@@ -19,7 +19,7 @@ class Preprocessor(ABC):
         pass
 
     @abstractmethod
-    def preprocess(self, states: AbstractStatesBatch) -> TensorType['batch_size', 'dim_in', float]:
+    def preprocess(self, states: AbstractStatesBatch) -> TensorType['batch_shape', 'dim_in', float]:
         pass
 
 
@@ -27,7 +27,7 @@ class IdentityPreprocessor(Preprocessor):
     "simple preprocessor applicable to environments with unidimensional states."
     @property
     def output_dim(self):
-        return self.env.state_dim
+        return self.env.ndim
 
     def preprocess(self, states):
         return states.states.float()

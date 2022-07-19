@@ -11,7 +11,12 @@ from gym.spaces import Discrete
 
 @dataclass
 class AbstractStatesBatch(ABC):
+    batch_shape: Tuple[int, ...]  # The shape of the batch, usually (n_envs,)
+    # The shape of the states, should be (*batch_shape, *state_dim)
+    shape: Tuple[int, ...] = field(init=False)
     states: Tensor
+    masks: Tensor  # Boolean tensor representing possible actions at each state of the batch
+    already_dones: Tensor  # Boolean tensor representing if the state is terminating
 
 
 @dataclass
@@ -32,14 +37,14 @@ class Env(ABC):
     device: torch.device = field(init=False)
 
     def __post_init__(self):
-        self.StatesBatch = self.make_state_class(self.n_envs)
+        self.StatesBatch = self.make_state_class()
         self.state_dim = (self.n_envs, *self.state_shape)
         self.action_space = Discrete(self.n_actions)
         self.device = torch.device(
             'cuda' if torch.cuda.is_available() else 'cpu')
 
     @abstractmethod
-    def make_state_class(self, batch_size) -> type:
+    def make_state_class(self) -> type:
         """
         :return: a class that represents a state.
         """
@@ -49,7 +54,7 @@ class Env(ABC):
         """
         :return: a batch of states, instance of StatesBatch
         """
-        self._state = self.StatesBatch(*kwargs)
+        self._state = self.StatesBatch(batch_shape=(self.n_envs, ), *kwargs)
         return deepcopy(self._state)
 
     @abstractmethod
@@ -58,9 +63,9 @@ class Env(ABC):
         pass
 
     @abstractmethod
-    def reward(self, final_states: AbstractStatesBatch) -> TensorType['batch_size', float]:
+    def reward(self, final_states: AbstractStatesBatch) -> TensorType['batch_shape', float]:
         pass
 
     @abstractmethod
-    def get_states_indices(self, states: AbstractStatesBatch) -> TensorType['batch_size', torch.long]:
+    def get_states_indices(self, states: AbstractStatesBatch) -> TensorType['batch_shape', torch.long]:
         pass

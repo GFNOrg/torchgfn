@@ -28,55 +28,52 @@ class HyperGrid(Env):
         super().__post_init__()
         self.n_states = self.height ** self.ndim
 
-    def make_state_class(self, batch_size):
+    def make_state_class(self):
         envSelf = self
-        bs = batch_size
 
         @ dataclass
         class StatesBatch(AbstractStatesBatch):
-            batch_size: int = bs
-            state_dim: Tuple = (envSelf.ndim, )
-            states: TensorType[(batch_size, *state_dim)] = None
-            shape: Tuple = field(init=False)
-            masks: TensorType[batch_size,
-                              envSelf.n_actions, bool] = field(init=False)
-            backward_masks: TensorType[batch_size,
-                                       envSelf.n_actions - 1, bool] = field(init=False)
-            already_dones: TensorType[batch_size, bool] = field(init=False)
+            batch_shape: Tuple[int, ...] = (envSelf.n_envs,)
+            state_dim = (envSelf.ndim, )
+            shape: Tuple[int, ...] = field(init=False)
+            states: TensorType[(*batch_shape, *state_dim)] = None
+            masks: TensorType[(*batch_shape,
+                              envSelf.n_actions)] = field(init=False)
+            backward_masks: TensorType[(*batch_shape,
+                                       envSelf.n_actions - 1)] = field(init=False)
+            already_dones: TensorType[batch_shape] = field(init=False)
 
             def __post_init__(self):
                 if self.states is None:
-                    self.shape = (self.batch_size, *self.state_dim)
+                    self.shape = (*self.batch_shape, *self.state_dim)
                     self.states = torch.zeros(
                         self.shape, dtype=torch.long, device=envSelf.device)
                 else:
-                    assert self.states.ndim == 2 and self.states.shape[1] == envSelf.ndim
-                    self.batch_size = self.states.shape[0]
-                # self.masks = torch.ones(
-                #     (self.batch_size, envSelf.n_actions), dtype=torch.bool, device=envSelf.device)
+                    assert self.states.shape[-1] == envSelf.ndim
+                    self.batch_shape = tuple(self.states.shape[:-1])
                 self.masks = self.make_masks(self.states)
                 self.backward_masks = self.make_backward_masks(self.states)
-                # self.backward_masks = torch.zeros(
-                #     (self.batch_size, envSelf.n_actions - 1), dtype=torch.bool, device=envSelf.device)
                 self.already_dones = torch.zeros(
-                    self.batch_size, dtype=torch.bool, device=envSelf.device)
+                    self.batch_shape, dtype=torch.bool, device=envSelf.device)
 
             def __repr__(self):
                 return f"StatesBatch(\nstates={self.states},\n masks={self.masks},\n backward_masks={self.backward_masks},\n already_dones={self.already_dones})"
 
             def make_masks(self, states: TensorType[('bs', *state_dim)]) -> TensorType['bs',
                                                                                        envSelf.n_actions, bool]:
+                batch_shape = tuple(states.shape[:-1])
                 masks = torch.ones(
-                    (states.shape[0], envSelf.n_actions), dtype=torch.bool, device=envSelf.device)
+                    (*batch_shape, envSelf.n_actions), dtype=torch.bool, device=envSelf.device)
                 masks[torch.cat([states == envSelf.height - 1,
-                                 torch.zeros(states.shape[0], 1, dtype=torch.bool, device=envSelf.device)],
-                                1)
+                                 torch.zeros((*batch_shape, 1), dtype=torch.bool, device=envSelf.device)],
+                                -1)
                       ] = False
                 return masks
 
             def make_backward_masks(self, states: TensorType[('bs', *state_dim)]) -> TensorType['bs', envSelf.n_actions - 1, bool]:
+                batch_shape = tuple(states.shape[:-1])
                 masks = torch.ones(
-                    states.shape[0], envSelf.n_actions - 1, dtype=torch.bool, device=envSelf.device)
+                    (*batch_shape, envSelf.n_actions - 1), dtype=torch.bool, device=envSelf.device)
 
                 masks[states == 0] = False
                 return masks
@@ -136,10 +133,10 @@ class HyperGrid(Env):
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
         return reward
 
-    def get_states_indices(self, states) -> TensorType['batch_size', torch.long]:
+    def get_states_indices(self, states) -> TensorType['batch_shape', torch.long]:
         states = states.states
         canonical_base = self.height ** torch.arange(self.ndim - 1, -1, -1)
-        flat_indices = (canonical_base * states).sum(1).long()
+        flat_indices = (canonical_base * states).sum(-1).long()
         return flat_indices
 
 
