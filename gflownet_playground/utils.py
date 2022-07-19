@@ -1,32 +1,15 @@
 import torch
+from torch import Tensor
+from torch import nn
 from torch.distributions import Categorical
-from abc import ABC, abstractmethod
 from copy import deepcopy
 
-class Preprocessor(ABC):
-    """
-    Base class for Preprocessors. The goal is to transform tensors representing raw states
-    to tensors that can be used as input to neural networks.
-    """
-    @abstractmethod
-    def preprocess(self, states):
-        """
-        :param states: Tensor of shape (k x state_dim)
-        :outputs: Tensor of shape (k x dim_in) where dim_in is the input dimension of the neural network
-        """
-        pass
+from typing import List, Tuple, Any
+
+from envs.env import Env
 
 
-class IdentityPreprocessor(Preprocessor): 
-    def __init__(self, input_dim):
-        self.output_dim = input_dim
-
-    def preprocess(self, states):
-        assert states.shape[-1] == self.output_dim
-        return states
-
-
-def sample_trajectories(env, pf, start_states, max_length, temperature=1.):
+def sample_trajectories(env: Env, pf: nn.Module, start_states: Tensor, max_length: int, temperature: float = 1.):
     """
     Function to roll-out trajectories starting from start_states using pf
     :param env: object of type gflownet_playground.envs.env.Env
@@ -52,7 +35,7 @@ def sample_trajectories(env, pf, start_states, max_length, temperature=1.):
             probs = torch.softmax(logits / temperature, 1)
             dist = Categorical(probs)
             actions = dist.sample()
-            all_actions[~dones, step] = actions#[~dones]
+            all_actions[~dones, step] = actions
             states[~dones], dones[~dones] = env.step(states[~dones], actions)
             step += 1
             all_trajectories[~old_dones, step, :] = states[~old_dones]
@@ -61,11 +44,46 @@ def sample_trajectories(env, pf, start_states, max_length, temperature=1.):
     return all_trajectories, last_states, all_actions.long(), dones, rewards
 
 
+def uniform_sample_trajectories(env, start_states):
+    """
+    Function to generate trajectories from a uniform distribution starting from start_states
+    :param env: object of type gflownet_playground.envs.env.Env
+    :param start_states: start_states to start with. tensor of size k x state_dim
+    """
+    # TODO: uniform sample final state and use uniform PB until getting to start_state
+    import numpy as np
+
+    k = start_states.shape[0]
+    trajectories = []
+    actionss = []
+    rewards = []
+    for i in range(k):
+        trajectory = []
+        actions = []
+        state = start_states[[i]]
+        trajectory.append(state[0])
+        done = False
+        while not done:
+            mask = env.mask_maker(state)
+            action = np.random.choice(
+                [i for i, j in enumerate(mask[0]) if not j])
+            actions.append(action)
+            action = torch.tensor([action])
+            # action = torch.randint(0, env.n_actions, (1,))
+            next_state, done = env.step(state, action)
+            trajectory.append(next_state[0])
+            state = next_state
+        trajectories.append(torch.stack(trajectory))
+        actionss.append(torch.tensor(actions))
+        rewards.append(env.reward(state))
+
+    return trajectories, actionss, rewards
+
+
 if __name__ == '__main__':
     from gflownet_playground.envs.hypergrid.hypergrid_env import HyperGrid
     from gflownet_playground.envs.hypergrid.utils import OneHotPreprocessor
     from gflownet_playground.gfn_models import PF, UniformPB, UniformPF
-
 
     ndim = 3
     H = 8
@@ -75,13 +93,24 @@ if __name__ == '__main__':
     env = HyperGrid(ndim, H)
     preprocessor = OneHotPreprocessor(ndim, H)
     print('Initializing a random P_F netowork...')
-    pf = PF(input_dim=H ** ndim, n_actions=ndim + 1, preprocessor=preprocessor, h=32)
+    pf = PF(input_dim=H ** ndim, n_actions=ndim +
+            1, preprocessor=preprocessor, h=32)
     print('Starting with 5 random start states:')
     start_states = torch.randint(0, H, (5, ndim)).float()
     print(start_states)
     print('Rolling-out trajectories of max_length {}...'.format(max_length))
-    trajectories, actions, dones, rewards = sample_trajectories(env, pf, start_states, max_length, temperature)
+    trajectories, last_states, actions, dones, rewards = sample_trajectories(
+        env, pf, start_states, max_length, temperature)
     print('Trajectories: {}'.format(trajectories))
+    print('Last states: {}'.format(last_states))
     print('Actions: {}'.format(actions))
     print('Dones: {}'.format(dones))
+    print('Rewards: {}'.format(rewards))
+
+    print('Sampling 10 trajectories from a uniform distribution...')
+    start_states = torch.zeros((10, ndim)).float()
+    trajectories, actionss, rewards = uniform_sample_trajectories(
+        env, start_states)
+    print('Trajectories: {}'.format(trajectories))
+    print('Actions: {}'.format(actionss))
     print('Rewards: {}'.format(rewards))
