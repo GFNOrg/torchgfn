@@ -4,12 +4,12 @@ from gflownet_playground.preprocessors.hot import OneHotPreprocessor, KHotPrepro
 
 if __name__ == '__main__':
     import torch
-    from gflownet_playground.envs.hypergrid.hypergrid_env import HyperGrid
+    from gflownet_playground.envs.hypergrid import HyperGrid
 
     ndim = 2
-    H = 4
+    height = 4
 
-    env = HyperGrid(ndim, H)
+    env = HyperGrid(ndim=ndim, height=height)
 
     print('Testing The Preprocessors on HyperGrid')
 
@@ -17,29 +17,12 @@ if __name__ == '__main__':
     one_hot_preprocessor = OneHotPreprocessor(env)
     k_hot_preprocessor = KHotPreprocessor(env)
 
-    explicit_grid = env.grid.view(-1, ndim)
-    one_hot_grid = one_hot_preprocessor.preprocess(explicit_grid)
-    k_hot_grid = k_hot_preprocessor.preprocess(explicit_grid)
-    preprocessed_grid = identity_preprocessor.preprocess(explicit_grid)
-
-    print('Looping through each state and showing its 3 preprocessed versions')
-    for i in range(H ** ndim):
-        print(explicit_grid[i])
-        print(preprocessed_grid[i])
-        print(one_hot_grid[i])
-        print(k_hot_grid[i])
-        print('')
-
-    print('Doing the same, but without flattening the grid')
-    explicit_grid = env.grid
-    print("Shape of the grid:", explicit_grid.shape)
-    preprocessed_grid = identity_preprocessor.preprocess(explicit_grid)
-    print("Identity preprocessed grid is of shape {}:".format(
-        preprocessed_grid.shape))
-    print(preprocessed_grid)
-    one_hot_grid = one_hot_preprocessor.preprocess(explicit_grid)
-    print("OneHot preprocessed grid is of shape {}:".format(one_hot_grid.shape))
-    print(one_hot_grid)
-    k_hot_grid = k_hot_preprocessor.preprocess(explicit_grid)
-    print("KHot preprocessed grid is of shape {}:".format(k_hot_grid.shape))
-    print(k_hot_grid)
+    random_states = torch.randint(0, height, (10, ndim))
+    random_states = env.StatesBatch(states=random_states)
+    print('States to try: ', random_states)
+    preprocessed_grid = identity_preprocessor.preprocess(random_states)
+    print('Identity Preprocessor: ', preprocessed_grid)
+    one_hot_grid = one_hot_preprocessor.preprocess(random_states)
+    print('One Hot Preprocessor: ', one_hot_grid)
+    k_hot_grid = k_hot_preprocessor.preprocess(random_states)
+    print('K Hot Preprocessor: ', k_hot_grid)

@@ -1,14 +1,12 @@
 from abc import ABC, abstractmethod
-from re import L
 import torch
 from torchtyping import TensorType
 from torch import Tensor
-from typing import Tuple, Type
+from typing import Tuple
 from dataclasses import dataclass, field
 from copy import deepcopy
 
 from gym.spaces import Discrete
-from scipy.stats import norm
 
 
 @dataclass
@@ -20,8 +18,7 @@ class AbstractStatesBatch(ABC):
 class Env(ABC):
     """
     Base class for environments, showing which methods should be implemented.
-    A common assumption for all environments is that all nodes of the DAG (except s_f)
-    can be represented as a fixed length 1-D tensor, and all actions are discrete,
+    A common assumption for all environments is that all actions are discrete,
     represented by a number in {0, ..., n_actions - 1}.
     """
     n_envs: int = 1  # number of environments to run in a vectorized wat
@@ -29,6 +26,7 @@ class Env(ABC):
     n_states: int = field(init=False)
     action_space: Discrete = field(init=False)
     state_shape: Tuple = field(init=False)  # shape of the states
+    ndim: int = field(init=False)
     state_dim: Tuple = field(init=False)
     StatesBatch: type = field(init=False)
     device: torch.device = field(init=False)

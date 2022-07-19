@@ -166,3 +166,7 @@ cython_debug/
 
 # iml
 *.iml
+
+
+.vscode/
+*.ipynb

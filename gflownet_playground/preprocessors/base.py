@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from torchtyping import TensorType
-from gflownet_playground.envs.env import Env
+from gflownet_playground.envs.env import Env, AbstractStatesBatch
 from typing import Tuple
 
 
@@ -19,11 +19,7 @@ class Preprocessor(ABC):
         pass
 
     @abstractmethod
-    def preprocess(self, states: TensorType['k': ..., 'state_dim': ...]) -> TensorType['k', 'dim_in']:
-        """
-        :param states: Tensor of shape (k x state_dim)
-        :outputs: Tensor of shape (k x dim_in) where dim_in is the input dimension of the neural network
-        """
+    def preprocess(self, states: AbstractStatesBatch) -> TensorType['batch_size', 'dim_in', float]:
         pass
 
 
@@ -34,4 +30,4 @@ class IdentityPreprocessor(Preprocessor):
         return self.env.state_dim
 
     def preprocess(self, states):
-        return states
+        return states.states.float()

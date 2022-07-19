@@ -2,17 +2,12 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from abc import ABC, abstractmethod
-from re import L
 import torch
 from torchtyping import TensorType
-from torch import Tensor
-from typing import Tuple, Type
+from typing import Tuple
 from dataclasses import dataclass, field
 from copy import deepcopy
 
-from gym.spaces import Discrete
-from scipy.stats import norm
 
 from gflownet_playground.envs.env import AbstractStatesBatch, Env
 
@@ -41,8 +36,8 @@ class HyperGrid(Env):
         class StatesBatch(AbstractStatesBatch):
             batch_size: int = bs
             state_dim: Tuple = (envSelf.ndim, )
+            states: TensorType[(batch_size, *state_dim)] = None
             shape: Tuple = field(init=False)
-            states: TensorType[(batch_size, *state_dim)] = field(init=False)
             masks: TensorType[batch_size,
                               envSelf.n_actions, bool] = field(init=False)
             backward_masks: TensorType[batch_size,
@@ -50,15 +45,41 @@ class HyperGrid(Env):
             already_dones: TensorType[batch_size, bool] = field(init=False)
 
             def __post_init__(self):
-                self.shape = (self.batch_size, *self.state_dim)
-                self.states = torch.zeros(
-                    self.shape, dtype=torch.long, device=envSelf.device)
-                self.masks = torch.ones(
-                    (self.batch_size, envSelf.n_actions), dtype=torch.bool, device=envSelf.device)
-                self.backward_masks = torch.zeros(
-                    (self.batch_size, envSelf.n_actions - 1), dtype=torch.bool, device=envSelf.device)
+                if self.states is None:
+                    self.shape = (self.batch_size, *self.state_dim)
+                    self.states = torch.zeros(
+                        self.shape, dtype=torch.long, device=envSelf.device)
+                else:
+                    assert self.states.ndim == 2 and self.states.shape[1] == envSelf.ndim
+                    self.batch_size = self.states.shape[0]
+                # self.masks = torch.ones(
+                #     (self.batch_size, envSelf.n_actions), dtype=torch.bool, device=envSelf.device)
+                self.masks = self.make_masks(self.states)
+                self.backward_masks = self.make_backward_masks(self.states)
+                # self.backward_masks = torch.zeros(
+                #     (self.batch_size, envSelf.n_actions - 1), dtype=torch.bool, device=envSelf.device)
                 self.already_dones = torch.zeros(
                     self.batch_size, dtype=torch.bool, device=envSelf.device)
+
+            def __repr__(self):
+                return f"StatesBatch(\nstates={self.states},\n masks={self.masks},\n backward_masks={self.backward_masks},\n already_dones={self.already_dones})"
+
+            def make_masks(self, states: TensorType[('bs', *state_dim)]) -> TensorType['bs',
+                                                                                       envSelf.n_actions, bool]:
+                masks = torch.ones(
+                    (states.shape[0], envSelf.n_actions), dtype=torch.bool, device=envSelf.device)
+                masks[torch.cat([states == envSelf.height - 1,
+                                 torch.zeros(states.shape[0], 1, dtype=torch.bool, device=envSelf.device)],
+                                1)
+                      ] = False
+                return masks
+
+            def make_backward_masks(self, states: TensorType[('bs', *state_dim)]) -> TensorType['bs', envSelf.n_actions - 1, bool]:
+                masks = torch.ones(
+                    states.shape[0], envSelf.n_actions - 1, dtype=torch.bool, device=envSelf.device)
+
+                masks[states == 0] = False
+                return masks
 
         return StatesBatch
 
@@ -75,8 +96,8 @@ class HyperGrid(Env):
 
         not_done_states = self._state.states[~dones]
         not_done_actions = actions[~dones]
-        not_done_masks = self._state.masks[~dones]
-        not_done_backward_masks = self._state.backward_masks[~dones]
+        # not_done_masks = self._state.masks[~dones]
+        # not_done_backward_masks = self._state.backward_masks[~dones]
 
         n_states_to_update = len(not_done_actions)
         not_done_states[torch.arange(
@@ -84,17 +105,21 @@ class HyperGrid(Env):
 
         self._state.states[~dones] = not_done_states
 
-        not_done_masks[torch.cat([not_done_states == self.height - 1,
-                                  torch.zeros(n_states_to_update, 1, dtype=torch.bool)],
-                                 1)
-                       ] = False
+        self._state.masks = self._state.make_masks(self._state.states)
+        self._state.backward_masks = self._state.make_backward_masks(
+            self._state.states)
 
-        self._state.masks[~dones] = not_done_masks
+        # not_done_masks[torch.cat([not_done_states == self.height - 1,
+        #                           torch.zeros(n_states_to_update, 1, dtype=torch.bool)],
+        #                          1)
+        #                ] = False
 
-        not_done_backward_masks[torch.arange(
-            n_states_to_update), not_done_actions] = True
+        # self._state.masks[~dones] = not_done_masks
 
-        self._state.backward_masks[~dones] = not_done_backward_masks
+        # not_done_backward_masks[torch.arange(
+        #     n_states_to_update), not_done_actions] = True
+
+        # self._state.backward_masks[~dones] = not_done_backward_masks
 
         return deepcopy(self._state), dones
 
