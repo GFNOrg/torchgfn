@@ -19,11 +19,13 @@ class KHotPreprocessor(Preprocessor):
     "Use K Hot Preprocessing for environment with enumerable states with a grid structure"
     @property
     def output_dim(self):
-        output_dim = self.env.n_states ** (1 / self.env.ndim)
+        output_dim = (self.env.n_states ** (1 / self.env.ndim)) * self.env.ndim
+        print(output_dim)
         assert output_dim.is_integer(), "The environment does not support K Hot preprocessing"
         return int(output_dim)
 
     def preprocess(self, states):
-        hot = one_hot(states.states, self.output_dim).float()
+        hot = one_hot(states.states, int(
+            self.output_dim / self.env.ndim)).float()
         hot = rearrange(hot, '... a b -> ... (a b)')
         return hot
