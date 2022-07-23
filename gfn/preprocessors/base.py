@@ -22,6 +22,9 @@ class Preprocessor(ABC):
     def preprocess(self, states: AbstractStatesBatch) -> TensorType['batch_shape', 'dim_in', float]:
         pass
 
+    def __call__(self, states):
+        return self.preprocess(states)
+
 
 class IdentityPreprocessor(Preprocessor):
     "simple preprocessor applicable to environments with unidimensional states."

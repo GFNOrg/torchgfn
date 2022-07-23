@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import torch
 from torchtyping import TensorType
 from torch import Tensor
-from typing import Tuple
+from typing import Tuple, Union
 from dataclasses import dataclass, field
 from copy import deepcopy
 
@@ -102,11 +102,11 @@ class Env(ABC):
         pass
 
     @abstractmethod
-    def reward(self, final_states: AbstractStatesBatch
+    def reward(self, final_states: Union[AbstractStatesBatch, Tensor]
                ) -> TensorType['batch_shape', float]:
         pass
 
     @abstractmethod
-    def get_states_indices(self, states: AbstractStatesBatch
+    def get_states_indices(self, states: Union[AbstractStatesBatch, Tensor]
                            ) -> TensorType['batch_shape', torch.long]:
         pass

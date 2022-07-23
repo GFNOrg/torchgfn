@@ -22,8 +22,18 @@ class Trajectories:
     when_is_done: TensorType['n_trajectories', torch.long]
     rewards: TensorType['n_trajectories', torch.float] = None
 
-    def get_last_states(self) -> TensorType['n_trajectories', 'shape']:
-        return self.states[-1]
+    def __repr__(self) -> str:
+        states = self.states.states
+        assert states.ndim == 3
+        states = states.transpose(0, 1)
+        states_repr = '\n'.join(['-> '.join([str(step.numpy()) for step in traj])
+                                 for traj in states])
+        return f"Trajectories(n_trajectories={self.n_trajectories}, " \
+               f"states={states_repr}, actions={self.actions}, " \
+               f"when_is_done={self.when_is_done}, rewards={self.rewards})"
+
+    def get_last_states_raw(self) -> TensorType['n_trajectories', 'shape']:
+        return self.states.states[-1]
 
 
 class TrajectoriesSampler:

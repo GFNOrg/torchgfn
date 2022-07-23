@@ -17,7 +17,7 @@ class HyperGrid(Env):
     "Hypergrid environment"
     ndim: int = 2
     height: int = 8
-    R0: float = 1e-2
+    R0: float = 1e-1
     R1: float = .5
     R2: float = 2.
     reward_cos: bool = False
@@ -151,8 +151,9 @@ class HyperGrid(Env):
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
         return reward
 
-    def get_states_indices(self, states) -> TensorType['batch_shape', torch.long]:
-        states = states.states
+    def get_states_indices(self, states):
+        if isinstance(states, AbstractStatesBatch):
+            states = states.states
         canonical_base = self.height ** torch.arange(self.ndim - 1, -1, -1)
         flat_indices = (canonical_base * states).sum(-1).long()
         return flat_indices
