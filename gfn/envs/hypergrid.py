@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from copy import deepcopy
 
 
-from gflownet_playground.envs.env import AbstractStatesBatch, Env
+from gfn.envs.env import AbstractStatesBatch, Env
 
 
 @dataclass
@@ -44,23 +44,27 @@ class HyperGrid(Env):
             already_dones: TensorType[batch_shape] = field(init=False)
 
             def __post_init__(self):
-                if self.states is None:
+                if self.states is None and not self.random:
                     self.shape = (*self.batch_shape, *self.state_dim)
                     self.states = torch.zeros(
                         self.shape, dtype=torch.long, device=envSelf.device)
+                elif self.random:
+                    self.shape = (*self.batch_shape, *self.state_dim)
+                    self.states = torch.randint(
+                        0, envSelf.height, self.shape, device=envSelf.device)
                 else:
                     assert self.states.shape[-1] == envSelf.ndim
                     self.batch_shape = tuple(self.states.shape[:-1])
-                self.masks = self.make_masks(self.states)
-                self.backward_masks = self.make_backward_masks(self.states)
-                self.already_dones = torch.zeros(
-                    self.batch_shape, dtype=torch.bool, device=envSelf.device)
+                    self.shape = (*self.batch_shape, *self.state_dim)
+                # self.masks = self.make_masks()
+                # self.backward_masks = self.make_backward_masks()
+                super().__post_init__()
 
             def __repr__(self):
                 return f"StatesBatch(\nstates={self.states},\n masks={self.masks},\n backward_masks={self.backward_masks},\n already_dones={self.already_dones})"
 
-            def make_masks(self, states: TensorType[('bs', *state_dim)]) -> TensorType['bs',
-                                                                                       envSelf.n_actions, bool]:
+            def make_masks(self) -> TensorType['bs', envSelf.n_actions, bool]:
+                states = self.states
                 batch_shape = tuple(states.shape[:-1])
                 masks = torch.ones(
                     (*batch_shape, envSelf.n_actions), dtype=torch.bool, device=envSelf.device)
@@ -70,13 +74,18 @@ class HyperGrid(Env):
                       ] = False
                 return masks
 
-            def make_backward_masks(self, states: TensorType[('bs', *state_dim)]) -> TensorType['bs', envSelf.n_actions - 1, bool]:
+            def make_backward_masks(self) -> TensorType['bs', envSelf.n_actions - 1, bool]:
+                states = self.states
                 batch_shape = tuple(states.shape[:-1])
                 masks = torch.ones(
                     (*batch_shape, envSelf.n_actions - 1), dtype=torch.bool, device=envSelf.device)
 
                 masks[states == 0] = False
                 return masks
+
+            def update_the_dones(self):
+                states = self.states
+                self.already_dones = (states.sum(-1) == 0)
 
         return StatesBatch
 
@@ -93,8 +102,6 @@ class HyperGrid(Env):
 
         not_done_states = self._state.states[~dones]
         not_done_actions = actions[~dones]
-        # not_done_masks = self._state.masks[~dones]
-        # not_done_backward_masks = self._state.backward_masks[~dones]
 
         n_states_to_update = len(not_done_actions)
         not_done_states[torch.arange(
@@ -102,26 +109,37 @@ class HyperGrid(Env):
 
         self._state.states[~dones] = not_done_states
 
-        self._state.masks = self._state.make_masks(self._state.states)
-        self._state.backward_masks = self._state.make_backward_masks(
-            self._state.states)
-
-        # not_done_masks[torch.cat([not_done_states == self.height - 1,
-        #                           torch.zeros(n_states_to_update, 1, dtype=torch.bool)],
-        #                          1)
-        #                ] = False
-
-        # self._state.masks[~dones] = not_done_masks
-
-        # not_done_backward_masks[torch.arange(
-        #     n_states_to_update), not_done_actions] = True
-
-        # self._state.backward_masks[~dones] = not_done_backward_masks
+        self._state.update_masks()
 
         return deepcopy(self._state), dones
 
+    def backward_step(self, states, actions):
+        states = deepcopy(states)
+        not_done_states_masks = states.backward_masks[~states.already_dones]
+        not_done_actions = actions[~states.already_dones]
+        actions_valid = all(torch.gather(
+            not_done_states_masks, 1, not_done_actions.unsqueeze(1)))
+        if not actions_valid:
+            raise ValueError('Actions are not valid')
+
+        not_done_states = states.states[~states.already_dones]
+        n_states_to_update = len(not_done_actions)
+        not_done_states[torch.arange(
+            n_states_to_update), not_done_actions] -= 1
+
+        states.states[~states.already_dones] = not_done_states
+
+        dones = states.already_dones | (states.states.sum(-1) == 0)
+
+        states.already_dones = dones
+
+        states.update_masks()
+
+        return states, dones
+
     def reward(self, final_states):
-        final_states = final_states.states
+        if isinstance(final_states, AbstractStatesBatch):
+            final_states = final_states.states
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states / (self.height - 1) - 0.5)
         if not self.reward_cos:
@@ -157,3 +175,34 @@ if __name__ == '__main__':
         print('ValueError raised as expected because of invalid actions')
     print(env._state)
     print('Final rewards:', env.reward(env._state))
+
+    states.zero_the_dones()
+    print('States after zeroing dones:', states)
+
+    try:
+        actions = torch.tensor([1, 1, 2], dtype=torch.long)
+        states, dones = env.backward_step(states, actions)
+    except RuntimeError:
+        print('RuntimeError raised as expected because of invalid actions')
+
+    actions = torch.tensor([1, 1, 1], dtype=torch.long)
+    states, dones = env.backward_step(states, actions)
+
+    # second is already done, so 43 is ok
+    actions = torch.tensor([0, 43, 1], dtype=torch.long)
+    states, dones = env.backward_step(states, actions)
+
+    # second is already done, so 43 is ok
+    actions = torch.tensor([0, 43, 34], dtype=torch.long)
+    states, dones = env.backward_step(states, actions)
+    if all(dones):
+        print('Initial states reached everywhere,', states)
+    else:
+        raise ValueError('Initial states not reached everywhere')
+
+    print('Testing state creating with given states:')
+    states = torch.randint(0, env.height, (5, 3, env.ndim))
+    states_batch = env.StatesBatch(states=states)
+    print('Testing done updating. For states that are s_0, done should be True:')
+    states_batch.update_the_dones()
+    print(states_batch)

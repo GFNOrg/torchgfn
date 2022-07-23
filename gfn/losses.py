@@ -43,9 +43,9 @@ def online_TB_loss(env, pf, pb, logZ, start_states, loss_fn=nn.MSELoss(),
                    temperature=1., device=None):
     """
     Function to roll-out a batch of trajectories starting from start_states using pf, then evaluate the average TB loss on the trajectories
-    :param env: object of type gflownet_playground.envs.env.Env
-    :param pf: nn.Module representing forward transition probabilities (e.g. gflownet_playground.gfn_models.PF)
-    :param pb: nn.Module representing backward transition probabilities (e.g. gflownet_playground.gfn_models.UniformPB)
+    :param env: object of type gfn.envs.env.Env
+    :param pf: nn.Module representing forward transition probabilities (e.g. gfn.gfn_models.PF)
+    :param pb: nn.Module representing backward transition probabilities (e.g. gfn.gfn_models.UniformPB)
     :param logZ: scalar tensor
     :param start_states: start_states to start with. tensor of size k x state_dim
     :param temperature: float, temperature to trade off between raw P_F and uniform
@@ -92,11 +92,11 @@ def online_TB_loss(env, pf, pb, logZ, start_states, loss_fn=nn.MSELoss(),
 
 
 if __name__ == '__main__':
-    from gflownet_playground.envs.hypergrid.hypergrid_env import HyperGrid
-    from gflownet_playground.envs.hypergrid.utils import OneHotPreprocessor, uniform_backwards_prob
-    from gflownet_playground.gfn_models import PF
-    from gflownet_playground.utils import sample_trajectories, evaluate_trajectories
-    from gflownet_playground.replay_buffer import ReplayBuffer
+    from gfn.envs.hypergrid_env import HyperGrid
+    from gfn.envs.utils import OneHotPreprocessor, uniform_backwards_prob
+    from gfn.gfn_models import PF
+    from gfn.utils import sample_trajectories, evaluate_trajectories
+    from gfn.replay_buffer import ReplayBuffer
 
     ndim = 3
     H = 8

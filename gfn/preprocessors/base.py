@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from torchtyping import TensorType
-from gflownet_playground.envs.env import Env, AbstractStatesBatch
+from gfn.envs.env import Env, AbstractStatesBatch
 from typing import Tuple
 
 

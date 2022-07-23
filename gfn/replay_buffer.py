@@ -19,7 +19,8 @@ class ReplayBuffer:
 
     def add(self, trajectories, actions, rewards, dones):
         to_add = trajectories[dones].shape[0]
-        indices = torch.arange(self._index, self._index + to_add) % self.capacity
+        indices = torch.arange(
+            self._index, self._index + to_add) % self.capacity
 
         self._is_full |= (self._index + to_add >= self.capacity)
         self._index = (self._index + to_add) % self.capacity
@@ -33,13 +34,12 @@ class ReplayBuffer:
 
         return self._trajectories[indices], self._actions[indices], self._rewards[indices]
 
-    
-if __name__ == '__main__':
-    from gflownet_playground.envs.hypergrid.hypergrid_env import HyperGrid
-    from gflownet_playground.envs.hypergrid.utils import OneHotPreprocessor
-    from gflownet_playground.gfn_models import PF
-    from gflownet_playground.utils import sample_trajectories, evaluate_trajectories
 
+if __name__ == '__main__':
+    from gfn.envs.hypergrid_env import HyperGrid
+    from gfn.envs.utils import OneHotPreprocessor
+    from gfn.gfn_models import PF
+    from gfn.utils import sample_trajectories, evaluate_trajectories
 
     ndim = 3
     H = 8
@@ -49,9 +49,11 @@ if __name__ == '__main__':
     env = HyperGrid(ndim, H)
     preprocessor = OneHotPreprocessor(ndim, H)
     print('Sampling 5 trajectories starting from the origin with a random P_F network, max_length {}'.format(max_length))
-    pf = PF(input_dim=H ** ndim, n_actions=ndim + 1, preprocessor=preprocessor, h=32)
+    pf = PF(input_dim=H ** ndim, n_actions=ndim +
+            1, preprocessor=preprocessor, h=32)
     start_states = torch.zeros(5, ndim).float()
-    trajectories, actions, dones = sample_trajectories(env, pf, start_states, max_length, temperature)
+    trajectories, actions, dones = sample_trajectories(
+        env, pf, start_states, max_length, temperature)
     rewards = evaluate_trajectories(env, trajectories, actions, dones)
     print('Number of done trajectories amongst samples: ', dones.sum().item())
 
@@ -63,7 +65,8 @@ if __name__ == '__main__':
 
     print('Resampling 7 trajectories and adding the done ones to the same buffer')
     start_states = torch.zeros(7, ndim).float()
-    trajectories, actions, dones = sample_trajectories(env, pf, start_states, max_length, temperature)
+    trajectories, actions, dones = sample_trajectories(
+        env, pf, start_states, max_length, temperature)
     rewards = evaluate_trajectories(env, trajectories, actions, dones)
     print('Number of done trajectories amongst samples: ', dones.sum().item())
     buffer.add(trajectories, actions, rewards, dones)
@@ -72,6 +75,3 @@ if __name__ == '__main__':
     print('Sampling 2 trajectories: ')
     trajectories, actions, rewards = buffer.sample(2)
     print(trajectories, actions, rewards)
-
-
-

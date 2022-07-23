@@ -12,8 +12,8 @@ from envs.env import Env
 def sample_trajectories(env: Env, pf: nn.Module, start_states: Tensor, max_length: int, temperature: float = 1.):
     """
     Function to roll-out trajectories starting from start_states using pf
-    :param env: object of type gflownet_playground.envs.env.Env
-    :param pf: nn.Module representing forward transition probabilities (e.g. gflownet_playground.gfn_models.PF)
+    :param env: object of type gfn.envs.env.Env
+    :param pf: nn.Module representing forward transition probabilities (e.g. gfn.gfn_models.PF)
     :param start_states: start_states to start with. tensor of size k x state_dim
     :param max_length: int, maximum length of trajectories
     :param temperature: float, temperature to trade off between raw P_F and uniform
@@ -47,7 +47,7 @@ def sample_trajectories(env: Env, pf: nn.Module, start_states: Tensor, max_lengt
 def uniform_sample_trajectories(env, start_states):
     """
     Function to generate trajectories from a uniform distribution starting from start_states
-    :param env: object of type gflownet_playground.envs.env.Env
+    :param env: object of type gfn.envs.env.Env
     :param start_states: start_states to start with. tensor of size k x state_dim
     """
     # TODO: uniform sample final state and use uniform PB until getting to start_state
@@ -81,9 +81,9 @@ def uniform_sample_trajectories(env, start_states):
 
 
 if __name__ == '__main__':
-    from gflownet_playground.envs.hypergrid.hypergrid_env import HyperGrid
-    from gflownet_playground.envs.hypergrid.utils import OneHotPreprocessor
-    from gflownet_playground.gfn_models import PF, UniformPB, UniformPF
+    from gfn.envs.hypergrid_env import HyperGrid
+    from gfn.envs.utils import OneHotPreprocessor
+    from gfn.gfn_models import PF, UniformPB, UniformPF
 
     ndim = 3
     H = 8

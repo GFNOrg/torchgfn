@@ -1,4 +1,4 @@
-from gflownet_playground.preprocessors.base import Preprocessor
+from gfn.preprocessors.base import Preprocessor
 from torch.nn.functional import one_hot
 import torch
 from einops import rearrange
@@ -20,7 +20,6 @@ class KHotPreprocessor(Preprocessor):
     @property
     def output_dim(self):
         output_dim = (self.env.n_states ** (1 / self.env.ndim)) * self.env.ndim
-        print(output_dim)
         assert output_dim.is_integer(), "The environment does not support K Hot preprocessing"
         return int(output_dim)
 

@@ -16,7 +16,39 @@ class AbstractStatesBatch(ABC):
     shape: Tuple[int, ...] = field(init=False)
     states: Tensor
     masks: Tensor  # Boolean tensor representing possible actions at each state of the batch
-    already_dones: Tensor  # Boolean tensor representing if the state is terminating
+    # Boolean tensor representing possible actions that could have led to each state of the batch
+    backward_masks: Tensor
+    # Boolean tensor representing if the state is the last of its trajectory
+    already_dones: Tensor
+    device: torch.device = field(init=False)
+    random: bool = False  # If True, then initial state is chosen randomly.
+
+    def __post_init__(self):
+        self.device = self.states.device
+        self.zero_the_dones()
+        self.update_masks()
+
+    @abstractmethod
+    def make_masks(self) -> Tensor:
+        pass
+
+    @abstractmethod
+    def make_backward_masks(self) -> Tensor:
+        pass
+
+    def update_masks(self) -> None:
+        self.masks = self.make_masks()
+        self.backward_masks = self.make_backward_masks()
+
+    def zero_the_dones(self) -> None:
+        self.already_dones = torch.zeros(
+            self.batch_shape, dtype=torch.bool, device=self.device)
+
+    @abstractmethod
+    def update_the_dones(self) -> None:
+        # When doing backward sampling, we need to know if the state is the last of its trajectory, i.e.
+        # is it s_0.
+        pass
 
 
 @dataclass
@@ -58,14 +90,23 @@ class Env(ABC):
         return deepcopy(self._state)
 
     @abstractmethod
-    def step(self, actions: TensorType[n_envs, torch.long]) -> Tuple[AbstractStatesBatch, TensorType[n_envs, bool]]:
-
+    def step(self, actions: TensorType[n_envs, torch.long]
+             ) -> Tuple[AbstractStatesBatch, TensorType[n_envs, bool]]:
         pass
 
     @abstractmethod
-    def reward(self, final_states: AbstractStatesBatch) -> TensorType['batch_shape', float]:
+    def backward_step(self, states: AbstractStatesBatch,
+                      actions: TensorType['batch_shape', torch.long]
+                      ) -> Tuple[AbstractStatesBatch,
+                                 TensorType['batch_shape', bool]]:
         pass
 
     @abstractmethod
-    def get_states_indices(self, states: AbstractStatesBatch) -> TensorType['batch_shape', torch.long]:
+    def reward(self, final_states: AbstractStatesBatch
+               ) -> TensorType['batch_shape', float]:
+        pass
+
+    @abstractmethod
+    def get_states_indices(self, states: AbstractStatesBatch
+                           ) -> TensorType['batch_shape', torch.long]:
         pass

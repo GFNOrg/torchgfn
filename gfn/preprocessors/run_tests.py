@@ -1,10 +1,10 @@
-from gflownet_playground.preprocessors.base import IdentityPreprocessor
-from gflownet_playground.preprocessors.hot import OneHotPreprocessor, KHotPreprocessor
+from gfn.preprocessors.base import IdentityPreprocessor
+from gfn.preprocessors.hot import OneHotPreprocessor, KHotPreprocessor
 
 
 if __name__ == '__main__':
     import torch
-    from gflownet_playground.envs.hypergrid import HyperGrid
+    from gfn.envs import HyperGrid
 
     ndim = 2
     height = 4
