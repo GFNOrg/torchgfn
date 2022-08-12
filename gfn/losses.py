@@ -1,7 +1,5 @@
-from turtle import forward
 import torch
 import torch.nn as nn
-from torch.nn.functional import one_hot
 from torchtyping import TensorType
 from gfn import preprocessors
 from gfn.samplers.trajectories_sampler import Trajectories

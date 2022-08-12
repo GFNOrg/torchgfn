@@ -4,9 +4,8 @@ from torch import nn
 from torch.distributions import Categorical
 from copy import deepcopy
 
-from typing import List, Tuple, Any
 
-from envs.env import Env
+from gfn.envs.env import Env
 
 
 def sample_trajectories(env: Env, pf: nn.Module, start_states: Tensor, max_length: int, temperature: float = 1.):

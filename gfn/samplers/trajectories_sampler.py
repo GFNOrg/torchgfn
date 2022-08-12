@@ -6,21 +6,24 @@ from dataclasses import dataclass
 from gfn.envs.env import Env, AbstractStatesBatch
 from gfn.samplers.action_samplers import ActionSampler, BackwardsActionSampler, FixedActions
 
+# Typing
+# max_length = None
+n_trajectories = None
+shape = None
+Tensor2D = TensorType['max_length', 'n_trajectories', torch.long]
+Tensor2D2 = TensorType['n_trajectories', 'shape']
+Tensor1D = TensorType['n_trajectories', torch.long]
+
 
 @dataclass
 class Trajectories:
     """Class for keeping track of multiple COMPLETE trajectories."""
     n_trajectories: int
-    # TensorType['max_length', 'n_trajectories', 'shape']
     states: AbstractStatesBatch
-    actions: TensorType['max_length', 'n_trajectories',
-                        torch.long]
-    # logits: TensorType['max_length', 'n_trajectories',
-    #                    'n_actions']
-    # backwards_masks: TensorType['max_length', 'n_trajectories', 'n_actions-1']
+    actions: Tensor2D
     # The following field mentions how many actions were taken in each trajectory.
-    when_is_done: TensorType['n_trajectories', torch.long]
-    rewards: TensorType['n_trajectories', torch.float] = None
+    when_is_done: Tensor1D
+    rewards: Tensor1D = None
 
     def __repr__(self) -> str:
         states = self.states.states
@@ -32,8 +35,20 @@ class Trajectories:
                f"states={states_repr}, actions={self.actions}, " \
                f"when_is_done={self.when_is_done}, rewards={self.rewards})"
 
-    def get_last_states_raw(self) -> TensorType['n_trajectories', 'shape']:
+    def get_last_states_raw(self) -> Tensor2D2:
         return self.states.states[-1]
+
+    def purge(self, raw_state) -> None:
+        """Remove all trajectories that ended in the given state."""
+        ndim = self.states.shape[-1]
+        mask = (self.get_last_states_raw() == raw_state).sum(1) == ndim
+        self.n_trajectories -= mask.sum().item()
+        self.states.states = self.states.states[:, ~mask]
+        self.states.update_masks()
+        self.actions = self.actions[:, ~mask]
+        self.when_is_done = self.when_is_done[~mask]
+        if self.rewards is not None:
+            self.rewards = self.rewards[~mask]
 
 
 class TrajectoriesSampler:

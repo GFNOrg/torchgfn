@@ -63,7 +63,7 @@ class HyperGrid(Env):
             def __repr__(self):
                 return f"StatesBatch(\nstates={self.states},\n masks={self.masks},\n backward_masks={self.backward_masks},\n already_dones={self.already_dones})"
 
-            def make_masks(self) -> TensorType['bs', envSelf.n_actions, bool]:
+            def make_masks(self) -> TensorType[..., envSelf.n_actions, bool]:
                 states = self.states
                 batch_shape = tuple(states.shape[:-1])
                 masks = torch.ones(
@@ -74,7 +74,7 @@ class HyperGrid(Env):
                       ] = False
                 return masks
 
-            def make_backward_masks(self) -> TensorType['bs', envSelf.n_actions - 1, bool]:
+            def make_backward_masks(self) -> TensorType[..., envSelf.n_actions - 1, bool]:
                 states = self.states
                 batch_shape = tuple(states.shape[:-1])
                 masks = torch.ones(

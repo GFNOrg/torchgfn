@@ -8,6 +8,12 @@ from copy import deepcopy
 
 from gym.spaces import Discrete
 
+# Typing
+batch_shape = None
+TensorLong = TensorType['batch_shape', torch.long]
+TensorFloat = TensorType['batch_shape', torch.float]
+TensorBool = TensorType['batch_shape', torch.bool]
+
 
 @dataclass
 class AbstractStatesBatch(ABC):
@@ -96,17 +102,17 @@ class Env(ABC):
 
     @abstractmethod
     def backward_step(self, states: AbstractStatesBatch,
-                      actions: TensorType['batch_shape', torch.long]
+                      actions: TensorLong
                       ) -> Tuple[AbstractStatesBatch,
-                                 TensorType['batch_shape', bool]]:
+                                 TensorBool]:
         pass
 
     @abstractmethod
     def reward(self, final_states: Union[AbstractStatesBatch, Tensor]
-               ) -> TensorType['batch_shape', float]:
+               ) -> TensorFloat:
         pass
 
     @abstractmethod
     def get_states_indices(self, states: Union[AbstractStatesBatch, Tensor]
-                           ) -> TensorType['batch_shape', torch.long]:
+                           ) -> TensorLong:
         pass

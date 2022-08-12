@@ -36,7 +36,7 @@ class ReplayBuffer:
 
 
 if __name__ == '__main__':
-    from gfn.envs.hypergrid_env import HyperGrid
+    from gfn.envs import HyperGrid
     from gfn.envs.utils import OneHotPreprocessor
     from gfn.gfn_models import PF
     from gfn.utils import sample_trajectories, evaluate_trajectories
