@@ -1,14 +1,25 @@
 import torch.nn as nn
 import torch
 from torch import Tensor
+from torchtyping import TensorType
 from typing import Union
+from gfn.estimators import GFNModule
+
+# Typing
+batch_shape = None
+input_dim = None
+output_dim = None
+InputTensor = TensorType['batch_shape', 'input_dim', float]
+OutputTensor = TensorType['batch_shape', 'output_dim', float]
 
 
-class NeuralNet(nn.Module):
+class NeuralNet(nn.Module, GFNModule):
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int,
                  torso: Union[None, nn.Module] = None):
         super().__init__()
         self.input_dim = input_dim
+        self.output_dim = output_dim
+
         if torso is None:
             self.torso = nn.Sequential(nn.Linear(input_dim, hidden_dim),
                                        nn.ReLU(),
@@ -18,22 +29,21 @@ class NeuralNet(nn.Module):
         else:
             self.torso = torso
         self.last_layer = nn.Linear(hidden_dim, output_dim)
-
+            
     def forward(self, preprocessed_states: Tensor):
         logits = self.torso(preprocessed_states)
         logits = self.last_layer(logits)
         return logits
 
-
-class Uniform(nn.Module):
+class Uniform(GFNModule):
     def __init__(self, output_dim):
         """
         :param n_actions: the number of all possible actions
         """
-        super().__init__()
+        self.input_dim = None
         self.output_dim = output_dim
 
-    def forward(self, preprocessed_states: Tensor):
+    def __call__(self, preprocessed_states: Tensor):
         logits = torch.zeros(
             *preprocessed_states.shape[:-1], self.output_dim).to(preprocessed_states.device)
         return logits

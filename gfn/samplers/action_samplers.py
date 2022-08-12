@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
 import torch
-from torchtyping import TensorType  # type: ignore
+from torchtyping import TensorType
 
 from gfn.envs.env import AbstractStatesBatch
 from gfn.preprocessors.base import Preprocessor
+from gfn.estimators import LogEdgeFlowEstimator, LogitPBEstimator, LogitPFEstimator
 from torch.distributions import Categorical
 
 # Typing
@@ -87,19 +88,32 @@ class UniformBackwardsActionSampler(BackwardsActionSampler):
         return torch.zeros_like(states.backward_masks, dtype=torch.float)
 
 
-class ModuleActionSampler(ActionSampler):
-    def __init__(self, preprocessor: Preprocessor, module: torch.nn.Module,
-                 temperature: float = 1., sf_temperature: float = 0.) -> None:
-        # module needs to return logits ! not probs
-        super().__init__(temperature, sf_temperature)
-        self.preprocessor = preprocessor
-        self.module = module
+class LogitPFActionSampler(ActionSampler):
+    def __init__(self, logit_PF: LogitPFEstimator, **kwargs):
+        super().__init__(**kwargs)
+        self.logit_PF = logit_PF
 
     def get_raw_logits(self, states):
-        preprocessed_states = self.preprocessor.preprocess(states)
-        logits = self.module(preprocessed_states)
-        return logits
+        return self.logit_PF(states)
 
 
-class BackwardsModuleActionSampler(BackwardsActionSampler, ModuleActionSampler):
-    pass
+class LogitPBActionSampler(BackwardsActionSampler):
+    def __init__(self, logit_PB: LogitPBEstimator, **kwargs):
+        super().__init__(**kwargs)
+        self.logit_PB = logit_PB
+
+    def get_raw_logits(self, states):
+        return self.logit_PB(states)
+
+
+class LogEdgeFlowsActionSampler(ActionSampler):
+    def __init__(self, log_edge_flow_estimator: LogEdgeFlowEstimator, **kwargs):
+        super().__init__(**kwargs)
+        self.log_edge_flow_estimator = log_edge_flow_estimator
+
+    def get_raw_logits(self, states):
+        logits = self.log_edge_flow_estimator(states)
+        env_rewards = self.log_edge_flow_estimator.env.reward(states)
+        env_log_rewards = torch.log(env_rewards).unsqueeze(-1)
+        all_logits = torch.cat([logits, env_log_rewards], dim=-1)
+        return all_logits

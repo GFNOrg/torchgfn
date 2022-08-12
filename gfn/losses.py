@@ -1,14 +1,14 @@
 import torch
-import torch.nn as nn
 from torchtyping import TensorType
 from gfn import preprocessors
 from gfn.samplers.trajectories_sampler import Trajectories
+from gfn.estimators import GFNModule
 
 
 class TrajectoryBalance:
     def __init__(self, preprocessor: preprocessors.Preprocessor,
-                 pf: nn.Module,
-                 pb: nn.Module,
+                 pf: GFNModule,
+                 pb: GFNModule,
                  logZ: TensorType[0],
                  reward_clip_min: float = 1e-5):
         self.preprocessor = preprocessor
@@ -60,11 +60,11 @@ class TrajectoryBalance:
 
 if __name__ == '__main__':
     from gfn.envs import HyperGrid
-    from gfn.preprocessors import IdentityPreprocessor, OneHotPreprocessor, KHotPreprocessor
-    from gfn.samplers.action_samplers import (UniformActionSampler, UniformBackwardsActionSampler,
-                                              ModuleActionSampler, FixedActions)
+    from gfn.preprocessors import KHotPreprocessor
+    from gfn.samplers.action_samplers import (FixedActions, LogitPFActionSampler)
     from gfn.models import NeuralNet, Uniform
     from gfn.samplers.trajectories_sampler import Trajectories, TrajectoriesSampler
+    from gfn.estimators import LogitPFEstimator
 
     n_envs = 5
     height = 4
@@ -112,7 +112,9 @@ if __name__ == '__main__':
                    output_dim=env.n_actions - 1,
                    hidden_dim=16)
 
-    action_sampler = ModuleActionSampler(preprocessor=preprocessor, module=pf)
+    print('Now with LogitPFActionSampler')
+    logit_PF = LogitPFEstimator(preprocessor, env, pf)
+    action_sampler = LogitPFActionSampler(logit_PF=logit_PF)
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
     trajectories = trajectories_sampler.sample_trajectories()
     print(trajectories)

@@ -6,6 +6,8 @@ from einops import rearrange
 
 class OneHotPreprocessor(Preprocessor):
     "Use One Hot Preprocessing for environment with enumerable states"
+    name = 'one_hot'
+
     @property
     def output_dim(self):
         return self.env.n_states
@@ -17,6 +19,8 @@ class OneHotPreprocessor(Preprocessor):
 
 class KHotPreprocessor(Preprocessor):
     "Use K Hot Preprocessing for environment with enumerable states with a grid structure"
+    name = 'k_hot'
+
     @property
     def output_dim(self):
         output_dim = (self.env.n_states ** (1 / self.env.ndim)) * self.env.ndim
