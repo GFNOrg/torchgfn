@@ -1,6 +1,9 @@
 from gfn.parametrizations.base import Parametrization
 from gfn.envs import Env
-from gfn.trajectories.dist import TrajectoryDistribution, EmpiricalTrajectoryDistribution
+from gfn.trajectories.dist import (
+    TrajectoryDistribution,
+    EmpiricalTrajectoryDistribution,
+)
 from gfn.samplers import LogEdgeFlowsActionSampler, TrajectoriesSampler
 from gfn.estimators import LogEdgeFlowEstimator
 from dataclasses import dataclass
@@ -17,10 +20,7 @@ class EdgeFlowParametrization(Parametrization):
     logF: LogEdgeFlowEstimator
 
     def Pi(self, env: Env, **action_sampler_kwargs) -> TrajectoryDistribution:
-        action_sampler = LogEdgeFlowsActionSampler(
-            self.logF, **action_sampler_kwargs)
+        action_sampler = LogEdgeFlowsActionSampler(self.logF, **action_sampler_kwargs)
         trajectories_sampler = TrajectoriesSampler(env, action_sampler)
         trajectories = trajectories_sampler.sample_trajectories()
         return EmpiricalTrajectoryDistribution(trajectories)
-
-

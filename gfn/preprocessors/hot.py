@@ -6,7 +6,7 @@ from einops import rearrange
 
 class OneHotPreprocessor(Preprocessor):
     "Use One Hot Preprocessing for environment with enumerable states"
-    name = 'one_hot'
+    name = "one_hot"
 
     @property
     def output_dim(self):
@@ -19,16 +19,17 @@ class OneHotPreprocessor(Preprocessor):
 
 class KHotPreprocessor(Preprocessor):
     "Use K Hot Preprocessing for environment with enumerable states with a grid structure"
-    name = 'k_hot'
+    name = "k_hot"
 
     @property
     def output_dim(self):
         output_dim = (self.env.n_states ** (1 / self.env.ndim)) * self.env.ndim
-        assert output_dim.is_integer(), "The environment does not support K Hot preprocessing"
+        assert (
+            output_dim.is_integer()
+        ), "The environment does not support K Hot preprocessing"
         return int(output_dim)
 
     def preprocess(self, states):
-        hot = one_hot(states.states, int(
-            self.output_dim / self.env.ndim)).float()
-        hot = rearrange(hot, '... a b -> ... (a b)')
+        hot = one_hot(states.states, int(self.output_dim / self.env.ndim)).float()
+        hot = rearrange(hot, "... a b -> ... (a b)")
         return hot

@@ -9,7 +9,7 @@ class ReplayBuffer:
 
         self._trajectories = torch.zeros((capacity, max_length + 1, state_dim))
         self._actions = torch.zeros((capacity, max_length)).long()
-        self._rewards = torch.zeros((capacity, ))
+        self._rewards = torch.zeros((capacity,))
 
         self._index = 0
         self._is_full = False
@@ -19,10 +19,9 @@ class ReplayBuffer:
 
     def add(self, trajectories, actions, rewards, dones):
         to_add = trajectories[dones].shape[0]
-        indices = torch.arange(
-            self._index, self._index + to_add) % self.capacity
+        indices = torch.arange(self._index, self._index + to_add) % self.capacity
 
-        self._is_full |= (self._index + to_add >= self.capacity)
+        self._is_full |= self._index + to_add >= self.capacity
         self._index = (self._index + to_add) % self.capacity
 
         self._trajectories[indices] = trajectories[dones]
@@ -32,10 +31,14 @@ class ReplayBuffer:
     def sample(self, batch_size, rng=np.random.default_rng()):
         indices = rng.choice(len(self), size=batch_size, replace=False)
 
-        return self._trajectories[indices], self._actions[indices], self._rewards[indices]
+        return (
+            self._trajectories[indices],
+            self._actions[indices],
+            self._rewards[indices],
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from gfn.envs import HyperGrid
     from gfn.envs.utils import OneHotPreprocessor
     from gfn.gfn_models import PF
@@ -48,30 +51,35 @@ if __name__ == '__main__':
 
     env = HyperGrid(ndim, H)
     preprocessor = OneHotPreprocessor(ndim, H)
-    print('Sampling 5 trajectories starting from the origin with a random P_F network, max_length {}'.format(max_length))
-    pf = PF(input_dim=H ** ndim, n_actions=ndim +
-            1, preprocessor=preprocessor, h=32)
+    print(
+        "Sampling 5 trajectories starting from the origin with a random P_F network, max_length {}".format(
+            max_length
+        )
+    )
+    pf = PF(input_dim=H**ndim, n_actions=ndim + 1, preprocessor=preprocessor, h=32)
     start_states = torch.zeros(5, ndim).float()
     trajectories, actions, dones = sample_trajectories(
-        env, pf, start_states, max_length, temperature)
+        env, pf, start_states, max_length, temperature
+    )
     rewards = evaluate_trajectories(env, trajectories, actions, dones)
-    print('Number of done trajectories amongst samples: ', dones.sum().item())
+    print("Number of done trajectories amongst samples: ", dones.sum().item())
 
-    print('Initializing a buffer of capacity 10...')
+    print("Initializing a buffer of capacity 10...")
     buffer = ReplayBuffer(capacity=10, max_length=max_length, state_dim=ndim)
-    print('Storing the done trajectories in the buffer')
+    print("Storing the done trajectories in the buffer")
     buffer.add(trajectories, actions, rewards, dones)
-    print('There are {} trajectories in the buffer'.format(len(buffer)))
+    print("There are {} trajectories in the buffer".format(len(buffer)))
 
-    print('Resampling 7 trajectories and adding the done ones to the same buffer')
+    print("Resampling 7 trajectories and adding the done ones to the same buffer")
     start_states = torch.zeros(7, ndim).float()
     trajectories, actions, dones = sample_trajectories(
-        env, pf, start_states, max_length, temperature)
+        env, pf, start_states, max_length, temperature
+    )
     rewards = evaluate_trajectories(env, trajectories, actions, dones)
-    print('Number of done trajectories amongst samples: ', dones.sum().item())
+    print("Number of done trajectories amongst samples: ", dones.sum().item())
     buffer.add(trajectories, actions, rewards, dones)
-    print('There are {} trajectories in the buffer'.format(len(buffer)))
+    print("There are {} trajectories in the buffer".format(len(buffer)))
 
-    print('Sampling 2 trajectories: ')
+    print("Sampling 2 trajectories: ")
     trajectories, actions, rewards = buffer.sample(2)
     print(trajectories, actions, rewards)

@@ -2,9 +2,17 @@ from gfn.parametrizations.base import Parametrization
 from abc import ABC
 from gfn.envs import Env
 from ..samplers.action_samplers import LogitPFActionSampler
-from gfn.trajectories.dist import TrajectoryDistribution, EmpiricalTrajectoryDistribution
+from gfn.trajectories.dist import (
+    TrajectoryDistribution,
+    EmpiricalTrajectoryDistribution,
+)
 from gfn.samplers import TrajectoriesSampler
-from gfn.estimators import LogStateFlowEstimator, LogitPFEstimator, LogitPBEstimator, LogZEstimator
+from gfn.estimators import (
+    LogStateFlowEstimator,
+    LogitPFEstimator,
+    LogitPBEstimator,
+    LogZEstimator,
+)
 from dataclasses import dataclass
 
 
@@ -12,18 +20,18 @@ from dataclasses import dataclass
 class PFBasedParametrization(Parametrization, ABC):
     r"Base class for parametrizations that explicitly used $P_F$"
     logit_PF: LogitPFEstimator
-    
+
     def Pi(self, env: Env, **action_sampler_kwargs) -> TrajectoryDistribution:
-        action_sampler = LogitPFActionSampler(
-            self.logit_PF, **action_sampler_kwargs)
+        action_sampler = LogitPFActionSampler(self.logit_PF, **action_sampler_kwargs)
         trajectories_sampler = TrajectoriesSampler(env, action_sampler)
         trajectories = trajectories_sampler.sample_trajectories()
         return EmpiricalTrajectoryDistribution(trajectories)
 
+
 @dataclass
 class ForwardTransitionParametrization(PFBasedParametrization):
     r"""
-    $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2$, where 
+    $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2$, where
     $\mathcal{O}_1$ is the set of functions from the internal states (no $s_f$)
     to $\mathbb{R}^+$ (which we parametrize with logs, to avoid the nonnegativity constraint),
     and $\mathcal{O}_2$ is the set of forward probability functions consistent with the DAG.
@@ -31,11 +39,10 @@ class ForwardTransitionParametrization(PFBasedParametrization):
     logF: LogStateFlowEstimator
 
 
-
 @dataclass
 class ForwardTransitionParametrizationWithZ(PFBasedParametrization):
     r"""
-    $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2$, where 
+    $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2$, where
     $\mathcal{O}_1 = \mathbb{R}$ represents the possible values for logZ,
     and $\mathcal{O}_2$ is the set of forward probability functions consistent with the DAG.
     """
@@ -45,7 +52,7 @@ class ForwardTransitionParametrizationWithZ(PFBasedParametrization):
 @dataclass
 class ForwardBackwardTransitionParametrization(ForwardTransitionParametrization):
     r"""
-    $\mathcal{O}_{PFB} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where 
+    $\mathcal{O}_{PFB} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where
     $\mathcal{O}_1$ is the set of functions from the internal states (no $s_f$)
     to $\mathbb{R}^+$ (which we parametrize with logs, to avoid the nonnegativity constraint),
     $\mathcal{O}_2$ is the set of forward probability functions consistent with the DAG,
@@ -53,10 +60,13 @@ class ForwardBackwardTransitionParametrization(ForwardTransitionParametrization)
     """
     logit_PB: LogitPBEstimator
 
+
 @dataclass
-class ForwardBackwardTransitionParametrizationWithZ(ForwardTransitionParametrizationWithZ):
+class ForwardBackwardTransitionParametrizationWithZ(
+    ForwardTransitionParametrizationWithZ
+):
     r"""
-    $\mathcal{O}_{PFB} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where 
+    $\mathcal{O}_{PFB} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where
     $\mathcal{O}_1 = \mathbb{R}$ represents the possible values for logZ,
     $\mathcal{O}_2$ is the set of forward probability functions consistent with the DAG,
     and $\mathcal{O}_3$ is the set of forward probability functions consistent with the DAG.

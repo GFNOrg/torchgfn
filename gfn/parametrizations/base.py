@@ -6,7 +6,7 @@ from gfn.envs import Env
 
 @dataclass
 class Parametrization(ABC):
-    """ 
+    """
     Abstract Base Class for Flow Parametrizations,
     as defined in Sec. 3 of GFlowNets Foundations
     """
@@ -14,7 +14,6 @@ class Parametrization(ABC):
     @abstractmethod
     def Pi(self, env: Env, **kwargs) -> TrajectoryDistribution:
         pass
-
 
     def P_T(self, env: Env) -> FinalStateDistribution:
         return FinalStateDistribution(self.Pi(env))

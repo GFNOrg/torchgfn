@@ -5,6 +5,7 @@ from gfn.containers import Transitions, States, Trajectories
 
 class Loss(ABC):
     "Abstract Base Class for all GFN Losses"
+
     @abstractmethod
     def __call__(self, *args, **kwargs) -> TensorType[0, float]:
         pass

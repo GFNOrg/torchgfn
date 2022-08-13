@@ -7,7 +7,7 @@ from typing import Tuple
 # Typing
 batch_shape = None
 dim_in = None
-OutputTensor = TensorType['batch_shape', 'dim_in', float]
+OutputTensor = TensorType["batch_shape", "dim_in", float]
 
 
 class Preprocessor(ABC):
@@ -15,7 +15,8 @@ class Preprocessor(ABC):
     Base class for Preprocessors. The goal is to transform tensors representing raw states
     to tensors that can be used as input to neural networks.
     """
-    name: str = 'Preprocessor'
+
+    name: str = "Preprocessor"
 
     def __init__(self, env: Env) -> None:
         self.env = env
@@ -38,7 +39,7 @@ class Preprocessor(ABC):
 
 class IdentityPreprocessor(Preprocessor):
     "Simple preprocessor applicable to environments with unidimensional states."
-    name = 'IdentityPreprocessor'
+    name = "IdentityPreprocessor"
 
     @property
     def output_dim(self):

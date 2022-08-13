@@ -5,15 +5,16 @@ from torchtyping import TensorType
 from gfn.envs import Env, AbstractStatesBatch
 
 # Typing
-Tensor2D = TensorType['max_length', 'n_trajectories', torch.long]
-Tensor2D2 = TensorType['n_trajectories', 'shape']
-Tensor1D = TensorType['n_trajectories', torch.long]
-FloatTensor1D = TensorType['n_trajectories', torch.float]
+Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
+Tensor2D2 = TensorType["n_trajectories", "shape"]
+Tensor1D = TensorType["n_trajectories", torch.long]
+FloatTensor1D = TensorType["n_trajectories", torch.float]
 
 
 @dataclass
 class Trajectories:
     """Class for keeping track of multiple COMPLETE trajectories."""
+
     env: Env
     n_trajectories: int
     states: AbstractStatesBatch
@@ -27,11 +28,14 @@ class Trajectories:
         states = self.states.states
         assert states.ndim == 3
         states = states.transpose(0, 1)
-        states_repr = '\n'.join(['-> '.join([str(step.numpy()) for step in traj])
-                                 for traj in states])
-        return f"Trajectories(n_trajectories={self.n_trajectories}, " \
-               f"states={states_repr}, actions={self.actions}, " \
-               f"when_is_done={self.when_is_done}, rewards={self.rewards})"
+        states_repr = "\n".join(
+            ["-> ".join([str(step.numpy()) for step in traj]) for traj in states]
+        )
+        return (
+            f"Trajectories(n_trajectories={self.n_trajectories}, "
+            f"states={states_repr}, actions={self.actions}, "
+            f"when_is_done={self.when_is_done}, rewards={self.rewards})"
+        )
 
     def get_last_states_raw(self) -> Tensor2D2:
         return self.states.states[-1]
@@ -48,7 +52,7 @@ class Trajectories:
         if self.rewards is not None:
             self.rewards = self.rewards[~mask]
 
-    def sample(self, n_trajectories: int) -> 'Trajectories':
+    def sample(self, n_trajectories: int) -> "Trajectories":
         """Sample a random subset of trajectories."""
         perm = torch.randperm(self.n_trajectories)
         indices = perm[:n_trajectories]
@@ -62,5 +66,12 @@ class Trajectories:
         last_states_raw = self.last_states.states[indices, ...]
         last_states = self.env.StatesBatch(states=last_states_raw)
         last_states.update_masks()
-        return Trajectories(env=self.env, n_trajectories=n_trajectories, states=states, actions=actions,
-                            when_is_done=when_is_done, rewards=rewards, last_states=last_states)
+        return Trajectories(
+            env=self.env,
+            n_trajectories=n_trajectories,
+            states=states,
+            actions=actions,
+            when_is_done=when_is_done,
+            rewards=rewards,
+            last_states=last_states,
+        )

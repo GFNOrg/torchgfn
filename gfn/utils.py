@@ -8,7 +8,13 @@ from copy import deepcopy
 from gfn.envs.env import Env
 
 
-def sample_trajectories(env: Env, pf: nn.Module, start_states: Tensor, max_length: int, temperature: float = 1.):
+def sample_trajectories(
+    env: Env,
+    pf: nn.Module,
+    start_states: Tensor,
+    max_length: int,
+    temperature: float = 1.0,
+):
     """
     Function to roll-out trajectories starting from start_states using pf
     :param env: object of type gfn.envs.env.Env
@@ -17,11 +23,12 @@ def sample_trajectories(env: Env, pf: nn.Module, start_states: Tensor, max_lengt
     :param max_length: int, maximum length of trajectories
     :param temperature: float, temperature to trade off between raw P_F and uniform
     """
-    rewards = torch.full((start_states.shape[0],), - float('inf'))
+    rewards = torch.full((start_states.shape[0],), -float("inf"))
     n_trajectories = start_states.shape[0]
     all_trajectories = torch.ones(
-        (n_trajectories, max_length + 1, start_states.shape[1])) * (- float('inf'))
-    all_actions = - torch.ones((n_trajectories, max_length)).to(torch.long)
+        (n_trajectories, max_length + 1, start_states.shape[1])
+    ) * (-float("inf"))
+    all_actions = -torch.ones((n_trajectories, max_length)).to(torch.long)
     with torch.no_grad():
         dones = torch.zeros(n_trajectories).bool()
         states = start_states
@@ -64,8 +71,7 @@ def uniform_sample_trajectories(env, start_states):
         done = False
         while not done:
             mask = env.mask_maker(state)
-            action = np.random.choice(
-                [i for i, j in enumerate(mask[0]) if not j])
+            action = np.random.choice([i for i, j in enumerate(mask[0]) if not j])
             actions.append(action)
             action = torch.tensor([action])
             # action = torch.randint(0, env.n_actions, (1,))
@@ -79,7 +85,7 @@ def uniform_sample_trajectories(env, start_states):
     return trajectories, actionss, rewards
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from gfn.envs.hypergrid_env import HyperGrid
     from gfn.envs.utils import OneHotPreprocessor
     from gfn.gfn_models import PF, UniformPB, UniformPF
@@ -91,25 +97,24 @@ if __name__ == '__main__':
 
     env = HyperGrid(ndim, H)
     preprocessor = OneHotPreprocessor(ndim, H)
-    print('Initializing a random P_F netowork...')
-    pf = PF(input_dim=H ** ndim, n_actions=ndim +
-            1, preprocessor=preprocessor, h=32)
-    print('Starting with 5 random start states:')
+    print("Initializing a random P_F netowork...")
+    pf = PF(input_dim=H**ndim, n_actions=ndim + 1, preprocessor=preprocessor, h=32)
+    print("Starting with 5 random start states:")
     start_states = torch.randint(0, H, (5, ndim)).float()
     print(start_states)
-    print('Rolling-out trajectories of max_length {}...'.format(max_length))
+    print("Rolling-out trajectories of max_length {}...".format(max_length))
     trajectories, last_states, actions, dones, rewards = sample_trajectories(
-        env, pf, start_states, max_length, temperature)
-    print('Trajectories: {}'.format(trajectories))
-    print('Last states: {}'.format(last_states))
-    print('Actions: {}'.format(actions))
-    print('Dones: {}'.format(dones))
-    print('Rewards: {}'.format(rewards))
+        env, pf, start_states, max_length, temperature
+    )
+    print("Trajectories: {}".format(trajectories))
+    print("Last states: {}".format(last_states))
+    print("Actions: {}".format(actions))
+    print("Dones: {}".format(dones))
+    print("Rewards: {}".format(rewards))
 
-    print('Sampling 10 trajectories from a uniform distribution...')
+    print("Sampling 10 trajectories from a uniform distribution...")
     start_states = torch.zeros((10, ndim)).float()
-    trajectories, actionss, rewards = uniform_sample_trajectories(
-        env, start_states)
-    print('Trajectories: {}'.format(trajectories))
-    print('Actions: {}'.format(actionss))
-    print('Rewards: {}'.format(rewards))
+    trajectories, actionss, rewards = uniform_sample_trajectories(env, start_states)
+    print("Trajectories: {}".format(trajectories))
+    print("Actions: {}".format(actionss))
+    print("Rewards: {}".format(rewards))

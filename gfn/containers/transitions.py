@@ -5,9 +5,9 @@ from gfn.envs import Env, AbstractStatesBatch
 
 
 # Typing
-LongTensor = TensorType['n_transitions', torch.long]
-BoolTensor = TensorType['n_transitions', torch.bool]
-FloatTensor = TensorType['n_transitions', torch.float]
+LongTensor = TensorType["n_transitions", torch.long]
+BoolTensor = TensorType["n_transitions", torch.bool]
+FloatTensor = TensorType["n_transitions", torch.float]
 
 
 @dataclass
@@ -26,8 +26,14 @@ class Transitions:
         next_states = self.next_states.states
         assert states.ndim == 2
 
-        states_repr = ',\t'.join([f"{str(state.numpy())}-> {str(next_state.numpy())}"
-                                  for state, next_state in zip(states, next_states)])
-        return f"Transitions(n_transitions={self.n_transitions}, " \
-            f"transitions={states_repr}, actions={self.actions}, " \
+        states_repr = ",\t".join(
+            [
+                f"{str(state.numpy())}-> {str(next_state.numpy())}"
+                for state, next_state in zip(states, next_states)
+            ]
+        )
+        return (
+            f"Transitions(n_transitions={self.n_transitions}, "
+            f"transitions={states_repr}, actions={self.actions}, "
             f"is_done={self.is_done}, rewards={self.rewards})"
+        )

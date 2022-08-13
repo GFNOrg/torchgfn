@@ -12,15 +12,15 @@ from torch.distributions import Categorical
 batch_size = None
 n_actions = None
 n_steps = None
-Tensor2D = TensorType['batch_size', 'n_actions']
-Tensor2D2 = TensorType['batch_size', 'n_steps']
-Tensor1D = TensorType['batch_size', float]
+Tensor2D = TensorType["batch_size", "n_actions"]
+Tensor2D2 = TensorType["batch_size", "n_steps"]
+Tensor1D = TensorType["batch_size", float]
 
 
 class ActionSampler(ABC):
     "Implements a method that samples actions from any given batch of states."
 
-    def __init__(self, temperature: float = 1., sf_temperature: float = 0.) -> None:
+    def __init__(self, temperature: float = 1.0, sf_temperature: float = 0.0) -> None:
         # sf_temperature is a quantity to SUBTRACT from the logits of the final action.
         self.temperature = temperature
         self.sf_temperature = sf_temperature
@@ -31,7 +31,7 @@ class ActionSampler(ABC):
 
     def get_logits(self, states: AbstractStatesBatch) -> Tensor2D:
         logits = self.get_raw_logits(states)
-        logits[~states.masks] = -float('inf')
+        logits[~states.masks] = -float("inf")
         return logits
 
     def get_probs(self, states: AbstractStatesBatch) -> Tuple[Tensor2D, Tensor2D]:
@@ -48,7 +48,7 @@ class ActionSampler(ABC):
 class BackwardsActionSampler(ActionSampler):
     def get_logits(self, states: AbstractStatesBatch) -> Tensor2D:
         logits = self.get_raw_logits(states)
-        logits[~states.backward_masks] = -float('inf')
+        logits[~states.backward_masks] = -float("inf")
         return logits
 
     def get_probs(self, states: AbstractStatesBatch) -> Tensor2D:
@@ -58,7 +58,7 @@ class BackwardsActionSampler(ActionSampler):
         # that the state is already done (usually during backwards sampling).
         # In which case, any action can be passed to the backward_step function
         # making the state stay at s_0
-        probs = probs.nan_to_num(nan=1./probs.shape[-1])
+        probs = probs.nan_to_num(nan=1.0 / probs.shape[-1])
         return logits, probs
 
 
@@ -71,10 +71,9 @@ class FixedActions(ActionSampler):
         self.step = 0
 
     def get_raw_logits(self, states: AbstractStatesBatch) -> Tensor2D:
-        logits = torch.ones_like(
-            states.masks, dtype=torch.float) * (-float('inf'))
+        logits = torch.ones_like(states.masks, dtype=torch.float) * (-float("inf"))
 
-        logits.scatter_(1, self.actions[:, self.step].unsqueeze(-1), 0.)
+        logits.scatter_(1, self.actions[:, self.step].unsqueeze(-1), 0.0)
         self.step += 1
         return logits
 
