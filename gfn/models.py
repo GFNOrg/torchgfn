@@ -48,6 +48,16 @@ class Uniform(GFNModule):
             *preprocessed_states.shape[:-1], self.output_dim).to(preprocessed_states.device)
         return logits
 
+class ZeroGFNModule(GFNModule):
+    def __init__(self):
+        self.input_dim = None
+        self.output_dim = 1
+
+    def __call__(self, preprocessed_states: Tensor):
+        out = torch.zeros(
+            preprocessed_states.shape[0], self.output_dim).to(preprocessed_states.device)
+        return out
+
 
 if __name__ == '__main__':
     print('PF weights')

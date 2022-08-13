@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from gfn.samplers.trajectories_sampler import Trajectories
+from gfn.containers import Trajectories
 from gfn.envs.env import AbstractStatesBatch
 
 

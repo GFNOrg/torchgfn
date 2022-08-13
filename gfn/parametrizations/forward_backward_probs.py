@@ -47,7 +47,6 @@ class O_PFB_Z(O):
     and $\mathcal{O}_3$ is the set of forward probability functions consistent with the DAG.
     """
     name = 'forward_backward_probability_Z'
-    logF: LogStateFlowEstimator
     logit_PF: LogitPFEstimator
     logit_PB: LogitPBEstimator
     logZ: LogZEstimator
@@ -57,8 +56,7 @@ class ForwardBackwardTransitionParametrizationWithZ(Parametrization):
     O_name = 'forward_backward_probability_Z'
 
     def H(self, flow: MarkovianFlow) -> O_PFB_Z:
-        return O_PFB_Z(logF=flow.log_state_flow_function(),
-                       logit_PF=flow.logit_PF(),
+        return O_PFB_Z(logit_PF=flow.logit_PF(),
                        logit_PB=flow.logit_PB(),
                        logZ=flow.log_Z())
 

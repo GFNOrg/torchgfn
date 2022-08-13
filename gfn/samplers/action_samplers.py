@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import torch
 from torchtyping import TensorType
+from typing import Tuple
 
 from gfn.envs.env import AbstractStatesBatch
 from gfn.preprocessors.base import Preprocessor
@@ -13,7 +14,7 @@ n_actions = None
 n_steps = None
 Tensor2D = TensorType['batch_size', 'n_actions']
 Tensor2D2 = TensorType['batch_size', 'n_steps']
-Tensor1D = TensorType['batch_size', torch.long]
+Tensor1D = TensorType['batch_size', float]
 
 
 class ActionSampler(ABC):
@@ -33,13 +34,13 @@ class ActionSampler(ABC):
         logits[~states.masks] = -float('inf')
         return logits
 
-    def get_probs(self, states: AbstractStatesBatch) -> Tensor2D:
+    def get_probs(self, states: AbstractStatesBatch) -> Tuple[Tensor2D, Tensor2D]:
         logits = self.get_logits(states)
         logits[..., -1] -= self.sf_temperature
         probs = torch.softmax(logits / self.temperature, dim=-1)
         return logits, probs
 
-    def sample(self, states: AbstractStatesBatch) -> Tensor1D:
+    def sample(self, states: AbstractStatesBatch) -> Tuple[Tensor2D, Tensor1D]:
         logits, probs = self.get_probs(states)
         return logits, Categorical(probs).sample()
 

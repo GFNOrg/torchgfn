@@ -31,7 +31,7 @@ class GFNModule(ABC):
 
 class LogEdgeFlowEstimator:
     def __init__(self, preprocessor: Preprocessor, env: Env, module: GFNModule):
-        assert module.input_dim == preprocessor.output_dim
+        assert module.input_dim is None or module.input_dim == preprocessor.output_dim
         assert module.output_dim == env.n_actions - 1
         assert module.output_type == 'free'
         self.preprocessor = preprocessor
@@ -44,7 +44,7 @@ class LogEdgeFlowEstimator:
 
 class LogStateFlowEstimator:
     def __init__(self, preprocessor: Preprocessor, module: GFNModule):
-        assert module.input_dim == preprocessor.output_dim
+        assert module.input_dim is None or module.input_dim == preprocessor.output_dim
         assert module.output_dim == 1
         assert module.output_type == 'free'
         self.preprocessor = preprocessor
@@ -56,7 +56,7 @@ class LogStateFlowEstimator:
 
 class LogitPFEstimator:
     def __init__(self, preprocessor: Preprocessor, env: Env, module: GFNModule):
-        assert module.input_dim == preprocessor.output_dim
+        assert module.input_dim is None or module.input_dim == preprocessor.output_dim
         assert module.output_dim == env.n_actions
         assert module.output_type == 'free'
         self.preprocessor = preprocessor
@@ -68,7 +68,7 @@ class LogitPFEstimator:
 
 class LogitPBEstimator:
     def __init__(self, preprocessor: Preprocessor, env: Env, module: GFNModule):
-        assert module.input_dim == preprocessor.output_dim
+        assert module.input_dim is None or module.input_dim == preprocessor.output_dim
         assert module.output_dim == env.n_actions - 1
         assert module.output_type == 'free'
         self.preprocessor = preprocessor
@@ -76,6 +76,7 @@ class LogitPBEstimator:
 
     def __call__(self, states: AbstractStatesBatch) -> OutputTensor:
         return self.module(self.preprocessor(states))
+
 
 @dataclass
 class LogZEstimator:

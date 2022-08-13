@@ -1,26 +1,20 @@
 import torch
 from torchtyping import TensorType
-from gfn import preprocessors
-from gfn.samplers.trajectories_sampler import Trajectories
-from gfn.estimators import GFNModule
+from gfn.containers import Trajectories
+from gfn.parametrizations import O_PFB_Z
+from gfn.losses.base import TrajectoryDecomposableLoss
+from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
 
 
-class TrajectoryBalance:
-    def __init__(self, preprocessor: preprocessors.Preprocessor,
-                 pf: GFNModule,
-                 pb: GFNModule,
-                 logZ: TensorType[0],
-                 reward_clip_min: float = 1e-5):
-        self.preprocessor = preprocessor
-        self.pf = pf
-        self.pb = pb
-        self.logZ = logZ
+class TrajectoryBalance(TrajectoryDecomposableLoss):
+    def __init__(self, o: O_PFB_Z, reward_clip_min: float = 1e-5):
+        self.o = o
         self.reward_clip_min = reward_clip_min
+        self.action_sampler = LogitPFActionSampler(o.logit_PF)
+        self.backward_action_sampler = LogitPBActionSampler(o.logit_PB)
 
     def __call__(self, trajectories: Trajectories) -> TensorType[0]:
-        preprocessed_states = self.preprocessor(trajectories.states)
-        pf_logits = self.pf(preprocessed_states)
-        pf_logits[~trajectories.states.masks] = -float('inf')
+        pf_logits = self.action_sampler.get_logits(trajectories.states)
         log_pf_all = pf_logits.log_softmax(dim=-1)
         log_pf_actions = torch.gather(
             log_pf_all, dim=-1, index=trajectories.actions.unsqueeze(-1)).squeeze(-1)
@@ -29,8 +23,8 @@ class TrajectoryBalance:
         log_pf_actions *= forward_mask
         log_pf_trajectories = torch.sum(log_pf_actions, dim=0)  # should be 1D
 
-        pb_logits = self.pb(preprocessed_states)[1:]
-        pb_logits[~trajectories.states.backward_masks[1:]] = -float('inf')
+        pb_logits = self.backward_action_sampler.get_logits(trajectories.states)[
+            1:]
         log_pb_all = pb_logits.log_softmax(dim=-1)
         # log_pb_al is now a 3D tensor of shape [n_steps - 1, n_trajectories, n_actions - 1]
         # in order to be able to use "gather", we need to add a dimension to the last dimension
@@ -46,7 +40,7 @@ class TrajectoryBalance:
         log_pb_actions *= backward_mask
         log_pb_trajectories = torch.sum(log_pb_actions, dim=0)  # should be 1D
 
-        preds = log_pf_trajectories - log_pb_trajectories + self.logZ
+        preds = log_pf_trajectories - log_pb_trajectories + self.o.logZ.logZ
 
         targets = torch.log(
             trajectories.rewards.clamp_min(self.reward_clip_min))
@@ -61,10 +55,11 @@ class TrajectoryBalance:
 if __name__ == '__main__':
     from gfn.envs import HyperGrid
     from gfn.preprocessors import KHotPreprocessor
-    from gfn.samplers.action_samplers import (FixedActions, LogitPFActionSampler)
+    from gfn.samplers.action_samplers import FixedActions
     from gfn.models import NeuralNet, Uniform
-    from gfn.samplers.trajectories_sampler import Trajectories, TrajectoriesSampler
-    from gfn.estimators import LogitPFEstimator
+    from gfn.samplers.trajectories_sampler import TrajectoriesSampler
+    from gfn.estimators import LogitPFEstimator, LogitPBEstimator, LogZEstimator
+    from gfn.parametrizations import O_PFB_Z
 
     n_envs = 5
     height = 4
@@ -86,20 +81,25 @@ if __name__ == '__main__':
     pb = Uniform(env.n_actions - 1)
 
     logZ = torch.tensor(0.)
+    logit_PF = LogitPFEstimator(preprocessor, env, pf)
+    logit_PB = LogitPBEstimator(preprocessor, env, pb)
+    logZ = LogZEstimator(logZ)
 
-    loss = TrajectoryBalance(preprocessor, pf, pb, logZ)
+    o = O_PFB_Z(logit_PF, logit_PB, logZ)
+
+    loss = TrajectoryBalance(o)
     print(loss(trajectories))
     # sanity check, by hand, we should get the following loss
     pbs = torch.tensor([0.5, 1, 1, 0.25, 1.])
     pfs = torch.tensor([1./(3 ** 3), 1. / (3 ** 3) * 0.5,
                        1./3, 1./(3 ** 4), 1./(3 ** 2)])
-    true_losses_exp = torch.exp(logZ) * pfs / (pbs * trajectories.rewards)
+    true_losses_exp = torch.exp(logZ.logZ) * pfs / (pbs * trajectories.rewards)
     true_loss = torch.log(true_losses_exp).pow(2).mean()
 
     if true_loss == loss(trajectories):
         print('OK - TB LOSS PROBABLY OK')
     else:
-        print('FAIL - TB LOSS NOT PROPERLY CALCULATED')
+        raise ValueError('TB LOSS NOT PROPERLY CALCULATED')
 
     print('Evaluating the loss on 5 trajectories with randomly chosen actions (P_F and P_B as modules)')
 
@@ -120,5 +120,11 @@ if __name__ == '__main__':
     print(trajectories)
 
     logZ = torch.tensor(-5.)
-    loss = TrajectoryBalance(preprocessor, pf, pb, logZ)
+
+    logit_PB = LogitPBEstimator(preprocessor, env, pb)
+    logZ = LogZEstimator(logZ)
+
+    o = O_PFB_Z(logit_PF, logit_PB, logZ)
+
+    loss = TrajectoryBalance(o)
     print(loss(trajectories))
