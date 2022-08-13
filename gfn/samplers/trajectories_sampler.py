@@ -2,7 +2,7 @@ import torch
 from typing import Union
 
 from gfn.envs import Env, AbstractStatesBatch
-from gfn.samplers import ActionSampler, BackwardsActionSampler
+from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
 
 from gfn.containers import Trajectories
 

@@ -1,13 +1,13 @@
 import torch
 from torchtyping import TensorType
 from gfn.containers import Trajectories
-from gfn.parametrizations import O_PFB_Z
 from gfn.losses.base import TrajectoryDecomposableLoss
 from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
+from gfn.parametrizations import ForwardBackwardTransitionParametrizationWithZ
 
 
 class TrajectoryBalance(TrajectoryDecomposableLoss):
-    def __init__(self, o: O_PFB_Z, reward_clip_min: float = 1e-5):
+    def __init__(self, o: ForwardBackwardTransitionParametrizationWithZ, reward_clip_min: float = 1e-5):
         self.o = o
         self.reward_clip_min = reward_clip_min
         self.action_sampler = LogitPFActionSampler(o.logit_PF)
@@ -59,7 +59,6 @@ if __name__ == '__main__':
     from gfn.models import NeuralNet, Uniform
     from gfn.samplers.trajectories_sampler import TrajectoriesSampler
     from gfn.estimators import LogitPFEstimator, LogitPBEstimator, LogZEstimator
-    from gfn.parametrizations import O_PFB_Z
 
     n_envs = 5
     height = 4
@@ -85,7 +84,7 @@ if __name__ == '__main__':
     logit_PB = LogitPBEstimator(preprocessor, env, pb)
     logZ = LogZEstimator(logZ)
 
-    o = O_PFB_Z(logit_PF, logit_PB, logZ)
+    o = ForwardBackwardTransitionParametrizationWithZ(logit_PF, logZ, logit_PB)
 
     loss = TrajectoryBalance(o)
     print(loss(trajectories))
@@ -124,7 +123,7 @@ if __name__ == '__main__':
     logit_PB = LogitPBEstimator(preprocessor, env, pb)
     logZ = LogZEstimator(logZ)
 
-    o = O_PFB_Z(logit_PF, logit_PB, logZ)
+    o = ForwardBackwardTransitionParametrizationWithZ(logit_PF, logZ, logit_PB)
 
     loss = TrajectoryBalance(o)
     print(loss(trajectories))

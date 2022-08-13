@@ -1,13 +1,13 @@
 import torch
 from torchtyping import TensorType
 from gfn.containers import Transitions
-from gfn.parametrizations import O_PFB
+from gfn.parametrizations import ForwardBackwardTransitionParametrization
 from gfn.losses.base import EdgeDecomposableLoss
 from gfn.samplers.action_samplers import LogitPFActionSampler, LogitPBActionSampler
 
 
 class DetailedBalance(EdgeDecomposableLoss):
-    def __init__(self, o: O_PFB, delta: float = 1e-5):
+    def __init__(self, o: ForwardBackwardTransitionParametrization, delta: float = 1e-5):
         self.o = o
         self.delta = delta
         self.action_sampler = LogitPFActionSampler(o.logit_PF)
@@ -76,7 +76,7 @@ if __name__ == '__main__':
     zero_module = ZeroGFNModule()
     logF = LogStateFlowEstimator(preprocessor, zero_module)
 
-    o = O_PFB(logF, logit_PF, logit_PB)
+    o = ForwardBackwardTransitionParametrization(logit_PF=logit_PF, logF=logF, logit_PB=logit_PB)
 
     loss = DetailedBalance(o)
     print(loss(transitions))
