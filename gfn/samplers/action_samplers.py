@@ -4,7 +4,6 @@ from torchtyping import TensorType
 from typing import Tuple
 
 from gfn.envs.env import AbstractStatesBatch
-from gfn.preprocessors.base import Preprocessor
 from gfn.estimators import LogEdgeFlowEstimator, LogitPBEstimator, LogitPFEstimator
 from torch.distributions import Categorical
 
