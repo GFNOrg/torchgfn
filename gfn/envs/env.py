@@ -1,18 +1,23 @@
 from abc import ABC, abstractmethod
+from turtle import st
 import torch
 from torchtyping import TensorType
 from torch import Tensor
-from typing import Tuple, Union
+from typing import Tuple, Union, ClassVar
 from dataclasses import dataclass, field
 from copy import deepcopy
 
 from gym.spaces import Discrete
+from gfn.containers.states import States, make_States_class, StatesMetaClass
 
 # Typing
-batch_shape = None
 TensorLong = TensorType["batch_shape", torch.long]
 TensorFloat = TensorType["batch_shape", torch.float]
 TensorBool = TensorType["batch_shape", torch.bool]
+ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
+BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
+OneStateTensor = TensorType["state_shape", torch.float]
+StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
 
 
 @dataclass
@@ -58,7 +63,6 @@ class AbstractStatesBatch(ABC):
         pass
 
 
-@dataclass
 class Env(ABC):
     """
     Base class for environments, showing which methods should be implemented.
@@ -66,54 +70,59 @@ class Env(ABC):
     represented by a number in {0, ..., n_actions - 1}.
     """
 
-    n_envs: int = 1  # number of environments to run in a vectorized wat
-    n_actions: int = field(init=False)  # number of actions
-    n_states: int = field(init=False)
-    action_space: Discrete = field(init=False)
-    state_shape: Tuple = field(init=False)  # shape of the states
-    ndim: int = field(init=False)
-    state_dim: Tuple = field(init=False)
-    StatesBatch: type = field(init=False)
-    device: torch.device = field(init=False)
+    def __init__(self, n_actions: int, s_0: OneStateTensor, s_f: OneStateTensor):
+        assert s_0.device == s_f.device
+        self.state_shape = tuple(s_0.shape)
+        self.n_actions = n_actions
 
-    def __post_init__(self):
-        self.StatesBatch = self.make_state_class()
-        self.state_dim = (self.n_envs, *self.state_shape)
         self.action_space = Discrete(self.n_actions)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = s_0.device
+
+        self.States: StatesMetaClass = make_States_class(
+            n_actions=n_actions,
+            s_0=s_0,
+            s_f=s_f,
+            make_random_states=lambda _, batch_shape: self.make_random_states(
+                batch_shape
+            ),
+            update_masks=self.update_masks,
+        )
 
     @abstractmethod
-    def make_state_class(self) -> type:
-        """
-        :return: a class that represents a state.
-        """
+    def make_random_states(self, batch_shape: Tuple[int]) -> StatesTensor:
         pass
 
-    def reset(self, *kwargs) -> AbstractStatesBatch:
-        """
-        :return: a batch of states, instance of StatesBatch
-        """
-        self._state = self.StatesBatch(batch_shape=(self.n_envs,), *kwargs)
-        return deepcopy(self._state)
+    @abstractmethod
+    def update_masks(self, states: States) -> None:
+        pass
+
+    def is_exit_actions(self, actions: TensorLong) -> TensorBool:
+        "Returns True if the action is an exit action."
+        return actions == self.n_actions - 1
 
     @abstractmethod
     def step(
-        self, actions: TensorType[n_envs, torch.long]
-    ) -> Tuple[AbstractStatesBatch, TensorType[n_envs, bool]]:
+        self,
+        states: States,
+        actions: TensorLong,
+    ) -> States:
+        """Function that takes a batch of states and actions and returns a batch of next
+        states and a boolean tensor indicating sink states in the new batch."""
         pass
 
     @abstractmethod
     def backward_step(
-        self, states: AbstractStatesBatch, actions: TensorLong
-    ) -> Tuple[AbstractStatesBatch, TensorBool]:
+        self, states: States, actions: TensorLong
+    ) -> Tuple[States, TensorBool]:
+        """Function that takes a batch of states and actions and returns a batch of next
+        states and a boolean tensor indicating initial states in the new batch."""
         pass
 
     @abstractmethod
-    def reward(self, final_states: Union[AbstractStatesBatch, Tensor]) -> TensorFloat:
+    def reward(self, final_states: States) -> TensorFloat:
         pass
 
+    @staticmethod
     @abstractmethod
-    def get_states_indices(
-        self, states: Union[AbstractStatesBatch, Tensor]
-    ) -> TensorLong:
+    def get_states_indices(states: States) -> TensorLong:
         pass
