@@ -1,2 +1,2 @@
-from .base import Preprocessor, IdentityPreprocessor
-from .hot import OneHotPreprocessor, KHotPreprocessor
+from .base import IdentityPreprocessor, Preprocessor
+from .hot import KHotPreprocessor, OneHotPreprocessor

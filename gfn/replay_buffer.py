@@ -42,7 +42,7 @@ if __name__ == "__main__":
     from gfn.envs import HyperGrid
     from gfn.envs.utils import OneHotPreprocessor
     from gfn.gfn_models import PF
-    from gfn.utils import sample_trajectories, evaluate_trajectories
+    from gfn.utils import evaluate_trajectories, sample_trajectories
 
     ndim = 3
     H = 8
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     buffer = ReplayBuffer(capacity=10, max_length=max_length, state_dim=ndim)
     print("Storing the done trajectories in the buffer")
     buffer.add(trajectories, actions, rewards, dones)
-    print("There are {} trajectories in the buffer".format(len(buffer)))
+    print(f"There are {len(buffer)} trajectories in the buffer")
 
     print("Resampling 7 trajectories and adding the done ones to the same buffer")
     start_states = torch.zeros(7, ndim).float()
@@ -78,7 +78,7 @@ if __name__ == "__main__":
     rewards = evaluate_trajectories(env, trajectories, actions, dones)
     print("Number of done trajectories amongst samples: ", dones.sum().item())
     buffer.add(trajectories, actions, rewards, dones)
-    print("There are {} trajectories in the buffer".format(len(buffer)))
+    print(f"There are {len(buffer)} trajectories in the buffer")
 
     print("Sampling 2 trajectories: ")
     trajectories, actions, rewards = buffer.sample(2)

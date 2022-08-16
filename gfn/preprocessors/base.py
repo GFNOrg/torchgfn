@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
-from torchtyping import TensorType
-from gfn.envs.env import Env, AbstractStatesBatch
 from typing import Tuple
 
+from torchtyping import TensorType
+
+from gfn.envs.env import AbstractStatesBatch, Env
 
 # Typing
 batch_shape = None

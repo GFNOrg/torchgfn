@@ -1,9 +1,10 @@
 import torch
 from torchtyping import TensorType
+
 from gfn.containers import Transitions
-from gfn.parametrizations import ForwardBackwardTransitionParametrization
 from gfn.losses.base import EdgeDecomposableLoss
-from gfn.samplers.action_samplers import LogitPFActionSampler, LogitPBActionSampler
+from gfn.parametrizations import ForwardBackwardTransitionParametrization
+from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
 
 
 class DetailedBalance(EdgeDecomposableLoss):
@@ -58,10 +59,10 @@ class DetailedBalance(EdgeDecomposableLoss):
 
 if __name__ == "__main__":
     from gfn.envs import HyperGrid
+    from gfn.estimators import LogitPBEstimator, LogitPFEstimator, LogStateFlowEstimator
+    from gfn.models import Uniform, ZeroGFNModule
     from gfn.preprocessors import KHotPreprocessor
     from gfn.samplers import FixedActions, LogitPFActionSampler, TransitionsSampler
-    from gfn.models import ZeroGFNModule, Uniform
-    from gfn.estimators import LogitPBEstimator, LogitPFEstimator, LogStateFlowEstimator
 
     n_envs = 5
     height = 4

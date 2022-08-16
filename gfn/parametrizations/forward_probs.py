@@ -1,19 +1,21 @@
-from gfn.parametrizations.base import Parametrization
 from abc import ABC
+from dataclasses import dataclass
+
 from gfn.envs import Env
-from ..samplers.action_samplers import LogitPFActionSampler
-from gfn.trajectories.dist import (
-    TrajectoryDistribution,
-    EmpiricalTrajectoryDistribution,
-)
-from gfn.samplers import TrajectoriesSampler
 from gfn.estimators import (
-    LogStateFlowEstimator,
-    LogitPFEstimator,
     LogitPBEstimator,
+    LogitPFEstimator,
+    LogStateFlowEstimator,
     LogZEstimator,
 )
-from dataclasses import dataclass
+from gfn.parametrizations.base import Parametrization
+from gfn.samplers import TrajectoriesSampler
+from gfn.trajectories.dist import (
+    EmpiricalTrajectoryDistribution,
+    TrajectoryDistribution,
+)
+
+from ..samplers.action_samplers import LogitPFActionSampler
 
 
 @dataclass

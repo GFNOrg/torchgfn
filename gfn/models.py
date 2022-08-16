@@ -1,8 +1,10 @@
-import torch.nn as nn
+from typing import Union
+
 import torch
+import torch.nn as nn
 from torch import Tensor
 from torchtyping import TensorType
-from typing import Union
+
 from gfn.estimators import GFNModule
 
 # Typing

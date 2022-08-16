@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+
 from gfn.containers import Trajectories
 from gfn.envs.env import AbstractStatesBatch
 

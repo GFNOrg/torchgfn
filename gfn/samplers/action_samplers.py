@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
-import torch
-from torchtyping import TensorType
 from typing import Tuple
+
+import torch
+from torch.distributions import Categorical
+from torchtyping import TensorType
 
 from gfn.envs.env import AbstractStatesBatch
 from gfn.estimators import LogEdgeFlowEstimator, LogitPBEstimator, LogitPFEstimator
-from torch.distributions import Categorical
 
 # Typing
 batch_size = None

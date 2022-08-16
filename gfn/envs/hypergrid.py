@@ -2,15 +2,15 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Tuple
+
 import torch
 from torchtyping import TensorType
-from typing import Tuple
-from dataclasses import dataclass, field
-from copy import deepcopy
 
-
-from gfn.envs.env import AbstractStatesBatch, Env
 from gfn.containers import States, make_States_class
+from gfn.envs.env import AbstractStatesBatch, Env
 
 # Typing
 TensorLong = TensorType["batch_shape", torch.long]
@@ -299,7 +299,7 @@ class HyperGrid(Env):
 
 
 if __name__ == "__main__":
-    print("Testing HyperGrid env with 3 environemnts, and height of 3")
+    print("Testing HyperGrid env with 3 environments, and height of 3")
     env = HyperGrid(n_envs=3, height=3)
     env.reset()
     actions = torch.tensor([0, 1, 1], dtype=torch.long)

@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from gfn.trajectories import TrajectoryDistribution, FinalStateDistribution
+
 from gfn.envs import Env
+from gfn.trajectories import FinalStateDistribution, TrajectoryDistribution
 
 
 @dataclass

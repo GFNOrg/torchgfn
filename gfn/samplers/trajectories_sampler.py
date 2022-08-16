@@ -1,10 +1,10 @@
-import torch
 from typing import Union
 
-from gfn.envs import Env, AbstractStatesBatch
-from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
+import torch
 
 from gfn.containers import Trajectories
+from gfn.envs import AbstractStatesBatch, Env
+from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
 
 
 class TrajectoriesSampler:
@@ -73,20 +73,20 @@ class TrajectoriesSampler:
 
 if __name__ == "__main__":
     from gfn.envs import HyperGrid
+    from gfn.estimators import LogitPBEstimator, LogitPFEstimator
+    from gfn.models import NeuralNet
     from gfn.preprocessors import (
         IdentityPreprocessor,
-        OneHotPreprocessor,
         KHotPreprocessor,
+        OneHotPreprocessor,
     )
     from gfn.samplers.action_samplers import (
+        FixedActions,
+        LogitPBActionSampler,
+        LogitPFActionSampler,
         UniformActionSampler,
         UniformBackwardsActionSampler,
-        LogitPBActionSampler,
-        FixedActions,
-        LogitPFActionSampler,
     )
-    from gfn.estimators import LogitPFEstimator, LogitPBEstimator
-    from gfn.models import NeuralNet
 
     n_envs = 5
     env = HyperGrid(n_envs=n_envs)

@@ -1,14 +1,15 @@
 from abc import ABC, abstractmethod
-from turtle import st
-import torch
-from torchtyping import TensorType
-from torch import Tensor
-from typing import Tuple, Union, ClassVar
-from dataclasses import dataclass, field
 from copy import deepcopy
+from dataclasses import dataclass, field
+from turtle import st
+from typing import ClassVar, Tuple, Union
 
+import torch
 from gym.spaces import Discrete
-from gfn.containers.states import States, make_States_class, StatesMetaClass
+from torch import Tensor
+from torchtyping import TensorType
+
+from gfn.containers.states import States, StatesMetaClass, make_States_class
 
 # Typing
 TensorLong = TensorType["batch_shape", torch.long]

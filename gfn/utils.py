@@ -1,9 +1,8 @@
-import torch
-from torch import Tensor
-from torch import nn
-from torch.distributions import Categorical
 from copy import deepcopy
 
+import torch
+from torch import Tensor, nn
+from torch.distributions import Categorical
 
 from gfn.envs.env import Env
 
@@ -102,19 +101,19 @@ if __name__ == "__main__":
     print("Starting with 5 random start states:")
     start_states = torch.randint(0, H, (5, ndim)).float()
     print(start_states)
-    print("Rolling-out trajectories of max_length {}...".format(max_length))
+    print(f"Rolling-out trajectories of max_length {max_length}...")
     trajectories, last_states, actions, dones, rewards = sample_trajectories(
         env, pf, start_states, max_length, temperature
     )
-    print("Trajectories: {}".format(trajectories))
-    print("Last states: {}".format(last_states))
-    print("Actions: {}".format(actions))
-    print("Dones: {}".format(dones))
-    print("Rewards: {}".format(rewards))
+    print(f"Trajectories: {trajectories}")
+    print(f"Last states: {last_states}")
+    print(f"Actions: {actions}")
+    print(f"Dones: {dones}")
+    print(f"Rewards: {rewards}")
 
     print("Sampling 10 trajectories from a uniform distribution...")
     start_states = torch.zeros((10, ndim)).float()
     trajectories, actionss, rewards = uniform_sample_trajectories(env, start_states)
-    print("Trajectories: {}".format(trajectories))
-    print("Actions: {}".format(actionss))
-    print("Rewards: {}".format(rewards))
+    print(f"Trajectories: {trajectories}")
+    print(f"Actions: {actionss}")
+    print(f"Rewards: {rewards}")

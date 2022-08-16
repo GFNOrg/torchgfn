@@ -1,8 +1,9 @@
 from dataclasses import dataclass
+
 import torch
 from torchtyping import TensorType
 
-from gfn.envs import Env, AbstractStatesBatch
+from gfn.envs import AbstractStatesBatch, Env
 
 # Typing
 Tensor2D = TensorType["max_length", "n_trajectories", torch.long]

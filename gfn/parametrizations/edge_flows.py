@@ -1,12 +1,13 @@
-from gfn.parametrizations.base import Parametrization
-from gfn.envs import Env
-from gfn.trajectories.dist import (
-    TrajectoryDistribution,
-    EmpiricalTrajectoryDistribution,
-)
-from gfn.samplers import LogEdgeFlowsActionSampler, TrajectoriesSampler
-from gfn.estimators import LogEdgeFlowEstimator
 from dataclasses import dataclass
+
+from gfn.envs import Env
+from gfn.estimators import LogEdgeFlowEstimator
+from gfn.parametrizations.base import Parametrization
+from gfn.samplers import LogEdgeFlowsActionSampler, TrajectoriesSampler
+from gfn.trajectories.dist import (
+    EmpiricalTrajectoryDistribution,
+    TrajectoryDistribution,
+)
 
 
 @dataclass

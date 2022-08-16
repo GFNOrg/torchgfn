@@ -1,8 +1,10 @@
-import torch
 from typing import Union
-from gfn.envs import Env, AbstractStatesBatch
-from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
+
+import torch
+
 from gfn.containers import Transitions
+from gfn.envs import AbstractStatesBatch, Env
+from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
 
 
 class TransitionsSampler:

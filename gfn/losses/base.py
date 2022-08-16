@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
+
 from torchtyping import TensorType
-from gfn.containers import Transitions, States, Trajectories
+
+from gfn.containers import States, Trajectories, Transitions
 
 
 class Loss(ABC):

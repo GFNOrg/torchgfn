@@ -1,7 +1,8 @@
-from gfn.preprocessors.base import Preprocessor
-from torch.nn.functional import one_hot
 import torch
 from einops import rearrange
+from torch.nn.functional import one_hot
+
+from gfn.preprocessors.base import Preprocessor
 
 
 class OneHotPreprocessor(Preprocessor):

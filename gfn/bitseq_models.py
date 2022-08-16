@@ -11,10 +11,10 @@ def make_mlp(l, act=nn.LeakyReLU(), tail=[]):
     return nn.Sequential(
         *(
             sum(
-                [
+                (
                     [nn.Linear(i, o)] + ([act] if n < len(l) - 2 else [])
                     for n, (i, o) in enumerate(zip(l, l[1:]))
-                ],
+                ),
                 [],
             )
             + tail

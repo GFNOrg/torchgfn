@@ -1,9 +1,9 @@
 from gfn.preprocessors.base import IdentityPreprocessor
-from gfn.preprocessors.hot import OneHotPreprocessor, KHotPreprocessor
-
+from gfn.preprocessors.hot import KHotPreprocessor, OneHotPreprocessor
 
 if __name__ == "__main__":
     import torch
+
     from gfn.envs import HyperGrid
 
     ndim = 2

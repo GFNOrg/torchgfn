@@ -1,9 +1,10 @@
 import torch
 from torchtyping import TensorType
+
 from gfn.containers import Trajectories
 from gfn.losses.base import TrajectoryDecomposableLoss
-from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
 from gfn.parametrizations import ForwardBackwardTransitionParametrizationWithZ
+from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
 
 
 class TrajectoryBalance(TrajectoryDecomposableLoss):
@@ -67,11 +68,11 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
 
 if __name__ == "__main__":
     from gfn.envs import HyperGrid
+    from gfn.estimators import LogitPBEstimator, LogitPFEstimator, LogZEstimator
+    from gfn.models import NeuralNet, Uniform
     from gfn.preprocessors import KHotPreprocessor
     from gfn.samplers.action_samplers import FixedActions
-    from gfn.models import NeuralNet, Uniform
     from gfn.samplers.trajectories_sampler import TrajectoriesSampler
-    from gfn.estimators import LogitPFEstimator, LogitPBEstimator, LogZEstimator
 
     n_envs = 5
     height = 4

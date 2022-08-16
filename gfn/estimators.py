@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-import torch.nn as nn
-import torch
-from torchtyping import TensorType
-from typing import Union, Literal
-from gfn.preprocessors.base import Preprocessor
-from gfn.envs.env import Env, AbstractStatesBatch
+from typing import Literal, Union
 
+import torch
+import torch.nn as nn
+from torchtyping import TensorType
+
+from gfn.envs.env import AbstractStatesBatch, Env
+from gfn.preprocessors.base import Preprocessor
 
 # Typing
 batch_shape = None

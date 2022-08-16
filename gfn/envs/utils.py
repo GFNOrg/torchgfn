@@ -1,7 +1,9 @@
 from distutils.command.build import build
-from gfn.envs import HyperGrid
+
 import torch
 from einops import rearrange
+
+from gfn.envs import HyperGrid
 
 
 def build_grid(env: HyperGrid):
