@@ -1,8 +1,7 @@
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass, field
-from turtle import st
-from typing import ClassVar, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from gym.spaces import Discrete
@@ -71,15 +70,25 @@ class Env(ABC):
     represented by a number in {0, ..., n_actions - 1}.
     """
 
-    def __init__(self, n_actions: int, s_0: OneStateTensor, s_f: OneStateTensor):
-        assert s_0.device == s_f.device
-        self.state_shape = tuple(s_0.shape)
+    def __init__(
+        self, n_actions: int, s_0: OneStateTensor, s_f: Optional[OneStateTensor] = None
+    ):
+        if isinstance(s_f, torch.Tensor) and (
+            s_f.shape != s_0.shape or s_f.device != s_0.device
+        ):
+            raise ValueError(
+                "If s_f is specified, it should be a tensor of shape {} and device {}".format(
+                    s_0.shape, s_0.device
+                )
+            )
         self.n_actions = n_actions
+        self.s_0 = s_0
+        self.state_shape = tuple(s_0.shape)
 
         self.action_space = Discrete(self.n_actions)
         self.device = s_0.device
-
         self.States: StatesMetaClass = make_States_class(
+            class_name=self.__class__.__name__ + "States",
             n_actions=n_actions,
             s_0=s_0,
             s_f=s_f,
@@ -89,6 +98,16 @@ class Env(ABC):
             update_masks=self.update_masks,
         )
 
+    def is_exit_actions(self, actions: TensorLong) -> TensorBool:
+        "Returns True if the action is an exit action."
+        return actions == self.n_actions - 1
+
+    def reset(self, batch_shape: Union[int, Tuple[int]]) -> StatesTensor:
+        "Instantiates a batch of initial states."
+        if isinstance(batch_shape, int):
+            batch_shape = (batch_shape,)
+        return self.States(batch_shape=batch_shape)
+
     @abstractmethod
     def make_random_states(self, batch_shape: Tuple[int]) -> StatesTensor:
         pass
@@ -96,10 +115,6 @@ class Env(ABC):
     @abstractmethod
     def update_masks(self, states: States) -> None:
         pass
-
-    def is_exit_actions(self, actions: TensorLong) -> TensorBool:
-        "Returns True if the action is an exit action."
-        return actions == self.n_actions - 1
 
     @abstractmethod
     def step(

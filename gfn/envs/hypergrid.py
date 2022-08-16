@@ -45,7 +45,7 @@ class HyperGrid2(Env):
         self.reward_cos = reward_cos
 
     def make_random_states(self, batch_shape: Tuple[int]) -> StatesTensor:
-        return torch.randint(0, self.height, batch_shape)
+        return torch.randint(0, self.height, (*batch_shape, *self.state_shape))
 
     def update_masks(self, states: States) -> None:
         # TODO: probably not the best way to do this
@@ -59,8 +59,8 @@ class HyperGrid2(Env):
     ) -> States:
 
         new_states = deepcopy(states)
+        sink_states: TensorBool = new_states.is_sink_state()
 
-        sink_states = new_states.is_sink_state()
         non_sink_states_masks = new_states.forward_masks[~sink_states]
         non_sink_actions = actions[~sink_states]
         actions_valid = all(
@@ -86,7 +86,8 @@ class HyperGrid2(Env):
     def backward_step(self, states: States, actions: TensorLong) -> States:
 
         new_states = deepcopy(states)
-        initial_states = new_states.is_initial_state()
+        initial_states: TensorBool = new_states.is_initial_state()
+
         non_initial_states_masks = new_states.backward_masks[~initial_states]
         non_initial_actions = actions[~initial_states]
         actions_valid = all(
@@ -299,6 +300,87 @@ class HyperGrid(Env):
 
 
 if __name__ == "__main__":
+
+    print("Testing HyperGrid environment")
+    env = HyperGrid2(ndim=2, height=3)
+    print(env)
+
+    print("\nInstantiating a linear batch of initial states")
+    states = env.reset(batch_shape=2)
+    print("States:", states)
+
+    print("\nInstantiating a two-dimensional batch of random states")
+    states = env.make_random_states(batch_shape=(2, 3))
+    print("States:", states)
+
+    print("\nTrying the step function starting from 3 instances of s_0")
+    states = env.reset(batch_shape=3)
+    actions = torch.tensor([0, 1, 2], dtype=torch.long)
+    states = env.step(states, actions)
+    print("After one step:", states)
+    actions = torch.tensor([2, 0, 1], dtype=torch.long)
+    states = env.step(states, actions)
+    print("After two steps:", states)
+    actions = torch.tensor([2, 0, 1], dtype=torch.long)
+    states = env.step(states, actions)
+    print("After three steps:", states)
+    try:
+        actions = torch.tensor([2, 0, 1], dtype=torch.long)
+        states = env.step(states, actions)
+    except ValueError:
+        print("ValueError raised as expected because of invalid actions")
+    print(states)
+    print("Final rewards:", env.reward(states))
+
+    assert False
+
+    actions = torch.tensor([0, 1, 1], dtype=torch.long)
+    states, dones = env.step(actions)
+    actions = torch.tensor([0, 2, 1], dtype=torch.long)
+    states, dones = env.step(actions)
+    actions = torch.tensor([1, 1, 2], dtype=torch.long)
+    states, dones = env.step(actions)
+    try:
+        actions = torch.tensor([0, 1, 1], dtype=torch.long)
+        states, dones = env.step(actions)
+    except ValueError:
+        print("ValueError raised as expected because of invalid actions")
+    print(env._state)
+    print("Final rewards:", env.reward(env._state))
+
+    states.zero_the_dones()
+    print("States after zeroing dones:", states)
+
+    try:
+        actions = torch.tensor([1, 1, 2], dtype=torch.long)
+        states, dones = env.backward_step(states, actions)
+    except RuntimeError:
+        print("RuntimeError raised as expected because of invalid actions")
+
+    actions = torch.tensor([1, 1, 1], dtype=torch.long)
+    states, dones = env.backward_step(states, actions)
+
+    # second is already done, so 43 is ok
+    actions = torch.tensor([0, 43, 1], dtype=torch.long)
+    states, dones = env.backward_step(states, actions)
+
+    # second is already done, so 43 is ok
+    actions = torch.tensor([0, 43, 34], dtype=torch.long)
+    states, dones = env.backward_step(states, actions)
+    if all(dones):
+        print("Initial states reached everywhere,", states)
+    else:
+        raise ValueError("Initial states not reached everywhere")
+
+    print("Testing state creating with given states:")
+    states = torch.randint(0, env.height, (5, 3, env.ndim))
+    states_batch = env.StatesBatch(states=states)
+    print("Testing done updating. For states that are s_0, done should be True:")
+    states_batch.update_the_dones()
+    print(states_batch)
+
+    assert False
+
     print("Testing HyperGrid env with 3 environments, and height of 3")
     env = HyperGrid(n_envs=3, height=3)
     env.reset()

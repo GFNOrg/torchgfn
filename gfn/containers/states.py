@@ -1,5 +1,4 @@
 from abc import ABC, ABCMeta, abstractmethod
-from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar, Optional, Tuple, Union
 
 import torch
@@ -13,7 +12,12 @@ DonesTensor = TensorType["batch_shape", torch.bool]
 OneStateTensor = TensorType["state_shape", torch.float]
 
 
-class States(ABC):
+class StatesMetaClass(ABCMeta):
+    make_initial_states: Callable[[Tuple[int]], StatesTensor]
+    make_random_states: Callable[[Tuple[int]], StatesTensor]
+
+
+class States(metaclass=StatesMetaClass):
     """Base class for states, seen as nodes of the DAG.
     Each environment/task should have its own States subclass.
     States are represented as torch tensors of shape=(*batch_shape , *state_shape).
@@ -120,6 +124,11 @@ class States(ABC):
         assert cls.s_0 is not None and cls.state_ndim is not None
         return cls.s_0.repeat(*batch_shape, *((1,) * cls.state_ndim))
 
+    @classmethod
+    @abstractmethod
+    def make_random_states(cls, batch_shape: Tuple[int]) -> StatesTensor:
+        pass
+
     def is_initial_state(self) -> DonesTensor:
         r"""Return a boolean tensor of shape=(*batch_shape,),
         where True means that the state is $s_0$ of the DAG.
@@ -144,11 +153,6 @@ class States(ABC):
             out = out.all(dim=-1)
         return out
 
-    @classmethod
-    @abstractmethod
-    def make_random_states(cls, batch_shape: Tuple[int]) -> StatesTensor:
-        pass
-
     def make_masks(self) -> ForwardMasksTensor:
         assert self.__class__.n_actions is not None
         self.forward_masks = torch.ones(
@@ -169,17 +173,18 @@ class States(ABC):
 
 
 def make_States_class(
+    class_name: str,
     n_actions: int,
     s_0: OneStateTensor,
     s_f: Optional[OneStateTensor],
     make_random_states: Callable[[Any, Tuple[int]], StatesTensor],
     update_masks: Callable[[States], None],
-) -> type:
+) -> StatesMetaClass:
     """
     Creates a States subclass with the given state_shape and forward/backward mask makers.
     """
     return type(
-        "States",
+        class_name,
         (States,),
         {
             "n_actions": n_actions,
