@@ -1,2 +1,4 @@
-from .env import AbstractStatesBatch, Env
+from .env import Env
 from .hypergrid import HyperGrid
+
+AbstractStatesBatch = None

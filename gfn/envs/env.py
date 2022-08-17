@@ -1,11 +1,9 @@
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from dataclasses import dataclass, field
 from typing import Optional, Tuple, Union
 
 import torch
 from gym.spaces import Discrete
-from torch import Tensor
 from torchtyping import TensorType
 
 from gfn.containers.states import States, StatesMetaClass, make_States_class
@@ -19,48 +17,9 @@ BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
 OneStateTensor = TensorType["state_shape", torch.float]
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
 
+NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
 
-@dataclass
-class AbstractStatesBatch(ABC):
-    batch_shape: Tuple[int, ...]  # The shape of the batch, usually (n_envs,)
-    # The shape of the states, should be (*batch_shape, *state_dim)
-    shape: Tuple[int, ...] = field(init=False)
-    states: Tensor
-    masks: Tensor  # Boolean tensor representing possible actions at each state of the batch
-    # Boolean tensor representing possible actions that could have led to each state of the batch
-    backward_masks: Tensor
-    # Boolean tensor representing if the state is the last of its trajectory
-    already_dones: Tensor
-    device: torch.device = field(init=False)
-    random: bool = False  # If True, then initial state is chosen randomly.
-
-    def __post_init__(self):
-        self.device = self.states.device
-        self.zero_the_dones()
-        self.update_masks()
-
-    @abstractmethod
-    def make_masks(self) -> Tensor:
-        pass
-
-    @abstractmethod
-    def make_backward_masks(self) -> Tensor:
-        pass
-
-    def update_masks(self) -> None:
-        self.masks = self.make_masks()
-        self.backward_masks = self.make_backward_masks()
-
-    def zero_the_dones(self) -> None:
-        self.already_dones = torch.zeros(
-            self.batch_shape, dtype=torch.bool, device=self.device
-        )
-
-    @abstractmethod
-    def update_the_dones(self) -> None:
-        # When doing backward sampling, we need to know if the state is the last of its trajectory, i.e.
-        # is it s_0.
-        pass
+AbstractStatesBatch = None
 
 
 class Env(ABC):
@@ -92,31 +51,25 @@ class Env(ABC):
             n_actions=n_actions,
             s_0=s_0,
             s_f=s_f,
-            make_random_states=lambda _, batch_shape: self.make_random_states(
+            make_random_states_tensor=lambda _, batch_shape: self.make_random_states_tensor(
                 batch_shape
             ),
-            update_masks=self.update_masks,
+            update_masks=lambda states: self.update_masks(states),
         )
+        self.s_f = self.States.s_f
 
     def is_exit_actions(self, actions: TensorLong) -> TensorBool:
         "Returns True if the action is an exit action."
         return actions == self.n_actions - 1
 
-    def reset(self, batch_shape: Union[int, Tuple[int]]) -> StatesTensor:
+    def reset(
+        self, batch_shape: Union[int, Tuple[int]], random_init: bool = False
+    ) -> StatesTensor:
         "Instantiates a batch of initial states."
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
-        return self.States(batch_shape=batch_shape)
+        return self.States(batch_shape=batch_shape, random_init=random_init)
 
-    @abstractmethod
-    def make_random_states(self, batch_shape: Tuple[int]) -> StatesTensor:
-        pass
-
-    @abstractmethod
-    def update_masks(self, states: States) -> None:
-        pass
-
-    @abstractmethod
     def step(
         self,
         states: States,
@@ -124,14 +77,69 @@ class Env(ABC):
     ) -> States:
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating sink states in the new batch."""
+        new_states = deepcopy(states)
+        sink_states: TensorBool = new_states.is_sink_state()
+
+        non_sink_states_masks = new_states.forward_masks[~sink_states]
+        non_sink_actions = actions[~sink_states]
+        actions_valid = all(
+            torch.gather(non_sink_states_masks, 1, non_sink_actions.unsqueeze(1))
+        )
+        if not actions_valid:
+            raise NonValidActionsError("Actions are not valid")
+
+        new_sink_states = self.is_exit_actions(actions)
+        new_states.states[new_sink_states] = self.s_f
+        new_sink_states = sink_states | new_sink_states
+
+        not_done_states = new_states.states[~new_sink_states]
+        not_done_actions = actions[~new_sink_states]
+
+        self.step_no_worry(not_done_states, not_done_actions)
+
+        new_states.states[~new_sink_states] = not_done_states
+
+        self.update_masks(new_states)
+        return new_states
+
+    def backward_step(self, states: States, actions: TensorLong) -> States:
+        """Function that takes a batch of states and actions and returns a batch of next
+        states and a boolean tensor indicating initial states in the new batch."""
+        new_states = deepcopy(states)
+        initial_states: TensorBool = new_states.is_initial_state()
+
+        non_initial_states_masks = new_states.backward_masks[~initial_states]
+        non_initial_actions = actions[~initial_states]
+        actions_valid = all(
+            torch.gather(non_initial_states_masks, 1, non_initial_actions.unsqueeze(1))
+        )
+        if not actions_valid:
+            raise NonValidActionsError("Actions are not valid")
+
+        not_done_states = new_states.states[~initial_states]
+        self.backward_step_no_worry(not_done_states, non_initial_actions)
+
+        new_states.states[~initial_states] = not_done_states
+
+        self.update_masks(new_states)
+        return new_states
+
+    @abstractmethod
+    def make_random_states_tensor(self, batch_shape: Tuple[int]) -> StatesTensor:
         pass
 
     @abstractmethod
-    def backward_step(
-        self, states: States, actions: TensorLong
-    ) -> Tuple[States, TensorBool]:
-        """Function that takes a batch of states and actions and returns a batch of next
-        states and a boolean tensor indicating initial states in the new batch."""
+    def update_masks(self, states: States) -> None:
+        pass
+
+    @abstractmethod
+    def step_no_worry(self, states: StatesTensor, actions: TensorLong) -> None:
+        """Same as the step function, but without worrying whether or not the actions are valid, or masking."""
+        pass
+
+    @abstractmethod
+    def backward_step_no_worry(self, states: StatesTensor, actions: TensorLong) -> None:
+        """Same as the backward_step function, but without worrying whether or not the actions are valid, or masking."""
         pass
 
     @abstractmethod

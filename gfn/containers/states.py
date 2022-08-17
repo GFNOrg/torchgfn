@@ -13,8 +13,8 @@ OneStateTensor = TensorType["state_shape", torch.float]
 
 
 class StatesMetaClass(ABCMeta):
-    make_initial_states: Callable[[Tuple[int]], StatesTensor]
-    make_random_states: Callable[[Tuple[int]], StatesTensor]
+    make_initial_states_tensor: Callable[[Tuple[int]], StatesTensor]
+    make_random_states_tensor: Callable[[Tuple[int]], StatesTensor]
 
 
 class States(metaclass=StatesMetaClass):
@@ -60,11 +60,9 @@ class States(metaclass=StatesMetaClass):
 
     def __init__(
         self,
-        states: Union[StatesTensor, None],
+        states: Optional[StatesTensor] = None,
         random_init: bool = False,
-        batch_shape: Union[Tuple[int], None] = None,
-        is_initial: Union[DonesTensor, None] = None,
-        is_sink: Union[DonesTensor, None] = None,
+        batch_shape: Optional[Tuple[int]] = None,
     ) -> None:
         r"""Initialize the states.
         If states is not None,  then random_init and batch_shape are ignored.
@@ -76,36 +74,17 @@ class States(metaclass=StatesMetaClass):
             assert (
                 batch_shape is not None
             ), "batch_shape cannot be None if states is None"
-            assert (
-                is_initial is None and is_sink is None
-            ), "when states is None, is_initial, is_sink cannot be None"
 
             self.batch_shape = batch_shape
             if random_init:
-                self.states = self.make_random_states(batch_shape)
-                self.is_initial = self.is_initial_state()
-                self.is_sink = self.is_sink_state()
+                self.states = self.make_random_states_tensor(batch_shape)
             else:
-                self.states = self.make_initial_states(batch_shape)
-                self.is_initial = torch.ones(batch_shape, dtype=torch.bool).to(
-                    self.__class__.device
-                )
-                self.is_sink = torch.zeros(batch_shape, dtype=torch.bool).to(
-                    self.__class__.device
-                )
+                self.states = self.make_initial_states_tensor(batch_shape)
         else:
             self.states = states
             shape = tuple(self.states.shape)
             assert shape[-self.__class__.state_ndim :] == self.__class__.state_shape  # type: ignore
             self.batch_shape = shape[: -self.__class__.state_ndim]  # type: ignore
-            if is_initial is None:
-                self.is_initial = self.is_initial_state()
-            else:
-                self.is_initial = is_initial
-            if is_sink is None:
-                self.is_sink = self.is_sink_state()
-            else:
-                self.is_sink = is_sink
 
         self.device = self.states.device
         assert self.device == self.__class__.device
@@ -115,18 +94,18 @@ class States(metaclass=StatesMetaClass):
         self.make_masks()
 
     def __repr__(self):
-        return f"""States(states={self.states},\n forward_masks={self.forward_masks},
-        \n backward_masks={self.backward_masks})
+        return f"""States(states={self.states},\n forward_masks={self.forward_masks.long()},
+        \n backward_masks={self.backward_masks.long()})
         """
 
     @classmethod
-    def make_initial_states(cls, batch_shape: Tuple[int]) -> StatesTensor:
+    def make_initial_states_tensor(cls, batch_shape: Tuple[int]) -> StatesTensor:
         assert cls.s_0 is not None and cls.state_ndim is not None
         return cls.s_0.repeat(*batch_shape, *((1,) * cls.state_ndim))
 
     @classmethod
     @abstractmethod
-    def make_random_states(cls, batch_shape: Tuple[int]) -> StatesTensor:
+    def make_random_states_tensor(cls, batch_shape: Tuple[int]) -> StatesTensor:
         pass
 
     def is_initial_state(self) -> DonesTensor:
@@ -134,7 +113,7 @@ class States(metaclass=StatesMetaClass):
         where True means that the state is $s_0$ of the DAG.
         """
         assert self.__class__.state_ndim is not None
-        out = self.states == self.make_initial_states(self.batch_shape)
+        out = self.states == self.make_initial_states_tensor(self.batch_shape)
         for _ in range(self.__class__.state_ndim):
             out = out.all(dim=-1)
         return out
@@ -177,7 +156,7 @@ def make_States_class(
     n_actions: int,
     s_0: OneStateTensor,
     s_f: Optional[OneStateTensor],
-    make_random_states: Callable[[Any, Tuple[int]], StatesTensor],
+    make_random_states_tensor: Callable[[Any, Tuple[int]], StatesTensor],
     update_masks: Callable[[States], None],
 ) -> StatesMetaClass:
     """
@@ -190,7 +169,7 @@ def make_States_class(
             "n_actions": n_actions,
             "s_0": s_0,
             "s_f": s_f,
-            "make_random_states": make_random_states,
+            "make_random_states_tensor": make_random_states_tensor,
             "update_masks": update_masks,
         },
     )

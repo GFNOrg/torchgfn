@@ -3,13 +3,15 @@ from dataclasses import dataclass
 import torch
 from torchtyping import TensorType
 
-from gfn.envs import AbstractStatesBatch, Env
+from gfn.envs import Env
 
 # Typing
 Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
 Tensor2D2 = TensorType["n_trajectories", "shape"]
 Tensor1D = TensorType["n_trajectories", torch.long]
 FloatTensor1D = TensorType["n_trajectories", torch.float]
+
+AbstractStatesBatch = None
 
 
 @dataclass

@@ -4,10 +4,12 @@ A pointed DAG environment (or GFN environment, or environment for short) is a re
 - The initial state `s_0`, as a `torch.Tensor` of arbitrary dimension
 - (Optional) The sink state `s_f`, as a `torch.Tensor` of the same shape as `s_0`, used to represent complete trajectories only. See [States](#states) for more info about `s_f`.
 - The method `update_masks` that specifies which actions are possible at each state (going forward and backward).
-- The methods `step` and `backward_step` that specify how an action changes a state (going forward and backward). Ideally, they should call `super().step(...)` or `super().backward_step()` given that these two helper functions handle masking for most environments.
+- The methods `step_no_worry` and `backward_step_no_worry` that specify how an action changes a state (going forward and backward). These functions do not need to handle masking, checking whether actions are allowed, checking whether a state is the sink state, etc... These checks are handled in `Env.step` and `Env.backward_step`
 - The `reward` function that assigns a nonnegative reward to every terminating state (i.e. state with all $s_f$ as a child in the DAG)
 
-The environment also specifies how a batch of states is represented. The attribute `env.States` is a class that inherits from [`States`](containers/states.py). This attribute is created automatically using an additional  method any environment inheriting from `Env` is required to implement: `make_random_states`, that creates random states ($\neq s_f$) according to the input batch shape.
+The environment also specifies how a batch of states is represented. The attribute `env.States` is a class that inherits from [`States`](containers/states.py). This attribute is created automatically using an additional  method any environment inheriting from `Env` is required to implement: `make_random_states_tensor`, that creates random states ($\neq s_f$) according to the input batch shape.
+
+Optionally, you can define a static `get_states_indices` method that assigns a unique integer number to each state if the environment allows it.
 
 ## States
 In this repository, a state is represent as a `torch.Tensor`. The shape of the tensor is arbitrary, but should be consistent across the states of the same environment. For instance, a state can either be a one-dimensional tensor (as in [HyperGrid](envs/hypergrid.py)), or three-dimensional if we consider 2-D RGB images.
@@ -24,6 +26,6 @@ The class variables `state_shape`, `state_ndim`, and `device` are inferred from 
 
 Finally, 2 abstract methods are necessary to finish the definition of a subclass of `States`:
 - `update_masks` that overrides a batch of states' `forward_masks` and `backward_masks` attributes, according to the allowed actions in the environment.
-- `make_random_states` that takes as input a batch shape and returns a random batch of states of the corresponding environment.
+- `make_random_states_tensor` that takes as input a batch shape and returns a random batch of states of the corresponding environment.
 
-The helper function [make_States_class](containers/states.py) makes it possible to define a States class of any environment by specifying a class name, `n_actions`, `s_0`, `make_random_states`, `update_masks`, and optionally `s_f`. In fact, it is this helper function that is used in the [Env](envs/env.py) abstract class representing a DAG environment.
+The helper function [make_States_class](containers/states.py) makes it possible to define a States class of any environment by specifying a class name, `n_actions`, `s_0`, `make_random_states_tensor`, `update_masks`, and optionally `s_f`. In fact, it is this helper function that is used in the [Env](envs/env.py) abstract class representing a DAG environment.
