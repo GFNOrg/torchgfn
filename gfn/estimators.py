@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Literal, Union
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -21,7 +21,7 @@ OutputTensor1D = TensorType["batch_shape", 1, float]
 @dataclass(eq=True, unsafe_hash=True)
 class GFNModule(ABC):
     "Abstract Base Class for all functions/approximators/estimators used"
-    input_dim: Union[int, None]
+    input_dim: Optional[int]
     output_dim: int
     output_type: Literal["free"] = "free"
 

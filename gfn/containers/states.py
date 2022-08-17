@@ -1,5 +1,5 @@
 from abc import ABC, ABCMeta, abstractmethod
-from typing import Any, Callable, ClassVar, Optional, Tuple, Union
+from typing import Any, Callable, ClassVar, Optional, Tuple
 
 import torch
 from torchtyping import TensorType

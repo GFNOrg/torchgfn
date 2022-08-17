@@ -1,9 +1,9 @@
-from typing import Union
+from typing import Optional
 
 import torch
 
-from gfn.containers import Trajectories
-from gfn.envs import AbstractStatesBatch, Env
+from gfn.containers import States, Trajectories
+from gfn.envs import Env
 from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
 
 
@@ -13,9 +13,7 @@ class TrajectoriesSampler:
         self.action_sampler = action_sampler
         self.is_backwards = isinstance(action_sampler, BackwardsActionSampler)
 
-    def sample_trajectories(
-        self, states: Union[None, AbstractStatesBatch] = None
-    ) -> Trajectories:
+    def sample_trajectories(self, states: Optional[States] = None) -> Trajectories:
         if states is None:
             states = self.env.reset()
         n_trajectories = states.shape[0]

@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -21,7 +21,7 @@ class NeuralNet(nn.Module, GFNModule):
         input_dim: int,
         hidden_dim: int,
         output_dim: int,
-        torso: Union[None, nn.Module] = None,
+        torso: Optional[nn.Module] = None,
     ):
         super().__init__()
         self.input_dim = input_dim

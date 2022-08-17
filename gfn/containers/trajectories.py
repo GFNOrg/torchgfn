@@ -3,15 +3,14 @@ from dataclasses import dataclass
 import torch
 from torchtyping import TensorType
 
+from gfn.containers import States
 from gfn.envs import Env
 
-# Typing
+# Typing  --- n_transitions is an int
 Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
 Tensor2D2 = TensorType["n_trajectories", "shape"]
 Tensor1D = TensorType["n_trajectories", torch.long]
 FloatTensor1D = TensorType["n_trajectories", torch.float]
-
-AbstractStatesBatch = None
 
 
 @dataclass
@@ -20,12 +19,12 @@ class Trajectories:
 
     env: Env
     n_trajectories: int
-    states: AbstractStatesBatch
+    states: States
     actions: Tensor2D
     # The following field mentions how many actions were taken in each trajectory.
     when_is_done: Tensor1D
     rewards: FloatTensor1D
-    last_states: AbstractStatesBatch
+    last_states: States
 
     def __repr__(self) -> str:
         states = self.states.states

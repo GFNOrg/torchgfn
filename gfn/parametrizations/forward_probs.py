@@ -9,13 +9,11 @@ from gfn.estimators import (
     LogZEstimator,
 )
 from gfn.parametrizations.base import Parametrization
-from gfn.samplers import TrajectoriesSampler
+from gfn.samplers import LogitPFActionSampler, TrajectoriesSampler
 from gfn.trajectories.dist import (
     EmpiricalTrajectoryDistribution,
     TrajectoryDistribution,
 )
-
-from ..samplers.action_samplers import LogitPFActionSampler
 
 
 @dataclass
@@ -35,7 +33,7 @@ class ForwardTransitionParametrization(PFBasedParametrization):
     r"""
     $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2$, where
     $\mathcal{O}_1$ is the set of functions from the internal states (no $s_f$)
-    to $\mathbb{R}^+$ (which we parametrize with logs, to avoid the nonnegativity constraint),
+    to $\mathbb{R}^+$ (which we parametrize with logs, to avoid the non-negativity constraint),
     and $\mathcal{O}_2$ is the set of forward probability functions consistent with the DAG.
     """
     logF: LogStateFlowEstimator
@@ -56,7 +54,7 @@ class ForwardBackwardTransitionParametrization(ForwardTransitionParametrization)
     r"""
     $\mathcal{O}_{PFB} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where
     $\mathcal{O}_1$ is the set of functions from the internal states (no $s_f$)
-    to $\mathbb{R}^+$ (which we parametrize with logs, to avoid the nonnegativity constraint),
+    to $\mathbb{R}^+$ (which we parametrize with logs, to avoid the non-negativity constraint),
     $\mathcal{O}_2$ is the set of forward probability functions consistent with the DAG,
     and $\mathcal{O}_3$ is the set of forward probability functions consistent with the DAG.
     """

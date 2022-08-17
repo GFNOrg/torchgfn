@@ -1,8 +1,8 @@
-from typing import Union
+from typing import Optional
 
 import torch
 
-from gfn.containers import Transitions
+from gfn.containers import States, Transitions
 from gfn.envs import AbstractStatesBatch, Env
 from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
 
@@ -13,9 +13,7 @@ class TransitionsSampler:
         self.action_sampler = action_sampler
         self.is_backwards = isinstance(action_sampler, BackwardsActionSampler)
 
-    def sample_transitions(
-        self, states: Union[None, AbstractStatesBatch] = None
-    ) -> Transitions:
+    def sample_transitions(self, states: Optional[States] = None) -> Transitions:
         if states is None:
             states = self.env.reset()
         n_transitions = states.shape[0]
