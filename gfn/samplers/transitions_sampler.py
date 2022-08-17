@@ -3,7 +3,7 @@ from typing import Optional
 import torch
 
 from gfn.containers import States, Transitions
-from gfn.envs import AbstractStatesBatch, Env
+from gfn.envs import Env
 from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
 
 
@@ -16,10 +16,9 @@ class TransitionsSampler:
     def sample_transitions(self, states: Optional[States] = None) -> Transitions:
         if states is None:
             states = self.env.reset()
-        n_transitions = states.shape[0]
-        rewards = torch.zeros(
-            n_transitions, dtype=torch.float, device=states.states.device
-        )
+        assert states is not None and states.ndim == 2
+        n_transitions = states.batch_shape[0]
+        rewards = torch.zeros(n_transitions, dtype=torch.float, device=states.device)
 
         _, actions = self.action_sampler.sample(states)
 

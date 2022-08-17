@@ -64,7 +64,7 @@ class Env(ABC):
 
     def reset(
         self, batch_shape: Union[int, Tuple[int]], random_init: bool = False
-    ) -> StatesTensor:
+    ) -> States:
         "Instantiates a batch of initial states."
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
