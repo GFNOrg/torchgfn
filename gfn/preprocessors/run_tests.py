@@ -2,8 +2,6 @@ from gfn.preprocessors.base import IdentityPreprocessor
 from gfn.preprocessors.hot import KHotPreprocessor, OneHotPreprocessor
 
 if __name__ == "__main__":
-    import torch
-
     from gfn.envs import HyperGrid
 
     ndim = 2
@@ -17,8 +15,7 @@ if __name__ == "__main__":
     one_hot_preprocessor = OneHotPreprocessor(env)
     k_hot_preprocessor = KHotPreprocessor(env)
 
-    random_states = torch.randint(0, height, (10, ndim))
-    random_states = env.StatesBatch(states=random_states)
+    random_states = env.reset(batch_shape=10, random_init=True)
     print("States to try: ", random_states)
     preprocessed_grid = identity_preprocessor.preprocess(random_states)
     print("Identity Preprocessor: ", preprocessed_grid)
@@ -27,14 +24,14 @@ if __name__ == "__main__":
     k_hot_grid = k_hot_preprocessor.preprocess(random_states)
     print("K Hot Preprocessor: ", k_hot_grid)
 
-    print("Testing The Preprocessors on HyperGrid with multidim batches")
+    print("Testing The Preprocessors on HyperGrid with multi-dimensional batches")
 
     identity_preprocessor = IdentityPreprocessor(env)
     one_hot_preprocessor = OneHotPreprocessor(env)
     k_hot_preprocessor = KHotPreprocessor(env)
 
-    random_states = torch.randint(0, height, (4, 2, ndim))
-    random_states = env.StatesBatch(states=random_states)
+    random_states = env.reset(batch_shape=(4, 2), random_init=True)
+
     print("States to try: ", random_states)
     preprocessed_grid = identity_preprocessor.preprocess(random_states)
     print("Identity Preprocessor: ", preprocessed_grid)

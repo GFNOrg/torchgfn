@@ -38,11 +38,13 @@ class TrajectoriesSampler:
 
         trajectories_states: List[StatesTensor] = [states.states]
         trajectories_actions: List[ActionsTensor] = []
-        trajectories_dones = (-1) * torch.ones(n_trajectories, dtype=torch.long)
+        trajectories_dones = torch.zeros(n_trajectories, dtype=torch.long)
         step = 0
 
         while not all(dones):
-            _, actions = self.action_sampler.sample(states)
+            actions = torch.full((n_trajectories,), fill_value=-1, dtype=torch.long)
+            _, valid_actions = self.action_sampler.sample(states[~dones])
+            actions[~dones] = valid_actions
             trajectories_actions += [actions]
 
             if self.is_backwards:
@@ -59,15 +61,14 @@ class TrajectoriesSampler:
             )
             trajectories_dones[new_dones & ~dones] = step
             states = new_states
-            dones = new_dones
+            dones = dones | new_dones
 
             trajectories_states += [states.states]
 
-            if (
-                isinstance(self.action_sampler, FixedActions)
-                and self.action_sampler.step >= self.action_sampler.total_steps
-            ):
-                dones = [True]
+            if isinstance(self.action_sampler, FixedActions):
+                self.action_sampler.actions = self.action_sampler.actions[
+                    valid_actions != self.env.n_actions - 1
+                ]
 
         trajectories_states = torch.stack(trajectories_states, dim=0)
         trajectories_states = self.env.States(states=trajectories_states)
@@ -86,6 +87,7 @@ class TrajectoriesSampler:
             when_is_done=trajectories_dones,
             rewards=trajectories_rewards,
             last_states=states,
+            is_backwards=self.is_backwards,
         )
 
         return trajectories
@@ -117,7 +119,7 @@ if __name__ == "__main__":
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     print(trajectories)
 
-    print("Trying the Fixed Actions Sampler: ")
+    print("\nTrying the Fixed Actions Sampler: ")
     action_sampler = FixedActions(
         torch.tensor(
             [[0, 1, 2, 0], [1, 1, 1, 2], [2, 2, 2, 2], [1, 0, 1, 2], [1, 0, 2, 1]]
@@ -127,7 +129,7 @@ if __name__ == "__main__":
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     print(trajectories)
 
-    print("Trying the LogitPFActionSampler: ")
+    print("\nTrying the LogitPFActionSampler: ")
     preprocessors = [
         IdentityPreprocessor(env=env),
         OneHotPreprocessor(env=env),
@@ -156,22 +158,20 @@ if __name__ == "__main__":
 
     for i, trajectories_sampler in enumerate(trajectories_samplers):
         print(
+            "\n",
             i,
             ": Trying the LogitPFActionSampler with preprocessor {}".format(
                 preprocessors[i]
             ),
         )
-        trajectories = trajectories_sampler.sample_trajectories()
+        trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
         print(trajectories)
-    assert False
 
-    print("---Trying Backwards sampling of trajectories---")
-    states = env.StatesBatch(random=True)
-    states.states[0] = torch.zeros(2)
-    states.update_masks()
-    states.update_the_dones()
+    print("\n\n---Trying Backwards sampling of trajectories---")
+    states = env.reset(batch_shape=20, random_init=True)
+
     print(
-        "Trying the Uniform Backwards Action Sampler with one of the initial states being s_0"
+        "\nTrying the Uniform Backwards Action Sampler with one of the initial states being s_0"
     )
     action_sampler = UniformBackwardsActionSampler()
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
@@ -203,27 +203,26 @@ if __name__ == "__main__":
 
     for i, trajectories_sampler in enumerate(trajectories_samplers):
         print(
+            "\n",
             i,
             ": Trying the LogitPBActionSampler with preprocessor {}".format(
                 preprocessors[i]
             ),
         )
-        states = env.StatesBatch(random=True)
-        states.update_masks()
-        states.update_the_dones()
+        states = env.reset(batch_shape=5, random_init=True)
         trajectories = trajectories_samplers[i].sample_trajectories(states)
         print(trajectories)
 
-    print("---Making Sure Last states are computed correctly---")
+    print("\n\n---Making Sure Last states are computed correctly---")
     action_sampler = UniformActionSampler(sf_temperature=2.0)
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories()
+    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     if trajectories.last_states.states.equal(trajectories.get_last_states_raw()):
         print("Last states are computed correctly")
     else:
         print("WARNING !! Last states are not computed correctly")
 
-    print("---Testing SubSampling---")
+    print("\n\n---Testing SubSampling---")
     print(
         f"There are {trajectories.n_trajectories} original trajectories, from which we will sample 2"
     )

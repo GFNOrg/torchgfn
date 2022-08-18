@@ -30,6 +30,11 @@ class KHotPreprocessor(Preprocessor):
         return int(output_dim)
 
     def preprocess(self, states):
-        hot = one_hot(states.states, int(self.output_dim / self.env.ndim)).float()
+        states_tensor = states.states
+        assert states_tensor.equal(
+            states_tensor.floor()
+        ), "K Hot preprocessing only works for integer states"
+        states_tensor = states_tensor.long()
+        hot = one_hot(states_tensor, int(self.output_dim / self.env.ndim)).float()
         hot = rearrange(hot, "... a b -> ... (a b)")
         return hot

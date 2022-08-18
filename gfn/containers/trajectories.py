@@ -26,17 +26,26 @@ class Trajectories:
     when_is_done: Tensor1D
     rewards: Optional[FloatTensor1D]
     last_states: States
+    is_backwards: bool = False
 
     def __repr__(self) -> str:
         states = self.states.states
         assert states.ndim == 3
         states = states.transpose(0, 1)
-        states_repr = "\n".join(
-            ["-> ".join([str(step.numpy()) for step in traj]) for traj in states]
-        )
+        trajectories_representation = ""
+        for traj in states:
+            one_traj_repr = []
+            for step in traj:
+                one_traj_repr.append(str(step.numpy()))
+                if step.equal(self.env.s_0 if self.is_backwards else self.env.s_f):
+                    break
+            trajectories_representation += "-> ".join(one_traj_repr) + "\n"
+        # states_repr = "\n".join(
+        #     ["-> ".join([str(step.numpy()) for step in traj]) for traj in states]
+        # )
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, "
-            f"states={states_repr}, actions={self.actions.transpose(0, 1)}, "
+            f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
             f"when_is_done={self.when_is_done}, rewards={self.rewards})"
         )
 
@@ -62,14 +71,12 @@ class Trajectories:
         indices = perm[:n_trajectories]
 
         states_raw = self.states.states[:, indices, ...]
-        states = self.env.StatesBatch(states=states_raw)
-        states.update_masks()
+        states = self.env.States(states=states_raw)
         actions = self.actions[:, indices]
         when_is_done = self.when_is_done[indices]
         rewards = self.rewards[indices] if self.rewards is not None else None
         last_states_raw = self.last_states.states[indices, ...]
-        last_states = self.env.StatesBatch(states=last_states_raw)
-        last_states.update_masks()
+        last_states = self.env.States(states=last_states_raw)
         return Trajectories(
             env=self.env,
             n_trajectories=n_trajectories,
@@ -78,4 +85,5 @@ class Trajectories:
             when_is_done=when_is_done,
             rewards=rewards,
             last_states=last_states,
+            is_backwards=self.is_backwards,
         )

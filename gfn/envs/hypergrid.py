@@ -43,7 +43,9 @@ class HyperGrid(Env):
         self.reward_cos = reward_cos
 
     def make_random_states_tensor(self, batch_shape: Tuple[int]) -> StatesTensor:
-        return torch.randint(0, self.height, (*batch_shape, *self.state_shape))
+        return torch.randint(
+            0, self.height, (*batch_shape, *self.state_shape), dtype=torch.float
+        )
 
     def update_masks(self, states: States) -> None:
         # TODO: probably not the best way to do this
@@ -75,6 +77,10 @@ class HyperGrid(Env):
         canonical_base = self.height ** torch.arange(self.ndim - 1, -1, -1)
         indices = (canonical_base * states_raw).sum(-1).long()
         return indices
+
+    @property
+    def n_states(self) -> int:
+        return self.height**self.ndim
 
 
 if __name__ == "__main__":
@@ -118,3 +124,13 @@ if __name__ == "__main__":
             print("States:", states)
         except NonValidActionsError:
             print("NonValidActionsError raised as expected because of invalid actions")
+
+    print("\nTesting subscripting with boolean tensors")
+    states = env.reset(batch_shape=(2, 3), random_init=True)
+    print("States:", states)
+    selections = torch.randint(0, 2, (2, 3), dtype=torch.bool)
+    print("Selections:", selections)
+    print("States[selections]:", states[selections])
+    selections = torch.randint(0, 2, (2,), dtype=torch.bool)
+    print("Selections:", selections)
+    print("States[selections]:", states[selections])

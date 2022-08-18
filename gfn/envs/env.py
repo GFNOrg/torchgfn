@@ -142,7 +142,11 @@ class Env(ABC):
     def reward(self, final_states: States) -> TensorFloat:
         pass
 
-    @staticmethod
     @abstractmethod
-    def get_states_indices(states: States) -> TensorLong:
+    def get_states_indices(self, states: States) -> TensorLong:
+        pass
+
+    @property
+    @abstractmethod
+    def n_states(self) -> int:
         pass

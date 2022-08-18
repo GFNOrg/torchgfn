@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any, Callable, ClassVar, Optional, Tuple
+from typing import Any, Callable, ClassVar
 
 import torch
 from torchtyping import TensorType
@@ -7,7 +9,7 @@ from torchtyping import TensorType
 # Typing
 ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
 BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
-StatesTensor = TensorType["shape", torch.float]
+StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
 DonesTensor = TensorType["batch_shape", torch.bool]
 OneStateTensor = TensorType["state_shape", torch.float]
 
@@ -18,13 +20,13 @@ class States(ABC):
     States are represented as torch tensors of shape=(*batch_shape , *state_shape).
     """
 
-    n_actions: ClassVar[Optional[int]] = None
-    s_0: ClassVar[Optional[OneStateTensor]] = None  # Represents the state s_0
+    n_actions: ClassVar[int | None] = None
+    s_0: ClassVar[OneStateTensor | None] = None  # Represents the state s_0
     s_f: ClassVar[
-        Optional[OneStateTensor]
+        OneStateTensor | None
     ] = None  # Represents the state s_f, for example it can be torch.tensor([-1., -1., ...])
-    state_shape: ClassVar[Optional[Tuple[int]]] = None
-    state_ndim: ClassVar[Optional[int]] = None
+    state_shape: ClassVar[tuple[int] | None] = None
+    state_ndim: ClassVar[int | None] = None
     device = torch.device(
         "cpu"
     )  # if s_0 is on another device, this will change automatically
@@ -55,9 +57,10 @@ class States(ABC):
 
     def __init__(
         self,
-        states: Optional[StatesTensor] = None,
+        states: StatesTensor | None = None,
         random_init: bool = False,
-        batch_shape: Optional[Tuple[int]] = None,
+        batch_shape: tuple[int] | None = None,
+        **kwargs,
     ) -> None:
         r"""Initialize the states.
         If states is not None,  then random_init and batch_shape are ignored.
@@ -80,27 +83,40 @@ class States(ABC):
             shape = tuple(self.states.shape)
             assert shape[-self.__class__.state_ndim :] == self.__class__.state_shape  # type: ignore
             self.batch_shape = shape[: -self.__class__.state_ndim]  # type: ignore
+            assert states.dtype == torch.float
 
         self.device = self.states.device
         assert self.device == self.__class__.device
 
         self.forward_masks: ForwardMasksTensor
         self.backward_masks: BackwardMasksTensor
-        self.make_masks()
+        if "forward_masks" in kwargs and "backward_masks" in kwargs:
+            self.forward_masks = kwargs["forward_masks"]
+            self.backward_masks = kwargs["backward_masks"]
+        else:
+            self.make_masks()
 
     def __repr__(self):
         return f"""States(states={self.states},\n forward_masks={self.forward_masks.long()},
         \n backward_masks={self.backward_masks.long()})
         """
 
+    def __getitem__(self, index: TensorType[bool]) -> States:
+        states = self.states[index]
+        forward_masks = self.forward_masks[index]
+        backward_masks = self.backward_masks[index]
+        return self.__class__(
+            states, forward_masks=forward_masks, backward_masks=backward_masks
+        )
+
     @classmethod
-    def make_initial_states_tensor(cls, batch_shape: Tuple[int]) -> StatesTensor:
+    def make_initial_states_tensor(cls, batch_shape: tuple[int]) -> StatesTensor:
         assert cls.s_0 is not None and cls.state_ndim is not None
         return cls.s_0.repeat(*batch_shape, *((1,) * cls.state_ndim))
 
     @classmethod
     @abstractmethod
-    def make_random_states_tensor(cls, batch_shape: Tuple[int]) -> StatesTensor:
+    def make_random_states_tensor(cls, batch_shape: tuple[int]) -> StatesTensor:
         pass
 
     @property
@@ -152,8 +168,8 @@ def make_States_class(
     class_name: str,
     n_actions: int,
     s_0: OneStateTensor,
-    s_f: Optional[OneStateTensor],
-    make_random_states_tensor: Callable[[Any, Tuple[int]], StatesTensor],
+    s_f: OneStateTensor | None,
+    make_random_states_tensor: Callable[[Any, tuple[int]], StatesTensor],
     update_masks: Callable[[States], None],
 ) -> type[States]:
     """

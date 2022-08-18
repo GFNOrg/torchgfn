@@ -30,7 +30,7 @@ class Preprocessor(ABC):
     def preprocess(self, states: States) -> OutputTensor:
         pass
 
-    def __call__(self, states):
+    def __call__(self, states: States) -> OutputTensor:
         return self.preprocess(states)
 
     def __repr__(self):

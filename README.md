@@ -9,7 +9,7 @@ A pointed DAG environment (or GFN environment, or environment for short) is a re
 
 The environment also specifies how a batch of states is represented. The attribute `env.States` is a class that inherits from [`States`](containers/states.py). This attribute is created automatically using an additional  method any environment inheriting from `Env` is required to implement: `make_random_states_tensor`, that creates random states ($\neq s_f$) according to the input batch shape.
 
-Optionally, you can define a static `get_states_indices` method that assigns a unique integer number to each state if the environment allows it.
+Optionally, you can define a static `get_states_indices` method that assigns a unique integer number to each state if the environment allows it, and a `n_states` property that returns an integer representing the number of states (excluding $s_f$) in the environment.
 
 ## States
 In this repository, a state is represent as a `torch.Tensor`. The shape of the tensor is arbitrary, but should be consistent across the states of the same environment. For instance, a state can either be a one-dimensional tensor (as in [HyperGrid](envs/hypergrid.py)), or three-dimensional if we consider 2-D RGB images.
