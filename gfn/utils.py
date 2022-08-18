@@ -87,7 +87,7 @@ def uniform_sample_trajectories(env, start_states):
 if __name__ == "__main__":
     from gfn.envs.hypergrid_env import HyperGrid
     from gfn.envs.utils import OneHotPreprocessor
-    from gfn.gfn_models import PF, UniformPB, UniformPF
+    from gfn.gfn_models import PF
 
     ndim = 3
     H = 8

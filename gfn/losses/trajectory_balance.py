@@ -57,6 +57,7 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
 
         preds = log_pf_trajectories - log_pb_trajectories + self.o.logZ.logZ
 
+        assert trajectories.rewards is not None
         targets = torch.log(trajectories.rewards.clamp_min(self.reward_clip_min))
 
         loss = torch.nn.MSELoss()(preds, targets)

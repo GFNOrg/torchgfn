@@ -2,11 +2,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-import torch
-import torch.nn as nn
 from torchtyping import TensorType
 
-from gfn.envs.env import AbstractStatesBatch, Env
+from gfn.containers import States
+from gfn.envs import Env
 from gfn.preprocessors.base import Preprocessor
 
 # Typing
@@ -23,7 +22,7 @@ class GFNModule(ABC):
     "Abstract Base Class for all functions/approximators/estimators used"
     input_dim: Optional[int]
     output_dim: int
-    output_type: Literal["free"] = "free"
+    output_type: Literal["free", "positive"] = "free"
 
     @abstractmethod
     def __call__(self, input: InputTensor) -> OutputTensor:
@@ -39,7 +38,7 @@ class LogEdgeFlowEstimator:
         self.module = module
         self.env = env
 
-    def __call__(self, states: AbstractStatesBatch) -> OutputTensor:
+    def __call__(self, states: States) -> OutputTensor:
         return self.module(self.preprocessor(states))
 
 
@@ -51,7 +50,7 @@ class LogStateFlowEstimator:
         self.preprocessor = preprocessor
         self.module = module
 
-    def __call__(self, states: AbstractStatesBatch) -> OutputTensor1D:
+    def __call__(self, states: States) -> OutputTensor1D:
         return self.module(self.preprocessor(states))
 
 
@@ -63,7 +62,7 @@ class LogitPFEstimator:
         self.preprocessor = preprocessor
         self.module = module
 
-    def __call__(self, states: AbstractStatesBatch) -> OutputTensor:
+    def __call__(self, states: States) -> OutputTensor:
         return self.module(self.preprocessor(states))
 
 
@@ -75,7 +74,7 @@ class LogitPBEstimator:
         self.preprocessor = preprocessor
         self.module = module
 
-    def __call__(self, states: AbstractStatesBatch) -> OutputTensor:
+    def __call__(self, states: States) -> OutputTensor:
         return self.module(self.preprocessor(states))
 
 

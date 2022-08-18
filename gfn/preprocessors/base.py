@@ -3,11 +3,10 @@ from typing import Tuple
 
 from torchtyping import TensorType
 
-from gfn.envs.env import AbstractStatesBatch, Env
+from gfn.containers import States
+from gfn.envs import Env
 
 # Typing
-batch_shape = None
-dim_in = None
 OutputTensor = TensorType["batch_shape", "dim_in", float]
 
 
@@ -28,7 +27,7 @@ class Preprocessor(ABC):
         pass
 
     @abstractmethod
-    def preprocess(self, states: AbstractStatesBatch) -> OutputTensor:
+    def preprocess(self, states: States) -> OutputTensor:
         pass
 
     def __call__(self, states):
@@ -39,7 +38,7 @@ class Preprocessor(ABC):
 
 
 class IdentityPreprocessor(Preprocessor):
-    "Simple preprocessor applicable to environments with unidimensional states."
+    "Simple preprocessor applicable to environments with uni-dimensional states."
     name = "IdentityPreprocessor"
 
     @property

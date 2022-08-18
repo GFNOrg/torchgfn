@@ -1,4 +1,3 @@
-import torch
 from einops import rearrange
 from torch.nn.functional import one_hot
 

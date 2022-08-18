@@ -1,10 +1,16 @@
-from typing import Optional
+from typing import List, Optional
 
 import torch
+from torchtyping import TensorType
 
 from gfn.containers import States, Trajectories
 from gfn.envs import Env
 from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
+
+# Typing
+StatesTensor = TensorType["n_trajectories", "state_shape", torch.float]
+ActionsTensor = TensorType["n_trajectories", torch.long]
+DonesTensor = TensorType["n_trajectories", torch.bool]
 
 
 class TrajectoriesSampler:
@@ -13,42 +19,58 @@ class TrajectoriesSampler:
         self.action_sampler = action_sampler
         self.is_backwards = isinstance(action_sampler, BackwardsActionSampler)
 
-    def sample_trajectories(self, states: Optional[States] = None) -> Trajectories:
+    def sample_trajectories(
+        self, states: Optional[States] = None, n_trajectories: Optional[int] = None
+    ) -> Trajectories:
         if states is None:
-            states = self.env.reset()
-        n_trajectories = states.shape[0]
-        trajectories_states = []
-        trajectories_actions = []
-        trajectories_already_dones = []
-        # trajectories_backwards_masks = []
+            assert (
+                n_trajectories is not None
+            ), "Either states or n_trajectories should be specified"
+            states = self.env.reset(batch_shape=(n_trajectories,))
+        else:
+            assert (
+                len(states.batch_shape) == 1
+            ), "States should be a linear batch of states"
+            n_trajectories = states.batch_shape[0]
+        assert states is not None
+
+        dones = states.is_initial_state if self.is_backwards else states.is_sink_state
+
+        trajectories_states: List[StatesTensor] = [states.states]
+        trajectories_actions: List[ActionsTensor] = []
         trajectories_dones = (-1) * torch.ones(n_trajectories, dtype=torch.long)
         step = 0
-        while not all(states.already_dones):
-            logits, actions = self.action_sampler.sample(states)
-            trajectories_states += [states.states]
+
+        while not all(dones):
+            _, actions = self.action_sampler.sample(states)
             trajectories_actions += [actions]
-            trajectories_already_dones += [states.already_dones]
 
             if self.is_backwards:
-                new_states, dones = self.env.backward_step(states, actions)
+                new_states = self.env.backward_step(states, actions)
             else:
                 # TODO: fix this when states is passed as argument
-                new_states, dones = self.env.step(actions)
-            trajectories_dones[dones & ~states.already_dones] = step
-            states = new_states
+                new_states = self.env.step(states, actions)
             step += 1
+
+            new_dones = (
+                new_states.is_initial_state
+                if self.is_backwards
+                else new_states.is_sink_state
+            )
+            trajectories_dones[new_dones & ~dones] = step
+            states = new_states
+            dones = new_dones
+
+            trajectories_states += [states.states]
+
             if (
                 isinstance(self.action_sampler, FixedActions)
                 and self.action_sampler.step >= self.action_sampler.total_steps
             ):
-                states.already_dones = torch.ones_like(
-                    states.already_dones, dtype=torch.bool
-                )
+                dones = [True]
 
         trajectories_states = torch.stack(trajectories_states, dim=0)
-        trajectories_already_dones = torch.stack(trajectories_already_dones, dim=0)
-        trajectories_states = self.env.StatesBatch(states=trajectories_states)
-        trajectories_states.already_dones = trajectories_already_dones
+        trajectories_states = self.env.States(states=trajectories_states)
         trajectories_actions = torch.stack(trajectories_actions, dim=0)
 
         if self.is_backwards:
@@ -79,22 +101,20 @@ if __name__ == "__main__":
         OneHotPreprocessor,
     )
     from gfn.samplers.action_samplers import (
-        FixedActions,
         LogitPBActionSampler,
         LogitPFActionSampler,
         UniformActionSampler,
         UniformBackwardsActionSampler,
     )
 
-    n_envs = 5
-    env = HyperGrid(n_envs=n_envs)
+    env = HyperGrid(ndim=2, height=4)
 
     print("---Trying Forward sampling of trajectories---")
 
     print("Trying the Uniform Action Sample with sf_temperature")
     action_sampler = UniformActionSampler(sf_temperature=2.0)
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories()
+    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     print(trajectories)
 
     print("Trying the Fixed Actions Sampler: ")
@@ -104,7 +124,7 @@ if __name__ == "__main__":
         )
     )
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories()
+    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     print(trajectories)
 
     print("Trying the LogitPFActionSampler: ")
@@ -143,6 +163,7 @@ if __name__ == "__main__":
         )
         trajectories = trajectories_sampler.sample_trajectories()
         print(trajectories)
+    assert False
 
     print("---Trying Backwards sampling of trajectories---")
     states = env.StatesBatch(random=True)
@@ -193,7 +214,7 @@ if __name__ == "__main__":
         trajectories = trajectories_samplers[i].sample_trajectories(states)
         print(trajectories)
 
-    print("---Making Sure Last states are computed correcly---")
+    print("---Making Sure Last states are computed correctly---")
     action_sampler = UniformActionSampler(sf_temperature=2.0)
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
     trajectories = trajectories_sampler.sample_trajectories()

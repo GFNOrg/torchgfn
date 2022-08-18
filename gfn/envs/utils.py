@@ -1,12 +1,11 @@
-from distutils.command.build import build
-
 import torch
 from einops import rearrange
 
+from gfn.containers import States
 from gfn.envs import HyperGrid
 
 
-def build_grid(env: HyperGrid):
+def build_grid(env: HyperGrid) -> States:
     H = env.height
     ndim = env.ndim
     grid_shape = (H,) * ndim + (ndim,)  # (H, ..., H, ndim)
@@ -16,14 +15,19 @@ def build_grid(env: HyperGrid):
         for _ in range(i):
             grid_i = grid_i.unsqueeze(1)
         grid[..., i] = grid_i
-    # return grid.view((H)**ndim,-1) # ((H)*ndim, ndim)
-    return grid
+
+    rearrange_string = " ".join([f"n{i}" for i in range(1, ndim + 1)])
+    rearrange_string += " ndim -> "
+    rearrange_string += " ".join([f"n{i}" for i in range(ndim, 0, -1)])
+    rearrange_string += " ndim"
+    grid = rearrange(grid, rearrange_string)
+    return env.States(grid)
 
 
-def get_flat_grid(env: HyperGrid):
+def get_flat_grid(env: HyperGrid) -> States:
     grid = build_grid(env)
-    grid.transpose_(0, 1)
-    return rearrange(grid, "... ndim -> (...) ndim")
+    flat_grid = rearrange(grid.states, "... ndim -> (...) ndim")
+    return env.States(flat_grid)
 
 
 if __name__ == "__main__":
@@ -31,13 +35,14 @@ if __name__ == "__main__":
 
     env = HyperGrid(height=4, ndim=3)
     grid = get_flat_grid(env)
-    print("Shape of the grid: ", grid.shape)
+    print("Shape of the grid: ", grid.batch_shape, grid.state_shape)
+    print(grid)
     print("All rewards: ", env.reward(grid))
 
     env = HyperGrid(height=8, ndim=2)
     grid = build_grid(env)
     flat_grid = get_flat_grid(env)
-    print("Shape of the grid: ", grid.shape)
+    print("Shape of the grid: ", grid.batch_shape, grid.state_shape)
     rewards = env.reward(grid)
 
     Z = rewards.sum()

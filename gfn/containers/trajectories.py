@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 from torchtyping import TensorType
@@ -15,7 +16,7 @@ FloatTensor1D = TensorType["n_trajectories", torch.float]
 
 @dataclass
 class Trajectories:
-    """Class for keeping track of multiple COMPLETE trajectories."""
+    """Class for keeping track of multiple COMPLETE trajectories, or backward trajectories."""
 
     env: Env
     n_trajectories: int
@@ -23,7 +24,7 @@ class Trajectories:
     actions: Tensor2D
     # The following field mentions how many actions were taken in each trajectory.
     when_is_done: Tensor1D
-    rewards: FloatTensor1D
+    rewards: Optional[FloatTensor1D]
     last_states: States
 
     def __repr__(self) -> str:
@@ -35,7 +36,7 @@ class Trajectories:
         )
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, "
-            f"states={states_repr}, actions={self.actions}, "
+            f"states={states_repr}, actions={self.actions.transpose(0, 1)}, "
             f"when_is_done={self.when_is_done}, rewards={self.rewards})"
         )
 

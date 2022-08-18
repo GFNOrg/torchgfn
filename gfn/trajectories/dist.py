@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 
-from gfn.containers import Trajectories
-from gfn.envs.env import AbstractStatesBatch
+from gfn.containers import States, Trajectories
 
 
 class TrajectoryDistribution(ABC):
@@ -37,7 +36,7 @@ class FinalStateDistribution:
     def __init__(self, trajectory_distribution: TrajectoryDistribution) -> None:
         self.trajectory_distribution = trajectory_distribution
 
-    def sample(self, n_final_states: int) -> AbstractStatesBatch:
+    def sample(self, n_final_states: int) -> States:
         """
         Sample a batch of final states.
         """

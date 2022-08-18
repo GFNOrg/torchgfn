@@ -14,7 +14,7 @@ n_actions = None
 n_steps = None
 Tensor2D = TensorType["batch_size", "n_actions"]
 Tensor2D2 = TensorType["batch_size", "n_steps"]
-Tensor1D = TensorType["batch_size", float]
+Tensor1D = TensorType["batch_size", torch.long]
 
 
 class ActionSampler(ABC):

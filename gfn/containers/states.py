@@ -37,7 +37,7 @@ class States(ABC):
         if getattr(cls, "s_0") is None:
             raise ValueError("s_0 must be specified")
         if isinstance(getattr(cls, "s_0"), torch.Tensor):
-            state_shape = getattr(cls, "s_0").shape
+            state_shape = tuple(getattr(cls, "s_0").shape)
             setattr(cls, "state_shape", state_shape)
             setattr(cls, "state_ndim", len(state_shape))
             setattr(cls, "device", getattr(cls, "s_0").device)
@@ -103,6 +103,7 @@ class States(ABC):
     def make_random_states_tensor(cls, batch_shape: Tuple[int]) -> StatesTensor:
         pass
 
+    @property
     def is_initial_state(self) -> DonesTensor:
         r"""Return a boolean tensor of shape=(*batch_shape,),
         where True means that the state is $s_0$ of the DAG.
@@ -113,6 +114,7 @@ class States(ABC):
             out = out.all(dim=-1)
         return out
 
+    @property
     def is_sink_state(self) -> DonesTensor:
         r"""Return a boolean tensor of shape=(*batch_shape,),
         where True means that the state is $s_f$ of the DAG.

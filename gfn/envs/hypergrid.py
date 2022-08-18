@@ -70,11 +70,11 @@ class HyperGrid(Env):
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
         return reward
 
-    def get_states_indices(self, states):
+    def get_states_indices(self, states: States) -> TensorLong:
         states_raw = states.states
         canonical_base = self.height ** torch.arange(self.ndim - 1, -1, -1)
-        flat_indices = (canonical_base * states_raw).sum(-1).long()
-        return flat_indices
+        indices = (canonical_base * states_raw).sum(-1).long()
+        return indices
 
 
 if __name__ == "__main__":
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     print("\nInstantiating a two-dimensional batch of random states")
     states = env.reset(batch_shape=(2, 3), random_init=True)
     print("States:", states)
-    while not all(states.is_initial_state().view(-1)):
+    while not all(states.is_initial_state.view(-1)):
         actions = torch.randint(0, env.n_actions - 1, (2, 3), dtype=torch.long)
         print("Actions: ", actions)
         try:

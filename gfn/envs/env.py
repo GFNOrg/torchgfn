@@ -18,8 +18,6 @@ StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
 
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
 
-AbstractStatesBatch = None
-
 
 class Env(ABC):
     """
@@ -32,7 +30,7 @@ class Env(ABC):
         self, n_actions: int, s_0: OneStateTensor, s_f: Optional[OneStateTensor] = None
     ):
         if isinstance(s_f, torch.Tensor) and (
-            s_f.shape != s_0.shape or s_f.device != s_0.device
+            s_f.shape != s_0.shape or s_f.device != s_0.device  # type: ignore
         ):
             raise ValueError(
                 "If s_f is specified, it should be a tensor of shape {} and device {}".format(
@@ -76,7 +74,7 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating sink states in the new batch."""
         new_states = deepcopy(states)
-        sink_states: TensorBool = new_states.is_sink_state()
+        sink_states: TensorBool = new_states.is_sink_state
 
         non_sink_states_masks = new_states.forward_masks[~sink_states]
         non_sink_actions = actions[~sink_states]
@@ -104,7 +102,7 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating initial states in the new batch."""
         new_states = deepcopy(states)
-        initial_states: TensorBool = new_states.is_initial_state()
+        initial_states: TensorBool = new_states.is_initial_state
 
         non_initial_states_masks = new_states.backward_masks[~initial_states]
         non_initial_actions = actions[~initial_states]

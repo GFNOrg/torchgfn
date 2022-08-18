@@ -6,14 +6,16 @@ import torch
 import torch.nn as nn
 
 
-def make_mlp(l, act=nn.LeakyReLU(), tail=[]):
+def make_mlp(dimensions_list, act=nn.LeakyReLU(), tail=[]):
     """makes an MLP with no top layer activation"""
     return nn.Sequential(
         *(
             sum(
                 (
-                    [nn.Linear(i, o)] + ([act] if n < len(l) - 2 else [])
-                    for n, (i, o) in enumerate(zip(l, l[1:]))
+                    [nn.Linear(i, o)] + ([act] if n < len(dimensions_list) - 2 else [])
+                    for n, (i, o) in enumerate(
+                        zip(dimensions_list, dimensions_list[1:])
+                    )
                 ),
                 [],
             )

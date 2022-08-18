@@ -62,7 +62,7 @@ if __name__ == "__main__":
     from gfn.estimators import LogitPBEstimator, LogitPFEstimator, LogStateFlowEstimator
     from gfn.models import Uniform, ZeroGFNModule
     from gfn.preprocessors import KHotPreprocessor
-    from gfn.samplers import FixedActions, LogitPFActionSampler, TransitionsSampler
+    from gfn.samplers import FixedActions, TransitionsSampler
 
     n_envs = 5
     height = 4
