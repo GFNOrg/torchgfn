@@ -43,6 +43,7 @@ class Trajectories:
         return self.states.states[-1]
 
     def purge(self, raw_state) -> None:
+        # TODO: obsolete - remove or update
         """Remove all trajectories that ended in the given state."""
         ndim = self.states.shape[-1]
         mask = (self.get_last_states_raw() == raw_state).sum(1) == ndim

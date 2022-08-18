@@ -2,7 +2,6 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from copy import deepcopy
 from typing import Tuple
 
 import torch

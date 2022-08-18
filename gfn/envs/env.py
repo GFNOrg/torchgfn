@@ -3,10 +3,9 @@ from copy import deepcopy
 from typing import Optional, Tuple, Union
 
 import torch
-from gym.spaces import Discrete
 from torchtyping import TensorType
 
-from gfn.containers.states import States, StatesMetaClass, make_States_class
+from gfn.containers.states import States, make_States_class
 
 # Typing
 TensorLong = TensorType["batch_shape", torch.long]
@@ -44,9 +43,8 @@ class Env(ABC):
         self.s_0 = s_0
         self.state_shape = tuple(s_0.shape)
 
-        self.action_space = Discrete(self.n_actions)
         self.device = s_0.device
-        self.States: StatesMetaClass = make_States_class(
+        self.States: type[States] = make_States_class(
             class_name=self.__class__.__name__ + "States",
             n_actions=n_actions,
             s_0=s_0,
@@ -63,12 +61,12 @@ class Env(ABC):
         return actions == self.n_actions - 1
 
     def reset(
-        self, batch_shape: Union[int, Tuple[int]], random_init: bool = False
+        self, batch_shape: Union[int, Tuple[int]], random_init: bool = False, **kwargs
     ) -> States:
         "Instantiates a batch of initial states."
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
-        return self.States(batch_shape=batch_shape, random_init=random_init)
+        return self.States(batch_shape=batch_shape, random_init=random_init, **kwargs)
 
     def step(
         self,

@@ -1,4 +1,4 @@
-from abc import ABC, ABCMeta, abstractmethod
+from abc import ABC, abstractmethod
 from typing import Any, Callable, ClassVar, Optional, Tuple
 
 import torch
@@ -12,12 +12,7 @@ DonesTensor = TensorType["batch_shape", torch.bool]
 OneStateTensor = TensorType["state_shape", torch.float]
 
 
-class StatesMetaClass(ABCMeta):
-    make_initial_states_tensor: Callable[[Tuple[int]], StatesTensor]
-    make_random_states_tensor: Callable[[Tuple[int]], StatesTensor]
-
-
-class States(metaclass=StatesMetaClass):
+class States(ABC):
     """Base class for states, seen as nodes of the DAG.
     Each environment/task should have its own States subclass.
     States are represented as torch tensors of shape=(*batch_shape , *state_shape).
@@ -158,7 +153,7 @@ def make_States_class(
     s_f: Optional[OneStateTensor],
     make_random_states_tensor: Callable[[Any, Tuple[int]], StatesTensor],
     update_masks: Callable[[States], None],
-) -> StatesMetaClass:
+) -> type[States]:
     """
     Creates a States subclass with the given state_shape and forward/backward mask makers.
     """
