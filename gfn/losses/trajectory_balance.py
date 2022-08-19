@@ -19,41 +19,45 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         self.backward_action_sampler = LogitPBActionSampler(o.logit_PB)
 
     def __call__(self, trajectories: Trajectories) -> TensorType[0]:
-        pf_logits = self.action_sampler.get_logits(trajectories.states)
-        log_pf_all = pf_logits.log_softmax(dim=-1)
-        log_pf_actions = torch.gather(
-            log_pf_all, dim=-1, index=trajectories.actions.unsqueeze(-1)
-        ).squeeze(-1)
-        forward_mask = (
-            torch.arange(log_pf_actions.shape[0])
-            .unsqueeze(1)
-            .lt(1 + trajectories.when_is_done.unsqueeze(0))
-            .float()
-        )
-        log_pf_actions *= forward_mask
-        log_pf_trajectories = torch.sum(log_pf_actions, dim=0)  # should be 1D
+        if trajectories.is_backwards:
+            raise ValueError("Backwards trajectories are not supported")
 
-        pb_logits = self.backward_action_sampler.get_logits(trajectories.states)[1:]
-        log_pb_all = pb_logits.log_softmax(dim=-1)
-        # log_pb_al is now a 3D tensor of shape [n_steps - 1, n_trajectories, n_actions - 1]
-        # in order to be able to use "gather", we need to add a dimension to the last dimension
-        # we can fill it with anything we want, given that it will be masked out later
-        new_log_pb_all = torch.cat(
-            [log_pb_all, 5 * torch.ones(log_pb_all.shape[:-1]).unsqueeze(-1)], -1
-        )
-        # the following tensor should be of shape [n_steps - 1, n_trajectories]
-        log_pb_actions = torch.gather(
-            new_log_pb_all, dim=-1, index=trajectories.actions[:-1].unsqueeze(-1)
+        valid_states = trajectories.states[~trajectories.states.is_sink_state]
+        valid_actions = trajectories.actions[trajectories.actions != -1]
+
+        # uncomment next line for debugging
+        # assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions == -1)
+
+        if valid_states.batch_shape != tuple(valid_actions.shape):
+            raise ValueError("Something wrong happening with log_pf evaluations")
+        valid_pf_logits = self.action_sampler.get_logits(valid_states)
+        valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
+        valid_log_pf_actions = torch.gather(
+            valid_log_pf_all, dim=-1, index=valid_actions.unsqueeze(-1)
         ).squeeze(-1)
-        backward_mask = (
-            torch.arange(new_log_pb_all.shape[0])
-            .unsqueeze(1)
-            .lt(trajectories.when_is_done.unsqueeze(0))
-            .float()
+        log_pf_trajectories = torch.zeros_like(trajectories.actions, dtype=torch.float)
+        log_pf_trajectories[trajectories.actions != -1] = valid_log_pf_actions
+
+        log_pf_trajectories = log_pf_trajectories.sum(dim=0)
+
+        valid_pb_logits = self.backward_action_sampler.get_logits(
+            valid_states[~valid_states.is_initial_state]
         )
-        log_pb_actions.nan_to_num_()  # TODO: this seems necessary, but I don't like it
-        log_pb_actions *= backward_mask
-        log_pb_trajectories = torch.sum(log_pb_actions, dim=0)  # should be 1D
+        valid_log_pb_all = valid_pb_logits.log_softmax(dim=-1)
+        non_exit_valid_actions = valid_actions[
+            valid_actions != trajectories.env.n_actions - 1
+        ]
+        valid_log_pb_actions = torch.gather(
+            valid_log_pb_all, dim=-1, index=non_exit_valid_actions.unsqueeze(-1)
+        ).squeeze(-1)
+        log_pb_trajectories = torch.zeros_like(trajectories.actions, dtype=torch.float)
+        log_pb_trajectories_slice = torch.zeros_like(valid_actions, dtype=torch.float)
+        log_pb_trajectories_slice[
+            valid_actions != trajectories.env.n_actions - 1
+        ] = valid_log_pb_actions
+        log_pb_trajectories[trajectories.actions != -1] = log_pb_trajectories_slice
+
+        log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
         preds = log_pf_trajectories - log_pb_trajectories + self.o.logZ.logZ
 
@@ -75,10 +79,9 @@ if __name__ == "__main__":
     from gfn.samplers.action_samplers import FixedActions
     from gfn.samplers.trajectories_sampler import TrajectoriesSampler
 
-    n_envs = 5
     height = 4
     ndim = 2
-    env = HyperGrid(n_envs=n_envs, height=height, ndim=ndim)
+    env = HyperGrid(height=height, ndim=ndim)
 
     print("Evaluating the loss on 5 trajectories with manually chosen actions")
     action_sampler = FixedActions(
@@ -87,7 +90,7 @@ if __name__ == "__main__":
         )
     )
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories()
+    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     print(trajectories)
 
     preprocessor = KHotPreprocessor(env)
@@ -133,7 +136,7 @@ if __name__ == "__main__":
     logit_PF = LogitPFEstimator(preprocessor, env, pf)
     action_sampler = LogitPFActionSampler(logit_PF=logit_PF)
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories()
+    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     print(trajectories)
 
     logZ = torch.tensor(-5.0)
