@@ -3,52 +3,68 @@ from torchtyping import TensorType
 
 from gfn.containers import Transitions
 from gfn.losses.base import EdgeDecomposableLoss
-from gfn.parametrizations import ForwardBackwardTransitionParametrization
+from gfn.parametrizations import O_PFB
 from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
 
 
 class DetailedBalance(EdgeDecomposableLoss):
-    def __init__(
-        self, o: ForwardBackwardTransitionParametrization, delta: float = 1e-5
-    ):
+    def __init__(self, o: O_PFB, delta: float = 1e-5):
         self.o = o
         self.delta = delta
         self.action_sampler = LogitPFActionSampler(o.logit_PF)
         self.backward_action_sampler = LogitPBActionSampler(o.logit_PB)
 
     def __call__(self, transitions: Transitions) -> TensorType[0]:
-        pf_logits = self.action_sampler.get_logits(transitions.states)
-        log_pf_all = pf_logits.log_softmax(dim=-1)
-        log_pf_actions = torch.gather(
-            log_pf_all, dim=-1, index=transitions.actions.unsqueeze(-1)
-        ).squeeze(
-            -1
-        )  # should be 1D
+        if transitions.is_backwards:
+            raise ValueError("Backwards transitions are not supported")
+        valid_states = transitions.states[~transitions.states.is_sink_state]
+        valid_actions = transitions.actions[transitions.actions != -1]
 
-        pb_logits = self.backward_action_sampler.get_logits(transitions.next_states)
-        log_pb_all = pb_logits.log_softmax(dim=-1)
-        log_pb_actions = torch.full(
-            (transitions.n_transitions,),
-            -10.0,  # The value -10 doesn't matter
-            device=transitions.env.device,
+        # uncomment next line for debugging
+        # assert transitions.states.is_sink_state.equal(transitions.actions == -1)
+
+        if valid_states.batch_shape != tuple(valid_actions.shape):
+            raise ValueError("Something wrong happening with log_pf evaluations")
+
+        valid_pf_logits = self.action_sampler.get_logits(valid_states)
+        valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
+        valid_log_pf_actions = torch.gather(
+            valid_log_pf_all, dim=-1, index=valid_actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        valid_log_F_s = self.o.logF(valid_states).squeeze(-1)
+
+        preds = valid_log_pf_actions + valid_log_F_s
+
+        targets = torch.zeros_like(preds)
+
+        # uncomment next line for debugging
+        assert transitions.next_states.is_sink_state.equal(transitions.is_done)
+
+        # automatically removes invalid transitions (i.e. s_f -> s_f)
+        valid_next_states = transitions.next_states[~transitions.is_done]
+        non_exit_valid_actions = valid_actions[
+            valid_actions != transitions.env.n_actions - 1
+        ]
+        valid_pb_logits = self.backward_action_sampler.get_logits(valid_next_states)
+        valid_log_pb_all = valid_pb_logits.log_softmax(dim=-1)
+        valid_log_pb_actions = torch.gather(
+            valid_log_pb_all, dim=-1, index=non_exit_valid_actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        valid_transitions_is_done = transitions.is_done[
+            ~transitions.states.is_sink_state
+        ]
+
+        valid_log_F_s_next = self.o.logF(valid_next_states).squeeze(-1)
+        targets[~valid_transitions_is_done] = valid_log_pb_actions + valid_log_F_s_next
+        assert transitions.rewards is not None
+        valid_transitions_rewards = transitions.rewards[
+            ~transitions.states.is_sink_state
+        ]
+        targets[valid_transitions_is_done] = torch.log(
+            valid_transitions_rewards[valid_transitions_is_done]
         )
-        log_pb_actions[~transitions.is_done] = torch.gather(
-            log_pb_all[~transitions.is_done],
-            dim=-1,
-            index=transitions.actions[~transitions.is_done].unsqueeze(-1),
-        ).squeeze(
-            -1
-        )  # should be 1D
-
-        log_F_s = self.o.logF(transitions.states).squeeze(-1)
-        log_F_s_next = self.o.logF(transitions.next_states).squeeze(-1)
-
-        log_rewards = transitions.rewards
-
-        preds = log_pf_actions + log_F_s
-        targets = transitions.is_done.float() * log_rewards + (
-            1 - transitions.is_done.float()
-        ) * (log_pb_actions + log_F_s_next)
 
         loss = torch.nn.MSELoss()(preds, targets)
         if torch.isnan(loss):
@@ -64,10 +80,9 @@ if __name__ == "__main__":
     from gfn.preprocessors import KHotPreprocessor
     from gfn.samplers import FixedActions, TransitionsSampler
 
-    n_envs = 5
     height = 4
     ndim = 2
-    env = HyperGrid(n_envs=n_envs, height=height, ndim=ndim)
+    env = HyperGrid(height=height, ndim=ndim)
 
     print("Evaluating the loss on 5 trajectories with manually chosen actions")
     action_sampler = FixedActions(
@@ -77,21 +92,23 @@ if __name__ == "__main__":
     )
 
     transitions_sampler = TransitionsSampler(env, action_sampler)
-    transitions = transitions_sampler.sample_transitions()
+    transitions = transitions_sampler.sample_transitions(n_transitions=5)
     print(transitions)
 
     preprocessor = KHotPreprocessor(env)
     pf = Uniform(env.n_actions)
     pb = Uniform(env.n_actions - 1)
 
-    logit_PF = LogitPFEstimator(preprocessor, env, pf)
-    logit_PB = LogitPBEstimator(preprocessor, env, pb)
+    logit_PF = LogitPFEstimator(preprocessor, pf)
+    logit_PB = LogitPBEstimator(preprocessor, pb)
     zero_module = ZeroGFNModule()
     logF = LogStateFlowEstimator(preprocessor, zero_module)
 
-    o = ForwardBackwardTransitionParametrization(
-        logit_PF=logit_PF, logF=logF, logit_PB=logit_PB
-    )
+    o = O_PFB(logit_PF=logit_PF, logF=logF, logit_PB=logit_PB)
 
     loss = DetailedBalance(o)
+    print(loss(transitions))
+
+    transitions = transitions_sampler.sample_transitions(states=transitions.next_states)
+    print(transitions)
     print(loss(transitions))

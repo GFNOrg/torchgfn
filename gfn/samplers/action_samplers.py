@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 from torch.distributions import Categorical
@@ -34,14 +34,19 @@ class ActionSampler(ABC):
         logits[~states.forward_masks] = -float("inf")
         return logits
 
-    def get_probs(self, states: States) -> Tuple[Tensor2D, Tensor2D]:
+    def get_probs(
+        self, states: States, temperature: Optional[float] = None
+    ) -> Tuple[Tensor2D, Tensor2D]:
         logits = self.get_logits(states)
         logits[..., -1] -= self.sf_temperature
-        probs = torch.softmax(logits / self.temperature, dim=-1)
+        temperature = temperature if temperature is not None else self.temperature
+        probs = torch.softmax(logits / temperature, dim=-1)
         return logits, probs
 
-    def sample(self, states: States) -> Tuple[Tensor2D, Tensor1D]:
-        logits, probs = self.get_probs(states)
+    def sample(
+        self, states: States, temperature: Optional[float] = None
+    ) -> Tuple[Tensor2D, Tensor1D]:
+        logits, probs = self.get_probs(states, temperature)
         return logits, Categorical(probs).sample()
 
 
@@ -51,9 +56,12 @@ class BackwardsActionSampler(ActionSampler):
         logits[~states.backward_masks] = -float("inf")
         return logits
 
-    def get_probs(self, states: States) -> Tensor2D:
+    def get_probs(
+        self, states: States, temperature: Optional[float] = None
+    ) -> Tensor2D:
         logits = self.get_logits(states)
-        probs = torch.softmax(logits / self.temperature, dim=-1)
+        temperature = temperature if temperature is not None else self.temperature
+        probs = torch.softmax(logits / temperature, dim=-1)
         # The following line is hack that works: when probs are nan, it means
         # that the state is already done (usually during backwards sampling).
         # In which case, any action can be passed to the backward_step function

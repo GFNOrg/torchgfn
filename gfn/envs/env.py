@@ -74,19 +74,19 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating sink states in the new batch."""
         new_states = deepcopy(states)
-        sink_states: TensorBool = new_states.is_sink_state
+        valid_states: TensorBool = ~states.is_sink_state
 
-        non_sink_states_masks = new_states.forward_masks[~sink_states]
-        non_sink_actions = actions[~sink_states]
-        actions_valid = all(
-            torch.gather(non_sink_states_masks, 1, non_sink_actions.unsqueeze(1))
+        valid_states_masks = new_states.forward_masks[valid_states]
+        valid_actions = actions[valid_states]
+        valid_actions_bool = all(
+            torch.gather(valid_states_masks, 1, valid_actions.unsqueeze(1))
         )
-        if not actions_valid:
+        if not valid_actions_bool:
             raise NonValidActionsError("Actions are not valid")
 
         new_sink_states = self.is_exit_actions(actions)
         new_states.states[new_sink_states] = self.s_f
-        new_sink_states = sink_states | new_sink_states
+        new_sink_states = ~valid_states | new_sink_states
 
         not_done_states = new_states.states[~new_sink_states]
         not_done_actions = actions[~new_sink_states]
@@ -102,20 +102,20 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating initial states in the new batch."""
         new_states = deepcopy(states)
-        initial_states: TensorBool = new_states.is_initial_state
+        valid_states: TensorBool = ~new_states.is_initial_state
 
-        non_initial_states_masks = new_states.backward_masks[~initial_states]
-        non_initial_actions = actions[~initial_states]
-        actions_valid = all(
-            torch.gather(non_initial_states_masks, 1, non_initial_actions.unsqueeze(1))
+        valid_states_masks = new_states.backward_masks[valid_states]
+        valid_actions = actions[valid_states]
+        valid_actions_bool = all(
+            torch.gather(valid_states_masks, 1, valid_actions.unsqueeze(1))
         )
-        if not actions_valid:
+        if not valid_actions_bool:
             raise NonValidActionsError("Actions are not valid")
 
-        not_done_states = new_states.states[~initial_states]
-        self.backward_step_no_worry(not_done_states, non_initial_actions)
+        not_done_states = new_states.states[valid_states]
+        self.backward_step_no_worry(not_done_states, valid_actions)
 
-        new_states.states[~initial_states] = not_done_states
+        new_states.states[valid_states] = not_done_states
 
         self.update_masks(new_states)
         return new_states

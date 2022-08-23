@@ -30,6 +30,18 @@ def get_flat_grid(env: HyperGrid) -> States:
     return env.States(flat_grid)
 
 
+def get_true_dist_pmf(env: HyperGrid) -> torch.Tensor:
+    "Returns a one-dimensional tensor representing the true distribution."
+    flat_grid = get_flat_grid(env)
+    flat_grid_indices = env.get_states_indices(flat_grid)
+    true_dist = env.reward(flat_grid)
+    true_dist = torch.tensor(
+        [true_dist[flat_grid_indices[i]] for i in range(len(flat_grid_indices))]
+    )
+    true_dist /= true_dist.sum()
+    return true_dist
+
+
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 

@@ -4,3 +4,5 @@ black
 torch
 torchtyping
 einops
+
+simple-parsing

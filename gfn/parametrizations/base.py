@@ -13,8 +13,13 @@ class Parametrization(ABC):
     """
 
     @abstractmethod
-    def Pi(self, env: Env, **kwargs) -> TrajectoryDistribution:
+    def Pi(self, env: Env, n_samples: int, **kwargs) -> TrajectoryDistribution:
         pass
 
-    def P_T(self, env: Env) -> FinalStateDistribution:
-        return FinalStateDistribution(self.Pi(env))
+    def P_T(self, env: Env, n_samples: int, **kwargs) -> FinalStateDistribution:
+        return FinalStateDistribution(self.Pi(env, n_samples, **kwargs))
+
+    @property
+    @abstractmethod
+    def parameters(self) -> dict:
+        pass

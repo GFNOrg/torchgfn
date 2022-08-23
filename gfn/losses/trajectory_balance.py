@@ -1,16 +1,18 @@
+from typing import Union
+
 import torch
 from torchtyping import TensorType
 
 from gfn.containers import Trajectories
 from gfn.losses.base import TrajectoryDecomposableLoss
-from gfn.parametrizations import ForwardBackwardTransitionParametrizationWithZ
+from gfn.parametrizations import O_PFBZ, O_PFZ
 from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
 
 
 class TrajectoryBalance(TrajectoryDecomposableLoss):
     def __init__(
         self,
-        o: ForwardBackwardTransitionParametrizationWithZ,
+        o: Union[O_PFBZ, O_PFZ],
         reward_clip_min: float = 1e-5,
     ):
         self.o = o
@@ -61,8 +63,10 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
 
         preds = log_pf_trajectories - log_pb_trajectories + self.o.logZ.logZ
 
-        assert trajectories.rewards is not None
-        targets = torch.log(trajectories.rewards.clamp_min(self.reward_clip_min))
+        rewards = trajectories.rewards
+        assert rewards is not None
+
+        targets = torch.log(rewards.clamp_min(self.reward_clip_min))
 
         loss = torch.nn.MSELoss()(preds, targets)
         if torch.isnan(loss):
@@ -98,11 +102,11 @@ if __name__ == "__main__":
     pb = Uniform(env.n_actions - 1)
 
     logZ = torch.tensor(0.0)
-    logit_PF = LogitPFEstimator(preprocessor, env, pf)
-    logit_PB = LogitPBEstimator(preprocessor, env, pb)
+    logit_PF = LogitPFEstimator(preprocessor, pf)
+    logit_PB = LogitPBEstimator(preprocessor, pb)
     logZ = LogZEstimator(logZ)
 
-    o = ForwardBackwardTransitionParametrizationWithZ(logit_PF, logZ, logit_PB)
+    o = O_PFZ(logit_PF, logit_PB, logZ)
 
     loss = TrajectoryBalance(o)
     print(loss(trajectories))
@@ -119,8 +123,9 @@ if __name__ == "__main__":
     else:
         raise ValueError("TB LOSS NOT PROPERLY CALCULATED")
 
+    n_trajectories = 25
     print(
-        "Evaluating the loss on 5 trajectories with randomly chosen actions (P_F and P_B as modules)"
+        f"\nEvaluating the loss on {n_trajectories} trajectories with randomly chosen actions (P_F and P_B as modules)"
     )
 
     preprocessor = KHotPreprocessor(env)
@@ -133,18 +138,20 @@ if __name__ == "__main__":
     )
 
     print("Now with LogitPFActionSampler")
-    logit_PF = LogitPFEstimator(preprocessor, env, pf)
+    logit_PF = LogitPFEstimator(preprocessor, pf)
     action_sampler = LogitPFActionSampler(logit_PF=logit_PF)
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
+    trajectories = trajectories_sampler.sample_trajectories(
+        n_trajectories=n_trajectories
+    )
     print(trajectories)
 
     logZ = torch.tensor(-5.0)
 
-    logit_PB = LogitPBEstimator(preprocessor, env, pb)
+    logit_PB = LogitPBEstimator(preprocessor, pb)
     logZ = LogZEstimator(logZ)
 
-    o = ForwardBackwardTransitionParametrizationWithZ(logit_PF, logZ, logit_PB)
+    o = O_PFBZ(logit_PF, logit_PB, logZ)
 
     loss = TrajectoryBalance(o)
     print(loss(trajectories))

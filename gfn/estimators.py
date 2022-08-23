@@ -55,9 +55,9 @@ class LogStateFlowEstimator:
 
 
 class LogitPFEstimator:
-    def __init__(self, preprocessor: Preprocessor, env: Env, module: GFNModule):
+    def __init__(self, preprocessor: Preprocessor, module: GFNModule):
         assert module.input_dim is None or module.input_dim == preprocessor.output_dim
-        assert module.output_dim == env.n_actions
+        assert module.output_dim == preprocessor.env.n_actions
         assert module.output_type == "free"
         self.preprocessor = preprocessor
         self.module = module
@@ -67,9 +67,9 @@ class LogitPFEstimator:
 
 
 class LogitPBEstimator:
-    def __init__(self, preprocessor: Preprocessor, env: Env, module: GFNModule):
+    def __init__(self, preprocessor: Preprocessor, module: GFNModule):
         assert module.input_dim is None or module.input_dim == preprocessor.output_dim
-        assert module.output_dim == env.n_actions - 1
+        assert module.output_dim == preprocessor.env.n_actions - 1
         assert module.output_type == "free"
         self.preprocessor = preprocessor
         self.module = module
@@ -81,3 +81,10 @@ class LogitPBEstimator:
 @dataclass
 class LogZEstimator:
     logZ: TensorType[0]
+
+    def __post_init__(self):
+        assert self.logZ.shape == ()
+        self.logZ.requires_grad = True
+
+    def __repr__(self) -> str:
+        return str(self.logZ.item())

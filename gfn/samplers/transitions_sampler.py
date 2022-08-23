@@ -13,22 +13,47 @@ class TransitionsSampler:
         self.action_sampler = action_sampler
         self.is_backwards = isinstance(action_sampler, BackwardsActionSampler)
 
-    def sample_transitions(self, states: Optional[States] = None) -> Transitions:
+    def sample_transitions(
+        self, states: Optional[States] = None, n_transitions: Optional[int] = None
+    ) -> Transitions:
         if states is None:
-            states = self.env.reset()
-        assert states is not None and states.ndim == 2
+            assert (
+                n_transitions is not None
+            ), "Either states or n_transitions should be specified"
+            states = self.env.reset(batch_shape=(n_transitions,))
+        assert states is not None and len(states.batch_shape) == 1
         n_transitions = states.batch_shape[0]
-        rewards = torch.zeros(n_transitions, dtype=torch.float, device=states.device)
+        actions = torch.full((n_transitions,), fill_value=-1, dtype=torch.long)
 
-        _, actions = self.action_sampler.sample(states)
+        valid_selector = (
+            ~states.is_initial_state if self.is_backwards else ~states.is_sink_state
+        )
+        valid_states = states[valid_selector]
+        _, valid_actions = self.action_sampler.sample(valid_states)
+        actions[valid_selector] = valid_actions
 
         if self.is_backwards:
-            new_states, dones = self.env.backward_step(states, actions)
+            new_states = self.env.backward_step(states, actions)
         else:
-            # TODO: fix this when states is passed as argument
-            new_states, dones = self.env.step(actions)
+            new_states = self.env.step(states, actions)
 
-        rewards[dones] = self.env.reward(new_states.states[dones])
+        is_done = (
+            new_states.is_initial_state
+            if self.is_backwards
+            else new_states.is_sink_state
+        )
+        if not self.is_backwards:
+            rewards = torch.zeros(
+                n_transitions, dtype=torch.float, device=states.device
+            )
+            rewards[is_done] = self.env.reward(states[is_done])
+        else:
+            rewards = None
+
+        if isinstance(self.action_sampler, FixedActions):
+            self.action_sampler.actions = self.action_sampler.actions[
+                valid_actions != self.env.n_actions - 1
+            ]
 
         transitions = Transitions(
             env=self.env,
@@ -36,8 +61,9 @@ class TransitionsSampler:
             states=states,
             actions=actions,
             next_states=new_states,
-            is_done=dones,
+            is_done=is_done,
             rewards=rewards,
+            is_backwards=self.is_backwards,
         )
 
         return transitions
@@ -47,15 +73,16 @@ if __name__ == "__main__":
     from gfn.envs import HyperGrid
     from gfn.samplers.action_samplers import UniformActionSampler
 
-    n_envs = 5
-    env = HyperGrid(n_envs=n_envs)
+    env = HyperGrid(ndim=2, height=8)
 
     print("---Trying Forward sampling of trajectories---")
 
     print("Trying the Uniform Action Sampler")
     action_sampler = UniformActionSampler()
     transitions_sampler = TransitionsSampler(env, action_sampler)
-    transitions = transitions_sampler.sample_transitions()
+    transitions = transitions_sampler.sample_transitions(n_transitions=5)
+    print(transitions)
+    transitions = transitions_sampler.sample_transitions(states=transitions.next_states)
     print(transitions)
 
     print("Trying the Fixed Actions Sampler")
@@ -65,5 +92,8 @@ if __name__ == "__main__":
         )
     )
     transitions_sampler = TransitionsSampler(env, action_sampler)
-    transitions = transitions_sampler.sample_transitions()
+    transitions = transitions_sampler.sample_transitions(n_transitions=5)
+    print(transitions)
+
+    transitions = transitions_sampler.sample_transitions(states=transitions.next_states)
     print(transitions)

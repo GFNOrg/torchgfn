@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 from torchtyping import TensorType
@@ -20,8 +21,9 @@ class Transitions:
     states: States
     actions: LongTensor
     next_states: States
-    is_done: BoolTensor  # true when the corresponding action is the exit action
-    rewards: FloatTensor  # should be zero for is_done=False
+    is_done: BoolTensor  # true when the corresponding action is the exit action for forward transitions
+    rewards: Optional[FloatTensor]  # should be zero for is_done=False
+    is_backwards: bool = False
 
     def __repr__(self):
         states_tensor = self.states.states

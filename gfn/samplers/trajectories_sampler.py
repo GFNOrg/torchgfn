@@ -20,7 +20,10 @@ class TrajectoriesSampler:
         self.is_backwards = isinstance(action_sampler, BackwardsActionSampler)
 
     def sample_trajectories(
-        self, states: Optional[States] = None, n_trajectories: Optional[int] = None
+        self,
+        states: Optional[States] = None,
+        n_trajectories: Optional[int] = None,
+        temperature: Optional[float] = 1.0,
     ) -> Trajectories:
         if states is None:
             assert (
@@ -43,7 +46,7 @@ class TrajectoriesSampler:
 
         while not all(dones):
             actions = torch.full((n_trajectories,), fill_value=-1, dtype=torch.long)
-            _, valid_actions = self.action_sampler.sample(states[~dones])
+            _, valid_actions = self.action_sampler.sample(states[~dones], temperature)
             actions[~dones] = valid_actions
             trajectories_actions += [actions]
 
@@ -74,19 +77,12 @@ class TrajectoriesSampler:
         trajectories_states = self.env.States(states=trajectories_states)
         trajectories_actions = torch.stack(trajectories_actions, dim=0)
 
-        if self.is_backwards:
-            trajectories_rewards = None
-        else:
-            trajectories_rewards = self.env.reward(states)
-
         trajectories = Trajectories(
             env=self.env,
             n_trajectories=n_trajectories,
             states=trajectories_states,
             actions=trajectories_actions,
             when_is_done=trajectories_dones,
-            rewards=trajectories_rewards,
-            last_states=states,
             is_backwards=self.is_backwards,
         )
 
@@ -142,7 +138,7 @@ if __name__ == "__main__":
         for preprocessor in preprocessors
     ]
     logit_pf_estimators = [
-        LogitPFEstimator(preprocessor=preprocessor, env=env, module=module)
+        LogitPFEstimator(preprocessor=preprocessor, module=module)
         for (preprocessor, module) in zip(preprocessors, modules)
     ]
 
@@ -187,7 +183,7 @@ if __name__ == "__main__":
         for preprocessor in preprocessors
     ]
     logit_pb_estimators = [
-        LogitPBEstimator(preprocessor=preprocessor, env=env, module=module)
+        LogitPBEstimator(preprocessor=preprocessor, module=module)
         for (preprocessor, module) in zip(preprocessors, modules)
     ]
 
@@ -217,10 +213,6 @@ if __name__ == "__main__":
     action_sampler = UniformActionSampler(sf_temperature=2.0)
     trajectories_sampler = TrajectoriesSampler(env, action_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
-    if trajectories.last_states.states.equal(trajectories.get_last_states_raw()):
-        print("Last states are computed correctly")
-    else:
-        print("WARNING !! Last states are not computed correctly")
 
     print("\n\n---Testing SubSampling---")
     print(

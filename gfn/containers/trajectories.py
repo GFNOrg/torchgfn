@@ -24,14 +24,11 @@ class Trajectories:
     actions: Tensor2D
     # The following field mentions how many actions were taken in each trajectory.
     when_is_done: Tensor1D
-    rewards: Optional[FloatTensor1D]
-    last_states: States
     is_backwards: bool = False
 
     def __repr__(self) -> str:
-        states = self.states.states
+        states = self.states.states.transpose(0, 1)
         assert states.ndim == 3
-        states = states.transpose(0, 1)
         trajectories_representation = ""
         for traj in states:
             one_traj_repr = []
@@ -49,8 +46,18 @@ class Trajectories:
             f"when_is_done={self.when_is_done}, rewards={self.rewards})"
         )
 
-    def get_last_states_raw(self) -> Tensor2D2:
-        return self.states.states[-1]
+    @property
+    def last_states(self) -> States:
+        mask = torch.nn.functional.one_hot(
+            self.when_is_done - 1, num_classes=self.when_is_done.max().item() + 1
+        ).T.bool()
+        return self.states[mask]
+
+    @property
+    def rewards(self) -> Optional[FloatTensor1D]:
+        if self.is_backwards:
+            return None
+        return self.env.reward(self.last_states)
 
     def purge(self, raw_state) -> None:
         # TODO: obsolete - remove or update
@@ -74,16 +81,11 @@ class Trajectories:
         states = self.env.States(states=states_raw)
         actions = self.actions[:, indices]
         when_is_done = self.when_is_done[indices]
-        rewards = self.rewards[indices] if self.rewards is not None else None
-        last_states_raw = self.last_states.states[indices, ...]
-        last_states = self.env.States(states=last_states_raw)
         return Trajectories(
             env=self.env,
             n_trajectories=n_trajectories,
             states=states,
             actions=actions,
             when_is_done=when_is_done,
-            rewards=rewards,
-            last_states=last_states,
             is_backwards=self.is_backwards,
         )

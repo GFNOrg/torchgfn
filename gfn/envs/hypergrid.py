@@ -2,7 +2,7 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from typing import Tuple
+from typing import Tuple, Union
 
 import torch
 from torchtyping import TensorType
@@ -72,8 +72,11 @@ class HyperGrid(Env):
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
         return reward
 
-    def get_states_indices(self, states: States) -> TensorLong:
-        states_raw = states.states
+    def get_states_indices(self, states: Union[States, StatesTensor]) -> TensorLong:
+        if isinstance(states, States):
+            states_raw = states.states
+        else:
+            states_raw = states
         canonical_base = self.height ** torch.arange(self.ndim - 1, -1, -1)
         indices = (canonical_base * states_raw).sum(-1).long()
         return indices
