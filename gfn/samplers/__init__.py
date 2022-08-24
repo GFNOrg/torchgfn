@@ -8,5 +8,6 @@ from .action_samplers import (
     UniformActionSampler,
     UniformBackwardsActionSampler,
 )
+from .base import TrainingSampler
 from .trajectories_sampler import TrajectoriesSampler
 from .transitions_sampler import TransitionsSampler

@@ -18,9 +18,9 @@ OutputTensor = TensorType["batch_shape", "output_dim", float]
 class NeuralNet(nn.Module, GFNModule):
     def __init__(
         self,
-        input_dim: int,
-        hidden_dim: int,
-        output_dim: int,
+        input_dim: Optional[int] = None,
+        hidden_dim: Optional[int] = None,
+        output_dim: int = 1,
         n_hidden_layers: Optional[int] = 2,
         activation_fn: Optional[Literal["relu", "tanh"]] = "relu",
         torso: Optional[nn.Module] = None,
@@ -40,9 +40,10 @@ class NeuralNet(nn.Module, GFNModule):
                 self.torso.append(nn.Linear(hidden_dim, hidden_dim))
                 self.torso.append(activation())
             self.torso = nn.Sequential(*self.torso)
+            self.torso.hidden_dim = hidden_dim
         else:
             self.torso = torso
-        self.last_layer = nn.Linear(hidden_dim, output_dim)
+        self.last_layer = nn.Linear(self.torso.hidden_dim, output_dim)
 
     def forward(self, preprocessed_states: InputTensor) -> OutputTensor:
         logits = self.torso(preprocessed_states)
@@ -71,7 +72,7 @@ class Tabular(nn.Module, GFNModule):
 
 
 class Uniform(GFNModule):
-    def __init__(self, output_dim):
+    def __init__(self, output_dim: int, **kwargs):
         """
         :param n_actions: the number of all possible actions
         """
@@ -140,5 +141,3 @@ if __name__ == "__main__":
     preprocessed_states = preprocessor(states)
     print("preprocessed_states : ", preprocessed_states)
     print(tabular(preprocessed_states))
-
-    assert False

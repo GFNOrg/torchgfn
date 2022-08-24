@@ -3,19 +3,18 @@ from torchtyping import TensorType
 
 from gfn.containers import Transitions
 from gfn.losses.base import EdgeDecomposableLoss
-from gfn.parametrizations import O_PFB
+from gfn.parametrizations import DBParametrization
 from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
 
 
 class DetailedBalance(EdgeDecomposableLoss):
-    def __init__(self, o: O_PFB, delta: float = 1e-5):
-        self.o = o
-        self.delta = delta
-        self.action_sampler = LogitPFActionSampler(o.logit_PF)
-        self.backward_action_sampler = LogitPBActionSampler(o.logit_PB)
+    def __init__(self, parametrization: DBParametrization):
+        self.parametrization = parametrization
+        self.action_sampler = LogitPFActionSampler(parametrization.logit_PF)
+        self.backward_action_sampler = LogitPBActionSampler(parametrization.logit_PB)
 
     def __call__(self, transitions: Transitions) -> TensorType[0]:
-        if transitions.is_backwards:
+        if transitions.is_backward:
             raise ValueError("Backwards transitions are not supported")
         valid_states = transitions.states[~transitions.states.is_sink_state]
         valid_actions = transitions.actions[transitions.actions != -1]
@@ -32,7 +31,7 @@ class DetailedBalance(EdgeDecomposableLoss):
             valid_log_pf_all, dim=-1, index=valid_actions.unsqueeze(-1)
         ).squeeze(-1)
 
-        valid_log_F_s = self.o.logF(valid_states).squeeze(-1)
+        valid_log_F_s = self.parametrization.logF(valid_states).squeeze(-1)
 
         preds = valid_log_pf_actions + valid_log_F_s
 
@@ -56,7 +55,7 @@ class DetailedBalance(EdgeDecomposableLoss):
             ~transitions.states.is_sink_state
         ]
 
-        valid_log_F_s_next = self.o.logF(valid_next_states).squeeze(-1)
+        valid_log_F_s_next = self.parametrization.logF(valid_next_states).squeeze(-1)
         targets[~valid_transitions_is_done] = valid_log_pb_actions + valid_log_F_s_next
         assert transitions.rewards is not None
         valid_transitions_rewards = transitions.rewards[
@@ -104,7 +103,7 @@ if __name__ == "__main__":
     zero_module = ZeroGFNModule()
     logF = LogStateFlowEstimator(preprocessor, zero_module)
 
-    o = O_PFB(logit_PF=logit_PF, logF=logF, logit_PB=logit_PB)
+    o = DBParametrization(logit_PF=logit_PF, logF=logF, logit_PB=logit_PB)
 
     loss = DetailedBalance(o)
     print(loss(transitions))

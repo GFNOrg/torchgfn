@@ -17,13 +17,12 @@ class TrajectoriesSampler:
     def __init__(self, env: Env, action_sampler: ActionSampler):
         self.env = env
         self.action_sampler = action_sampler
-        self.is_backwards = isinstance(action_sampler, BackwardsActionSampler)
+        self.is_backward = isinstance(action_sampler, BackwardsActionSampler)
 
     def sample_trajectories(
         self,
         states: Optional[States] = None,
         n_trajectories: Optional[int] = None,
-        temperature: Optional[float] = 1.0,
     ) -> Trajectories:
         if states is None:
             assert (
@@ -37,7 +36,7 @@ class TrajectoriesSampler:
             n_trajectories = states.batch_shape[0]
         assert states is not None
 
-        dones = states.is_initial_state if self.is_backwards else states.is_sink_state
+        dones = states.is_initial_state if self.is_backward else states.is_sink_state
 
         trajectories_states: List[StatesTensor] = [states.states]
         trajectories_actions: List[ActionsTensor] = []
@@ -46,20 +45,19 @@ class TrajectoriesSampler:
 
         while not all(dones):
             actions = torch.full((n_trajectories,), fill_value=-1, dtype=torch.long)
-            _, valid_actions = self.action_sampler.sample(states[~dones], temperature)
+            _, valid_actions = self.action_sampler.sample(states[~dones])
             actions[~dones] = valid_actions
             trajectories_actions += [actions]
 
-            if self.is_backwards:
+            if self.is_backward:
                 new_states = self.env.backward_step(states, actions)
             else:
-                # TODO: fix this when states is passed as argument
                 new_states = self.env.step(states, actions)
             step += 1
 
             new_dones = (
                 new_states.is_initial_state
-                if self.is_backwards
+                if self.is_backward
                 else new_states.is_sink_state
             )
             trajectories_dones[new_dones & ~dones] = step
@@ -83,10 +81,13 @@ class TrajectoriesSampler:
             states=trajectories_states,
             actions=trajectories_actions,
             when_is_done=trajectories_dones,
-            is_backwards=self.is_backwards,
+            is_backward=self.is_backward,
         )
 
         return trajectories
+
+    def sample(self, n_objects: int) -> Trajectories:
+        return self.sample_trajectories(n_trajectories=n_objects)
 
 
 if __name__ == "__main__":

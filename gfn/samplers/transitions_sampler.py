@@ -11,7 +11,7 @@ class TransitionsSampler:
     def __init__(self, env: Env, action_sampler: ActionSampler):
         self.env = env
         self.action_sampler = action_sampler
-        self.is_backwards = isinstance(action_sampler, BackwardsActionSampler)
+        self.is_backward = isinstance(action_sampler, BackwardsActionSampler)
 
     def sample_transitions(
         self, states: Optional[States] = None, n_transitions: Optional[int] = None
@@ -26,29 +26,22 @@ class TransitionsSampler:
         actions = torch.full((n_transitions,), fill_value=-1, dtype=torch.long)
 
         valid_selector = (
-            ~states.is_initial_state if self.is_backwards else ~states.is_sink_state
+            ~states.is_initial_state if self.is_backward else ~states.is_sink_state
         )
         valid_states = states[valid_selector]
         _, valid_actions = self.action_sampler.sample(valid_states)
         actions[valid_selector] = valid_actions
 
-        if self.is_backwards:
+        if self.is_backward:
             new_states = self.env.backward_step(states, actions)
         else:
             new_states = self.env.step(states, actions)
 
         is_done = (
             new_states.is_initial_state
-            if self.is_backwards
+            if self.is_backward
             else new_states.is_sink_state
         )
-        if not self.is_backwards:
-            rewards = torch.zeros(
-                n_transitions, dtype=torch.float, device=states.device
-            )
-            rewards[is_done] = self.env.reward(states[is_done])
-        else:
-            rewards = None
 
         if isinstance(self.action_sampler, FixedActions):
             self.action_sampler.actions = self.action_sampler.actions[
@@ -62,11 +55,13 @@ class TransitionsSampler:
             actions=actions,
             next_states=new_states,
             is_done=is_done,
-            rewards=rewards,
-            is_backwards=self.is_backwards,
+            is_backward=self.is_backward,
         )
 
         return transitions
+
+    def sample(self, n_objects: int) -> Transitions:
+        return self.sample_transitions(n_transitions=n_objects)
 
 
 if __name__ == "__main__":

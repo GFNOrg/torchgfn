@@ -1,28 +1,26 @@
-from typing import Union
-
 import torch
 from torchtyping import TensorType
 
 from gfn.containers import Trajectories
 from gfn.losses.base import TrajectoryDecomposableLoss
-from gfn.parametrizations import O_PFBZ, O_PFZ
+from gfn.parametrizations import TBParametrization
 from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
 
 
 class TrajectoryBalance(TrajectoryDecomposableLoss):
     def __init__(
         self,
-        o: Union[O_PFBZ, O_PFZ],
+        parametrization: TBParametrization,
         reward_clip_min: float = 1e-5,
     ):
-        self.o = o
+        self.parametrization = parametrization
         self.reward_clip_min = reward_clip_min
-        self.action_sampler = LogitPFActionSampler(o.logit_PF)
-        self.backward_action_sampler = LogitPBActionSampler(o.logit_PB)
+        self.action_sampler = LogitPFActionSampler(parametrization.logit_PF)
+        self.backward_action_sampler = LogitPBActionSampler(parametrization.logit_PB)
 
     def __call__(self, trajectories: Trajectories) -> TensorType[0]:
-        if trajectories.is_backwards:
-            raise ValueError("Backwards trajectories are not supported")
+        if trajectories.is_backward:
+            raise ValueError("Backward trajectories are not supported")
 
         valid_states = trajectories.states[~trajectories.states.is_sink_state]
         valid_actions = trajectories.actions[trajectories.actions != -1]
@@ -61,7 +59,9 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
 
         log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
-        preds = log_pf_trajectories - log_pb_trajectories + self.o.logZ.logZ
+        preds = (
+            log_pf_trajectories - log_pb_trajectories + self.parametrization.logZ.tensor
+        )
 
         rewards = trajectories.rewards
         assert rewards is not None
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     logit_PB = LogitPBEstimator(preprocessor, pb)
     logZ = LogZEstimator(logZ)
 
-    o = O_PFZ(logit_PF, logit_PB, logZ)
+    o = TBParametrization(logit_PF, logit_PB, logZ)
 
     loss = TrajectoryBalance(o)
     print(loss(trajectories))
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     pfs = torch.tensor(
         [1.0 / (3**3), 1.0 / (3**3) * 0.5, 1.0 / 3, 1.0 / (3**4), 1.0 / (3**2)]
     )
-    true_losses_exp = torch.exp(logZ.logZ) * pfs / (pbs * trajectories.rewards)
+    true_losses_exp = torch.exp(logZ.tensor) * pfs / (pbs * trajectories.rewards)
     true_loss = torch.log(true_losses_exp).pow(2).mean()
 
     if true_loss == loss(trajectories):
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     logit_PB = LogitPBEstimator(preprocessor, pb)
     logZ = LogZEstimator(logZ)
 
-    o = O_PFBZ(logit_PF, logit_PB, logZ)
+    o = TBParametrization(logit_PF, logit_PB, logZ)
 
     loss = TrajectoryBalance(o)
     print(loss(trajectories))

@@ -22,8 +22,7 @@ class Transitions:
     actions: LongTensor
     next_states: States
     is_done: BoolTensor  # true when the corresponding action is the exit action for forward transitions
-    rewards: Optional[FloatTensor]  # should be zero for is_done=False
-    is_backwards: bool = False
+    is_backward: bool = False
 
     def __repr__(self):
         states_tensor = self.states.states
@@ -40,3 +39,17 @@ class Transitions:
             f"transitions={states_repr}, actions={self.actions}, "
             f"is_done={self.is_done}, rewards={self.rewards})"
         )
+
+    @property
+    def rewards(self) -> Optional[FloatTensor]:
+        if self.is_backward:
+            return None
+        else:
+            rewards = torch.full(
+                (self.n_transitions,),
+                fill_value=-1.0,
+                dtype=torch.float,
+                device=self.states.device,
+            )
+            rewards[self.is_done] = self.env.reward(self.states[self.is_done])
+            return rewards

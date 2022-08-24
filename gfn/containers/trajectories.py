@@ -24,7 +24,7 @@ class Trajectories:
     actions: Tensor2D
     # The following field mentions how many actions were taken in each trajectory.
     when_is_done: Tensor1D
-    is_backwards: bool = False
+    is_backward: bool = False
 
     def __repr__(self) -> str:
         states = self.states.states.transpose(0, 1)
@@ -34,7 +34,7 @@ class Trajectories:
             one_traj_repr = []
             for step in traj:
                 one_traj_repr.append(str(step.numpy()))
-                if step.equal(self.env.s_0 if self.is_backwards else self.env.s_f):
+                if step.equal(self.env.s_0 if self.is_backward else self.env.s_f):
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         # states_repr = "\n".join(
@@ -55,7 +55,7 @@ class Trajectories:
 
     @property
     def rewards(self) -> Optional[FloatTensor1D]:
-        if self.is_backwards:
+        if self.is_backward:
             return None
         return self.env.reward(self.last_states)
 
@@ -87,5 +87,5 @@ class Trajectories:
             states=states,
             actions=actions,
             when_is_done=when_is_done,
-            is_backwards=self.is_backwards,
+            is_backward=self.is_backward,
         )

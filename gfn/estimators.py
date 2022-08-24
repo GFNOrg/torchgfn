@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -27,6 +28,10 @@ class GFNModule(ABC):
     @abstractmethod
     def __call__(self, input: InputTensor) -> OutputTensor:
         pass
+
+    def named_parameters(self) -> Iterator:
+        # Mimics torch.nn.Module.named_parameters()
+        return iter([])
 
 
 class LogEdgeFlowEstimator:
@@ -80,11 +85,11 @@ class LogitPBEstimator:
 
 @dataclass
 class LogZEstimator:
-    logZ: TensorType[0]
+    tensor: TensorType[0]
 
     def __post_init__(self):
-        assert self.logZ.shape == ()
-        self.logZ.requires_grad = True
+        assert self.tensor.shape == ()
+        self.tensor.requires_grad = True
 
     def __repr__(self) -> str:
-        return str(self.logZ.item())
+        return str(self.tensor.item())
