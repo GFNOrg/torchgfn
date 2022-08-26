@@ -1,4 +1,5 @@
 """
+merge with `modules` eventually
 Copied from https://github.com/Tikquuss/GflowNets_Tutorial/blob/main/4_Sequence_Generation.ipynb
 """
 
