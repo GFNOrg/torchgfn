@@ -3,7 +3,7 @@ import torch
 
 from gfn.envs import HyperGrid
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator
-from gfn.models import NeuralNet
+from gfn.modules import NeuralNet
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers import TrajectoriesSampler, TransitionsSampler
 from gfn.samplers.actions_samplers import (

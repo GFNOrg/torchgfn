@@ -4,7 +4,7 @@ from dataclasses import dataclass, fields
 import torch
 
 from ..envs import Env
-from ..estimators import GFNModule
+from ..modules import GFNModule
 from ..trajectories import FinalStateDistribution, TrajectoryDistribution
 
 

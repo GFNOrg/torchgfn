@@ -1,3 +1,6 @@
+from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Literal, Optional
 
 import torch
@@ -5,7 +8,6 @@ import torch.nn as nn
 from torchtyping import TensorType
 
 from gfn.envs import Env
-from gfn.estimators import GFNModule
 
 # Typing
 batch_shape = None
@@ -13,6 +15,22 @@ input_dim = None
 output_dim = None
 InputTensor = TensorType["batch_shape", "input_dim", float]
 OutputTensor = TensorType["batch_shape", "output_dim", float]
+
+
+@dataclass(eq=True, unsafe_hash=True)
+class GFNModule(ABC):
+    "Abstract Base Class for all functions/approximators/estimators used"
+    input_dim: Optional[int]
+    output_dim: int
+    output_type: Literal["free", "positive"] = "free"
+
+    @abstractmethod
+    def __call__(self, input: InputTensor) -> OutputTensor:
+        pass
+
+    def named_parameters(self) -> Iterator:
+        # Mimics torch.nn.Module.named_parameters()
+        return iter([])
 
 
 class NeuralNet(nn.Module, GFNModule):

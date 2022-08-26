@@ -11,7 +11,7 @@ from gfn.estimators import (
 )
 from gfn.losses.detailed_balance import DetailedBalance
 from gfn.losses.trajectory_balance import TrajectoryBalance
-from gfn.models import NeuralNet, Tabular, Uniform
+from gfn.modules import NeuralNet, Tabular, Uniform
 from gfn.parametrizations import DBParametrization, FMParametrization, TBParametrization
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers.actions_samplers import FixedActionsSampler, LogitPFActionsSampler

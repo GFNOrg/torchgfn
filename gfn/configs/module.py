@@ -5,8 +5,7 @@ from typing import Optional
 from simple_parsing.helpers import JsonSerializable
 
 from gfn.envs import Env
-from gfn.estimators import GFNModule
-from gfn.models import NeuralNet, Tabular, Uniform
+from gfn.modules import GFNModule, NeuralNet, Tabular, Uniform
 
 
 @dataclass
