@@ -3,9 +3,9 @@ from dataclasses import dataclass, fields
 
 import torch
 
-from gfn.envs import Env
-from gfn.estimators import GFNModule
-from gfn.trajectories import FinalStateDistribution, TrajectoryDistribution
+from ..envs import Env
+from ..estimators import GFNModule
+from ..trajectories import FinalStateDistribution, TrajectoryDistribution
 
 
 @dataclass

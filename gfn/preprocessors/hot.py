@@ -23,11 +23,10 @@ class KHotPreprocessor(Preprocessor):
 
     @property
     def output_dim(self):
-        output_dim = (self.env.n_states ** (1 / self.env.ndim)) * self.env.ndim
-        assert (
-            output_dim.is_integer()
-        ), "The environment does not support K Hot preprocessing"
-        return int(output_dim)
+        if not hasattr(self.env, "height"):
+            raise ValueError("The environment does not support K Hot preprocessing")
+        output_dim = self.env.height * self.env.ndim
+        return output_dim
 
     def preprocess(self, states):
         states_tensor = states.states

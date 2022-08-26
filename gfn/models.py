@@ -24,7 +24,9 @@ class NeuralNet(nn.Module, GFNModule):
         n_hidden_layers: Optional[int] = 2,
         activation_fn: Optional[Literal["relu", "tanh"]] = "relu",
         torso: Optional[nn.Module] = None,
+        **kwargs
     ):
+        del kwargs
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -52,7 +54,8 @@ class NeuralNet(nn.Module, GFNModule):
 
 
 class Tabular(nn.Module, GFNModule):
-    def __init__(self, env: Env, output_dim: int) -> None:
+    def __init__(self, env: Env, output_dim: int, **kwargs) -> None:
+        del kwargs
         super().__init__()
 
         self.env = env
@@ -68,11 +71,17 @@ class Tabular(nn.Module, GFNModule):
         assert preprocessed_states.ndim == 2
         states_indices = self.env.get_states_indices(preprocessed_states)
         outputs = [self.tensors[index] for index in states_indices]
-        return torch.stack(outputs)
+        if len(outputs) > 0:
+            return torch.stack(outputs)
+        else:
+            return torch.tensor(
+                [[] for _ in range(self.env.ndim)], device=preprocessed_states.device
+            ).T
 
 
 class Uniform(GFNModule):
     def __init__(self, output_dim: int, **kwargs):
+        del kwargs
         """
         :param n_actions: the number of all possible actions
         """

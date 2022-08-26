@@ -3,16 +3,12 @@ from typing import Optional
 import torch
 
 from gfn.containers import States, Transitions
-from gfn.envs import Env
-from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
+
+from .actions_samplers import FixedActionsSampler
+from .base import TrainingSampler
 
 
-class TransitionsSampler:
-    def __init__(self, env: Env, action_sampler: ActionSampler):
-        self.env = env
-        self.action_sampler = action_sampler
-        self.is_backward = isinstance(action_sampler, BackwardsActionSampler)
-
+class TransitionsSampler(TrainingSampler):
     def sample_transitions(
         self, states: Optional[States] = None, n_transitions: Optional[int] = None
     ) -> Transitions:
@@ -29,7 +25,7 @@ class TransitionsSampler:
             ~states.is_initial_state if self.is_backward else ~states.is_sink_state
         )
         valid_states = states[valid_selector]
-        _, valid_actions = self.action_sampler.sample(valid_states)
+        _, valid_actions = self.actions_sampler.sample(valid_states)
         actions[valid_selector] = valid_actions
 
         if self.is_backward:
@@ -43,8 +39,8 @@ class TransitionsSampler:
             else new_states.is_sink_state
         )
 
-        if isinstance(self.action_sampler, FixedActions):
-            self.action_sampler.actions = self.action_sampler.actions[
+        if isinstance(self.actions_sampler, FixedActionsSampler):
+            self.actions_sampler.actions = self.actions_sampler.actions[
                 valid_actions != self.env.n_actions - 1
             ]
 
@@ -61,34 +57,5 @@ class TransitionsSampler:
         return transitions
 
     def sample(self, n_objects: int) -> Transitions:
+        # TODO: Change `sample_transitions` such that it can take a number of trajectories as input, roll them out, and get transitions from the resulting trajectories (maybe, using `trajectories_sampler.sample_trajectories`)
         return self.sample_transitions(n_transitions=n_objects)
-
-
-if __name__ == "__main__":
-    from gfn.envs import HyperGrid
-    from gfn.samplers.action_samplers import UniformActionSampler
-
-    env = HyperGrid(ndim=2, height=8)
-
-    print("---Trying Forward sampling of trajectories---")
-
-    print("Trying the Uniform Action Sampler")
-    action_sampler = UniformActionSampler()
-    transitions_sampler = TransitionsSampler(env, action_sampler)
-    transitions = transitions_sampler.sample_transitions(n_transitions=5)
-    print(transitions)
-    transitions = transitions_sampler.sample_transitions(states=transitions.next_states)
-    print(transitions)
-
-    print("Trying the Fixed Actions Sampler")
-    action_sampler = FixedActions(
-        torch.tensor(
-            [[0, 1, 2, 0], [1, 1, 1, 2], [2, 2, 2, 2], [1, 0, 1, 2], [1, 0, 2, 1]]
-        )
-    )
-    transitions_sampler = TransitionsSampler(env, action_sampler)
-    transitions = transitions_sampler.sample_transitions(n_transitions=5)
-    print(transitions)
-
-    transitions = transitions_sampler.sample_transitions(states=transitions.next_states)
-    print(transitions)

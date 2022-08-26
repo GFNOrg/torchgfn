@@ -2,13 +2,13 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from typing import Tuple, Union
+from typing import Literal, Tuple, Union
 
 import torch
 from torchtyping import TensorType
 
 from gfn.containers import States
-from gfn.envs.env import Env, NonValidActionsError
+from gfn.envs.env import Env
 
 # Typing
 TensorLong = TensorType["batch_shape", torch.long]
@@ -24,13 +24,14 @@ class HyperGrid(Env):
     def __init__(
         self,
         ndim: int = 2,
-        height: int = 8,
+        height: int = 4,
         R0: float = 0.1,
         R1: float = 0.5,
         R2: float = 2.0,
         reward_cos: bool = False,
+        device: Literal["cpu", "cuda"] = "cpu",
     ):
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device(device)
         s_0 = torch.zeros(ndim, device=device)
         s_f = torch.ones(ndim, device=device) * (-1)
         n_actions = ndim + 1
@@ -84,56 +85,3 @@ class HyperGrid(Env):
     @property
     def n_states(self) -> int:
         return self.height**self.ndim
-
-
-if __name__ == "__main__":
-
-    print("Testing HyperGrid environment")
-    env = HyperGrid(ndim=2, height=3)
-    print(env)
-
-    print("\nInstantiating a linear batch of initial states")
-    states = env.reset(batch_shape=3)
-    print("States:", states)
-
-    print("\nTrying the step function starting from 3 instances of s_0")
-    actions = torch.tensor([0, 1, 2], dtype=torch.long)
-    states = env.step(states, actions)
-    print("After one step:", states)
-    actions = torch.tensor([2, 0, 1], dtype=torch.long)
-    states = env.step(states, actions)
-    print("After two steps:", states)
-    actions = torch.tensor([2, 0, 1], dtype=torch.long)
-    states = env.step(states, actions)
-    print("After three steps:", states)
-    try:
-        actions = torch.tensor([2, 0, 1], dtype=torch.long)
-        states = env.step(states, actions)
-    except NonValidActionsError:
-        print("NonValidActionsError raised as expected because of invalid actions")
-    print(states)
-    print("Final rewards:", env.reward(states))
-
-    print("\nTrying the backward step function starting from a batch of random states")
-
-    print("\nInstantiating a two-dimensional batch of random states")
-    states = env.reset(batch_shape=(2, 3), random_init=True)
-    print("States:", states)
-    while not all(states.is_initial_state.view(-1)):
-        actions = torch.randint(0, env.n_actions - 1, (2, 3), dtype=torch.long)
-        print("Actions: ", actions)
-        try:
-            states = env.backward_step(states, actions)
-            print("States:", states)
-        except NonValidActionsError:
-            print("NonValidActionsError raised as expected because of invalid actions")
-
-    print("\nTesting subscripting with boolean tensors")
-    states = env.reset(batch_shape=(2, 3), random_init=True)
-    print("States:", states)
-    selections = torch.randint(0, 2, (2, 3), dtype=torch.bool)
-    print("Selections:", selections)
-    print("States[selections]:", states[selections])
-    selections = torch.randint(0, 2, (2,), dtype=torch.bool)
-    print("Selections:", selections)
-    print("States[selections]:", states[selections])

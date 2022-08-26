@@ -1,15 +1,14 @@
+import pytest
+
+from gfn.envs import HyperGrid
 from gfn.preprocessors.base import IdentityPreprocessor
 from gfn.preprocessors.hot import KHotPreprocessor, OneHotPreprocessor
 
-if __name__ == "__main__":
-    from gfn.envs import HyperGrid
 
-    ndim = 2
-    height = 4
-
+@pytest.mark.parametrize("ndim", [2, 3])
+@pytest.mark.parametrize("height", [4, 8])
+def test_preprocessors_hypergrid(ndim, height):
     env = HyperGrid(ndim=ndim, height=height)
-
-    print("Testing The Preprocessors on HyperGrid")
 
     identity_preprocessor = IdentityPreprocessor(env)
     one_hot_preprocessor = OneHotPreprocessor(env)

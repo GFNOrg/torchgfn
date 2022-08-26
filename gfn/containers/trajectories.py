@@ -4,8 +4,8 @@ from typing import Optional
 import torch
 from torchtyping import TensorType
 
-from gfn.containers import States
-from gfn.envs import Env
+from ..envs import Env
+from .states import States
 
 # Typing  --- n_transitions is an int
 Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
@@ -58,19 +58,6 @@ class Trajectories:
         if self.is_backward:
             return None
         return self.env.reward(self.last_states)
-
-    def purge(self, raw_state) -> None:
-        # TODO: obsolete - remove or update
-        """Remove all trajectories that ended in the given state."""
-        ndim = self.states.shape[-1]
-        mask = (self.get_last_states_raw() == raw_state).sum(1) == ndim
-        self.n_trajectories -= mask.sum().item()
-        self.states.states = self.states.states[:, ~mask]
-        self.states.update_masks()
-        self.actions = self.actions[:, ~mask]
-        self.when_is_done = self.when_is_done[~mask]
-        if self.rewards is not None:
-            self.rewards = self.rewards[~mask]
 
     def sample(self, n_trajectories: int) -> "Trajectories":
         """Sample a random subset of trajectories."""

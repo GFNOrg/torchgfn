@@ -8,9 +8,8 @@ from gfn.estimators import (
     LogStateFlowEstimator,
     LogZEstimator,
 )
-from gfn.models import Uniform
 from gfn.parametrizations.base import Parametrization
-from gfn.samplers import LogitPFActionSampler, TrajectoriesSampler
+from gfn.samplers import LogitPFActionsSampler, TrajectoriesSampler
 from gfn.trajectories.dist import (
     EmpiricalTrajectoryDistribution,
     TrajectoryDistribution,
@@ -24,10 +23,10 @@ class PFBasedParametrization(Parametrization, ABC):
     logit_PB: LogitPBEstimator
 
     def Pi(
-        self, env: Env, n_samples: int = 1000, **action_sampler_kwargs
+        self, env: Env, n_samples: int = 1000, **actions_sampler_kwargs
     ) -> TrajectoryDistribution:
-        action_sampler = LogitPFActionSampler(self.logit_PF, **action_sampler_kwargs)
-        trajectories_sampler = TrajectoriesSampler(env, action_sampler)
+        actions_sampler = LogitPFActionsSampler(self.logit_PF, **actions_sampler_kwargs)
+        trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
         trajectories = trajectories_sampler.sample_trajectories(
             n_trajectories=n_samples
         )
@@ -59,84 +58,3 @@ class TBParametrization(PFBasedParametrization):
     Useful for the Trajectory Balance Loss.
     """
     logZ: LogZEstimator
-
-
-if __name__ == "__main__":
-    import torch
-
-    from gfn.envs import HyperGrid
-    from gfn.estimators import (
-        LogitPBEstimator,
-        LogitPFEstimator,
-        LogStateFlowEstimator,
-        LogZEstimator,
-    )
-    from gfn.models import NeuralNet
-    from gfn.parametrizations.base import Parametrization
-    from gfn.preprocessors import IdentityPreprocessor
-    from gfn.trajectories.dist import TrajectoryDistribution
-
-    env = HyperGrid()
-
-    preprocessor = IdentityPreprocessor(env)
-
-    print("\nTrying the DB parametrization... with learnable logit_PB")
-
-    pb_module = NeuralNet(
-        input_dim=preprocessor.output_dim,
-        n_hidden_layers=1,
-        hidden_dim=16,
-        output_dim=env.n_actions - 1,
-    )
-    pf_module = NeuralNet(
-        input_dim=preprocessor.output_dim,
-        n_hidden_layers=1,
-        hidden_dim=16,
-        output_dim=env.n_actions,
-    )
-    f_module = NeuralNet(
-        input_dim=preprocessor.output_dim,
-        n_hidden_layers=1,
-        hidden_dim=16,
-        output_dim=1,
-    )
-    logit_PF = LogitPFEstimator(preprocessor, pf_module)
-    logit_PB = LogitPBEstimator(preprocessor, pb_module)
-    logF = LogStateFlowEstimator(preprocessor, f_module)
-    logZ = LogZEstimator(torch.tensor(0.0))
-
-    parametrization = DBParametrization(logit_PF, logit_PB, logF)
-    print(parametrization.Pi(env, n_samples=10).sample())
-    print(parametrization.parameters.keys())
-    print(len(set(parametrization.parameters.values())))
-
-    print("Now TB loss")
-    parametrization = TBParametrization(logit_PF, logit_PB, logZ)
-    print(parametrization.parameters.keys())
-    print(len(set(parametrization.parameters.values())))
-
-    print("\nTrying the DB parametrization... with learnable logit_PB tied to PF")
-    pb_module = NeuralNet(output_dim=env.n_actions - 1, torso=logit_PF.module.torso)
-    logit_PB = LogitPBEstimator(preprocessor, pb_module)
-
-    parametrization = DBParametrization(logit_PF, logit_PB, logF)
-    print(parametrization.parameters.keys())
-    print(len(set(parametrization.parameters.values())))
-
-    print("Now TB loss")
-    parametrization = TBParametrization(logit_PF, logit_PB, logZ)
-    print(parametrization.parameters.keys())
-    print(len(set(parametrization.parameters.values())))
-
-    print("\nTrying the DB parametrization... with uniform PB")
-    logit_PB = LogitPBEstimator(
-        preprocessor, module=Uniform(output_dim=env.n_actions - 1)
-    )
-    parametrization = DBParametrization(logit_PF, logit_PB, logF)
-    print(parametrization.parameters.keys())
-    print(len(set(parametrization.parameters.values())))
-
-    print("Now TB loss")
-    parametrization = TBParametrization(logit_PF, logit_PB, logZ)
-    print(parametrization.parameters.keys())
-    print(len(set(parametrization.parameters.values())))

@@ -4,7 +4,7 @@ from torchtyping import TensorType
 from gfn.containers import Trajectories
 from gfn.losses.base import TrajectoryDecomposableLoss
 from gfn.parametrizations import TBParametrization
-from gfn.samplers.action_samplers import LogitPBActionSampler, LogitPFActionSampler
+from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsSampler
 
 
 class TrajectoryBalance(TrajectoryDecomposableLoss):
@@ -15,8 +15,8 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
     ):
         self.parametrization = parametrization
         self.reward_clip_min = reward_clip_min
-        self.action_sampler = LogitPFActionSampler(parametrization.logit_PF)
-        self.backward_action_sampler = LogitPBActionSampler(parametrization.logit_PB)
+        self.actions_sampler = LogitPFActionsSampler(parametrization.logit_PF)
+        self.backward_actions_sampler = LogitPBActionsSampler(parametrization.logit_PB)
 
     def __call__(self, trajectories: Trajectories) -> TensorType[0]:
         if trajectories.is_backward:
@@ -30,7 +30,7 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
 
         if valid_states.batch_shape != tuple(valid_actions.shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
-        valid_pf_logits = self.action_sampler.get_logits(valid_states)
+        valid_pf_logits = self.actions_sampler.get_logits(valid_states)
         valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
         valid_log_pf_actions = torch.gather(
             valid_log_pf_all, dim=-1, index=valid_actions.unsqueeze(-1)
@@ -40,7 +40,7 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
 
         log_pf_trajectories = log_pf_trajectories.sum(dim=0)
 
-        valid_pb_logits = self.backward_action_sampler.get_logits(
+        valid_pb_logits = self.backward_actions_sampler.get_logits(
             valid_states[~valid_states.is_initial_state]
         )
         valid_log_pb_all = valid_pb_logits.log_softmax(dim=-1)
@@ -73,85 +73,3 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
             raise ValueError("loss is nan")
 
         return loss
-
-
-if __name__ == "__main__":
-    from gfn.envs import HyperGrid
-    from gfn.estimators import LogitPBEstimator, LogitPFEstimator, LogZEstimator
-    from gfn.models import NeuralNet, Uniform
-    from gfn.preprocessors import KHotPreprocessor
-    from gfn.samplers.action_samplers import FixedActions
-    from gfn.samplers.trajectories_sampler import TrajectoriesSampler
-
-    height = 4
-    ndim = 2
-    env = HyperGrid(height=height, ndim=ndim)
-
-    print("Evaluating the loss on 5 trajectories with manually chosen actions")
-    action_sampler = FixedActions(
-        torch.tensor(
-            [[0, 1, 2, 0], [1, 1, 1, 2], [2, 2, 2, 2], [1, 0, 1, 2], [1, 2, 2, 1]]
-        )
-    )
-    trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
-    print(trajectories)
-
-    preprocessor = KHotPreprocessor(env)
-    pf = Uniform(env.n_actions)
-    pb = Uniform(env.n_actions - 1)
-
-    logZ = torch.tensor(0.0)
-    logit_PF = LogitPFEstimator(preprocessor, pf)
-    logit_PB = LogitPBEstimator(preprocessor, pb)
-    logZ = LogZEstimator(logZ)
-
-    o = TBParametrization(logit_PF, logit_PB, logZ)
-
-    loss = TrajectoryBalance(o)
-    print(loss(trajectories))
-    # sanity check, by hand, we should get the following loss
-    pbs = torch.tensor([0.5, 1, 1, 0.25, 1.0])
-    pfs = torch.tensor(
-        [1.0 / (3**3), 1.0 / (3**3) * 0.5, 1.0 / 3, 1.0 / (3**4), 1.0 / (3**2)]
-    )
-    true_losses_exp = torch.exp(logZ.tensor) * pfs / (pbs * trajectories.rewards)
-    true_loss = torch.log(true_losses_exp).pow(2).mean()
-
-    if true_loss == loss(trajectories):
-        print("OK - TB LOSS PROBABLY OK")
-    else:
-        raise ValueError("TB LOSS NOT PROPERLY CALCULATED")
-
-    n_trajectories = 25
-    print(
-        f"\nEvaluating the loss on {n_trajectories} trajectories with randomly chosen actions (P_F and P_B as modules)"
-    )
-
-    preprocessor = KHotPreprocessor(env)
-    pf = NeuralNet(
-        input_dim=preprocessor.output_dim, output_dim=env.n_actions, hidden_dim=16
-    )
-
-    pb = NeuralNet(
-        input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1, hidden_dim=16
-    )
-
-    print("Now with LogitPFActionSampler")
-    logit_PF = LogitPFEstimator(preprocessor, pf)
-    action_sampler = LogitPFActionSampler(logit_PF=logit_PF)
-    trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(
-        n_trajectories=n_trajectories
-    )
-    print(trajectories)
-
-    logZ = torch.tensor(-5.0)
-
-    logit_PB = LogitPBEstimator(preprocessor, pb)
-    logZ = LogZEstimator(logZ)
-
-    o = TBParametrization(logit_PF, logit_PB, logZ)
-
-    loss = TrajectoryBalance(o)
-    print(loss(trajectories))

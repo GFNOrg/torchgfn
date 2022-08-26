@@ -2,7 +2,8 @@ import torch
 from einops import rearrange
 
 from gfn.containers import States
-from gfn.envs import HyperGrid
+
+from .hypergrid import HyperGrid
 
 
 def build_grid(env: HyperGrid) -> States:
@@ -40,34 +41,3 @@ def get_true_dist_pmf(env: HyperGrid) -> torch.Tensor:
     )
     true_dist /= true_dist.sum()
     return true_dist
-
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-
-    env = HyperGrid(height=4, ndim=3)
-    grid = get_flat_grid(env)
-    print("Shape of the grid: ", grid.batch_shape, grid.state_shape)
-    print(grid)
-    print("All rewards: ", env.reward(grid))
-
-    env = HyperGrid(height=8, ndim=2)
-    grid = build_grid(env)
-    flat_grid = get_flat_grid(env)
-    print("Shape of the grid: ", grid.batch_shape, grid.state_shape)
-    rewards = env.reward(grid)
-
-    Z = rewards.sum()
-
-    if Z != env.reward(flat_grid).sum():
-        print("Something is wrong")
-
-    plt.imshow(rewards)
-    plt.colorbar()
-    plt.show()
-
-    print(env.get_states_indices(grid))
-    print(env.get_states_indices(flat_grid))
-
-    print(env.reward(grid))
-    print(env.reward(flat_grid))

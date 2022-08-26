@@ -3,8 +3,8 @@ from typing import Tuple
 
 from torchtyping import TensorType
 
-from gfn.containers import States
-from gfn.envs import Env
+from ..containers import States
+from ..envs import Env
 
 # Typing
 OutputTensor = TensorType["batch_shape", "dim_in", float]

@@ -4,8 +4,9 @@ import torch
 from torchtyping import TensorType
 
 from gfn.containers import States, Trajectories
-from gfn.envs import Env
-from gfn.samplers import ActionSampler, BackwardsActionSampler, FixedActions
+
+from .actions_samplers import FixedActionsSampler
+from .base import TrainingSampler
 
 # Typing
 StatesTensor = TensorType["n_trajectories", "state_shape", torch.float]
@@ -13,12 +14,7 @@ ActionsTensor = TensorType["n_trajectories", torch.long]
 DonesTensor = TensorType["n_trajectories", torch.bool]
 
 
-class TrajectoriesSampler:
-    def __init__(self, env: Env, action_sampler: ActionSampler):
-        self.env = env
-        self.action_sampler = action_sampler
-        self.is_backward = isinstance(action_sampler, BackwardsActionSampler)
-
+class TrajectoriesSampler(TrainingSampler):
     def sample_trajectories(
         self,
         states: Optional[States] = None,
@@ -45,7 +41,7 @@ class TrajectoriesSampler:
 
         while not all(dones):
             actions = torch.full((n_trajectories,), fill_value=-1, dtype=torch.long)
-            _, valid_actions = self.action_sampler.sample(states[~dones])
+            _, valid_actions = self.actions_sampler.sample(states[~dones])
             actions[~dones] = valid_actions
             trajectories_actions += [actions]
 
@@ -66,8 +62,8 @@ class TrajectoriesSampler:
 
             trajectories_states += [states.states]
 
-            if isinstance(self.action_sampler, FixedActions):
-                self.action_sampler.actions = self.action_sampler.actions[
+            if isinstance(self.actions_sampler, FixedActionsSampler):
+                self.actions_sampler.actions = self.actions_sampler.actions[
                     valid_actions != self.env.n_actions - 1
                 ]
 
@@ -88,138 +84,3 @@ class TrajectoriesSampler:
 
     def sample(self, n_objects: int) -> Trajectories:
         return self.sample_trajectories(n_trajectories=n_objects)
-
-
-if __name__ == "__main__":
-    from gfn.envs import HyperGrid
-    from gfn.estimators import LogitPBEstimator, LogitPFEstimator
-    from gfn.models import NeuralNet
-    from gfn.preprocessors import (
-        IdentityPreprocessor,
-        KHotPreprocessor,
-        OneHotPreprocessor,
-    )
-    from gfn.samplers.action_samplers import (
-        LogitPBActionSampler,
-        LogitPFActionSampler,
-        UniformActionSampler,
-        UniformBackwardsActionSampler,
-    )
-
-    env = HyperGrid(ndim=2, height=4)
-
-    print("---Trying Forward sampling of trajectories---")
-
-    print("Trying the Uniform Action Sample with sf_temperature")
-    action_sampler = UniformActionSampler(sf_temperature=2.0)
-    trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
-    print(trajectories)
-
-    print("\nTrying the Fixed Actions Sampler: ")
-    action_sampler = FixedActions(
-        torch.tensor(
-            [[0, 1, 2, 0], [1, 1, 1, 2], [2, 2, 2, 2], [1, 0, 1, 2], [1, 0, 2, 1]]
-        )
-    )
-    trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
-    print(trajectories)
-
-    print("\nTrying the LogitPFActionSampler: ")
-    preprocessors = [
-        IdentityPreprocessor(env=env),
-        OneHotPreprocessor(env=env),
-        KHotPreprocessor(env=env),
-    ]
-    modules = [
-        NeuralNet(
-            input_dim=preprocessor.output_dim, hidden_dim=12, output_dim=env.n_actions
-        )
-        for preprocessor in preprocessors
-    ]
-    logit_pf_estimators = [
-        LogitPFEstimator(preprocessor=preprocessor, module=module)
-        for (preprocessor, module) in zip(preprocessors, modules)
-    ]
-
-    logit_pf_action_samplers = [
-        LogitPFActionSampler(logit_PF=logit_pf_estimator)
-        for logit_pf_estimator in logit_pf_estimators
-    ]
-
-    trajectories_samplers = [
-        TrajectoriesSampler(env, logit_pf_action_sampler)
-        for logit_pf_action_sampler in logit_pf_action_samplers
-    ]
-
-    for i, trajectories_sampler in enumerate(trajectories_samplers):
-        print(
-            "\n",
-            i,
-            ": Trying the LogitPFActionSampler with preprocessor {}".format(
-                preprocessors[i]
-            ),
-        )
-        trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
-        print(trajectories)
-
-    print("\n\n---Trying Backwards sampling of trajectories---")
-    states = env.reset(batch_shape=20, random_init=True)
-
-    print(
-        "\nTrying the Uniform Backwards Action Sampler with one of the initial states being s_0"
-    )
-    action_sampler = UniformBackwardsActionSampler()
-    trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(states)
-    print(trajectories)
-
-    modules = [
-        NeuralNet(
-            input_dim=preprocessor.output_dim,
-            hidden_dim=12,
-            output_dim=env.n_actions - 1,
-        )
-        for preprocessor in preprocessors
-    ]
-    logit_pb_estimators = [
-        LogitPBEstimator(preprocessor=preprocessor, module=module)
-        for (preprocessor, module) in zip(preprocessors, modules)
-    ]
-
-    logit_pb_action_samplers = [
-        LogitPBActionSampler(logit_PB=logit_pb_estimator)
-        for logit_pb_estimator in logit_pb_estimators
-    ]
-
-    trajectories_samplers = [
-        TrajectoriesSampler(env, logit_pb_action_sampler)
-        for logit_pb_action_sampler in logit_pb_action_samplers
-    ]
-
-    for i, trajectories_sampler in enumerate(trajectories_samplers):
-        print(
-            "\n",
-            i,
-            ": Trying the LogitPBActionSampler with preprocessor {}".format(
-                preprocessors[i]
-            ),
-        )
-        states = env.reset(batch_shape=5, random_init=True)
-        trajectories = trajectories_samplers[i].sample_trajectories(states)
-        print(trajectories)
-
-    print("\n\n---Making Sure Last states are computed correctly---")
-    action_sampler = UniformActionSampler(sf_temperature=2.0)
-    trajectories_sampler = TrajectoriesSampler(env, action_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
-
-    print("\n\n---Testing SubSampling---")
-    print(
-        f"There are {trajectories.n_trajectories} original trajectories, from which we will sample 2"
-    )
-    print(trajectories)
-    sampled_trajectories = trajectories.sample(n_trajectories=2)
-    print("The two sampled trajectories are:")
-    print(sampled_trajectories)

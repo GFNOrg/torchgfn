@@ -9,15 +9,12 @@ from gfn.containers import States
 from gfn.estimators import LogEdgeFlowEstimator, LogitPBEstimator, LogitPFEstimator
 
 # Typing
-batch_size = None
-n_actions = None
-n_steps = None
 Tensor2D = TensorType["batch_size", "n_actions"]
 Tensor2D2 = TensorType["batch_size", "n_steps"]
 Tensor1D = TensorType["batch_size", torch.long]
 
 
-class ActionSampler(ABC):
+class ActionsSampler(ABC):
     "Implements a method that samples actions from any given batch of states."
 
     def __init__(
@@ -59,9 +56,8 @@ class ActionSampler(ABC):
         return logits, probs
 
     def sample(self, states: States) -> Tuple[Tensor2D, Tensor1D]:
-        self.update_state()
         logits, probs = self.get_probs(states)
-        self.step += 1
+        self.update_state()
 
         return logits, Categorical(probs).sample()
 
@@ -71,9 +67,10 @@ class ActionSampler(ABC):
                 self.temperature *= self.scheduler_gamma
                 self.sf_temperature *= self.scheduler_gamma
                 self.current_milestone_index += 1
+        self.step += 1
 
 
-class BackwardsActionSampler(ActionSampler):
+class BackwardActionsSampler(ActionsSampler):
     def get_logits(self, states: States) -> Tensor2D:
         logits = self.get_raw_logits(states)
         logits[~states.backward_masks] = -float("inf")
@@ -93,7 +90,7 @@ class BackwardsActionSampler(ActionSampler):
         return logits, probs
 
 
-class FixedActions(ActionSampler):
+class FixedActionsSampler(ActionsSampler):
     # Should be used for debugging and testing purposes.
     def __init__(self, actions: Tensor2D2, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -109,42 +106,42 @@ class FixedActions(ActionSampler):
         return logits
 
 
-class UniformActionSampler(ActionSampler):
+class UniformActionsSampler(ActionsSampler):
     def get_raw_logits(self, states):
         return torch.zeros_like(states.forward_masks, dtype=torch.float)
 
 
-class UniformBackwardsActionSampler(BackwardsActionSampler):
+class UniformBackwardActionsSampler(BackwardActionsSampler):
     def get_raw_logits(self, states):
         return torch.zeros_like(states.backward_masks, dtype=torch.float)
 
 
-class LogitPFActionSampler(ActionSampler):
-    def __init__(self, logit_PF: LogitPFEstimator, **kwargs):
+class LogitPFActionsSampler(ActionsSampler):
+    def __init__(self, estimator: LogitPFEstimator, **kwargs):
         super().__init__(**kwargs)
-        self.logit_PF = logit_PF
+        self.estimator = estimator
 
     def get_raw_logits(self, states):
-        return self.logit_PF(states)
+        return self.estimator(states)
 
 
-class LogitPBActionSampler(BackwardsActionSampler):
-    def __init__(self, logit_PB: LogitPBEstimator, **kwargs):
+class LogitPBActionsSampler(BackwardActionsSampler):
+    def __init__(self, estimator: LogitPBEstimator, **kwargs):
         super().__init__(**kwargs)
-        self.logit_PB = logit_PB
+        self.estimator = estimator
 
     def get_raw_logits(self, states):
-        return self.logit_PB(states)
+        return self.estimator(states)
 
 
-class LogEdgeFlowsActionSampler(ActionSampler):
-    def __init__(self, log_edge_flow_estimator: LogEdgeFlowEstimator, **kwargs):
+class LogEdgeFlowsActionsSampler(ActionsSampler):
+    def __init__(self, estimator: LogEdgeFlowEstimator, **kwargs):
         super().__init__(**kwargs)
-        self.log_edge_flow_estimator = log_edge_flow_estimator
+        self.estimator = estimator
 
     def get_raw_logits(self, states):
-        logits = self.log_edge_flow_estimator(states)
-        env_rewards = self.log_edge_flow_estimator.env.reward(states)
+        logits = self.estimator(states)
+        env_rewards = self.estimator.env.reward(states)
         env_log_rewards = torch.log(env_rewards).unsqueeze(-1)
         all_logits = torch.cat([logits, env_log_rewards], dim=-1)
         return all_logits
