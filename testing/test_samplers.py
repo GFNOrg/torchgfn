@@ -17,6 +17,7 @@ from gfn.samplers.actions_samplers import (
 
 @pytest.mark.parametrize("height", [4, 5])
 def test_hypergrid_trajectory_sampling(height: int):
+    # TODO: make this deterministic by introducing a seed - PyTest fails sometimes here for no reason
     print("---Trying Forward sampling of trajectories---")
     env = HyperGrid(ndim=2, height=height)
 

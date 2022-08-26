@@ -58,9 +58,7 @@ class FMParametrizationConfig(BaseParametrizationConfig):
         self.adjust_module_config(logF_edge_config, preprocessor, env.n_actions - 1)
 
         logF_module = logF_edge_config.parse(env=env)
-        logF_edge = LogEdgeFlowEstimator(
-            preprocessor=preprocessor, env=env, module=logF_module
-        )
+        logF_edge = LogEdgeFlowEstimator(preprocessor=preprocessor, module=logF_module)
         _ = FMParametrization(logF_edge)
 
         # TODO: FlowMatching loss not implemented yet

@@ -31,7 +31,7 @@ def test_FM_hypergrid(ndim: int):
         hidden_dim=16,
         output_dim=env.n_actions - 1,
     )
-    log_F_edge = LogEdgeFlowEstimator(preprocessor, env, module)
+    log_F_edge = LogEdgeFlowEstimator(preprocessor, module)
     parametrization = FMParametrization(log_F_edge)
 
     print(parametrization.Pi(env, n_samples=10).sample())

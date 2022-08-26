@@ -3,9 +3,8 @@ from dataclasses import dataclass
 from torchtyping import TensorType
 
 from gfn.containers import States
-from gfn.envs import Env
-from gfn.modules import GFNModule
-from gfn.preprocessors.base import Preprocessor
+from gfn.modules import GFNModule, Tabular
+from gfn.preprocessors.base import IdentityPreprocessor, Preprocessor
 
 # Typing
 batch_shape = None
@@ -13,39 +12,16 @@ input_dim = None
 output_dim = None
 InputTensor = TensorType["batch_shape", "input_dim", float]
 OutputTensor = TensorType["batch_shape", "output_dim", float]
-OutputTensor1D = TensorType["batch_shape", 1, float]
 
 
-class LogEdgeFlowEstimator:
-    def __init__(self, preprocessor: Preprocessor, env: Env, module: GFNModule):
+class FunctionEstimator:
+    def __init__(self, preprocessor: Preprocessor, module: GFNModule) -> None:
         assert module.input_dim is None or module.input_dim == preprocessor.output_dim
-        assert module.output_dim == env.n_actions - 1
         assert module.output_type == "free"
-        self.preprocessor = preprocessor
-        self.module = module
-        self.env = env
-
-    def __call__(self, states: States) -> OutputTensor:
-        return self.module(self.preprocessor(states))
-
-
-class LogStateFlowEstimator:
-    def __init__(self, preprocessor: Preprocessor, module: GFNModule):
-        assert module.input_dim is None or module.input_dim == preprocessor.output_dim
-        assert module.output_dim == 1
-        assert module.output_type == "free"
-        self.preprocessor = preprocessor
-        self.module = module
-
-    def __call__(self, states: States) -> OutputTensor1D:
-        return self.module(self.preprocessor(states))
-
-
-class LogitPFEstimator:
-    def __init__(self, preprocessor: Preprocessor, module: GFNModule):
-        assert module.input_dim is None or module.input_dim == preprocessor.output_dim
-        assert module.output_dim == preprocessor.env.n_actions
-        assert module.output_type == "free"
+        if isinstance(module, Tabular) and not isinstance(
+            preprocessor, IdentityPreprocessor
+        ):
+            raise ValueError("Tabular modules must use the IdentityPreprocessor")
         self.preprocessor = preprocessor
         self.module = module
 
@@ -53,16 +29,28 @@ class LogitPFEstimator:
         return self.module(self.preprocessor(states))
 
 
-class LogitPBEstimator:
+class LogEdgeFlowEstimator(FunctionEstimator):
     def __init__(self, preprocessor: Preprocessor, module: GFNModule):
-        assert module.input_dim is None or module.input_dim == preprocessor.output_dim
+        super().__init__(preprocessor, module)
         assert module.output_dim == preprocessor.env.n_actions - 1
-        assert module.output_type == "free"
-        self.preprocessor = preprocessor
-        self.module = module
 
-    def __call__(self, states: States) -> OutputTensor:
-        return self.module(self.preprocessor(states))
+
+class LogStateFlowEstimator(FunctionEstimator):
+    def __init__(self, preprocessor: Preprocessor, module: GFNModule):
+        super().__init__(preprocessor, module)
+        assert module.output_dim == 1
+
+
+class LogitPFEstimator(FunctionEstimator):
+    def __init__(self, preprocessor: Preprocessor, module: GFNModule):
+        super().__init__(preprocessor, module)
+        assert module.output_dim == preprocessor.env.n_actions
+
+
+class LogitPBEstimator(FunctionEstimator):
+    def __init__(self, preprocessor: Preprocessor, module: GFNModule):
+        super().__init__(preprocessor, module)
+        assert module.output_dim == preprocessor.env.n_actions - 1
 
 
 @dataclass

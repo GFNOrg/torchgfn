@@ -30,6 +30,7 @@ class SamplerConfig(JsonSerializable):
     def parse(
         self, env: Env, parametrization: Parametrization
     ) -> Tuple[TrainingSampler, TrajectoriesSampler]:
+        # TODO: validation_actions_sampler seems redundant and useless
 
         if isinstance(parametrization, FMParametrization):
             actions_sampler_cls = LogEdgeFlowsActionsSampler
