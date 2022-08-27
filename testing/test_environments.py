@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import pytest
 import torch
 
 from gfn.envs import HyperGrid
@@ -46,15 +47,26 @@ def test_hypergrid():
         except NonValidActionsError:
             print("NonValidActionsError raised as expected because of invalid actions")
 
-    print("\nTesting subscripting with boolean tensors")
+
+@pytest.mark.parametrize("ndim", [2, 3, 4])
+def test_states_get_and_set(ndim: int):
+    env = HyperGrid(ndim=ndim, height=8)
+
     states = env.reset(batch_shape=(2, 3), random_init=True)
     print("States:", states)
+    print("\nTesting subscripting with boolean tensors")
+
     selections = torch.randint(0, 2, (2, 3), dtype=torch.bool)
     print("Selections:", selections)
     print("States[selections]:", states[selections])
     selections = torch.randint(0, 2, (2,), dtype=torch.bool)
     print("Selections:", selections)
     print("States[selections]:", states[selections])
+
+    states = env.reset(batch_shape=(2, 3))
+    states_2 = env.reset(batch_shape=1, random_init=True)
+    states[0, 2] = states_2
+    print("States:", states)
 
 
 def test_get_flat_grid(plot=False):

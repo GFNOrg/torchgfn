@@ -1,1 +1,1 @@
-from .dist import FinalStateDistribution, TrajectoryDistribution
+from .dist import TrajectoryBasedTerminatingStateDistribution, TrajectoryDistribution

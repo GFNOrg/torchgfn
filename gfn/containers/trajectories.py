@@ -24,6 +24,7 @@ class Trajectories:
     actions: Tensor2D
     # The following field mentions how many actions were taken in each trajectory.
     when_is_done: Tensor1D
+    last_states: States
     is_backward: bool = False
 
     def __repr__(self) -> str:
@@ -47,32 +48,27 @@ class Trajectories:
         )
 
     @property
-    def last_states(self) -> States:
-        mask = torch.nn.functional.one_hot(
-            self.when_is_done - 1, num_classes=self.when_is_done.max().item() + 1
-        ).T.bool()
-        return self.states[mask]
-
-    @property
     def rewards(self) -> Optional[FloatTensor1D]:
         if self.is_backward:
             return None
         return self.env.reward(self.last_states)
 
     def sample(self, n_trajectories: int) -> "Trajectories":
+        # TODO: improve and add tests for this method.
         """Sample a random subset of trajectories."""
         perm = torch.randperm(self.n_trajectories)
         indices = perm[:n_trajectories]
 
-        states_raw = self.states.states[:, indices, ...]
-        states = self.env.States(states=states_raw)
+        states = self.states[:, indices]
         actions = self.actions[:, indices]
         when_is_done = self.when_is_done[indices]
+        last_states = self.last_states[indices]
         return Trajectories(
             env=self.env,
             n_trajectories=n_trajectories,
             states=states,
             actions=actions,
             when_is_done=when_is_done,
+            last_states=last_states,
             is_backward=self.is_backward,
         )

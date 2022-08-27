@@ -17,7 +17,10 @@ OneStateTensor = TensorType["state_shape", torch.float]
 class States(ABC):
     """Base class for states, seen as nodes of the DAG.
     Each environment/task should have its own States subclass.
-    States are represented as torch tensors of shape=(*batch_shape , *state_shape).
+    In essence, a States object is a container of three tensors:
+    - states: a torch tensor of shape (*batch_shape , *state_shape)
+    - forward_masks: a torch tensor of shape (*batch_shape , n_actions)
+    - backward_masks: a torch tensor of shape (*batch_shape , (n_actions - 1))
     """
 
     n_actions: ClassVar[int | None] = None
@@ -67,11 +70,11 @@ class States(ABC):
         If states is None, then the initialized state is either the
         initial state $s_0$ or random states. In this case, batch_shape cannot be None.
         If random_init is True, then the states are initialized randomly.
+        The `forward_mask` and `backward_mask` attributes can be passed as keyword arguments.
         """
         if states is None:
-            assert (
-                batch_shape is not None
-            ), "batch_shape cannot be None if states is None"
+            if batch_shape is None:
+                batch_shape = (0,)
 
             self.batch_shape = batch_shape
             if random_init:
@@ -97,16 +100,36 @@ class States(ABC):
             self.make_masks()
 
     def __repr__(self):
-        return f"""States(states={self.states},\n forward_masks={self.forward_masks.long()},
-        \n backward_masks={self.backward_masks.long()})
-        """
+        return f"""{self.__class__.__name__} object of batch shape {self.batch_shape}
+        and state shape {self.state_shape}"""
+        # return f"""States(states={self.states},\n forward_masks={self.forward_masks.long()},
+        # \n backward_masks={self.backward_masks.long()})
+        # """
 
-    def __getitem__(self, index: TensorType[bool]) -> States:
+    def __getitem__(self, index: Any) -> States:
+        # TODO: add test for this method
         states = self.states[index]
         forward_masks = self.forward_masks[index]
         backward_masks = self.backward_masks[index]
         return self.__class__(
             states, forward_masks=forward_masks, backward_masks=backward_masks
+        )
+
+    def __setitem__(self, index: Any, value: States) -> None:
+        self.states[index] = value.states
+        self.forward_masks[index] = value.forward_masks
+        self.backward_masks[index] = value.backward_masks
+
+    def extend(self, other: States) -> None:
+        other_batch_shape = other.batch_shape
+        assert (
+            len(other_batch_shape) == len(self.batch_shape) == 1
+        ), "extend only works for 1D batches of states"
+        self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
+        self.states = torch.cat((self.states, other.states), dim=0)
+        self.forward_masks = torch.cat((self.forward_masks, other.forward_masks), dim=0)
+        self.backward_masks = torch.cat(
+            (self.backward_masks, other.backward_masks), dim=0
         )
 
     @classmethod

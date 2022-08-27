@@ -5,7 +5,10 @@ import torch
 
 from ..envs import Env
 from ..modules import GFNModule
-from ..trajectories import FinalStateDistribution, TrajectoryDistribution
+from ..trajectories import (
+    TrajectoryBasedTerminatingStateDistribution,
+    TrajectoryDistribution,
+)
 
 
 @dataclass
@@ -21,8 +24,12 @@ class Parametrization(ABC):
     def Pi(self, env: Env, n_samples: int, **kwargs) -> TrajectoryDistribution:
         pass
 
-    def P_T(self, env: Env, n_samples: int, **kwargs) -> FinalStateDistribution:
-        return FinalStateDistribution(self.Pi(env, n_samples, **kwargs))
+    def P_T(
+        self, env: Env, n_samples: int, **kwargs
+    ) -> TrajectoryBasedTerminatingStateDistribution:
+        return TrajectoryBasedTerminatingStateDistribution(
+            self.Pi(env, n_samples, **kwargs)
+        )
 
     @property
     def parameters(self) -> dict:

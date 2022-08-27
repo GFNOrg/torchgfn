@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from gfn.containers.trajectories import Trajectories
 from gfn.envs import HyperGrid
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator
 from gfn.modules import NeuralNet
@@ -16,7 +17,7 @@ from gfn.samplers.actions_samplers import (
 
 
 @pytest.mark.parametrize("height", [4, 5])
-def test_hypergrid_trajectory_sampling(height: int):
+def test_hypergrid_trajectory_sampling(height: int) -> Trajectories:
     # TODO: make this deterministic by introducing a seed - PyTest fails sometimes here for no reason
     print("---Trying Forward sampling of trajectories---")
     env = HyperGrid(ndim=2, height=height)
@@ -125,8 +126,12 @@ def test_hypergrid_trajectory_sampling(height: int):
     actions_sampler = UniformActionsSampler(sf_temperature=2.0)
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
+    return trajectories
 
-    print("\n\n---Testing SubSampling---")
+
+@pytest.mark.parametrize("height", [4, 5])
+def test_sub_sampling(height: int):
+    trajectories = test_hypergrid_trajectory_sampling(height)
     print(
         f"There are {trajectories.n_trajectories} original trajectories, from which we will sample 2"
     )
@@ -162,3 +167,6 @@ def test_hypergrid_transition_sampling(height: int):
 
     transitions = transitions_sampler.sample_transitions(states=transitions.next_states)
     print(transitions)
+
+
+test_sub_sampling(4)

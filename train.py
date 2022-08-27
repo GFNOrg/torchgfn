@@ -1,9 +1,10 @@
+import torch
 from simple_parsing import ArgumentParser
 from simple_parsing.helpers.serialization import encode
 
 import wandb
 from gfn.configs import EnvConfig, OptimConfig, ParametrizationConfig, SamplerConfig
-from gfn.utils import validate_TB_parametrization_for_HyperGrid
+from gfn.utils import validate_TB_for_HyperGrid
 
 parser = ArgumentParser()
 
@@ -15,12 +16,26 @@ parser.add_arguments(SamplerConfig, dest="sampler_config")
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--n_iterations", type=int, default=1000)
 parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-parser.add_argument("--validation_samples", type=int, default=1000)
+parser.add_argument("--seed", type=int, default=0)
+parser.add_argument(
+    "--validation_samples",
+    type=int,
+    default=1000,
+    help="Number of validation samples to use to evaluate the pmf.",
+)
 parser.add_argument("--validation_interval", type=int, default=100)
+parser.add_argument(
+    "--validate_with_training_examples",
+    action="store_true",
+    default=False,
+    help="If true, the pmf is obtained from the latest visited terminating states",
+)
+
 
 args = parser.parse_args()
 
-# config = args.config
+torch.manual_seed(args.seed)
+
 env_config: EnvConfig = args.env_config
 parametrization_config: ParametrizationConfig = args.parametrization_config
 optim_config: OptimConfig = args.optim_config
@@ -35,19 +50,16 @@ training_sampler, validation_trajectories_sampler = sampler_config.parse(
 
 print(env_config, parametrization_config, optim_config, sampler_config)
 
-use_wandb = False
+use_wandb = True
+
 
 if use_wandb:
-    wandb.init(project="gfn_tests_2")
+    wandb.init(project="gfn_library_tests")
     wandb.config.update(encode(args))
-    # wandb.config.update(encode(env_config))
-    # wandb.config.update(encode(parametrization_config))
-    # wandb.config.update(encode(optim_config))
-    # wandb.config.update(encode(sampler_config))
-    # wandb.config.update({"batch_size": args.batch_size})
-    # wandb.config.update({"n_iterations": args.n_iterations})
-    # wandb.config.update({"device": args.device})
 
+visited_terminating_states = (
+    env.States() if args.validate_with_training_examples else None
+)
 
 for i in range(args.n_iterations):
     training_objects = training_sampler.sample(n_objects=args.batch_size)
@@ -58,19 +70,17 @@ for i in range(args.n_iterations):
 
     optimizer.step()
     scheduler.step()
+    if args.validate_with_training_examples:
+        visited_terminating_states.extend(training_objects.last_states)  # type: ignore
     if use_wandb:
-        wandb.log(
-            {
-                # "trajectories": env.get_states_indices(trajectories.states).transpose(0, 1),
-                "loss": loss,
-                # "last_states_indices": wandb.Histogram(last_states_indices),
-            },
-            step=i,
-        )
+        wandb.log({"loss": loss.item()}, step=i)
+        wandb.log({"states_visited": (i + 1) * args.batch_size}, step=i)
     if i % args.validation_interval == 0:
-        validation_info = validate_TB_parametrization_for_HyperGrid(
-            env, parametrization, args.validation_samples
+        true_logZ, validation_info = validate_TB_for_HyperGrid(
+            env, parametrization, args.validation_samples, visited_terminating_states
         )
         if use_wandb:
             wandb.log(validation_info, step=i)
-        print(f"{i}: {validation_info} - Loss: {loss}")
+            if i == 0:
+                wandb.log({"true_logZ": true_logZ})
+        print(f"{i}: {validation_info} - Loss: {loss} - True logZ: {true_logZ}")

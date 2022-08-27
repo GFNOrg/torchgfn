@@ -6,6 +6,7 @@ import torch
 from torchtyping import TensorType
 
 from gfn.containers import States, Trajectories
+from gfn.envs.env import Env
 
 # Typing
 TensorPmf = TensorType["n_states", float]
@@ -24,6 +25,19 @@ class TrajectoryDistribution(ABC):
         pass
 
 
+class TerminatingStatesDistribution(ABC):
+    """
+    Represents an abstract distribution over terminating states.
+    """
+
+    @abstractmethod
+    def pmf(self) -> TensorPmf:
+        """
+        Compute the probability mass function of the distribution.
+        """
+        pass
+
+
 class EmpiricalTrajectoryDistribution(TrajectoryDistribution):
     """
     Represents an empirical distribution over trajectories.
@@ -38,7 +52,29 @@ class EmpiricalTrajectoryDistribution(TrajectoryDistribution):
         return self.trajectories.sample(n_trajectories)
 
 
-class FinalStateDistribution:
+class EmpiricalTerminatingStatesDistribution(TerminatingStatesDistribution):
+    """
+    Represents an empirical distribution over terminating states.
+    """
+
+    def __init__(self, env: Env, states: States) -> None:
+        assert len(states.batch_shape) == 1, "States should be a linear batch of states"
+        self.states = states
+        self.n_states = states.batch_shape[0]
+        self.states_to_indices = env.get_states_indices
+        self.env_n_states = env.n_states
+
+    def pmf(self) -> TensorPmf:
+        states_indices = self.states_to_indices(self.states).numpy().tolist()
+        counter = Counter(states_indices)
+        counter_list = [
+            counter[state_idx] if state_idx in counter else 0
+            for state_idx in range(self.env_n_states)
+        ]
+        return torch.tensor(counter_list, dtype=torch.float) / len(states_indices)
+
+
+class TrajectoryBasedTerminatingStateDistribution(TerminatingStatesDistribution):
     """
     Represents a distribution over final states.
     """
@@ -50,7 +86,7 @@ class FinalStateDistribution:
         self.states_to_indices = (
             self.trajectory_distribution.trajectories.env.get_states_indices
         )
-        self.n_states = self.trajectory_distribution.trajectories.env.n_states
+        self.env_n_states = self.trajectory_distribution.trajectories.env.n_states
 
     def sample(self, n_final_states: Optional[int] = None) -> States:
         """
@@ -66,5 +102,8 @@ class FinalStateDistribution:
         samples = self.sample()
         samples_indices = self.states_to_indices(samples).numpy().tolist()
         counter = Counter(samples_indices)
-        counter_list = [counter[state_idx] for state_idx in range(self.n_states)]
+        counter_list = [
+            counter[state_idx] if state_idx in counter else 0
+            for state_idx in range(self.env_n_states)
+        ]
         return torch.tensor(counter_list, dtype=torch.float) / len(samples_indices)

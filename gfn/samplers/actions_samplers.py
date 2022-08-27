@@ -56,7 +56,8 @@ class ActionsSampler(ABC):
         return logits, probs
 
     def sample(self, states: States) -> Tuple[Tensor2D, Tensor1D]:
-        logits, probs = self.get_probs(states)
+        with torch.no_grad():
+            logits, probs = self.get_probs(states)
         self.update_state()
 
         return logits, Categorical(probs).sample()
