@@ -1,3 +1,16 @@
+## Running the code
+For now, only the Trajectory Balance and Detailed Balance losses are implemented. The Trajectory Balance loss has been tested, and the code obtains similar results than those of [The Trajectory Balance paper](https://arxiv.org/pdf/2201.13259.pdf).
+
+To run the code:
+```python
+python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --parametrization TB --parametrization.tied --validate_with_training_examples --validation_samples 200000 --seed 3
+```
+
+
+## Contributing
+Run `pre-commit` after staging, and before committing. Make sure all the tests pass. The codebase uses `black` formatter.
+
+
 ## Defining an environment
 A pointed DAG environment (or GFN environment, or environment for short) is a representation for the pointed DAG. The abstract class [Env](envs/env.py) specifies the requirements for a valid environment definition. To obtain such a representation, the environment needs to specify the following attributes or properties:
 - The number of actions `n_actions`. The last action (`n_actions - 1`) should correspond to the exit action
