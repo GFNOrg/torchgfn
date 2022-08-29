@@ -87,7 +87,9 @@ class Tabular(nn.Module, GFNModule):
     def forward(self, preprocessed_states: InputTensor) -> OutputTensor:
         # Note that only the IdentityPreprocessor is compatible with the Tabular module, and only linear batches are possible
         assert preprocessed_states.ndim == 2
-        states_indices = self.env.get_states_indices(preprocessed_states)
+        states_indices = self.env.get_states_indices(
+            self.env.States(preprocessed_states)
+        )
         outputs = [self.tensors[index] for index in states_indices]
         if len(outputs) > 0:
             return torch.stack(outputs)

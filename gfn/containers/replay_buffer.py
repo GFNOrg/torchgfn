@@ -1,42 +1,47 @@
-# probably will be unused - to delete eventually
-import numpy as np
+from typing import Literal
+
 import torch
+
+from ..envs import Env
+from .trajectories import Trajectories
+from .transitions import Transitions
 
 
 class ReplayBuffer:
-    def __init__(self, capacity, max_length, state_dim):
+    def __init__(
+        self,
+        env: Env,
+        capacity: int = 1000,
+        objects: Literal["transitions", "trajectories"] = "trajectories",
+    ):
+        self.env = env
         self.capacity = capacity
-        self.max_length = max_length
+        self.type = objects
+        if objects == "transitions":
+            self.training_objects = Transitions(env)
+        else:
+            self.training_objects = Trajectories(env)
 
-        self._trajectories = torch.zeros((capacity, max_length + 1, state_dim))
-        self._actions = torch.zeros((capacity, max_length)).long()
-        self._rewards = torch.zeros((capacity,))
-
-        self._index = 0
         self._is_full = False
+        self._index = 0
+
+    def __repr__(self):
+        return f"ReplayBuffer(capacity={self.capacity}, containing {len(self)} {self.type})"
 
     def __len__(self):
         return self.capacity if self._is_full else self._index
 
-    def add(self, trajectories, actions, rewards, dones):
-        to_add = trajectories[dones].shape[0]
-        indices = torch.arange(self._index, self._index + to_add) % self.capacity
+    def add(self, training_objects: Transitions | Trajectories):
+        to_add = len(training_objects)
 
         self._is_full |= self._index + to_add >= self.capacity
         self._index = (self._index + to_add) % self.capacity
 
-        self._trajectories[indices] = trajectories[dones]
-        self._actions[indices] = actions[dones]
-        self._rewards[indices] = rewards[dones]
+        self.training_objects.extend(training_objects)
+        self.training_objects = self.training_objects[-self.capacity :]
 
-    def sample(self, batch_size, rng=np.random.default_rng()):
-        indices = rng.choice(len(self), size=batch_size, replace=False)
-
-        return (
-            self._trajectories[indices],
-            self._actions[indices],
-            self._rewards[indices],
-        )
+    def sample(self, n_objects: int):
+        return self.training_objects.sample(n_objects)
 
 
 if __name__ == "__main__":

@@ -115,10 +115,10 @@ class States(ABC):
             states, forward_masks=forward_masks, backward_masks=backward_masks
         )
 
-    def __setitem__(self, index: int | Sequence[int], value: States) -> None:
-        self.states[index] = value.states
-        self.forward_masks[index] = value.forward_masks
-        self.backward_masks[index] = value.backward_masks
+    # def __setitem__(self, index: int | Sequence[int], value: States) -> None:
+    #     self.states[index] = value.states
+    #     self.forward_masks[index] = value.forward_masks
+    #     self.backward_masks[index] = value.backward_masks
 
     def extend(self, other: States) -> None:
         other_batch_shape = other.batch_shape
@@ -132,7 +132,12 @@ class States(ABC):
                 (self.backward_masks, other.backward_masks), dim=0
             )
         elif len(other_batch_shape) == len(self.batch_shape) == 2:
-            assert self.batch_shape[0] == other_batch_shape[0]
+            self.extend_with_sf(
+                required_first_dim=max(self.batch_shape[0], other_batch_shape[0])
+            )
+            other.extend_with_sf(
+                required_first_dim=max(self.batch_shape[0], other_batch_shape[0])
+            )
             self.batch_shape = (
                 self.batch_shape[0],
                 self.batch_shape[1] + other_batch_shape[1],
@@ -147,6 +152,57 @@ class States(ABC):
         else:
             raise ValueError(
                 f"extend is not implemented for batch shapes {self.batch_shape} and {other_batch_shape}"
+            )
+
+    def extend_with_sf(self, required_first_dim: int) -> None:
+        """Takes a two-dimensional batch of states (i.e. of batch_shape (a, b)),
+        and extends it to a States object of batch_shape (required_first_dim, b),
+        by adding the required number of sink_states. This is useful to extend trajectories
+        of different lengths."""
+        if len(self.batch_shape) == 2:
+            if self.batch_shape[0] >= required_first_dim:
+                return
+            self.states = torch.cat(
+                (
+                    self.states,
+                    self.__class__.s_f.repeat(  # type: ignore
+                        required_first_dim - self.batch_shape[0], self.batch_shape[1], 1
+                    ),
+                ),
+                dim=0,
+            )
+            self.forward_masks = torch.cat(
+                (
+                    self.forward_masks,
+                    torch.ones(
+                        (
+                            required_first_dim - self.batch_shape[0],
+                            *self.forward_masks.shape[1:],
+                        ),
+                        dtype=torch.bool,
+                        device=self.device,
+                    ),
+                ),
+                dim=0,
+            )
+            self.backward_masks = torch.cat(
+                (
+                    self.backward_masks,
+                    torch.ones(
+                        (
+                            required_first_dim - self.batch_shape[0],
+                            *self.backward_masks.shape[1:],
+                        ),
+                        dtype=torch.bool,
+                        device=self.device,
+                    ),
+                ),
+                dim=0,
+            )
+            self.batch_shape = (required_first_dim, self.batch_shape[1])
+        else:
+            raise ValueError(
+                f"extend_with_sf is not implemented for batch shapes {self.batch_shape}"
             )
 
     @classmethod

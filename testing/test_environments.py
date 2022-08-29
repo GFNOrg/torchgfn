@@ -49,7 +49,7 @@ def test_hypergrid():
 
 
 @pytest.mark.parametrize("ndim", [2, 3, 4])
-def test_states_get_and_set(ndim: int):
+def test_states_getitem(ndim: int):
     env = HyperGrid(ndim=ndim, height=8)
 
     states = env.reset(batch_shape=(2, 3), random_init=True)
@@ -62,11 +62,6 @@ def test_states_get_and_set(ndim: int):
     selections = torch.randint(0, 2, (2,), dtype=torch.bool)
     print("Selections:", selections)
     print("States[selections]:", states[selections])
-
-    states = env.reset(batch_shape=(2, 3))
-    states_2 = env.reset(batch_shape=1, random_init=True)
-    states[0, 2] = states_2
-    print("States:", states)
 
 
 def test_get_flat_grid(plot=False):

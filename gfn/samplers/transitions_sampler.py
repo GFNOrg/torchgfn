@@ -46,7 +46,6 @@ class TransitionsSampler(TrainingSampler):
 
         transitions = Transitions(
             env=self.env,
-            n_transitions=n_transitions,
             states=states,
             actions=actions,
             next_states=new_states,

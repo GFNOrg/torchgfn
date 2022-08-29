@@ -27,6 +27,7 @@ class Trajectories:
         self.env = env
         self.is_backward = is_backward
         self.states = states if states is not None else env.States(batch_shape=(0, 0))
+        assert len(self.states.batch_shape) == 2
         self.actions = (
             actions
             if actions is not None
@@ -49,9 +50,6 @@ class Trajectories:
                 if step.equal(self.env.s_0 if self.is_backward else self.env.s_f):
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
-        # states_repr = "\n".join(
-        #     ["-> ".join([str(step.numpy()) for step in traj]) for traj in states]
-        # )
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
             f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
@@ -62,8 +60,13 @@ class Trajectories:
     def n_trajectories(self) -> int:
         return self.states.batch_shape[1]
 
+    def __len__(self) -> int:
+        return self.n_trajectories
+
     @property
     def max_length(self) -> int:
+        if len(self) == 0:
+            return 0
         return self.when_is_done.max().item()
 
     @property
@@ -80,9 +83,12 @@ class Trajectories:
         "Returns a subset of the `n_trajectories` trajectories."
         if isinstance(index, int):
             index = [index]
+        when_is_done = self.when_is_done[index]
+        new_max_length = when_is_done.max().item() if len(when_is_done) > 0 else 0
         states = self.states[:, index]
         actions = self.actions[:, index]
-        when_is_done = self.when_is_done[index]
+        states = states[: 1 + new_max_length]
+        actions = actions[:new_max_length]
         return Trajectories(
             env=self.env,
             states=states,
@@ -91,23 +97,42 @@ class Trajectories:
             is_backward=self.is_backward,
         )
 
-    def __setitem__(
-        self, index: Union[int, Sequence[int]], value: "Trajectories"
-    ) -> None:
-        if isinstance(index, int):
-            index = [index]
-        self.states[:, index] = value.states
-        self.actions[:, index] = value.actions
-        self.when_is_done[index] = value.when_is_done
+    # def __setitem__(
+    #     self, index: Union[int, Sequence[int]], value: "Trajectories"
+    # ) -> None:
+    #     if isinstance(index, int):
+    #         index = [index]
+    #     self.states[:, index] = value.states
+    #     self.actions[:, index] = value.actions
+    #     self.when_is_done[index] = value.when_is_done
 
     def extend(self, other: "Trajectories") -> None:
         """Extend the trajectories with another set of trajectories."""
+        self.extend_actions(required_first_dim=max(self.max_length, other.max_length))
+        other.extend_actions(required_first_dim=max(self.max_length, other.max_length))
+
         self.states.extend(other.states)
         self.actions = torch.cat((self.actions, other.actions), dim=1)
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
 
+    def extend_actions(self, required_first_dim: int) -> None:
+        """Extends the actions along the first dimension by by adding -1s as necessary.
+        This is useful for extending trajectories of different lengths."""
+        if self.max_length >= required_first_dim:
+            return
+        self.actions = torch.cat(
+            (
+                self.actions,
+                torch.full(
+                    size=(required_first_dim - self.max_length, self.n_trajectories),
+                    fill_value=-1,
+                    dtype=torch.long,
+                ),
+            ),
+            dim=0,
+        )
+
     def sample(self, n_trajectories: int) -> "Trajectories":
-        # TODO: improve and add tests for this method.
         """Sample a random subset of trajectories."""
         perm = torch.randperm(self.n_trajectories)
         indices = perm[:n_trajectories]
