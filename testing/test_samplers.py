@@ -126,7 +126,31 @@ def test_hypergrid_trajectory_sampling(height: int) -> Trajectories:
     actions_sampler = UniformActionsSampler(sf_temperature=2.0)
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
+    print(trajectories)
     return trajectories
+
+
+@pytest.mark.parametrize("height", [4, 5])
+def test_trajectories_getitem_setitem(height: int):
+    trajectories = test_hypergrid_trajectory_sampling(height)
+    print(f"There are {trajectories.n_trajectories} original trajectories")
+    print(trajectories)
+    print(trajectories[0])
+    print(trajectories[[1, 0]])
+    print(trajectories[torch.tensor([1, 2], dtype=torch.long)])
+    trajectories[2] = trajectories[1]
+    print(trajectories)
+    print(trajectories[[2, 0, 1]])
+
+
+@pytest.mark.parametrize("height", [4, 5])
+def test_trajectories_extend(height: int):
+    trajectories = test_hypergrid_trajectory_sampling(height)
+    print(
+        f"There are {trajectories.n_trajectories} original trajectories. To which we will add the two first trajectories"
+    )
+    trajectories.extend(trajectories[[1, 0]])
+    print(trajectories)
 
 
 @pytest.mark.parametrize("height", [4, 5])
@@ -167,6 +191,3 @@ def test_hypergrid_transition_sampling(height: int):
 
     transitions = transitions_sampler.sample_transitions(states=transitions.next_states)
     print(transitions)
-
-
-test_sub_sampling(4)

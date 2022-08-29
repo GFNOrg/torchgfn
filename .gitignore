@@ -173,4 +173,3 @@ cython_debug/
 
 # wandb
 wandb/
-./config.py  # Uncomment if simple_parsing gets fixed soon

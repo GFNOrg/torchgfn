@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, ClassVar
+from typing import Any, Callable, ClassVar, Sequence
 
 import torch
 from torchtyping import TensorType
@@ -106,7 +106,7 @@ class States(ABC):
         # \n backward_masks={self.backward_masks.long()})
         # """
 
-    def __getitem__(self, index: Any) -> States:
+    def __getitem__(self, index: int | Sequence[int]) -> States:
         # TODO: add test for this method
         states = self.states[index]
         forward_masks = self.forward_masks[index]
@@ -115,22 +115,39 @@ class States(ABC):
             states, forward_masks=forward_masks, backward_masks=backward_masks
         )
 
-    def __setitem__(self, index: Any, value: States) -> None:
+    def __setitem__(self, index: int | Sequence[int], value: States) -> None:
         self.states[index] = value.states
         self.forward_masks[index] = value.forward_masks
         self.backward_masks[index] = value.backward_masks
 
     def extend(self, other: States) -> None:
         other_batch_shape = other.batch_shape
-        assert (
-            len(other_batch_shape) == len(self.batch_shape) == 1
-        ), "extend only works for 1D batches of states"
-        self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
-        self.states = torch.cat((self.states, other.states), dim=0)
-        self.forward_masks = torch.cat((self.forward_masks, other.forward_masks), dim=0)
-        self.backward_masks = torch.cat(
-            (self.backward_masks, other.backward_masks), dim=0
-        )
+        if len(other_batch_shape) == len(self.batch_shape) == 1:
+            self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
+            self.states = torch.cat((self.states, other.states), dim=0)
+            self.forward_masks = torch.cat(
+                (self.forward_masks, other.forward_masks), dim=0
+            )
+            self.backward_masks = torch.cat(
+                (self.backward_masks, other.backward_masks), dim=0
+            )
+        elif len(other_batch_shape) == len(self.batch_shape) == 2:
+            assert self.batch_shape[0] == other_batch_shape[0]
+            self.batch_shape = (
+                self.batch_shape[0],
+                self.batch_shape[1] + other_batch_shape[1],
+            )
+            self.states = torch.cat((self.states, other.states), dim=1)
+            self.forward_masks = torch.cat(
+                (self.forward_masks, other.forward_masks), dim=1
+            )
+            self.backward_masks = torch.cat(
+                (self.backward_masks, other.backward_masks), dim=1
+            )
+        else:
+            raise ValueError(
+                f"extend is not implemented for batch shapes {self.batch_shape} and {other_batch_shape}"
+            )
 
     @classmethod
     def make_initial_states_tensor(cls, batch_shape: tuple[int]) -> StatesTensor:

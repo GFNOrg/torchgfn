@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence, Union
 
 import torch
 from torchtyping import TensorType
@@ -53,16 +53,15 @@ class Trajectories:
             return None
         return self.env.reward(self.last_states)
 
-    def sample(self, n_trajectories: int) -> "Trajectories":
-        # TODO: improve and add tests for this method.
-        """Sample a random subset of trajectories."""
-        perm = torch.randperm(self.n_trajectories)
-        indices = perm[:n_trajectories]
-
-        states = self.states[:, indices]
-        actions = self.actions[:, indices]
-        when_is_done = self.when_is_done[indices]
-        last_states = self.last_states[indices]
+    def __getitem__(self, index: Union[int, Sequence[int]]) -> "Trajectories":
+        "Returns a subset of the `n_trajectories` trajectories."
+        if isinstance(index, int):
+            index = [index]
+        states = self.states[:, index]
+        actions = self.actions[:, index]
+        when_is_done = self.when_is_done[index]
+        last_states = self.last_states[index]
+        n_trajectories = len(index)
         return Trajectories(
             env=self.env,
             n_trajectories=n_trajectories,
@@ -72,3 +71,27 @@ class Trajectories:
             last_states=last_states,
             is_backward=self.is_backward,
         )
+
+    def __setitem__(
+        self, index: Union[int, Sequence[int]], value: "Trajectories"
+    ) -> None:
+        if isinstance(index, int):
+            index = [index]
+        self.states[:, index] = value.states
+        self.actions[:, index] = value.actions
+        self.when_is_done[index] = value.when_is_done
+
+    def extend(self, other: "Trajectories") -> None:
+        """Extend the trajectories with another set of trajectories."""
+        self.states.extend(other.states)
+        self.actions = torch.cat((self.actions, other.actions), dim=1)
+        self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
+        self.last_states.extend(other.last_states)
+
+    def sample(self, n_trajectories: int) -> "Trajectories":
+        # TODO: improve and add tests for this method.
+        """Sample a random subset of trajectories."""
+        perm = torch.randperm(self.n_trajectories)
+        indices = perm[:n_trajectories]
+
+        return self[indices]
