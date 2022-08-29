@@ -40,7 +40,7 @@ class ReplayBuffer:
         self.training_objects.extend(training_objects)
         self.training_objects = self.training_objects[-self.capacity :]
 
-    def sample(self, n_objects: int):
+    def sample(self, n_objects: int) -> Transitions | Trajectories:
         return self.training_objects.sample(n_objects)
 
 
