@@ -32,8 +32,6 @@ class TrajectoriesSampler(TrainingSampler):
             n_trajectories = states.batch_shape[0]
         assert states is not None
 
-        last_states = self.env.States(batch_shape=(n_trajectories,))
-
         dones = states.is_initial_state if self.is_backward else states.is_sink_state
 
         trajectories_states: List[StatesTensor] = [states.states]
@@ -58,7 +56,6 @@ class TrajectoriesSampler(TrainingSampler):
                 if self.is_backward
                 else new_states.is_sink_state
             ) & ~dones
-            last_states[new_dones] = states[new_dones]
             trajectories_dones[new_dones & ~dones] = step
             states = new_states
             dones = dones | new_dones
@@ -76,11 +73,9 @@ class TrajectoriesSampler(TrainingSampler):
 
         trajectories = Trajectories(
             env=self.env,
-            n_trajectories=n_trajectories,
             states=trajectories_states,
             actions=trajectories_actions,
             when_is_done=trajectories_dones,
-            last_states=last_states,
             is_backward=self.is_backward,
         )
 

@@ -191,3 +191,6 @@ def test_hypergrid_transition_sampling(height: int):
 
     transitions = transitions_sampler.sample_transitions(states=transitions.next_states)
     print(transitions)
+
+
+test_trajectories_extend(5)

@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Optional, Sequence, Union
 
 import torch
@@ -14,18 +13,30 @@ Tensor1D = TensorType["n_trajectories", torch.long]
 FloatTensor1D = TensorType["n_trajectories", torch.float]
 
 
-@dataclass
 class Trajectories:
     """Class for keeping track of multiple COMPLETE trajectories, or backward trajectories."""
 
-    env: Env
-    n_trajectories: int
-    states: States
-    actions: Tensor2D
-    # The following field mentions how many actions were taken in each trajectory.
-    when_is_done: Tensor1D
-    last_states: States
-    is_backward: bool = False
+    def __init__(
+        self,
+        env: Env,
+        states: Optional[States] = None,
+        actions: Optional[Tensor2D] = None,
+        when_is_done: Optional[Tensor1D] = None,
+        is_backward: bool = False,
+    ) -> None:
+        self.env = env
+        self.is_backward = is_backward
+        self.states = states if states is not None else env.States(batch_shape=(0, 0))
+        self.actions = (
+            actions
+            if actions is not None
+            else torch.full(size=(0, 0), fill_value=-1, dtype=torch.long)
+        )
+        self.when_is_done = (
+            when_is_done
+            if when_is_done is not None
+            else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
+        )
 
     def __repr__(self) -> str:
         states = self.states.states.transpose(0, 1)
@@ -42,10 +53,22 @@ class Trajectories:
         #     ["-> ".join([str(step.numpy()) for step in traj]) for traj in states]
         # )
         return (
-            f"Trajectories(n_trajectories={self.n_trajectories}, "
+            f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
             f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
             f"when_is_done={self.when_is_done}, rewards={self.rewards})"
         )
+
+    @property
+    def n_trajectories(self) -> int:
+        return self.states.batch_shape[1]
+
+    @property
+    def max_length(self) -> int:
+        return self.when_is_done.max().item()
+
+    @property
+    def last_states(self) -> States:
+        return self.states[self.when_is_done - 1, torch.arange(self.n_trajectories)]
 
     @property
     def rewards(self) -> Optional[FloatTensor1D]:
@@ -60,15 +83,11 @@ class Trajectories:
         states = self.states[:, index]
         actions = self.actions[:, index]
         when_is_done = self.when_is_done[index]
-        last_states = self.last_states[index]
-        n_trajectories = len(index)
         return Trajectories(
             env=self.env,
-            n_trajectories=n_trajectories,
             states=states,
             actions=actions,
             when_is_done=when_is_done,
-            last_states=last_states,
             is_backward=self.is_backward,
         )
 
@@ -86,7 +105,6 @@ class Trajectories:
         self.states.extend(other.states)
         self.actions = torch.cat((self.actions, other.actions), dim=1)
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
-        self.last_states.extend(other.last_states)
 
     def sample(self, n_trajectories: int) -> "Trajectories":
         # TODO: improve and add tests for this method.
