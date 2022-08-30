@@ -1,10 +1,13 @@
-from typing import Optional, Sequence, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Sequence
+
+if TYPE_CHECKING:
+    from ..envs import Env
+    from .states import States
 
 import torch
 from torchtyping import TensorType
-
-from ..envs import Env
-from .states import States
 
 # Typing  --- n_transitions is an int
 Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
@@ -19,9 +22,9 @@ class Trajectories:
     def __init__(
         self,
         env: Env,
-        states: Optional[States] = None,
-        actions: Optional[Tensor2D] = None,
-        when_is_done: Optional[Tensor1D] = None,
+        states: States | None = None,
+        actions: Tensor2D | None = None,
+        when_is_done: Tensor1D | None = None,
         is_backward: bool = False,
     ) -> None:
         self.env = env
@@ -74,12 +77,12 @@ class Trajectories:
         return self.states[self.when_is_done - 1, torch.arange(self.n_trajectories)]
 
     @property
-    def rewards(self) -> Optional[FloatTensor1D]:
+    def rewards(self) -> FloatTensor1D | None:
         if self.is_backward:
             return None
         return self.env.reward(self.last_states)
 
-    def __getitem__(self, index: Union[int, Sequence[int]]) -> "Trajectories":
+    def __getitem__(self, index: int | Sequence[int]) -> Trajectories:
         "Returns a subset of the `n_trajectories` trajectories."
         if isinstance(index, int):
             index = [index]
@@ -106,7 +109,7 @@ class Trajectories:
     #     self.actions[:, index] = value.actions
     #     self.when_is_done[index] = value.when_is_done
 
-    def extend(self, other: "Trajectories") -> None:
+    def extend(self, other: Trajectories) -> None:
         """Extend the trajectories with another set of trajectories."""
         self.extend_actions(required_first_dim=max(self.max_length, other.max_length))
         other.extend_actions(required_first_dim=max(self.max_length, other.max_length))
@@ -132,7 +135,7 @@ class Trajectories:
             dim=0,
         )
 
-    def sample(self, n_trajectories: int) -> "Trajectories":
+    def sample(self, n_trajectories: int) -> Trajectories:
         """Sample a random subset of trajectories."""
         perm = torch.randperm(self.n_trajectories)
         indices = perm[:n_trajectories]

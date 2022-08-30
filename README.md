@@ -1,4 +1,20 @@
 ## Running the code
+```bash
+git clone https://github.com/saleml/gfn.git
+cd gfn
+conda create -n gfn python=3.10
+conda activate gfn
+pip install -r requirements.txt
+pip install -e .
+python train.py
+```
+
+Optionally, for `wandb logging`
+```bash
+pip install wandb
+wandb login
+```
+
 For now, only the Trajectory Balance and Detailed Balance losses are implemented. The Trajectory Balance loss has been tested, and the code obtains similar results than those of [The Trajectory Balance paper](https://arxiv.org/pdf/2201.13259.pdf).
 
 To run the code:
@@ -8,6 +24,11 @@ python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 10000
 
 
 ## Contributing
+Before the first commit:
+```bash
+pre-commit install
+pre-commit run --all-files
+```
 Run `pre-commit` after staging, and before committing. Make sure all the tests pass. The codebase uses `black` formatter.
 
 

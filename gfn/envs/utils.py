@@ -10,7 +10,7 @@ def build_grid(env: HyperGrid) -> States:
     H = env.height
     ndim = env.ndim
     grid_shape = (H,) * ndim + (ndim,)  # (H, ..., H, ndim)
-    grid = torch.zeros(grid_shape)
+    grid = torch.zeros(grid_shape, device=env.device)
     for i in range(ndim):
         grid_i = torch.linspace(start=0, end=H - 1, steps=H)
         for _ in range(i):
@@ -37,7 +37,8 @@ def get_true_dist_pmf(env: HyperGrid) -> torch.Tensor:
     flat_grid_indices = env.get_states_indices(flat_grid)
     true_dist = env.reward(flat_grid)
     true_dist = torch.tensor(
-        [true_dist[flat_grid_indices[i]] for i in range(len(flat_grid_indices))]
+        [true_dist[flat_grid_indices[i]] for i in range(len(flat_grid_indices))],
+        device=env.device,
     )
     true_dist /= true_dist.sum()
     return true_dist

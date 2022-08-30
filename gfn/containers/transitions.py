@@ -1,10 +1,13 @@
-from typing import Optional, Sequence
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Sequence
 
 import torch
 from torchtyping import TensorType
 
-from ..envs import Env
-from .states import States
+if TYPE_CHECKING:
+    from ..envs import Env
+    from .states import States
 
 # Typing  -- n_transitions is either int or Tuple[int]
 LongTensor = TensorType["n_transitions", torch.long]
@@ -18,10 +21,10 @@ class Transitions:
     def __init__(
         self,
         env: Env,
-        states: Optional[States] = None,
-        actions: Optional[LongTensor] = None,
-        is_done: Optional[BoolTensor] = None,
-        next_states: Optional[States] = None,
+        states: States | None = None,
+        actions: LongTensor | None = None,
+        is_done: BoolTensor | None = None,
+        next_states: States | None = None,
         is_backward: bool = False,
     ):
         self.env = env
@@ -70,7 +73,7 @@ class Transitions:
         )
 
     @property
-    def rewards(self) -> Optional[FloatTensor]:
+    def rewards(self) -> FloatTensor | None:
         if self.is_backward:
             return None
         else:
@@ -83,7 +86,7 @@ class Transitions:
             rewards[self.is_done] = self.env.reward(self.states[self.is_done])
             return rewards
 
-    def __getitem__(self, index: int | Sequence[int]) -> "Transitions":
+    def __getitem__(self, index: int | Sequence[int]) -> Transitions:
         if isinstance(index, int):
             index = [index]
         states = self.states[index]
@@ -99,7 +102,7 @@ class Transitions:
             is_backward=self.is_backward,
         )
 
-    def __setitem__(self, index: int | Sequence[int], value: "Transitions") -> None:
+    def __setitem__(self, index: int | Sequence[int], value: Transitions) -> None:
         if isinstance(index, int):
             index = [index]
         self.states[index] = value.states
@@ -107,13 +110,13 @@ class Transitions:
         self.is_done[index] = value.is_done
         self.next_states[index] = value.next_states
 
-    def extend(self, other: "Transitions") -> None:
+    def extend(self, other: Transitions) -> None:
         self.states.extend(other.states)
         self.actions = torch.cat((self.actions, other.actions), dim=0)
         self.is_done = torch.cat((self.is_done, other.is_done), dim=0)
         self.next_states.extend(other.next_states)
 
-    def sample(self, n_transitions: int) -> "Transitions":
+    def sample(self, n_transitions: int) -> Transitions:
         "Sample a random subset of transitions"
         perm = torch.randperm(self.n_transitions)
         return self[perm[:n_transitions]]

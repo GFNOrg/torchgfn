@@ -18,7 +18,8 @@ parser.add_arguments(SamplerConfig, dest="sampler_config")
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--n_iterations", type=int, default=1000)
 parser.add_argument("--replay_buffer_size", type=int, default=0)
-parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+parser.add_argument("--no_cuda", action="store_true")
+parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument(
     "--validation_samples",
@@ -38,18 +39,23 @@ parser.add_argument(
 args = parser.parse_args()
 
 torch.manual_seed(args.seed)
+if args.no_cuda:
+    device_str = "cpu"
+else:
+    device_str = "cuda" if torch.cuda.is_available() else "cpu"
 
 env_config: EnvConfig = args.env_config
 parametrization_config: ParametrizationConfig = args.parametrization_config
 optim_config: OptimConfig = args.optim_config
 sampler_config: SamplerConfig = args.sampler_config
 
-env = env_config.parse(args.device)
+env = env_config.parse(device_str)
 parametrization, loss_fn = parametrization_config.parse(env)
 optimizer, scheduler = optim_config.parse(parametrization)
 training_sampler, validation_trajectories_sampler = sampler_config.parse(
     env, parametrization
 )
+
 use_replay_buffer = False
 if args.replay_buffer_size > 0:
     use_replay_buffer = True
@@ -61,12 +67,14 @@ if args.replay_buffer_size > 0:
     replay_buffer = ReplayBuffer(env, capacity=args.replay_buffer_size, objects=objects)
 
 print(env_config, parametrization_config, optim_config, sampler_config)
+print(args)
+print(device_str)
 
-use_wandb = True
+use_wandb = len(args.wandb) > 0
 
 
 if use_wandb:
-    wandb.init(project="gfn_library_tests")
+    wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
 
 visited_terminating_states = (

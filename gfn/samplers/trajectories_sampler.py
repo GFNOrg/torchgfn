@@ -40,7 +40,12 @@ class TrajectoriesSampler(TrainingSampler):
         step = 0
 
         while not all(dones):
-            actions = torch.full((n_trajectories,), fill_value=-1, dtype=torch.long)
+            actions = torch.full(
+                (n_trajectories,),
+                fill_value=-1,
+                dtype=torch.long,
+                device=states.device,
+            )
             _, valid_actions = self.actions_sampler.sample(states[~dones])
             actions[~dones] = valid_actions
             trajectories_actions += [actions]

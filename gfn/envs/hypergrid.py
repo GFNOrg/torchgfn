@@ -78,7 +78,9 @@ class HyperGrid(Env):
             states_raw = states.states
         else:
             states_raw = states
-        canonical_base = self.height ** torch.arange(self.ndim - 1, -1, -1)
+        canonical_base = self.height ** torch.arange(
+            self.ndim - 1, -1, -1, device=states_raw.device
+        )
         indices = (canonical_base * states_raw).sum(-1).long()
         return indices
 

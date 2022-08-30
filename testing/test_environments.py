@@ -1,4 +1,3 @@
-import matplotlib.pyplot as plt
 import pytest
 import torch
 
@@ -83,6 +82,8 @@ def test_get_flat_grid(plot=False):
         raise ValueError("Something is wrong")
 
     if plot:
+        import matplotlib.pyplot as plt
+
         plt.imshow(rewards)
         plt.colorbar()
         plt.show()

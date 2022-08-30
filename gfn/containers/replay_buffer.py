@@ -1,8 +1,12 @@
-from typing import Literal
+from __future__ import annotations
 
-from ..envs import Env
+from typing import TYPE_CHECKING, Literal
+
 from .trajectories import Trajectories
 from .transitions import Transitions
+
+if TYPE_CHECKING:
+    from ..envs import Env
 
 
 class ReplayBuffer:

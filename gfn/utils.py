@@ -25,6 +25,7 @@ def validate_TB_for_HyperGrid(
     visited_terminating_states: Optional[States] = None,
 ) -> Tuple[float, Dict[str, float]]:
     true_logZ, true_dist_pmf = get_hypergrid_statistics(env)
+    true_dist_pmf = true_dist_pmf.cpu()
 
     logZ = parametrization.logZ.tensor.item()
     if visited_terminating_states is None:

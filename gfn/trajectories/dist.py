@@ -65,7 +65,7 @@ class EmpiricalTerminatingStatesDistribution(TerminatingStatesDistribution):
         self.env_n_states = env.n_states
 
     def pmf(self) -> TensorPmf:
-        states_indices = self.states_to_indices(self.states).numpy().tolist()
+        states_indices = self.states_to_indices(self.states).cpu().numpy().tolist()
         counter = Counter(states_indices)
         counter_list = [
             counter[state_idx] if state_idx in counter else 0
@@ -100,7 +100,7 @@ class TrajectoryBasedTerminatingStateDistribution(TerminatingStatesDistribution)
         Compute the probability mass function of the distribution.
         """
         samples = self.sample()
-        samples_indices = self.states_to_indices(samples).numpy().tolist()
+        samples_indices = self.states_to_indices(samples).cpu().numpy().tolist()
         counter = Counter(samples_indices)
         counter_list = [
             counter[state_idx] if state_idx in counter else 0
