@@ -47,6 +47,7 @@ parser.add_argument(
 )
 
 args = parser.parse_args()
+print(encode(args))
 
 torch.manual_seed(args.seed)
 if args.no_cuda:
@@ -144,7 +145,7 @@ for i in range(args.n_iterations):
             scores = scores - torch.mean(scores)
         loss = torch.mean(logPF_trajectories * scores.detach())
         if args.learn_PB:
-            loss += torch.mean(logPB_trajectories)
+            loss -= torch.mean(logPB_trajectories)
     loss.backward()
 
     optimizer.step()
