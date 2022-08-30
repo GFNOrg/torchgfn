@@ -26,7 +26,7 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
 
     def get_scores(
         self, trajectories: Trajectories
-    ) -> Tuple[ScoresTensor, ScoresTensor]:
+    ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
         if trajectories.is_backward:
             raise ValueError("Backward trajectories are not supported")
 
@@ -72,11 +72,12 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
 
         return (
             log_pf_trajectories,
+            log_pb_trajectories,
             log_pf_trajectories - log_pb_trajectories - log_rewards,
         )
 
     def __call__(self, trajectories: Trajectories) -> LossTensor:
-        _, scores = self.get_scores(trajectories)
+        _, _, scores = self.get_scores(trajectories)
         loss = (scores + self.parametrization.logZ.tensor).pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("loss is nan")

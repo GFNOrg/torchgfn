@@ -24,6 +24,8 @@ parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--n_iterations", type=int, default=1000)
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--lr_Z", type=float, default=0.1)
+parser.add_argument("--learn_PB", action="store_true")
+parser.add_argument("--tie_PB", action="store_true")
 parser.add_argument("--replay_buffer_size", type=int, default=0)
 parser.add_argument("--no_cuda", action="store_true")
 parser.add_argument("--use_tb", action="store_true", default=False)
@@ -67,7 +69,16 @@ logit_PF = NeuralNet(
     hidden_dim=256,
     n_hidden_layers=2,
 )
-logit_PB = Uniform(env=env, output_dim=env.n_actions - 1)
+if args.learn_PB:
+    logit_PB = NeuralNet(
+        input_dim=preprocessor.output_dim,
+        output_dim=env.n_actions - 1,
+        hidden_dim=256,
+        n_hidden_layers=2,
+        torso=logit_PF.torso if args.tie_PB else None,
+    )
+else:
+    logit_PB = Uniform(env=env, output_dim=env.n_actions - 1)
 
 logZ_tensor = torch.tensor(0.0)
 logit_PF = LogitPFEstimator(preprocessor=preprocessor, module=logit_PF)
@@ -126,10 +137,14 @@ for i in range(args.n_iterations):
     if args.use_tb:
         loss = loss_fn(training_objects)
     else:
-        logPF_trajectories, scores = loss_fn.get_scores(trajectories)
+        logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
+            trajectories
+        )
         if args.use_baseline:
             scores = scores - torch.mean(scores)
         loss = torch.mean(logPF_trajectories * scores.detach())
+        if args.learn_PB:
+            loss += torch.mean(logPB_trajectories)
     loss.backward()
 
     optimizer.step()
