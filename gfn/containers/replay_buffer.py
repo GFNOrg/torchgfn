@@ -1,7 +1,5 @@
 from typing import Literal
 
-import torch
-
 from ..envs import Env
 from .trajectories import Trajectories
 from .transitions import Transitions
@@ -42,50 +40,3 @@ class ReplayBuffer:
 
     def sample(self, n_objects: int) -> Transitions | Trajectories:
         return self.training_objects.sample(n_objects)
-
-
-if __name__ == "__main__":
-    from gfn.envs import HyperGrid
-    from gfn.envs.utils import OneHotPreprocessor
-    from gfn.gfn_models import PF
-    from gfn.utils import evaluate_trajectories, sample_trajectories
-
-    ndim = 3
-    H = 8
-    max_length = 6
-    temperature = 2
-
-    env = HyperGrid(ndim, H)
-    preprocessor = OneHotPreprocessor(ndim, H)
-    print(
-        "Sampling 5 trajectories starting from the origin with a random P_F network, max_length {}".format(
-            max_length
-        )
-    )
-    pf = PF(input_dim=H**ndim, n_actions=ndim + 1, preprocessor=preprocessor, h=32)
-    start_states = torch.zeros(5, ndim).float()
-    trajectories, actions, dones = sample_trajectories(
-        env, pf, start_states, max_length, temperature
-    )
-    rewards = evaluate_trajectories(env, trajectories, actions, dones)
-    print("Number of done trajectories amongst samples: ", dones.sum().item())
-
-    print("Initializing a buffer of capacity 10...")
-    buffer = ReplayBuffer(capacity=10, max_length=max_length, state_dim=ndim)
-    print("Storing the done trajectories in the buffer")
-    buffer.add(trajectories, actions, rewards, dones)
-    print(f"There are {len(buffer)} trajectories in the buffer")
-
-    print("Resampling 7 trajectories and adding the done ones to the same buffer")
-    start_states = torch.zeros(7, ndim).float()
-    trajectories, actions, dones = sample_trajectories(
-        env, pf, start_states, max_length, temperature
-    )
-    rewards = evaluate_trajectories(env, trajectories, actions, dones)
-    print("Number of done trajectories amongst samples: ", dones.sum().item())
-    buffer.add(trajectories, actions, rewards, dones)
-    print(f"There are {len(buffer)} trajectories in the buffer")
-
-    print("Sampling 2 trajectories: ")
-    trajectories, actions, rewards = buffer.sample(2)
-    print(trajectories, actions, rewards)

@@ -3,7 +3,7 @@ For now, only the Trajectory Balance and Detailed Balance losses are implemented
 
 To run the code:
 ```python
-python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --parametrization TB --parametrization.tied --validate_with_training_examples --validation_samples 200000 --seed 3
+python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --parametrization TB --parametrization.tied --validate_with_training_examples --validation_samples 200000 --seed 3 --preprocessor KHot
 ```
 
 
