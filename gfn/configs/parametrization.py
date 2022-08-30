@@ -165,7 +165,7 @@ class ParametrizationConfig(JsonSerializable):
         },
         default=TBParametrizationConfig(),
     )
-    preprocessor: str = choice("Identity", "OneHot", "KHot", default="Identity")
+    preprocessor: str = choice("Identity", "OneHot", "KHot", default="KHot")
 
     logF_edge: GFNModuleConfig = subgroups(
         {
