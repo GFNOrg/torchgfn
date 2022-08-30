@@ -173,3 +173,8 @@ cython_debug/
 
 # wandb
 wandb/
+
+# slurm-specific stuff
+multi_sbatch.py
+*.sh
+*.out
