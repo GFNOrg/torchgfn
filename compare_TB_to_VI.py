@@ -119,6 +119,13 @@ use_wandb = len(args.wandb) > 0
 if use_wandb:
     wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
+    run_name = "TB" if args.use_tb else "VI"
+    run_name += "_baseline" if args.use_baseline else ""
+    run_name += "_learnPB" if args.learn_PB else ""
+    run_name += "_tiePB" if args.tie_PB else ""
+    run_name += f"_{args.seed}"
+    wandb.run.name = run_name
+
 
 visited_terminating_states = (
     env.States() if args.validate_with_training_examples else None
