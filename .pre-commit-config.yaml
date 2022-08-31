@@ -18,10 +18,10 @@ repos:
     rev: 4.0.1
     hooks:
       - id: flake8
-        # exclude: >
-        #     (?x)^(
-        #         .*\.py
-        #     )$
+        exclude: >
+            (?x)^(
+                .*sbatch.*\.py
+            )$
         args:
           - '--per-file-ignores=*/__init__.py:F401'
           - --ignore=E203, W503  # black handles this

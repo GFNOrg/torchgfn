@@ -7,7 +7,7 @@ from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.envs import HyperGrid
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator, LogZEstimator
 from gfn.losses import TrajectoryBalance
-from gfn.modules import NeuralNet, Uniform
+from gfn.modules import NeuralNet, Tabular, Uniform
 from gfn.parametrizations import TBParametrization
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers import LogitPFActionsSampler, TrajectoriesSampler
@@ -18,8 +18,9 @@ parser.add_argument("--ndim", type=int, default=2)
 parser.add_argument("--height", type=int, default=8)
 
 parser.add_argument(
-    "--preprocessor", type=str, choices=["identity", "KHot", "OneHot"], default="KHot"
+    "--preprocessor", type=str, choices=["Identity", "KHot", "OneHot"], default="KHot"
 )
+parser.add_argument("--tabular", action="store_true")
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--n_iterations", type=int, default=1000)
 parser.add_argument("--lr", type=float, default=0.001)
@@ -64,20 +65,26 @@ elif args.preprocessor == "OneHot":
 else:
     preprocessor = KHotPreprocessor(env)
 
-logit_PF = NeuralNet(
-    input_dim=preprocessor.output_dim,
-    output_dim=env.n_actions,
-    hidden_dim=256,
-    n_hidden_layers=2,
-)
-if args.learn_PB:
-    logit_PB = NeuralNet(
+if args.tabular:
+    logit_PF = Tabular(env, output_dim=env.n_actions)
+else:
+    logit_PF = NeuralNet(
         input_dim=preprocessor.output_dim,
-        output_dim=env.n_actions - 1,
+        output_dim=env.n_actions,
         hidden_dim=256,
         n_hidden_layers=2,
-        torso=logit_PF.torso if args.tie_PB else None,
     )
+if args.learn_PB:
+    if args.tabular:
+        logit_PB = Tabular(env, output_dim=env.n_actions - 1)
+    else:
+        logit_PB = NeuralNet(
+            input_dim=preprocessor.output_dim,
+            output_dim=env.n_actions - 1,
+            hidden_dim=256,
+            n_hidden_layers=2,
+            torso=logit_PF.torso if args.tie_PB else None,
+        )
 else:
     logit_PB = Uniform(env=env, output_dim=env.n_actions - 1)
 
@@ -120,12 +127,12 @@ use_wandb = len(args.wandb) > 0
 if use_wandb:
     wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
-    run_name = "TB" if args.use_tb else "VI"
-    run_name += "_baseline" if args.use_baseline else ""
-    run_name += "_learnPB" if args.learn_PB else ""
-    run_name += "_tiePB" if args.tie_PB else ""
-    run_name += f"_{args.seed}"
-    wandb.run.name = run_name
+    run_name = "TB_" if args.use_tb else "VI_"
+    run_name += "tab" if args.tabular else "nn"
+    run_name += "_learnPB" if args.learn_PB else "_uniformPB"
+    run_name += f"_lr_{args.lr}_"
+    run_name += f"_{args.ndim}_{args.height}_{args.seed}_"
+    wandb.run.name = run_name + wandb.run.name.split("-")[-1]
 
 
 visited_terminating_states = (

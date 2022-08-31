@@ -4,7 +4,6 @@ from dataclasses import dataclass, fields
 import torch
 
 from ..envs import Env
-from ..modules import GFNModule
 from ..trajectories import (
     TrajectoryBasedTerminatingStateDistribution,
     TrajectoryDistribution,
@@ -38,14 +37,16 @@ class Parametrization(ABC):
         Note that there might be duplicate parameters (e.g. when two NNs share parameters),
         in which case the optimizer should take as input set(self.parameters.values()).
         """
+        # TODO: use parameters of the fields instead, loop through them here
         parameters_dict = {}
         for field in fields(self.__class__):
             estimator = getattr(self, field.name)
             if hasattr(estimator, "module"):
-                assert isinstance(estimator.module, torch.nn.Module) or isinstance(
-                    estimator.module, GFNModule
-                )
-                module_parameters_dict = dict(estimator.module.named_parameters())
+
+                if isinstance(estimator.module, torch.nn.Module):
+                    module_parameters_dict = dict(estimator.module.named_parameters())
+                else:
+                    module_parameters_dict = estimator.module.named_parameters()
                 parameters_dict.update(
                     {
                         f"{field.name}_{key}": value
