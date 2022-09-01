@@ -39,7 +39,7 @@ for seed in (11, 12, 13, 14):
                                     --validate_with_training_examples"""
                 script_to_run = script_to_run.replace("\n", " ")
                 print(f"{counter}, {script_to_run}")
-                # subprocess.check_output(
-                #     prefix(job_name) + script_to_run, shell=True
-                # )
+                subprocess.check_output(
+                    prefix(job_name) + script_to_run, shell=True
+                )
                 counter += 1
