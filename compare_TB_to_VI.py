@@ -32,6 +32,7 @@ parser.add_argument("--replay_buffer_size", type=int, default=0)
 parser.add_argument("--no_cuda", action="store_true")
 parser.add_argument("--use_tb", action="store_true", default=False)
 parser.add_argument("--use_chi2", action="store_true", default=False)
+parser.add_argument("--v2", action="store_true", default=False)
 parser.add_argument("--use_baseline", action="store_true", default=False)
 parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
@@ -135,8 +136,9 @@ use_wandb = len(args.wandb) > 0
 if use_wandb:
     wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
-    run_name = "TB_" if args.use_tb else "VI_"
-    run_name += f"schedule_{args.schedule}" if args.schedule != 1.0 else ""
+    run_name = "TB_" if args.use_tb else ("VI_" if not args.use_chi2 else "CHI2_")
+    run_name += "v2_" if args.v2 else ""
+    run_name += "baseline_" if args.use_baseline else ""
     run_name += f"_{args.ndim}_{args.height}_{args.seed}_"
     wandb.run.name = run_name + wandb.run.name.split("-")[-1]
 
@@ -164,7 +166,18 @@ for i in range(args.n_iterations):
             trajectories
         )
         if args.use_chi2:
-            loss = torch.mean(torch.exp(-2 * scores))
+            if args.v2:
+                exp_scores = torch.exp(-2 * scores.detach())
+                loss = torch.mean(
+                    (2 * logPB_trajectories - logPF_trajectories) * exp_scores
+                    + (
+                        logPF_trajectories * torch.mean(exp_scores)
+                        if args.use_baseline
+                        else 0.0
+                    )
+                )
+            else:
+                loss = 0.5 * torch.mean(torch.exp(-2 * scores))
         else:
             if args.use_baseline:
                 scores = scores - torch.mean(scores).detach()
