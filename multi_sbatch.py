@@ -28,7 +28,7 @@ for seed in (11, 12, 13, 14):
             # ("", "", "--v2", "--use_chi2"),
             # ("", "--use_baseline", "--v2", "--use_chi2"),
             ("--use_tb", "", "", "--use_chi2"),
-            ("--use_tb", "--v2", ""),
+            ("--use_tb", "", "--v2", ""),
         ]:
             job_name = f"{counter}_{wandb}"
             script_to_run = f"""python compare_TB_to_VI.py --ndim {ndim} --height {height} 
