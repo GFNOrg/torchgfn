@@ -30,7 +30,7 @@ for seed in (11, 12, 13, 14):
             job_name = f"{counter}_{wandb}"
             script_to_run = f"""python compare_TB_to_VI.py --ndim {ndim} --height {height} 
                                 --preprocessor KHot --batch_size 16 --n_iterations 100000 
-                                --lr 0.001 --lr_Z 0.1 --learn_PB --tie_PB {no_cuda} --schedule {schedule} 
+                                --lr 0.001 --lr_Z 0.1 --learn_PB --tie_PB {no_cuda}
                                 {use_tb} {use_baseline} --wandb {wandb} --seed {seed}  {use_chi2} 
                                 --validation_samples {validation_samples} --validation_interval 100 
                                 --validate_with_training_examples"""
