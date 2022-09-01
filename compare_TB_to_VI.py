@@ -30,6 +30,7 @@ parser.add_argument("--tie_PB", action="store_true")
 parser.add_argument("--replay_buffer_size", type=int, default=0)
 parser.add_argument("--no_cuda", action="store_true")
 parser.add_argument("--use_tb", action="store_true", default=False)
+parser.add_argument("--v2", action="store_true", default=False)
 parser.add_argument("--use_baseline", action="store_true", default=False)
 parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
@@ -128,9 +129,8 @@ if use_wandb:
     wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
     run_name = "TB_" if args.use_tb else "VI_"
-    run_name += "tab" if args.tabular else "nn"
+    run_name += "v2" if args.v2 else ""
     run_name += "_learnPB" if args.learn_PB else "_uniformPB"
-    run_name += f"_lr_{args.lr}_"
     run_name += f"_{args.ndim}_{args.height}_{args.seed}_"
     wandb.run.name = run_name + wandb.run.name.split("-")[-1]
 
@@ -156,10 +156,13 @@ for i in range(args.n_iterations):
             trajectories
         )
         if args.use_baseline:
-            scores = scores - torch.mean(scores)
-        loss = torch.mean(logPF_trajectories * scores.detach())
-        if args.learn_PB:
-            loss -= torch.mean(logPB_trajectories)
+            scores = scores - torch.mean(scores).detach()
+        if args.v2:
+            loss = torch.mean(scores**2)
+        else:
+            loss = torch.mean(logPF_trajectories * scores.detach())
+            if args.learn_PB:
+                loss -= torch.mean(logPB_trajectories)
     loss.backward()
 
     optimizer.step()
