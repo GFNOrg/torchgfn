@@ -25,8 +25,8 @@ for seed in (11, 12, 13, 14):
         for (use_tb, use_baseline, v2, use_chi2) in [
             # ("--use_tb", "", "", ""),
             # ("", "--use_baseline", "", ""),
-            ("", "", "--v2", "--use_chi2"),
-            ("", "--use_baseline", "--v2", "--use_chi2"),
+            # ("", "", "--v2", "--use_chi2"),
+            # ("", "--use_baseline", "--v2", "--use_chi2"),
             ("--use_tb", "", "", "--use_chi2"),
             ("--use_tb", "--v2", ""),
         ]:
