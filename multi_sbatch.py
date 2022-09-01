@@ -5,13 +5,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--no-cuda", action="store_true", default=False, help="use gpu")
 parser.add_argument("--time", default="2:00:0", help="time")
 parser.add_argument("--mem", default="12G", help="memory needed for each job")
+parser.add_argument("--suffix", default="", help="suffix for slurm sbatch")
 args = parser.parse_args()
 
 gres = "--gres=gpu:1" if not args.no_cuda else ""
 
 
 def prefix(job_name):
-    return f"sbatch --time {args.time} {gres} --job-name {job_name} -c 4 --mem {args.mem} run.sh "
+    return f"sbatch --time {args.time} {gres} --job-name {job_name} -c 4 --mem {args.mem} {args.suffix} run.sh "
 
 
 no_cuda = "--no_cuda"
