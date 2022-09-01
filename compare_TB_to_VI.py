@@ -120,7 +120,7 @@ else:
     scheduler_Z = None
 optimizer = torch.optim.Adam(params)
 
-use_replay_buffer = False
+use_replay_buffer = args.replay_buffer_size > 0
 if args.replay_buffer_size > 0:
     use_replay_buffer = True
     replay_buffer = ReplayBuffer(
@@ -154,6 +154,8 @@ for i in range(args.n_iterations):
         training_objects = trajectories
 
     optimizer.zero_grad()
+    if optimizer_Z is not None:
+        optimizer_Z.zero_grad()
     if args.use_tb:
         loss = loss_fn(training_objects)
     else:

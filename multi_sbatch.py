@@ -25,20 +25,21 @@ for seed in (11, 12, 13, 14):
         for (use_tb, use_baseline) in [
             ("--use_tb", ""),
             ("", "--use_baseline"),
-            ("", "--use_baseline"),
         ]:
-            if len(use_tb) > 0:
-                for schedule in [0.9, 0.95, 0.99, 1.0]:
-                    job_name = f"{counter}_{wandb}"
-                    script_to_run = f"""python compare_TB_to_VI.py --ndim {ndim} --height {height} 
-                                        --preprocessor KHot --batch_size 16 --n_iterations 100000 
-                                        --lr 0.001 --lr_Z 0.1 --learn_PB --tie_PB {no_cuda} --schedule {schedule}
-                                        {use_tb} {use_baseline} --wandb {wandb} --seed {seed} 
-                                        --validation_samples {validation_samples} --validation_interval 100 
-                                        --validate_with_training_examples"""
-                    script_to_run = script_to_run.replace("\n", " ")
-                    print(f"{counter}, {script_to_run}")
-                    subprocess.check_output(
-                        prefix(job_name) + script_to_run, shell=True
-                    )
+            for schedule in [0.9, 0.95, 0.99, 1.0]:
+                if len(use_tb) == 0 and schedule != 1.0:
                     counter += 1
+                    continue
+                job_name = f"{counter}_{wandb}"
+                script_to_run = f"""python compare_TB_to_VI.py --ndim {ndim} --height {height} 
+                                    --preprocessor KHot --batch_size 16 --n_iterations 100000 
+                                    --lr 0.001 --lr_Z 0.1 --learn_PB --tie_PB {no_cuda} --schedule {schedule}
+                                    {use_tb} {use_baseline} --wandb {wandb} --seed {seed} 
+                                    --validation_samples {validation_samples} --validation_interval 100 
+                                    --validate_with_training_examples"""
+                script_to_run = script_to_run.replace("\n", " ")
+                print(f"{counter}, {script_to_run}")
+                # subprocess.check_output(
+                #     prefix(job_name) + script_to_run, shell=True
+                # )
+                counter += 1
