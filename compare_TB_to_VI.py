@@ -136,7 +136,11 @@ use_wandb = len(args.wandb) > 0
 if use_wandb:
     wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
-    run_name = "TB_" if args.use_tb else ("VI_" if not args.use_chi2 else "CHI2_")
+    run_name = (
+        ("TB_" if not args.use_chi2 else "TB2_")
+        if args.use_tb
+        else ("VI_" if not args.use_chi2 else "CHI2_")
+    )
     run_name += "v2_" if args.v2 else ""
     run_name += "baseline_" if args.use_baseline else ""
     run_name += f"_{args.ndim}_{args.height}_{args.seed}_"
@@ -159,12 +163,16 @@ for i in range(args.n_iterations):
     optimizer.zero_grad()
     if optimizer_Z is not None:
         optimizer_Z.zero_grad()
+    logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
     if args.use_tb:
-        loss = loss_fn(training_objects)
+        loss = (scores + parametrization.logZ.tensor).pow(2)
+        if args.v2 and not args.use_chi2:
+            loss = loss.pow(2)
+        elif args.use_chi2:
+            loss = (torch.exp(-scores) - torch.exp(parametrization.logZ.tensor)).pow(2)
+        loss = loss.mean()
+
     else:
-        logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
-            trajectories
-        )
         if args.use_chi2:
             if args.v2:
                 exp_scores = torch.exp(-2 * scores.detach())
@@ -185,8 +193,9 @@ for i in range(args.n_iterations):
     loss.backward()
 
     optimizer.step()
-    if optimizer_Z is not None and scheduler_Z is not None:
+    if optimizer_Z is not None:
         optimizer_Z.step()
+    if scheduler_Z is not None:
         scheduler_Z.step()
     if args.validate_with_training_examples:
         visited_terminating_states.extend(training_objects.last_states)  # type: ignore
