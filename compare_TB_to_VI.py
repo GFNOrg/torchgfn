@@ -25,12 +25,12 @@ parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--n_iterations", type=int, default=1000)
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--lr_Z", type=float, default=0.1)
+parser.add_argument("--schedule", type=float, default=1.0)
 parser.add_argument("--learn_PB", action="store_true")
 parser.add_argument("--tie_PB", action="store_true")
 parser.add_argument("--replay_buffer_size", type=int, default=0)
 parser.add_argument("--no_cuda", action="store_true")
 parser.add_argument("--use_tb", action="store_true", default=False)
-parser.add_argument("--v2", action="store_true", default=False)
 parser.add_argument("--use_baseline", action="store_true", default=False)
 parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
@@ -111,7 +111,13 @@ params = [
     }
 ]
 if args.use_tb and "logZ" in parametrization.parameters:
-    params.append({"params": [parametrization.parameters["logZ"]], "lr": args.lr_Z})
+    optimizer_Z = torch.optim.Adam([parametrization.parameters["logZ"]], lr=args.lr_Z)
+    scheduler_Z = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer_Z, milestones=list(range(1000, 100000, 1000)), gamma=0.9
+    )
+else:
+    optimizer_Z = None
+    scheduler_Z = None
 optimizer = torch.optim.Adam(params)
 
 use_replay_buffer = False
@@ -129,8 +135,7 @@ if use_wandb:
     wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
     run_name = "TB_" if args.use_tb else "VI_"
-    run_name += "v2" if args.v2 else ""
-    run_name += "_learnPB" if args.learn_PB else "_uniformPB"
+    run_name += f"schedule_{args.schedule}" if args.schedule != 1.0 else ""
     run_name += f"_{args.ndim}_{args.height}_{args.seed}_"
     wandb.run.name = run_name + wandb.run.name.split("-")[-1]
 
@@ -157,15 +162,13 @@ for i in range(args.n_iterations):
         )
         if args.use_baseline:
             scores = scores - torch.mean(scores).detach()
-        if args.v2:
-            loss = torch.mean(scores**2)
-        else:
-            loss = torch.mean(logPF_trajectories * scores.detach())
-            if args.learn_PB:
-                loss -= torch.mean(logPB_trajectories)
+        loss = torch.mean(scores**2)
     loss.backward()
 
     optimizer.step()
+    if optimizer_Z is not None and scheduler_Z is not None:
+        optimizer_Z.step()
+        scheduler_Z.step()
     if args.validate_with_training_examples:
         visited_terminating_states.extend(training_objects.last_states)  # type: ignore
     if use_wandb:
