@@ -31,13 +31,14 @@ parser.add_argument("--tie_PB", action="store_true")
 parser.add_argument("--replay_buffer_size", type=int, default=0)
 parser.add_argument("--no_cuda", action="store_true")
 parser.add_argument("--use_tb", action="store_true", default=False)
+parser.add_argument("--use_chi2", action="store_true", default=False)
 parser.add_argument("--use_baseline", action="store_true", default=False)
 parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument(
     "--validation_samples",
     type=int,
-    default=100000,
+    default=200000,
     help="Number of validation samples to use to evaluate the pmf.",
 )
 parser.add_argument("--validation_interval", type=int, default=100)
@@ -162,9 +163,12 @@ for i in range(args.n_iterations):
         logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
             trajectories
         )
-        if args.use_baseline:
-            scores = scores - torch.mean(scores).detach()
-        loss = torch.mean(scores**2)
+        if args.use_chi2:
+            loss = torch.mean(torch.exp(-2 * scores))
+        else:
+            if args.use_baseline:
+                scores = scores - torch.mean(scores).detach()
+            loss = torch.mean(scores**2)
     loss.backward()
 
     optimizer.step()
