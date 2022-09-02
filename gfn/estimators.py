@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-
 from torchtyping import TensorType
 
 from gfn.containers import States
@@ -53,11 +51,9 @@ class LogitPBEstimator(FunctionEstimator):
         assert module.output_dim == preprocessor.env.n_actions - 1
 
 
-@dataclass
 class LogZEstimator:
-    tensor: TensorType[0]
-
-    def __post_init__(self):
+    def __init__(self, tensor: TensorType[0, float]) -> None:
+        self.tensor = tensor
         assert self.tensor.shape == ()
         self.tensor.requires_grad = True
 
