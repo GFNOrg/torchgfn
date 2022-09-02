@@ -52,9 +52,7 @@ sampler_config: SamplerConfig = args.sampler_config
 env = env_config.parse(device_str)
 parametrization, loss_fn = parametrization_config.parse(env)
 optimizer, scheduler = optim_config.parse(parametrization)
-training_sampler, validation_trajectories_sampler = sampler_config.parse(
-    env, parametrization
-)
+training_sampler = sampler_config.parse(env, parametrization)
 
 use_replay_buffer = False
 if args.replay_buffer_size > 0:

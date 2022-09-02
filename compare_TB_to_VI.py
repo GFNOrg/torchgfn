@@ -7,7 +7,7 @@ from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.envs import HyperGrid
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator, LogZEstimator
 from gfn.losses import TrajectoryBalance
-from gfn.modules import NeuralNet, Uniform
+from gfn.modules import NeuralNet, Tabular, Uniform
 from gfn.parametrizations import TBParametrization
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers import LogitPFActionsSampler, TrajectoriesSampler
@@ -16,26 +16,30 @@ from gfn.utils import validate_TB_for_HyperGrid
 parser = ArgumentParser()
 parser.add_argument("--ndim", type=int, default=2)
 parser.add_argument("--height", type=int, default=8)
-
+parser.add_argument("--R0", type=float, default=0.1)
 parser.add_argument(
-    "--preprocessor", type=str, choices=["identity", "KHot", "OneHot"], default="KHot"
+    "--preprocessor", type=str, choices=["Identity", "KHot", "OneHot"], default="KHot"
 )
+parser.add_argument("--tabular", action="store_true")
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--n_iterations", type=int, default=1000)
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--lr_Z", type=float, default=0.1)
+parser.add_argument("--schedule", type=float, default=1.0)
 parser.add_argument("--learn_PB", action="store_true")
 parser.add_argument("--tie_PB", action="store_true")
 parser.add_argument("--replay_buffer_size", type=int, default=0)
 parser.add_argument("--no_cuda", action="store_true")
 parser.add_argument("--use_tb", action="store_true", default=False)
+parser.add_argument("--use_chi2", action="store_true", default=False)
+parser.add_argument("--v2", action="store_true", default=False)
 parser.add_argument("--use_baseline", action="store_true", default=False)
 parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument(
     "--validation_samples",
     type=int,
-    default=100000,
+    default=200000,
     help="Number of validation samples to use to evaluate the pmf.",
 )
 parser.add_argument("--validation_interval", type=int, default=100)
@@ -56,7 +60,7 @@ else:
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-env = HyperGrid(args.ndim, args.height)
+env = HyperGrid(args.ndim, args.height, R0=args.R0)
 if args.preprocessor == "Identity":
     preprocessor = IdentityPreprocessor(env)
 elif args.preprocessor == "OneHot":
@@ -64,20 +68,26 @@ elif args.preprocessor == "OneHot":
 else:
     preprocessor = KHotPreprocessor(env)
 
-logit_PF = NeuralNet(
-    input_dim=preprocessor.output_dim,
-    output_dim=env.n_actions,
-    hidden_dim=256,
-    n_hidden_layers=2,
-)
-if args.learn_PB:
-    logit_PB = NeuralNet(
+if args.tabular:
+    logit_PF = Tabular(env, output_dim=env.n_actions)
+else:
+    logit_PF = NeuralNet(
         input_dim=preprocessor.output_dim,
-        output_dim=env.n_actions - 1,
+        output_dim=env.n_actions,
         hidden_dim=256,
         n_hidden_layers=2,
-        torso=logit_PF.torso if args.tie_PB else None,
     )
+if args.learn_PB:
+    if args.tabular:
+        logit_PB = Tabular(env, output_dim=env.n_actions - 1)
+    else:
+        logit_PB = NeuralNet(
+            input_dim=preprocessor.output_dim,
+            output_dim=env.n_actions - 1,
+            hidden_dim=256,
+            n_hidden_layers=2,
+            torso=logit_PF.torso if args.tie_PB else None,
+        )
 else:
     logit_PB = Uniform(env=env, output_dim=env.n_actions - 1)
 
@@ -103,10 +113,16 @@ params = [
     }
 ]
 if args.use_tb and "logZ" in parametrization.parameters:
-    params.append({"params": [parametrization.parameters["logZ"]], "lr": args.lr_Z})
+    optimizer_Z = torch.optim.Adam([parametrization.parameters["logZ"]], lr=args.lr_Z)
+    scheduler_Z = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer_Z, milestones=list(range(1000, 100000, 1000)), gamma=args.schedule
+    )
+else:
+    optimizer_Z = None
+    scheduler_Z = None
 optimizer = torch.optim.Adam(params)
 
-use_replay_buffer = False
+use_replay_buffer = args.replay_buffer_size > 0
 if args.replay_buffer_size > 0:
     use_replay_buffer = True
     replay_buffer = ReplayBuffer(
@@ -120,6 +136,18 @@ use_wandb = len(args.wandb) > 0
 if use_wandb:
     wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
+    run_name = (
+        ("TB_" if not args.use_chi2 else "TB2_")
+        if args.use_tb
+        else ("VI_" if not args.use_chi2 else "CHI2_")
+    )
+    if args.use_tb:
+        run_name += f"sch{args.schedule}_"
+    run_name += "v2_" if args.v2 else ""
+    run_name += "baseline_" if args.use_baseline else ""
+    run_name += f"_{args.ndim}_{args.height}_{args.R0}_{args.seed}_"
+    wandb.run.name = run_name + wandb.run.name.split("-")[-1]
+
 
 visited_terminating_states = (
     env.States() if args.validate_with_training_examples else None
@@ -135,20 +163,42 @@ for i in range(args.n_iterations):
         training_objects = trajectories
 
     optimizer.zero_grad()
+    if optimizer_Z is not None:
+        optimizer_Z.zero_grad()
+    logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
     if args.use_tb:
-        loss = loss_fn(training_objects)
+        loss = (scores + parametrization.logZ.tensor).pow(2)
+        if args.v2 and not args.use_chi2:
+            loss = loss.pow(2)
+        elif args.use_chi2:
+            loss = (torch.exp(-scores) - torch.exp(parametrization.logZ.tensor)).pow(2)
+        loss = loss.mean()
+
     else:
-        logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
-            trajectories
-        )
-        if args.use_baseline:
-            scores = scores - torch.mean(scores)
-        loss = torch.mean(logPF_trajectories * scores.detach())
-        if args.learn_PB:
-            loss -= torch.mean(logPB_trajectories)
+        if args.use_chi2:
+            if args.v2:
+                exp_scores = torch.exp(-2 * scores.detach())
+                loss = torch.mean(
+                    (2 * logPB_trajectories - logPF_trajectories) * exp_scores
+                    + (
+                        logPF_trajectories * torch.mean(exp_scores)
+                        if args.use_baseline
+                        else 0.0
+                    )
+                )
+            else:
+                loss = 0.5 * torch.mean(torch.exp(-2 * scores))
+        else:
+            if args.use_baseline:
+                scores = scores - torch.mean(scores).detach()
+            loss = torch.mean(scores**2)
     loss.backward()
 
     optimizer.step()
+    if optimizer_Z is not None:
+        optimizer_Z.step()
+    if scheduler_Z is not None:
+        scheduler_Z.step()
     if args.validate_with_training_examples:
         visited_terminating_states.extend(training_objects.last_states)  # type: ignore
     if use_wandb:

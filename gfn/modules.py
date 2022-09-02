@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -28,9 +27,8 @@ class GFNModule(ABC):
     def __call__(self, input: InputTensor) -> OutputTensor:
         pass
 
-    def named_parameters(self) -> Iterator:
-        # Mimics torch.nn.Module.named_parameters()
-        return iter([])
+    def named_parameters(self) -> dict:
+        return {}
 
 
 class NeuralNet(nn.Module, GFNModule):
@@ -75,43 +73,42 @@ class NeuralNet(nn.Module, GFNModule):
         return logits
 
 
-class Tabular(nn.Module, GFNModule):
+class Tabular(GFNModule):
     def __init__(self, env: Env, output_dim: int, **kwargs) -> None:
         del kwargs
-        super().__init__()
 
         self.env = env
         self.input_dim = None
 
-        self.tensors = nn.ParameterList(
-            [
-                torch.zeros(output_dim, dtype=torch.float, device=env.device)
-                for _ in range(env.n_states)
-            ]
+        self.logits = torch.zeros(
+            (env.n_states, output_dim),
+            dtype=torch.float,
+            device=env.device,
+            requires_grad=True,
         )
+
         self.output_dim = output_dim
 
-    def forward(self, preprocessed_states: InputTensor) -> OutputTensor:
+    def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
         # Note that only the IdentityPreprocessor is compatible with the Tabular module, and only linear batches are possible
         assert preprocessed_states.ndim == 2
+        # TODO: maybe use a environment-specific preprocessor called TabularPreprocessor that calls get_states_indices under the hood
         states_indices = self.env.get_states_indices(
             self.env.States(preprocessed_states)
         )
-        outputs = [self.tensors[index] for index in states_indices]
-        if len(outputs) > 0:
-            return torch.stack(outputs)
-        else:
-            return torch.tensor(
-                [[] for _ in range(self.env.ndim)], device=preprocessed_states.device
-            ).T
+        outputs = self.logits[states_indices]
+        return outputs
+
+    def named_parameters(self) -> dict:
+        return {"logits": self.logits}
 
 
 class Uniform(GFNModule):
     def __init__(self, output_dim: int, **kwargs):
-        del kwargs
         """
         :param n_actions: the number of all possible actions
         """
+        del kwargs
         self.input_dim = None
         self.output_dim = output_dim
 

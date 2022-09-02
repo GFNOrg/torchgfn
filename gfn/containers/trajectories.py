@@ -100,15 +100,6 @@ class Trajectories:
             is_backward=self.is_backward,
         )
 
-    # def __setitem__(
-    #     self, index: Union[int, Sequence[int]], value: "Trajectories"
-    # ) -> None:
-    #     if isinstance(index, int):
-    #         index = [index]
-    #     self.states[:, index] = value.states
-    #     self.actions[:, index] = value.actions
-    #     self.when_is_done[index] = value.when_is_done
-
     def extend(self, other: Trajectories) -> None:
         """Extend the trajectories with another set of trajectories."""
         self.extend_actions(required_first_dim=max(self.max_length, other.max_length))
