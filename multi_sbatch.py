@@ -32,15 +32,17 @@ for seed in (11, 12, 13, 14):
                         counter += 1
                         continue
                     job_name = f"{counter}_{wandb}"
-                    script_to_run = f"""python compare_TB_to_VI.py --ndim {ndim} --height {height} 
+                    script_to_run = f"""python compare_TB_to_VI.py --ndim {ndim} --height {height}  --R0 {R0}
                                         --preprocessor KHot --batch_size 16 --n_iterations 100000 
                                         --lr 0.001 --lr_Z 0.1 --learn_PB --tie_PB {no_cuda} --schedule {schedule}
                                         {use_tb} {use_baseline} --wandb {wandb} --seed {seed}  {use_chi2} {v2} 
                                         --validation_samples {validation_samples} --validation_interval 100 
                                         --validate_with_training_examples"""
-                    script_to_run = script_to_run.replace("\n", " ")
-                    print(f"{counter}, {script_to_run}")
-                    subprocess.check_output(
-                        prefix(job_name) + script_to_run, shell=True
+                    script_to_run = script_to_run.replace(r"\n", " ").replace(
+                        r"\t", " "
                     )
+                    print(f"{counter}, {script_to_run}")
+                    # subprocess.check_output(
+                    #     prefix(job_name) + script_to_run, shell=True
+                    # )
                     counter += 1
