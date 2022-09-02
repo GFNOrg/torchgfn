@@ -22,7 +22,7 @@ validation_samples = 200000
 counter = 0
 for seed in (11, 12, 13, 14):
     for (ndim, height) in [(2, 64), (4, 8)]:
-        for R0 in [0.1, 0.01, 0.001]:
+        for R0 in [0.01, 0.001]:
             for (use_tb, use_baseline, v2, use_chi2) in [
                 ("--use_tb", "", "", ""),
                 ("", "--use_baseline", "", ""),
@@ -42,7 +42,7 @@ for seed in (11, 12, 13, 14):
                         r"\t", " "
                     )
                     print(f"{counter}, {script_to_run}")
-                    # subprocess.check_output(
-                    #     prefix(job_name) + script_to_run, shell=True
-                    # )
+                    subprocess.check_output(
+                        prefix(job_name) + script_to_run, shell=True
+                    )
                     counter += 1
