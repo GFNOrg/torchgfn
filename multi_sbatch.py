@@ -38,8 +38,8 @@ for seed in (11, 12, 13, 14):
                                         {use_tb} {use_baseline} --wandb {wandb} --seed {seed}  {use_chi2} {v2} 
                                         --validation_samples {validation_samples} --validation_interval 100 
                                         --validate_with_training_examples"""
-                    script_to_run = script_to_run.replace(r"\n", " ").replace(
-                        r"\t", " "
+                    script_to_run = script_to_run.replace("\n", " ").replace(
+                        "\t", " "
                     )
                     print(f"{counter}, {script_to_run}")
                     subprocess.check_output(
