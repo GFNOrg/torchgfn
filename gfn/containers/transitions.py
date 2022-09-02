@@ -102,14 +102,6 @@ class Transitions:
             is_backward=self.is_backward,
         )
 
-    def __setitem__(self, index: int | Sequence[int], value: Transitions) -> None:
-        if isinstance(index, int):
-            index = [index]
-        self.states[index] = value.states
-        self.actions[index] = value.actions
-        self.is_done[index] = value.is_done
-        self.next_states[index] = value.next_states
-
     def extend(self, other: Transitions) -> None:
         self.states.extend(other.states)
         self.actions = torch.cat((self.actions, other.actions), dim=0)

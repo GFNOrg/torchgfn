@@ -102,9 +102,6 @@ class States(ABC):
     def __repr__(self):
         return f"""{self.__class__.__name__} object of batch shape {self.batch_shape}
         and state shape {self.state_shape}"""
-        # return f"""States(states={self.states},\n forward_masks={self.forward_masks.long()},
-        # \n backward_masks={self.backward_masks.long()})
-        # """
 
     def __getitem__(self, index: int | Sequence[int]) -> States:
         # TODO: add test for this method
@@ -114,11 +111,6 @@ class States(ABC):
         return self.__class__(
             states, forward_masks=forward_masks, backward_masks=backward_masks
         )
-
-    # def __setitem__(self, index: int | Sequence[int], value: States) -> None:
-    #     self.states[index] = value.states
-    #     self.forward_masks[index] = value.forward_masks
-    #     self.backward_masks[index] = value.backward_masks
 
     def extend(self, other: States) -> None:
         other_batch_shape = other.batch_shape
