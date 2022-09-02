@@ -16,7 +16,7 @@ from gfn.utils import validate_TB_for_HyperGrid
 parser = ArgumentParser()
 parser.add_argument("--ndim", type=int, default=2)
 parser.add_argument("--height", type=int, default=8)
-
+parser.add_argument("--R0", type=float, default=0.1)
 parser.add_argument(
     "--preprocessor", type=str, choices=["Identity", "KHot", "OneHot"], default="KHot"
 )
@@ -60,7 +60,7 @@ else:
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-env = HyperGrid(args.ndim, args.height)
+env = HyperGrid(args.ndim, args.height, R0=args.R0)
 if args.preprocessor == "Identity":
     preprocessor = IdentityPreprocessor(env)
 elif args.preprocessor == "OneHot":
@@ -115,7 +115,7 @@ params = [
 if args.use_tb and "logZ" in parametrization.parameters:
     optimizer_Z = torch.optim.Adam([parametrization.parameters["logZ"]], lr=args.lr_Z)
     scheduler_Z = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer_Z, milestones=list(range(1000, 100000, 1000)), gamma=0.9
+        optimizer_Z, milestones=list(range(1000, 100000, 1000)), gamma=args.schedule
     )
 else:
     optimizer_Z = None
@@ -141,9 +141,11 @@ if use_wandb:
         if args.use_tb
         else ("VI_" if not args.use_chi2 else "CHI2_")
     )
+    if args.use_tb:
+        run_name += f"sch{args.schedule}_"
     run_name += "v2_" if args.v2 else ""
     run_name += "baseline_" if args.use_baseline else ""
-    run_name += f"_{args.ndim}_{args.height}_{args.seed}_"
+    run_name += f"_{args.ndim}_{args.height}_{args.R0}_{args.seed}_"
     wandb.run.name = run_name + wandb.run.name.split("-")[-1]
 
 
