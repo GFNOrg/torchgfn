@@ -115,12 +115,16 @@ params = [
 if args.use_tb and "logZ" in parametrization.parameters:
     optimizer_Z = torch.optim.Adam([parametrization.parameters["logZ"]], lr=args.lr_Z)
     scheduler_Z = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer_Z, milestones=list(range(1000, 100000, 1000)), gamma=args.schedule
+        optimizer_Z, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
     )
 else:
     optimizer_Z = None
     scheduler_Z = None
 optimizer = torch.optim.Adam(params)
+scheduler = torch.optim.lr_scheduler.MultiStepLR(
+    optimizer, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
+)
+
 
 use_replay_buffer = args.replay_buffer_size > 0
 if args.replay_buffer_size > 0:
@@ -195,6 +199,7 @@ for i in range(args.n_iterations):
     loss.backward()
 
     optimizer.step()
+    scheduler.step()
     if optimizer_Z is not None:
         optimizer_Z.step()
     if scheduler_Z is not None:
