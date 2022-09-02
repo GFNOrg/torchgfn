@@ -49,7 +49,7 @@ class HyperGrid(Env):
         )
 
     def update_masks(self, states: States) -> None:
-        # TODO: probably not the best way to do this
+        # TODO: is this the best way ?
         states.forward_masks[..., :-1] = states.states != self.height - 1
         states.backward_masks = states.states != 0
 
