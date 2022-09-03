@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Sequence
 import torch
 from torchtyping import TensorType
 
+from .trajectories import Trajectories
+
 if TYPE_CHECKING:
     from ..envs import Env
     from .states import States
@@ -49,6 +51,26 @@ class Transitions:
             and self.states.batch_shape == self.next_states.batch_shape
         )
 
+    @classmethod
+    def from_trajectories(cls, trajectories: Trajectories):
+        "Create a Transitions from a Trajectories"
+        states = trajectories.states[:-1][trajectories.actions != -1]
+        next_states = trajectories.states[1:][trajectories.actions != -1]
+        actions = trajectories.actions[trajectories.actions != -1]
+        is_done = (
+            next_states.is_sink_state
+            if not trajectories.is_backward
+            else next_states.is_initial_state
+        )
+        return cls(
+            env=trajectories.env,
+            states=states,
+            actions=actions,
+            is_done=is_done,
+            next_states=next_states,
+            is_backward=trajectories.is_backward,
+        )
+
     @property
     def n_transitions(self) -> int:
         return self.states.batch_shape[0]
@@ -73,6 +95,11 @@ class Transitions:
         )
 
     @property
+    def last_states(self) -> States:
+        "Get the last states, i.e. terminating states"
+        return self.states[self.is_done]
+
+    @property
     def rewards(self) -> FloatTensor | None:
         if self.is_backward:
             return None
@@ -83,7 +110,7 @@ class Transitions:
                 dtype=torch.float,
                 device=self.states.device,
             )
-            rewards[self.is_done] = self.env.reward(self.states[self.is_done])
+            rewards[self.is_done] = self.env.reward(self.last_states)
             return rewards
 
     def __getitem__(self, index: int | Sequence[int]) -> Transitions:

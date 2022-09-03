@@ -1,11 +1,11 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 from gfn.containers.states import States
 from gfn.trajectories.dist import EmpiricalTerminatingStatesDistribution
 
 from .envs import HyperGrid
 from .envs.utils import get_flat_grid, get_true_dist_pmf
-from .parametrizations import TBParametrization
+from .parametrizations import Parametrization, TBParametrization
 
 
 def get_hypergrid_statistics(env: HyperGrid):
@@ -18,16 +18,18 @@ def get_hypergrid_statistics(env: HyperGrid):
     return true_logZ, true_dist_pmf
 
 
-def validate_TB_for_HyperGrid(
+def hypergrid_validate(
     env: HyperGrid,
-    parametrization: TBParametrization = None,
+    parametrization: Parametrization,
     n_validation_samples: int = 1000,
     visited_terminating_states: Optional[States] = None,
-) -> Tuple[float, Dict[str, float]]:
+) -> Dict[str, float]:
     true_logZ, true_dist_pmf = get_hypergrid_statistics(env)
     true_dist_pmf = true_dist_pmf.cpu()
 
-    logZ = parametrization.logZ.tensor.item()
+    logZ = None
+    if isinstance(parametrization, TBParametrization):
+        logZ = parametrization.logZ.tensor.item()
     if visited_terminating_states is None:
         final_states_dist = parametrization.P_T(env, n_validation_samples)
     else:
@@ -36,4 +38,7 @@ def validate_TB_for_HyperGrid(
         )
     final_states_dist_pmf = final_states_dist.pmf()
     l1_dist = (final_states_dist_pmf - true_dist_pmf).abs().mean().item()
-    return true_logZ, {"logZ": logZ, "l1_dist": l1_dist}
+    validation_info = {"l1_dist": l1_dist}
+    if logZ is not None:
+        validation_info["logZ_diff"] = logZ - true_logZ
+    return validation_info
