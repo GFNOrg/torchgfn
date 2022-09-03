@@ -1,6 +1,7 @@
 pre-commit
 black
 pytest
+tqdm
 
 numpy
 torch

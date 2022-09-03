@@ -147,7 +147,7 @@ if use_wandb:
     run_name += "v2_" if args.v2 else ""
     run_name += "baseline_" if args.use_baseline else ""
     run_name += f"_{args.ndim}_{args.height}_{args.R0}_{args.seed}_"
-    wandb.run.name = run_name + wandb.run.name.split("-")[-1]
+    wandb.run.name = run_name + wandb.run.name.split("-")[-1]  # type: ignore
 
 
 visited_terminating_states = (
