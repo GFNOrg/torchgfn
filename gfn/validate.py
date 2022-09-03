@@ -3,28 +3,19 @@ from typing import Dict, Optional
 from gfn.containers.states import States
 from gfn.trajectories.dist import EmpiricalTerminatingStatesDistribution
 
-from .envs import HyperGrid
-from .envs.utils import get_flat_grid, get_true_dist_pmf
+from .envs import Env
 from .parametrizations import Parametrization, TBParametrization
 
 
-def get_hypergrid_statistics(env: HyperGrid):
-    true_dist_pmf = get_true_dist_pmf(env)
-
-    flat_grid = get_flat_grid(env)
-
-    all_rewards = env.reward(flat_grid)
-    true_logZ = all_rewards.sum().log().item()
-    return true_logZ, true_dist_pmf
-
-
-def hypergrid_validate(
-    env: HyperGrid,
+def validate(
+    env: Env,
     parametrization: Parametrization,
     n_validation_samples: int = 1000,
     visited_terminating_states: Optional[States] = None,
 ) -> Dict[str, float]:
-    true_logZ, true_dist_pmf = get_hypergrid_statistics(env)
+
+    true_logZ = env.log_partition
+    true_dist_pmf = env.true_dist_pmf
     true_dist_pmf = true_dist_pmf.cpu()
 
     logZ = None

@@ -7,7 +7,7 @@ import wandb
 from gfn.configs import EnvConfig, OptimConfig, ParametrizationConfig, SamplerConfig
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.parametrizations.forward_probs import TBParametrization
-from gfn.utils import hypergrid_validate
+from gfn.validate import validate
 
 parser = ArgumentParser()
 
@@ -100,7 +100,7 @@ for i in trange(args.n_iterations):
     if use_wandb:
         wandb.log(to_log, step=i)
     if i % args.validation_interval == 0:
-        validation_info = hypergrid_validate(
+        validation_info = validate(
             env, parametrization, args.validation_samples, visited_terminating_states
         )
         if use_wandb:

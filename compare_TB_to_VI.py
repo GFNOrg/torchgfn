@@ -12,7 +12,7 @@ from gfn.modules import NeuralNet, Tabular, Uniform
 from gfn.parametrizations import TBParametrization
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers import LogitPFActionsSampler, TrajectoriesSampler
-from gfn.utils import hypergrid_validate
+from gfn.validate import validate
 
 parser = ArgumentParser()
 parser.add_argument("--ndim", type=int, default=2)
@@ -206,7 +206,7 @@ for i in trange(args.n_iterations):
     if use_wandb:
         wandb.log(to_log, step=i)
     if i % args.validation_interval == 0:
-        validation_info = hypergrid_validate(
+        validation_info = validate(
             env, parametrization, args.validation_samples, visited_terminating_states
         )
         if use_wandb:

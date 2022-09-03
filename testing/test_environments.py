@@ -3,7 +3,6 @@ import torch
 
 from gfn.envs import HyperGrid
 from gfn.envs.env import NonValidActionsError
-from gfn.envs.utils import build_grid, get_flat_grid
 
 
 def test_hypergrid():
@@ -65,14 +64,14 @@ def test_states_getitem(ndim: int):
 
 def test_get_flat_grid(plot=False):
     env = HyperGrid(height=4, ndim=3)
-    grid = get_flat_grid(env)
+    grid = env.build_flat_grid()
     print("Shape of the grid: ", grid.batch_shape, grid.state_shape)
     print(grid)
     print("All rewards: ", env.reward(grid))
 
     env = HyperGrid(height=8, ndim=2)
-    grid = build_grid(env)
-    flat_grid = get_flat_grid(env)
+    grid = env.build_grid()
+    flat_grid = env.build_flat_grid()
     print("Shape of the grid: ", grid.batch_shape, grid.state_shape)
     rewards = env.reward(grid)
 
