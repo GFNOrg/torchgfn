@@ -5,6 +5,7 @@ Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 from typing import Literal, Tuple
 
 import torch
+from einops import rearrange
 from torchtyping import TensorType
 
 from gfn.containers.states import States
@@ -87,3 +88,45 @@ class HyperGrid(Env):
     @property
     def n_states(self) -> int:
         return self.height**self.ndim
+
+    @property
+    def true_dist_pmf(self) -> torch.Tensor:
+        flat_grid = self.build_flat_grid()
+        flat_grid_indices = self.get_states_indices(flat_grid)
+        true_dist = self.reward(flat_grid)
+        true_dist = torch.tensor(
+            [true_dist[flat_grid_indices[i]] for i in range(len(flat_grid_indices))],
+            device=self.device,
+        )
+        true_dist /= true_dist.sum()
+        return true_dist
+
+    @property
+    def log_partition(self) -> float:
+        grid = self.build_grid()
+        rewards = self.reward(grid)
+        return rewards.sum().log().item()
+
+    def build_grid(self) -> States:
+        "Utility function to build the complete grid"
+        H = self.height
+        ndim = self.ndim
+        grid_shape = (H,) * ndim + (ndim,)  # (H, ..., H, ndim)
+        grid = torch.zeros(grid_shape, device=self.device)
+        for i in range(ndim):
+            grid_i = torch.linspace(start=0, end=H - 1, steps=H)
+            for _ in range(i):
+                grid_i = grid_i.unsqueeze(1)
+            grid[..., i] = grid_i
+
+        rearrange_string = " ".join([f"n{i}" for i in range(1, ndim + 1)])
+        rearrange_string += " ndim -> "
+        rearrange_string += " ".join([f"n{i}" for i in range(ndim, 0, -1)])
+        rearrange_string += " ndim"
+        grid = rearrange(grid, rearrange_string)
+        return self.States(grid)
+
+    def build_flat_grid(self) -> States:
+        grid = self.build_grid()
+        flat_grid = rearrange(grid.states, "... ndim -> (...) ndim")
+        return self.States(flat_grid)

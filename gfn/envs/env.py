@@ -15,6 +15,7 @@ ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
 BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
 OneStateTensor = TensorType["state_shape", torch.float]
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
+PmfTensor = TensorType["n_states", torch.float]
 
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
 
@@ -23,7 +24,8 @@ class Env(ABC):
     """
     Base class for environments, showing which methods should be implemented.
     A common assumption for all environments is that all actions are discrete,
-    represented by a number in {0, ..., n_actions - 1}.
+    represented by a number in {0, ..., n_actions - 1}, the last one being the
+    exit action.
     """
 
     def __init__(
@@ -142,11 +144,27 @@ class Env(ABC):
     def reward(self, final_states: States) -> TensorFloat:
         pass
 
-    @abstractmethod
     def get_states_indices(self, states: States) -> TensorLong:
-        pass
+        return NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
     @property
-    @abstractmethod
     def n_states(self) -> int:
-        pass
+        return NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
+
+    @property
+    def true_dist_pmf(self) -> PmfTensor:
+        "Returns a one-dimensional tensor representing the true distribution."
+        return NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
+
+    @property
+    def log_partition(self) -> float:
+        "Returns the logarithm of the partition function."
+        return NotImplementedError(
+            "The environment does not support enumeration of states"
+        )

@@ -1,6 +1,7 @@
 import torch
 from simple_parsing import ArgumentParser
 from simple_parsing.helpers.serialization import encode
+from tqdm import tqdm, trange
 
 import wandb
 from gfn.containers.replay_buffer import ReplayBuffer
@@ -11,7 +12,7 @@ from gfn.modules import NeuralNet, Tabular, Uniform
 from gfn.parametrizations import TBParametrization
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers import LogitPFActionsSampler, TrajectoriesSampler
-from gfn.utils import validate_TB_for_HyperGrid
+from gfn.validate import validate
 
 parser = ArgumentParser()
 parser.add_argument("--ndim", type=int, default=2)
@@ -150,7 +151,7 @@ if use_wandb:
     run_name += "v2_" if args.v2 else ""
     run_name += "baseline_" if args.use_baseline else ""
     run_name += f"_{args.ndim}_{args.height}_{args.R0}_{args.seed}_"
-    wandb.run.name = run_name + wandb.run.name.split("-")[-1]
+    wandb.run.name = run_name + wandb.run.name.split("-")[-1]  # type: ignore
 
 
 visited_terminating_states = (
@@ -158,7 +159,7 @@ visited_terminating_states = (
 )
 
 
-for i in range(args.n_iterations):
+for i in trange(args.n_iterations):
     trajectories = trajectories_sampler.sample(n_objects=args.batch_size)
     if use_replay_buffer:
         replay_buffer.add(trajectories)  # type: ignore
@@ -206,15 +207,14 @@ for i in range(args.n_iterations):
         scheduler_Z.step()
     if args.validate_with_training_examples:
         visited_terminating_states.extend(training_objects.last_states)  # type: ignore
+    to_log = {"loss": loss.item(), "states_visited": (i + 1) * args.batch_size}
     if use_wandb:
-        wandb.log({"loss": loss.item()}, step=i)
-        wandb.log({"states_visited": (i + 1) * args.batch_size}, step=i)
+        wandb.log(to_log, step=i)
     if i % args.validation_interval == 0:
-        true_logZ, validation_info = validate_TB_for_HyperGrid(
+        validation_info = validate(
             env, parametrization, args.validation_samples, visited_terminating_states
         )
         if use_wandb:
             wandb.log(validation_info, step=i)
-            if i == 0:
-                wandb.log({"true_logZ": true_logZ})
-        print(f"{i}: {validation_info} - Loss: {loss} - True logZ: {true_logZ}")
+        to_log.update(validation_info)
+        tqdm.write(f"{i}: {to_log}")

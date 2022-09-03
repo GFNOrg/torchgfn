@@ -22,6 +22,40 @@ To run the code:
 python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --parametrization TB --parametrization.tied --validate_with_training_examples --validation_samples 200000 --seed 3 --preprocessor KHot
 ```
 
+## Example, in a few lines
+```python
+env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
+preprocessor = KHotPreprocessor(env)  # Meaning that states will be represented as a vector with $K$ ones
+
+logit_PF_module = NeuralNet(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
+logit_PB_module = NeuralNet(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1, torso = logit_PF_module.torso)  # We also learn P_B, that shares weights with P_F
+logZ_tensor = torch.tensor(0.)
+
+logit_PF = LogitPFEstimator(preprocessor=preprocessor, module=logit_PF_module)
+logit_PB = LogitPBEstimator(preprocessor=preprocessor, module=logit_PB_module)
+logZ = LogZEstimator(logZ_tensor)
+
+parametrization = TBParametrization(logit_PF, logit_PB, logZ)
+
+actions_sampler = LogitPFActionsSampler(estimator=logit_PF)
+trajectories_sampler = TrajectoriesSampler(env=env, actions_sampler=actions_sampler)
+
+loss_fn = TrajectoryBalance(parametrization=parametrization)
+
+params = [
+    {"params": [val for key, val in parametrization.parameters.items() if key != "logZ"],"lr": 0.001},
+    {"params": [parametrization.parameters["logZ"]], "lr": 0.1}
+]
+optimizer = torch.optim.Adam(params)
+
+for i in range(1000):
+    trajectories = trajectories_sampler.sample(n_objects=16)
+    optimizer.zero_grad()
+    loss = loss_fn(trajectories)
+    loss.backward()
+    optimizer.step()
+```
+
 
 ## Contributing
 Before the first commit:

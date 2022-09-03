@@ -46,15 +46,31 @@ class TransitionsSampler(TrainingSampler):
 
         transitions = Transitions(
             env=self.env,
-            states=states,
-            actions=actions,
-            next_states=new_states,
-            is_done=is_done,
+            states=states[valid_selector],
+            actions=actions[valid_selector],
+            next_states=new_states[valid_selector],
+            is_done=is_done[valid_selector],
             is_backward=self.is_backward,
         )
 
         return transitions
 
     def sample(self, n_objects: int) -> Transitions:
-        # TODO: Change `sample_transitions` such that it can take a number of trajectories as input, roll them out, and get transitions from the resulting trajectories (maybe, using `trajectories_sampler.sample_trajectories`)
-        return self.sample_transitions(n_transitions=n_objects)
+        """:param: n_objects: number of trajectories to roll-out
+        :return: Transitions object corresponding to all transitions in the trajectories.
+
+        An alternative is to use the following code, by defining a trajectories_sampler
+        > trajectories = trajectories_sampler.sample_trajectories(
+        >     n_trajectories=n_objects
+        > )
+        > transitions = Transitions.from_trajectories(trajectories)
+        > return transitions
+        """
+        all_transitions = Transitions(env=self.env)
+        transitions = self.sample_transitions(n_transitions=n_objects)
+        all_transitions.extend(transitions)
+        while torch.any(~transitions.is_done):
+            transitions = self.sample_transitions(states=transitions.next_states)
+            all_transitions.extend(transitions)
+
+        return all_transitions
