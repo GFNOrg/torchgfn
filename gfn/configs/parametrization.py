@@ -67,7 +67,7 @@ class FMParametrizationConfig(BaseParametrizationConfig):
 
 @dataclass
 class PFBasedParametrizationConfig(BaseParametrizationConfig, ABC):
-    tied: bool = False
+    tied: bool = True
 
     def get_estimators(
         self,
@@ -119,7 +119,11 @@ class DBParametrizationConfig(PFBasedParametrizationConfig):
         )
         self.adjust_module_config(logF_state_config, preprocessor, 1)
 
-        logF_module = logF_state_config.parse(env=env)
+        logF_module = logF_state_config.parse(
+            env=env,
+            tied_to=logit_PF.module if self.tied else None,
+            tied_to_name="logit_PF" if self.tied else None,
+        )
         logF_state = LogStateFlowEstimator(
             preprocessor=preprocessor, module=logF_module
         )
