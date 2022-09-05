@@ -93,6 +93,7 @@ for i in trange(args.n_iterations):
     if not args.do_not_validate_with_training_examples:
         visited_terminating_states.extend(last_states)  # type: ignore
 
+    to_log = {}
     for j in range(args.epochs):
         if use_replay_buffer:
             training_objects = replay_buffer.sample(n_objects=args.batch_size)  # type: ignore
