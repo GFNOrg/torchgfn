@@ -91,13 +91,12 @@ class HyperGrid(Env):
 
     @property
     def true_dist_pmf(self) -> torch.Tensor:
-        flat_grid = self.build_flat_grid()
-        flat_grid_indices = self.get_states_indices(flat_grid)
-        true_dist = self.reward(flat_grid)
-        true_dist = torch.tensor(
-            [true_dist[flat_grid_indices[i]] for i in range(len(flat_grid_indices))],
-            device=self.device,
+        all_states = self.all_states
+        assert torch.all(
+            self.get_states_indices(all_states)
+            == torch.arange(self.n_states, device=self.device)
         )
+        true_dist = self.reward(all_states)
         true_dist /= true_dist.sum()
         return true_dist
 
@@ -126,7 +125,8 @@ class HyperGrid(Env):
         grid = rearrange(grid, rearrange_string)
         return self.States(grid)
 
-    def build_flat_grid(self) -> States:
+    @property
+    def all_states(self) -> States:
         grid = self.build_grid()
         flat_grid = rearrange(grid.states, "... ndim -> (...) ndim")
         return self.States(flat_grid)

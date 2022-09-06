@@ -2,7 +2,7 @@ from torchtyping import TensorType
 
 from gfn.containers import States
 from gfn.modules import GFNModule, Tabular
-from gfn.preprocessors.base import IdentityPreprocessor, Preprocessor
+from gfn.preprocessors.base import EnumPreprocessor, Preprocessor
 
 # Typing
 batch_shape = None
@@ -17,9 +17,9 @@ class FunctionEstimator:
         assert module.input_dim is None or module.input_dim == preprocessor.output_dim
         assert module.output_type == "free"
         if isinstance(module, Tabular) and not isinstance(
-            preprocessor, IdentityPreprocessor
+            preprocessor, EnumPreprocessor
         ):
-            raise ValueError("Tabular modules must use the IdentityPreprocessor")
+            raise ValueError("Tabular modules must use the EnumPreprocessor")
         self.preprocessor = preprocessor
         self.module = module
 

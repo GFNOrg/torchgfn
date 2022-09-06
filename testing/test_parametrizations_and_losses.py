@@ -13,7 +13,12 @@ from gfn.losses.detailed_balance import DetailedBalance
 from gfn.losses.trajectory_balance import TrajectoryBalance
 from gfn.modules import NeuralNet, Tabular, Uniform
 from gfn.parametrizations import DBParametrization, FMParametrization, TBParametrization
-from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
+from gfn.preprocessors import (
+    EnumPreprocessor,
+    IdentityPreprocessor,
+    KHotPreprocessor,
+    OneHotPreprocessor,
+)
 from gfn.samplers.actions_samplers import FixedActionsSampler, LogitPFActionsSampler
 from gfn.samplers.trajectories_sampler import TrajectoriesSampler
 from gfn.samplers.transitions_sampler import TransitionsSampler
@@ -40,7 +45,8 @@ def test_FM_hypergrid(ndim: int):
 
 @pytest.mark.parametrize("ndim", [2, 3])
 @pytest.mark.parametrize(
-    "preprocessor_cls", [IdentityPreprocessor, OneHotPreprocessor, KHotPreprocessor]
+    "preprocessor_cls",
+    [IdentityPreprocessor, OneHotPreprocessor, KHotPreprocessor, EnumPreprocessor],
 )
 @pytest.mark.parametrize("module_cls", [NeuralNet, Uniform, Tabular])
 @pytest.mark.parametrize("parametrization_name", ["DB", "TB"])
@@ -58,8 +64,10 @@ def test_PFBasedParametrization_hypergrid(
 
     print("\nTrying the DB parametrization... with learnable logit_PB")
 
-    if module_cls == Tabular and preprocessor_cls != IdentityPreprocessor:
-        pytest.skip("Tabular only supports IdentityPreprocessor")
+    if preprocessor_cls == EnumPreprocessor and module_cls != Tabular:
+        pytest.skip("EnumPreprocessor only works with Tabular modules")
+    if module_cls == Tabular and preprocessor_cls != EnumPreprocessor:
+        pytest.skip("Tabular only supports EnumPreprocessor")
     if tie_pb_to_pf and module_cls != NeuralNet:
         pytest.skip("Tying PB to PF only works with NeuralNet")
 

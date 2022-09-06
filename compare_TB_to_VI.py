@@ -10,7 +10,12 @@ from gfn.estimators import LogitPBEstimator, LogitPFEstimator, LogZEstimator
 from gfn.losses import TrajectoryBalance
 from gfn.modules import NeuralNet, Tabular, Uniform
 from gfn.parametrizations import TBParametrization
-from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
+from gfn.preprocessors import (
+    EnumPreprocessor,
+    IdentityPreprocessor,
+    KHotPreprocessor,
+    OneHotPreprocessor,
+)
 from gfn.samplers import LogitPFActionsSampler, TrajectoriesSampler
 from gfn.validate import validate
 
@@ -19,7 +24,10 @@ parser.add_argument("--ndim", type=int, default=2)
 parser.add_argument("--height", type=int, default=8)
 parser.add_argument("--R0", type=float, default=0.1)
 parser.add_argument(
-    "--preprocessor", type=str, choices=["Identity", "KHot", "OneHot"], default="KHot"
+    "--preprocessor",
+    type=str,
+    choices=["Identity", "KHot", "OneHot", "Enum"],
+    default="KHot",
 )
 parser.add_argument("--tabular", action="store_true")
 parser.add_argument("--batch_size", type=int, default=16)
@@ -66,8 +74,10 @@ if args.preprocessor == "Identity":
     preprocessor = IdentityPreprocessor(env)
 elif args.preprocessor == "OneHot":
     preprocessor = OneHotPreprocessor(env)
-else:
+elif args.preprocessor == "KHot":
     preprocessor = KHotPreprocessor(env)
+else:
+    preprocessor = EnumPreprocessor(env)
 
 if args.tabular:
     logit_PF = Tabular(env, output_dim=env.n_actions)

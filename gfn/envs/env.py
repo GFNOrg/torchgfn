@@ -168,3 +168,14 @@ class Env(ABC):
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
+
+    @property
+    def all_states(self) -> States:
+        """Returns a batch of all states for environments with enumerable states.
+        The batch_shape should be (n_states,).
+        This should satisfy:
+        self.get_states_indices(self.all_states) == torch.arange(self.n_states)
+        """
+        return NotImplementedError(
+            "The environment does not support enumeration of states"
+        )

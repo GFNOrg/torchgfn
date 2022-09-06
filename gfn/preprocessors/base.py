@@ -7,7 +7,7 @@ from ..containers import States
 from ..envs import Env
 
 # Typing
-OutputTensor = TensorType["batch_shape", "dim_in", float]
+OutputTensor = TensorType["batch_shape", "dim_in"]
 
 
 class Preprocessor(ABC):
@@ -34,7 +34,7 @@ class Preprocessor(ABC):
         return self.preprocess(states)
 
     def __repr__(self):
-        return self.name
+        return f"{self.name} of {self.env} with output_dim={self.output_dim}"
 
 
 class IdentityPreprocessor(Preprocessor):
@@ -47,3 +47,15 @@ class IdentityPreprocessor(Preprocessor):
 
     def preprocess(self, states):
         return states.states.float()
+
+
+class EnumPreprocessor(Preprocessor):
+    "Preprocessor applicable to environments with discrete states."
+    name = "EnumPreprocessor"
+
+    @property
+    def output_dim(self):
+        return 1
+
+    def preprocess(self, states):
+        return self.env.get_states_indices(states).long()
