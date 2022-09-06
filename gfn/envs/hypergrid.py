@@ -46,7 +46,11 @@ class HyperGrid(Env):
 
     def make_random_states_tensor(self, batch_shape: Tuple[int]) -> StatesTensor:
         return torch.randint(
-            0, self.height, (*batch_shape, *self.state_shape), dtype=torch.float
+            0,
+            self.height,
+            (*batch_shape, *self.state_shape),
+            dtype=torch.float,
+            device=self.device,
         )
 
     def update_masks(self, states: States) -> None:
