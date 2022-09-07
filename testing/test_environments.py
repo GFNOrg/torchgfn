@@ -62,22 +62,15 @@ def test_states_getitem(ndim: int):
     print("States[selections]:", states[selections])
 
 
-def test_get_flat_grid(plot=False):
-    env = HyperGrid(height=4, ndim=3)
-    grid = env.build_flat_grid()
-    print("Shape of the grid: ", grid.batch_shape, grid.state_shape)
-    print(grid)
-    print("All rewards: ", env.reward(grid))
-
+def test_get_grid(plot=False):
     env = HyperGrid(height=8, ndim=2)
     grid = env.build_grid()
-    flat_grid = env.build_flat_grid()
     print("Shape of the grid: ", grid.batch_shape, grid.state_shape)
     rewards = env.reward(grid)
 
     Z = rewards.sum()
 
-    if Z != env.reward(flat_grid).sum():
+    if Z.log().item() != env.log_partition:
         raise ValueError("Something is wrong")
 
     if plot:
@@ -88,7 +81,5 @@ def test_get_flat_grid(plot=False):
         plt.show()
 
     print(env.get_states_indices(grid))
-    print(env.get_states_indices(flat_grid))
 
     print(env.reward(grid))
-    print(env.reward(flat_grid))

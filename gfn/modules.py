@@ -90,13 +90,9 @@ class Tabular(GFNModule):
         self.output_dim = output_dim
 
     def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
-        # Note that only the IdentityPreprocessor is compatible with the Tabular module, and only linear batches are possible
-        assert preprocessed_states.ndim == 2
-        # TODO: maybe use a environment-specific preprocessor called TabularPreprocessor that calls get_states_indices under the hood
-        states_indices = self.env.get_states_indices(
-            self.env.States(preprocessed_states)
-        )
-        outputs = self.logits[states_indices]
+        # Note that only the EnumPreprocessor is compatible with the Tabular module
+        assert preprocessed_states.dtype == torch.long
+        outputs = self.logits[preprocessed_states]
         return outputs
 
     def named_parameters(self) -> dict:

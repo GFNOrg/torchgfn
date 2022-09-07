@@ -22,6 +22,7 @@ from gfn.parametrizations import (
     TBParametrization,
 )
 from gfn.preprocessors import (
+    EnumPreprocessor,
     IdentityPreprocessor,
     KHotPreprocessor,
     OneHotPreprocessor,
@@ -169,7 +170,7 @@ class ParametrizationConfig(JsonSerializable):
         },
         default=TBParametrizationConfig(),
     )
-    preprocessor: str = choice("Identity", "OneHot", "KHot", default="KHot")
+    preprocessor: str = choice("Identity", "OneHot", "KHot", "Enum", default="KHot")
 
     logF_edge: GFNModuleConfig = subgroups(
         {
@@ -219,8 +220,10 @@ class ParametrizationConfig(JsonSerializable):
             preprocessor = IdentityPreprocessor(env)
         elif self.preprocessor == "OneHot":
             preprocessor = OneHotPreprocessor(env)
-        else:
+        elif self.preprocessor == "KHot":
             preprocessor = KHotPreprocessor(env)
+        else:
+            preprocessor = EnumPreprocessor(env)
         return preprocessor
 
     def parse(self, env: Env) -> Tuple[Parametrization, Loss]:
