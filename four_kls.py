@@ -41,6 +41,8 @@ parser.add_argument("--use_tb", action="store_true", default=False)
 parser.add_argument("--use_baseline", action="store_true", default=False)
 parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--forward_kl_pf", action="store_true", default=False)
+parser.add_argument("--forward_kl_pb", action="store_true", default=False)
 parser.add_argument(
     "--validation_samples",
     type=int,
@@ -174,27 +176,47 @@ for i in trange(args.n_iterations):
     optimizer_PB.zero_grad()
     if optimizer_Z is not None:
         optimizer_Z.zero_grad()
-    logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
-    if args.use_tb:
-        loss = (scores + parametrization.logZ.tensor).pow(2)
-        loss = loss.mean()
-    else:
-        if args.use_baseline:
-            scores = scores - torch.mean(scores).detach()
-        loss = torch.mean(scores**2)
-    loss.backward()
 
+    # if args.use_tb:
+    #     loss = (scores + parametrization.logZ.tensor).pow(2)
+    #     loss = loss.mean()
+    # else:
+    #     if args.use_baseline:
+    #         scores = scores - torch.mean(scores).detach()
+    #     loss = torch.mean(scores**2)
+    # loss.backward()
+    logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
+    loss_Z = (scores + parametrization.logZ.tensor).pow(2).mean()
+    if optimizer_Z is not None and scheduler_Z is not None:
+        loss_Z.backward()
+        optimizer_Z.step()
+        scheduler_Z.step()
+
+        logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
+            trajectories
+        )
+    if args.forward_kl_pf:
+        loss_PF = torch.mean(
+            logPF_trajectories * (scores + parametrization.logZ.tensor).detach()
+        )
+    else:
+        loss_PF = -torch.mean(logPF_trajectories * torch.exp(-scores.detach()))
+
+    loss_PF.backward()
     optimizer_PF.step()
     scheduler_PF.step()
+
+    logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
+    if args.forward_kl_pb:
+        loss_PB = -torch.mean(logPB_trajectories)
+    else:
+        loss_PB = -torch.mean(logPB_trajectories * torch.exp(-scores.detach()))
     optimizer_PB.step()
     scheduler_PB.step()
-    if optimizer_Z is not None:
-        optimizer_Z.step()
-    if scheduler_Z is not None:
-        scheduler_Z.step()
+
     if args.validate_with_training_examples:
         visited_terminating_states.extend(training_objects.last_states)  # type: ignore
-    to_log = {"loss": loss.item(), "states_visited": (i + 1) * args.batch_size}
+    to_log = {"loss": loss_PF.item(), "states_visited": (i + 1) * args.batch_size}
     if use_wandb:
         wandb.log(to_log, step=i)
     if i % args.validation_interval == 0:
