@@ -40,7 +40,6 @@ parser.add_argument("--tie_PB", action="store_true")
 parser.add_argument("--replay_buffer_size", type=int, default=0)
 parser.add_argument("--no_cuda", action="store_true")
 parser.add_argument("--use_tb", action="store_true", default=False)
-parser.add_argument("--use_chi2", action="store_true", default=False)
 parser.add_argument("--v2", action="store_true", default=False)
 parser.add_argument("--use_baseline", action="store_true", default=False)
 parser.add_argument("--wandb", type=str, default="")
@@ -151,11 +150,7 @@ use_wandb = len(args.wandb) > 0
 if use_wandb:
     wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
-    run_name = (
-        ("TB_" if not args.use_chi2 else "TB2_")
-        if args.use_tb
-        else ("VI_" if not args.use_chi2 else "CHI2_")
-    )
+    run_name = ("TB_") if args.use_tb else ("VI_")
     if args.use_tb:
         run_name += f"sch{args.schedule}_"
     run_name += "v2_" if args.v2 else ""
@@ -183,30 +178,13 @@ for i in trange(args.n_iterations):
     logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
     if args.use_tb:
         loss = (scores + parametrization.logZ.tensor).pow(2)
-        if args.v2 and not args.use_chi2:
+        if args.v2:
             loss = loss.pow(2)
-        elif args.use_chi2:
-            loss = (torch.exp(-scores) - torch.exp(parametrization.logZ.tensor)).pow(2)
         loss = loss.mean()
-
     else:
-        if args.use_chi2:
-            if args.v2:
-                exp_scores = torch.exp(-2 * scores.detach())
-                loss = torch.mean(
-                    (2 * logPB_trajectories - logPF_trajectories) * exp_scores
-                    + (
-                        logPF_trajectories * torch.mean(exp_scores)
-                        if args.use_baseline
-                        else 0.0
-                    )
-                )
-            else:
-                loss = 0.5 * torch.mean(torch.exp(-2 * scores))
-        else:
-            if args.use_baseline:
-                scores = scores - torch.mean(scores).detach()
-            loss = torch.mean(scores**2)
+        if args.use_baseline:
+            scores = scores - torch.mean(scores).detach()
+        loss = torch.mean(scores**2)
     loss.backward()
 
     optimizer.step()
