@@ -26,9 +26,11 @@ class Trajectories:
         actions: Tensor2D | None = None,
         when_is_done: Tensor1D | None = None,
         is_backward: bool = False,
+        is_complete: bool = True,
     ) -> None:
         self.env = env
         self.is_backward = is_backward
+        self.is_complete = is_complete
         self.states = states if states is not None else env.States(batch_shape=(0, 0))
         assert len(self.states.batch_shape) == 2
         self.actions = (
@@ -53,11 +55,14 @@ class Trajectories:
                 if step.equal(self.env.s_0 if self.is_backward else self.env.s_f):
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
-        return (
-            f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
-            f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
-            f"when_is_done={self.when_is_done}, rewards={self.rewards})"
-        )
+        if self.is_complete:
+            return (
+                f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
+                + f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
+                + f"when_is_done={self.when_is_done}, rewards={self.rewards})"
+            )
+        else:
+            return f"Trajectories(n_trajectories={self.n_trajectories}, states=\n{trajectories_representation})"
 
     @property
     def n_trajectories(self) -> int:
@@ -70,7 +75,8 @@ class Trajectories:
     def max_length(self) -> int:
         if len(self) == 0:
             return 0
-        return self.when_is_done.max().item()
+
+        return self.actions.shape[0]
 
     @property
     def last_states(self) -> States:
@@ -98,6 +104,7 @@ class Trajectories:
             actions=actions,
             when_is_done=when_is_done,
             is_backward=self.is_backward,
+            is_complete=self.is_complete,
         )
 
     def extend(self, other: Trajectories) -> None:
@@ -118,7 +125,10 @@ class Trajectories:
             (
                 self.actions,
                 torch.full(
-                    size=(required_first_dim - self.max_length, self.n_trajectories),
+                    size=(
+                        required_first_dim - self.actions.shape[0],
+                        self.n_trajectories,
+                    ),
                     fill_value=-1,
                     dtype=torch.long,
                 ),
