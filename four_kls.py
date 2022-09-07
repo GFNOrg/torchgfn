@@ -118,7 +118,7 @@ params = [
         "lr": args.lr,
     }
 ]
-if args.use_tb and "logZ" in parametrization.parameters:
+if "logZ" in parametrization.parameters:
     optimizer_Z = torch.optim.Adam([parametrization.parameters["logZ"]], lr=args.lr_Z)
     scheduler_Z = torch.optim.lr_scheduler.MultiStepLR(
         optimizer_Z, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
@@ -126,14 +126,20 @@ if args.use_tb and "logZ" in parametrization.parameters:
 else:
     optimizer_Z = None
     scheduler_Z = None
-optimizer_PF = torch.optim.Adam(logit_PF.module.parameters(), lr=args.lr)
-optimizer_PB = torch.optim.Adam(logit_PB.module.parameters(), lr=args.lr)
-scheduler_PF = torch.optim.lr_scheduler.MultiStepLR(
-    optimizer_PF, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
-)
-scheduler_PB = torch.optim.lr_scheduler.MultiStepLR(
-    optimizer_PB, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
-)
+if args.use_tb:
+    optimizer = torch.optim.Adam(params, lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
+    )
+else:
+    optimizer_PF = torch.optim.Adam(logit_PF.module.parameters(), lr=args.lr)
+    optimizer_PB = torch.optim.Adam(logit_PB.module.parameters(), lr=args.lr)
+    scheduler_PF = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer_PF, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
+    )
+    scheduler_PB = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer_PB, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
+    )
 
 
 use_replay_buffer = args.replay_buffer_size > 0
@@ -154,7 +160,8 @@ if use_wandb:
     if args.use_tb:
         run_name += f"sch{args.schedule}_"
     run_name += ""
-    run_name += "baseline_" if args.use_baseline else ""
+    run_name += "fKL_" if args.forward_kl_pf else ""
+    run_name += "bKL_" if args.forward_kl_pb else ""
     run_name += f"_{args.ndim}_{args.height}_{args.R0}_{args.seed}_"
     wandb.run.name = run_name + wandb.run.name.split("-")[-1]  # type: ignore
 
@@ -172,51 +179,58 @@ for i in trange(args.n_iterations):
     else:
         training_objects = trajectories
 
-    optimizer_PF.zero_grad()
-    optimizer_PB.zero_grad()
+    if args.use_tb:
+        optimizer.zero_grad()
+    else:
+        optimizer_PF.zero_grad()
+        optimizer_PB.zero_grad()
+
     if optimizer_Z is not None:
         optimizer_Z.zero_grad()
 
-    # if args.use_tb:
-    #     loss = (scores + parametrization.logZ.tensor).pow(2)
-    #     loss = loss.mean()
-    # else:
-    #     if args.use_baseline:
-    #         scores = scores - torch.mean(scores).detach()
-    #     loss = torch.mean(scores**2)
-    # loss.backward()
     logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
-    loss_Z = (scores + parametrization.logZ.tensor).pow(2).mean()
-    if optimizer_Z is not None and scheduler_Z is not None:
-        loss_Z.backward()
+    if args.use_tb:
+        loss = (scores + parametrization.logZ.tensor).pow(2)
+        loss = loss.mean()
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
         optimizer_Z.step()
         scheduler_Z.step()
+    else:
+        loss_Z = (scores + parametrization.logZ.tensor).pow(2).mean()
+        if optimizer_Z is not None and scheduler_Z is not None:
+            loss_Z.backward()
+            optimizer_Z.step()
+            scheduler_Z.step()
+
+            logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
+                trajectories
+            )
+        if args.forward_kl_pf:
+            loss_PF = torch.mean(
+                logPF_trajectories * (scores + parametrization.logZ.tensor).detach()
+            )
+        else:
+            loss_PF = -torch.mean(logPF_trajectories * torch.exp(-scores.detach()))
+
+        loss_PF.backward()
+        optimizer_PF.step()
+        scheduler_PF.step()
 
         logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
             trajectories
         )
-    if args.forward_kl_pf:
-        loss_PF = torch.mean(
-            logPF_trajectories * (scores + parametrization.logZ.tensor).detach()
-        )
-    else:
-        loss_PF = -torch.mean(logPF_trajectories * torch.exp(-scores.detach()))
-
-    loss_PF.backward()
-    optimizer_PF.step()
-    scheduler_PF.step()
-
-    logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
-    if args.forward_kl_pb:
-        loss_PB = -torch.mean(logPB_trajectories)
-    else:
-        loss_PB = -torch.mean(logPB_trajectories * torch.exp(-scores.detach()))
-    optimizer_PB.step()
-    scheduler_PB.step()
+        if args.forward_kl_pb:
+            loss_PB = -torch.mean(logPB_trajectories)
+        else:
+            loss_PB = -torch.mean(logPB_trajectories * torch.exp(-scores.detach()))
+        optimizer_PB.step()
+        scheduler_PB.step()
 
     if args.validate_with_training_examples:
         visited_terminating_states.extend(training_objects.last_states)  # type: ignore
-    to_log = {"loss": loss_PF.item(), "states_visited": (i + 1) * args.batch_size}
+    to_log = {"states_visited": (i + 1) * args.batch_size}
     if use_wandb:
         wandb.log(to_log, step=i)
     if i % args.validation_interval == 0:
