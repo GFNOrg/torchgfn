@@ -224,7 +224,11 @@ for i in trange(args.n_iterations):
         if args.forward_kl_pb:
             loss_PB = -torch.mean(logPB_trajectories)
         else:
-            loss_PB = -torch.mean(logPB_trajectories * torch.exp(-scores.detach()))
+            loss_PB = -torch.mean(
+                logPB_trajectories
+                * (scores + parametrization.logZ.tensor).detach()
+                * torch.exp(-scores.detach())
+            )
         optimizer_PB.step()
         scheduler_PB.step()
 
