@@ -39,6 +39,7 @@ parser.add_argument("--replay_buffer_size", type=int, default=0)
 # parser.add_argument("--use_baseline", action="store_true", default=False)
 parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--uniform_pb", action="store_true", default=False)
 parser.add_argument(
     "--mode",
     type=str,
@@ -88,12 +89,15 @@ else:
 if args.tabular:
     logit_PB = Tabular(env, output_dim=env.n_actions - 1)
 else:
-    logit_PB = NeuralNet(
-        input_dim=preprocessor.output_dim,
-        output_dim=env.n_actions - 1,
-        hidden_dim=256,
-        n_hidden_layers=2,
-    )
+    if args.uniform_pb:
+        logit_PB = Uniform(output_dim=env.n_actions - 1)
+    else:
+        logit_PB = NeuralNet(
+            input_dim=preprocessor.output_dim,
+            output_dim=env.n_actions - 1,
+            hidden_dim=256,
+            n_hidden_layers=2,
+        )
 
 logZ_tensor = torch.tensor(0.0)
 logit_PF = LogitPFEstimator(preprocessor=preprocessor, module=logit_PF)
@@ -131,13 +135,16 @@ if args.mode == "tb":
     )
 else:
     optimizer_PF = torch.optim.Adam(logit_PF.module.parameters(), lr=args.lr)
-    optimizer_PB = torch.optim.Adam(logit_PB.module.parameters(), lr=args.lr)
     scheduler_PF = torch.optim.lr_scheduler.MultiStepLR(
         optimizer_PF, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
     )
-    scheduler_PB = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer_PB, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
-    )
+    if not args.uniform_pb:
+        optimizer_PB = torch.optim.Adam(logit_PB.module.parameters(), lr=args.lr)
+        scheduler_PB = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer_PB,
+            milestones=list(range(2000, 100000, 2000)),
+            gamma=args.schedule,
+        )
 
 
 use_replay_buffer = args.replay_buffer_size > 0
@@ -177,7 +184,8 @@ for i in trange(args.n_iterations):
         optimizer.zero_grad()
     else:
         optimizer_PF.zero_grad()
-        optimizer_PB.zero_grad()
+        if not args.uniform_pb:
+            optimizer_PB.zero_grad()
 
     if optimizer_Z is not None:
         optimizer_Z.zero_grad()
@@ -219,16 +227,17 @@ for i in trange(args.n_iterations):
         logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
             trajectories
         )
-        if args.mode == "reverse_kl" or args.mode == "rws":
-            loss_PB = -torch.mean(logPB_trajectories)
-        else:
-            loss_PB = -torch.mean(
-                logPB_trajectories
-                * (scores + parametrization.logZ.tensor).detach()
-                * torch.exp(-scores.detach() / torch.exp(-scores.detach()).sum())
-            )
-        optimizer_PB.step()
-        scheduler_PB.step()
+        if not args.uniform_pb:
+            if args.mode == "reverse_kl" or args.mode == "rws":
+                loss_PB = -torch.mean(logPB_trajectories)
+            else:
+                loss_PB = -torch.mean(
+                    logPB_trajectories
+                    * (scores + parametrization.logZ.tensor).detach()
+                    * torch.exp(-scores.detach() / torch.exp(-scores.detach()).sum())
+                )
+            optimizer_PB.step()
+            scheduler_PB.step()
 
     if args.validate_with_training_examples:
         visited_terminating_states.extend(training_objects.last_states)  # type: ignore
