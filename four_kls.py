@@ -36,13 +36,15 @@ parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--lr_Z", type=float, default=0.1)
 parser.add_argument("--schedule", type=float, default=1.0)
 parser.add_argument("--replay_buffer_size", type=int, default=0)
-parser.add_argument("--no_cuda", action="store_true")
-parser.add_argument("--use_tb", action="store_true", default=False)
-parser.add_argument("--use_baseline", action="store_true", default=False)
+# parser.add_argument("--use_baseline", action="store_true", default=False)
 parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
-parser.add_argument("--forward_kl_pf", action="store_true", default=False)
-parser.add_argument("--forward_kl_pb", action="store_true", default=False)
+parser.add_argument(
+    "--mode",
+    type=str,
+    choices=["tb", "forward_kl", "reverse_kl", "rws", "reverse_rws"],
+    default="tb",
+)
 parser.add_argument(
     "--validation_samples",
     type=int,
@@ -61,10 +63,7 @@ args = parser.parse_args()
 print(encode(args))
 
 torch.manual_seed(args.seed)
-if args.no_cuda:
-    device_str = "cpu"
-else:
-    device_str = "cuda" if torch.cuda.is_available() else "cpu"
+device_str = "cpu"
 
 
 env = HyperGrid(args.ndim, args.height, R0=args.R0)
@@ -94,7 +93,6 @@ else:
         output_dim=env.n_actions - 1,
         hidden_dim=256,
         n_hidden_layers=2,
-        torso=logit_PF.torso,
     )
 
 logZ_tensor = torch.tensor(0.0)
@@ -126,7 +124,7 @@ if "logZ" in parametrization.parameters:
 else:
     optimizer_Z = None
     scheduler_Z = None
-if args.use_tb:
+if args.mode == "tb":
     optimizer = torch.optim.Adam(params, lr=args.lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
@@ -156,12 +154,8 @@ use_wandb = len(args.wandb) > 0
 if use_wandb:
     wandb.init(project=args.wandb)
     wandb.config.update(encode(args))
-    run_name = ("TB_") if args.use_tb else ("VI_")
-    if args.use_tb:
-        run_name += f"sch{args.schedule}_"
-    run_name += ""
-    run_name += "fKL_" if args.forward_kl_pf else ""
-    run_name += "bKL_" if args.forward_kl_pb else ""
+    run_name = args.mode
+    run_name += f"_bs_{args.batch_size}_"
     run_name += f"_{args.ndim}_{args.height}_{args.R0}_{args.seed}_"
     wandb.run.name = run_name + wandb.run.name.split("-")[-1]  # type: ignore
 
@@ -179,7 +173,7 @@ for i in trange(args.n_iterations):
     else:
         training_objects = trajectories
 
-    if args.use_tb:
+    if args.mode == "tb":
         optimizer.zero_grad()
     else:
         optimizer_PF.zero_grad()
@@ -189,7 +183,7 @@ for i in trange(args.n_iterations):
         optimizer_Z.zero_grad()
 
     logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
-    if args.use_tb:
+    if args.mode == "tb":
         loss = (scores + parametrization.logZ.tensor).pow(2)
         loss = loss.mean()
         loss.backward()
@@ -207,12 +201,16 @@ for i in trange(args.n_iterations):
             logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
                 trajectories
             )
-        if args.forward_kl_pf:
+        if args.mode == "reverse_kl" or args.mode == "reverse_rws":
             loss_PF = torch.mean(
                 logPF_trajectories * (scores + parametrization.logZ.tensor).detach()
             )
         else:
-            loss_PF = -torch.mean(logPF_trajectories * torch.exp(-scores.detach()))
+            loss_PF = -torch.mean(
+                logPF_trajectories
+                * torch.exp(-scores.detach())
+                / torch.exp(-scores.detach()).sum()
+            )
 
         loss_PF.backward()
         optimizer_PF.step()
@@ -221,13 +219,13 @@ for i in trange(args.n_iterations):
         logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
             trajectories
         )
-        if args.forward_kl_pb:
+        if args.mode == "reverse_kl" or args.mode == "rws":
             loss_PB = -torch.mean(logPB_trajectories)
         else:
             loss_PB = -torch.mean(
                 logPB_trajectories
                 * (scores + parametrization.logZ.tensor).detach()
-                * torch.exp(-scores.detach())
+                * torch.exp(-scores.detach() / torch.exp(-scores.detach()).sum())
             )
         optimizer_PB.step()
         scheduler_PB.step()
