@@ -5,16 +5,14 @@ import torch
 
 from gfn.containers import ReplayBuffer, Trajectories
 from gfn.envs import HyperGrid
-from gfn.estimators import LogitPBEstimator, LogitPFEstimator
+from gfn.estimators import LogitPFEstimator
 from gfn.modules import NeuralNet
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers import TrajectoriesSampler, TransitionsSampler
 from gfn.samplers.actions_samplers import (
     FixedActionsSampler,
-    LogitPBActionsSampler,
     LogitPFActionsSampler,
     UniformActionsSampler,
-    UniformBackwardActionsSampler,
 )
 
 
@@ -87,54 +85,6 @@ def test_hypergrid_trajectory_sampling(height: int, human_print=False) -> Trajec
 
     if human_print:
         print("\n\n---Trying Backward sampling of trajectories---")
-    states = env.reset(batch_shape=20, random_init=True)
-
-    if human_print:
-        print(
-            "\nTrying the Uniform Backward Action Sampler with one of the initial states being s_0"
-        )
-    actions_sampler = UniformBackwardActionsSampler()
-    trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(states)
-    if human_print:
-        print(trajectories)
-
-    modules = [
-        NeuralNet(
-            input_dim=preprocessor.output_dim,
-            hidden_dim=12,
-            output_dim=env.n_actions - 1,
-        )
-        for preprocessor in preprocessors
-    ]
-    logit_pb_estimators = [
-        LogitPBEstimator(preprocessor=preprocessor, module=module)
-        for (preprocessor, module) in zip(preprocessors, modules)
-    ]
-
-    logit_pb_actions_samplers = [
-        LogitPBActionsSampler(estimator=logit_pb_estimator)
-        for logit_pb_estimator in logit_pb_estimators
-    ]
-
-    trajectories_samplers = [
-        TrajectoriesSampler(env, logit_pb_actions_sampler)
-        for logit_pb_actions_sampler in logit_pb_actions_samplers
-    ]
-
-    for i, trajectories_sampler in enumerate(trajectories_samplers):
-        if human_print:
-            print(
-                "\n",
-                i,
-                ": Trying the LogitPBActionSampler with preprocessor {}".format(
-                    preprocessors[i]
-                ),
-            )
-        states = env.reset(batch_shape=5, random_init=True)
-        trajectories = trajectories_samplers[i].sample_trajectories(states)
-        if human_print:
-            print(trajectories)
 
     if human_print:
         print("\n\n---Making Sure Last states are computed correctly---")
@@ -237,4 +187,4 @@ def test_replay_buffer(height: int, objects: Literal["trajectories", "transition
     )
 
 
-test_replay_buffer(height=4, objects="transitions")
+test_hypergrid_trajectory_sampling(4)

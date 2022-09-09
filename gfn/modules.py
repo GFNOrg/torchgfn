@@ -92,7 +92,7 @@ class Tabular(GFNModule):
     def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
         # Note that only the EnumPreprocessor is compatible with the Tabular module
         assert preprocessed_states.dtype == torch.long
-        outputs = self.logits[preprocessed_states]
+        outputs = self.logits[preprocessed_states.squeeze(-1)]
         return outputs
 
     def named_parameters(self) -> dict:

@@ -108,6 +108,7 @@ class FixedActionsSampler(ActionsSampler):
 
 
 class UniformActionsSampler(ActionsSampler):
+    # TODO: might be redundant with the LogitPFActionsSampler with Uniform LogitPFEstimator
     def get_raw_logits(self, states):
         return torch.zeros_like(states.forward_masks, dtype=torch.float)
 

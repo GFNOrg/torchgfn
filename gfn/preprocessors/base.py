@@ -58,4 +58,4 @@ class EnumPreprocessor(Preprocessor):
         return 1
 
     def preprocess(self, states):
-        return self.env.get_states_indices(states).long()
+        return self.env.get_states_indices(states).long().unsqueeze(-1)

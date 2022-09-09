@@ -1,3 +1,5 @@
+# TODO: merge with trajectories.py
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Sequence
@@ -16,8 +18,8 @@ Tensor1D = TensorType["n_trajectories", torch.long]
 FloatTensor1D = TensorType["n_trajectories", torch.float]
 
 
-class Trajectories:
-    """Class for keeping track of multiple COMPLETE trajectories, or backward trajectories."""
+class SubTrajectories:
+    "Container for multiple sub-trajectories"
 
     def __init__(
         self,
@@ -33,14 +35,14 @@ class Trajectories:
             actions
             if actions is not None
             else torch.full(
-                size=(0, 0), fill_value=-1, dtype=torch.long, device=self.env.device
+                size=(0, 0), fill_value=-1, dtype=torch.long, device=self.states.device
             )
         )
         self.when_is_done = (
             when_is_done
             if when_is_done is not None
             else torch.full(
-                size=(0,), fill_value=-1, dtype=torch.long, device=self.env.device
+                size=(0,), fill_value=-1, dtype=torch.long, device=self.states.device
             )
         )
 
@@ -58,7 +60,7 @@ class Trajectories:
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
             f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
-            f"when_is_done={self.when_is_done}, rewards={self.rewards})"
+            f"when_is_done={self.when_is_done})"
         )
 
     @property
@@ -72,62 +74,23 @@ class Trajectories:
     def max_length(self) -> int:
         if len(self) == 0:
             return 0
-        return self.when_is_done.max().item()
+        return torch.any(self.actions != -1, dim=1).sum().item()
 
-    @property
-    def last_states(self) -> States:
-        return self.states[self.when_is_done - 1, torch.arange(self.n_trajectories)]
-
-    @property
-    def rewards(self) -> FloatTensor1D | None:
-        return self.env.reward(self.last_states)
-
-    def __getitem__(self, index: int | Sequence[int]) -> Trajectories:
+    def __getitem__(self, index: int | Sequence[int]) -> SubTrajectories:
         "Returns a subset of the `n_trajectories` trajectories."
         if isinstance(index, int):
             index = [index]
         when_is_done = self.when_is_done[index]
-        new_max_length = when_is_done.max().item() if len(when_is_done) > 0 else 0
         states = self.states[:, index]
         actions = self.actions[:, index]
+        new_max_length = (
+            torch.any(actions != -1, dim=1).sum().item() if len(when_is_done) > 0 else 0
+        )
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
-        return Trajectories(
+        return SubTrajectories(
             env=self.env,
             states=states,
             actions=actions,
             when_is_done=when_is_done,
         )
-
-    def extend(self, other: Trajectories) -> None:
-        """Extend the trajectories with another set of trajectories."""
-        self.extend_actions(required_first_dim=max(self.max_length, other.max_length))
-        other.extend_actions(required_first_dim=max(self.max_length, other.max_length))
-
-        self.states.extend(other.states)
-        self.actions = torch.cat((self.actions, other.actions), dim=1)
-        self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
-
-    def extend_actions(self, required_first_dim: int) -> None:
-        """Extends the actions along the first dimension by by adding -1s as necessary.
-        This is useful for extending trajectories of different lengths."""
-        if self.max_length >= required_first_dim:
-            return
-        self.actions = torch.cat(
-            (
-                self.actions,
-                torch.full(
-                    size=(required_first_dim - self.max_length, self.n_trajectories),
-                    fill_value=-1,
-                    dtype=torch.long,
-                ),
-            ),
-            dim=0,
-        )
-
-    def sample(self, n_trajectories: int) -> Trajectories:
-        """Sample a random subset of trajectories."""
-        perm = torch.randperm(self.n_trajectories)
-        indices = perm[:n_trajectories]
-
-        return self[indices]

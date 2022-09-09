@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Sequence
 import torch
 from torchtyping import TensorType
 
+from .sub_trajectories import SubTrajectories
 from .trajectories import Trajectories
 
 if TYPE_CHECKING:
@@ -27,10 +28,8 @@ class Transitions:
         actions: LongTensor | None = None,
         is_done: BoolTensor | None = None,
         next_states: States | None = None,
-        is_backward: bool = False,
     ):
         self.env = env
-        self.is_backward = is_backward
         self.states = states if states is not None else env.States(batch_shape=(0,))
         assert len(self.states.batch_shape) == 1
         self.actions = (
@@ -52,23 +51,18 @@ class Transitions:
         )
 
     @classmethod
-    def from_trajectories(cls, trajectories: Trajectories):
+    def from_trajectories(cls, trajectories: Trajectories | SubTrajectories):
         "Create a Transitions from a Trajectories"
         states = trajectories.states[:-1][trajectories.actions != -1]
         next_states = trajectories.states[1:][trajectories.actions != -1]
         actions = trajectories.actions[trajectories.actions != -1]
-        is_done = (
-            next_states.is_sink_state
-            if not trajectories.is_backward
-            else next_states.is_initial_state
-        )
+        is_done = next_states.is_sink_state
         return cls(
             env=trajectories.env,
             states=states,
             actions=actions,
             is_done=is_done,
             next_states=next_states,
-            is_backward=trajectories.is_backward,
         )
 
     @property
@@ -101,17 +95,14 @@ class Transitions:
 
     @property
     def rewards(self) -> FloatTensor | None:
-        if self.is_backward:
-            return None
-        else:
-            rewards = torch.full(
-                (self.n_transitions,),
-                fill_value=-1.0,
-                dtype=torch.float,
-                device=self.states.device,
-            )
-            rewards[self.is_done] = self.env.reward(self.last_states)
-            return rewards
+        rewards = torch.full(
+            (self.n_transitions,),
+            fill_value=-1.0,
+            dtype=torch.float,
+            device=self.states.device,
+        )
+        rewards[self.is_done] = self.env.reward(self.last_states)
+        return rewards
 
     def __getitem__(self, index: int | Sequence[int]) -> Transitions:
         if isinstance(index, int):
@@ -126,7 +117,6 @@ class Transitions:
             actions=actions,
             is_done=is_done,
             next_states=next_states,
-            is_backward=self.is_backward,
         )
 
     def extend(self, other: Transitions) -> None:

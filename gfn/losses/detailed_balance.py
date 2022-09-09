@@ -14,8 +14,6 @@ class DetailedBalance(EdgeDecomposableLoss):
         self.backward_actions_sampler = LogitPBActionsSampler(parametrization.logit_PB)
 
     def __call__(self, transitions: Transitions) -> TensorType[0]:
-        if transitions.is_backward:
-            raise ValueError("Backward transitions are not supported")
         valid_states = transitions.states[~transitions.states.is_sink_state]
         valid_actions = transitions.actions[transitions.actions != -1]
 

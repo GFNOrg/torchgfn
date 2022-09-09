@@ -27,8 +27,6 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
     def get_scores(
         self, trajectories: Trajectories
     ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
-        if trajectories.is_backward:
-            raise ValueError("Backward trajectories are not supported")
 
         valid_states = trajectories.states[~trajectories.states.is_sink_state]
         valid_actions = trajectories.actions[trajectories.actions != -1]
