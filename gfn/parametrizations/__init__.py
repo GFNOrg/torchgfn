@@ -1,3 +1,8 @@
 from .base import Parametrization
 from .edge_flows import FMParametrization
-from .forward_probs import DBParametrization, PFBasedParametrization, TBParametrization
+from .forward_probs import (
+    DBParametrization,
+    PFBasedParametrization,
+    TBParametrization,
+    SubTBParametrization,
+)

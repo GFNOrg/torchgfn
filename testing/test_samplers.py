@@ -185,6 +185,3 @@ def test_replay_buffer(height: int, objects: Literal["trajectories", "transition
     print(
         f"After adding {len(training_objects)} trajectories, the replay buffer is {replay_buffer} \n {replay_buffer.training_objects}  "
     )
-
-
-test_hypergrid_trajectory_sampling(4)

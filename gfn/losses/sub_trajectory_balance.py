@@ -26,13 +26,32 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         self.actions_sampler = LogitPFActionsSampler(parametrization.logit_PF)
         self.backward_actions_sampler = LogitPBActionsSampler(parametrization.logit_PB)
 
-    def get_sub_trajectories(self, trajectories: Trajectories) -> Trajectories:
-        pass
+    def get_scores(self, trajectories: Trajectories) -> Trajectories:
+        # Note that this counts sub-trajectories that terminate early, multiple times
+        log_pfs_all = []
+        log_pbs_all = []
+        scores_all = []
+        max_length = trajectories.max_length
+        for i in range(max_length - 1):
+            for j in range(i + 2, max_length + 2):
+                sub_trajectories = SubTrajectories.from_trajectories_fixed_length(
+                    trajectories, i, j
+                )
+                log_pf, log_pb, scores = self.get_scores_fixed_length(sub_trajectories)
+                log_pbs_all.append(log_pb * (j - i - 1))
+                log_pfs_all.append(log_pf * (j - i - 1))
+                scores_all.append(scores * (j - i - 1))
+        log_pf_all = torch.cat(log_pfs_all, dim=0)
+        log_pb_all = torch.cat(log_pbs_all, dim=0)
+        scores_all = torch.cat(scores_all, dim=0)
+        return log_pf_all, log_pb_all, scores_all
 
-    def get_scores(
+    def get_scores_fixed_length(
         self, sub_trajectories: SubTrajectories
     ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
         # TODO: this can be improved. Many things used here can and should be in the sub_trajectories class
+        if sub_trajectories.max_length == 0:
+            return torch.zeros(0), torch.zeros(0), torch.zeros(0)
         valid_states = sub_trajectories.states[:-1][
             ~sub_trajectories.states[:-1].is_sink_state
         ]
@@ -120,8 +139,8 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
 
         return log_pf_trajectories, log_pb_trajectories, pf_scores - pb_scores
 
-    def __call__(self, sub_trajectories: SubTrajectories) -> LossTensor:
-        _, _, scores = self.get_scores(sub_trajectories)
+    def __call__(self, trajectories: Trajectories) -> LossTensor:
+        _, _, scores = self.get_scores(trajectories)
         loss = scores.pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("Loss is NaN")
@@ -150,10 +169,10 @@ if __name__ == "__main__":
     sampler = UniformActionsSampler()
     trajectories_sampler = TrajectoriesSampler(env, sampler)
 
-    trajs = trajectories_sampler.sample(n_objects=100)
+    trajs = trajectories_sampler.sample(n_objects=5)
 
     start_idx = 0
-    end_idx = 100
+    end_idx = 2
     sub_trajs = SubTrajectories(
         env,
         states=trajs.states[start_idx:end_idx],
@@ -174,11 +193,17 @@ if __name__ == "__main__":
     parametrization = DBParametrization(logit_PF, logit_PB, logF)
     sub_tb = SubTrajectoryBalance(parametrization)
 
-    scores = sub_tb.get_scores(sub_trajs)
+    scores = sub_tb.get_scores_fixed_length(sub_trajs)
+    print("ok")
 
-    loss = sub_tb(sub_trajs)
+    print(sub_tb.get_scores(trajs))
+    print("ok")
+
+    loss = sub_tb(trajs)
 
     print(scores)
+
+    print(loss)
     if end_idx > trajs.max_length and start_idx == 0:
         print("Comparing to TB")
         logZ = torch.tensor(0.0)
@@ -190,15 +215,19 @@ if __name__ == "__main__":
 
         scores_tb = tb.get_scores(trajs)
 
-        assert torch.all(scores[-1] == scores_tb[-1])
+        assert torch.all((scores[-1] - scores_tb[-1]).abs() < 1e-4)
         print("OK")
     if end_idx == start_idx + 2:
         print("Comparing to DB")
         db = DetailedBalance(parametrization)
 
         transitions = Transitions.from_trajectories(sub_trajs)
+        if transitions.n_transitions == 0:
+            assert sub_trajs.max_length == 0
+        else:
+            loss_db = db(transitions)
 
-        loss_db = db(transitions)
+            assert scores[-1].pow(2).mean() == loss_db
+            print("OK")
 
-        assert loss == loss_db
-        print("OK")
+    

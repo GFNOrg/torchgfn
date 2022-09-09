@@ -14,12 +14,13 @@ from gfn.estimators import (
     LogStateFlowEstimator,
     LogZEstimator,
 )
-from gfn.losses import DetailedBalance, Loss, TrajectoryBalance
+from gfn.losses import DetailedBalance, Loss, TrajectoryBalance, SubTrajectoryBalance
 from gfn.parametrizations import (
     DBParametrization,
     FMParametrization,
     Parametrization,
     TBParametrization,
+    SubTBParametrization,
 )
 from gfn.preprocessors import (
     EnumPreprocessor,
@@ -68,7 +69,7 @@ class FMParametrizationConfig(BaseParametrizationConfig):
 
 @dataclass
 class PFBasedParametrizationConfig(BaseParametrizationConfig, ABC):
-    tied: bool = False
+    tied: bool = True
 
     def get_estimators(
         self,
@@ -120,12 +121,50 @@ class DBParametrizationConfig(PFBasedParametrizationConfig):
         )
         self.adjust_module_config(logF_state_config, preprocessor, 1)
 
-        logF_module = logF_state_config.parse(env=env)
+        logF_module = logF_state_config.parse(
+            env=env,
+            tied_to=logit_PF.module if self.tied else None,
+            tied_to_name="logit_PF" if self.tied else None,
+        )
         logF_state = LogStateFlowEstimator(
             preprocessor=preprocessor, module=logF_module
         )
         parametrization = DBParametrization(logit_PF, logit_PB, logF_state)
         loss = DetailedBalance(parametrization)
+        return (parametrization, loss)
+
+
+@dataclass
+class SubTBParametrizationConfig(PFBasedParametrizationConfig):
+    # TODO: Should be merged with DBParametrizationConfig
+    def parse(
+        self,
+        env: Env,
+        preprocessor: Preprocessor,
+        logit_PF_config: GFNModuleConfig,
+        logit_PB_config: GFNModuleConfig,
+        logF_state_config: GFNModuleConfig,
+        **kwargs,
+    ) -> Tuple[Parametrization, Loss]:
+        del kwargs
+        logit_PF, logit_PB = super().get_estimators(
+            env,
+            preprocessor,
+            logit_PF_config=logit_PF_config,
+            logit_PB_config=logit_PB_config,
+        )
+        self.adjust_module_config(logF_state_config, preprocessor, 1)
+
+        logF_module = logF_state_config.parse(
+            env=env,
+            tied_to=logit_PF.module if self.tied else None,
+            tied_to_name="logit_PF" if self.tied else None,
+        )
+        logF_state = LogStateFlowEstimator(
+            preprocessor=preprocessor, module=logF_module
+        )
+        parametrization = SubTBParametrization(logit_PF, logit_PB, logF_state)
+        loss = SubTrajectoryBalance(parametrization)
         return (parametrization, loss)
 
 
@@ -163,6 +202,7 @@ class ParametrizationConfig(JsonSerializable):
             "FM": FMParametrizationConfig,
             "DB": DBParametrizationConfig,
             "TB": TBParametrizationConfig,
+            "SubTB": SubTBParametrizationConfig,
         },
         default=TBParametrizationConfig(),
     )

@@ -1,12 +1,14 @@
 # TODO: merge with trajectories.py
 
 from __future__ import annotations
+from tracemalloc import start
 
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from ..envs import Env
     from .states import States
+    from .trajectories import Trajectories
 
 import torch
 from torchtyping import TensorType
@@ -46,6 +48,30 @@ class SubTrajectories:
             )
         )
 
+    @classmethod
+    def from_trajectories_fixed_length(
+        cls, trajectories: Trajectories, start_idx: int = 0, end_idx: int = None
+    ) -> SubTrajectories:
+        if end_idx is None:
+            end_idx = trajectories.max_length + 1
+        assert start_idx + 1 < end_idx
+
+        mask = ~trajectories.states[start_idx:end_idx][
+            end_idx - start_idx - 2
+        ].is_sink_state
+
+        return cls(
+            env=trajectories.env,
+            states=trajectories.states[start_idx:end_idx][:, mask],
+            actions=trajectories.actions[start_idx : end_idx - 1][:, mask],
+            when_is_done=(
+                (trajectories.when_is_done - start_idx)
+                * (trajectories.when_is_done < (end_idx))
+                + torch.full(size=(len(trajectories),), fill_value=-1, dtype=torch.long)
+                * (trajectories.when_is_done >= (end_idx))
+            )[mask],
+        )
+
     def __repr__(self) -> str:
         states = self.states.states.transpose(0, 1)
         assert states.ndim == 3
@@ -58,7 +84,7 @@ class SubTrajectories:
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
-            f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
+            f"SubTrajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
             f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
             f"when_is_done={self.when_is_done})"
         )

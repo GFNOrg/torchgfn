@@ -9,7 +9,11 @@ from gfn.parametrizations import (
     Parametrization,
     PFBasedParametrization,
 )
-from gfn.parametrizations.forward_probs import DBParametrization, TBParametrization
+from gfn.parametrizations.forward_probs import (
+    DBParametrization,
+    TBParametrization,
+    SubTBParametrization,
+)
 from gfn.samplers import (
     LogEdgeFlowsActionsSampler,
     LogitPFActionsSampler,
@@ -40,7 +44,9 @@ class SamplerConfig(JsonSerializable):
             estimator = parametrization.logit_PF
             if isinstance(parametrization, DBParametrization):
                 training_sampler_cls = TransitionsSampler
-            elif isinstance(parametrization, TBParametrization):
+            elif isinstance(parametrization, TBParametrization) or isinstance(
+                parametrization, SubTBParametrization
+            ):
                 training_sampler_cls = TrajectoriesSampler
             else:
                 raise ValueError(f"Unknown parametrization {parametrization}")

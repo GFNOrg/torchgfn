@@ -6,6 +6,10 @@ from gfn.losses.base import EdgeDecomposableLoss
 from gfn.parametrizations import DBParametrization
 from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsSampler
 
+# Typing
+ScoresTensor = TensorType["n_transitions", float]
+LossTensor = TensorType[0, float]
+
 
 class DetailedBalance(EdgeDecomposableLoss):
     def __init__(self, parametrization: DBParametrization):
@@ -13,7 +17,9 @@ class DetailedBalance(EdgeDecomposableLoss):
         self.actions_sampler = LogitPFActionsSampler(parametrization.logit_PF)
         self.backward_actions_sampler = LogitPBActionsSampler(parametrization.logit_PB)
 
-    def __call__(self, transitions: Transitions) -> TensorType[0]:
+    def get_scores(self, transitions: Transitions):
+        if transitions.is_backward:
+            raise ValueError("Backward transitions are not supported")
         valid_states = transitions.states[~transitions.states.is_sink_state]
         valid_actions = transitions.actions[transitions.actions != -1]
 
@@ -54,7 +60,9 @@ class DetailedBalance(EdgeDecomposableLoss):
         ]
 
         valid_log_F_s_next = self.parametrization.logF(valid_next_states).squeeze(-1)
-        targets[~valid_transitions_is_done] = valid_log_pb_actions + valid_log_F_s_next
+        targets[~valid_transitions_is_done] = valid_log_pb_actions
+        log_pb_actions = targets.clone()
+        targets[~valid_transitions_is_done] += valid_log_F_s_next
         assert transitions.rewards is not None
         valid_transitions_rewards = transitions.rewards[
             ~transitions.states.is_sink_state
@@ -63,7 +71,14 @@ class DetailedBalance(EdgeDecomposableLoss):
             valid_transitions_rewards[valid_transitions_is_done]
         )
 
-        loss = torch.nn.MSELoss()(preds, targets)
+        scores = preds - targets
+
+        return (valid_log_pf_actions, log_pb_actions, scores)
+
+    def __call__(self, transitions: Transitions) -> LossTensor:
+        _, _, scores = self.get_scores(transitions)
+        loss = torch.mean(scores**2)
+
         if torch.isnan(loss):
             raise ValueError("loss is nan")
 
