@@ -52,6 +52,8 @@ class SubTrajectories:
     def from_trajectories_fixed_length(
         cls, trajectories: Trajectories, start_idx: int = 0, end_idx: int = None
     ) -> SubTrajectories:
+        if trajectories.is_backward:
+            raise NotImplementedError("Backward trajectories are not supported yet.")
         if end_idx is None:
             end_idx = trajectories.max_length + 1
         assert start_idx + 1 < end_idx

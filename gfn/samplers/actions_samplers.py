@@ -7,6 +7,7 @@ from torchtyping import TensorType
 
 from gfn.containers import States
 from gfn.estimators import LogEdgeFlowEstimator, LogitPBEstimator, LogitPFEstimator
+from gfn.modules import Uniform
 
 # Typing
 Tensor2D = TensorType["batch_size", "n_actions"]
@@ -105,17 +106,6 @@ class FixedActionsSampler(ActionsSampler):
 
         logits.scatter_(1, self.actions[:, self.step].unsqueeze(-1), 0.0)
         return logits
-
-
-class UniformActionsSampler(ActionsSampler):
-    # TODO: might be redundant with the LogitPFActionsSampler with Uniform LogitPFEstimator
-    def get_raw_logits(self, states):
-        return torch.zeros_like(states.forward_masks, dtype=torch.float)
-
-
-class UniformBackwardActionsSampler(BackwardActionsSampler):
-    def get_raw_logits(self, states):
-        return torch.zeros_like(states.backward_masks, dtype=torch.float)
 
 
 class LogitPFActionsSampler(ActionsSampler):

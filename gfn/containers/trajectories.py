@@ -25,23 +25,21 @@ class Trajectories:
         states: States | None = None,
         actions: Tensor2D | None = None,
         when_is_done: Tensor1D | None = None,
+        is_backward: bool = False,
     ) -> None:
         self.env = env
+        self.is_backward = is_backward
         self.states = states if states is not None else env.States(batch_shape=(0, 0))
         assert len(self.states.batch_shape) == 2
         self.actions = (
             actions
             if actions is not None
-            else torch.full(
-                size=(0, 0), fill_value=-1, dtype=torch.long, device=self.env.device
-            )
+            else torch.full(size=(0, 0), fill_value=-1, dtype=torch.long)
         )
         self.when_is_done = (
             when_is_done
             if when_is_done is not None
-            else torch.full(
-                size=(0,), fill_value=-1, dtype=torch.long, device=self.env.device
-            )
+            else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
         )
 
     def __repr__(self) -> str:
@@ -52,13 +50,13 @@ class Trajectories:
             one_traj_repr = []
             for step in traj:
                 one_traj_repr.append(str(step.numpy()))
-                if step.equal(self.env.s_f):
+                if step.equal(self.env.s_0 if self.is_backward else self.env.s_f):
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
-            f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
-            f"when_is_done={self.when_is_done}, rewards={self.rewards})"
+            + f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
+            + f"when_is_done={self.when_is_done}, rewards={self.rewards})"
         )
 
     @property
@@ -72,7 +70,8 @@ class Trajectories:
     def max_length(self) -> int:
         if len(self) == 0:
             return 0
-        return self.when_is_done.max().item()
+
+        return self.actions.shape[0]
 
     @property
     def last_states(self) -> States:
@@ -80,6 +79,8 @@ class Trajectories:
 
     @property
     def rewards(self) -> FloatTensor1D | None:
+        if self.is_backward:
+            return None
         return self.env.reward(self.last_states)
 
     def __getitem__(self, index: int | Sequence[int]) -> Trajectories:
@@ -97,6 +98,7 @@ class Trajectories:
             states=states,
             actions=actions,
             when_is_done=when_is_done,
+            is_backward=self.is_backward,
         )
 
     def extend(self, other: Trajectories) -> None:
@@ -117,7 +119,10 @@ class Trajectories:
             (
                 self.actions,
                 torch.full(
-                    size=(required_first_dim - self.max_length, self.n_trajectories),
+                    size=(
+                        required_first_dim - self.actions.shape[0],
+                        self.n_trajectories,
+                    ),
                     fill_value=-1,
                     dtype=torch.long,
                 ),

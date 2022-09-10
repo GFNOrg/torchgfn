@@ -14,10 +14,7 @@ class TrainingSampler(ABC):
     def __init__(self, env: Env, actions_sampler: ActionsSampler, **kwargs):
         self.env = env
         self.actions_sampler = actions_sampler
-        if isinstance(actions_sampler, BackwardActionsSampler):
-            raise ValueError(
-                "BackwardActionsSampler is not supported for sampling training objects"
-            )
+        self.is_backward = isinstance(actions_sampler, BackwardActionsSampler)
 
     @abstractmethod
     def sample(self, n_objects: int) -> Any:

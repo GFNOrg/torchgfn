@@ -11,9 +11,14 @@ from gfn.estimators import (
 )
 from gfn.losses.detailed_balance import DetailedBalance
 from gfn.losses.trajectory_balance import TrajectoryBalance
-from gfn.losses.sub_trajectory_balance import SubTrajectoryBalance
+from gfn.losses.sub_trajectory_balance import SubTrajectoryBalance2
 from gfn.modules import NeuralNet, Tabular, Uniform
-from gfn.parametrizations import DBParametrization, FMParametrization, TBParametrization
+from gfn.parametrizations import (
+    DBParametrization,
+    FMParametrization,
+    TBParametrization,
+    SubTBParametrization,
+)
 from gfn.preprocessors import (
     EnumPreprocessor,
     IdentityPreprocessor,
@@ -23,7 +28,6 @@ from gfn.preprocessors import (
 from gfn.samplers.actions_samplers import (
     FixedActionsSampler,
     LogitPFActionsSampler,
-    UniformActionsSampler,
 )
 from gfn.samplers.trajectories_sampler import TrajectoriesSampler
 from gfn.samplers.transitions_sampler import TransitionsSampler
@@ -55,7 +59,7 @@ def test_FM_hypergrid(ndim: int):
     [IdentityPreprocessor, OneHotPreprocessor, KHotPreprocessor, EnumPreprocessor],
 )
 @pytest.mark.parametrize("module_cls", [NeuralNet, Uniform, Tabular])
-@pytest.mark.parametrize("parametrization_name", ["DB", "TB"])
+@pytest.mark.parametrize("parametrization_name", ["DB", "TB", "SubTB"])
 @pytest.mark.parametrize("tie_pb_to_pf", [True, False])
 def test_PFBasedParametrization_hypergrid(
     ndim: int,
@@ -110,10 +114,14 @@ def test_PFBasedParametrization_hypergrid(
         parametrization = DBParametrization(logit_PF, logit_PB, logF)
         training_sampler_cls = TransitionsSampler
         loss_cls = DetailedBalance
-    else:
+    elif parametrization_name == "TB":
         parametrization = TBParametrization(logit_PF, logit_PB, logZ)
         training_sampler_cls = TrajectoriesSampler
         loss_cls = TrajectoryBalance
+    elif parametrization_name == "SubTB":
+        parametrization = SubTBParametrization(logit_PF, logit_PB, logF)
+        training_sampler_cls = TrajectoriesSampler
+        loss_cls = SubTrajectoryBalance2
     print(parametrization.Pi(env, n_samples=10).sample())
 
     print(parametrization.parameters.keys())
@@ -127,7 +135,7 @@ def test_PFBasedParametrization_hypergrid(
 
     print(loss)
 
-    if ndim == 2 and parametrization_name == "TB" and module_cls == Uniform:
+    if ndim == 2 and parametrization_name in ("TB", "SubTB") and module_cls == Uniform:
         print("Evaluating the TB loss on 5 trajectories with manually chosen actions")
         actions_sampler = FixedActionsSampler(
             torch.tensor(
@@ -150,69 +158,14 @@ def test_PFBasedParametrization_hypergrid(
         true_losses_exp = torch.exp(logZ.tensor) * pfs / (pbs * trajectories.rewards)
         true_loss = torch.log(true_losses_exp).pow(2).mean()
 
-        if true_loss == loss_fn(trajectories):
-            print("OK - TB LOSS PROBABLY OK")
-        else:
-            raise ValueError("TB LOSS NOT PROPERLY CALCULATED")
+        loss = loss_fn(trajectories)
+
+        print(loss)
+        if parametrization_name == "TB":
+            if true_loss == loss:
+                print("OK - TB LOSS PROBABLY OK")
+            else:
+                raise ValueError("TB LOSS NOT PROPERLY CALCULATED")
 
 
-@pytest.mark.parametrize("ndim", [2, 3])
-@pytest.mark.parametrize("start_idx", [0, 1, 4, 6, 8, 10])
-@pytest.mark.parametrize("end_idx", [2, 4, 6, 8, 10, 12, 20])
-def test_sub_trajectory_balance(ndim: int, start_idx: int, end_idx: int):
-    if end_idx <= start_idx + 1:
-        pytest.skip("Impossible config for SubTB")
-    env = HyperGrid(ndim=ndim, height=8)
-    sampler = UniformActionsSampler()
-    trajectories_sampler = TrajectoriesSampler(env, sampler)
-
-    trajectories = trajectories_sampler.sample(n_objects=100)
-
-    sub_trajectories = SubTrajectories(
-        env,
-        states=trajectories.states[start_idx:end_idx],
-        actions=trajectories.actions[start_idx : end_idx - 1],
-        when_is_done=(trajectories.when_is_done - start_idx)
-        * (trajectories.when_is_done < (end_idx))
-        + torch.full(size=(len(trajectories),), fill_value=-1, dtype=torch.long)
-        * (trajectories.when_is_done >= (end_idx)),
-    )
-
-    preprocessor = EnumPreprocessor(env)
-    logit_PF = Uniform(output_dim=env.n_actions)
-    logit_PF = LogitPFEstimator(preprocessor, logit_PF)
-    logit_PB = Uniform(output_dim=env.n_actions - 1)
-    logit_PB = LogitPBEstimator(preprocessor, logit_PB)
-    logF = Tabular(env, 1)
-    logF = LogStateFlowEstimator(preprocessor, logF)
-
-    parametrization = DBParametrization(logit_PF, logit_PB, logF)
-    sub_tb = SubTrajectoryBalance(parametrization)
-
-    scores = sub_tb.get_scores_fixed_length(sub_trajectories)
-
-    total_loss = sub_tb(trajectories)
-
-    if end_idx > trajectories.max_length and start_idx == 0:
-        print("Comparing to TB")
-        logZ = torch.tensor(0.0)
-        logZ = LogZEstimator(logZ)
-
-        parametrization_2 = TBParametrization(logit_PF, logit_PB, logZ)
-
-        tb = TrajectoryBalance(parametrization_2)
-
-        scores_tb = tb.get_scores(trajectories)
-
-        assert torch.all((scores[-1] - scores_tb[-1]).abs() < 1e-5)
-        print("OK")
-    if end_idx == start_idx + 2:
-        print("Comparing to DB")
-        db = DetailedBalance(parametrization)
-
-        transitions = Transitions.from_trajectories(sub_trajectories)
-
-        loss_db = db(transitions)
-
-        assert scores[-1].pow(2).mean() == loss_db
-        print("OK")
+test_PFBasedParametrization_hypergrid(2, KHotPreprocessor, Uniform, "SubTB", False)

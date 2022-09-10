@@ -5,8 +5,6 @@ from .actions_samplers import (
     LogEdgeFlowsActionsSampler,
     LogitPBActionsSampler,
     LogitPFActionsSampler,
-    UniformActionsSampler,
-    UniformBackwardActionsSampler,
 )
 from .base import TrainingSampler
 from .states_sampler import StatesSampler
