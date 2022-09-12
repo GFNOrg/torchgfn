@@ -4,9 +4,16 @@ import torch
 from gfn.envs import HyperGrid
 from gfn.envs.env import NonValidActionsError
 
+preprocessors_int_to_str = ["Identity", "OneHot", "KHot"]
 
-def test_hypergrid():
-    env = HyperGrid(ndim=2, height=3)
+
+@pytest.mark.parametrize("preprocessor_idx", [0, 1, 2])
+def test_hypergrid_and_preprocessors(
+    preprocessor_idx: int,
+):
+    env = HyperGrid(
+        ndim=2, height=3, preprocessor_name=preprocessors_int_to_str[preprocessor_idx]
+    )
     print(env)
 
     print("\nInstantiating a linear batch of initial states")
@@ -36,7 +43,8 @@ def test_hypergrid():
     print("\nInstantiating a two-dimensional batch of random states")
     states = env.reset(batch_shape=(2, 3), random_init=True)
     print("States:", states)
-    while not all(states.is_initial_state.view(-1)):
+    backward_step_ok = False
+    while not backward_step_ok:
         actions = torch.randint(0, env.n_actions - 1, (2, 3), dtype=torch.long)
         print("Actions: ", actions)
         try:
@@ -44,6 +52,16 @@ def test_hypergrid():
             print("States:", states)
         except NonValidActionsError:
             print("NonValidActionsError raised as expected because of invalid actions")
+        backward_step_ok = True
+
+    print("\nTrying the preprocessors")
+    random_states = env.reset(batch_shape=10, random_init=True)
+    preprocessed_grid = env.preprocessor.preprocess(random_states)
+    print("Preprocessed Grid: ", preprocessed_grid)
+
+    random_states = env.reset(batch_shape=(4, 2), random_init=True)
+    preprocessed_grid = env.preprocessor.preprocess(random_states)
+    print("Preprocessed Grid: ", preprocessed_grid)
 
 
 @pytest.mark.parametrize("ndim", [2, 3, 4])

@@ -1,8 +1,12 @@
-python four_kls.py  --validate_with_training_examples --ndim 2 --height 64 --R0 0.001 --batch_size 64 --n_iterations 15000  --seed 15 --mode tb --uniform_pb --wandb vi_vs_rws_vs_tb  &> /dev/null &
-python four_kls.py  --validate_with_training_examples --ndim 2 --height 64 --R0 0.001 --batch_size 64 --n_iterations 15000  --seed 15 --mode forward_kl --uniform_pb --wandb vi_vs_rws_vs_tb &> /dev/null &
-python four_kls.py  --validate_with_training_examples --ndim 2 --height 64 --R0 0.001 --batch_size 64 --n_iterations 15000  --seed 16 --mode tb --uniform_pb --wandb vi_vs_rws_vs_tb  &> /dev/null &
-python four_kls.py  --validate_with_training_examples --ndim 2 --height 64 --R0 0.001 --batch_size 64 --n_iterations 15000  --seed 16 --mode forward_kl --uniform_pb --wandb vi_vs_rws_vs_tb &> /dev/null &
-python four_kls.py  --validate_with_training_examples --ndim 2 --height 64 --R0 0.001 --batch_size 64 --n_iterations 15000  --seed 17 --mode tb --uniform_pb --wandb vi_vs_rws_vs_tb  &> /dev/null &
-python four_kls.py  --validate_with_training_examples --ndim 2 --height 64 --R0 0.001 --batch_size 64 --n_iterations 15000  --seed 17 --mode forward_kl --uniform_pb --wandb vi_vs_rws_vs_tb &> /dev/null &
+python train.py --parametrization SubTB --parametrization.weighing equal --n_iterations 20000 --batch_size 16 --env HyperGrid --env.ndim 2 --env.height 64 --validate_with_training_examples --validation_samples 200000 --wandb test_subtb2  &> /dev/null &
+python train.py --parametrization SubTB --parametrization.weighing geometric --parametrization.lamda 0.9 --n_iterations 20000 --batch_size 16 --env HyperGrid --env.ndim 2 --env.height 64 --validate_with_training_examples --validation_samples 200000 --wandb test_subtb2  &> /dev/null &
+python train.py --parametrization SubTB --parametrization.weighing TB --n_iterations 20000 --batch_size 16 --env HyperGrid --env.ndim 2 --env.height 64 --validate_with_training_examples --validation_samples 200000 --wandb test_subtb2  &> /dev/null &
+python train.py --parametrization SubTB --parametrization.weighing DB --n_iterations 20000 --batch_size 16 --env HyperGrid --env.ndim 2 --env.height 64 --validate_with_training_examples --validation_samples 200000 --wandb test_subtb2  &> /dev/null &
+python train.py --parametrization TB --n_iterations 20000 --batch_size 16 --env HyperGrid --env.ndim 2 --env.height 64 --validate_with_training_examples --validation_samples 200000 --wandb test_subtb2  &> /dev/null &
 
 
+python train.py --parametrization SubTB --parametrization.weighing geometric --parametrization.lamda 0.9 --n_iterations 20000 --batch_size 16 --env HyperGrid --env.ndim 2 --env.height 64 --validate_with_training_examples --validation_samples 200000 --wandb test_subtb2  &> /dev/null &
+
+
+python train.py --parametrization SubTB --parametrization.weighing geometric --parametrization.lamda 0.9 --n_iterations 20000 --batch_size 16 --env HyperGrid --env.ndim 2 --env.height 64 --validate_with_training_examples --validation_samples 200001 --wandb test_subtb3  &> /dev/null &
+python train.py --parametrization TB --n_iterations 20000 --batch_size 16 --env HyperGrid --env.ndim 2 --env.height 64 --validate_with_training_examples --validation_samples 200000 --wandb test_subtb3  &> /dev/null &

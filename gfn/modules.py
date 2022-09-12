@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -9,43 +8,52 @@ from torchtyping import TensorType
 from gfn.envs import Env
 
 # Typing
-batch_shape = None
-input_dim = None
-output_dim = None
-InputTensor = TensorType["batch_shape", "input_dim", float]
+
+InputTensor = TensorType["batch_shape", "input_shape", float]
 OutputTensor = TensorType["batch_shape", "output_dim", float]
 
 
-@dataclass(eq=True, unsafe_hash=True)
 class GFNModule(ABC):
-    "Abstract Base Class for all functions/approximators/estimators used"
-    input_dim: Optional[int]
-    output_dim: int
-    output_type: Literal["free", "positive"] = "free"
+    """Abstract Base Class for all functions/approximators/estimators used.
+    Each module takes a preprocessed tensor as input, and outputs a tensor of logits,
+    or log flows. The input dimension of the module (e.g.) Neural network, is deduced
+    from the environment's preprocessor's output dimension"""
 
-    @abstractmethod
-    def __call__(self, input: InputTensor) -> OutputTensor:
-        pass
+    def __init__(
+        self,
+        output_dim: int,
+        input_shape: Optional[Tuple[int]] = None,
+        **kwargs,
+    ) -> None:
+        self.output_dim = output_dim
+        self.input_shape = input_shape
+        del kwargs
 
     def named_parameters(self) -> dict:
+        """Returns a dictionary of all (learnable) parameters of the module. Not needed
+        for NeuralNet modules, given that those inherit this function from nn.Module"""
         return {}
+
+    @abstractmethod
+    def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
+        pass
 
 
 class NeuralNet(nn.Module, GFNModule):
     def __init__(
         self,
-        input_dim: Optional[int] = None,
-        hidden_dim: Optional[int] = None,
-        output_dim: int = 1,
+        input_shape: Tuple[int],
+        output_dim: int,
+        hidden_dim: Optional[int] = 256,
         n_hidden_layers: Optional[int] = 2,
         activation_fn: Optional[Literal["relu", "tanh"]] = "relu",
         torso: Optional[nn.Module] = None,
-        **kwargs
+        **kwargs,
     ):
-        del kwargs
         super().__init__()
-        self.input_dim = input_dim
-        self.output_dim = output_dim
+        super(nn.Module, self).__init__(
+            output_dim=output_dim, input_shape=input_shape, **kwargs
+        )
 
         if torso is None:
             assert (
@@ -53,6 +61,11 @@ class NeuralNet(nn.Module, GFNModule):
             ), "n_hidden_layers must be >= 0"
             assert activation_fn is not None, "activation_fn must be provided"
             activation = nn.ReLU if activation_fn == "relu" else nn.Tanh
+            if len(input_shape) > 1:
+                raise NotImplementedError(
+                    "Only 1D inputs are supported for new NeuralNet creation"
+                )
+            input_dim = input_shape[0]
             self.torso = [nn.Linear(input_dim, hidden_dim), activation()]
             for _ in range(n_hidden_layers - 1):
                 self.torso.append(nn.Linear(hidden_dim, hidden_dim))
@@ -75,10 +88,7 @@ class NeuralNet(nn.Module, GFNModule):
 
 class Tabular(GFNModule):
     def __init__(self, env: Env, output_dim: int, **kwargs) -> None:
-        del kwargs
-
-        self.env = env
-        self.input_dim = None
+        super().__init__(output_dim=output_dim, **kwargs)
 
         self.logits = torch.zeros(
             (env.n_states, output_dim),
@@ -86,8 +96,6 @@ class Tabular(GFNModule):
             device=env.device,
             requires_grad=True,
         )
-
-        self.output_dim = output_dim
 
     def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
         # Note that only the EnumPreprocessor is compatible with the Tabular module
@@ -99,29 +107,15 @@ class Tabular(GFNModule):
         return {"logits": self.logits}
 
 
-class Uniform(GFNModule):
-    def __init__(self, output_dim: int, **kwargs):
-        """
-        :param n_actions: the number of all possible actions
-        """
-        del kwargs
-        self.input_dim = None
-        self.output_dim = output_dim
-
-    def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
-        logits = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
-            preprocessed_states.device
-        )
-        return logits
-
-
 class ZeroGFNModule(GFNModule):
-    def __init__(self):
-        self.input_dim = None
-        self.output_dim = 1
-
     def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
-        out = torch.zeros(preprocessed_states.shape[0], self.output_dim).to(
+        out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
             preprocessed_states.device
         )
         return out
+
+
+class Uniform(ZeroGFNModule):
+    """Use this module for uniform policies for example"""
+
+    pass

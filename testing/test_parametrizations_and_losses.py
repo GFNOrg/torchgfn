@@ -10,28 +10,17 @@ from gfn.estimators import (
     LogZEstimator,
 )
 from gfn.losses.detailed_balance import DetailedBalance
+from gfn.losses.sub_trajectory_balance import SubTrajectoryBalance
 from gfn.losses.trajectory_balance import TrajectoryBalance
-from gfn.losses.sub_trajectory_balance import SubTrajectoryBalance2
-from gfn.modules import NeuralNet, Tabular, Uniform
 from gfn.parametrizations import (
     DBParametrization,
     FMParametrization,
-    TBParametrization,
     SubTBParametrization,
+    TBParametrization,
 )
-from gfn.preprocessors import (
-    EnumPreprocessor,
-    IdentityPreprocessor,
-    KHotPreprocessor,
-    OneHotPreprocessor,
-)
-from gfn.samplers.actions_samplers import (
-    FixedActionsSampler,
-    LogitPFActionsSampler,
-)
+from gfn.samplers.actions_samplers import FixedActionsSampler, LogitPFActionsSampler
 from gfn.samplers.trajectories_sampler import TrajectoriesSampler
 from gfn.samplers.transitions_sampler import TransitionsSampler
-from gfn.containers import SubTrajectories, Transitions
 
 
 @pytest.mark.parametrize("ndim", [2, 3])
@@ -39,14 +28,7 @@ def test_FM_hypergrid(ndim: int):
     # TODO: once the flow matching loss implemented, add a test for it here, as done for the other parametrizations
     env = HyperGrid(ndim=ndim)
 
-    preprocessor = IdentityPreprocessor(env)
-    module = NeuralNet(
-        input_dim=preprocessor.output_dim,
-        n_hidden_layers=1,
-        hidden_dim=16,
-        output_dim=env.n_actions - 1,
-    )
-    log_F_edge = LogEdgeFlowEstimator(preprocessor, module)
+    log_F_edge = LogEdgeFlowEstimator(env=env, module_name="NeuralNet")
     parametrization = FMParametrization(log_F_edge)
 
     print(parametrization.Pi(env, n_samples=10).sample())
@@ -54,58 +36,29 @@ def test_FM_hypergrid(ndim: int):
 
 
 @pytest.mark.parametrize("ndim", [2, 3])
-@pytest.mark.parametrize(
-    "preprocessor_cls",
-    [IdentityPreprocessor, OneHotPreprocessor, KHotPreprocessor, EnumPreprocessor],
-)
-@pytest.mark.parametrize("module_cls", [NeuralNet, Uniform, Tabular])
+@pytest.mark.parametrize("preprocessor_name", ["KHot", "OneHot", "Identity"])
+@pytest.mark.parametrize("module_name", ["NeuralNet", "Uniform", "Tabular"])
 @pytest.mark.parametrize("parametrization_name", ["DB", "TB", "SubTB"])
 @pytest.mark.parametrize("tie_pb_to_pf", [True, False])
 def test_PFBasedParametrization_hypergrid(
     ndim: int,
-    preprocessor_cls: type,
-    module_cls: type,
+    preprocessor_name: str,
+    module_name: str,
     parametrization_name: str,
     tie_pb_to_pf: bool,
 ):
-    env = HyperGrid(ndim=ndim, height=4)
-
-    preprocessor = preprocessor_cls(env)
+    env = HyperGrid(ndim=ndim, height=4, preprocessor_name=preprocessor_name)
 
     print("\nTrying the DB parametrization... with learnable logit_PB")
 
-    if preprocessor_cls == EnumPreprocessor and module_cls != Tabular:
-        pytest.skip("EnumPreprocessor only works with Tabular modules")
-    if module_cls == Tabular and preprocessor_cls != EnumPreprocessor:
-        pytest.skip("Tabular only supports EnumPreprocessor")
-    if tie_pb_to_pf and module_cls != NeuralNet:
+    if tie_pb_to_pf and module_name != "NeuralNet":
         pytest.skip("Tying PB to PF only works with NeuralNet")
 
-    pf_module = module_cls(
-        input_dim=preprocessor.output_dim,
-        n_hidden_layers=1,
-        hidden_dim=16,
-        output_dim=env.n_actions,
-        env=env,
+    logit_PF = LogitPFEstimator(env, module_name)
+    logit_PB = LogitPBEstimator(env, module_name)
+    logF = LogStateFlowEstimator(
+        env, module_name if module_name != "Uniform" else "Zero"
     )
-    pb_module = module_cls(
-        input_dim=preprocessor.output_dim,
-        n_hidden_layers=1,
-        hidden_dim=16,
-        output_dim=env.n_actions - 1,
-        env=env,
-        torso=pf_module.torso if tie_pb_to_pf else None,
-    )
-    f_module = module_cls(
-        input_dim=preprocessor.output_dim,
-        n_hidden_layers=1,
-        hidden_dim=16,
-        output_dim=1,
-        env=env,
-    )
-    logit_PF = LogitPFEstimator(preprocessor, pf_module)
-    logit_PB = LogitPBEstimator(preprocessor, pb_module)
-    logF = LogStateFlowEstimator(preprocessor, f_module)
     logZ = LogZEstimator(torch.tensor(0.0))
 
     actions_sampler = LogitPFActionsSampler(estimator=logit_PF)
@@ -121,7 +74,9 @@ def test_PFBasedParametrization_hypergrid(
     elif parametrization_name == "SubTB":
         parametrization = SubTBParametrization(logit_PF, logit_PB, logF)
         training_sampler_cls = TrajectoriesSampler
-        loss_cls = SubTrajectoryBalance2
+        loss_cls = SubTrajectoryBalance
+    else:
+        raise ValueError(f"Unknown parametrization {parametrization_name}")
     print(parametrization.Pi(env, n_samples=10).sample())
 
     print(parametrization.parameters.keys())
@@ -135,7 +90,11 @@ def test_PFBasedParametrization_hypergrid(
 
     print(loss)
 
-    if ndim == 2 and parametrization_name in ("TB", "SubTB") and module_cls == Uniform:
+    if (
+        ndim == 2
+        and parametrization_name in ("TB", "SubTB")
+        and module_name == "Uniform"
+    ):
         print("Evaluating the TB loss on 5 trajectories with manually chosen actions")
         actions_sampler = FixedActionsSampler(
             torch.tensor(
@@ -168,4 +127,37 @@ def test_PFBasedParametrization_hypergrid(
                 raise ValueError("TB LOSS NOT PROPERLY CALCULATED")
 
 
-test_PFBasedParametrization_hypergrid(2, KHotPreprocessor, Uniform, "SubTB", False)
+@pytest.mark.parametrize("ndim", [2, 3])
+@pytest.mark.parametrize(
+    "preprocessor_name",
+    ["KHot", "OneHot", "Identity"],
+)
+@pytest.mark.parametrize("module_name", ["NeuralNet", "Uniform", "Tabular"])
+@pytest.mark.parametrize("weighing", ["equal", "TB", "DB", "geometric"])
+def test_subTB_vs_TB(
+    ndim: int,
+    preprocessor_name: str,
+    module_name: str,
+    weighing: str,
+):
+    env = HyperGrid(ndim=ndim, height=7, preprocessor_name=preprocessor_name)
+
+    logit_PF = LogitPFEstimator(env, module_name=module_name)
+    logit_PB = LogitPBEstimator(env, module_name=module_name)
+    logF = LogStateFlowEstimator(env, module_name="Zero")
+    logZ = LogZEstimator(torch.tensor(0.0))
+    actions_sampler = LogitPFActionsSampler(estimator=logit_PF)
+    trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
+    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
+
+    subtb_loss = SubTrajectoryBalance(
+        SubTBParametrization(logit_PF, logit_PB, logF), weighing=weighing
+    )(trajectories)
+
+    if weighing == "TB":
+        tb_loss = TrajectoryBalance(TBParametrization(logit_PF, logit_PB, logZ))(
+            trajectories
+        )
+        print("TB loss", tb_loss)
+        print("SubTB loss", subtb_loss)
+        assert (tb_loss - subtb_loss).abs() < 1e-4

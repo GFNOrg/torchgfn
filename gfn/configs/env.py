@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from simple_parsing import subgroups
+from simple_parsing import choice, subgroups
 from simple_parsing.helpers import JsonSerializable
 
 from gfn.envs import Env, HyperGrid
@@ -20,8 +20,9 @@ class HyperGridConfig(BaseEnvConfig):
     R1: float = 0.5
     R2: float = 2.0
     reward_cos: bool = False
+    preprocessor_name: str = choice("KHot", "OneHot", "Identity", default="KHot")
 
-    def parse(self, device: Literal["cpu", "cuda"]) -> Env:
+    def parse(self, device_str: Literal["cpu", "cuda"]) -> Env:
         return HyperGrid(
             ndim=self.ndim,
             height=self.height,
@@ -29,12 +30,13 @@ class HyperGridConfig(BaseEnvConfig):
             R1=self.R1,
             R2=self.R2,
             reward_cos=self.reward_cos,
-            device=device,
+            device_str=device_str,
+            preprocessor_name=self.preprocessor_name,
         )
 
 
 @dataclass
-class BitSequenceConfig(BaseEnvConfig):
+class MoleculesConfig(BaseEnvConfig):
     def parse(self, device: Literal["cpu", "cuda"]) -> Env:
         raise NotImplementedError("Not implemented yet")
 
@@ -42,7 +44,7 @@ class BitSequenceConfig(BaseEnvConfig):
 @dataclass
 class EnvConfig(JsonSerializable):
     env: BaseEnvConfig = subgroups(
-        {"HyperGrid": HyperGridConfig, "BitSequence": BitSequenceConfig},
+        {"HyperGrid": HyperGridConfig, "Molecules": MoleculesConfig},
         default=HyperGridConfig(),
     )
 

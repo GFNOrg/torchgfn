@@ -1,10 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Callable, Optional, Tuple
 
 from torchtyping import TensorType
 
-from ..containers import States
-from ..envs import Env
+from gfn.containers import States
 
 # Typing
 OutputTensor = TensorType["batch_shape", "dim_in"]
@@ -18,13 +17,8 @@ class Preprocessor(ABC):
 
     name: str = "Preprocessor"
 
-    def __init__(self, env: Env) -> None:
-        self.env = env
-
-    @property
-    @abstractmethod
-    def output_dim(self) -> Tuple:
-        pass
+    def __init__(self, output_shape: Optional[Tuple[int]] = None, **kwargs) -> None:
+        self.output_shape = output_shape
 
     @abstractmethod
     def preprocess(self, states: States) -> OutputTensor:
@@ -34,18 +28,14 @@ class Preprocessor(ABC):
         return self.preprocess(states)
 
     def __repr__(self):
-        return f"{self.name} of {self.env} with output_dim={self.output_dim}"
+        return f"{self.name}, output_shape={self.output_shape}"
 
 
 class IdentityPreprocessor(Preprocessor):
     "Simple preprocessor applicable to environments with uni-dimensional states."
     name = "IdentityPreprocessor"
 
-    @property
-    def output_dim(self):
-        return self.env.ndim
-
-    def preprocess(self, states):
+    def preprocess(self, states: States) -> OutputTensor:
         return states.states.float()
 
 
@@ -53,9 +43,11 @@ class EnumPreprocessor(Preprocessor):
     "Preprocessor applicable to environments with discrete states."
     name = "EnumPreprocessor"
 
-    @property
-    def output_dim(self):
-        return 1
+    def __init__(
+        self, get_states_indices: Callable[[States], OutputTensor], **kwargs
+    ) -> None:
+        super().__init__(output_shape=(1,))
+        self.get_states_indices = get_states_indices
 
     def preprocess(self, states):
-        return self.env.get_states_indices(states).long().unsqueeze(-1)
+        return self.get_states_indices(states).long().unsqueeze(-1)

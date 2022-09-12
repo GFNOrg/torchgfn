@@ -8,8 +8,25 @@ import torch
 from einops import rearrange
 from torchtyping import TensorType
 
-from gfn.containers.states import States
+from gfn.containers.states import States# The position i of the following 1D tensor represents the number of sub-trajectories of length i in the batch
+            n_sub_trajectories = torch.maximum(
+                trajectories.when_is_done - torch.arange(3).unsqueeze(-1),
+                torch.tensor(0),
+            ).sum(1)
+            per_length_losses = torch.stack(
+                [(p - t).pow(2).mean() for p, t in zip(all_preds, all_targets)]
+            )
+            ld = self.lamda
+            weights = (
+                (1 - ld)
+                / (1 - ld**trajectories.max_length)
+                * (ld ** torch.arange(trajectories.max_length))
+            )
+            assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
+            return (per_length_losses * weights).sum()
 from gfn.envs.env import Env
+
+from .preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 
 # Typing
 TensorLong = TensorType["batch_shape", torch.long]
@@ -19,6 +36,12 @@ ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
 BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
 OneStateTensor = TensorType["state_shape", torch.float]
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
+
+preprocessors_dict = {
+    "KHot": KHotPreprocessor,
+    "OneHot": OneHotPreprocessor,
+    "Identity": IdentityPreprocessor,
+}
 
 
 class HyperGrid(Env):
@@ -30,19 +53,34 @@ class HyperGrid(Env):
         R1: float = 0.5,
         R2: float = 2.0,
         reward_cos: bool = False,
-        device: Literal["cpu", "cuda"] = "cpu",
+        device_str: Literal["cpu", "cuda"] = "cpu",
+        preprocessor_name: Literal["KHot", "OneHot", "Identity"] = "KHot",
     ):
-        device = torch.device(device)
+        device = torch.device(device_str)
         s_0 = torch.zeros(ndim, device=device)
         s_f = torch.ones(ndim, device=device) * (-1)
         n_actions = ndim + 1
-        super().__init__(n_actions, s_0, s_f)
         self.ndim = ndim
         self.height = height
         self.R0 = R0
         self.R1 = R1
         self.R2 = R2
         self.reward_cos = reward_cos
+        self.number_of_states = height**ndim
+        preprocessor = preprocessors_dict[preprocessor_name](
+            height=height,
+            ndim=ndim,
+            n_states=self.number_of_states,
+            get_states_indices=self.get_states_indices,
+            output_shape=tuple(s_0.shape),
+        )
+        super().__init__(
+            n_actions=n_actions,
+            s_0=s_0,
+            s_f=s_f,
+            device_str=device_str,
+            preprocessor=preprocessor,
+        )
 
     def make_random_states_tensor(self, batch_shape: Tuple[int]) -> StatesTensor:
         return torch.randint(
@@ -58,10 +96,10 @@ class HyperGrid(Env):
         states.forward_masks[..., :-1] = states.states != self.height - 1
         states.backward_masks = states.states != 0
 
-    def step_no_worry(self, states: StatesTensor, actions: TensorLong) -> None:
+    def maskless_step(self, states: StatesTensor, actions: TensorLong) -> None:
         states.scatter_(-1, actions.unsqueeze(-1), 1, reduce="add")
 
-    def backward_step_no_worry(self, states: StatesTensor, actions: TensorLong) -> None:
+    def maskless_backward_step(self, states: StatesTensor, actions: TensorLong) -> None:
         states.scatter_(-1, actions.unsqueeze(-1), -1, reduce="add")
 
     def reward(self, final_states: States) -> TensorFloat:
@@ -91,7 +129,7 @@ class HyperGrid(Env):
 
     @property
     def n_states(self) -> int:
-        return self.height**self.ndim
+        return self.number_of_states
 
     @property
     def true_dist_pmf(self) -> torch.Tensor:

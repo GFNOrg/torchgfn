@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING, Sequence
 import torch
 from torchtyping import TensorType
 
-from gfn.containers.sub_trajectories import SubTrajectories
-
 from .trajectories import Trajectories
 
 if TYPE_CHECKING:
@@ -54,16 +52,14 @@ class Transitions:
         )
 
     @classmethod
-    def from_trajectories(
-        cls, trajectories: Trajectories | SubTrajectories
-    ) -> Transitions:
+    def from_trajectories(cls, trajectories: Trajectories) -> Transitions:
         "Create a Transitions from a Trajectories"
         states = trajectories.states[:-1][trajectories.actions != -1]
         next_states = trajectories.states[1:][trajectories.actions != -1]
         actions = trajectories.actions[trajectories.actions != -1]
         is_done = (
             next_states.is_sink_state
-            if isinstance(trajectories, SubTrajectories) or not trajectories.is_backward
+            if not trajectories.is_backward
             else next_states.is_initial_state
         )
         return cls(
@@ -72,10 +68,7 @@ class Transitions:
             actions=actions,
             is_done=is_done,
             next_states=next_states,
-            is_backward=not (
-                isinstance(trajectories, SubTrajectories)
-                or not trajectories.is_backward
-            ),
+            is_backward=trajectories.is_backward,
         )
 
     @property

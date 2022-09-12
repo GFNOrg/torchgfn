@@ -7,6 +7,8 @@ from torchtyping import TensorType
 
 from gfn.containers.states import States, make_States_class
 
+from .preprocessors import IdentityPreprocessor, Preprocessor
+
 # Typing
 TensorLong = TensorType["batch_shape", torch.long]
 TensorFloat = TensorType["batch_shape", torch.float]
@@ -29,7 +31,12 @@ class Env(ABC):
     """
 
     def __init__(
-        self, n_actions: int, s_0: OneStateTensor, s_f: Optional[OneStateTensor] = None
+        self,
+        n_actions: int,
+        s_0: OneStateTensor,
+        s_f: Optional[OneStateTensor] = None,
+        device_str: Optional[str] = None,
+        preprocessor: Optional[Preprocessor] = None,
     ):
         if isinstance(s_f, torch.Tensor) and (
             s_f.shape != s_0.shape or s_f.device != s_0.device  # type: ignore
@@ -43,7 +50,7 @@ class Env(ABC):
         self.s_0 = s_0
         self.state_shape = tuple(s_0.shape)
 
-        self.device = s_0.device
+        self.device = torch.device(device_str) if device_str is not None else s_0.device
         self.States: type[States] = make_States_class(
             class_name=self.__class__.__name__ + "States",
             n_actions=n_actions,
@@ -55,6 +62,9 @@ class Env(ABC):
             update_masks=lambda states: self.update_masks(states),
         )
         self.s_f = self.States.s_f
+        if preprocessor is None:
+            preprocessor = IdentityPreprocessor(output_shape=tuple(s_0.shape))
+        self.preprocessor = preprocessor
 
     def is_exit_actions(self, actions: TensorLong) -> TensorBool:
         "Returns True if the action is an exit action."
@@ -93,7 +103,7 @@ class Env(ABC):
         not_done_states = new_states.states[~new_sink_states]
         not_done_actions = actions[~new_sink_states]
 
-        self.step_no_worry(not_done_states, not_done_actions)
+        self.maskless_step(not_done_states, not_done_actions)
 
         new_states.states[~new_sink_states] = not_done_states
 
@@ -115,7 +125,7 @@ class Env(ABC):
             raise NonValidActionsError("Actions are not valid")
 
         not_done_states = new_states.states[valid_states]
-        self.backward_step_no_worry(not_done_states, valid_actions)
+        self.maskless_backward_step(not_done_states, valid_actions)
 
         new_states.states[valid_states] = not_done_states
 
@@ -131,12 +141,12 @@ class Env(ABC):
         pass
 
     @abstractmethod
-    def step_no_worry(self, states: StatesTensor, actions: TensorLong) -> None:
+    def maskless_step(self, states: StatesTensor, actions: TensorLong) -> None:
         """Same as the step function, but without worrying whether or not the actions are valid, or masking."""
         pass
 
     @abstractmethod
-    def backward_step_no_worry(self, states: StatesTensor, actions: TensorLong) -> None:
+    def maskless_backward_step(self, states: StatesTensor, actions: TensorLong) -> None:
         """Same as the backward_step function, but without worrying whether or not the actions are valid, or masking."""
         pass
 

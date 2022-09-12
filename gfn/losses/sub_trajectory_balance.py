@@ -1,11 +1,10 @@
-from typing import List, Tuple
+from typing import List, Literal, Tuple
 
 import torch
 from torchtyping import TensorType
 
-from gfn.containers import Trajectories, States, SubTrajectories
+from gfn.containers import Trajectories
 from gfn.losses.base import TrajectoryDecomposableLoss
-from gfn.modules import NeuralNet
 from gfn.parametrizations import DBParametrization
 from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsSampler
 
@@ -14,12 +13,13 @@ ScoresTensor = TensorType[-1, float]
 LossTensor = TensorType[0, float]
 
 
-class SubTrajectoryBalance2(TrajectoryDecomposableLoss):
+class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     def __init__(
         self,
         parametrization: DBParametrization,
         reward_clip_min: float = 1e-5,
-        lamda: float = 0.1,
+        weighing: Literal["DB", "TB", "geometric", "equal"] = "geometric",
+        lamda: float = 0.9,
     ):
         # Lamda is a discount factor for longer trajectories. The part of the loss
         # corresponding to sub-trajectories of length i is multiplied by lamda^i
@@ -28,6 +28,7 @@ class SubTrajectoryBalance2(TrajectoryDecomposableLoss):
         self.reward_clip_min = reward_clip_min
         self.actions_sampler = LogitPFActionsSampler(parametrization.logit_PF)
         self.backward_actions_sampler = LogitPBActionsSampler(parametrization.logit_PB)
+        self.weighing = weighing
         self.lamda = lamda
 
     def get_scores(
@@ -58,6 +59,9 @@ class SubTrajectoryBalance2(TrajectoryDecomposableLoss):
 
         all_preds = []
         all_targets = []
+        all_unflat_preds = []
+        all_unflat_targets = []
+        flattening_masks = []
         for i in range(1, 1 + trajectories.max_length):
             current_log_state_flows = (
                 log_state_flows if i == 1 else log_state_flows[: -(i - 1)]
@@ -69,7 +73,7 @@ class SubTrajectoryBalance2(TrajectoryDecomposableLoss):
             )
             targets = torch.full_like(preds, fill_value=-float("inf"))
             targets.T[is_terminal_mask[i - 1 :].T] = torch.log(
-                trajectories.rewards[trajectories.when_is_done >= i]
+                trajectories.rewards[trajectories.when_is_done >= i]  # type: ignore
             )
             if i > 1:
                 targets[is_terminal_mask[i - 1 :]] += (
@@ -92,52 +96,104 @@ class SubTrajectoryBalance2(TrajectoryDecomposableLoss):
             all_preds.append(flat_preds)
             all_targets.append(flat_targets)
 
-        return (all_preds, all_targets)
+            all_unflat_preds.append(preds)
+            all_unflat_targets.append(targets)
+
+            flattening_masks.append(flattening_mask)
+
+        return (
+            all_preds,
+            all_targets,
+            all_unflat_preds,
+            all_unflat_targets,
+            flattening_masks,
+        )
 
     def __call__(self, trajectories: Trajectories) -> LossTensor:
-        all_preds, all_targets = self.get_scores(trajectories)
-        losses = [(p - t).pow(2).mean() for p, t in zip(all_preds, all_targets)]
-        max_l = len(losses)
-        losses = torch.stack(losses)
-        weights = self.lamda ** torch.arange(1, max_l + 1)
-        weights = weights / weights.sum()
-        return torch.sum(weights * losses)
+        (
+            all_preds,
+            all_targets,
+            all_unflat_preds,
+            all_unflat_targets,
+            flattening_masks,
+        ) = self.get_scores(trajectories)
 
+        flattening_mask = torch.cat(flattening_masks)
+        pre_losses = torch.cat(all_unflat_preds, 0) - torch.cat(all_unflat_targets, 0)
 
-if __name__ == "__main__":
+        if self.weighing == "equal":
+            # the following tensor represents the contributions of each loss element to the final loss
+            contributions = (
+                2.0 / (trajectories.when_is_done * (trajectories.when_is_done + 1))
+            ).repeat(
+                int(trajectories.max_length * (1 + trajectories.max_length) / 2), 1
+            )
+        elif self.weighing == "TB":
+            # Each trajectory contributes one element to the loss
+            contributions = torch.zeros_like(pre_losses)
+            indices = (
+                trajectories.max_length * (trajectories.when_is_done - 1)
+                - (trajectories.when_is_done - 1) * (trajectories.when_is_done - 2) / 2
+            ).long()
+            contributions.scatter_(0, indices.unsqueeze(0), 1)
+        elif self.weighing == "DB":
+            # Longer trajectories contribute more to the loss
+            per_length_losses = torch.stack(
+                [(p - t).pow(2).mean() for p, t in zip(all_preds, all_targets)]
+            )
+            return per_length_losses[0]
+        elif self.weighing == "geometric":
+            # the following tensor represents the weights given to each possible sub-trajectory length
+            contributions = self.lamda ** torch.arange(trajectories.max_length)
+            contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
 
-    from gfn.containers import Trajectories, Transitions
-    from gfn.containers.sub_trajectories import SubTrajectories
-    from gfn.envs import HyperGrid
-    from gfn.estimators import (
-        LogitPBEstimator,
-        LogitPFEstimator,
-        LogStateFlowEstimator,
-        LogZEstimator,
-    )
-    from gfn.losses import DetailedBalance, TrajectoryBalance
-    from gfn.modules import Tabular, Uniform, NeuralNet
-    from gfn.parametrizations import DBParametrization, TBParametrization
-    from gfn.preprocessors import EnumPreprocessor, OneHotPreprocessor
-    from gfn.samplers import TrajectoriesSampler
+            contributions = contributions.repeat_interleave(
+                torch.arange(trajectories.max_length, 0, -1),
+                dim=0,
+                output_size=int(
+                    trajectories.max_length * (trajectories.max_length + 1) / 2
+                ),
+            )
+            r"""
+            Now we need to divide each column by n + (n-1) lambda +...+ 1*lambda^{n-1}
+            where n is the length of the trajectory corresponding to that column
+            We can do it the ugly way, or using the cool identity:
+            https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
+            """
+            per_trajectory_denominator = (
+                1.0
+                / (1 - self.lamda) ** 2
+                * (
+                    self.lamda * (self.lamda ** trajectories.when_is_done.double() - 1)
+                    + (1 - self.lamda) * trajectories.when_is_done.double()
+                )
+            ).float()
+            contributions = contributions / per_trajectory_denominator
 
-    env = HyperGrid(ndim=2, height=6)
-    preprocessor = OneHotPreprocessor(env)
-    logit_PF = Uniform(output_dim=env.n_actions)
-    logit_PF = LogitPFEstimator(preprocessor, logit_PF)
-    sampler = LogitPFActionsSampler(logit_PF, sf_temperature=2)
-    trajectories_sampler = TrajectoriesSampler(env, sampler)
+        elif self.weighing == "geometric2":
+            # The position i of the following 1D tensor represents the number of sub-trajectories of length i in the batch
+            # n_sub_trajectories = torch.maximum(
+            #     trajectories.when_is_done - torch.arange(3).unsqueeze(-1),
+            #     torch.tensor(0),
+            # ).sum(1)
+            per_length_losses = torch.stack(
+                [(p - t).pow(2).mean() for p, t in zip(all_preds, all_targets)]
+            )
+            ld = self.lamda
+            weights = (
+                (1 - ld)
+                / (1 - ld**trajectories.max_length)
+                * (ld ** torch.arange(trajectories.max_length))
+            )
+            assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
+            return (per_length_losses * weights).sum()
+        else:
+            raise ValueError(f"Unknown weighing method {self.weighing}")
 
-    logit_PB = Uniform(output_dim=env.n_actions - 1)
-    logit_PB = LogitPBEstimator(preprocessor, logit_PB)
-    logF = NeuralNet(input_dim=preprocessor.output_dim, output_dim=1, hidden_dim=32)
-    logF = LogStateFlowEstimator(preprocessor, logF)
-
-    parametrization = DBParametrization(logit_PF, logit_PB, logF)
-
-    trajs = trajectories_sampler.sample(n_objects=5)
-    sub_tb = SubTrajectoryBalance2(parametrization)
-    all_preds, all_targets = sub_tb.get_scores(trajs)
-
-    loss = sub_tb(trajs)
-    assert False
+        flat_contributions = contributions[~flattening_mask]
+        flat_contributions = flat_contributions / len(trajectories)
+        assert (
+            flat_contributions.sum() - 1.0
+        ).abs() < 1e-5, f"{flat_contributions.sum()}"
+        losses = flat_contributions * pre_losses[~flattening_mask].pow(2)
+        return losses.sum()
