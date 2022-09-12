@@ -36,23 +36,34 @@ def test_FM_hypergrid(ndim: int):
 
 
 @pytest.mark.parametrize("ndim", [2, 3])
-@pytest.mark.parametrize("preprocessor_name", ["KHot", "OneHot", "Identity"])
-@pytest.mark.parametrize("module_name", ["NeuralNet", "Uniform", "Tabular"])
-@pytest.mark.parametrize("parametrization_name", ["DB", "TB", "SubTB"])
-@pytest.mark.parametrize("tie_pb_to_pf", [True, False])
+@pytest.mark.parametrize(
+    ("module_name", "tie_pb_to_pf"),
+    [("NeuralNet", False), ("NeuralNet", True), ("Uniform", False), ("Tabular", False)],
+)
+@pytest.mark.parametrize(
+    ("parametrization_name", "sub_tb_weighing"),
+    [
+        ("DB", None),
+        ("TB", None),
+        ("SubTB", "DB"),
+        ("SubTB", "TB"),
+        ("SubTB", "ModifiedDB"),
+        ("SubTB", "equal"),
+        ("SubTB", "equal_within"),
+        ("SubTB", "geometric"),
+        ("SubTB", "geometric_within"),
+    ],
+)
 def test_PFBasedParametrization_hypergrid(
     ndim: int,
-    preprocessor_name: str,
     module_name: str,
     parametrization_name: str,
     tie_pb_to_pf: bool,
+    sub_tb_weighing: str,
 ):
-    env = HyperGrid(ndim=ndim, height=4, preprocessor_name=preprocessor_name)
+    env = HyperGrid(ndim=ndim, height=4)
 
     print("\nTrying the DB parametrization... with learnable logit_PB")
-
-    if tie_pb_to_pf and module_name != "NeuralNet":
-        pytest.skip("Tying PB to PF only works with NeuralNet")
 
     logit_PF = LogitPFEstimator(env, module_name)
     logit_PB = LogitPBEstimator(env, module_name)
@@ -63,6 +74,7 @@ def test_PFBasedParametrization_hypergrid(
 
     actions_sampler = LogitPFActionsSampler(estimator=logit_PF)
 
+    loss_kwargs = {}
     if parametrization_name == "DB":
         parametrization = DBParametrization(logit_PF, logit_PB, logF)
         training_sampler_cls = TransitionsSampler
@@ -75,6 +87,7 @@ def test_PFBasedParametrization_hypergrid(
         parametrization = SubTBParametrization(logit_PF, logit_PB, logF)
         training_sampler_cls = TrajectoriesSampler
         loss_cls = SubTrajectoryBalance
+        loss_kwargs = {"weighing": sub_tb_weighing}
     else:
         raise ValueError(f"Unknown parametrization {parametrization_name}")
     print(parametrization.Pi(env, n_samples=10).sample())
@@ -85,7 +98,7 @@ def test_PFBasedParametrization_hypergrid(
     training_sampler = training_sampler_cls(env=env, actions_sampler=actions_sampler)
 
     training_objects = training_sampler.sample(n_objects=10)
-    loss_fn = loss_cls(parametrization)
+    loss_fn = loss_cls(parametrization, **loss_kwargs)
     loss = loss_fn(training_objects)
 
     print(loss)

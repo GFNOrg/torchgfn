@@ -132,7 +132,14 @@ class DBParametrizationConfig(StateFlowBasedParametrizationConfig):
 class SubTBParametrizationConfig(StateFlowBasedParametrizationConfig):
     # TODO: Should be merged with DBParametrizationConfig
     weighing: str = choice(
-        "equal", "geometric", "TB", "DB", "geometric2", default="geometric"
+        "equal",
+        "equal_within",
+        "geometric",
+        "TB",
+        "DB",
+        "ModifiedDB",
+        "geometric_within",
+        default="geometric",
     )
     lamda: float = 0.9
 

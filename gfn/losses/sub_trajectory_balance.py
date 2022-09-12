@@ -5,7 +5,7 @@ from torchtyping import TensorType
 
 from gfn.containers import Trajectories
 from gfn.losses.base import TrajectoryDecomposableLoss
-from gfn.parametrizations import DBParametrization
+from gfn.parametrizations import SubTBParametrization
 from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsSampler
 
 # Typing
@@ -16,11 +16,27 @@ LossTensor = TensorType[0, float]
 class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     def __init__(
         self,
-        parametrization: DBParametrization,
+        parametrization: SubTBParametrization,
         reward_clip_min: float = 1e-5,
-        weighing: Literal["DB", "TB", "geometric", "equal", "geometric2"] = "geometric",
+        weighing: Literal[
+            "DB", "ModifiedDB", "TB", "geometric", "equal", "geometric2", "equal_within"
+        ] = "geometric",
         lamda: float = 0.9,
     ):
+        """
+        :param parametrization: parametrization of the model
+        :param reward_clip_min: minimum value of the reward. Rewards lower than this value will be clipped to this value.
+        :param weighing: how to weigh the different sub-trajectories of each trajectory.
+            - "DB": Considers all one-step transitions of each trajectory in the batch and weighs them equally (regardless of the length of trajectory).
+                    Should be equivalent to DetailedBalance loss.
+            - "ModifiedDB": Considers all one-step transitions of each trajectory in the batch and weighs them inversely proportional to the trajectory length.
+                    This ensures that the loss is not dominated by long trajectories. Each trajectory contributes equally to the loss.
+            - "TB": Considers only the full trajectory. Should be equivalent to TrajectoryBalance loss.
+            - "equal_within": Each sub-trajectory of each trajectory is weighed equally within the trajectory. Then each trajectory is weighed equally within the batch.
+            - "equal": Each sub-trajectory of each trajectory is weighed equally within the set of all sub-trajectories.
+            - "geometric_within": Each sub-trajectory of each trajectory is weighed proportionally to (lamda ** len(sub_trajectory)), within each trajectory.
+            - "geometric": Each sub-trajectory of each trajectory is weighed proportionally to (lamda ** len(sub_trajectory)), within the set of all sub-trajectories.
+        """
         # Lamda is a discount factor for longer trajectories. The part of the loss
         # corresponding to sub-trajectories of length i is multiplied by lamda^i
         # where an edge is of length 1. As lamda approaches 1, each loss becomes equally weighted.
@@ -34,6 +50,14 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     def get_scores(
         self, trajectories: Trajectories
     ) -> Tuple[List[ScoresTensor], List[ScoresTensor]]:
+        """
+        Returns two elements:
+        - A list of tensors, each of which representing the scores of all sub-trajectories of length k, for k in [1, ..., trajectories.max_length].
+            where the score of a sub-trajectory tau is log P_F(tau) + log F(tau_0) - log P_B(tau) - log F(tau_{-1}). The shape of the k-th tensor
+            is (trajectories.max_length - k + 1, trajectories.n_trajectories), k starting from 1.
+        - A list of tensors representing what should be masked out in the each element of the first list, given that not all sub-trajectories
+            of length k exist for each trajectory. The entries of those tensors are True if the corresponding sub-trajectory does not exist.
+        """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, fill_value=-float("inf")
         )
@@ -57,11 +81,8 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         is_terminal_mask = trajectories.actions == trajectories.env.n_actions - 1
         full_mask = sink_states_mask | is_terminal_mask
 
-        all_preds = []
-        all_targets = []
-        all_unflat_preds = []
-        all_unflat_targets = []
         flattening_masks = []
+        scores = []
         for i in range(1, 1 + trajectories.max_length):
             current_log_state_flows = (
                 log_state_flows if i == 1 else log_state_flows[: -(i - 1)]
@@ -93,58 +114,75 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             if torch.any(torch.isnan(flat_targets)):
                 raise ValueError("NaN in targets")
 
-            all_preds.append(flat_preds)
-            all_targets.append(flat_targets)
-
-            all_unflat_preds.append(preds)
-            all_unflat_targets.append(targets)
-
             flattening_masks.append(flattening_mask)
+            scores.append(preds - targets)
 
         return (
-            all_preds,
-            all_targets,
-            all_unflat_preds,
-            all_unflat_targets,
+            scores,
             flattening_masks,
         )
 
     def __call__(self, trajectories: Trajectories) -> LossTensor:
         (
-            all_preds,
-            all_targets,
-            all_unflat_preds,
-            all_unflat_targets,
+            scores,
             flattening_masks,
         ) = self.get_scores(trajectories)
 
         flattening_mask = torch.cat(flattening_masks)
-        pre_losses = torch.cat(all_unflat_preds, 0) - torch.cat(all_unflat_targets, 0)
+        all_scores = torch.cat(scores, 0)
 
-        if self.weighing == "equal":
-            # the following tensor represents the contributions of each loss element to the final loss
-            contributions = (
-                2.0 / (trajectories.when_is_done * (trajectories.when_is_done + 1))
-            ).repeat(
-                int(trajectories.max_length * (1 + trajectories.max_length) / 2), 1
+        # all_scores is a tensor of shape (max_length * (max_length + 1) / 2, n_trajectories)
+        n_rows = int(trajectories.max_length * (1 + trajectories.max_length) / 2)
+
+        if self.weighing == "equal_within":
+            # the following tensor represents the inverse of how many sub-trajectories there are in each trajectory
+            contributions = 2.0 / (
+                trajectories.when_is_done * (trajectories.when_is_done + 1)
             )
+            contributions = contributions / len(trajectories)
+            # if we repeat the previous tensor, we get a tensor of shape (max_length * (max_length + 1) / 2, n_trajectories)
+            # that we can multiply with all_scores to get a loss where each sub-trajectory is weighted equally within each trajectory
+            contributions = contributions.repeat(n_rows, 1)
+        elif self.weighing == "equal":
+            n_sub_trajectories = int(
+                (trajectories.when_is_done * (trajectories.when_is_done + 1) / 2)
+                .sum()
+                .item()
+            )
+            contributions = torch.ones(n_rows, len(trajectories)) / n_sub_trajectories
         elif self.weighing == "TB":
-            # Each trajectory contributes one element to the loss
-            contributions = torch.zeros_like(pre_losses)
+            # Each trajectory contributes one element to the loss, equally weighted
+            contributions = torch.zeros_like(all_scores)
             indices = (
                 trajectories.max_length * (trajectories.when_is_done - 1)
                 - (trajectories.when_is_done - 1) * (trajectories.when_is_done - 2) / 2
             ).long()
             contributions.scatter_(0, indices.unsqueeze(0), 1)
+            contributions = contributions / len(trajectories)
         elif self.weighing == "DB":
             # Longer trajectories contribute more to the loss
-            per_length_losses = torch.stack(
-                [(p - t).pow(2).mean() for p, t in zip(all_preds, all_targets)]
+            return scores[0][~flattening_masks[0]].pow(2).mean()
+        elif self.weighing == "ModifiedDB":
+            # The following tensor represents the inverse of how many transitions there are in each trajectory
+            contributions = 1.0 / trajectories.when_is_done
+            contributions = contributions / len(trajectories)
+            contributions = contributions.repeat(trajectories.max_length, 1)
+            contributions = torch.cat(
+                (
+                    contributions,
+                    torch.zeros(
+                        (n_rows - trajectories.max_length, len(trajectories)),
+                        device=contributions.device,
+                    ),
+                ),
+                0,
             )
-            return per_length_losses[0]
-        elif self.weighing == "geometric":
+
+        elif self.weighing == "geometric_within":
             # the following tensor represents the weights given to each possible sub-trajectory length
-            contributions = self.lamda ** torch.arange(trajectories.max_length)
+            contributions = (
+                self.lamda ** torch.arange(trajectories.max_length).double()
+            ).float()
             contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
 
             contributions = contributions.repeat_interleave(
@@ -169,15 +207,21 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
                 )
             ).float()
             contributions = contributions / per_trajectory_denominator
+            contributions = contributions / len(trajectories)
 
-        elif self.weighing == "geometric2":
+        elif self.weighing == "geometric":
             # The position i of the following 1D tensor represents the number of sub-trajectories of length i in the batch
             # n_sub_trajectories = torch.maximum(
             #     trajectories.when_is_done - torch.arange(3).unsqueeze(-1),
             #     torch.tensor(0),
             # ).sum(1)
+
+            # The following tensor's k-th entry represents the mean of all losses of sub-trajectories of length k
             per_length_losses = torch.stack(
-                [(p - t).pow(2).mean() for p, t in zip(all_preds, all_targets)]
+                [
+                    scores[~flattening_mask].pow(2).mean()
+                    for scores, flattening_mask in zip(scores, flattening_masks)
+                ]
             )
             ld = self.lamda
             weights = (
@@ -191,9 +235,8 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             raise ValueError(f"Unknown weighing method {self.weighing}")
 
         flat_contributions = contributions[~flattening_mask]
-        flat_contributions = flat_contributions / len(trajectories)
         assert (
             flat_contributions.sum() - 1.0
         ).abs() < 1e-5, f"{flat_contributions.sum()}"
-        losses = flat_contributions * pre_losses[~flattening_mask].pow(2)
+        losses = flat_contributions * all_scores[~flattening_mask].pow(2)
         return losses.sum()

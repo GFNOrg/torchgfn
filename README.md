@@ -19,20 +19,17 @@ For now, only the Trajectory Balance and Detailed Balance losses are implemented
 
 To run the code:
 ```python
-python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --parametrization TB --parametrization.tied --validate_with_training_examples --validation_samples 200000 --seed 3 --preprocessor KHot
+python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --parametrization TB 
 ```
 
 ## Example, in a few lines
 ```python
 env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
-preprocessor = KHotPreprocessor(env)  # Meaning that states will be represented as a vector with $K$ ones
 
-logit_PF_module = NeuralNet(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
-logit_PB_module = NeuralNet(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1, torso = logit_PF_module.torso)  # We also learn P_B, that shares weights with P_F
 logZ_tensor = torch.tensor(0.)
 
-logit_PF = LogitPFEstimator(preprocessor=preprocessor, module=logit_PF_module)
-logit_PB = LogitPBEstimator(preprocessor=preprocessor, module=logit_PB_module)
+logit_PF = LogitPFEstimator(env=env, module_name='NeuralNet')
+logit_PB = LogitPBEstimator(env=env, module_name='NeuralNet', torso=logit_PF.module.torso)  # To share parameters between PF and PB
 logZ = LogZEstimator(logZ_tensor)
 
 parametrization = TBParametrization(logit_PF, logit_PB, logZ)
@@ -72,7 +69,7 @@ A pointed DAG environment (or GFN environment, or environment for short) is a re
 - The initial state `s_0`, as a `torch.Tensor` of arbitrary dimension
 - (Optional) The sink state `s_f`, as a `torch.Tensor` of the same shape as `s_0`, used to represent complete trajectories only. See [States](#states) for more info about `s_f`.
 - The method `update_masks` that specifies which actions are possible at each state (going forward and backward).
-- The methods `step_no_worry` and `backward_step_no_worry` that specify how an action changes a state (going forward and backward). These functions do not need to handle masking, checking whether actions are allowed, checking whether a state is the sink state, etc... These checks are handled in `Env.step` and `Env.backward_step`
+- The methods `maskless_step` and `maskless_backward_step` that specify how an action changes a state (going forward and backward). These functions do not need to handle masking, checking whether actions are allowed, checking whether a state is the sink state, etc... These checks are handled in `Env.step` and `Env.backward_step`
 - The `reward` function that assigns a nonnegative reward to every terminating state (i.e. state with all $s_f$ as a child in the DAG)
 
 The environment also specifies how a batch of states is represented. The attribute `env.States` is a class that inherits from [`States`](containers/states.py). This attribute is created automatically using an additional  method any environment inheriting from `Env` is required to implement: `make_random_states_tensor`, that creates random states ($\neq s_f$) according to the input batch shape.
