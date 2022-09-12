@@ -11,6 +11,7 @@ from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsS
 # Typing
 ScoresTensor = TensorType[-1, float]
 LossTensor = TensorType[0, float]
+LogPTrajectoriesTensor = TensorType["max_length", "n_trajectories", float]
 
 
 class SubTrajectoryBalance(TrajectoryDecomposableLoss):
@@ -47,6 +48,24 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         self.weighing = weighing
         self.lamda = lamda
 
+    def cumulative_logprobs(
+        self,
+        trajectories: Trajectories,
+        log_p_trajectories: LogPTrajectoriesTensor,
+    ) -> LogPTrajectoriesTensor:
+        """
+        :param trajectories: trajectories
+        :param log_p_trajectories: log probabilities of each transition in each trajectory
+        :return: cumulative sum of log probabilities of each trajectory
+        """
+        return torch.cat(
+            (
+                torch.zeros(1, trajectories.n_trajectories),
+                log_p_trajectories.cumsum(dim=0),
+            ),
+            dim=0,
+        )
+
     def get_scores(
         self, trajectories: Trajectories
     ) -> Tuple[List[ScoresTensor], List[ScoresTensor]]:
@@ -61,16 +80,14 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, fill_value=-float("inf")
         )
-        log_pf_trajectories_cum = log_pf_trajectories.cumsum(dim=0)
-        log_pf_trajectories_cum = torch.cat(
-            (torch.zeros(1, trajectories.n_trajectories), log_pf_trajectories_cum),
-            dim=0,
+
+        log_pf_trajectories_cum = self.cumulative_logprobs(
+            trajectories, log_pf_trajectories
         )
-        log_pb_trajectories_cum = log_pb_trajectories.cumsum(dim=0)
-        log_pb_trajectories_cum = torch.cat(
-            (torch.zeros(1, trajectories.n_trajectories), log_pb_trajectories_cum),
-            dim=0,
+        log_pb_trajectories_cum = self.cumulative_logprobs(
+            trajectories, log_pb_trajectories
         )
+
         states = trajectories.states
         log_state_flows = torch.full_like(log_pf_trajectories, fill_value=-float("inf"))
         mask = ~states.is_sink_state
@@ -87,19 +104,27 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             current_log_state_flows = (
                 log_state_flows if i == 1 else log_state_flows[: -(i - 1)]
             )
+
             preds = (
                 log_pf_trajectories_cum[i:]
                 - log_pf_trajectories_cum[:-i]
                 + current_log_state_flows
             )
+
             targets = torch.full_like(preds, fill_value=-float("inf"))
             targets.T[is_terminal_mask[i - 1 :].T] = torch.log(
                 trajectories.rewards[trajectories.when_is_done >= i]  # type: ignore
             )
+
+            # For now, the targets contain the log-rewards of the ending sub trajectories
+            # We need to add to that the log-probabilities of the backward actions up-to
+            # the sub-trajectory's terminating state
             if i > 1:
                 targets[is_terminal_mask[i - 1 :]] += (
                     log_pb_trajectories_cum[i - 1 :] - log_pb_trajectories_cum[: -i + 1]
                 )[:-1][is_terminal_mask[i - 1 :]]
+
+            # The following creates the targets for the non-finishing sub-trajectories
             targets[~full_mask[i - 1 :]] = (
                 log_pb_trajectories_cum[i:] - log_pb_trajectories_cum[:-i]
             )[:-1][~full_mask[i - 1 : -1]] + log_state_flows[i:][~sink_states_mask[i:]]
@@ -109,8 +134,10 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             )
             flat_preds = preds[~flattening_mask]
             flat_targets = targets[~flattening_mask]
+
             if torch.any(torch.isnan(flat_preds)):
                 raise ValueError("NaN in preds")
+
             if torch.any(torch.isnan(flat_targets)):
                 raise ValueError("NaN in targets")
 
