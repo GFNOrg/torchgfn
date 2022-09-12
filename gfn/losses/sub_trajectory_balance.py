@@ -8,6 +8,21 @@ from gfn.losses.base import TrajectoryDecomposableLoss
 from gfn.modules import NeuralNet
 from gfn.parametrizations import DBParametrization
 from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsSampler
+from gfn.containers import Trajectories, Transitions
+from gfn.containers.sub_trajectories import SubTrajectories
+from gfn.envs import HyperGrid
+from gfn.estimators import (
+    LogitPBEstimator,
+    LogitPFEstimator,
+    LogStateFlowEstimator,
+    LogZEstimator,
+)
+from gfn.losses import DetailedBalance, TrajectoryBalance
+from gfn.modules import Tabular, Uniform, NeuralNet
+from gfn.parametrizations import DBParametrization, TBParametrization
+from gfn.preprocessors import EnumPreprocessor, OneHotPreprocessor
+from gfn.samplers import TrajectoriesSampler
+
 
 # Typing
 ScoresTensor = TensorType[-1, float]
@@ -103,24 +118,7 @@ class SubTrajectoryBalance2(TrajectoryDecomposableLoss):
         weights = weights / weights.sum()
         return torch.sum(weights * losses)
 
-
-if __name__ == "__main__":
-
-    from gfn.containers import Trajectories, Transitions
-    from gfn.containers.sub_trajectories import SubTrajectories
-    from gfn.envs import HyperGrid
-    from gfn.estimators import (
-        LogitPBEstimator,
-        LogitPFEstimator,
-        LogStateFlowEstimator,
-        LogZEstimator,
-    )
-    from gfn.losses import DetailedBalance, TrajectoryBalance
-    from gfn.modules import Tabular, Uniform, NeuralNet
-    from gfn.parametrizations import DBParametrization, TBParametrization
-    from gfn.preprocessors import EnumPreprocessor, OneHotPreprocessor
-    from gfn.samplers import TrajectoriesSampler
-
+def main():
     env = HyperGrid(ndim=2, height=6)
     preprocessor = OneHotPreprocessor(env)
     logit_PF = Uniform(output_dim=env.n_actions)
@@ -141,3 +139,8 @@ if __name__ == "__main__":
 
     loss = sub_tb(trajs)
     assert False
+
+if __name__ == "__main__":
+    main()
+
+
