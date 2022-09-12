@@ -179,3 +179,5 @@ wandb/
 *.out
 
 scripts.py
+
+*.ipynb
