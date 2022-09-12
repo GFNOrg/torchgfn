@@ -1,14 +1,11 @@
-from typing import List, Tuple
-
 import torch
 from torchtyping import TensorType
+from typing import List, Tuple
 
-from gfn.containers import Trajectories, States, SubTrajectories
-from gfn.losses.base import TrajectoryDecomposableLoss
-from gfn.modules import NeuralNet
-from gfn.parametrizations import DBParametrization
-from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsSampler
-from gfn.containers import Trajectories, Transitions
+from gfn.constants import ScoresTensor, LossTensor  # For typing
+from gfn.containers import Trajectories, Transitions, States, SubTrajectories
+# TODO(@saleml): This is a namespace collision with gfn.containers.SubTrajectories,
+#  so I take it we can delete the gfn.containers.subTrajectories?
 from gfn.containers.sub_trajectories import SubTrajectories
 from gfn.envs import HyperGrid
 from gfn.estimators import (
@@ -17,17 +14,13 @@ from gfn.estimators import (
     LogStateFlowEstimator,
     LogZEstimator,
 )
-from gfn.losses import DetailedBalance, TrajectoryBalance
-from gfn.modules import Tabular, Uniform, NeuralNet
 from gfn.parametrizations import DBParametrization, TBParametrization
 from gfn.preprocessors import EnumPreprocessor, OneHotPreprocessor
+from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsSampler
+from gfn.losses import DetailedBalance, TrajectoryBalance
+from gfn.losses.base import TrajectoryDecomposableLoss
+from gfn.modules import Tabular, Uniform, NeuralNet
 from gfn.samplers import TrajectoriesSampler
-
-
-# Typing
-ScoresTensor = TensorType[-1, float]
-LossTensor = TensorType[0, float]
-
 
 class SubTrajectoryBalance2(TrajectoryDecomposableLoss):
     def __init__(
@@ -118,6 +111,7 @@ class SubTrajectoryBalance2(TrajectoryDecomposableLoss):
         weights = weights / weights.sum()
         return torch.sum(weights * losses)
 
+
 def main():
     env = HyperGrid(ndim=2, height=6)
     preprocessor = OneHotPreprocessor(env)
@@ -136,11 +130,9 @@ def main():
     trajs = trajectories_sampler.sample(n_objects=5)
     sub_tb = SubTrajectoryBalance2(parametrization)
     all_preds, all_targets = sub_tb.get_scores(trajs)
-
     loss = sub_tb(trajs)
     assert False
 
+
 if __name__ == "__main__":
     main()
-
-
