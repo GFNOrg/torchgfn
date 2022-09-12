@@ -131,7 +131,9 @@ class DBParametrizationConfig(StateFlowBasedParametrizationConfig):
 @dataclass
 class SubTBParametrizationConfig(StateFlowBasedParametrizationConfig):
     # TODO: Should be merged with DBParametrizationConfig
-    weighing: str = choice("equal", "geometric", "TB", "DB", default="geometric")
+    weighing: str = choice(
+        "equal", "geometric", "TB", "DB", "geometric2", default="geometric"
+    )
     lamda: float = 0.9
 
     def parse(

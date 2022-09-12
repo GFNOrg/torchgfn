@@ -18,7 +18,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         self,
         parametrization: DBParametrization,
         reward_clip_min: float = 1e-5,
-        weighing: Literal["DB", "TB", "geometric", "equal"] = "geometric",
+        weighing: Literal["DB", "TB", "geometric", "equal", "geometric2"] = "geometric",
         lamda: float = 0.9,
     ):
         # Lamda is a discount factor for longer trajectories. The part of the loss

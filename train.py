@@ -25,12 +25,12 @@ parser.add_argument("--seed", type=int, default=0)
 parser.add_argument(
     "--validation_samples",
     type=int,
-    default=1000,
+    default=200000,
     help="Number of validation samples to use to evaluate the pmf.",
 )
 parser.add_argument("--validation_interval", type=int, default=100)
 parser.add_argument(
-    "--validate_with_training_examples",
+    "--do_not_validate_with_training_examples",
     action="store_true",
     default=False,
     help="If true, the pmf is obtained from the latest visited terminating states",
@@ -77,7 +77,7 @@ if use_wandb:
     wandb.config.update(encode(args))
 
 visited_terminating_states = (
-    env.States() if args.validate_with_training_examples else None
+    env.States() if not args.do_not_validate_with_training_examples else None
 )
 
 for i in trange(args.n_iterations):
@@ -94,7 +94,7 @@ for i in trange(args.n_iterations):
 
     optimizer.step()
     scheduler.step()
-    if args.validate_with_training_examples:
+    if not args.do_not_validate_with_training_examples:
         visited_terminating_states.extend(training_objects.last_states)  # type: ignore
     to_log = {"loss": loss.item(), "states_visited": (i + 1) * args.batch_size}
     if use_wandb:

@@ -8,22 +8,7 @@ import torch
 from einops import rearrange
 from torchtyping import TensorType
 
-from gfn.containers.states import States# The position i of the following 1D tensor represents the number of sub-trajectories of length i in the batch
-            n_sub_trajectories = torch.maximum(
-                trajectories.when_is_done - torch.arange(3).unsqueeze(-1),
-                torch.tensor(0),
-            ).sum(1)
-            per_length_losses = torch.stack(
-                [(p - t).pow(2).mean() for p, t in zip(all_preds, all_targets)]
-            )
-            ld = self.lamda
-            weights = (
-                (1 - ld)
-                / (1 - ld**trajectories.max_length)
-                * (ld ** torch.arange(trajectories.max_length))
-            )
-            assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
-            return (per_length_losses * weights).sum()
+from gfn.containers.states import States
 from gfn.envs.env import Env
 
 from .preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
