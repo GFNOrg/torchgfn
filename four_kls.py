@@ -97,27 +97,14 @@ scheduler_Z = torch.optim.lr_scheduler.MultiStepLR(
     optimizer_Z, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
 )
 
-if args.mode == "tb" or args.mode == "forward_kl" or args.mode == "reverse_kl":
-    optimizer = torch.optim.Adam(params, lr=args.lr)
-    if args.mode == "tb":
-        optimizer.add_param_group(
-            {"params": [parametrization.parameters["logZ"]], "lr": args.lr_Z}
-        )
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
+optimizer = torch.optim.Adam(params, lr=args.lr)
+if args.mode == "tb":
+    optimizer.add_param_group(
+        {"params": [parametrization.parameters["logZ"]], "lr": args.lr_Z}
     )
-else:
-    optimizer_PF = torch.optim.Adam(logit_PF.module.parameters(), lr=args.lr)
-    scheduler_PF = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer_PF, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
-    )
-    if not args.uniform_pb:
-        optimizer_PB = torch.optim.Adam(logit_PB.module.parameters(), lr=args.lr)
-        scheduler_PB = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer_PB,
-            milestones=list(range(2000, 100000, 2000)),
-            gamma=args.schedule,
-        )
+scheduler = torch.optim.lr_scheduler.MultiStepLR(
+    optimizer, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
+)
 
 
 use_replay_buffer = args.replay_buffer_size > 0
@@ -162,12 +149,7 @@ for i in trange(args.n_iterations):
 
     logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
 
-    if args.mode == "tb" or args.mode == "forward_kl" or args.mode == "reverse_kl":
-        optimizer.zero_grad()
-    else:
-        optimizer_PF.zero_grad()
-        if not args.uniform_pb:
-            optimizer_PB.zero_grad()
+    optimizer.zero_grad()
 
     optimizer_Z.zero_grad()
 
@@ -191,6 +173,22 @@ for i in trange(args.n_iterations):
             loss = loss * (-(logZ_tensor + scores)).detach().exp()
     elif args.mode == "reverse_kl":
         loss = logPF_trajectories * (scores.detach() - baseline) - logPB_trajectories
+    elif args.mode == "rws":
+        loss_pf = -logPF_trajectories
+        if not args.sample_from_reward and args.reweight:
+            loss_pf = loss_pf * (-(logZ_tensor + scores)).detach().exp()
+        loss_pb = -logPB_trajectories
+        if args.sample_from_reward and args.reweight:
+            loss_pb = loss_pb * ((logZ_tensor + scores)).detach().exp()
+        loss = loss_pf + loss_pb
+    elif args.mode == "reverse_rws":
+        loss_pf = logPF_trajectories * (scores.detach() - baseline)
+        if args.sample_from_reward and args.reweight:
+            loss_pf = loss_pf * ((logZ_tensor + scores)).detach().exp()
+        loss_pb = -logPB_trajectories * (scores.detach() - baseline)
+        if not args.sample_from_reward and args.reweight:
+            loss_pb = loss_pb * (-(logZ_tensor + scores)).detach().exp()
+        loss = loss_pf + loss_pb
 
     loss = loss.mean()
     loss.backward()
