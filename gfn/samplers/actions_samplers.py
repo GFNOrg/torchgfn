@@ -42,6 +42,8 @@ class ActionsSampler(ABC):
 
     def get_logits(self, states: States) -> Tensor2D:
         logits = self.get_raw_logits(states)
+        if torch.any(torch.all(torch.isnan(logits), 1)):
+            raise ValueError("NaNs in estimator")
         logits[~states.forward_masks] = -float("inf")
         return logits
 
@@ -74,6 +76,8 @@ class ActionsSampler(ABC):
 class BackwardActionsSampler(ActionsSampler):
     def get_logits(self, states: States) -> Tensor2D:
         logits = self.get_raw_logits(states)
+        if torch.any(torch.all(torch.isnan(logits), 1)):
+            raise ValueError("NaNs in estimator")
         logits[~states.backward_masks] = -float("inf")
         return logits
 

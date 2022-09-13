@@ -1,3 +1,4 @@
+from turtle import forward
 import torch
 from simple_parsing import ArgumentParser
 from simple_parsing.helpers.serialization import encode
@@ -58,7 +59,6 @@ torch.manual_seed(args.seed)
 device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 print(device_str)
 
-
 env = HyperGrid(args.ndim, args.height, R0=args.R0)
 
 
@@ -79,6 +79,10 @@ if not args.sample_from_reward:
         actions_sampler = LogitPFActionsSampler(estimator=logit_PF, temperature=0.1)
 else:
     actions_sampler = LogitPBActionsSampler(estimator=logit_PB)
+    validation_actions_sampler = LogitPFActionsSampler(estimator=logit_PF)
+    validation_trajectories_sampler = TrajectoriesSampler(
+        env=env, actions_sampler=validation_actions_sampler
+    )
 
 trajectories_sampler = TrajectoriesSampler(env=env, actions_sampler=actions_sampler)
 
@@ -138,6 +142,9 @@ for i in trange(args.n_iterations):
         states = env.all_states[samples_idx]
         trajectories = trajectories_sampler.sample_trajectories(states=states)
         trajectories = Trajectories.revert_backward_trajectories(trajectories)
+        validation_trajectories = validation_trajectories_sampler.sample(
+            n_objects=args.batch_size
+        )
     else:
         trajectories = trajectories_sampler.sample(n_objects=args.batch_size)
 
@@ -170,24 +177,24 @@ for i in trange(args.n_iterations):
     elif args.mode == "forward_kl":
         loss = -logPB_trajectories * (scores.detach() - baseline) - logPF_trajectories
         if args.reweight:
-            loss = loss * (-(logZ_tensor + scores)).detach().exp()
+            loss = loss * (-scores.exp()) / (-scores.exp().sum()).detach()
     elif args.mode == "reverse_kl":
         loss = logPF_trajectories * (scores.detach() - baseline) - logPB_trajectories
     elif args.mode == "rws":
         loss_pf = -logPF_trajectories
         if not args.sample_from_reward and args.reweight:
-            loss_pf = loss_pf * (-(logZ_tensor + scores)).detach().exp()
+            loss_pf = loss_pf * (-scores.exp()) / (-scores.exp().sum()).detach()
         loss_pb = -logPB_trajectories
         if args.sample_from_reward and args.reweight:
-            loss_pb = loss_pb * ((logZ_tensor + scores)).detach().exp()
+            loss_pb = loss_pb * (scores.exp()) / (scores.exp().sum()).detach()
         loss = loss_pf + loss_pb
     elif args.mode == "reverse_rws":
         loss_pf = logPF_trajectories * (scores.detach() - baseline)
         if args.sample_from_reward and args.reweight:
-            loss_pf = loss_pf * ((logZ_tensor + scores)).detach().exp()
+            loss_pf = loss_pf * (scores.exp()) / (scores.exp().sum()).detach()
         loss_pb = -logPB_trajectories * (scores.detach() - baseline)
         if not args.sample_from_reward and args.reweight:
-            loss_pb = loss_pb * (-(logZ_tensor + scores)).detach().exp()
+            loss_pb = loss_pb * (-scores.exp()) / (-scores.exp().sum()).detach()
         loss = loss_pf + loss_pb
 
     loss = loss.mean()
@@ -195,47 +202,7 @@ for i in trange(args.n_iterations):
     optimizer.step()
     scheduler.step()
 
-    # else:
-    #     loss_Z = (scores + parametrization.logZ.tensor).pow(2).mean()
-    #     if optimizer_Z is not None and scheduler_Z is not None:
-    #         loss_Z.backward()
-    #         optimizer_Z.step()
-    #         scheduler_Z.step()
-
-    #         logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
-    #             trajectories
-    #         )
-    #     if args.mode == "reverse_kl" or args.mode == "reverse_rws":
-    #         loss_PF = torch.mean(
-    #             logPF_trajectories * (scores + parametrization.logZ.tensor).detach()
-    #         )
-    #     else:
-    #         loss_PF = -torch.mean(
-    #             logPF_trajectories
-    #             * torch.exp(-scores.detach())
-    #             / torch.exp(-scores.detach()).sum()
-    #         )
-
-    #     loss_PF.backward()
-    #     optimizer_PF.step()
-    #     scheduler_PF.step()
-
-    #     logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(
-    #         trajectories
-    #     )
-    #     if not args.uniform_pb:
-    #         if args.mode == "reverse_kl" or args.mode == "rws":
-    #             loss_PB = -torch.mean(logPB_trajectories)
-    #         else:
-    #             loss_PB = -torch.mean(
-    #                 logPB_trajectories
-    #                 * (scores + parametrization.logZ.tensor).detach()
-    #                 * torch.exp(-scores.detach() / torch.exp(-scores.detach()).sum())
-    #             )
-    #         optimizer_PB.step()
-    #         scheduler_PB.step()
-
-    visited_terminating_states.extend(training_objects.last_states)  # type: ignore
+    visited_terminating_states.extend(training_objects.last_states if not args.sample_from_reward else validation_trajectories.last_states)  # type: ignore
     to_log = {"states_visited": (i + 1) * args.batch_size, "loss": loss.item()}
     if use_wandb:
         wandb.log(to_log, step=i)
