@@ -27,9 +27,16 @@ def validate(
         final_states_dist = EmpiricalTerminatingStatesDistribution(
             env, visited_terminating_states[-n_validation_samples:]
         )
+        n_visited_states = visited_terminating_states.batch_shape[0]
+        n_validation_samples = min(n_visited_states, n_validation_samples)
+
     final_states_dist_pmf = final_states_dist.pmf()
     l1_dist = (final_states_dist_pmf - true_dist_pmf).abs().mean().item()
     validation_info = {"l1_dist": l1_dist}
     if logZ is not None:
         validation_info["logZ_diff"] = max(logZ - true_logZ, true_logZ - logZ)
+    quasi_best = (n_validation_samples * true_dist_pmf).round()
+    quasi_best = quasi_best / quasi_best.sum()
+    quasi_best_l1_dist = (quasi_best - true_dist_pmf).abs().mean().item()
+    # validation_info["quasi_best_l1_dist"] = quasi_best_l1_dist
     return validation_info

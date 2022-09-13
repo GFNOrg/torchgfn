@@ -136,3 +136,36 @@ class Trajectories:
         indices = perm[:n_trajectories]
 
         return self[indices]
+
+    @staticmethod
+    def revert_backward_trajectories(trajectories: Trajectories) -> Trajectories:
+        """Revert the backward trajectories to forward trajectories."""
+        assert trajectories.is_backward
+        new_actions = torch.full_like(trajectories.actions, -1)
+        new_actions = torch.cat(
+            [new_actions, torch.full((1, len(trajectories)), -1)], dim=0
+        )
+        new_states = trajectories.env.s_f.repeat(  # type: ignore
+            trajectories.when_is_done.max() + 1, len(trajectories), 1
+        )
+        new_when_is_done = trajectories.when_is_done + 1
+        for i in range(len(trajectories)):
+            new_actions[trajectories.when_is_done[i], i] = (
+                trajectories.env.n_actions - 1
+            )
+            new_actions[: trajectories.when_is_done[i], i] = trajectories.actions[
+                : trajectories.when_is_done[i], i
+            ].flip(0)
+            new_states[
+                : trajectories.when_is_done[i] + 1, i
+            ] = trajectories.states.states[: trajectories.when_is_done[i] + 1, i].flip(
+                0
+            )
+        new_states = trajectories.env.States(new_states)
+        return Trajectories(
+            env=trajectories.env,
+            states=new_states,
+            actions=new_actions,
+            when_is_done=new_when_is_done,
+            is_backward=False,
+        )
