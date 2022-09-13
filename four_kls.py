@@ -162,7 +162,7 @@ for i in trange(args.n_iterations):
 
     logPF_trajectories, logPB_trajectories, scores = loss_fn.get_scores(trajectories)
 
-    if args.mode == "tb" or args.mode == "forward_kl":
+    if args.mode == "tb" or args.mode == "forward_kl" or args.mode == "reverse_kl":
         optimizer.zero_grad()
     else:
         optimizer_PF.zero_grad()
