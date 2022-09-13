@@ -49,12 +49,14 @@ parser.add_argument(
 parser.add_argument("--validation_interval", type=int, default=100)
 parser.add_argument("--sample_from_reward", action="store_true", default=False)
 parser.add_argument("--reweight", action="store_true", default=False)
+parser.add_argument("--no_cuda", action="store_true", default=False)
 
 args = parser.parse_args()
 print(encode(args))
 
 torch.manual_seed(args.seed)
-device_str = "cpu"
+device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+print(device_str)
 
 
 env = HyperGrid(args.ndim, args.height, R0=args.R0)
@@ -95,7 +97,7 @@ scheduler_Z = torch.optim.lr_scheduler.MultiStepLR(
     optimizer_Z, milestones=list(range(2000, 100000, 2000)), gamma=args.schedule
 )
 
-if args.mode == "tb" or args.mode == "forward_kl":
+if args.mode == "tb" or args.mode == "forward_kl" or args.mode == "reverse_kl":
     optimizer = torch.optim.Adam(params, lr=args.lr)
     if args.mode == "tb":
         optimizer.add_param_group(
@@ -183,20 +185,17 @@ for i in trange(args.n_iterations):
 
     if args.mode == "tb":
         loss = (scores + parametrization.logZ.tensor).pow(2)
-        loss = loss.mean()
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
     elif args.mode == "forward_kl":
-        loss = logPB_trajectories * (-scores.detach() - baseline) - logPF_trajectories
+        loss = -logPB_trajectories * (scores.detach() - baseline) - logPF_trajectories
         if args.reweight:
             loss = loss * (-(logZ_tensor + scores)).detach().exp()
-            loss = loss.mean()
-        else:
-            loss = loss.mean()
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
+    elif args.mode == "reverse_kl":
+        loss = logPF_trajectories * (scores.detach() - baseline) - logPB_trajectories
+
+    loss = loss.mean()
+    loss.backward()
+    optimizer.step()
+    scheduler.step()
 
     # else:
     #     loss_Z = (scores + parametrization.logZ.tensor).pow(2).mean()
