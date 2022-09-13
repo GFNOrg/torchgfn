@@ -10,7 +10,6 @@ from gfn.configs import EnvConfig
 from gfn.estimators import LogEdgeFlowEstimator
 from gfn.modules import Tabular, Uniform
 from gfn.parametrizations.edge_flows import FMParametrization
-from gfn.preprocessors import EnumPreprocessor
 from gfn.validate import validate
 
 parser = ArgumentParser()
@@ -28,11 +27,10 @@ F_edge = torch.zeros(env.n_states, env.n_actions)
 
 logit_PB = Uniform(output_dim=env.n_actions - 1)
 
-preprocessor = EnumPreprocessor(env)
 
 all_states = env.all_states
 
-all_states_indices = preprocessor(all_states)
+all_states_indices = env.get_states_indices(all_states)
 
 # Zeroth step: Define the necessary containers
 Y = set()  # Contains the state indices that do not need more visits
@@ -50,6 +48,8 @@ for index in all_states_indices[all_states.forward_masks.long().sum(1) == 1].num
     U.append((index, F_edge[index, -1].item()))
 
 
+print("Calculating edge flows...")
+
 # Third Step: Iterate over the states in U and update the flows
 while len(U) > 0:
     s_prime_index, F_s_prime = U.pop(0)
@@ -57,19 +57,20 @@ while len(U) > 0:
     state_prime = all_states[[s_prime_index]]
 
     backward_mask = state_prime.backward_masks[0]
-    pb_logits = logit_PB(preprocessor(state_prime))
+    pb_logits = logit_PB(env.get_states_indices(state_prime))
     pb_logits[~backward_mask] = -float("inf")
     pb = torch.softmax(pb_logits, dim=0)
     for i in range(env.n_actions - 1):
         if backward_mask[i]:
             state = env.backward_step(state_prime, torch.tensor([i]))
-            s_index = preprocessor(state)[0].item()
-            pb_logits = logit_PB(preprocessor(state_prime))
+            s_index = env.get_states_indices(state)[0].item()
+            pb_logits = logit_PB(env.get_states_indices(state_prime))
             F_edge[s_index, i] = F_s_prime * pb[i].item()
             F_state[s_index] = F_state[s_index] + F_edge[s_index, i]
             if all(
                 [
-                    preprocessor(env.step(state, torch.tensor([j])))[0].item() in Y
+                    env.get_states_indices(env.step(state, torch.tensor([j])))[0].item()
+                    in Y
                     for j in range(env.n_actions - 1)
                     if state.forward_masks[0, j]
                 ]
@@ -78,12 +79,14 @@ while len(U) > 0:
 
 print(F_edge)
 
+print("Validating...")
+
 # Sanity check - should get the right pmf
 logF_edge = torch.log(F_edge)
-logF_edge_module = Tabular(env, output_dim=env.n_actions - 1)
-logF_edge_module.logits = logF_edge[:, :-1]
+logF_edge_module = Tabular(env, output_dim=env.n_actions)
+logF_edge_module.logits = logF_edge
 logF_edge_estimator = LogEdgeFlowEstimator(
-    preprocessor=preprocessor, module=logF_edge_module
+    env=env, module_name="Tabular", module=logF_edge_module
 )
 parametrization = FMParametrization(logF=logF_edge_estimator)
-print(validate(env, parametrization, n_validation_samples=10000))
+print(validate(env, parametrization, n_validation_samples=100000))

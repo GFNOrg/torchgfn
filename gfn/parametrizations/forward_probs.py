@@ -48,6 +48,14 @@ class DBParametrization(PFBasedParametrization):
 
 
 @dataclass
+class SubTBParametrization(PFBasedParametrization):
+    r"""
+    Exactly the same as DBParametrization
+    """
+    logF: LogStateFlowEstimator
+
+
+@dataclass
 class TBParametrization(PFBasedParametrization):
     r"""
     $\mathcal{O}_{PFZ} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where

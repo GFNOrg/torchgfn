@@ -56,6 +56,7 @@ class TransitionsSampler(TrainingSampler):
         return transitions
 
     def sample(self, n_objects: int) -> Transitions:
+        # TODO: merge with Sub-Trajectories sampling
         """:param: n_objects: number of trajectories to roll-out
         :return: Transitions object corresponding to all transitions in the trajectories.
 

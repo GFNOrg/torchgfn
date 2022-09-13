@@ -112,6 +112,17 @@ class States(ABC):
             states, forward_masks=forward_masks, backward_masks=backward_masks
         )
 
+    def flatten(self) -> States:
+        """Flatten the batch dimension of the states.
+        This is useful for example when extracting individual states from trajectories.
+        """
+        states = self.states.view(-1, *self.state_shape)
+        forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
+        backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
+        return self.__class__(
+            states, forward_masks=forward_masks, backward_masks=backward_masks
+        )
+
     def extend(self, other: States) -> None:
         other_batch_shape = other.batch_shape
         if len(other_batch_shape) == len(self.batch_shape) == 1:

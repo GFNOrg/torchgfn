@@ -177,4 +177,7 @@ wandb/
 # slurm-specific stuff
 *.sh
 *.out
+
 scripts.py
+
+*.ipynb

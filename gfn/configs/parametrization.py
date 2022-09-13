@@ -14,33 +14,37 @@ from gfn.estimators import (
     LogStateFlowEstimator,
     LogZEstimator,
 )
-from gfn.losses import DetailedBalance, Loss, TrajectoryBalance
+from gfn.losses import (
+    DetailedBalance,
+    FlowMatching,
+    Loss,
+    SubTrajectoryBalance,
+    TrajectoryBalance,
+)
 from gfn.parametrizations import (
     DBParametrization,
     FMParametrization,
     Parametrization,
+    SubTBParametrization,
     TBParametrization,
 )
-from gfn.preprocessors import (
-    EnumPreprocessor,
-    IdentityPreprocessor,
-    KHotPreprocessor,
-    OneHotPreprocessor,
-    Preprocessor,
-)
 
-from .module import GFNModuleConfig, NeuralNetConfig, TabularConfig, UniformConfig
+
+@dataclass
+class GFNModuleConfig(JsonSerializable):
+    module_name: str = choice(
+        "NeuralNet", "Tabular", "Uniform", "Zero", default="NeuralNet"
+    )
+    n_hidden_layers: int = 2
+    hidden_dim: int = 256
+    activation_fn: str = "relu"
+
+    def __post_init__(self):
+        self.module_kwargs = self.__dict__.copy()
 
 
 @dataclass
 class BaseParametrizationConfig(JsonSerializable, ABC):
-    @staticmethod
-    def adjust_module_config(
-        module_config: GFNModuleConfig, preprocessor: Preprocessor, output_dim: int
-    ) -> None:
-        module_config.input_dim = preprocessor.output_dim
-        module_config.output_dim = output_dim
-
     @abstractmethod
     def parse(self, env: Env, **kwargs) -> Tuple[Parametrization, Loss]:
         pass
@@ -48,88 +52,114 @@ class BaseParametrizationConfig(JsonSerializable, ABC):
 
 @dataclass
 class FMParametrizationConfig(BaseParametrizationConfig):
+    logF_edge: GFNModuleConfig = GFNModuleConfig()
+
     def parse(
         self,
         env: Env,
-        preprocessor: Preprocessor,
-        logF_edge_config: GFNModuleConfig,
-        **kwargs,
     ) -> Tuple[Parametrization, Loss]:
-        del kwargs
-        self.adjust_module_config(logF_edge_config, preprocessor, env.n_actions - 1)
 
-        logF_module = logF_edge_config.parse(env=env)
-        logF_edge = LogEdgeFlowEstimator(preprocessor=preprocessor, module=logF_module)
-        _ = FMParametrization(logF_edge)
+        logF_edge = LogEdgeFlowEstimator(
+            env=env,
+            **self.logF_edge.module_kwargs,
+        )
+        parametrization = FMParametrization(logF_edge)
 
-        # TODO: FlowMatching loss not implemented yet
-        raise NotImplementedError("FlowMatching loss not implemented yet")
+        loss = FlowMatching(parametrization, env)
+
+        return parametrization, loss
 
 
 @dataclass
 class PFBasedParametrizationConfig(BaseParametrizationConfig, ABC):
+    logit_PF: GFNModuleConfig = GFNModuleConfig()
+    logit_PB: GFNModuleConfig = GFNModuleConfig()
     tied: bool = True
 
     def get_estimators(
         self,
         env: Env,
-        preprocessor: Preprocessor,
-        logit_PF_config: GFNModuleConfig,
-        logit_PB_config: GFNModuleConfig,
-        **kwargs,
-    ) -> Tuple[Preprocessor, LogitPFEstimator, LogitPBEstimator]:
-        del kwargs
-        if self.tied and not (
-            isinstance(logit_PF_config, NeuralNetConfig)
-            and isinstance(logit_PB_config, NeuralNetConfig)
-        ):
-            print("Setting back tied to False")
-            self.tied = False
-        self.adjust_module_config(logit_PF_config, preprocessor, env.n_actions)
-        self.adjust_module_config(logit_PB_config, preprocessor, env.n_actions - 1)
+    ) -> Tuple[LogitPFEstimator, LogitPBEstimator]:
 
-        logit_PF_module = logit_PF_config.parse(env=env)
-        logit_PF = LogitPFEstimator(preprocessor=preprocessor, module=logit_PF_module)
-        logit_PB_module = logit_PB_config.parse(
-            env=env,
-            tied_to=logit_PF_module if self.tied else None,
-            tied_to_name="logit_PF" if self.tied else None,
-        )
-        logit_PB = LogitPBEstimator(preprocessor=preprocessor, module=logit_PB_module)
+        logit_PF = LogitPFEstimator(env=env, **self.logit_PF.module_kwargs)
+        logit_PB_kwargs = self.logit_PB.module_kwargs
+        if (
+            self.tied
+            and self.logit_PF.module_name
+            and self.logit_PB.module_name == "NeuralNet"
+        ):
+            torso = logit_PF.module.torso
+        else:
+            torso = None
+        logit_PB_kwargs["torso"] = torso
+        logit_PB = LogitPBEstimator(env=env, **logit_PB_kwargs)
 
         return (logit_PF, logit_PB)
 
 
 @dataclass
-class DBParametrizationConfig(PFBasedParametrizationConfig):
+class StateFlowBasedParametrizationConfig(PFBasedParametrizationConfig, ABC):
+    logF_state: GFNModuleConfig = GFNModuleConfig()
+
+    def get_estimators(
+        self,
+        env: Env,
+    ) -> Tuple[LogitPFEstimator, LogitPBEstimator, LogStateFlowEstimator]:
+
+        logit_PF, logit_PB = super().get_estimators(env)
+        logF_state_kwargs = self.logF_state.module_kwargs
+        if (
+            self.tied
+            and self.logit_PF.module_name == "NeuralNet"
+            and self.logF_state.module_name == "NeuralNet"
+        ):
+            torso = logit_PF.module.torso
+        else:
+            torso = None
+        logF_state_kwargs["torso"] = torso
+        logF_state = LogStateFlowEstimator(env=env, **self.logF_state.module_kwargs)
+
+        return (logit_PF, logit_PB, logF_state)
+
+
+@dataclass
+class DBParametrizationConfig(StateFlowBasedParametrizationConfig):
     def parse(
         self,
         env: Env,
-        preprocessor: Preprocessor,
-        logit_PF_config: GFNModuleConfig,
-        logit_PB_config: GFNModuleConfig,
-        logF_state_config: GFNModuleConfig,
-        **kwargs,
     ) -> Tuple[Parametrization, Loss]:
-        del kwargs
-        logit_PF, logit_PB = super().get_estimators(
-            env,
-            preprocessor,
-            logit_PF_config=logit_PF_config,
-            logit_PB_config=logit_PB_config,
-        )
-        self.adjust_module_config(logF_state_config, preprocessor, 1)
+        logit_PF, logit_PB, logF_state = self.get_estimators(env)
 
-        logF_module = logF_state_config.parse(
-            env=env,
-            tied_to=logit_PF.module if self.tied else None,
-            tied_to_name="logit_PF" if self.tied else None,
-        )
-        logF_state = LogStateFlowEstimator(
-            preprocessor=preprocessor, module=logF_module
-        )
         parametrization = DBParametrization(logit_PF, logit_PB, logF_state)
         loss = DetailedBalance(parametrization)
+        return (parametrization, loss)
+
+
+@dataclass
+class SubTBParametrizationConfig(StateFlowBasedParametrizationConfig):
+    # TODO: Should be merged with DBParametrizationConfig
+    weighing: str = choice(
+        "equal",
+        "equal_within",
+        "geometric",
+        "TB",
+        "DB",
+        "ModifiedDB",
+        "geometric_within",
+        default="geometric",
+    )
+    lamda: float = 0.9
+
+    def parse(
+        self,
+        env: Env,
+    ) -> Tuple[Parametrization, Loss]:
+        logit_PF, logit_PB, logF_state = self.get_estimators(env)
+
+        parametrization = SubTBParametrization(logit_PF, logit_PB, logF_state)
+        loss = SubTrajectoryBalance(
+            parametrization, weighing=self.weighing, lamda=self.lamda
+        )
         return (parametrization, loss)
 
 
@@ -141,18 +171,8 @@ class TBParametrizationConfig(PFBasedParametrizationConfig):
     def parse(
         self,
         env: Env,
-        preprocessor: Preprocessor,
-        logit_PF_config: GFNModuleConfig,
-        logit_PB_config: GFNModuleConfig,
-        **kwargs,
     ) -> Tuple[Parametrization, Loss]:
-        del kwargs
-        logit_PF, logit_PB = super().get_estimators(
-            env,
-            preprocessor,
-            logit_PF_config=logit_PF_config,
-            logit_PB_config=logit_PB_config,
-        )
+        logit_PF, logit_PB = self.get_estimators(env)
         logZ_tensor = torch.tensor(self.logZ_init, dtype=torch.float)
         logZ = LogZEstimator(tensor=logZ_tensor)
         parametrization = TBParametrization(logit_PF, logit_PB, logZ)
@@ -167,72 +187,10 @@ class ParametrizationConfig(JsonSerializable):
             "FM": FMParametrizationConfig,
             "DB": DBParametrizationConfig,
             "TB": TBParametrizationConfig,
+            "SubTB": SubTBParametrizationConfig,
         },
         default=TBParametrizationConfig(),
     )
-    preprocessor: str = choice("Identity", "OneHot", "KHot", "Enum", default="KHot")
-
-    logF_edge: GFNModuleConfig = subgroups(
-        {
-            "tabular": TabularConfig,
-            "uniform": UniformConfig,
-            "neural_net": NeuralNetConfig,
-        },
-        default=NeuralNetConfig(),
-    )
-    logF_state: GFNModuleConfig = subgroups(
-        {
-            "tabular": TabularConfig,
-            "uniform": UniformConfig,
-            "neural_net": NeuralNetConfig,
-        },
-        default=NeuralNetConfig(),
-    )
-    logit_PF: GFNModuleConfig = subgroups(
-        {
-            "tabular": TabularConfig,
-            "uniform": UniformConfig,
-            "neural_net": NeuralNetConfig,
-        },
-        default=NeuralNetConfig(),
-    )
-    logit_PB: GFNModuleConfig = subgroups(
-        {
-            "tabular": TabularConfig,
-            "uniform": UniformConfig,
-            "neural_net": NeuralNetConfig,
-        },
-        default=NeuralNetConfig(),
-    )
-
-    def __post_init__(self):
-        if isinstance(self.parametrization, FMParametrizationConfig):
-            self.logit_PF = None
-            self.logit_PB = None
-            self.logF_state = None
-        else:
-            self.logF_edge = None
-            if isinstance(self.parametrization, TBParametrizationConfig):
-                self.logF_state = None
-
-    def get_preprocessor(self, env) -> Preprocessor:
-        if self.preprocessor == "Identity":
-            preprocessor = IdentityPreprocessor(env)
-        elif self.preprocessor == "OneHot":
-            preprocessor = OneHotPreprocessor(env)
-        elif self.preprocessor == "KHot":
-            preprocessor = KHotPreprocessor(env)
-        else:
-            preprocessor = EnumPreprocessor(env)
-        return preprocessor
 
     def parse(self, env: Env) -> Tuple[Parametrization, Loss]:
-        preprocessor = self.get_preprocessor(env)
-        return self.parametrization.parse(
-            env=env,
-            preprocessor=preprocessor,
-            logF_edge_config=self.logF_edge,
-            logF_state_config=self.logF_state,
-            logit_PF_config=self.logit_PF,
-            logit_PB_config=self.logit_PB,
-        )
+        return self.parametrization.parse(env=env)

@@ -52,7 +52,7 @@ class Transitions:
         )
 
     @classmethod
-    def from_trajectories(cls, trajectories: Trajectories):
+    def from_trajectories(cls, trajectories: Trajectories) -> Transitions:
         "Create a Transitions from a Trajectories"
         states = trajectories.states[:-1][trajectories.actions != -1]
         next_states = trajectories.states[1:][trajectories.actions != -1]

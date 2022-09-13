@@ -107,16 +107,6 @@ class FixedActionsSampler(ActionsSampler):
         return logits
 
 
-class UniformActionsSampler(ActionsSampler):
-    def get_raw_logits(self, states):
-        return torch.zeros_like(states.forward_masks, dtype=torch.float)
-
-
-class UniformBackwardActionsSampler(BackwardActionsSampler):
-    def get_raw_logits(self, states):
-        return torch.zeros_like(states.backward_masks, dtype=torch.float)
-
-
 class LogitPFActionsSampler(ActionsSampler):
     def __init__(self, estimator: LogitPFEstimator, **kwargs):
         super().__init__(**kwargs)
@@ -142,7 +132,7 @@ class LogEdgeFlowsActionsSampler(ActionsSampler):
 
     def get_raw_logits(self, states):
         logits = self.estimator(states)
-        env_rewards = self.estimator.preprocessor.env.reward(states)
-        env_log_rewards = torch.log(env_rewards).unsqueeze(-1)
-        all_logits = torch.cat([logits, env_log_rewards], dim=-1)
-        return all_logits
+        # env_rewards = self.estimator.preprocessor.env.reward(states)
+        # env_log_rewards = torch.log(env_rewards).unsqueeze(-1)
+        # all_logits = torch.cat([logits, env_log_rewards], dim=-1)
+        return logits

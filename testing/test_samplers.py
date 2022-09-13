@@ -6,31 +6,22 @@ import torch
 from gfn.containers import ReplayBuffer, Trajectories
 from gfn.envs import HyperGrid
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator
-from gfn.modules import NeuralNet
-from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers import TrajectoriesSampler, TransitionsSampler
 from gfn.samplers.actions_samplers import (
     FixedActionsSampler,
     LogitPBActionsSampler,
     LogitPFActionsSampler,
-    UniformActionsSampler,
-    UniformBackwardActionsSampler,
 )
 
 
 @pytest.mark.parametrize("height", [4, 5])
-def test_hypergrid_trajectory_sampling(height: int, human_print=False) -> Trajectories:
+@pytest.mark.parametrize("preprocessor_name", ["KHot", "OneHot", "Identity"])
+def test_hypergrid_trajectory_sampling(
+    height: int, preprocessor_name: str, human_print=False
+) -> Trajectories:
     if human_print:
         print("---Trying Forward sampling of trajectories---")
-    env = HyperGrid(ndim=2, height=height)
-
-    if human_print:
-        print("Trying the Uniform Action Sample with sf_temperature")
-    actions_sampler = UniformActionsSampler(sf_temperature=2.0)
-    trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
-    if human_print:
-        print(trajectories)
+    env = HyperGrid(ndim=2, height=height, preprocessor_name=preprocessor_name)
 
     if human_print:
         print("\nTrying the Fixed Actions Sampler: ")
@@ -46,100 +37,36 @@ def test_hypergrid_trajectory_sampling(height: int, human_print=False) -> Trajec
 
     if human_print:
         print("\nTrying the LogitPFActionSampler: ")
-    preprocessors = [
-        IdentityPreprocessor(env=env),
-        OneHotPreprocessor(env=env),
-        KHotPreprocessor(env=env),
-    ]
-    modules = [
-        NeuralNet(
-            input_dim=preprocessor.output_dim, hidden_dim=12, output_dim=env.n_actions
-        )
-        for preprocessor in preprocessors
-    ]
-    logit_pf_estimators = [
-        LogitPFEstimator(preprocessor=preprocessor, module=module)
-        for (preprocessor, module) in zip(preprocessors, modules)
-    ]
 
-    logit_pf_actions_samplers = [
-        LogitPFActionsSampler(estimator=logit_pf_estimator)
-        for logit_pf_estimator in logit_pf_estimators
-    ]
+    logit_pf_estimator = LogitPFEstimator(env, module_name="NeuralNet")
 
-    trajectories_samplers = [
-        TrajectoriesSampler(env, logit_pf_actions_sampler)
-        for logit_pf_actions_sampler in logit_pf_actions_samplers
-    ]
+    logit_pf_actions_sampler = LogitPFActionsSampler(estimator=logit_pf_estimator)
 
-    for i, trajectories_sampler in enumerate(trajectories_samplers):
-        if human_print:
-            print(
-                "\n",
-                i,
-                ": Trying the LogitPFActionSampler with preprocessor {}".format(
-                    preprocessors[i]
-                ),
-            )
-        trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
-        if human_print:
-            print(trajectories)
+    trajectories_sampler = TrajectoriesSampler(env, logit_pf_actions_sampler)
 
-    if human_print:
-        print("\n\n---Trying Backward sampling of trajectories---")
-    states = env.reset(batch_shape=20, random_init=True)
-
-    if human_print:
-        print(
-            "\nTrying the Uniform Backward Action Sampler with one of the initial states being s_0"
-        )
-    actions_sampler = UniformBackwardActionsSampler()
-    trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(states)
+    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
     if human_print:
         print(trajectories)
 
-    modules = [
-        NeuralNet(
-            input_dim=preprocessor.output_dim,
-            hidden_dim=12,
-            output_dim=env.n_actions - 1,
-        )
-        for preprocessor in preprocessors
-    ]
-    logit_pb_estimators = [
-        LogitPBEstimator(preprocessor=preprocessor, module=module)
-        for (preprocessor, module) in zip(preprocessors, modules)
-    ]
+    if human_print:
+        print("\n\n---Trying Backward sampling of trajectories---")
 
-    logit_pb_actions_samplers = [
-        LogitPBActionsSampler(estimator=logit_pb_estimator)
-        for logit_pb_estimator in logit_pb_estimators
-    ]
+    states = env.reset(batch_shape=20, random_init=True)
 
-    trajectories_samplers = [
-        TrajectoriesSampler(env, logit_pb_actions_sampler)
-        for logit_pb_actions_sampler in logit_pb_actions_samplers
-    ]
+    logit_pb_estimator = LogitPBEstimator(env=env, module_name="NeuralNet")
 
-    for i, trajectories_sampler in enumerate(trajectories_samplers):
-        if human_print:
-            print(
-                "\n",
-                i,
-                ": Trying the LogitPBActionSampler with preprocessor {}".format(
-                    preprocessors[i]
-                ),
-            )
-        states = env.reset(batch_shape=5, random_init=True)
-        trajectories = trajectories_samplers[i].sample_trajectories(states)
-        if human_print:
-            print(trajectories)
+    logit_pb_actions_sampler = LogitPBActionsSampler(estimator=logit_pb_estimator)
+
+    bw_trajectories_sampler = TrajectoriesSampler(env, logit_pb_actions_sampler)
+
+    states = env.reset(batch_shape=5, random_init=True)
+    bw_trajectories = bw_trajectories_sampler.sample_trajectories(states)
+    if human_print:
+        print(bw_trajectories)
 
     if human_print:
         print("\n\n---Making Sure Last states are computed correctly---")
-    actions_sampler = UniformActionsSampler(sf_temperature=2.0)
-    trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
+
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     if human_print:
         print(trajectories)
@@ -148,7 +75,7 @@ def test_hypergrid_trajectory_sampling(height: int, human_print=False) -> Trajec
 
 @pytest.mark.parametrize("height", [4, 5])
 def test_trajectories_getitem(height: int):
-    trajectories = test_hypergrid_trajectory_sampling(height)
+    trajectories = test_hypergrid_trajectory_sampling(height, preprocessor_name="KHot")
     print(f"There are {trajectories.n_trajectories} original trajectories")
     print(trajectories)
     print(trajectories[0])
@@ -158,7 +85,7 @@ def test_trajectories_getitem(height: int):
 
 @pytest.mark.parametrize("height", [4, 5])
 def test_trajectories_extend(height: int):
-    trajectories = test_hypergrid_trajectory_sampling(height)
+    trajectories = test_hypergrid_trajectory_sampling(height, preprocessor_name="KHot")
     print(
         f"There are {trajectories.n_trajectories} original trajectories. To which we will add the two first trajectories"
     )
@@ -168,7 +95,9 @@ def test_trajectories_extend(height: int):
 
 @pytest.mark.parametrize("height", [4, 5])
 def test_sub_sampling(height: int):
-    trajectories = test_hypergrid_trajectory_sampling(height)
+    trajectories = test_hypergrid_trajectory_sampling(
+        height, preprocessor_name="Identity"
+    )
     print(
         f"There are {trajectories.n_trajectories} original trajectories, from which we will sample 2"
     )
@@ -183,14 +112,6 @@ def test_hypergrid_transition_sampling(height: int):
     env = HyperGrid(ndim=2, height=height)
 
     print("---Trying Forward sampling of trajectories---")
-
-    print("Trying the Uniform Action Sampler")
-    actions_sampler = UniformActionsSampler()
-    transitions_sampler = TransitionsSampler(env, actions_sampler)
-    transitions = transitions_sampler.sample_transitions(n_transitions=5)
-    print(transitions)
-    transitions = transitions_sampler.sample_transitions(states=transitions.next_states)
-    print(transitions)
 
     print("Trying the Fixed Actions Sampler")
     actions_sampler = FixedActionsSampler(
@@ -214,7 +135,9 @@ def test_replay_buffer(height: int, objects: Literal["trajectories", "transition
     replay_buffer = ReplayBuffer(env, capacity=10, objects=objects)
     print(f"After initialization, the replay buffer is {replay_buffer} ")
     if objects == "trajectories":
-        training_objects = test_hypergrid_trajectory_sampling(height)
+        training_objects = test_hypergrid_trajectory_sampling(
+            height, preprocessor_name="Identity"
+        )
         replay_buffer.add(
             training_objects[
                 training_objects.when_is_done != training_objects.max_length
@@ -235,6 +158,3 @@ def test_replay_buffer(height: int, objects: Literal["trajectories", "transition
     print(
         f"After adding {len(training_objects)} trajectories, the replay buffer is {replay_buffer} \n {replay_buffer.training_objects}  "
     )
-
-
-test_replay_buffer(height=4, objects="transitions")

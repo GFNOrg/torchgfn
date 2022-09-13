@@ -31,5 +31,5 @@ def validate(
     l1_dist = (final_states_dist_pmf - true_dist_pmf).abs().mean().item()
     validation_info = {"l1_dist": l1_dist}
     if logZ is not None:
-        validation_info["logZ_diff"] = logZ - true_logZ
+        validation_info["logZ_diff"] = max(logZ - true_logZ, true_logZ - logZ)
     return validation_info

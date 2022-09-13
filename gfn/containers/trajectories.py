@@ -55,8 +55,8 @@ class Trajectories:
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
-            f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
-            f"when_is_done={self.when_is_done}, rewards={self.rewards})"
+            + f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
+            + f"when_is_done={self.when_is_done}, rewards={self.rewards})"
         )
 
     @property
@@ -70,7 +70,8 @@ class Trajectories:
     def max_length(self) -> int:
         if len(self) == 0:
             return 0
-        return self.when_is_done.max().item()
+
+        return self.actions.shape[0]
 
     @property
     def last_states(self) -> States:
@@ -118,7 +119,10 @@ class Trajectories:
             (
                 self.actions,
                 torch.full(
-                    size=(required_first_dim - self.max_length, self.n_trajectories),
+                    size=(
+                        required_first_dim - self.actions.shape[0],
+                        self.n_trajectories,
+                    ),
                     fill_value=-1,
                     dtype=torch.long,
                 ),
