@@ -96,6 +96,12 @@ for i in trange(args.n_iterations):
     scheduler.step()
     if not args.do_not_validate_with_training_examples:
         visited_terminating_states.extend(training_objects.last_states)  # type: ignore
+    # With TB, SubTB, and DB, each trajectory is responsible for propagating ONE reward back to the root.
+    # Thus, "states_visited", which is supposed to represent the number of times the reward function is
+    # queries, is equal to the number of trajectories, or the batch size.
+    # With FM however, the credit assignment is different, given that each terminating state,
+    # even though it is not the last state of its trajectory, is responsible for propagating ONE reward back to the root.
+    # Keep this in mind when interpreting "states_visited" ! The reward function is queried much more than that !
     to_log = {"loss": loss.item(), "states_visited": (i + 1) * args.batch_size}
     if use_wandb:
         wandb.log(to_log, step=i)

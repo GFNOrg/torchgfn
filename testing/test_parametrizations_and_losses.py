@@ -10,6 +10,7 @@ from gfn.estimators import (
     LogZEstimator,
 )
 from gfn.losses.detailed_balance import DetailedBalance
+from gfn.losses.flow_matching import FlowMatching
 from gfn.losses.sub_trajectory_balance import SubTrajectoryBalance
 from gfn.losses.trajectory_balance import TrajectoryBalance
 from gfn.parametrizations import (
@@ -18,21 +19,38 @@ from gfn.parametrizations import (
     SubTBParametrization,
     TBParametrization,
 )
-from gfn.samplers.actions_samplers import FixedActionsSampler, LogitPFActionsSampler
+from gfn.samplers.actions_samplers import (
+    FixedActionsSampler,
+    LogEdgeFlowsActionsSampler,
+    LogitPFActionsSampler,
+)
+from gfn.samplers.states_sampler import StatesSampler
 from gfn.samplers.trajectories_sampler import TrajectoriesSampler
 from gfn.samplers.transitions_sampler import TransitionsSampler
 
 
 @pytest.mark.parametrize("ndim", [2, 3])
-def test_FM_hypergrid(ndim: int):
+@pytest.mark.parametrize(
+    "module_name",
+    ["NeuralNet", "Zero", "Tabular"],
+)
+def test_FM_hypergrid(ndim: int, module_name: str):
     # TODO: once the flow matching loss implemented, add a test for it here, as done for the other parametrizations
     env = HyperGrid(ndim=ndim)
 
-    log_F_edge = LogEdgeFlowEstimator(env=env, module_name="NeuralNet")
+    log_F_edge = LogEdgeFlowEstimator(env=env, module_name=module_name)
     parametrization = FMParametrization(log_F_edge)
 
     print(parametrization.Pi(env, n_samples=10).sample())
     print(parametrization.parameters.keys())
+
+    actions_sampler = LogEdgeFlowsActionsSampler(log_F_edge)
+    states_sampler = StatesSampler(env, actions_sampler)
+
+    states = states_sampler.sample(n_objects=10)
+
+    loss = FlowMatching(parametrization, env)
+    print(loss(states))
 
 
 @pytest.mark.parametrize("ndim", [2, 3])
@@ -57,8 +75,8 @@ def test_FM_hypergrid(ndim: int):
 def test_PFBasedParametrization_hypergrid(
     ndim: int,
     module_name: str,
-    parametrization_name: str,
     tie_pb_to_pf: bool,
+    parametrization_name: str,
     sub_tb_weighing: str,
 ):
     env = HyperGrid(ndim=ndim, height=4)
@@ -66,7 +84,9 @@ def test_PFBasedParametrization_hypergrid(
     print("\nTrying the DB parametrization... with learnable logit_PB")
 
     logit_PF = LogitPFEstimator(env, module_name)
-    logit_PB = LogitPBEstimator(env, module_name)
+    logit_PB = LogitPBEstimator(
+        env, module_name, torso=logit_PF.module.torso if tie_pb_to_pf else None
+    )
     logF = LogStateFlowEstimator(
         env, module_name if module_name != "Uniform" else "Zero"
     )

@@ -48,6 +48,8 @@ for index in all_states_indices[all_states.forward_masks.long().sum(1) == 1].num
     U.append((index, F_edge[index, -1].item()))
 
 
+print("Calculating edge flows...")
+
 # Third Step: Iterate over the states in U and update the flows
 while len(U) > 0:
     s_prime_index, F_s_prime = U.pop(0)
@@ -77,12 +79,14 @@ while len(U) > 0:
 
 print(F_edge)
 
+print("Validating...")
+
 # Sanity check - should get the right pmf
 logF_edge = torch.log(F_edge)
-logF_edge_module = Tabular(env, output_dim=env.n_actions - 1)
-logF_edge_module.logits = logF_edge[:, :-1]
+logF_edge_module = Tabular(env, output_dim=env.n_actions)
+logF_edge_module.logits = logF_edge
 logF_edge_estimator = LogEdgeFlowEstimator(
     env=env, module_name="Tabular", module=logF_edge_module
 )
 parametrization = FMParametrization(logF=logF_edge_estimator)
-print(validate(env, parametrization, n_validation_samples=10000))
+print(validate(env, parametrization, n_validation_samples=100000))

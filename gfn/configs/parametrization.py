@@ -14,7 +14,13 @@ from gfn.estimators import (
     LogStateFlowEstimator,
     LogZEstimator,
 )
-from gfn.losses import DetailedBalance, Loss, SubTrajectoryBalance, TrajectoryBalance
+from gfn.losses import (
+    DetailedBalance,
+    FlowMatching,
+    Loss,
+    SubTrajectoryBalance,
+    TrajectoryBalance,
+)
 from gfn.parametrizations import (
     DBParametrization,
     FMParametrization,
@@ -57,10 +63,11 @@ class FMParametrizationConfig(BaseParametrizationConfig):
             env=env,
             **self.logF_edge.module_kwargs,
         )
-        _ = FMParametrization(logF_edge)
+        parametrization = FMParametrization(logF_edge)
 
-        # TODO: FlowMatching loss not implemented yet
-        raise NotImplementedError("FlowMatching loss not implemented yet")
+        loss = FlowMatching(parametrization, env)
+
+        return parametrization, loss
 
 
 @dataclass
