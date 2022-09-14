@@ -1,4 +1,4 @@
-from turtle import forward
+import os
 import torch
 from simple_parsing import ArgumentParser
 from simple_parsing.helpers.serialization import encode
@@ -52,7 +52,19 @@ parser.add_argument("--sample_from_reward", action="store_true", default=False)
 parser.add_argument("--reweight", action="store_true", default=False)
 parser.add_argument("--no_cuda", action="store_true", default=False)
 
+# Slurm specific arguments
+parser.add_argument("--task_id", type=int)
+parser.add_argument("--total", type=int)
+parser.add_argument("--offset", type=int, default=0)
 args = parser.parse_args()
+
+# If launched via slurm scheduler, change the args as follows:
+if os.environ.get("SLURM_PROCID") is not None:
+    slurm_process_id = int(os.environ["SLURM_PROCID"])
+    config_id = args.offset + slurm_process_id * args.total + args.task_id
+    print(config_id)
+assert False
+
 print(encode(args))
 
 torch.manual_seed(args.seed)
