@@ -13,23 +13,22 @@ parser.add_argument("--offset", type=int, default=0)
 args = parser.parse_args()
 
 job_name = args.job_name if args.job_name is not None else f"four_kls_{args.offset}"
-output_filename = f"/network/scratch/l/lahlosal/{job_name}"
+output_filename = f"/network/scratch/l/lahlosal/SLURM_OUTPUTS/{job_name}"
 ntasks_per_node = args.ntasks_per_node
 partition = args.partition
 gres = "gpu:1"
-cpus_per_task = 4
+cpus_per_task = 1
 mem = "10G"
 
 conda_env = "gfn"
 
 
-sbatch_directory = "sbatch_scripts/"
+sbatch_directory = "sbatch_scripts"
 if not os.path.exists(sbatch_directory):
     os.makedirs(sbatch_directory)
 
 bash_range = "{1.." + str(args.n_threads_per_task) + "}"
-sbatch_skeleton = f"""
-#!/bin/bash
+sbatch_skeleton = f"""#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH --output={output_filename}.out
 #SBATCH --ntasks-per-node={ntasks_per_node}
