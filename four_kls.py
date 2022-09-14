@@ -133,7 +133,14 @@ if use_wandb:
 
 visited_terminating_states = env.States()
 
-
+if (args.mode, args.sample_from_reward, args.reweight) in [
+    ("tb", True, True),
+    ("tb", False, True),
+    ("forward_kl", True, True),
+    ("reverse_kl", True, False),
+    ("reverse_kl", True, False),
+]:
+    raise ValueError("Invalid combination of parameters.")
 for i in trange(args.n_iterations):
     if args.sample_from_reward:
         samples_idx = torch.distributions.Categorical(probs=env.true_dist_pmf).sample(
@@ -172,29 +179,36 @@ for i in trange(args.n_iterations):
     optimizer_Z.step()
     scheduler_Z.step()
 
+    if args.reweight:
+        if args.sample_from_reward:
+            weights = torch.exp(scores) / torch.exp(scores).sum()
+        else:
+            weights = torch.exp(-scores) / torch.exp(-scores).sum()
+        weights = weights.detach()
+
     if args.mode == "tb":
         loss = (scores + parametrization.logZ.tensor).pow(2)
     elif args.mode == "forward_kl":
         loss = -logPB_trajectories * (scores.detach() - baseline) - logPF_trajectories
         if args.reweight:
-            loss = loss * (-scores.exp()) / (-scores.exp().sum()).detach()
+            loss = loss * weights
     elif args.mode == "reverse_kl":
         loss = logPF_trajectories * (scores.detach() - baseline) - logPB_trajectories
     elif args.mode == "rws":
         loss_pf = -logPF_trajectories
         if not args.sample_from_reward and args.reweight:
-            loss_pf = loss_pf * (-scores.exp()) / (-scores.exp().sum()).detach()
+            loss_pf = loss_pf * weights
         loss_pb = -logPB_trajectories
         if args.sample_from_reward and args.reweight:
-            loss_pb = loss_pb * (scores.exp()) / (scores.exp().sum()).detach()
+            loss_pb = loss_pb * weights
         loss = loss_pf + loss_pb
     elif args.mode == "reverse_rws":
         loss_pf = logPF_trajectories * (scores.detach() - baseline)
         if args.sample_from_reward and args.reweight:
-            loss_pf = loss_pf * (scores.exp()) / (scores.exp().sum()).detach()
+            loss_pf = loss_pf * weights
         loss_pb = -logPB_trajectories * (scores.detach() - baseline)
         if not args.sample_from_reward and args.reweight:
-            loss_pb = loss_pb * (-scores.exp()) / (-scores.exp().sum()).detach()
+            loss_pb = loss_pb * weights
         loss = loss_pf + loss_pb
 
     loss = loss.mean()
