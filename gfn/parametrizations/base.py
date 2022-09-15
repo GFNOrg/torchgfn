@@ -1,3 +1,4 @@
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 
@@ -61,3 +62,34 @@ class Parametrization(ABC):
                 parameters_dict[field.name] = estimator.tensor
 
         return parameters_dict
+
+    def save_state_dict(self, path: str):
+        for field in fields(self.__class__):
+            estimator = getattr(self, field.name)
+            if hasattr(estimator, "module"):
+                if isinstance(estimator.module, torch.nn.Module):
+                    torch.save(
+                        estimator.module.state_dict(),
+                        os.path.join(path, str(field.name) + "_module.pt"),
+                    )
+            elif hasattr(estimator, "tensor"):
+                torch.save(
+                    estimator.tensor, os.path.join(path, str(field.name) + "_tensor.pt")
+                )
+
+    def load_state_dict(self, path: str):
+        for field in fields(self.__class__):
+            estimator = getattr(self, field.name)
+            if hasattr(estimator, "module"):
+                if isinstance(estimator.module, torch.nn.Module) and os.path.exists(
+                    os.path.join(path, str(field.name) + "_module.pt")
+                ):
+                    estimator.module.load_state_dict(
+                        torch.load(os.path.join(path, str(field.name) + "_module.pt"))
+                    )
+            elif hasattr(estimator, "tensor") and os.path.exists(
+                os.path.join(path, str(field.name) + "_tensor.pt")
+            ):
+                estimator.tensor = torch.load(
+                    os.path.join(path, str(field.name) + "_tensor.pt")
+                )

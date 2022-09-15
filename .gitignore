@@ -181,3 +181,5 @@ wandb/
 scripts.py
 
 *.ipynb
+
+models/
