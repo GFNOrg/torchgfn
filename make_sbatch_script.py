@@ -22,6 +22,9 @@ mem = "10G"
 
 conda_env = "gfn"
 
+wandb_dir = "/home/mila/l/lahlosal/scratch/wandb"
+models_directory = "/home/mila/l/lahlosal/scratch/four_kls_models"
+
 
 sbatch_directory = "sbatch_scripts"
 if not os.path.exists(sbatch_directory):
@@ -41,8 +44,9 @@ module load anaconda/3
 conda activate {conda_env}
 
 
-srun --output={output_filename}-%t.out bash -c 'for i in {bash_range}; do python four_kls.py --task_id=$i --total={args.n_threads_per_task} --offset={args.offset}& done; wait;'
+srun --output={output_filename}-%t.out bash -c 'for i in {bash_range}; do python four_kls.py --task_id=$i --total={args.n_threads_per_task} --offset={args.offset} --wandb_dir={wandb_dir} --models_directory={models_directory}& done; wait;'
 """
+
 
 with open(f"{sbatch_directory}/{job_name}.sh", "w+") as f:
     f.writelines(sbatch_skeleton)

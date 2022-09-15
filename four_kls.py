@@ -53,6 +53,8 @@ parser.add_argument("--reweight", action="store_true", default=False)
 parser.add_argument("--no_cuda", action="store_true", default=False)
 
 parser.add_argument("--models_directory", type=str, default=None)
+parser.add_argument("--wandb_dir", type=str, default=None)
+
 
 parser.add_argument("--config_id", type=int, default=None)
 
@@ -224,6 +226,8 @@ use_wandb = len(args.wandb) > 0
 
 
 if use_wandb:
+    if args.wandb_dir is not None:
+        os.environ["WANDB_DIR"] = args.wandb_dir
     wandb.init(project=args.wandb, id=wandb_id, resume="allow")
     wandb.config.update(encode(args))
     if args.config_id is not None:
