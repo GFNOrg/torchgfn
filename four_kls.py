@@ -21,8 +21,8 @@ parser.add_argument("--ndim", type=int, default=4)
 parser.add_argument("--height", type=int, default=8)
 parser.add_argument("--R0", type=float, default=0.1)
 
-parser.add_argument("--batch_size", type=int, default=16)
-parser.add_argument("--n_iterations", type=int, default=1000)
+parser.add_argument("--batch_size", type=int, default=64)
+parser.add_argument("--n_iterations", type=int, default=40000)
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--lr_Z", type=float, default=0.1)
 parser.add_argument("--schedule", type=float, default=1.0)
@@ -33,7 +33,7 @@ parser.add_argument(
 parser.add_argument("--wandb", type=str, default="")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--uniform_pb", action="store_true", default=False)
-parser.add_argument("--untied", action="store_true", default=False)
+parser.add_argument("--tied", action="store_true", default=False)
 parser.add_argument("--off_policy", action="store_true", default=False)
 parser.add_argument(
     "--mode",
@@ -52,18 +52,71 @@ parser.add_argument("--sample_from_reward", action="store_true", default=False)
 parser.add_argument("--reweight", action="store_true", default=False)
 parser.add_argument("--no_cuda", action="store_true", default=False)
 
+parser.add_argument("--config_id", type=int, default=None)
+
 # Slurm specific arguments
 parser.add_argument("--task_id", type=int)
 parser.add_argument("--total", type=int)
 parser.add_argument("--offset", type=int, default=0)
 args = parser.parse_args()
 
-# If launched via slurm scheduler, change the args as follows:
-if os.environ.get("SLURM_PROCID") is not None:
-    slurm_process_id = int(os.environ["SLURM_PROCID"])
-    config_id = args.offset + slurm_process_id * args.total + args.task_id
-    print(config_id)
-assert False
+# If launched via slurm scheduler or args.config_id is specified, change the args as follows:
+if os.environ.get("SLURM_PROCID") is not None or args.config_id is not None:
+    if args.config_id is None:
+        slurm_process_id = int(os.environ["SLURM_PROCID"])
+        args.config_id = args.offset + slurm_process_id * args.total + args.task_id
+    config_id = args.config_id
+    print(config_id)  # config_id starts with 1
+    args.wandb = "four_kls_test_0"
+    args.no_cuda = True
+    changing_vars = [
+        "seed",
+        "ndim",
+        "height",
+        "R0",
+        "mode",
+        "baseline",
+        "sample_from_reward",
+        "reweight",
+    ]
+    seeds = range(10, 15)
+    env_configs = [(4, 8, 0.1), (2, 64, 0.01)]
+    modes = ["tb", "forward_kl", "reverse_kl", "rws", "reverse_rws"]
+    baselines = ["None", "local", "global"]
+    sample_from_rewards = [False, True]
+    reweights = [False, True]
+    config = []
+    for seed in seeds:
+        for ndim, height, R0 in env_configs:
+            for mode in modes:
+                for baseline in (
+                    baselines if args.mode not in ["tb", "rws"] else ["None"]
+                ):
+                    for sample_from_reward in (
+                        sample_from_rewards if args.mode != "reverse_kl" else [False]
+                    ):
+                        for reweight in (
+                            reweights
+                            if args.mode not in ["tb", "reverse_kl"]
+                            else [False]
+                        ):
+                            config.append(
+                                dict(
+                                    seed=seed,
+                                    ndim=ndim,
+                                    height=height,
+                                    R0=R0,
+                                    mode=mode,
+                                    baseline=baseline,
+                                    sample_from_reward=sample_from_reward,
+                                    reweight=reweight,
+                                )
+                            )
+    print(f"Total number of configs: {len(config)}. Config id: {config_id}")
+    print(config)
+    config = config[config_id - 1]
+    for var in changing_vars:
+        setattr(args, var, config[var])
 
 print(encode(args))
 
@@ -79,7 +132,7 @@ logit_PF = LogitPFEstimator(env=env, module_name="NeuralNet")
 logit_PB = LogitPBEstimator(
     env=env,
     module_name="Uniform" if args.uniform_pb else "NeuralNet",
-    torso=logit_PF.module.torso if not args.untied else None,
+    torso=logit_PF.module.torso if args.tied else None,
 )
 logZ = LogZEstimator(logZ_tensor)
 parametrization = TBParametrization(logit_PF, logit_PB, logZ)
@@ -150,7 +203,8 @@ if (args.mode, args.sample_from_reward, args.reweight) in [
     ("tb", False, True),
     ("forward_kl", True, True),
     ("reverse_kl", True, False),
-    ("reverse_kl", True, False),
+    ("reverse_kl", True, True),
+    ("reverse_kl", False, True),
 ]:
     raise ValueError("Invalid combination of parameters.")
 for i in trange(args.n_iterations):
