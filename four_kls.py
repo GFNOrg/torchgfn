@@ -229,7 +229,7 @@ if use_wandb:
     if args.wandb_dir is not None:
         os.environ["WANDB_DIR"] = args.wandb_dir
     wandb.init(project=args.wandb, id=wandb_id, resume="allow")
-    wandb.config.update(encode(args))
+    wandb.config.update(encode(args), allow_val_change=True)
     if args.config_id is not None:
         wandb.run.name = f"{args.wandb}_{args.config_id}"
     else:
