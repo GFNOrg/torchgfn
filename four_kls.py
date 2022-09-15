@@ -116,7 +116,9 @@ if os.environ.get("SLURM_PROCID") is not None or args.config_id is not None:
     config = config[config_id - 1]
     for var in changing_vars:
         setattr(args, var, config[var])
+
 print(encode(args))
+
 if args.config_id is not None:
     model_hash = str(args.wandb + str(args.config_id))
 else:
@@ -126,12 +128,18 @@ if args.models_directory is not None:
 else:
     models_directory = "models"
 save_path = os.path.join(models_directory, model_hash)
-print(save_path)
+
 loading_model = (
     save_path is not None
     and os.path.exists(save_path)
     and model_hash != "temporary_model"
 )
+if loading_model:
+    print(f"Trying to load model from {save_path}")
+elif save_path is not None:
+    if save_path is not None and not os.path.exists(save_path):
+        os.makedirs(save_path)
+    print(f"Model will be saved to {save_path}")
 
 torch.manual_seed(args.seed)
 device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
@@ -202,7 +210,6 @@ if args.replay_buffer_size > 0:
 visited_terminating_states = env.States()
 if loading_model:
     parametrization.load_state_dict(save_path)
-    print("Loaded model from", save_path)
     with open(os.path.join(save_path, "metadata.txt"), "r") as f:
         lines = f.readlines()
         iteration = int(lines[0].split(":")[-1].strip())
@@ -216,8 +223,8 @@ if loading_model:
         scheduler_Z.load_state_dict(
             torch.load(os.path.join(save_path, "scheduler_Z.pt"))
         )
-    print("Loaded optimizer from", save_path)
     visited_terminating_states.load(save_path)
+    print("Models, optimizers, and visited states loaded from", save_path)
 else:
     iteration = 0
     wandb_id = None
@@ -247,8 +254,7 @@ if (args.mode, args.sample_from_reward, args.reweight) in [
     ("reverse_kl", False, True),
 ]:
     raise ValueError("Invalid combination of parameters.")
-if save_path is not None and not os.path.exists(save_path):
-    os.makedirs(save_path)
+
 for i in trange(iteration, args.n_iterations):
     if args.sample_from_reward:
         samples_idx = torch.distributions.Categorical(probs=env.true_dist_pmf).sample(
@@ -336,18 +342,17 @@ for i in trange(iteration, args.n_iterations):
         to_log.update(validation_info)
         tqdm.write(f"{i}: {to_log}")
 
-        if save_path is not None and os.path.exists(save_path):
-            parametrization.save_state_dict(save_path)
-            torch.save(optimizer.state_dict(), os.path.join(save_path, "optimizer.pt"))
-            torch.save(scheduler.state_dict(), os.path.join(save_path, "scheduler.pt"))
-            visited_terminating_states.save(save_path)
-            if args.mode != "tb":
-                torch.save(
-                    optimizer_Z.state_dict(), os.path.join(save_path, "optimizer_Z.pt")
-                )
-                torch.save(
-                    scheduler_Z.state_dict(), os.path.join(save_path, "scheduler_Z.pt")
-                )
-            with open(os.path.join(save_path, "metadata.txt"), "w") as f:
-                f.write("Iteration: " + str(i) + "\n")
-                f.write(wandb.run.id)
+        parametrization.save_state_dict(save_path)
+        torch.save(optimizer.state_dict(), os.path.join(save_path, "optimizer.pt"))
+        torch.save(scheduler.state_dict(), os.path.join(save_path, "scheduler.pt"))
+        visited_terminating_states.save(save_path)
+        if args.mode != "tb":
+            torch.save(
+                optimizer_Z.state_dict(), os.path.join(save_path, "optimizer_Z.pt")
+            )
+            torch.save(
+                scheduler_Z.state_dict(), os.path.join(save_path, "scheduler_Z.pt")
+            )
+        with open(os.path.join(save_path, "metadata.txt"), "w") as f:
+            f.write("Iteration: " + str(i) + "\n")
+            f.write(wandb.run.id)

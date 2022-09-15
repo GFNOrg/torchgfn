@@ -22,7 +22,7 @@ mem = "10G"
 
 conda_env = "gfn"
 
-wandb_dir = "/home/mila/l/lahlosal/scratch/wandb"
+wandb_dir = "/home/mila/l/lahlosal/scratch/"
 models_directory = "/home/mila/l/lahlosal/scratch/four_kls_models"
 
 
