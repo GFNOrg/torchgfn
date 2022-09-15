@@ -89,16 +89,12 @@ if os.environ.get("SLURM_PROCID") is not None or args.config_id is not None:
     for seed in seeds:
         for ndim, height, R0 in env_configs:
             for mode in modes:
-                for baseline in (
-                    baselines if args.mode not in ["tb", "rws"] else ["None"]
-                ):
+                for baseline in baselines if mode not in ["tb", "rws"] else ["None"]:
                     for sample_from_reward in (
-                        sample_from_rewards if args.mode != "reverse_kl" else [False]
+                        sample_from_rewards if mode != "reverse_kl" else [False]
                     ):
                         for reweight in (
-                            reweights
-                            if args.mode not in ["tb", "reverse_kl"]
-                            else [False]
+                            reweights if mode not in ["tb", "reverse_kl"] else [False]
                         ):
                             config.append(
                                 dict(
@@ -113,11 +109,9 @@ if os.environ.get("SLURM_PROCID") is not None or args.config_id is not None:
                                 )
                             )
     print(f"Total number of configs: {len(config)}. Config id: {config_id}")
-    print(config)
     config = config[config_id - 1]
     for var in changing_vars:
         setattr(args, var, config[var])
-
 print(encode(args))
 
 torch.manual_seed(args.seed)
