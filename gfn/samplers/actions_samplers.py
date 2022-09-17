@@ -54,13 +54,11 @@ class ActionsSampler(ABC):
         with torch.no_grad():
             logits, probs = self.get_probs(states)
         if self.epsilon > 0:
-            print(probs)
             probs = (
                 1 - self.epsilon
             ) * probs + self.epsilon * states.forward_masks.float() / states.forward_masks.sum(
                 dim=-1, keepdim=True
             ).float()
-            print(probs)
 
         return logits, Categorical(probs).sample()
 
