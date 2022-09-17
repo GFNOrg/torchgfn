@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Sequence, Tuple
-
+import os
 import torch
 from torchtyping import TensorType
 
@@ -157,3 +157,19 @@ class Transitions:
         "Sample a random subset of transitions"
         perm = torch.randperm(self.n_transitions)
         return self[perm[:n_transitions]]
+
+    def save(self, directory: str) -> None:
+        if self.is_backward:
+            raise NotImplementedError("Not implemented for backward transitions")
+        self.states.save(os.path.join(directory, "transitions_states.pt"))
+        self.next_states.save(os.path.join(directory, "transitions_next_states.pt"))
+        torch.save(self.actions, os.path.join(directory, "transitions_actions.pt"))
+        torch.save(self.is_done, os.path.join(directory, "transitions_is_done.pt"))
+
+    def load(self, directory: str) -> None:
+        if self.is_backward:
+            raise NotImplementedError("Not implemented for backward transitions")
+        self.states.load(os.path.join(directory, "transitions_states.pt"))
+        self.next_states.load(os.path.join(directory, "transitions_next_states.pt"))
+        self.actions = torch.load(os.path.join(directory, "transitions_actions.pt"))
+        self.is_done = torch.load(os.path.join(directory, "transitions_is_done.pt"))

@@ -44,3 +44,9 @@ class ReplayBuffer:
 
     def sample(self, n_objects: int) -> Transitions | Trajectories:
         return self.training_objects.sample(n_objects)
+
+    def save(self, directory: str):
+        self.training_objects.save(directory)
+
+    def load(self, directory: str):
+        self.training_objects.load(directory)

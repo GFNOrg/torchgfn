@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-import os
 from typing import Any, Callable, ClassVar, Sequence
 
 import torch
@@ -264,14 +263,20 @@ class States(ABC):
         pass
 
     def save(self, path: str) -> None:
-        torch.save(self.states, os.path.join(path, "states_states.pt"))
-        torch.save(self.forward_masks, os.path.join(path, "states_forward_masks.pt"))
-        torch.save(self.backward_masks, os.path.join(path, "states_backward_masks.pt"))
+        torch.save(
+            {
+                "states": self.states,
+                "forward_masks": self.forward_masks,
+                "backward_masks": self.backward_masks,
+            },
+            path,
+        )
 
     def load(self, path: str) -> None:
-        self.states = torch.load(os.path.join(path, "states_states.pt"))
-        self.forward_masks = torch.load(os.path.join(path, "states_forward_masks.pt"))
-        self.backward_masks = torch.load(os.path.join(path, "states_backward_masks.pt"))
+        loaded = torch.load(path)
+        self.states = loaded["states"]
+        self.forward_masks = loaded["forward_masks"]
+        self.backward_masks = loaded["backward_masks"]
 
 
 def make_States_class(

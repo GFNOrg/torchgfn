@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 
 from typing import TYPE_CHECKING, Sequence
 
@@ -168,4 +169,20 @@ class Trajectories:
             actions=new_actions,
             when_is_done=new_when_is_done,
             is_backward=False,
+        )
+
+    def save(self, directory: str) -> None:
+        if self.is_backward:
+            raise ValueError("Cannot save backward trajectories.")
+        self.states.save(os.path.join(directory, "trajectories_states.pt"))
+        torch.save(self.actions, os.path.join(directory, "trajectories_actions.pt"))
+        torch.save(
+            self.when_is_done, os.path.join(directory, "trajectories_when_is_done.pt")
+        )
+
+    def load(self, directory: str) -> None:
+        self.states.load(os.path.join(directory, "trajectories_states.pt"))
+        self.actions = torch.load(os.path.join(directory, "trajectories_actions.pt"))
+        self.when_is_done = torch.load(
+            os.path.join(directory, "trajectories_when_is_done.pt")
         )
