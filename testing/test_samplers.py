@@ -8,7 +8,6 @@ from gfn.envs import HyperGrid
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator
 from gfn.samplers import TrajectoriesSampler, TransitionsSampler
 from gfn.samplers.actions_samplers import (
-    FixedActionsSampler,
     LogitPBActionsSampler,
     LogitPFActionsSampler,
 )
@@ -25,10 +24,8 @@ def test_hypergrid_trajectory_sampling(
 
     if human_print:
         print("\nTrying the Fixed Actions Sampler: ")
-    actions_sampler = FixedActionsSampler(
-        torch.tensor(
-            [[0, 1, 2, 0], [1, 1, 1, 2], [2, 2, 2, 2], [1, 0, 1, 2], [1, 0, 2, 1]]
-        )
+    actions_sampler = LogitPFActionsSampler(
+        LogitPFEstimator(env=env, module_name="NeuralNet")
     )
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
@@ -114,10 +111,8 @@ def test_hypergrid_transition_sampling(height: int):
     print("---Trying Forward sampling of trajectories---")
 
     print("Trying the Fixed Actions Sampler")
-    actions_sampler = FixedActionsSampler(
-        torch.tensor(
-            [[0, 1, 2, 0], [1, 1, 1, 2], [2, 2, 2, 2], [1, 0, 1, 2], [1, 0, 2, 1]]
-        )
+    actions_sampler = LogitPFActionsSampler(
+        LogitPFEstimator(env=env, module_name="NeuralNet")
     )
     transitions_sampler = TransitionsSampler(env, actions_sampler)
     transitions = transitions_sampler.sample_transitions(n_transitions=5)

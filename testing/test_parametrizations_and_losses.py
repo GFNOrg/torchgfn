@@ -20,7 +20,6 @@ from gfn.parametrizations import (
     TBParametrization,
 )
 from gfn.samplers.actions_samplers import (
-    FixedActionsSampler,
     LogEdgeFlowsActionsSampler,
     LogitPFActionsSampler,
 )
@@ -122,42 +121,6 @@ def test_PFBasedParametrization_hypergrid(
     loss = loss_fn(training_objects)
 
     print(loss)
-
-    if (
-        ndim == 2
-        and parametrization_name in ("TB", "SubTB")
-        and module_name == "Uniform"
-    ):
-        print("Evaluating the TB loss on 5 trajectories with manually chosen actions")
-        actions_sampler = FixedActionsSampler(
-            torch.tensor(
-                [[0, 1, 2, 0], [1, 1, 1, 2], [2, 2, 2, 2], [1, 0, 1, 2], [1, 2, 2, 1]]
-            )
-        )
-        trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
-        trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
-        # sanity check, by hand, we should get the following loss
-        pbs = torch.tensor([0.5, 1, 1, 0.25, 1.0])
-        pfs = torch.tensor(
-            [
-                1.0 / (3**3),
-                1.0 / (3**3) * 0.5,
-                1.0 / 3,
-                1.0 / (3**4),
-                1.0 / (3**2),
-            ]
-        )
-        true_losses_exp = torch.exp(logZ.tensor) * pfs / (pbs * trajectories.rewards)
-        true_loss = torch.log(true_losses_exp).pow(2).mean()
-
-        loss = loss_fn(trajectories)
-
-        print(loss)
-        if parametrization_name == "TB":
-            if true_loss == loss:
-                print("OK - TB LOSS PROBABLY OK")
-            else:
-                raise ValueError("TB LOSS NOT PROPERLY CALCULATED")
 
 
 @pytest.mark.parametrize("ndim", [2, 3])

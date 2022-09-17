@@ -1,7 +1,6 @@
 from .actions_samplers import (
     ActionsSampler,
     BackwardActionsSampler,
-    FixedActionsSampler,
     LogEdgeFlowsActionsSampler,
     LogitPBActionsSampler,
     LogitPFActionsSampler,

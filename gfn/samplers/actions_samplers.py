@@ -21,20 +21,13 @@ class ActionsSampler(ABC):
         self,
         temperature: float = 1.0,
         sf_temperature: float = 0.0,
-        scheduler_gamma: Optional[float] = None,
-        scheduler_milestones: Optional[List[int]] = None,
+        epsilon: float = 0.0,
     ) -> None:
         # sf_temperature is a quantity to SUBTRACT from the logits of the final action.
-        # This is useful for preventing the final action from being chosen too often.
-        # scheduler_milestones is a list of milestones at which to adjust the temperature and sf_temperature.,
-        # and scheduler_gamma is the factor by which to multiply the temperatures at each milestone
-        # the step is incremented by 1 after each call to sample(), regardless of the batch size.
+        # with probability epsilon, an action is sampled uniformly at random.
         self.temperature = temperature
         self.sf_temperature = sf_temperature
-        self.scheduler_gamma = scheduler_gamma
-        self.scheduler_milestones = scheduler_milestones
-        self.step = 0
-        self.current_milestone_index = 0
+        self.epsilon = epsilon
 
     @abstractmethod
     def get_raw_logits(self, states: States) -> Tensor2D:
@@ -60,17 +53,16 @@ class ActionsSampler(ABC):
     def sample(self, states: States) -> Tuple[Tensor2D, Tensor1D]:
         with torch.no_grad():
             logits, probs = self.get_probs(states)
-        self.update_state()
+        if self.epsilon > 0:
+            print(probs)
+            probs = (
+                1 - self.epsilon
+            ) * probs + self.epsilon * states.forward_masks.float() / states.forward_masks.sum(
+                dim=-1, keepdim=True
+            ).float()
+            print(probs)
 
         return logits, Categorical(probs).sample()
-
-    def update_state(self) -> None:
-        if self.scheduler_gamma is not None and self.scheduler_milestones is not None:
-            if self.scheduler_milestones[self.current_milestone_index] == self.step:
-                self.temperature *= self.scheduler_gamma
-                self.sf_temperature *= self.scheduler_gamma
-                self.current_milestone_index += 1
-        self.step += 1
 
 
 class BackwardActionsSampler(ActionsSampler):
@@ -93,22 +85,6 @@ class BackwardActionsSampler(ActionsSampler):
         # making the state stay at s_0
         probs = probs.nan_to_num(nan=1.0 / probs.shape[-1])
         return logits, probs
-
-
-class FixedActionsSampler(ActionsSampler):
-    # Should be used for debugging and testing purposes.
-    def __init__(self, actions: Tensor2D2, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.actions = actions
-        self.total_steps = actions.shape[1]
-
-    def get_raw_logits(self, states: States) -> Tensor2D:
-        logits = torch.ones_like(states.forward_masks, dtype=torch.float) * (
-            -float("inf")
-        )
-
-        logits.scatter_(1, self.actions[:, self.step].unsqueeze(-1), 0.0)
-        return logits
 
 
 class LogitPFActionsSampler(ActionsSampler):

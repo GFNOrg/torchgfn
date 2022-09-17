@@ -4,7 +4,6 @@ import torch
 
 from gfn.containers import States, Transitions
 
-from .actions_samplers import FixedActionsSampler
 from .base import TrainingSampler
 
 
@@ -38,11 +37,6 @@ class TransitionsSampler(TrainingSampler):
             if self.is_backward
             else new_states.is_sink_state
         )
-
-        if isinstance(self.actions_sampler, FixedActionsSampler):
-            self.actions_sampler.actions = self.actions_sampler.actions[
-                valid_actions != self.env.n_actions - 1
-            ]
 
         transitions = Transitions(
             env=self.env,

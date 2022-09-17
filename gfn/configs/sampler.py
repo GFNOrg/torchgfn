@@ -28,8 +28,6 @@ from gfn.samplers import (
 class SamplerConfig(JsonSerializable):
     temperature: float = 1.0
     sf_temperature: float = 0.0
-    scheduler_gamma: Optional[float] = None
-    scheduler_milestones: Optional[List[int]] = None
 
     def parse(
         self, env: Env, parametrization: Parametrization
@@ -56,8 +54,6 @@ class SamplerConfig(JsonSerializable):
             estimator=estimator,
             temperature=self.temperature,
             sf_temperature=self.sf_temperature,
-            scheduler_gamma=self.scheduler_gamma,
-            scheduler_milestones=self.scheduler_milestones,
         )
 
         training_sampler: TrainingSampler = training_sampler_cls(

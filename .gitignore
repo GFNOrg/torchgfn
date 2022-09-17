@@ -183,3 +183,5 @@ scripts.py
 *.ipynb
 
 models/
+
+*.DS_Store

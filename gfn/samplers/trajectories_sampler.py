@@ -5,7 +5,6 @@ from torchtyping import TensorType
 
 from gfn.containers import States, Trajectories
 
-from .actions_samplers import FixedActionsSampler
 from .base import TrainingSampler
 
 # Typing
@@ -66,11 +65,6 @@ class TrajectoriesSampler(TrainingSampler):
             dones = dones | new_dones
 
             trajectories_states += [states.states]
-
-            if isinstance(self.actions_sampler, FixedActionsSampler):
-                self.actions_sampler.actions = self.actions_sampler.actions[
-                    valid_actions != self.env.n_actions - 1
-                ]
 
         trajectories_states = torch.stack(trajectories_states, dim=0)
         trajectories_states = self.env.States(states=trajectories_states)
