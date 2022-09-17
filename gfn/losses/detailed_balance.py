@@ -3,7 +3,7 @@ from torchtyping import TensorType
 
 from gfn.containers import Transitions
 from gfn.losses.base import EdgeDecomposableLoss
-from gfn.parametrizations import DBParametrization
+from gfn.parametrizations import DBParametrization, TBParametrization
 from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsSampler
 
 # Typing
@@ -12,7 +12,7 @@ LossTensor = TensorType[0, float]
 
 
 class DetailedBalance(EdgeDecomposableLoss):
-    def __init__(self, parametrization: DBParametrization):
+    def __init__(self, parametrization: DBParametrization | TBParametrization):
         self.parametrization = parametrization
         self.actions_sampler = LogitPFActionsSampler(parametrization.logit_PF)
         self.backward_actions_sampler = LogitPBActionsSampler(parametrization.logit_PB)
@@ -83,3 +83,48 @@ class DetailedBalance(EdgeDecomposableLoss):
             raise ValueError("loss is nan")
 
         return loss
+
+    def get_modified_scores(self, transitions: Transitions) -> ScoresTensor:
+        "DAG-GFN-style detailed balance, for when all states are connected to the sink"
+        if transitions.is_backward:
+            raise ValueError("Backward transitions are not supported")
+        mask = ~transitions.next_states.is_sink_state
+        valid_states = transitions.states[mask]
+        valid_next_states = transitions.next_states[mask]
+        valid_actions = transitions.actions[mask]
+        all_rewards = transitions.all_rewards[mask]
+
+        valid_pf_logits = self.actions_sampler.get_logits(valid_states)
+        valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
+        valid_log_pf_actions = torch.gather(
+            valid_log_pf_all, dim=-1, index=valid_actions.unsqueeze(-1)
+        ).squeeze(-1)
+        valid_log_pf_s_exit = valid_log_pf_all[:, -1]
+
+        # The following two lines are slightly inefficient, given that most
+        # next_states are also states, for which we already did a forward pass.
+        valid_log_pf_s_prime_all = self.actions_sampler.get_logits(
+            valid_next_states
+        ).log_softmax(dim=-1)
+        valid_log_pf_s_prime_exit = valid_log_pf_s_prime_all[:, -1]
+
+        valid_pb_logits = self.backward_actions_sampler.get_logits(valid_next_states)
+        valid_log_pb_all = valid_pb_logits.log_softmax(dim=-1)
+        valid_log_pb_actions = torch.gather(
+            valid_log_pb_all, dim=-1, index=valid_actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        preds = (
+            torch.log(all_rewards[:, 0])
+            + valid_log_pf_actions
+            + valid_log_pf_s_prime_exit
+        )
+        targets = (
+            torch.log(all_rewards[:, 1]) + valid_log_pb_actions + valid_log_pf_s_exit
+        )
+
+        scores = preds - targets
+        if torch.any(torch.isinf(scores)):
+            raise ValueError("scores contains inf")
+
+        return scores

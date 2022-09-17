@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Sequence, Tuple
 
 import torch
 from torchtyping import TensorType
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 LongTensor = TensorType["n_transitions", torch.long]
 BoolTensor = TensorType["n_transitions", torch.bool]
 FloatTensor = TensorType["n_transitions", torch.float]
+PairFloatTensor = TensorType["n_transitions", 2, torch.float]
 
 
 class Transitions:
@@ -112,6 +113,23 @@ class Transitions:
             )
             rewards[self.is_done] = self.env.reward(self.last_states)
             return rewards
+
+    @property
+    def all_rewards(self) -> PairFloatTensor:
+        """This is applicable to environments where all states are terminating.
+        This function evaluates the rewards for all transitions that do not end in the sink state."""
+        if self.is_backward:
+            raise NotImplementedError("Not implemented for backward transitions")
+        is_sink_state = self.next_states.is_sink_state
+        rewards = torch.full(
+            (self.n_transitions, 2),
+            fill_value=-1.0,
+            dtype=torch.float,
+            device=self.states.device,
+        )
+        rewards[~is_sink_state, 0] = self.env.reward(self.states[~is_sink_state])
+        rewards[~is_sink_state, 1] = self.env.reward(self.next_states[~is_sink_state])
+        return rewards
 
     def __getitem__(self, index: int | Sequence[int]) -> Transitions:
         if isinstance(index, int):
