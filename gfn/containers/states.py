@@ -277,6 +277,9 @@ class States(ABC):
         self.states = loaded["states"]
         self.forward_masks = loaded["forward_masks"]
         self.backward_masks = loaded["backward_masks"]
+        shape = tuple(self.states.shape)
+        assert shape[-self.__class__.state_ndim :] == self.__class__.state_shape  # type: ignore
+        self.batch_shape = shape[: -self.__class__.state_ndim]  # type: ignore
 
 
 def make_States_class(
