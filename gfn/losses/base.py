@@ -37,7 +37,11 @@ class StateDecomposableLoss(Loss, ABC):
 
 class TrajectoryDecomposableLoss(Loss, ABC):
     def get_pfs_and_pbs(
-        self, trajectories: Trajectories, fill_value: float = 0.0
+        self,
+        trajectories: Trajectories,
+        fill_value: float = 0.0,
+        temperature: float = 1.0,
+        epsilon=0.0,
     ) -> Tuple[LogPTrajectoriesTensor, LogPTrajectoriesTensor]:
         # fill value is the value used for invalid states (sink state usually)
         if trajectories.is_backward:
@@ -52,7 +56,13 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         if valid_states.batch_shape != tuple(valid_actions.shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
         valid_pf_logits = self.actions_sampler.get_logits(valid_states)
+        valid_pf_logits = valid_pf_logits / temperature
         valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
+        valid_log_pf_all = (
+            1 - epsilon
+        ) * valid_log_pf_all + epsilon * valid_states.forward_masks.float() / valid_states.forward_masks.sum(
+            dim=-1, keepdim=True
+        )
         valid_log_pf_actions = torch.gather(
             valid_log_pf_all, dim=-1, index=valid_actions.unsqueeze(-1)
         ).squeeze(-1)
