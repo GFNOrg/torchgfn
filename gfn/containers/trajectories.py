@@ -27,6 +27,8 @@ class Trajectories:
         actions: Tensor2D | None = None,
         when_is_done: Tensor1D | None = None,
         is_backward: bool = False,
+        log_pfs: FloatTensor1D | None = None,  # log_probs of the trajectories
+        log_pbs: FloatTensor1D | None = None,  # log_probs of the backward trajectories
     ) -> None:
         self.env = env
         self.is_backward = is_backward
@@ -42,6 +44,8 @@ class Trajectories:
             if when_is_done is not None
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
         )
+        self.log_pfs = log_pfs
+        self.log_pbs = log_pbs
 
     def __repr__(self) -> str:
         states = self.states.states.transpose(0, 1)

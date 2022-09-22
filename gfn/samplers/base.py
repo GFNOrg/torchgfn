@@ -11,9 +11,16 @@ class TrainingSampler(ABC):
     Abstract base class for samplers of objects (states, trajectories, or transitions) that are used during training
     """
 
-    def __init__(self, env: Env, actions_sampler: ActionsSampler, **kwargs):
+    def __init__(
+        self,
+        env: Env,
+        actions_sampler: ActionsSampler,
+        backward_actions_sampler: BackwardActionsSampler | None = None,
+        **kwargs
+    ):
         self.env = env
         self.actions_sampler = actions_sampler
+        self.backward_actions_sampler = backward_actions_sampler
         self.is_backward = isinstance(actions_sampler, BackwardActionsSampler)
 
     @abstractmethod

@@ -36,6 +36,8 @@ class TrajectoriesSampler(TrainingSampler):
         trajectories_states: List[StatesTensor] = [states.states]
         trajectories_actions: List[ActionsTensor] = []
         trajectories_dones = torch.zeros(n_trajectories, dtype=torch.long)
+        trajectories_log_pfs = torch.zeros(n_trajectories, dtype=torch.float)
+        trajectories_log_pbs = torch.zeros(n_trajectories, dtype=torch.float)
         step = 0
 
         while not all(dones):
@@ -45,20 +47,32 @@ class TrajectoriesSampler(TrainingSampler):
                 dtype=torch.long,
                 device=states.device,
             )
-            _, valid_actions = self.actions_sampler.sample(states[~dones])
+            actions_log_probs, valid_actions = self.actions_sampler.sample(
+                states[~dones]
+            )
             actions[~dones] = valid_actions
             trajectories_actions += [actions]
+            trajectories_log_pfs[~dones] += actions_log_probs
 
             if self.is_backward:
                 new_states = self.env.backward_step(states, actions)
             else:
                 new_states = self.env.step(states, actions)
+            sink_states_mask = new_states.is_sink_state
+            if self.backward_actions_sampler is not None and not self.is_backward:
+                non_sink_new_states = new_states[~sink_states_mask]
+                _, backward_probs = self.backward_actions_sampler.get_probs(
+                    non_sink_new_states
+                )
+                trajectories_log_pbs[~sink_states_mask] += (
+                    backward_probs.gather(-1, actions[~sink_states_mask].unsqueeze(-1))
+                    .squeeze(-1)
+                    .log()
+                )
             step += 1
 
             new_dones = (
-                new_states.is_initial_state
-                if self.is_backward
-                else new_states.is_sink_state
+                new_states.is_initial_state if self.is_backward else sink_states_mask
             ) & ~dones
             trajectories_dones[new_dones & ~dones] = step
             states = new_states
@@ -76,6 +90,10 @@ class TrajectoriesSampler(TrainingSampler):
             actions=trajectories_actions,
             when_is_done=trajectories_dones,
             is_backward=self.is_backward,
+            log_pfs=trajectories_log_pfs,
+            log_pbs=trajectories_log_pbs
+            if self.backward_actions_sampler is not None and not self.is_backward
+            else None,
         )
 
         return trajectories

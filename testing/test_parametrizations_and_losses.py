@@ -21,6 +21,7 @@ from gfn.parametrizations import (
 )
 from gfn.samplers.actions_samplers import (
     LogEdgeFlowsActionsSampler,
+    LogitPBActionsSampler,
     LogitPFActionsSampler,
 )
 from gfn.samplers.states_sampler import StatesSampler
@@ -92,6 +93,7 @@ def test_PFBasedParametrization_hypergrid(
     logZ = LogZEstimator(torch.tensor(0.0))
 
     actions_sampler = LogitPFActionsSampler(estimator=logit_PF)
+    backward_actions_sampler = LogitPBActionsSampler(estimator=logit_PB)
 
     loss_kwargs = {}
     if parametrization_name == "DB":
@@ -114,11 +116,31 @@ def test_PFBasedParametrization_hypergrid(
     print(parametrization.parameters.keys())
     print(len(set(parametrization.parameters.values())))
 
-    training_sampler = training_sampler_cls(env=env, actions_sampler=actions_sampler)
+    training_sampler = training_sampler_cls(
+        env=env,
+        actions_sampler=actions_sampler,
+        backward_actions_sampler=backward_actions_sampler,
+    )
 
     training_objects = training_sampler.sample(n_objects=10)
     loss_fn = loss_cls(parametrization, **loss_kwargs)
     loss = loss_fn(training_objects)
+
+    if parametrization_name == "TB":
+        assert torch.all(
+            torch.abs(
+                loss_fn.get_pfs_and_pbs(training_objects)[0].sum(0)
+                - training_objects.log_pfs
+            )
+            < 1e-5
+        )
+        assert torch.all(
+            torch.abs(
+                loss_fn.get_pfs_and_pbs(training_objects)[1].sum(0)
+                - training_objects.log_pbs
+            )
+            < 1e-5
+        )
 
     print(loss)
 

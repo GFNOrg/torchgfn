@@ -18,20 +18,29 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         self,
         parametrization: TBParametrization,
         reward_clip_min: float = 1e-5,
+        on_policy: bool = False,
     ):
         self.parametrization = parametrization
         self.reward_clip_min = reward_clip_min
         self.actions_sampler = LogitPFActionsSampler(parametrization.logit_PF)
         self.backward_actions_sampler = LogitPBActionsSampler(parametrization.logit_PB)
+        self.on_policy = on_policy
 
     def get_scores(
         self, trajectories: Trajectories
     ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
 
-        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(trajectories)
+        if self.on_policy:
+            assert trajectories.log_pbs is not None
+            log_pf_trajectories = trajectories.log_pfs
+            log_pb_trajectories = trajectories.log_pbs
+        else:
+            log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
+                trajectories
+            )
 
-        log_pf_trajectories = log_pf_trajectories.sum(dim=0)
-        log_pb_trajectories = log_pb_trajectories.sum(dim=0)
+            log_pf_trajectories = log_pf_trajectories.sum(dim=0)
+            log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
         rewards = trajectories.rewards
         log_rewards = torch.log(rewards.clamp_min(self.reward_clip_min))  # type: ignore
