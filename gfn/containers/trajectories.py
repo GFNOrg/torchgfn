@@ -98,12 +98,16 @@ class Trajectories:
         actions = self.actions[:, index]
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
+        log_pfs = self.log_pfs[index] if self.log_pfs is not None else None
+        log_pbs = self.log_pbs[index] if self.log_pbs is not None else None
         return Trajectories(
             env=self.env,
             states=states,
             actions=actions,
             when_is_done=when_is_done,
             is_backward=self.is_backward,
+            log_pfs=log_pfs,
+            log_pbs=log_pbs,
         )
 
     def extend(self, other: Trajectories) -> None:
