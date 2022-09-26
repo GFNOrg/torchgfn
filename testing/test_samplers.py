@@ -7,10 +7,7 @@ from gfn.containers import ReplayBuffer, Trajectories
 from gfn.envs import HyperGrid
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator
 from gfn.samplers import TrajectoriesSampler, TransitionsSampler
-from gfn.samplers.actions_samplers import (
-    LogitPBActionsSampler,
-    LogitPFActionsSampler,
-)
+from gfn.samplers.actions_samplers import LogitPBActionsSampler, LogitPFActionsSampler
 
 
 @pytest.mark.parametrize("height", [4, 5])

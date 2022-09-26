@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence, Tuple
 import os
+from typing import TYPE_CHECKING, Sequence
+
 import torch
 from torchtyping import TensorType
 

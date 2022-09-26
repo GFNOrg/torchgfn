@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Tuple
 
 from simple_parsing.helpers import JsonSerializable
 
@@ -11,8 +11,8 @@ from gfn.parametrizations import (
 )
 from gfn.parametrizations.forward_probs import (
     DBParametrization,
-    TBParametrization,
     SubTBParametrization,
+    TBParametrization,
 )
 from gfn.samplers import (
     LogEdgeFlowsActionsSampler,

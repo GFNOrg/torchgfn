@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
-from random import uniform
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 from torch.distributions import Categorical
@@ -23,14 +22,12 @@ class ActionsSampler(ABC):
         temperature: float = 1.0,
         sf_temperature: float = 0.0,
         epsilon: float = 0.0,
-        exclude_sf_from_uniform: bool = False,
     ) -> None:
         # sf_temperature is a quantity to SUBTRACT from the logits of the final action.
         # with probability epsilon, an action is sampled uniformly at random.
         self.temperature = temperature
         self.sf_temperature = sf_temperature
         self.epsilon = epsilon
-        self.exclude_sf_from_uniform = exclude_sf_from_uniform
 
     @abstractmethod
     def get_raw_logits(self, states: States) -> Tensor2D:
@@ -56,22 +53,10 @@ class ActionsSampler(ABC):
     def sample(self, states: States) -> Tuple[Tensor2D, Tensor1D]:
         logits, probs = self.get_probs(states)
         if self.epsilon > 0:
-            if self.exclude_sf_from_uniform:
-                forward_mask_clone = states.forward_masks.clone()
-                at_least_one_possible_non_exit_action = torch.any(
-                    forward_mask_clone[..., :-1], dim=-1
-                )
-                forward_mask_clone[at_least_one_possible_non_exit_action][
-                    ..., -1
-                ] = False
-                uniform_dist = forward_mask_clone.float() / torch.sum(
-                    forward_mask_clone.float(), dim=-1, keepdim=True
-                )
-            else:
-                uniform_dist = (
-                    states.forward_masks.float()
-                    / states.forward_masks.sum(dim=-1, keepdim=True).float()
-                )
+            uniform_dist = (
+                states.forward_masks.float()
+                / states.forward_masks.sum(dim=-1, keepdim=True).float()
+            )
             probs = (1 - self.epsilon) * probs + self.epsilon * uniform_dist
         dist = Categorical(probs=probs)
         with torch.no_grad():

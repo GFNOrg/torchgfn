@@ -3,6 +3,6 @@ from .edge_flows import FMParametrization
 from .forward_probs import (
     DBParametrization,
     PFBasedParametrization,
-    TBParametrization,
     SubTBParametrization,
+    TBParametrization,
 )
