@@ -44,8 +44,8 @@ class Trajectories:
             if when_is_done is not None
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
         )
-        self.log_pfs = log_pfs
-        self.log_pbs = log_pbs
+        self.log_pfs = log_pfs if log_pfs is not None else torch.zeros(0)
+        self.log_pbs = log_pbs if log_pbs is not None else torch.zeros(0)
 
     def __repr__(self) -> str:
         states = self.states.states.transpose(0, 1)
@@ -99,7 +99,7 @@ class Trajectories:
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
         log_pfs = self.log_pfs[index] if self.log_pfs is not None else None
-        log_pbs = self.log_pbs[index] if self.log_pbs is not None else None
+        log_pbs = self.log_pbs[index] if len(self.log_pbs) > 0 else None
         return Trajectories(
             env=self.env,
             states=states,
@@ -118,6 +118,10 @@ class Trajectories:
         self.states.extend(other.states)
         self.actions = torch.cat((self.actions, other.actions), dim=1)
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
+        if self.log_pfs is not None and other.log_pfs is not None:
+            self.log_pfs = torch.cat((self.log_pfs, other.log_pfs), dim=0)
+        if self.log_pbs is not None and other.log_pbs is not None:
+            self.log_pbs = torch.cat((self.log_pbs, other.log_pbs), dim=0)
 
     def extend_actions(self, required_first_dim: int) -> None:
         """Extends the actions along the first dimension by by adding -1s as necessary.
@@ -187,6 +191,8 @@ class Trajectories:
         torch.save(
             self.when_is_done, os.path.join(directory, "trajectories_when_is_done.pt")
         )
+        torch.save(self.log_pfs, os.path.join(directory, "trajectories_log_pfs.pt"))
+        torch.save(self.log_pbs, os.path.join(directory, "trajectories_log_pbs.pt"))
 
     def load(self, directory: str) -> None:
         self.states.load(os.path.join(directory, "trajectories_states.pt"))
@@ -194,3 +200,5 @@ class Trajectories:
         self.when_is_done = torch.load(
             os.path.join(directory, "trajectories_when_is_done.pt")
         )
+        self.log_pfs = torch.load(os.path.join(directory, "trajectories_log_pfs.pt"))
+        self.log_pbs = torch.load(os.path.join(directory, "trajectories_log_pbs.pt"))

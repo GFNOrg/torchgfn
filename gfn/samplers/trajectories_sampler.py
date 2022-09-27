@@ -93,7 +93,7 @@ class TrajectoriesSampler(TrainingSampler):
             log_pfs=trajectories_log_pfs,
             log_pbs=trajectories_log_pbs
             if self.backward_actions_sampler is not None and not self.is_backward
-            else None,
+            else torch.zeros(0),
         )
 
         return trajectories
