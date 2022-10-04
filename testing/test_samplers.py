@@ -19,8 +19,6 @@ def test_hypergrid_trajectory_sampling(
         print("---Trying Forward sampling of trajectories---")
     env = HyperGrid(ndim=2, height=height, preprocessor_name=preprocessor_name)
 
-    if human_print:
-        print("\nTrying the Fixed Actions Sampler: ")
     actions_sampler = LogitPFActionsSampler(
         LogitPFEstimator(env=env, module_name="NeuralNet")
     )
@@ -107,7 +105,6 @@ def test_hypergrid_transition_sampling(height: int):
 
     print("---Trying Forward sampling of trajectories---")
 
-    print("Trying the Fixed Actions Sampler")
     actions_sampler = LogitPFActionsSampler(
         LogitPFEstimator(env=env, module_name="NeuralNet")
     )

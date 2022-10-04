@@ -156,6 +156,8 @@ class States(ABC):
             raise ValueError(
                 f"extend is not implemented for batch shapes {self.batch_shape} and {other_batch_shape}"
             )
+        # free memory
+        del other
 
     def extend_with_sf(self, required_first_dim: int) -> None:
         """Takes a two-dimensional batch of states (i.e. of batch_shape (a, b)),
@@ -280,6 +282,13 @@ class States(ABC):
         shape = tuple(self.states.shape)
         assert shape[-self.__class__.state_ndim :] == self.__class__.state_shape  # type: ignore
         self.batch_shape = shape[: -self.__class__.state_ndim]  # type: ignore
+
+    def copy(self) -> States:
+        return self.__class__(
+            self.states.clone(),
+            self.forward_masks.clone(),
+            self.backward_masks.clone(),
+        )
 
 
 def make_States_class(

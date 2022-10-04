@@ -8,6 +8,8 @@ from .transitions import Transitions
 if TYPE_CHECKING:
     from ..envs import Env
 
+# TODO: fix the memory leak
+
 
 class ReplayBuffer:
     def __init__(
@@ -18,7 +20,7 @@ class ReplayBuffer:
     ):
         self.env = env
         self.capacity = capacity
-        self.type = objects
+        self.objects_type = objects
         if objects == "transitions":
             self.training_objects = Transitions(env)
         else:
@@ -28,7 +30,7 @@ class ReplayBuffer:
         self._index = 0
 
     def __repr__(self):
-        return f"ReplayBuffer(capacity={self.capacity}, containing {len(self)} {self.type})"
+        return f"ReplayBuffer(capacity={self.capacity}, containing {len(self)} {self.objects_type})"
 
     def __len__(self):
         return self.capacity if self._is_full else self._index
@@ -50,3 +52,4 @@ class ReplayBuffer:
 
     def load(self, directory: str):
         self.training_objects.load(directory)
+        self._index = len(self.training_objects)

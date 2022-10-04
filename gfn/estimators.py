@@ -46,7 +46,7 @@ class FunctionEstimator:
         return self.module(self.preprocessor(states))
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.env}, {self.module})"
+        return f"{self.__class__.__name__}({self.module})"
 
 
 class LogEdgeFlowEstimator(FunctionEstimator):

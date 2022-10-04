@@ -51,7 +51,7 @@ class Trajectories:
         states = self.states.states.transpose(0, 1)
         assert states.ndim == 3
         trajectories_representation = ""
-        for traj in states:
+        for traj in states[:10]:
             one_traj_repr = []
             for step in traj:
                 one_traj_repr.append(str(step.numpy()))
@@ -59,9 +59,9 @@ class Trajectories:
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
-            f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length},"
-            + f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1).numpy()}, "
-            + f"when_is_done={self.when_is_done}, rewards={self.rewards})"
+            f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length}, First 10 trajectories:"
+            + f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1)[:10].numpy()}, "
+            + f"when_is_done={self.when_is_done[:10].numpy()})"
         )
 
     @property
@@ -92,14 +92,14 @@ class Trajectories:
         "Returns a subset of the `n_trajectories` trajectories."
         if isinstance(index, int):
             index = [index]
-        when_is_done = self.when_is_done[index]
+        when_is_done = self.when_is_done[index].clone()
         new_max_length = when_is_done.max().item() if len(when_is_done) > 0 else 0
-        states = self.states[:, index]
-        actions = self.actions[:, index]
+        states = self.states[:, index].copy()
+        actions = self.actions[:, index].clone()
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
-        log_pfs = self.log_pfs[index] if self.log_pfs is not None else None
-        log_pbs = self.log_pbs[index] if len(self.log_pbs) > 0 else None
+        log_pfs = self.log_pfs[index].clone() if self.log_pfs is not None else None
+        log_pbs = self.log_pbs[index].clone() if len(self.log_pbs) > 0 else None
         return Trajectories(
             env=self.env,
             states=states,
@@ -202,3 +202,14 @@ class Trajectories:
         )
         self.log_pfs = torch.load(os.path.join(directory, "trajectories_log_pfs.pt"))
         self.log_pbs = torch.load(os.path.join(directory, "trajectories_log_pbs.pt"))
+
+    def copy(self) -> Trajectories:
+        return Trajectories(
+            env=self.env,
+            states=self.states.copy(),
+            actions=self.actions.clone(),
+            when_is_done=self.when_is_done.clone(),
+            is_backward=self.is_backward,
+            log_pfs=self.log_pfs.clone() if self.log_pfs is not None else None,
+            log_pbs=self.log_pbs.clone() if self.log_pbs is not None else None,
+        )
