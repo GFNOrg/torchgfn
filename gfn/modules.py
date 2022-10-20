@@ -16,17 +16,15 @@ OutputTensor = TensorType["batch_shape", "output_dim", float]
 class GFNModule(ABC):
     """Abstract Base Class for all functions/approximators/estimators used.
     Each module takes a preprocessed tensor as input, and outputs a tensor of logits,
-    or log flows. The input dimension of the module (e.g.) Neural network, is deduced
+    or log flows. The input dimension of the module (e.g. Neural network), is deduced
     from the environment's preprocessor's output dimension"""
 
     def __init__(
         self,
         output_dim: int,
-        input_shape: Optional[Tuple[int]] = None,
         **kwargs,
     ) -> None:
         self.output_dim = output_dim
-        self.input_shape = input_shape
         del kwargs
 
     def named_parameters(self) -> dict:
@@ -42,7 +40,6 @@ class GFNModule(ABC):
 class NeuralNet(nn.Module, GFNModule):
     def __init__(
         self,
-        input_shape: Tuple[int],
         output_dim: int,
         hidden_dim: Optional[int] = 256,
         n_hidden_layers: Optional[int] = 2,
@@ -51,9 +48,7 @@ class NeuralNet(nn.Module, GFNModule):
         **kwargs,
     ):
         super().__init__()
-        super(nn.Module, self).__init__(
-            output_dim=output_dim, input_shape=input_shape, **kwargs
-        )
+        super(nn.Module, self).__init__(output_dim=output_dim, **kwargs)
 
         if torso is None:
             assert (

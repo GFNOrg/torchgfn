@@ -152,7 +152,7 @@ class Trajectories:
 
     @staticmethod
     def revert_backward_trajectories(trajectories: Trajectories) -> Trajectories:
-        """Revert the backward trajectories to forward trajectories."""
+
         assert trajectories.is_backward
         new_actions = torch.full_like(trajectories.actions, -1)
         new_actions = torch.cat(

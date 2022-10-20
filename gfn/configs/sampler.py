@@ -27,7 +27,7 @@ from gfn.samplers import (
 @dataclass
 class SamplerConfig(JsonSerializable):
     temperature: float = 1.0
-    sf_temperature: float = 0.0
+    sf_bias: float = 0.0
 
     def parse(
         self, env: Env, parametrization: Parametrization
@@ -53,7 +53,7 @@ class SamplerConfig(JsonSerializable):
         training_actions_sampler = actions_sampler_cls(
             estimator=estimator,
             temperature=self.temperature,
-            sf_temperature=self.sf_temperature,
+            sf_bias=self.sf_bias,
         )
 
         training_sampler: TrainingSampler = training_sampler_cls(

@@ -36,7 +36,7 @@ class IdentityPreprocessor(Preprocessor):
     name = "IdentityPreprocessor"
 
     def preprocess(self, states: States) -> OutputTensor:
-        return states.states.float()
+        return states.states_tensor.float()
 
 
 class EnumPreprocessor(Preprocessor):

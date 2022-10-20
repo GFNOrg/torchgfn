@@ -49,7 +49,7 @@ class KHotPreprocessor(Preprocessor):
         self.get_states_indices = get_states_indices
 
     def preprocess(self, states):
-        states_tensor = states.states
+        states_tensor = states.states_tensor
         assert states_tensor.equal(
             states_tensor.floor()
         ), "K Hot preprocessing only works for integer states"

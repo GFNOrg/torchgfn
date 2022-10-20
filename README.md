@@ -64,33 +64,33 @@ Run `pre-commit` after staging, and before committing. Make sure all the tests p
 
 
 ## Defining an environment
-A pointed DAG environment (or GFN environment, or environment for short) is a representation for the pointed DAG. The abstract class [Env](envs/env.py) specifies the requirements for a valid environment definition. To obtain such a representation, the environment needs to specify the following attributes or properties:
-- The number of actions `n_actions`. The last action (`n_actions - 1`) should correspond to the exit action
-- The initial state `s_0`, as a `torch.Tensor` of arbitrary dimension
-- (Optional) The sink state `s_f`, as a `torch.Tensor` of the same shape as `s_0`, used to represent complete trajectories only. See [States](#states) for more info about `s_f`.
-- The method `update_masks` that specifies which actions are possible at each state (going forward and backward).
+A pointed DAG environment (or GFN environment, or environment for short) is a representation for the pointed DAG. The abstract class [Env](gfn/envs/env.py) specifies the requirements for a valid environment definition. To obtain such a representation, the environment needs to specify the following attributes, properties, or methods:
+- The `action_space`. Which should be a `gym.spaces.Discrete` object for discrete environments. The last action should correspond to the exit action.
+- The initial state `s_0`, as a `torch.Tensor` of arbitrary dimension.
+- (Optional) The sink state `s_f`, as a `torch.Tensor` of the same shape as `s_0`, used to represent complete trajectories only (within a batch of trajectories of different lengths), and never processed by any model. If not specified, it is set to `torch.fill_like(s_0, -float('inf'))`.
+- The method `make_States_class` that creates a subclass of [States](gfn/containers/states.py). The instances of the resulting class should represent a batch of states of arbitrary shape, which is useful to define a trajectory, or a batch of trajectories. `s_0` and `s_f`, along with a tuple called `state_shape` should be defined as class variables, and the subclass (of `States`) should implement masking methods, that specify which actions are possible, in a discrete environment.
 - The methods `maskless_step` and `maskless_backward_step` that specify how an action changes a state (going forward and backward). These functions do not need to handle masking, checking whether actions are allowed, checking whether a state is the sink state, etc... These checks are handled in `Env.step` and `Env.backward_step`
-- The `reward` function that assigns a nonnegative reward to every terminating state (i.e. state with all $s_f$ as a child in the DAG)
+- The `reward` function that assigns a nonnegative reward to every terminating state (i.e. state with all $s_f$ as a child in the DAG).
 
-The environment also specifies how a batch of states is represented. The attribute `env.States` is a class that inherits from [`States`](containers/states.py). This attribute is created automatically using an additional  method any environment inheriting from `Env` is required to implement: `make_random_states_tensor`, that creates random states ($\neq s_f$) according to the input batch shape.
+If the states (as represented in the `States` class) need to be transformed to another format before being processed (by neural networks for example), then the environment should define a `preprocessor` attribute, which should be an instance of the [base preprocessor class](gfn/envs/preprocessors/base.py). If no preprocessor is defined, the states are used as is (actually transformed using  [`IdentityPreprocessor`](gfn/envs/preprocessors/base.py), which transforms the state tensors to `FloatTensor`s). Implementing your own preprocessor requires defining the `preprocess` function, and the `output_shape` attribute, which is a tuple representing the shape of *one* preprocessed state.
 
 Optionally, you can define a static `get_states_indices` method that assigns a unique integer number to each state if the environment allows it, and a `n_states` property that returns an integer representing the number of states (excluding $s_f$) in the environment.
 
-## States
-In this repository, a state is represent as a `torch.Tensor`. The shape of the tensor is arbitrary, but should be consistent across the states of the same environment. For instance, a state can either be a one-dimensional tensor (as in [HyperGrid](envs/hypergrid.py)), or three-dimensional if we consider 2-D RGB images.
+For more details, take a look at [HyperGrid](gfn/envs/hypergrid.py).
 
-The [States](containers/states.py) class represents an abstract base class for a batch of states of any pointed DAG environment. The batch shape is a tuple of arbitrary length. A distinction is made between `state_shape` and `batch_shape`, which are completely independent. The resulting tensor has shape `(*batch_shape, *state_shape)`.
 
-To subclass `States`, 2 class variables are necessary (otherwise a `TypeError` is raised):
-- `n_actions`: an integer representing the maximum number of (forward) actions in each state
-- `s_0`: The initial state of the pointed DAG.
+## Estimators and Modules
+Training GFlowNets requires one or multiple estimators. As of now, only discrete environments are handled. All estimators are subclasses of [DiscreteFunctionEstimator](gfn/estimators.py), implementing a `__call__` function that takes as input a batch of [States](gfn/containers/states.py). 
+- [LogEdgeFlowEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $\log F(s \rightarrow s')$, including when $s' = s_f$.
+- [LogStateFlowEstimator](gfn/estimators.py). It outputs a `(*batch_shape, 1)` tensor representing $\log F(s)$.
+- [LogitPFEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $logit(s' \mid s)$, such that $P_F(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$, including when $s' = s_f$.
+- [LogitPBEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions - 1)` tensor representing $logit(s' \mid s)$, such that $P_B(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$.
 
-Additionally, the class variable `s_f` can either be manually instantiated, or inferred from `s_0` (in which case it would a be a tensor of the same shape as `s_0` filled with `-inf`). No computations are ever made on `s_f`, and its sole purpose is to represent complete trajectories.
+These estimators require a [module](gfn/modules.py). Modules inherit from the [GFNModule](gfn/modules.py) class, which can be seen as an extension of `torch.nn.Module`.
 
-The class variables `state_shape`, `state_ndim`, and `device` are inferred from `s_0`.
+Said differently, a `States` object is first transformed via the environment's preprocessor to a `(*batch_shape, *output_shape)` float tensor
 
-Finally, 2 abstract methods are necessary to finish the definition of a subclass of `States`:
-- `update_masks` that overrides a batch of states' `forward_masks` and `backward_masks` attributes, according to the allowed actions in the environment.
-- `make_random_states_tensor` that takes as input a batch shape and returns a random batch of states of the corresponding environment.
 
-The helper function [make_States_class](containers/states.py) makes it possible to define a States class of any environment by specifying a class name, `n_actions`, `s_0`, `make_random_states_tensor`, `update_masks`, and optionally `s_f`. In fact, it is this helper function that is used in the [Env](envs/env.py) abstract class representing a DAG environment.
+Additionally, a [LogZEstimaor](gfn/estimators.py) is provided, which is a container for a scalar tensor representing $\log Z$, the log-partition function, useful for the Trajectory Balance loss for example. Each module takes a preprocessed tensor as input, and outputs a tensor of logits, or log flows
+
+## Action Samplers

@@ -2,11 +2,13 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from typing import Literal, Tuple
+from typing import ClassVar, Literal, Tuple, cast
 
 import torch
 from einops import rearrange
 from torchtyping import TensorType
+
+from gym.spaces import Discrete
 
 from gfn.containers.states import States
 from gfn.envs.env import Env
@@ -41,45 +43,102 @@ class HyperGrid(Env):
         device_str: Literal["cpu", "cuda"] = "cpu",
         preprocessor_name: Literal["KHot", "OneHot", "Identity"] = "KHot",
     ):
-        device = torch.device(device_str)
-        s_0 = torch.zeros(ndim, device=device)
-        s_f = torch.ones(ndim, device=device) * (-1)
-        n_actions = ndim + 1
+        """HyperGrid environment from the GFlowNets paper.
+        The states are represented as 1-d tensors of length `ndim` with values in
+        {0, 1, ..., height - 1}.
+        A preprocessor transforms the states to the input of the neural network,
+        which can be a one-hot, a K-hot, or an identity encoding.
+
+        Args:
+            ndim (int, optional): dimension of the grid. Defaults to 2.
+            height (int, optional): height of the grid. Defaults to 4.
+            R0 (float, optional): reward parameter R0. Defaults to 0.1.
+            R1 (float, optional): reward parameter R1. Defaults to 0.5.
+            R2 (float, optional): reward parameter R1. Defaults to 2.0.
+            reward_cos (bool, optional): Which version of the reward to use. Defaults to False.
+            device_str (str, optional): "cpu" or "cuda". Defaults to "cpu".
+            preprocessor_name (str, optional): "KHot" or "OneHot" or "Identity". Defaults to "KHot".
+        """
         self.ndim = ndim
         self.height = height
         self.R0 = R0
         self.R1 = R1
         self.R2 = R2
         self.reward_cos = reward_cos
-        self.number_of_states = height**ndim
-        preprocessor = preprocessors_dict[preprocessor_name](
+
+        s_0 = torch.zeros(ndim, dtype=torch.long, device=torch.device(device_str))
+        s_f = torch.full(
+            ndim, fill_value=-1, dtype=torch.long, device=torch.device(device_str)
+        )
+
+        action_space = Discrete(ndim + 1)
+
+        self.preprocessor = preprocessors_dict[preprocessor_name](
             height=height,
             ndim=ndim,
             n_states=self.number_of_states,
             get_states_indices=self.get_states_indices,
             output_shape=tuple(s_0.shape),
         )
+
         super().__init__(
-            n_actions=n_actions,
-            s_0=s_0,
-            s_f=s_f,
-            device_str=device_str,
-            preprocessor=preprocessor,
+            action_space=action_space, s_0=s_0, s_f=s_f, device_str=device_str
         )
 
-    def make_random_states_tensor(self, batch_shape: Tuple[int]) -> StatesTensor:
-        return torch.randint(
-            0,
-            self.height,
-            (*batch_shape, *self.state_shape),
-            dtype=torch.float,
-            device=self.device,
-        )
+    def make_States_class(self) -> type[States]:
+        "Creates a States class for this environment"
+        env = self
 
-    def update_masks(self, states: States) -> None:
-        # TODO: is this the best way ?
-        states.forward_masks[..., :-1] = states.states != self.height - 1
-        states.backward_masks = states.states != 0
+        class HyperGridStates(States):
+
+            state_shape: ClassVar[tuple[int, ...]] = (env.ndim,)
+            s_0 = env.s_0
+            s_f = env.s_f
+
+            @classmethod
+            def batch_of_s0(cls, batch_shape: Tuple[int, ...]) -> "HyperGridStates":
+                "Creates a batch of s0 states."
+                states_tensor = torch.zeros(
+                    batch_shape + cls.state_shape, device=env.device
+                )
+                return cls(states_tensor)
+
+            @classmethod
+            def random_states(cls, batch_shape: Tuple[int, ...]) -> "HyperGridStates":
+                "Creates a batch of random states."
+                states_tensor = torch.randint(
+                    0, env.height, batch_shape + env.s_0.shape, device=env.device
+                )
+                return cls(states_tensor)
+
+            def make_masks(self) -> Tuple[ForwardMasksTensor, BackwardMasksTensor]:
+                "Mask illegal (forward and backward) actions."
+                forward_masks = torch.ones(
+                    (*self.batch_shape, env.n_actions),
+                    dtype=torch.bool,
+                    device=env.device,
+                )
+                backward_masks = torch.ones(
+                    (*self.batch_shape, env.n_actions - 1),
+                    dtype=torch.bool,
+                    device=env.device,
+                )
+
+                return forward_masks, backward_masks
+
+            def update_masks(self) -> None:
+                "Update the masks based on the current states."
+                # The following two lines are for typing only.
+                self.forward_masks = cast(ForwardMasksTensor, self.forward_masks)
+                self.backward_masks = cast(BackwardMasksTensor, self.backward_masks)
+
+                self.forward_masks[..., :-1] = self.states_tensor != env.height - 1
+                self.backward_masks[..., :-1] = self.states_tensor != 0
+
+        return HyperGridStates
+
+    def is_exit_actions(self, actions: TensorLong) -> TensorBool:
+        return actions == self.action_space.n - 1
 
     def maskless_step(self, states: StatesTensor, actions: TensorLong) -> None:
         states.scatter_(-1, actions.unsqueeze(-1), 1, reduce="add")

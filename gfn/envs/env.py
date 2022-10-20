@@ -2,12 +2,14 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 from typing import Optional, Tuple, Union
 
+from gym.spaces import Space
 import torch
 from torchtyping import TensorType
 
-from gfn.containers.states import States, make_States_class
+from .preprocessors import IdentityPreprocessor
 
-from .preprocessors import IdentityPreprocessor, Preprocessor
+from gfn.containers.states import States, correct_cast
+
 
 # Typing
 TensorLong = TensorType["batch_shape", torch.long]
@@ -32,112 +34,30 @@ class Env(ABC):
 
     def __init__(
         self,
-        n_actions: int,
+        action_space: Space,
         s_0: OneStateTensor,
         s_f: Optional[OneStateTensor] = None,
         device_str: Optional[str] = None,
-        preprocessor: Optional[Preprocessor] = None,
     ):
-        if isinstance(s_f, torch.Tensor) and (
-            s_f.shape != s_0.shape or s_f.device != s_0.device  # type: ignore
-        ):
-            raise ValueError(
-                "If s_f is specified, it should be a tensor of shape {} and device {}".format(
-                    s_0.shape, s_0.device
-                )
-            )
-        self.n_actions = n_actions
-        self.s_0 = s_0
-        self.state_shape = tuple(s_0.shape)
-
+        self.s0 = s_0
+        if s_f is None:
+            s_f = torch.full_like(s_0, -float("inf"))
+        self.sf = s_f
+        self.action_space = action_space
         self.device = torch.device(device_str) if device_str is not None else s_0.device
-        self.States: type[States] = make_States_class(
-            class_name=self.__class__.__name__ + "States",
-            n_actions=n_actions,
-            s_0=s_0,
-            s_f=s_f,
-            make_random_states_tensor=lambda _, batch_shape: self.make_random_states_tensor(
-                batch_shape
-            ),
-            update_masks=lambda states: self.update_masks(states),
-        )
-        self.s_f = self.States.s_f
-        if preprocessor is None:
-            preprocessor = IdentityPreprocessor(output_shape=tuple(s_0.shape))
-        self.preprocessor = preprocessor
+        self.States = self.make_States_class()
 
-    def is_exit_actions(self, actions: TensorLong) -> TensorBool:
-        "Returns True if the action is an exit action."
-        return actions == self.n_actions - 1
-
-    def reset(
-        self, batch_shape: Union[int, Tuple[int]], random_init: bool = False, **kwargs
-    ) -> States:
-        "Instantiates a batch of initial states."
-        if isinstance(batch_shape, int):
-            batch_shape = (batch_shape,)
-        return self.States(batch_shape=batch_shape, random_init=random_init, **kwargs)
-
-    def step(
-        self,
-        states: States,
-        actions: TensorLong,
-    ) -> States:
-        """Function that takes a batch of states and actions and returns a batch of next
-        states and a boolean tensor indicating sink states in the new batch."""
-        new_states = deepcopy(states)
-        valid_states: TensorBool = ~states.is_sink_state
-
-        valid_states_masks = new_states.forward_masks[valid_states]
-        valid_actions = actions[valid_states]
-        valid_actions_bool = all(
-            torch.gather(valid_states_masks, 1, valid_actions.unsqueeze(1))
-        )
-        if not valid_actions_bool:
-            raise NonValidActionsError("Actions are not valid")
-
-        new_sink_states = self.is_exit_actions(actions)
-        new_states.states[new_sink_states] = self.s_f
-        new_sink_states = ~valid_states | new_sink_states
-
-        not_done_states = new_states.states[~new_sink_states]
-        not_done_actions = actions[~new_sink_states]
-
-        self.maskless_step(not_done_states, not_done_actions)
-
-        new_states.states[~new_sink_states] = not_done_states
-
-        self.update_masks(new_states)
-        return new_states
-
-    def backward_step(self, states: States, actions: TensorLong) -> States:
-        """Function that takes a batch of states and actions and returns a batch of next
-        states and a boolean tensor indicating initial states in the new batch."""
-        new_states = deepcopy(states)
-        valid_states: TensorBool = ~new_states.is_initial_state
-
-        valid_states_masks = new_states.backward_masks[valid_states]
-        valid_actions = actions[valid_states]
-        valid_actions_bool = all(
-            torch.gather(valid_states_masks, 1, valid_actions.unsqueeze(1))
-        )
-        if not valid_actions_bool:
-            raise NonValidActionsError("Actions are not valid")
-
-        not_done_states = new_states.states[valid_states]
-        self.maskless_backward_step(not_done_states, valid_actions)
-
-        new_states.states[valid_states] = not_done_states
-
-        self.update_masks(new_states)
-        return new_states
+        if not hasattr(self, "preprocessor"):
+            self.preprocessor = IdentityPreprocessor()
 
     @abstractmethod
-    def make_random_states_tensor(self, batch_shape: Tuple[int]) -> StatesTensor:
+    def make_States_class(self) -> type[States]:
+        "Returns a class that inherits from States and implements the environment-specific methods."
         pass
 
     @abstractmethod
-    def update_masks(self, states: States) -> None:
+    def is_exit_actions(self, actions: TensorLong) -> TensorBool:
+        "Returns True if the action is an exit action."
         pass
 
     @abstractmethod
@@ -189,3 +109,72 @@ class Env(ABC):
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
+
+
+    def reset(
+        self, batch_shape: Union[int, Tuple[int]], random_init: bool = False, **kwargs
+    ) -> States:
+        "Instantiates a batch of initial states."
+        if isinstance(batch_shape, int):
+            batch_shape = (batch_shape,)
+        return self.States(batch_shape=batch_shape, random_init=random_init, **kwargs)
+
+    def step(
+        self,
+        states: States,
+        actions: TensorLong,
+    ) -> States:
+        """Function that takes a batch of states and actions and returns a batch of next
+        states and a boolean tensor indicating sink states in the new batch."""
+        new_states = deepcopy(states)
+        valid_states: TensorBool = ~states.is_sink_state
+        valid_actions = actions[valid_states]
+
+        if new_states.forward_masks is not None:
+            new_forward_masks = correct_cast(new_states.forward_masks)
+            valid_states_masks = new_forward_masks[valid_states]
+            valid_actions_bool = all(
+                torch.gather(valid_states_masks, 1, valid_actions.unsqueeze(1))
+            )
+            if not valid_actions_bool:
+                raise NonValidActionsError("Actions are not valid")
+
+        new_sink_states = self.is_exit_actions(actions)
+        new_states.states_tensor[new_sink_states] = self.s_f
+        new_sink_states = ~valid_states | new_sink_states
+
+        not_done_states = new_states.states[~new_sink_states]
+        not_done_actions = actions[~new_sink_states]
+
+        self.maskless_step(not_done_states, not_done_actions)
+
+        new_states.states[~new_sink_states] = not_done_states
+
+        self.update_masks(new_states)
+        return new_states
+
+    def backward_step(self, states: States, actions: TensorLong) -> States:
+        """Function that takes a batch of states and actions and returns a batch of next
+        states and a boolean tensor indicating initial states in the new batch."""
+        new_states = deepcopy(states)
+        valid_states: TensorBool = ~new_states.is_initial_state
+        valid_actions = actions[valid_states]
+
+        if new_states.backward_masks is not None:
+            new_backward_masks = correct_cast(new_states.backward_masks)
+            valid_states_masks = new_backward_masks[valid_states]
+            valid_actions_bool = all(
+                torch.gather(valid_states_masks, 1, valid_actions.unsqueeze(1))
+            )
+            if not valid_actions_bool:
+                raise NonValidActionsError("Actions are not valid")
+       
+        not_done_states = new_states.states_tensor[valid_states]
+        self.maskless_backward_step(not_done_states, valid_actions)
+
+        new_states.states[valid_states] = not_done_states
+
+        self.update_masks(new_states)
+        return new_states
+
+    

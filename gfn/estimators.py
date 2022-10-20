@@ -8,7 +8,6 @@ from gfn.envs.preprocessors.base import EnumPreprocessor
 from gfn.modules import NeuralNet, Tabular, Uniform, ZeroGFNModule
 
 # Typing
-InputTensor = TensorType["batch_shape", "input_shape", float]
 OutputTensor = TensorType["batch_shape", "output_dim", float]
 
 module_names_to_clss = {
@@ -19,7 +18,7 @@ module_names_to_clss = {
 }
 
 
-class FunctionEstimator:
+class DiscreteFunctionEstimator:
     def __init__(
         self,
         env: Env,
@@ -49,7 +48,7 @@ class FunctionEstimator:
         return f"{self.__class__.__name__}({self.module})"
 
 
-class LogEdgeFlowEstimator(FunctionEstimator):
+class LogEdgeFlowEstimator(DiscreteFunctionEstimator):
     def __init__(
         self,
         env: Env,
@@ -61,7 +60,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
         )
 
 
-class LogStateFlowEstimator(FunctionEstimator):
+class LogStateFlowEstimator(DiscreteFunctionEstimator):
     def __init__(
         self,
         env: Env,
@@ -71,7 +70,7 @@ class LogStateFlowEstimator(FunctionEstimator):
         super().__init__(env, output_dim=1, module_name=module_name, **module_kwargs)
 
 
-class LogitPFEstimator(FunctionEstimator):
+class LogitPFEstimator(DiscreteFunctionEstimator):
     def __init__(
         self,
         env: Env,
@@ -83,7 +82,7 @@ class LogitPFEstimator(FunctionEstimator):
         )
 
 
-class LogitPBEstimator(FunctionEstimator):
+class LogitPBEstimator(DiscreteFunctionEstimator):
     def __init__(
         self,
         env: Env,
