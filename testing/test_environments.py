@@ -41,7 +41,7 @@ def test_hypergrid_and_preprocessors(
     print("\nTrying the backward step function starting from a batch of random states")
 
     print("\nInstantiating a two-dimensional batch of random states")
-    states = env.reset(batch_shape=(2, 3), random_init=True)
+    states = env.reset(batch_shape=(2, 3), random=True)
     print("States:", states)
     backward_step_ok = False
     while not backward_step_ok:
@@ -55,11 +55,11 @@ def test_hypergrid_and_preprocessors(
         backward_step_ok = True
 
     print("\nTrying the preprocessors")
-    random_states = env.reset(batch_shape=10, random_init=True)
+    random_states = env.reset(batch_shape=10, random=True)
     preprocessed_grid = env.preprocessor.preprocess(random_states)
     print("Preprocessed Grid: ", preprocessed_grid)
 
-    random_states = env.reset(batch_shape=(4, 2), random_init=True)
+    random_states = env.reset(batch_shape=(4, 2), random=True)
     preprocessed_grid = env.preprocessor.preprocess(random_states)
     print("Preprocessed Grid: ", preprocessed_grid)
 
@@ -68,7 +68,7 @@ def test_hypergrid_and_preprocessors(
 def test_states_getitem(ndim: int):
     env = HyperGrid(ndim=ndim, height=8)
 
-    states = env.reset(batch_shape=(2, 3), random_init=True)
+    states = env.reset(batch_shape=(2, 3), random=True)
     print("States:", states)
     print("\nTesting subscripting with boolean tensors")
 

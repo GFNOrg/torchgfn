@@ -15,8 +15,6 @@ pip install wandb
 wandb login
 ```
 
-For now, only the Trajectory Balance and Detailed Balance losses are implemented. The Trajectory Balance loss has been tested, and the code obtains similar results than those of [The Trajectory Balance paper](https://arxiv.org/pdf/2201.13259.pdf).
-
 To run the code:
 ```python
 python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --parametrization TB 
@@ -34,7 +32,7 @@ logZ = LogZEstimator(logZ_tensor)
 
 parametrization = TBParametrization(logit_PF, logit_PB, logZ)
 
-actions_sampler = LogitPFActionsSampler(estimator=logit_PF)
+actions_sampler = DiscreteActionsSampler(estimator=logit_PF)
 trajectories_sampler = TrajectoriesSampler(env=env, actions_sampler=actions_sampler)
 
 loss_fn = TrajectoryBalance(parametrization=parametrization)
@@ -78,19 +76,47 @@ Optionally, you can define a static `get_states_indices` method that assigns a u
 
 For more details, take a look at [HyperGrid](gfn/envs/hypergrid.py).
 
+### Other containers
+Besides the `States` class, other containers of states are available:
+- [Transitions](gfn/containers/transitions.py), representing a batch of transitions $s \rightarrow s'$.
+- [Trajectories](gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
+
+These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of [ReplayBuffer](gfn/containers/replay_buffer.py)s.
+
+They inherit from the base `Container` [class](gfn/containers/base.py), indicating some helpful methods.
+
+In most cases, one needs to sample complete trajectories. From a batch of trajectories, a batch of states and batch of transitions can be defined using `Trajectories.to_transitions()` and `Trajectories.to_states()`. These exclude meaningless transitions and states that were added to the batch of trajectories to allow for efficient batching.
+
 
 ## Estimators and Modules
-Training GFlowNets requires one or multiple estimators. As of now, only discrete environments are handled. All estimators are subclasses of [DiscreteFunctionEstimator](gfn/estimators.py), implementing a `__call__` function that takes as input a batch of [States](gfn/containers/states.py). 
+Training GFlowNets requires one or multiple estimators. As of now, only discrete environments are handled. All estimators are subclasses of [FunctionEstimator](gfn/estimators.py), implementing a `__call__` function that takes as input a batch of [States](gfn/containers/states.py). 
 - [LogEdgeFlowEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $\log F(s \rightarrow s')$, including when $s' = s_f$.
 - [LogStateFlowEstimator](gfn/estimators.py). It outputs a `(*batch_shape, 1)` tensor representing $\log F(s)$.
 - [LogitPFEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $logit(s' \mid s)$, such that $P_F(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$, including when $s' = s_f$.
 - [LogitPBEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions - 1)` tensor representing $logit(s' \mid s)$, such that $P_B(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$.
 
-These estimators require a [module](gfn/modules.py). Modules inherit from the [GFNModule](gfn/modules.py) class, which can be seen as an extension of `torch.nn.Module`.
-
-Said differently, a `States` object is first transformed via the environment's preprocessor to a `(*batch_shape, *output_shape)` float tensor
+Defining an estimator requires the environment, and a [module](gfn/modules.py) instance. Modules inherit from the [GFNModule](gfn/modules.py) class, which can be seen as an extension of `torch.nn.Module`. Alternatively, a module is created by providing which module type to use (e.g. "NeuralNet" or "Uniform" or "Zero"). A Basic MLP is provided as the [NeuralNet](gfn/modules.py) class, but any function approximator should be possible.
 
 
-Additionally, a [LogZEstimaor](gfn/estimators.py) is provided, which is a container for a scalar tensor representing $\log Z$, the log-partition function, useful for the Trajectory Balance loss for example. Each module takes a preprocessed tensor as input, and outputs a tensor of logits, or log flows
+Said differently, a `States` object is first transformed via the environment's preprocessor to a `(*batch_shape, *output_shape)` float tensor. The preprocessor's output shape should match the module input shape (if any). The preprocessed states are then passed as inputs to the module, returning the desired output (either flows or probabilities over children in the DAG).
 
-## Action Samplers
+Each module has a `named_parameters` functions that returns a dictionary of the learnable parameters. This attribute is transferred to the corresponding estimator.
+
+
+Additionally, a [LogZEstimator](gfn/estimators.py) is provided, which is a container for a scalar tensor representing $\log Z$, the log-partition function, useful for the Trajectory Balance loss for example. This estimator also has a `named_parameters` function.
+
+## Samplers
+An [ActionsSampler](gfn/samplers/actions_samplers.py) object defines how actions are sampled at each state of the DAG. As of now, only [DiscreteActionsSampler](gfn/samplers/actions_samplers.py)s are implemented. The require an estimator (of $P_F$, $P_B$, or edge flows) defining the action probabilities. These estimators can contain any type of modules (including random action sampling for example). A [BackwardDiscreteActionsSampler](gfn/samplers/actions_samplers.py) class is provided to sample parents of a state, which is helpful to sample trajectories starting from their last states.
+
+They are at the core of [TrajectoriesSampler](gfn/samplers/trajectories_sampler.py)s, which implements the `sample_trajectories` method, that sample a batch of trajectories starting from a given set of initial states or starting from $s_0$.
+
+## Losses
+GFlowNets can be trained with different losses, each of which requires a different parametrization. A parametrization is a dataclass, which can be seen as a container of different estimators. Each parametrization defines a distribution over trajectories, via the `parametrization.Pi` method, and a distribution over terminating states, via the `parametrization.P_T` method. Both distributions should be instances of the classes defined [here](gfn/distributions.py).
+
+The base classes for losses and parametrizations are provided [here](gfn/losses/base.py).
+
+Currently, the implemented losses are:
+- Flow Matching
+- Detailed Balance
+- Trajectory Balance
+- Sub-Trajectory Balance

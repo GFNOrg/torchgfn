@@ -9,24 +9,15 @@ from gfn.estimators import (
     LogStateFlowEstimator,
     LogZEstimator,
 )
-from gfn.losses.detailed_balance import DetailedBalance
-from gfn.losses.flow_matching import FlowMatching
-from gfn.losses.sub_trajectory_balance import SubTrajectoryBalance
-from gfn.losses.trajectory_balance import TrajectoryBalance
-from gfn.parametrizations import (
-    DBParametrization,
-    FMParametrization,
-    SubTBParametrization,
-    TBParametrization,
-)
+from gfn.losses.detailed_balance import DBParametrization, DetailedBalance
+from gfn.losses.flow_matching import FlowMatching, FMParametrization
+from gfn.losses.sub_trajectory_balance import SubTBParametrization, SubTrajectoryBalance
+from gfn.losses.trajectory_balance import TBParametrization, TrajectoryBalance
 from gfn.samplers.actions_samplers import (
-    LogEdgeFlowsActionsSampler,
-    LogitPBActionsSampler,
-    LogitPFActionsSampler,
+    BackwardDiscreteActionsSampler,
+    DiscreteActionsSampler,
 )
-from gfn.samplers.states_sampler import StatesSampler
 from gfn.samplers.trajectories_sampler import TrajectoriesSampler
-from gfn.samplers.transitions_sampler import TransitionsSampler
 
 
 @pytest.mark.parametrize("ndim", [2, 3])
@@ -44,10 +35,10 @@ def test_FM_hypergrid(ndim: int, module_name: str):
     print(parametrization.Pi(env, n_samples=10).sample())
     print(parametrization.parameters.keys())
 
-    actions_sampler = LogEdgeFlowsActionsSampler(log_F_edge)
-    states_sampler = StatesSampler(env, actions_sampler)
-
-    states = states_sampler.sample(n_objects=10)
+    actions_sampler = DiscreteActionsSampler(log_F_edge)
+    trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
+    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
+    states = trajectories.to_states()
 
     loss = FlowMatching(parametrization, env)
     print(loss(states))
@@ -81,32 +72,34 @@ def test_PFBasedParametrization_hypergrid(
 ):
     env = HyperGrid(ndim=ndim, height=4)
 
-    print("\nTrying the DB parametrization... with learnable logit_PB")
-
-    logit_PF = LogitPFEstimator(env, module_name)
-    logit_PB = LogitPBEstimator(
-        env, module_name, torso=logit_PF.module.torso if tie_pb_to_pf else None
-    )
+    logit_PF = LogitPFEstimator(env, module_name=module_name)
+    logit_PB = LogitPBEstimator(env, module_name=module_name)
+    if tie_pb_to_pf:
+        logit_PB.module.torso = logit_PF.module.torso
     logF = LogStateFlowEstimator(
-        env, module_name if module_name != "Uniform" else "Zero"
+        env, module_name=module_name if module_name != "Uniform" else "Zero"
     )
     logZ = LogZEstimator(torch.tensor(0.0))
 
-    actions_sampler = LogitPFActionsSampler(estimator=logit_PF)
-    backward_actions_sampler = LogitPBActionsSampler(estimator=logit_PB)
+    actions_sampler = DiscreteActionsSampler(estimator=logit_PF)
+    backward_actions_sampler = BackwardDiscreteActionsSampler(estimator=logit_PB)
+
+    trajectories_sampler = TrajectoriesSampler(
+        env=env,
+        actions_sampler=actions_sampler,
+        backward_actions_sampler=backward_actions_sampler,
+        evaluate_log_probabilities=True,
+    )
 
     loss_kwargs = {}
     if parametrization_name == "DB":
         parametrization = DBParametrization(logit_PF, logit_PB, logF)
-        training_sampler_cls = TransitionsSampler
         loss_cls = DetailedBalance
     elif parametrization_name == "TB":
         parametrization = TBParametrization(logit_PF, logit_PB, logZ)
-        training_sampler_cls = TrajectoriesSampler
         loss_cls = TrajectoryBalance
     elif parametrization_name == "SubTB":
         parametrization = SubTBParametrization(logit_PF, logit_PB, logF)
-        training_sampler_cls = TrajectoriesSampler
         loss_cls = SubTrajectoryBalance
         loss_kwargs = {"weighing": sub_tb_weighing}
     else:
@@ -116,13 +109,11 @@ def test_PFBasedParametrization_hypergrid(
     print(parametrization.parameters.keys())
     print(len(set(parametrization.parameters.values())))
 
-    training_sampler = training_sampler_cls(
-        env=env,
-        actions_sampler=actions_sampler,
-        backward_actions_sampler=backward_actions_sampler,
-    )
-
-    training_objects = training_sampler.sample(n_objects=10)
+    trajectories = trajectories_sampler.sample(n_objects=10)
+    if parametrization_name == "DB":
+        training_objects = trajectories.to_transitions()
+    else:
+        training_objects = trajectories
     loss_fn = loss_cls(parametrization, **loss_kwargs)
     loss = loss_fn(training_objects)
 
@@ -164,7 +155,7 @@ def test_subTB_vs_TB(
     logit_PB = LogitPBEstimator(env, module_name=module_name)
     logF = LogStateFlowEstimator(env, module_name="Zero")
     logZ = LogZEstimator(torch.tensor(0.0))
-    actions_sampler = LogitPFActionsSampler(estimator=logit_PF)
+    actions_sampler = DiscreteActionsSampler(estimator=logit_PF)
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
 
