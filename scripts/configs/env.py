@@ -37,7 +37,7 @@ class HyperGridConfig(BaseEnvConfig):
 
 @dataclass
 class MoleculesConfig(BaseEnvConfig):
-    def parse(self, device: Literal["cpu", "cuda"]) -> Env:
+    def parse(self, device_str: Literal["cpu", "cuda"]) -> Env:
         raise NotImplementedError("Not implemented yet")
 
 

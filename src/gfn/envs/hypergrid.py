@@ -220,5 +220,5 @@ class HyperGrid(Env):
     @property
     def all_states(self) -> States:
         grid = self.build_grid()
-        flat_grid = rearrange(grid.states, "... ndim -> (...) ndim")
+        flat_grid = rearrange(grid.states_tensor, "... ndim -> (...) ndim")
         return self.States(flat_grid)

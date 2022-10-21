@@ -15,18 +15,16 @@ from gfn.estimators import (
     LogZEstimator,
 )
 from gfn.losses import (
+    DBParametrization,
     DetailedBalance,
     FlowMatching,
-    Loss,
-    SubTrajectoryBalance,
-    TrajectoryBalance,
-)
-from gfn.parametrizations import (
-    DBParametrization,
     FMParametrization,
+    Loss,
     Parametrization,
     SubTBParametrization,
+    SubTrajectoryBalance,
     TBParametrization,
+    TrajectoryBalance,
 )
 
 
@@ -40,18 +38,18 @@ class GFNModuleConfig(JsonSerializable):
     activation_fn: str = "relu"
 
     def __post_init__(self):
-        self.module_kwargs = self.__dict__.copy()
+        self.nn_kwargs = self.__dict__.copy()
 
 
 @dataclass
-class BaseParametrizationConfig(JsonSerializable, ABC):
+class BaseLossConfig(JsonSerializable, ABC):
     @abstractmethod
     def parse(self, env: Env, **kwargs) -> Tuple[Parametrization, Loss]:
         pass
 
 
 @dataclass
-class FMParametrizationConfig(BaseParametrizationConfig):
+class FMLossConfig(BaseLossConfig):
     logF_edge: GFNModuleConfig = GFNModuleConfig()
 
     def parse(
@@ -61,7 +59,7 @@ class FMParametrizationConfig(BaseParametrizationConfig):
 
         logF_edge = LogEdgeFlowEstimator(
             env=env,
-            **self.logF_edge.module_kwargs,
+            **self.logF_edge.nn_kwargs,
         )
         parametrization = FMParametrization(logF_edge)
 
@@ -71,7 +69,7 @@ class FMParametrizationConfig(BaseParametrizationConfig):
 
 
 @dataclass
-class PFBasedParametrizationConfig(BaseParametrizationConfig, ABC):
+class PFBasedLossConfig(BaseLossConfig, ABC):
     logit_PF: GFNModuleConfig = GFNModuleConfig()
     logit_PB: GFNModuleConfig = GFNModuleConfig()
     tied: bool = True
@@ -81,8 +79,8 @@ class PFBasedParametrizationConfig(BaseParametrizationConfig, ABC):
         env: Env,
     ) -> Tuple[LogitPFEstimator, LogitPBEstimator]:
 
-        logit_PF = LogitPFEstimator(env=env, **self.logit_PF.module_kwargs)
-        logit_PB_kwargs = self.logit_PB.module_kwargs
+        logit_PF = LogitPFEstimator(env=env, **self.logit_PF.nn_kwargs)
+        logit_PB_kwargs = self.logit_PB.nn_kwargs
         if (
             self.tied
             and self.logit_PF.module_name
@@ -98,7 +96,7 @@ class PFBasedParametrizationConfig(BaseParametrizationConfig, ABC):
 
 
 @dataclass
-class StateFlowBasedParametrizationConfig(PFBasedParametrizationConfig, ABC):
+class StateFlowBasedLossConfig(PFBasedLossConfig, ABC):
     logF_state: GFNModuleConfig = GFNModuleConfig()
 
     def get_estimators(
@@ -107,7 +105,7 @@ class StateFlowBasedParametrizationConfig(PFBasedParametrizationConfig, ABC):
     ) -> Tuple[LogitPFEstimator, LogitPBEstimator, LogStateFlowEstimator]:
 
         logit_PF, logit_PB = super().get_estimators(env)
-        logF_state_kwargs = self.logF_state.module_kwargs
+        logF_state_kwargs = self.logF_state.nn_kwargs
         if (
             self.tied
             and self.logit_PF.module_name == "NeuralNet"
@@ -117,13 +115,13 @@ class StateFlowBasedParametrizationConfig(PFBasedParametrizationConfig, ABC):
         else:
             torso = None
         logF_state_kwargs["torso"] = torso
-        logF_state = LogStateFlowEstimator(env=env, **self.logF_state.module_kwargs)
+        logF_state = LogStateFlowEstimator(env=env, **self.logF_state.nn_kwargs)
 
         return (logit_PF, logit_PB, logF_state)
 
 
 @dataclass
-class DBParametrizationConfig(StateFlowBasedParametrizationConfig):
+class DBLossConfig(StateFlowBasedLossConfig):
     def parse(
         self,
         env: Env,
@@ -136,8 +134,8 @@ class DBParametrizationConfig(StateFlowBasedParametrizationConfig):
 
 
 @dataclass
-class SubTBParametrizationConfig(StateFlowBasedParametrizationConfig):
-    # TODO: Should be merged with DBParametrizationConfig
+class SubTBLossConfig(StateFlowBasedLossConfig):
+    # TODO: Should be merged with DBLossConfig
     weighing: str = choice(
         "equal",
         "equal_within",
@@ -164,7 +162,7 @@ class SubTBParametrizationConfig(StateFlowBasedParametrizationConfig):
 
 
 @dataclass
-class TBParametrizationConfig(PFBasedParametrizationConfig):
+class TBLossConfig(PFBasedLossConfig):
     logZ_init: float = 0.0
     reward_clip_min: float = 1e-5
 
@@ -181,16 +179,16 @@ class TBParametrizationConfig(PFBasedParametrizationConfig):
 
 
 @dataclass
-class ParametrizationConfig(JsonSerializable):
-    parametrization: BaseParametrizationConfig = subgroups(
+class LossConfig(JsonSerializable):
+    loss: BaseLossConfig = subgroups(
         {
-            "FM": FMParametrizationConfig,
-            "DB": DBParametrizationConfig,
-            "TB": TBParametrizationConfig,
-            "SubTB": SubTBParametrizationConfig,
+            "FM": FMLossConfig,
+            "DB": DBLossConfig,
+            "TB": TBLossConfig,
+            "SubTB": SubTBLossConfig,
         },
-        default=TBParametrizationConfig(),
+        default=TBLossConfig(),
     )
 
     def parse(self, env: Env) -> Tuple[Parametrization, Loss]:
-        return self.parametrization.parse(env=env)
+        return self.loss.parse(env=env)

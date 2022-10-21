@@ -1,6 +1,6 @@
 """This implements a simple dynamic programming algorithm for computing edge flows given a reward function and
 a backward transition probability function. Currently it's implemented for uniform P_B, but can
-trivially be extended to other P_B manually specified.
+trivially be extended to other P_B manually specified. Only discrete environments are handled.
 """
 
 import torch
@@ -10,7 +10,7 @@ from gfn.configs import EnvConfig
 from gfn.estimators import LogEdgeFlowEstimator
 from gfn.modules import Tabular, Uniform
 from gfn.parametrizations.edge_flows import FMParametrization
-from gfn.validate import validate
+from gfn.utils import validate
 
 parser = ArgumentParser()
 

@@ -1,4 +1,4 @@
 from .env import EnvConfig
+from .loss import LossConfig
 from .optim import OptimConfig
-from .parametrization import ParametrizationConfig
 from .sampler import SamplerConfig

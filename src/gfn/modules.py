@@ -56,8 +56,6 @@ class NeuralNet(nn.Module, GFNModule):
             n_hidden_layers (Optional[int], optional): Number of hidden layers. Defaults to 2.
             activation_fn (Optional[Literal[relu, tanh]], optional): Activation function. Defaults to "relu".
             torso (Optional[nn.Module], optional): If provided, this module will be used as the torso of the network (i.e. all layers except last layer). Defaults to None.
-        Raises:
-            NotImplementedError: _description_
         """
         super().__init__()
         self._output_dim = output_dim

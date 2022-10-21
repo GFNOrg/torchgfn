@@ -21,6 +21,7 @@ class FunctionEstimator(ABC):
         module_name: Optional[
             Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
         ] = None,
+        **nn_kwargs,
     ) -> None:
         """Base class for function estimators. Either module or (module_name, output_dim) must be provided.
 
@@ -29,6 +30,7 @@ class FunctionEstimator(ABC):
             module (Optional[GFNModule], optional): The module to use. Defaults to None.
             output_dim (Optional[int], optional): Used only if module is None. Defines the output dimension of the module. Defaults to None.
             module_name (Optional[Literal[NeuralNet, Uniform, Tabular, Zero]], optional): Used only if module is None. What module to use. Defaults to None.
+            **nn_kwargs: Keyword arguments to pass to the module, if module_name is NeuralNet.
         """
         if module is None:
             assert module_name is not None and output_dim is not None
@@ -38,6 +40,7 @@ class FunctionEstimator(ABC):
                 module = NeuralNet(
                     input_dim=input_dim,
                     output_dim=output_dim,
+                    **nn_kwargs,
                 )
             elif module_name == "Uniform":
                 module = Uniform(output_dim=output_dim)
@@ -77,11 +80,16 @@ class LogEdgeFlowEstimator(FunctionEstimator):
         module_name: Optional[
             Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
         ] = None,
+        **nn_kwargs,
     ) -> None:
         if module is not None:
             assert module.output_dim == env.n_actions
         super().__init__(
-            env, module=module, output_dim=env.n_actions, module_name=module_name
+            env,
+            module=module,
+            output_dim=env.n_actions,
+            module_name=module_name,
+            **nn_kwargs,
         )
 
 
@@ -93,10 +101,13 @@ class LogStateFlowEstimator(FunctionEstimator):
         module_name: Optional[
             Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
         ] = None,
+        **nn_kwargs,
     ):
         if module is not None:
             assert module.output_dim == 1
-        super().__init__(env, module=module, output_dim=1, module_name=module_name)
+        super().__init__(
+            env, module=module, output_dim=1, module_name=module_name, **nn_kwargs
+        )
 
 
 class LogitPFEstimator(FunctionEstimator):
@@ -107,11 +118,16 @@ class LogitPFEstimator(FunctionEstimator):
         module_name: Optional[
             Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
         ] = None,
+        **nn_kwargs,
     ):
         if module is not None:
             assert module.output_dim == env.n_actions
         super().__init__(
-            env, module=module, output_dim=env.n_actions, module_name=module_name
+            env,
+            module=module,
+            output_dim=env.n_actions,
+            module_name=module_name,
+            **nn_kwargs,
         )
 
 
@@ -123,11 +139,16 @@ class LogitPBEstimator(FunctionEstimator):
         module_name: Optional[
             Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
         ] = None,
+        **nn_kwargs,
     ):
         if module is not None:
             assert module.output_dim == env.n_actions - 1
         super().__init__(
-            env, module=module, output_dim=env.n_actions - 1, module_name=module_name
+            env,
+            module=module,
+            output_dim=env.n_actions - 1,
+            module_name=module_name,
+            **nn_kwargs,
         )
 
 

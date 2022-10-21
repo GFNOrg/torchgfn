@@ -1,39 +1,39 @@
 import torch
+import wandb
+from configs import EnvConfig, LossConfig, OptimConfig, SamplerConfig
 from simple_parsing import ArgumentParser
 from simple_parsing.helpers.serialization import encode
 from tqdm import tqdm, trange
 
-import wandb
-from gfn.configs import EnvConfig, OptimConfig, ParametrizationConfig, SamplerConfig
 from gfn.containers.replay_buffer import ReplayBuffer
-from gfn.parametrizations.forward_probs import TBParametrization
-from gfn.validate import validate
+from gfn.losses import StateDecomposableLoss, TBParametrization
+from gfn.utils import trajectories_to_training_samples, validate
 
 parser = ArgumentParser()
 
 parser.add_arguments(EnvConfig, dest="env_config")
-parser.add_arguments(ParametrizationConfig, dest="parametrization_config")
+parser.add_arguments(LossConfig, dest="loss_config")
 parser.add_arguments(OptimConfig, dest="optim_config")
 parser.add_arguments(SamplerConfig, dest="sampler_config")
 
+parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--n_iterations", type=int, default=1000)
 parser.add_argument("--replay_buffer_size", type=int, default=0)
 parser.add_argument("--no_cuda", action="store_true")
 parser.add_argument("--wandb", type=str, default="")
-parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--validation_interval", type=int, default=100)
 parser.add_argument(
     "--validation_samples",
     type=int,
     default=200000,
     help="Number of validation samples to use to evaluate the pmf.",
 )
-parser.add_argument("--validation_interval", type=int, default=100)
 parser.add_argument(
-    "--do_not_validate_with_training_examples",
+    "--resample_for_validation",
     action="store_true",
     default=False,
-    help="If true, the pmf is obtained from the latest visited terminating states",
+    help="If False (default), the pmf is obtained from the latest visited terminating states",
 )
 
 
@@ -46,16 +46,20 @@ else:
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
 
 env_config: EnvConfig = args.env_config
-parametrization_config: ParametrizationConfig = args.parametrization_config
+loss_config: LossConfig = args.loss_config
 optim_config: OptimConfig = args.optim_config
 sampler_config: SamplerConfig = args.sampler_config
 
 env = env_config.parse(device_str)
-parametrization, loss_fn = parametrization_config.parse(env)
+parametrization, loss_fn = loss_config.parse(env)
 optimizer, scheduler = optim_config.parse(parametrization)
-training_sampler = sampler_config.parse(env, parametrization)
+trajectories_sampler = sampler_config.parse(env, parametrization)
+
+if isinstance(loss_fn, StateDecomposableLoss):
+    assert args.resample_for_validation
 
 use_replay_buffer = False
+replay_buffer = None
 if args.replay_buffer_size > 0:
     use_replay_buffer = True
     if isinstance(parametrization, TBParametrization):
@@ -65,7 +69,7 @@ if args.replay_buffer_size > 0:
     print(objects)
     replay_buffer = ReplayBuffer(env, capacity=args.replay_buffer_size, objects=objects)
 
-print(env_config, parametrization_config, optim_config, sampler_config)
+print(env_config, loss_config, optim_config, sampler_config)
 print(args)
 print(device_str)
 
@@ -77,14 +81,15 @@ if use_wandb:
     wandb.config.update(encode(args))
 
 visited_terminating_states = (
-    env.States() if not args.do_not_validate_with_training_examples else None
+    env.States.from_batch_shape((0,)) if not args.resample_for_validation else None
 )
 
 for i in trange(args.n_iterations):
-    training_samples = training_sampler.sample(n_objects=args.batch_size)
-    if use_replay_buffer:
-        replay_buffer.add(training_samples)  # type: ignore
-        training_objects = replay_buffer.sample(n_objects=args.batch_size)  # type: ignore
+    trajectories = trajectories_sampler.sample(n_objects=args.batch_size)
+    training_samples = trajectories_to_training_samples(trajectories, loss_fn)
+    if replay_buffer is not None:
+        replay_buffer.add(training_samples)
+        training_objects = replay_buffer.sample(n_objects=args.batch_size)
     else:
         training_objects = training_samples
 
@@ -94,8 +99,8 @@ for i in trange(args.n_iterations):
 
     optimizer.step()
     scheduler.step()
-    if not args.do_not_validate_with_training_examples:
-        visited_terminating_states.extend(training_objects.last_states)  # type: ignore
+    if visited_terminating_states is not None:
+        visited_terminating_states.extend(training_objects.last_states)
     # With TB, SubTB, and DB, each trajectory is responsible for propagating ONE reward back to the root.
     # Thus, "states_visited", which is supposed to represent the number of times the reward function is
     # queries, is equal to the number of trajectories, or the batch size.
