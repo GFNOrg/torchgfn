@@ -56,7 +56,7 @@ for i in range(1000):
 ## Contributing
 Before the first commit:
 ```bash
-pip install pre-commit, black, pytest
+pip install pre-commit black pytest
 pre-commit install
 pre-commit run --all-files
 ```
