@@ -56,17 +56,26 @@ class TrajectoriesSampler:
                 len(states.batch_shape) == 1
             ), "States should be a linear batch of states"
             n_trajectories = states.batch_shape[0]
-        assert states is not None
+
+        device = states.states_tensor.device
 
         dones = states.is_initial_state if self.is_backward else states.is_sink_state
 
         trajectories_states: List[StatesTensor] = [states.states_tensor]
         trajectories_actions: List[ActionsTensor] = []
-        trajectories_dones = torch.zeros(n_trajectories, dtype=torch.long)
-        trajectories_rewards = torch.zeros(n_trajectories, dtype=torch.float)
+        trajectories_dones = torch.zeros(
+            n_trajectories, dtype=torch.long, device=device
+        )
+        trajectories_rewards = torch.zeros(
+            n_trajectories, dtype=torch.float, device=device
+        )
         if self.evaluate_log_probabilities:
-            trajectories_log_pfs = torch.zeros(n_trajectories, dtype=torch.float)
-            trajectories_log_pbs = torch.zeros(n_trajectories, dtype=torch.float)
+            trajectories_log_pfs = torch.zeros(
+                n_trajectories, dtype=torch.float, device=device
+            )
+            trajectories_log_pbs = torch.zeros(
+                n_trajectories, dtype=torch.float, device=device
+            )
         else:
             trajectories_log_pfs = None
             trajectories_log_pbs = None
@@ -77,7 +86,7 @@ class TrajectoriesSampler:
                 (n_trajectories,),
                 fill_value=-1,
                 dtype=torch.long,
-                device=states.states_tensor.device,
+                device=device,
             )
             actions_log_probs, valid_actions = self.actions_sampler.sample(
                 states[~dones]
