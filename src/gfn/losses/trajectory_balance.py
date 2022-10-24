@@ -50,7 +50,7 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
     ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
 
         if self.on_policy:
-            assert trajectories.log_pbs is not None
+            assert trajectories.log_pbs is not None and trajectories.log_pfs is not None
             log_pf_trajectories = trajectories.log_pfs
             log_pb_trajectories = trajectories.log_pbs
         else:

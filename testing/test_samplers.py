@@ -166,3 +166,8 @@ def test_replay_buffer(
     print(
         f"After adding {len(training_objects)} trajectories, the replay buffer is {replay_buffer} \n {replay_buffer.training_objects}  "
     )
+
+
+test_hypergrid_trajectory_sampling(
+    3, preprocessor_name="Identity", evaluate_log_probabilities=True
+)

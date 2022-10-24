@@ -109,7 +109,7 @@ def test_PFBasedParametrization_hypergrid(
     print(parametrization.parameters.keys())
     print(len(set(parametrization.parameters.values())))
 
-    trajectories = trajectories_sampler.sample(n_objects=10)
+    trajectories = trajectories_sampler.sample(n_trajectories=10)
     if parametrization_name == "DB":
         training_objects = trajectories.to_transitions()
     else:

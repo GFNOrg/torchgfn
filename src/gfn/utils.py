@@ -47,7 +47,7 @@ def validate(
             these last n_validation_samples states. Otherwise, n_validation_samples are resampled for evaluation.
 
     Returns:
-        Dict[str, float]: A dictionary containing the l1 validation metric, and if the parametrization is a TBParametrization,
+        Dict[str, float]: A dictionary containing the l1 validation metric. If the parametrization is a TBParametrization,
         i.e. contains LogZ, then the (absolute) difference between the learned and the target LogZ is also returned in the
         dictionary.
     """

@@ -44,8 +44,8 @@ class ReplayBuffer:
         self.training_objects.extend(training_objects)
         self.training_objects = self.training_objects[-self.capacity :]
 
-    def sample(self, n_objects: int) -> Transitions | Trajectories:
-        return self.training_objects.sample(n_objects)
+    def sample(self, n_trajectories: int) -> Transitions | Trajectories:
+        return self.training_objects.sample(n_trajectories)
 
     def save(self, directory: str):
         self.training_objects.save(directory)

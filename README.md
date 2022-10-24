@@ -1,34 +1,33 @@
-## Running the code
+## Installing the library
 ```bash
 git clone https://github.com/saleml/gfn.git
 cd gfn
-conda create -n gfn python=3.10
-conda activate gfn
-pip install -r requirements.txt
 pip install -e .
-python train.py
 ```
 
-Optionally, for `wandb logging`
+Optionally, to run scripts, and for [wandb](https://wandb.ai) logging
 ```bash
-pip install wandb
+pip install -r requirements.txt
 wandb login
 ```
 
-To run the code:
-```python
-python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --parametrization TB 
+
+## About this repo
+This library serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization used for the GFN loss. 
+
+An example script is provided [here](scripts/train.py). To run the code, use one of the following:
+```bash
+python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --loss TB 
+python train.py --env HyperGrid --env.ndim 2 --env.height 64 --n_iterations 100000 --loss DB --logit_PB.module_name Uniform --optim adam --optim.lr 5e-3 
 ```
 
-## Example, in a few lines
+### Example, in a few lines
 ```python
 env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
-logZ_tensor = torch.tensor(0.)
-
 logit_PF = LogitPFEstimator(env=env, module_name='NeuralNet')
 logit_PB = LogitPBEstimator(env=env, module_name='NeuralNet', torso=logit_PF.module.torso)  # To share parameters between PF and PB
-logZ = LogZEstimator(logZ_tensor)
+logZ = LogZEstimator(torch.tensor(0.))
 
 parametrization = TBParametrization(logit_PF, logit_PB, logZ)
 
@@ -44,7 +43,7 @@ params = [
 optimizer = torch.optim.Adam(params)
 
 for i in range(1000):
-    trajectories = trajectories_sampler.sample(n_objects=16)
+    trajectories = trajectories_sampler.sample(n_trajectories=16)
     optimizer.zero_grad()
     loss = loss_fn(trajectories)
     loss.backward()
@@ -52,14 +51,20 @@ for i in range(1000):
 ```
 
 
+
+
 ## Contributing
 Before the first commit:
 ```bash
+pip install pre-commit, black, pytest
 pre-commit install
 pre-commit run --all-files
 ```
-Run `pre-commit` after staging, and before committing. Make sure all the tests pass. The codebase uses `black` formatter.
+Run `pre-commit` after staging, and before committing. Make sure all the tests pass (By running `pytest`).
+The codebase uses `black` formatter.
 
+
+# Details about the codebase
 
 ## Defining an environment
 A pointed DAG environment (or GFN environment, or environment for short) is a representation for the pointed DAG. The abstract class [Env](gfn/envs/env.py) specifies the requirements for a valid environment definition. To obtain such a representation, the environment needs to specify the following attributes, properties, or methods:

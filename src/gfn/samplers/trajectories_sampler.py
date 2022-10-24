@@ -114,7 +114,7 @@ class TrajectoriesSampler:
             ) & ~dones
             trajectories_dones[new_dones & ~dones] = step
             trajectories_rewards[new_dones & ~dones] = self.env.reward(
-                new_states[new_dones & ~dones]
+                states[new_dones & ~dones]
             )
             states = new_states
             dones = dones | new_dones
@@ -138,5 +138,5 @@ class TrajectoriesSampler:
 
         return trajectories
 
-    def sample(self, n_objects: int) -> Trajectories:
-        return self.sample_trajectories(n_trajectories=n_objects)
+    def sample(self, n_trajectories: int) -> Trajectories:
+        return self.sample_trajectories(n_trajectories=n_trajectories)

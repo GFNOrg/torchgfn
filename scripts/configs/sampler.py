@@ -1,10 +1,15 @@
 from dataclasses import dataclass
+from typing import Tuple
 
 from simple_parsing.helpers import JsonSerializable
 
 from gfn.envs import Env
 from gfn.losses import FMParametrization, Parametrization, PFBasedParametrization
-from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.samplers import (
+    BackwardDiscreteActionsSampler,
+    DiscreteActionsSampler,
+    TrajectoriesSampler,
+)
 
 
 @dataclass
@@ -13,7 +18,12 @@ class SamplerConfig(JsonSerializable):
     sf_bias: float = 0.0
     epsilon: float = 0.0
 
-    def parse(self, env: Env, parametrization: Parametrization) -> TrajectoriesSampler:
+    def parse(
+        self, env: Env, parametrization: Parametrization
+    ) -> Tuple[TrajectoriesSampler, bool]:
+        on_policy = (
+            self.temperature == 1.0 and self.sf_bias == 0.0 and self.epsilon == 0.0
+        )
         if isinstance(parametrization, FMParametrization):
             estimator = parametrization.logF
         elif isinstance(parametrization, PFBasedParametrization):
@@ -28,8 +38,22 @@ class SamplerConfig(JsonSerializable):
             epsilon=self.epsilon,
         )
 
-        trajectories_sampler = TrajectoriesSampler(
-            env=env, actions_sampler=actions_sampler
-        )
+        if on_policy:
+            backward_actions_sampler = BackwardDiscreteActionsSampler(
+                estimator=parametrization.logit_PB
+            )
 
-        return trajectories_sampler
+            trajectories_sampler = TrajectoriesSampler(
+                env=env,
+                actions_sampler=actions_sampler,
+                evaluate_log_probabilities=True,
+                backward_actions_sampler=backward_actions_sampler,
+            )
+        else:
+            trajectories_sampler = TrajectoriesSampler(
+                env=env,
+                actions_sampler=actions_sampler,
+                evaluate_log_probabilities=False,
+            )
+
+        return trajectories_sampler, on_policy

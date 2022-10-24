@@ -6,7 +6,7 @@ from simple_parsing.helpers.serialization import encode
 from tqdm import tqdm, trange
 
 from gfn.containers.replay_buffer import ReplayBuffer
-from gfn.losses import StateDecomposableLoss, TBParametrization
+from gfn.losses import StateDecomposableLoss, TBParametrization, TrajectoryBalance
 from gfn.utils import trajectories_to_training_samples, validate
 
 parser = ArgumentParser()
@@ -53,7 +53,10 @@ sampler_config: SamplerConfig = args.sampler_config
 env = env_config.parse(device_str)
 parametrization, loss_fn = loss_config.parse(env)
 optimizer, scheduler = optim_config.parse(parametrization)
-trajectories_sampler = sampler_config.parse(env, parametrization)
+trajectories_sampler, on_policy = sampler_config.parse(env, parametrization)
+
+if on_policy and isinstance(loss_fn, TrajectoryBalance):
+    loss_fn.on_policy = True
 
 if isinstance(loss_fn, StateDecomposableLoss):
     assert args.resample_for_validation
@@ -85,11 +88,11 @@ visited_terminating_states = (
 )
 
 for i in trange(args.n_iterations):
-    trajectories = trajectories_sampler.sample(n_objects=args.batch_size)
+    trajectories = trajectories_sampler.sample(n_trajectories=args.batch_size)
     training_samples = trajectories_to_training_samples(trajectories, loss_fn)
     if replay_buffer is not None:
         replay_buffer.add(training_samples)
-        training_objects = replay_buffer.sample(n_objects=args.batch_size)
+        training_objects = replay_buffer.sample(n_trajectories=args.batch_size)
     else:
         training_objects = training_samples
 

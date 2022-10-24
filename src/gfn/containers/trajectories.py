@@ -237,7 +237,13 @@ class Trajectories(Container):
             rewards = None
         else:
             rewards = torch.full_like(actions, fill_value=-1.0, dtype=torch.float)
-            rewards[is_done] = self._rewards
+            rewards[is_done] = torch.cat(
+                [
+                    self._rewards[self.when_is_done == i]
+                    for i in range(self.when_is_done.max() + 1)
+                ],
+                dim=0,
+            )
         return Transitions(
             env=self.env,
             states=states,
