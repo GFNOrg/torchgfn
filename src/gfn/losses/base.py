@@ -101,7 +101,11 @@ class EdgeDecomposableLoss(Loss, ABC):
 
 class StateDecomposableLoss(Loss, ABC):
     @abstractmethod
-    def __call__(self, states: States) -> TensorType[0, float]:
+    def __call__(self, states_tuple: Tuple[States, States]) -> TensorType[0, float]:
+        """Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a tuple of states,
+        the first one being the internal states of the trajectories (i.e. non-terminal states), and the second one
+        being the terminal states of the trajectories. If these two are not handled differently, then they should be
+        concatenated together."""
         pass
 
 

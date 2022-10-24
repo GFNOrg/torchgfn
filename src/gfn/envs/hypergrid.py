@@ -214,7 +214,7 @@ class HyperGrid(Env):
         rearrange_string += " ndim -> "
         rearrange_string += " ".join([f"n{i}" for i in range(ndim, 0, -1)])
         rearrange_string += " ndim"
-        grid = rearrange(grid, rearrange_string)
+        grid = rearrange(grid, rearrange_string).long()
         return self.States(grid)
 
     @property

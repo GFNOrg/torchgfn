@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Tuple
 
 import torch
 from torchtyping import TensorType
@@ -37,53 +38,61 @@ class FMParametrization(Parametrization):
 
 
 class FlowMatching(StateDecomposableLoss):
-    def __init__(self, parametrization: FMParametrization, env: Env) -> None:
+    def __init__(self, parametrization: FMParametrization) -> None:
         self.parametrization = parametrization
-        self.env = env
+        self.env = parametrization.logF.env
 
-    def get_scores(self, states: States) -> ScoresTensor:
+    def get_scores(self, states_tuple: Tuple[States, States]) -> ScoresTensor:
         """
         Compute the scores for the given states, defined as the log-sum incoming flows minus log-sum outgoing flows.
-        The batch_shape of states should be (n_states,).
-        The scores are first computed for the the states that are not s0.
-        Then s0 is treated separately, the corresponding F(s0 ->sf), if s0 is terminating, should be equal to R(s0).
-        Therefore, there would be as many entries in the ScoresTensor corresponding to s0 as there are s0 in the batch,
-        and the score (as a convention) for those entries is defined to be log F(s0 -> sf) - log R(s0).
+        The first element of the tuple is the set of intermediary states in a trajectory that are not s0.
+        The second element of the tuple is the set of terminal states in each trajectory that is not s0 -> sf.
+        The reward function is queried only for the second element of the tuple (even if there are terminal states in the first element).
+        The batch_shape of each states object in the tuple should be (n_states,).
 
         As of now, only discrete environments are handled.
         """
+        intermediary_states, terminating_states = states_tuple
+        terminating_states_mask = torch.zeros(
+            intermediary_states.batch_shape,
+            dtype=torch.bool,
+            device=intermediary_states.states_tensor.device,
+        )
+        terminating_states_mask = torch.cat(
+            (
+                terminating_states_mask,
+                torch.ones(
+                    terminating_states.batch_shape,
+                    dtype=torch.bool,
+                    device=intermediary_states.states_tensor.device,
+                ),
+            )
+        )
+        intermediary_states.extend(terminating_states)
+
+        states = intermediary_states
         assert len(states.batch_shape) == 1
-        non_sink_states = states[~states.is_sink_state]
 
-        non_initial_states = non_sink_states[~non_sink_states.is_initial_state]
-
-        (
-            non_initial_states.forward_masks,
-            non_initial_states.backward_masks,
-        ) = correct_cast(
-            non_initial_states.forward_masks, non_initial_states.backward_masks
+        states.forward_masks, states.backward_masks = correct_cast(
+            states.forward_masks, states.backward_masks
         )
 
-        non_initial_terminal_mask = non_initial_states.forward_masks[:, -1]
-        non_initial_terminal_states = non_initial_states[non_initial_terminal_mask]
-        non_initial_terminal_states_rewards = self.env.reward(
-            non_initial_terminal_states
-        )
+        terminating_states_rewards = self.env.reward(terminating_states)
 
         incoming_flows = torch.full_like(
-            non_initial_states.backward_masks, -float("inf"), dtype=torch.float
+            states.backward_masks, -float("inf"), dtype=torch.float
         )
         outgoing_flows = torch.full_like(
-            non_initial_states.forward_masks, -float("inf"), dtype=torch.float
+            states.forward_masks, -float("inf"), dtype=torch.float
         )
-        outgoing_flows[non_initial_terminal_mask, -1] = torch.log(
-            non_initial_terminal_states_rewards
+        outgoing_flows[terminating_states_mask, -1] = torch.log(
+            terminating_states_rewards
         )
         for action_idx in range(self.env.n_actions - 1):
-            valid_backward_mask = non_initial_states.backward_masks[:, action_idx]
-            valid_forward_mask = non_initial_states.forward_masks[:, action_idx]
-            valid_backward_states = non_initial_states[valid_backward_mask]
-            valid_forward_states = non_initial_states[valid_forward_mask]
+            valid_backward_mask = states.backward_masks[:, action_idx]
+            valid_forward_mask = states.forward_masks[:, action_idx]
+            valid_backward_states = states[valid_backward_mask]
+            valid_forward_states = states[valid_forward_mask]
             _, valid_backward_states.backward_masks = correct_cast(
                 valid_backward_states.forward_masks,
                 valid_backward_states.backward_masks,
@@ -105,27 +114,8 @@ class FlowMatching(StateDecomposableLoss):
         incoming_flows = torch.logsumexp(incoming_flows, dim=1)
         outgoing_flows = torch.logsumexp(outgoing_flows, dim=1)
 
-        # We still need to compute the scores for the initial states that appear in the batch
-        initial_states = non_sink_states[non_sink_states.is_initial_state]
-        initial_states.forward_masks, _ = correct_cast(
-            initial_states.forward_masks, initial_states.backward_masks
-        )
-
-        is_terminal = torch.all(initial_states.forward_masks[:, -1])
-        if is_terminal:
-            initial_states_rewards = self.env.reward(initial_states)
-            initial_states_terminating_flows = self.parametrization.logF(
-                initial_states
-            )[:, -1]
-            incoming_flows = torch.cat(
-                [incoming_flows, initial_states_terminating_flows]
-            )
-            outgoing_flows = torch.cat(
-                [outgoing_flows, torch.log(initial_states_rewards)]
-            )
-
         return incoming_flows - outgoing_flows
 
-    def __call__(self, states: States) -> LossTensor:
-        scores = self.get_scores(states)
+    def __call__(self, states_tuple: Tuple[States, States]) -> LossTensor:
+        scores = self.get_scores(states_tuple)
         return scores.pow(2).mean()

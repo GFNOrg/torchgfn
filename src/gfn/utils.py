@@ -20,7 +20,8 @@ def trajectories_to_training_samples(
     depending on the loss.
     """
     if isinstance(loss_fn, StateDecomposableLoss):
-        return trajectories.to_states()
+        # return trajectories.to_states()
+        return trajectories.to_non_initial_intermediary_and_terminating_states()
     elif isinstance(loss_fn, TrajectoryDecomposableLoss):
         return trajectories
     elif isinstance(loss_fn, EdgeDecomposableLoss):

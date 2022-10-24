@@ -38,7 +38,7 @@ class SamplerConfig(JsonSerializable):
             epsilon=self.epsilon,
         )
 
-        if on_policy:
+        if on_policy and hasattr(parametrization, "logit_PB"):
             backward_actions_sampler = BackwardDiscreteActionsSampler(
                 estimator=parametrization.logit_PB
             )

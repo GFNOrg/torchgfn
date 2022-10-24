@@ -6,7 +6,7 @@ from simple_parsing.helpers.serialization import encode
 from tqdm import tqdm, trange
 
 from gfn.containers.replay_buffer import ReplayBuffer
-from gfn.losses import StateDecomposableLoss, TBParametrization, TrajectoryBalance
+from gfn.losses import TBParametrization, TrajectoryBalance
 from gfn.utils import trajectories_to_training_samples, validate
 
 parser = ArgumentParser()
@@ -58,9 +58,6 @@ trajectories_sampler, on_policy = sampler_config.parse(env, parametrization)
 if on_policy and isinstance(loss_fn, TrajectoryBalance):
     loss_fn.on_policy = True
 
-if isinstance(loss_fn, StateDecomposableLoss):
-    assert args.resample_for_validation
-
 use_replay_buffer = False
 replay_buffer = None
 if args.replay_buffer_size > 0:
@@ -87,6 +84,7 @@ visited_terminating_states = (
     env.States.from_batch_shape((0,)) if not args.resample_for_validation else None
 )
 
+states_visited = 0
 for i in trange(args.n_iterations):
     trajectories = trajectories_sampler.sample(n_trajectories=args.batch_size)
     training_samples = trajectories_to_training_samples(trajectories, loss_fn)
@@ -103,14 +101,10 @@ for i in trange(args.n_iterations):
     optimizer.step()
     scheduler.step()
     if visited_terminating_states is not None:
-        visited_terminating_states.extend(training_objects.last_states)
-    # With TB, SubTB, and DB, each trajectory is responsible for propagating ONE reward back to the root.
-    # Thus, "states_visited", which is supposed to represent the number of times the reward function is
-    # queries, is equal to the number of trajectories, or the batch size.
-    # With FM however, the credit assignment is different, given that each terminating state,
-    # even though it is not the last state of its trajectory, is responsible for propagating ONE reward back to the root.
-    # Keep this in mind when interpreting "states_visited" ! The reward function is queried much more than that !
-    to_log = {"loss": loss.item(), "states_visited": (i + 1) * args.batch_size}
+        visited_terminating_states.extend(trajectories.last_states)
+
+    states_visited += len(trajectories)
+    to_log = {"loss": loss.item(), "states_visited": states_visited}
     if use_wandb:
         wandb.log(to_log, step=i)
     if i % args.validation_interval == 0:

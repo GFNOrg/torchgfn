@@ -292,10 +292,3 @@ class States(Container, ABC):
             *self.batch_shape, *((1,) * len(self.__class__.state_shape))
         )
         return self.compare(sink_states)
-
-    # def copy(self) -> States:
-    #     return self.__class__(
-    #         self.states.clone(),
-    #         self.forward_masks.clone() if self.forward_masks is not None else None,
-    #         self.backward_masks.clone() if self.backward_masks is not None else None,
-    #     )

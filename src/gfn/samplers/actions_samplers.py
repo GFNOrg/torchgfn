@@ -83,6 +83,10 @@ class DiscreteActionsSampler:
             Tensor2D: A 2D tensor of shape (batch_size, n_actions) containing the transformed logits.
         """
         logits = self.get_raw_logits(states)
+        if isinstance(self.estimator, LogEdgeFlowEstimator):
+            logits = torch.cat(
+                [logits, self.estimator.env.reward(states).unsqueeze(-1).log()], dim=-1
+            )
         if torch.any(torch.all(torch.isnan(logits), 1)):
             raise ValueError("NaNs in estimator")
         states.forward_masks, _ = correct_cast(

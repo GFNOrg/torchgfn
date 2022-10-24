@@ -259,6 +259,21 @@ class Trajectories(Container):
         states = self.states.flatten()
         return states[~states.is_sink_state]
 
+    def to_non_initial_intermediary_and_terminating_states(
+        self,
+    ) -> tuple[States, States]:
+        """Returns a tuple of `States` objects from the trajectories, containing all non-initial intermediary and terminating states in the trajectories
+
+        Returns:
+            Tuple[States, States]: - All the intermediary states in the trajectories that are not s0.
+                                   - All the terminating states in the trajectories that are not s0.
+        """
+        states = self.states[:-1][self.actions != self.env.n_actions - 1]
+        intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]
+        terminating_states = self.last_states
+        terminating_states = terminating_states[~terminating_states.is_initial_state]
+        return intermediary_states, terminating_states
+
     # def copy(self) -> Trajectories:
     #     return Trajectories(
     #         env=self.env,

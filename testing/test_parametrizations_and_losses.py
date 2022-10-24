@@ -38,10 +38,10 @@ def test_FM_hypergrid(ndim: int, module_name: str):
     actions_sampler = DiscreteActionsSampler(log_F_edge)
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
-    states = trajectories.to_states()
+    states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
 
-    loss = FlowMatching(parametrization, env)
-    print(loss(states))
+    loss = FlowMatching(parametrization)
+    print(loss(states_tuple))
 
 
 @pytest.mark.parametrize("ndim", [2, 3])

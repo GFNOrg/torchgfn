@@ -32,6 +32,7 @@ class FunctionEstimator(ABC):
             module_name (Optional[Literal[NeuralNet, Uniform, Tabular, Zero]], optional): Used only if module is None. What module to use. Defaults to None.
             **nn_kwargs: Keyword arguments to pass to the module, if module_name is NeuralNet.
         """
+        self.env = env
         if module is None:
             assert module_name is not None and output_dim is not None
             if module_name == "NeuralNet":
@@ -87,7 +88,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
         super().__init__(
             env,
             module=module,
-            output_dim=env.n_actions,
+            output_dim=env.n_actions - 1,
             module_name=module_name,
             **nn_kwargs,
         )

@@ -32,7 +32,13 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         parametrization: SubTBParametrization,
         reward_clip_min: float = 1e-5,
         weighing: Literal[
-            "DB", "ModifiedDB", "TB", "geometric", "equal", "geometric2", "equal_within"
+            "DB",
+            "ModifiedDB",
+            "TB",
+            "geometric",
+            "equal",
+            "geometric_within",
+            "equal_within",
         ] = "geometric",
         lamda: float = 0.9,
     ):

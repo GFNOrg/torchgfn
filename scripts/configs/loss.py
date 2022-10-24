@@ -63,7 +63,7 @@ class FMLossConfig(BaseLossConfig):
         )
         parametrization = FMParametrization(logF_edge)
 
-        loss = FlowMatching(parametrization, env)
+        loss = FlowMatching(parametrization)
 
         return parametrization, loss
 
@@ -135,7 +135,6 @@ class DBLossConfig(StateFlowBasedLossConfig):
 
 @dataclass
 class SubTBLossConfig(StateFlowBasedLossConfig):
-    # TODO: Should be merged with DBLossConfig
     weighing: str = choice(
         "equal",
         "equal_within",
@@ -144,7 +143,7 @@ class SubTBLossConfig(StateFlowBasedLossConfig):
         "DB",
         "ModifiedDB",
         "geometric_within",
-        default="geometric",
+        default="geometric_within",
     )
     lamda: float = 0.9
 
