@@ -41,6 +41,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             "equal_within",
         ] = "geometric",
         lamda: float = 0.9,
+        on_policy: bool = False,
     ):
         """
         :param parametrization: parametrization of the model
@@ -55,6 +56,8 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             - "equal": Each sub-trajectory of each trajectory is weighed equally within the set of all sub-trajectories.
             - "geometric_within": Each sub-trajectory of each trajectory is weighed proportionally to (lamda ** len(sub_trajectory)), within each trajectory.
             - "geometric": Each sub-trajectory of each trajectory is weighed proportionally to (lamda ** len(sub_trajectory)), within the set of all sub-trajectories.
+        :param lamda: parameter for geometric weighing
+        :param on_policy: whether the loss is computed on-policy (in which case the log probs stored in the trajectories are used) or off-policy
         """
         # Lamda is a discount factor for longer trajectories. The part of the loss
         # corresponding to sub-trajectories of length i is multiplied by lamda^i
@@ -67,6 +70,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         )
         self.weighing = weighing
         self.lamda = lamda
+        self.on_policy = on_policy
 
     def cumulative_logprobs(
         self,
@@ -98,8 +102,10 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             of length k exist for each trajectory. The entries of those tensors are True if the corresponding sub-trajectory does not exist.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-            trajectories, fill_value=-float("inf")
+            trajectories, fill_value=-float("inf"), no_pf=self.on_policy
         )
+        if self.on_policy:
+            log_pf_trajectories = trajectories.log_probs
 
         log_pf_trajectories_cum = self.cumulative_logprobs(
             trajectories, log_pf_trajectories

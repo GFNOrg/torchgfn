@@ -28,6 +28,7 @@ class Transitions(Container):
         next_states: States | None = None,
         is_backward: bool = False,
         rewards: FloatTensor | None = None,
+        log_probs: FloatTensor | None = None,
     ):
         """Container for transitions.
 
@@ -39,6 +40,8 @@ class Transitions(Container):
             next_states (States, optional): States object with uni-dimensional batch_shape, representing the children of the transitions. Defaults to None.
             is_backward (bool, optional): Whether the transitions are backward transitions (i.e. next_states is the parent of states). Defaults to False.
             rewards (FloatTensor1D, optional): The rewards of the transitions (using a default value like -1 for non-terminating transitions). Defaults to None.
+            log_probs (FloatTensor1D, optional): The log-probabilities of the actions. Defaults to None.
+
         When states and next_states are not None, the Transitions is an empty container that can be populated on the go.
         """
         self.env = env
@@ -70,6 +73,8 @@ class Transitions(Container):
         )
 
         self._rewards = rewards
+
+        self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
 
     @property
     def n_transitions(self) -> int:
@@ -142,6 +147,7 @@ class Transitions(Container):
         is_done = self.is_done[index]
         next_states = self.next_states[index]
         rewards = self._rewards[index] if self._rewards is not None else None
+        log_probs = self.log_probs[index]
         return Transitions(
             env=self.env,
             states=states,
@@ -150,6 +156,7 @@ class Transitions(Container):
             next_states=next_states,
             is_backward=self.is_backward,
             rewards=rewards,
+            log_probs=log_probs,
         )
 
     def extend(self, other: Transitions) -> None:
@@ -162,3 +169,4 @@ class Transitions(Container):
             self._rewards = torch.cat((self._rewards, other._rewards), dim=0)
         else:
             self._rewards = None
+        self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=0)

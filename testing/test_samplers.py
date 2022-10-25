@@ -3,7 +3,8 @@ from typing import Literal
 import pytest
 import torch
 
-from gfn.containers import ReplayBuffer, Trajectories
+from gfn.containers import Trajectories
+from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.envs import HyperGrid
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator
 from gfn.samplers import TrajectoriesSampler
@@ -15,11 +16,9 @@ from gfn.samplers.actions_samplers import (
 
 @pytest.mark.parametrize("height", [4, 5])
 @pytest.mark.parametrize("preprocessor_name", ["KHot", "OneHot", "Identity"])
-@pytest.mark.parametrize("evaluate_log_probabilities", [True, False])
 def test_hypergrid_trajectory_sampling(
     height: int,
     preprocessor_name: str,
-    evaluate_log_probabilities: bool,
     human_print=False,
 ) -> Trajectories:
     if human_print:
@@ -29,9 +28,7 @@ def test_hypergrid_trajectory_sampling(
     actions_sampler = DiscreteActionsSampler(
         LogitPFEstimator(env=env, module_name="NeuralNet")
     )
-    backward_actions_sampler = BackwardDiscreteActionsSampler(
-        LogitPBEstimator(env=env, module_name="Uniform")
-    )
+
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     if human_print:
@@ -47,8 +44,6 @@ def test_hypergrid_trajectory_sampling(
     trajectories_sampler = TrajectoriesSampler(
         env,
         actions_sampler=logit_pf_actions_sampler,
-        backward_actions_sampler=backward_actions_sampler,
-        evaluate_log_probabilities=evaluate_log_probabilities,
     )
 
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
@@ -83,12 +78,10 @@ def test_hypergrid_trajectory_sampling(
 
 
 @pytest.mark.parametrize("height", [4, 5])
-@pytest.mark.parametrize("evaluate_log_probabilities", [True, False])
-def test_trajectories_getitem(height: int, evaluate_log_probabilities: bool):
+def test_trajectories_getitem(height: int):
     trajectories = test_hypergrid_trajectory_sampling(
         height,
         preprocessor_name="KHot",
-        evaluate_log_probabilities=evaluate_log_probabilities,
     )
     print(f"There are {trajectories.n_trajectories} original trajectories")
     print(trajectories)
@@ -98,12 +91,10 @@ def test_trajectories_getitem(height: int, evaluate_log_probabilities: bool):
 
 
 @pytest.mark.parametrize("height", [4, 5])
-@pytest.mark.parametrize("evaluate_log_probabilities", [True, False])
-def test_trajectories_extend(height: int, evaluate_log_probabilities: bool):
+def test_trajectories_extend(height: int):
     trajectories = test_hypergrid_trajectory_sampling(
         height,
         preprocessor_name="KHot",
-        evaluate_log_probabilities=evaluate_log_probabilities,
     )
     print(
         f"There are {trajectories.n_trajectories} original trajectories. To which we will add the two first trajectories"
@@ -113,12 +104,10 @@ def test_trajectories_extend(height: int, evaluate_log_probabilities: bool):
 
 
 @pytest.mark.parametrize("height", [4, 5])
-@pytest.mark.parametrize("evaluate_log_probabilities", [True, False])
-def test_sub_sampling(height: int, evaluate_log_probabilities: bool):
+def test_sub_sampling(height: int):
     trajectories = test_hypergrid_trajectory_sampling(
         height,
         preprocessor_name="Identity",
-        evaluate_log_probabilities=evaluate_log_probabilities,
     )
     print(
         f"There are {trajectories.n_trajectories} original trajectories, from which we will sample 2"
@@ -131,19 +120,16 @@ def test_sub_sampling(height: int, evaluate_log_probabilities: bool):
 
 @pytest.mark.parametrize("height", [4, 5])
 @pytest.mark.parametrize("objects", ["trajectories", "transitions"])
-@pytest.mark.parametrize("evaluate_log_probabilities", [True, False])
 def test_replay_buffer(
     height: int,
     objects: Literal["trajectories", "transitions"],
-    evaluate_log_probabilities: bool,
 ):
     env = HyperGrid(ndim=2, height=height)
-    replay_buffer = ReplayBuffer(env, capacity=10, objects=objects)
+    replay_buffer = ReplayBuffer(env, capacity=10, objects_type=objects)
     print(f"After initialization, the replay buffer is {replay_buffer} ")
     training_objects = test_hypergrid_trajectory_sampling(
         height,
         preprocessor_name="Identity",
-        evaluate_log_probabilities=evaluate_log_probabilities,
     )
     if objects == "trajectories":
         replay_buffer.add(
@@ -166,8 +152,3 @@ def test_replay_buffer(
     print(
         f"After adding {len(training_objects)} trajectories, the replay buffer is {replay_buffer} \n {replay_buffer.training_objects}  "
     )
-
-
-test_hypergrid_trajectory_sampling(
-    3, preprocessor_name="Identity", evaluate_log_probabilities=True
-)

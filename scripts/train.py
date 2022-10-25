@@ -6,7 +6,6 @@ from simple_parsing.helpers.serialization import encode
 from tqdm import tqdm, trange
 
 from gfn.containers.replay_buffer import ReplayBuffer
-from gfn.losses import TBParametrization, TrajectoryBalance
 from gfn.utils import trajectories_to_training_samples, validate
 
 parser = ArgumentParser()
@@ -54,20 +53,13 @@ env = env_config.parse(device_str)
 parametrization, loss_fn = loss_config.parse(env)
 optimizer, scheduler = optim_config.parse(parametrization)
 trajectories_sampler, on_policy = sampler_config.parse(env, parametrization)
-
-if on_policy and isinstance(loss_fn, TrajectoryBalance):
-    loss_fn.on_policy = True
+loss_fn.on_policy = on_policy
 
 use_replay_buffer = False
 replay_buffer = None
 if args.replay_buffer_size > 0:
     use_replay_buffer = True
-    if isinstance(parametrization, TBParametrization):
-        objects = "trajectories"
-    else:
-        objects = "transitions"
-    print(objects)
-    replay_buffer = ReplayBuffer(env, capacity=args.replay_buffer_size, objects=objects)
+    replay_buffer = ReplayBuffer(env, loss_fn, capacity=args.replay_buffer_size)
 
 print(env_config, loss_config, optim_config, sampler_config)
 print(args)

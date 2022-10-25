@@ -31,32 +31,36 @@ class DBParametrization(PFBasedParametrization):
 
 
 class DetailedBalance(EdgeDecomposableLoss):
-    def __init__(self, parametrization: DBParametrization):
+    def __init__(self, parametrization: DBParametrization, on_policy: bool = False):
+        "If on_policy is True, the log probs stored in the transitions are used."
         self.parametrization = parametrization
         self.actions_sampler = DiscreteActionsSampler(parametrization.logit_PF)
         self.backward_actions_sampler = BackwardDiscreteActionsSampler(
             parametrization.logit_PB
         )
+        self.on_policy = on_policy
 
     def get_scores(self, transitions: Transitions):
         if transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
-        valid_states = transitions.states[~transitions.states.is_sink_state]
-        valid_actions = transitions.actions[transitions.actions != -1]
+        states = transitions.states
+        actions = transitions.actions
 
         # uncomment next line for debugging
         # assert transitions.states.is_sink_state.equal(transitions.actions == -1)
 
-        if valid_states.batch_shape != tuple(valid_actions.shape):
+        if states.batch_shape != tuple(actions.shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
+        if self.on_policy:
+            valid_log_pf_actions = transitions.log_probs
+        else:
+            valid_pf_logits = self.actions_sampler.get_logits(states)
+            valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
+            valid_log_pf_actions = torch.gather(
+                valid_log_pf_all, dim=-1, index=actions.unsqueeze(-1)
+            ).squeeze(-1)
 
-        valid_pf_logits = self.actions_sampler.get_logits(valid_states)
-        valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
-        valid_log_pf_actions = torch.gather(
-            valid_log_pf_all, dim=-1, index=valid_actions.unsqueeze(-1)
-        ).squeeze(-1)
-
-        valid_log_F_s = self.parametrization.logF(valid_states).squeeze(-1)
+        valid_log_F_s = self.parametrization.logF(states).squeeze(-1)
 
         preds = valid_log_pf_actions + valid_log_F_s
 
@@ -67,13 +71,11 @@ class DetailedBalance(EdgeDecomposableLoss):
 
         # automatically removes invalid transitions (i.e. s_f -> s_f)
         valid_next_states = transitions.next_states[~transitions.is_done]
-        non_exit_valid_actions = valid_actions[
-            valid_actions != transitions.env.n_actions - 1
-        ]
+        non_exit_actions = actions[actions != transitions.env.n_actions - 1]
         valid_pb_logits = self.backward_actions_sampler.get_logits(valid_next_states)
         valid_log_pb_all = valid_pb_logits.log_softmax(dim=-1)
         valid_log_pb_actions = torch.gather(
-            valid_log_pb_all, dim=-1, index=non_exit_valid_actions.unsqueeze(-1)
+            valid_log_pb_all, dim=-1, index=non_exit_actions.unsqueeze(-1)
         ).squeeze(-1)
 
         valid_transitions_is_done = transitions.is_done[
@@ -110,15 +112,15 @@ class DetailedBalance(EdgeDecomposableLoss):
         if transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
         mask = ~transitions.next_states.is_sink_state
-        valid_states = transitions.states[mask]
+        states = transitions.states[mask]
         valid_next_states = transitions.next_states[mask]
-        valid_actions = transitions.actions[mask]
+        actions = transitions.actions[mask]
         all_rewards = transitions.all_rewards[mask]
 
-        valid_pf_logits = self.actions_sampler.get_logits(valid_states)
+        valid_pf_logits = self.actions_sampler.get_logits(states)
         valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
         valid_log_pf_actions = torch.gather(
-            valid_log_pf_all, dim=-1, index=valid_actions.unsqueeze(-1)
+            valid_log_pf_all, dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
         valid_log_pf_s_exit = valid_log_pf_all[:, -1]
 
@@ -132,7 +134,7 @@ class DetailedBalance(EdgeDecomposableLoss):
         valid_pb_logits = self.backward_actions_sampler.get_logits(valid_next_states)
         valid_log_pb_all = valid_pb_logits.log_softmax(dim=-1)
         valid_log_pb_actions = torch.gather(
-            valid_log_pb_all, dim=-1, index=valid_actions.unsqueeze(-1)
+            valid_log_pb_all, dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
         preds = (

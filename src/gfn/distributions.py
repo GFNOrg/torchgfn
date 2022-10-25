@@ -5,7 +5,8 @@ from typing import Optional
 import torch
 from torchtyping import TensorType
 
-from gfn.containers import States, Trajectories
+from gfn.containers.states import States
+from gfn.containers.trajectories import Trajectories
 from gfn.envs.env import Env
 
 # Typing

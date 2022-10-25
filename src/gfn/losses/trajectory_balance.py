@@ -37,6 +37,12 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         reward_clip_min: float = 1e-5,
         on_policy: bool = False,
     ):
+        """Loss object to evaluate the TB loss on a batch of trajectories.
+
+        Args:
+            reward_clip_min (float, optional): minimal value to clamp the reward to. Defaults to 1e-5.
+            on_policy (bool, optional): If True, the log probs stored in the trajectories are used. Defaults to False.
+        """
         self.parametrization = parametrization
         self.reward_clip_min = reward_clip_min
         self.actions_sampler = DiscreteActionsSampler(parametrization.logit_PF)
@@ -49,17 +55,15 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         self, trajectories: Trajectories
     ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
 
+        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
+            trajectories, no_pf=self.on_policy
+        )
         if self.on_policy:
-            assert trajectories.log_pbs is not None and trajectories.log_pfs is not None
-            log_pf_trajectories = trajectories.log_pfs
-            log_pb_trajectories = trajectories.log_pbs
-        else:
-            log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-                trajectories
-            )
+            log_pf_trajectories = trajectories.log_probs
 
-            log_pf_trajectories = log_pf_trajectories.sum(dim=0)
-            log_pb_trajectories = log_pb_trajectories.sum(dim=0)
+        assert log_pf_trajectories is not None
+        log_pf_trajectories = log_pf_trajectories.sum(dim=0)
+        log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
         rewards = trajectories.rewards
         log_rewards = torch.log(rewards.clamp_min(self.reward_clip_min))  # type: ignore

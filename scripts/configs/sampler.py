@@ -5,11 +5,7 @@ from simple_parsing.helpers import JsonSerializable
 
 from gfn.envs import Env
 from gfn.losses import FMParametrization, Parametrization, PFBasedParametrization
-from gfn.samplers import (
-    BackwardDiscreteActionsSampler,
-    DiscreteActionsSampler,
-    TrajectoriesSampler,
-)
+from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 
 
 @dataclass
@@ -38,22 +34,9 @@ class SamplerConfig(JsonSerializable):
             epsilon=self.epsilon,
         )
 
-        if on_policy and hasattr(parametrization, "logit_PB"):
-            backward_actions_sampler = BackwardDiscreteActionsSampler(
-                estimator=parametrization.logit_PB
-            )
-
-            trajectories_sampler = TrajectoriesSampler(
-                env=env,
-                actions_sampler=actions_sampler,
-                evaluate_log_probabilities=True,
-                backward_actions_sampler=backward_actions_sampler,
-            )
-        else:
-            trajectories_sampler = TrajectoriesSampler(
-                env=env,
-                actions_sampler=actions_sampler,
-                evaluate_log_probabilities=False,
-            )
+        trajectories_sampler = TrajectoriesSampler(
+            env=env,
+            actions_sampler=actions_sampler,
+        )
 
         return trajectories_sampler, on_policy

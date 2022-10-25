@@ -10,6 +10,7 @@ from gfn.samplers.actions_samplers import ActionsSampler, BackwardActionsSampler
 # Typing
 StatesTensor = TensorType["n_trajectories", "state_shape", torch.float]
 ActionsTensor = TensorType["n_trajectories", torch.long]
+LogProbsTensor = TensorType["n_trajectories", torch.float]
 DonesTensor = TensorType["n_trajectories", torch.bool]
 
 
@@ -18,28 +19,16 @@ class TrajectoriesSampler:
         self,
         env: Env,
         actions_sampler: ActionsSampler,
-        evaluate_log_probabilities: bool = False,
-        backward_actions_sampler: BackwardActionsSampler | None = None,
     ):
         """Sample complete trajectories, or completes trajectories from a given batch states, using actions_sampler.
 
         Args:
             env (Env): Environment to sample trajectories from.
             actions_sampler (ActionsSampler): Sampler of actions.
-            evaluate_log_probabilities (bool, optional): Whether to evaluate log probabilities of actions. Defaults to False. If True, requires backward_actions_sampler to be not None.
-            backward_actions_sampler (BackwardActionsSampler, optional): Useful to calculate log_pbs. If None (default), log_pbs will be set to None.
         """
         self.env = env
         self.actions_sampler = actions_sampler
-        self.evaluate_log_probabilities = evaluate_log_probabilities
-        self.backward_actions_sampler = backward_actions_sampler
         self.is_backward = isinstance(actions_sampler, BackwardActionsSampler)
-        if evaluate_log_probabilities and (
-            backward_actions_sampler is None or self.is_backward
-        ):
-            raise ValueError(
-                "evaluate_log_probabilities is True but backward_actions_sampler is None or actions_sampler is BackwardActionsSampler"
-            )
 
     def sample_trajectories(
         self,
@@ -63,22 +52,14 @@ class TrajectoriesSampler:
 
         trajectories_states: List[StatesTensor] = [states.states_tensor]
         trajectories_actions: List[ActionsTensor] = []
+        trajectories_logprobs: List[LogProbsTensor] = []
         trajectories_dones = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
         trajectories_rewards = torch.zeros(
             n_trajectories, dtype=torch.float, device=device
         )
-        if self.evaluate_log_probabilities:
-            trajectories_log_pfs = torch.zeros(
-                n_trajectories, dtype=torch.float, device=device
-            )
-            trajectories_log_pbs = torch.zeros(
-                n_trajectories, dtype=torch.float, device=device
-            )
-        else:
-            trajectories_log_pfs = None
-            trajectories_log_pbs = None
+
         step = 0
 
         while not all(dones):
@@ -88,11 +69,16 @@ class TrajectoriesSampler:
                 dtype=torch.long,
                 device=device,
             )
+            log_probs = torch.full(
+                (n_trajectories,), fill_value=0, dtype=torch.float, device=device
+            )
             actions_log_probs, valid_actions = self.actions_sampler.sample(
                 states[~dones]
             )
             actions[~dones] = valid_actions
+            log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
+            trajectories_logprobs += [log_probs]
 
             if self.is_backward:
                 new_states = self.env.backward_step(states, actions)
@@ -100,22 +86,6 @@ class TrajectoriesSampler:
                 new_states = self.env.step(states, actions)
             sink_states_mask = new_states.is_sink_state
 
-            if self.evaluate_log_probabilities:
-                assert (
-                    trajectories_log_pfs is not None
-                    and trajectories_log_pbs is not None
-                    and self.backward_actions_sampler is not None
-                )
-                trajectories_log_pfs[~dones] += actions_log_probs
-                non_sink_new_states = new_states[~sink_states_mask]
-                backward_probs = self.backward_actions_sampler.get_probs(
-                    non_sink_new_states
-                )
-                trajectories_log_pbs[~sink_states_mask] += (
-                    backward_probs.gather(-1, actions[~sink_states_mask].unsqueeze(-1))
-                    .squeeze(-1)
-                    .log()
-                )
             step += 1
 
             new_dones = (
@@ -133,6 +103,7 @@ class TrajectoriesSampler:
         trajectories_states = torch.stack(trajectories_states, dim=0)
         trajectories_states = self.env.States(states_tensor=trajectories_states)
         trajectories_actions = torch.stack(trajectories_actions, dim=0)
+        trajectories_logprobs = torch.stack(trajectories_logprobs, dim=0)
 
         trajectories = Trajectories(
             env=self.env,
@@ -141,8 +112,7 @@ class TrajectoriesSampler:
             when_is_done=trajectories_dones,
             is_backward=self.is_backward,
             rewards=trajectories_rewards,
-            log_pfs=trajectories_log_pfs,
-            log_pbs=trajectories_log_pbs,
+            log_probs=trajectories_logprobs,
         )
 
         return trajectories

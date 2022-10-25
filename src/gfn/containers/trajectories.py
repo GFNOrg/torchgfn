@@ -14,6 +14,7 @@ from gfn.containers.transitions import Transitions
 
 # Typing  --- n_transitions is an int
 Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
+FloatTensor2D = TensorType["max_length", "n_trajectories", torch.float]
 Tensor2D2 = TensorType["n_trajectories", "shape"]
 Tensor1D = TensorType["n_trajectories", torch.long]
 FloatTensor1D = TensorType["n_trajectories", torch.float]
@@ -28,8 +29,7 @@ class Trajectories(Container):
         when_is_done: Tensor1D | None = None,
         is_backward: bool = False,
         rewards: FloatTensor1D | None = None,
-        log_pfs: FloatTensor1D | None = None,  # log_probs of the trajectories
-        log_pbs: FloatTensor1D | None = None,  # log_probs of the backward trajectories
+        log_probs: FloatTensor2D | None = None,
     ) -> None:
         """Container for complete trajectories (starting in s_0 and ending in s_f).
         Trajectories are represented as a States object with bi-dimensional batch shape.
@@ -40,8 +40,6 @@ class Trajectories(Container):
         The actions are represented as a two dimensional tensor with the first dimension representing the time step
         and the second dimension representing the trajectory index.
         The when_is_done tensor represents the time step at which each trajectory ends.
-        The log_pfs tensor represents the log probability (P_F) of each trajectory.
-        The log_pbs tensor represents the log probability (P_B) of each trajectory.
 
 
         Args:
@@ -51,8 +49,7 @@ class Trajectories(Container):
             when_is_done (Tensor1D, optional): The time step at which each trajectory ends. Defaults to None.
             is_backward (bool, optional): Whether the trajectories are backward or forward. Defaults to False.
             rewards (FloatTensor1D, optional): The rewards of the trajectories. Defaults to None.
-            log_pfs (FloatTensor1D, optional): The log probability (P_F) of each trajectory. Defaults to None.
-            log_pbs (FloatTensor1D, optional): The log probability (P_B) of each trajectory. Defaults to None.
+            log_probs (FloatTensor2D, optional): The log probabilities of the trajectories' actions. Defaults to None.
 
         If states is None, then the states are initialized to an empty States object, that can be populated on the fly.
         If rewards is None, then `env.reward` is used to compute the rewards, at each call of self.rewards
@@ -76,8 +73,11 @@ class Trajectories(Container):
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
         )
         self._rewards = rewards
-        self.log_pfs = log_pfs
-        self.log_pbs = log_pbs
+        self.log_probs = (
+            log_probs
+            if log_probs is not None
+            else torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
+        )
 
     def __repr__(self) -> str:
         states = self.states.states_tensor.transpose(0, 1)
@@ -131,11 +131,12 @@ class Trajectories(Container):
         new_max_length = when_is_done.max().item() if len(when_is_done) > 0 else 0
         states = self.states[:, index]
         actions = self.actions[:, index]
+        log_probs = self.log_probs[:, index]
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
+        log_probs = log_probs[:new_max_length]
         rewards = self._rewards[index] if self._rewards is not None else None
-        log_pfs = self.log_pfs[index] if self.log_pfs is not None else None
-        log_pbs = self.log_pbs[index] if self.log_pbs is not None else None
+
         return Trajectories(
             env=self.env,
             states=states,
@@ -143,8 +144,7 @@ class Trajectories(Container):
             when_is_done=when_is_done,
             is_backward=self.is_backward,
             rewards=rewards,
-            log_pfs=log_pfs,
-            log_pbs=log_pbs,
+            log_probs=log_probs,
         )
 
     def extend(self, other: Trajectories) -> None:
@@ -155,21 +155,15 @@ class Trajectories(Container):
         self.states.extend(other.states)
         self.actions = torch.cat((self.actions, other.actions), dim=1)
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
-        if self.log_pfs is not None and other.log_pfs is not None:
-            self.log_pfs = torch.cat((self.log_pfs, other.log_pfs), dim=0)
-        else:
-            self.log_pfs = None
-        if self.log_pbs is not None and other.log_pbs is not None:
-            self.log_pbs = torch.cat((self.log_pbs, other.log_pbs), dim=0)
-        else:
-            self.log_pbs = None
+        self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
+
         if self._rewards is not None and other._rewards is not None:
             self._rewards = torch.cat((self._rewards, other._rewards), dim=0)
         else:
             self._rewards = None
 
     def extend_actions(self, required_first_dim: int) -> None:
-        """Extends the actions along the first dimension by by adding -1s as necessary.
+        """Extends the actions and log_probs along the first dimension by by adding -1s as necessary.
         This is useful for extending trajectories of different lengths."""
         if self.max_length >= required_first_dim:
             return
@@ -187,6 +181,20 @@ class Trajectories(Container):
             ),
             dim=0,
         )
+        self.log_probs = torch.cat(
+            (
+                self.log_probs,
+                torch.full(
+                    size=(
+                        required_first_dim - self.log_probs.shape[0],
+                        self.n_trajectories,
+                    ),
+                    fill_value=0,
+                    dtype=torch.float,
+                ),
+            ),
+            dim=0,
+        )
 
     @staticmethod
     def revert_backward_trajectories(trajectories: Trajectories) -> Trajectories:
@@ -196,7 +204,7 @@ class Trajectories(Container):
         new_actions = torch.cat(
             [new_actions, torch.full((1, len(trajectories)), -1)], dim=0
         )
-        new_states = trajectories.env.s_f.repeat(  # type: ignore
+        new_states = trajectories.env.sf.repeat(
             trajectories.when_is_done.max() + 1, len(trajectories), 1
         )
         new_when_is_done = trajectories.when_is_done + 1
@@ -219,6 +227,7 @@ class Trajectories(Container):
             env=trajectories.env,
             states=new_states,
             actions=new_actions,
+            log_probs=trajectories.log_probs,
             when_is_done=new_when_is_done,
             is_backward=False,
         )
@@ -244,6 +253,7 @@ class Trajectories(Container):
                 ],
                 dim=0,
             )
+        log_probs = self.log_probs[self.actions != -1]
         return Transitions(
             env=self.env,
             states=states,
@@ -252,6 +262,7 @@ class Trajectories(Container):
             next_states=next_states,
             is_backward=self.is_backward,
             rewards=rewards,
+            log_probs=log_probs,
         )
 
     def to_states(self) -> States:
@@ -273,14 +284,3 @@ class Trajectories(Container):
         terminating_states = self.last_states
         terminating_states = terminating_states[~terminating_states.is_initial_state]
         return intermediary_states, terminating_states
-
-    # def copy(self) -> Trajectories:
-    #     return Trajectories(
-    #         env=self.env,
-    #         states=self.states.copy(),
-    #         actions=self.actions.clone(),
-    #         when_is_done=self.when_is_done.clone(),
-    #         is_backward=self.is_backward,
-    #         log_pfs=self.log_pfs.clone() if self.log_pfs is not None else None,
-    #         log_pbs=self.log_pbs.clone() if self.log_pbs is not None else None,
-    #     )

@@ -237,6 +237,8 @@ class States(Container, ABC):
                         torch.ones(
                             required_first_dim - self.batch_shape[0],
                             *self.forward_masks.shape[1:],
+                            dtype=torch.bool,
+                            device=self.device,
                         ),
                     ),
                     dim=0,
@@ -247,6 +249,8 @@ class States(Container, ABC):
                         torch.ones(
                             required_first_dim - self.batch_shape[0],
                             *self.backward_masks.shape[1:],
+                            dtype=torch.bool,
+                            device=self.device,
                         ),
                     ),
                     dim=0,

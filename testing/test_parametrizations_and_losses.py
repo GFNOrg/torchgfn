@@ -13,10 +13,7 @@ from gfn.losses.detailed_balance import DBParametrization, DetailedBalance
 from gfn.losses.flow_matching import FlowMatching, FMParametrization
 from gfn.losses.sub_trajectory_balance import SubTBParametrization, SubTrajectoryBalance
 from gfn.losses.trajectory_balance import TBParametrization, TrajectoryBalance
-from gfn.samplers.actions_samplers import (
-    BackwardDiscreteActionsSampler,
-    DiscreteActionsSampler,
-)
+from gfn.samplers.actions_samplers import DiscreteActionsSampler
 from gfn.samplers.trajectories_sampler import TrajectoriesSampler
 
 
@@ -82,13 +79,10 @@ def test_PFBasedParametrization_hypergrid(
     logZ = LogZEstimator(torch.tensor(0.0))
 
     actions_sampler = DiscreteActionsSampler(estimator=logit_PF)
-    backward_actions_sampler = BackwardDiscreteActionsSampler(estimator=logit_PB)
 
     trajectories_sampler = TrajectoriesSampler(
         env=env,
         actions_sampler=actions_sampler,
-        backward_actions_sampler=backward_actions_sampler,
-        evaluate_log_probabilities=True,
     )
 
     loss_kwargs = {}
@@ -120,15 +114,8 @@ def test_PFBasedParametrization_hypergrid(
     if parametrization_name == "TB":
         assert torch.all(
             torch.abs(
-                loss_fn.get_pfs_and_pbs(training_objects)[0].sum(0)
-                - training_objects.log_pfs
-            )
-            < 1e-5
-        )
-        assert torch.all(
-            torch.abs(
-                loss_fn.get_pfs_and_pbs(training_objects)[1].sum(0)
-                - training_objects.log_pbs
+                loss_fn.get_pfs_and_pbs(training_objects)[0]
+                - training_objects.log_probs
             )
             < 1e-5
         )

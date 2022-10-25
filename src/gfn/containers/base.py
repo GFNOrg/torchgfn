@@ -37,9 +37,6 @@ class Container(ABC):
 
     def sample(self, n_samples: int) -> Container:
         "Samples a subset of the container"
-        if hasattr(self, "flatten"):
-            # This is for States with multi-dimensional batch_shape
-            return self.flatten().sample(n_samples)
         return self[torch.randperm(len(self))[:n_samples]]
 
     def save(self, path: str) -> None:
