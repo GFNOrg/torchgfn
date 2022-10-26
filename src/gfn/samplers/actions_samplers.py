@@ -72,11 +72,6 @@ class DiscreteActionsSampler:
             Tensor2D: A 2D tensor of shape (batch_size, n_actions) containing the logits for each action in each state in the batch.
         """
         logits = self.estimator(states)
-        # Note that using a LogEdgeFlowEstimator does not output log F(s -> s_f), we need to add that manually
-        if isinstance(self.estimator, LogEdgeFlowEstimator):
-            logits = torch.cat(
-                [logits, self.estimator.env.reward(states).unsqueeze(-1).log()], dim=-1
-            )
         return logits
 
     def get_logits(self, states: States) -> Tensor2D:

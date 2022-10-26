@@ -51,6 +51,7 @@ class BaseLossConfig(JsonSerializable, ABC):
 @dataclass
 class FMLossConfig(BaseLossConfig):
     logF_edge: GFNModuleConfig = GFNModuleConfig()
+    alpha: float = 1.0
 
     def parse(
         self,
@@ -63,7 +64,7 @@ class FMLossConfig(BaseLossConfig):
         )
         parametrization = FMParametrization(logF_edge)
 
-        loss = FlowMatching(parametrization)
+        loss = FlowMatching(parametrization, alpha=self.alpha)
 
         return parametrization, loss
 

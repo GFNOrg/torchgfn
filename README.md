@@ -54,7 +54,7 @@ for i in range(1000):
 
 
 
-## Contributing
+# Contributing
 Before the first commit:
 ```bash
 pip install pre-commit black pytest
@@ -71,7 +71,7 @@ The codebase uses `black` formatter.
 A pointed DAG environment (or GFN environment, or environment for short) is a representation for the pointed DAG. The abstract class [Env](gfn/envs/env.py) specifies the requirements for a valid environment definition. To obtain such a representation, the environment needs to specify the following attributes, properties, or methods:
 - The `action_space`. Which should be a `gym.spaces.Discrete` object for discrete environments. The last action should correspond to the exit action.
 - The initial state `s_0`, as a `torch.Tensor` of arbitrary dimension.
-- (Optional) The sink state `s_f`, as a `torch.Tensor` of the same shape as `s_0`, used to represent complete trajectories only (within a batch of trajectories of different lengths), and never processed by any model. If not specified, it is set to `torch.fill_like(s_0, -float('inf'))`.
+- (Optional) The sink state `s_f`, as a `torch.Tensor` of the same shape as `s_0`, used to represent complete trajectories only (within a batch of trajectories of different lengths), and never processed by any model. If not specified, it is set to `torch.full_like(s_0, -float('inf'))`.
 - The method `make_States_class` that creates a subclass of [States](gfn/containers/states.py). The instances of the resulting class should represent a batch of states of arbitrary shape, which is useful to define a trajectory, or a batch of trajectories. `s_0` and `s_f`, along with a tuple called `state_shape` should be defined as class variables, and the subclass (of `States`) should implement masking methods, that specify which actions are possible, in a discrete environment.
 - The methods `maskless_step` and `maskless_backward_step` that specify how an action changes a state (going forward and backward). These functions do not need to handle masking, checking whether actions are allowed, checking whether a state is the sink state, etc... These checks are handled in `Env.step` and `Env.backward_step`
 - The `reward` function that assigns a nonnegative reward to every terminating state (i.e. state with all $s_f$ as a child in the DAG).
@@ -96,7 +96,7 @@ In most cases, one needs to sample complete trajectories. From a batch of trajec
 
 ## Estimators and Modules
 Training GFlowNets requires one or multiple estimators. As of now, only discrete environments are handled. All estimators are subclasses of [FunctionEstimator](gfn/estimators.py), implementing a `__call__` function that takes as input a batch of [States](gfn/containers/states.py). 
-- [LogEdgeFlowEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $\log F(s \rightarrow s')$, not including when $s' = s_f$.
+- [LogEdgeFlowEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $\log F(s \rightarrow s')$, including when $s' = s_f$.
 - [LogStateFlowEstimator](gfn/estimators.py). It outputs a `(*batch_shape, 1)` tensor representing $\log F(s)$.
 - [LogitPFEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $logit(s' \mid s)$, such that $P_F(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$, including when $s' = s_f$.
 - [LogitPBEstimator](gfn/estimators.py). It outputs a `(*batch_shape, n_actions - 1)` tensor representing $logit(s' \mid s)$, such that $P_B(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$.
@@ -125,4 +125,7 @@ Currently, the implemented losses are:
 - Flow Matching
 - Detailed Balance
 - Trajectory Balance
-- Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](gfn/losses/sub_trajectory_balance.py)
+- Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](gfn/losses/sub_trajectory_balance.py).
+
+## Solving for the flows using Dynamic Programming
+A simple script that propagates trajectories rewards through the DAG to define edge flows in a deterministic way (by visiting each edge once only) is provided [here](scripts/dynamic_programming.py).

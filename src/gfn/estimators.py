@@ -88,7 +88,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
         super().__init__(
             env,
             module=module,
-            output_dim=env.n_actions - 1,
+            output_dim=env.n_actions,
             module_name=module_name,
             **nn_kwargs,
         )

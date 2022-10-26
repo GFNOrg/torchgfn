@@ -15,7 +15,7 @@ class BaseEnvConfig(JsonSerializable):
 @dataclass
 class HyperGridConfig(BaseEnvConfig):
     ndim: int = 2
-    height: int = 4
+    height: int = 8
     R0: float = 0.1
     R1: float = 0.5
     R2: float = 2.0

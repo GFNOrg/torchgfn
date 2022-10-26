@@ -38,57 +38,36 @@ class FMParametrization(Parametrization):
 
 
 class FlowMatching(StateDecomposableLoss):
-    def __init__(self, parametrization: FMParametrization) -> None:
+    def __init__(self, parametrization: FMParametrization, alpha=1.0) -> None:
+        "alpha is the weight of the reward matching loss"
         self.parametrization = parametrization
         self.env = parametrization.logF.env
+        self.alpha = alpha
 
-    def get_scores(self, states_tuple: Tuple[States, States]) -> ScoresTensor:
+    def flow_matching_loss(self, states: States) -> ScoresTensor:
         """
-        Compute the scores for the given states, defined as the log-sum incoming flows minus log-sum outgoing flows.
-        The first element of the tuple is the set of intermediary states in a trajectory that are not s0.
-        The second element of the tuple is the set of terminal states in each trajectory that is not s0 -> sf.
-        The reward function is queried only for the second element of the tuple (even if there are terminal states in the first element).
-        The batch_shape of each states object in the tuple should be (n_states,).
+        Compute the FM for the given states, defined as the log-sum incoming flows minus log-sum outgoing flows.
+        The states should not include s0. The batch shape should be (n_states,).
 
         As of now, only discrete environments are handled.
         """
-        intermediary_states, terminating_states = states_tuple
-        terminating_states_mask = torch.zeros(
-            intermediary_states.batch_shape,
-            dtype=torch.bool,
-            device=intermediary_states.states_tensor.device,
-        )
-        terminating_states_mask = torch.cat(
-            (
-                terminating_states_mask,
-                torch.ones(
-                    terminating_states.batch_shape,
-                    dtype=torch.bool,
-                    device=intermediary_states.states_tensor.device,
-                ),
-            )
-        )
-        intermediary_states.extend(terminating_states)
 
-        states = intermediary_states
         assert len(states.batch_shape) == 1
+        assert not torch.any(states.is_initial_state)
 
         states.forward_masks, states.backward_masks = correct_cast(
             states.forward_masks, states.backward_masks
         )
 
-        terminating_states_rewards = self.env.reward(terminating_states)
-
-        incoming_flows = torch.full_like(
+        incoming_log_flows = torch.full_like(
             states.backward_masks, -float("inf"), dtype=torch.float
         )
-        outgoing_flows = torch.full_like(
+        outgoing_log_flows = torch.full_like(
             states.forward_masks, -float("inf"), dtype=torch.float
         )
-        outgoing_flows[terminating_states_mask, -1] = torch.log(
-            terminating_states_rewards
-        )
+
         for action_idx in range(self.env.n_actions - 1):
+            # TODO: can this be done in a vectorized way? Maybe by "repeating" the states and creating a big actions tensor?
             valid_backward_mask = states.backward_masks[:, action_idx]
             valid_forward_mask = states.forward_masks[:, action_idx]
             valid_backward_states = states[valid_backward_mask]
@@ -105,17 +84,33 @@ class FlowMatching(StateDecomposableLoss):
                 valid_backward_states, backward_actions
             )
 
-            incoming_flows[valid_backward_mask, action_idx] = self.parametrization.logF(
-                valid_backward_states_parents
-            )[:, action_idx]
-            outgoing_flows[valid_forward_mask, action_idx] = self.parametrization.logF(
-                valid_forward_states
-            )[:, action_idx]
-        incoming_flows = torch.logsumexp(incoming_flows, dim=1)
-        outgoing_flows = torch.logsumexp(outgoing_flows, dim=1)
+            incoming_log_flows[
+                valid_backward_mask, action_idx
+            ] = self.parametrization.logF(valid_backward_states_parents)[:, action_idx]
+            outgoing_log_flows[
+                valid_forward_mask, action_idx
+            ] = self.parametrization.logF(valid_forward_states)[:, action_idx]
 
-        return incoming_flows - outgoing_flows
+        # Now the exit action
+        valid_forward_mask = states.forward_masks[:, -1]
+        outgoing_log_flows[valid_forward_mask, -1] = self.parametrization.logF(
+            states[valid_forward_mask]
+        )[:, -1]
+
+        log_incoming_flows = torch.logsumexp(incoming_log_flows, dim=-1)
+        log_outgoing_flows = torch.logsumexp(outgoing_log_flows, dim=-1)
+
+        return (log_incoming_flows - log_outgoing_flows).pow(2).mean()
+
+    def reward_matching_loss(self, terminating_states: States) -> LossTensor:
+        assert terminating_states.rewards is not None
+        log_edge_flows = self.parametrization.logF(terminating_states)
+        terminating_log_edge_flows = log_edge_flows[:, -1]
+        log_rewards = terminating_states.rewards.log()
+        return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
     def __call__(self, states_tuple: Tuple[States, States]) -> LossTensor:
-        scores = self.get_scores(states_tuple)
-        return scores.pow(2).mean()
+        intermediary_states, terminating_states = states_tuple
+        fm_loss = self.flow_matching_loss(intermediary_states)
+        rm_loss = self.reward_matching_loss(terminating_states)
+        return fm_loss + self.alpha * rm_loss

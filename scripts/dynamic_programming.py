@@ -4,12 +4,13 @@ trivially be extended to other P_B manually specified. Only discrete environment
 """
 
 import torch
+from configs import EnvConfig
 from simple_parsing import ArgumentParser
 
-from gfn.configs import EnvConfig
+from gfn.containers.states import correct_cast
 from gfn.estimators import LogEdgeFlowEstimator
+from gfn.losses import FMParametrization
 from gfn.modules import Tabular, Uniform
-from gfn.parametrizations.edge_flows import FMParametrization
 from gfn.utils import validate
 
 parser = ArgumentParser()
@@ -55,6 +56,9 @@ while len(U) > 0:
     s_prime_index, F_s_prime = U.pop(0)
     Y.add(s_prime_index)
     state_prime = all_states[[s_prime_index]]
+    _, state_prime.backward_masks = correct_cast(
+        state_prime.forward_masks, state_prime.backward_masks
+    )
 
     backward_mask = state_prime.backward_masks[0]
     pb_logits = logit_PB(env.get_states_indices(state_prime))
@@ -63,6 +67,9 @@ while len(U) > 0:
     for i in range(env.n_actions - 1):
         if backward_mask[i]:
             state = env.backward_step(state_prime, torch.tensor([i]))
+            state.forward_masks, _ = correct_cast(
+                state.forward_masks, state.backward_masks
+            )
             s_index = env.get_states_indices(state)[0].item()
             pb_logits = logit_PB(env.get_states_indices(state_prime))
             F_edge[s_index, i] = F_s_prime * pb[i].item()
@@ -83,7 +90,7 @@ print("Validating...")
 
 # Sanity check - should get the right pmf
 logF_edge = torch.log(F_edge)
-logF_edge_module = Tabular(env, output_dim=env.n_actions)
+logF_edge_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
 logF_edge_module.logits = logF_edge
 logF_edge_estimator = LogEdgeFlowEstimator(
     env=env, module_name="Tabular", module=logF_edge_module

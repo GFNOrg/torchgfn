@@ -14,6 +14,7 @@ ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
 BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
 DonesTensor = TensorType["batch_shape", torch.bool]
+RewardsTensor = TensorType["batch_shape", torch.float]
 OneStateTensor = TensorType["state_shape", torch.float]
 
 
@@ -75,6 +76,10 @@ class States(Container, ABC):
         else:
             self.forward_masks = forward_masks
             self.backward_masks = backward_masks
+
+        self._rewards = (
+            None  # Useful attribute if we want to store the reward of the states
+        )
 
     @classmethod
     def from_batch_shape(cls, batch_shape: tuple[int], random: bool = False) -> States:
@@ -296,3 +301,11 @@ class States(Container, ABC):
             *self.batch_shape, *((1,) * len(self.__class__.state_shape))
         )
         return self.compare(sink_states)
+
+    @property
+    def rewards(self) -> RewardsTensor:
+        return self._rewards
+
+    @rewards.setter
+    def rewards(self, rewards: RewardsTensor) -> None:
+        self._rewards = rewards
