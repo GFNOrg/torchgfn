@@ -5,7 +5,7 @@ import torch
 
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
-from gfn.envs import HyperGrid
+from gfn.envs import HyperGrid, DiscreteEBMEnv
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator
 from gfn.samplers import TrajectoriesSampler
 from gfn.samplers.actions_samplers import (
@@ -14,16 +14,25 @@ from gfn.samplers.actions_samplers import (
 )
 
 
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 @pytest.mark.parametrize("height", [4, 5])
 @pytest.mark.parametrize("preprocessor_name", ["KHot", "OneHot", "Identity"])
-def test_hypergrid_trajectory_sampling(
+def test_trajectory_sampling(
+    env_name: str,
     height: int,
     preprocessor_name: str,
     human_print=False,
 ) -> Trajectories:
     if human_print:
         print("---Trying Forward sampling of trajectories---")
-    env = HyperGrid(ndim=2, height=height, preprocessor_name=preprocessor_name)
+    if env_name == "HyperGrid":
+        env = HyperGrid(ndim=2, height=height, preprocessor_name=preprocessor_name)
+    elif env_name == "DiscreteEBM":
+        if preprocessor_name != "Identity" or height != 4:
+            pytest.skip("Useless tests")
+        env = DiscreteEBMEnv(ndim=8)
+    else:
+        raise ValueError("Unknown environment name")
 
     actions_sampler = DiscreteActionsSampler(
         LogitPFEstimator(env=env, module_name="NeuralNet")
@@ -77,11 +86,13 @@ def test_hypergrid_trajectory_sampling(
     return trajectories
 
 
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 @pytest.mark.parametrize("height", [4, 5])
-def test_trajectories_getitem(height: int):
-    trajectories = test_hypergrid_trajectory_sampling(
+def test_trajectories_getitem(env_name: str, height: int):
+    trajectories = test_trajectory_sampling(
+        env_name,
         height,
-        preprocessor_name="KHot",
+        preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
     )
     print(f"There are {trajectories.n_trajectories} original trajectories")
     print(trajectories)
@@ -90,11 +101,13 @@ def test_trajectories_getitem(height: int):
     print(trajectories[torch.tensor([1, 2], dtype=torch.long)])
 
 
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 @pytest.mark.parametrize("height", [4, 5])
-def test_trajectories_extend(height: int):
-    trajectories = test_hypergrid_trajectory_sampling(
+def test_trajectories_extend(env_name: str, height: int):
+    trajectories = test_trajectory_sampling(
+        env_name,
         height,
-        preprocessor_name="KHot",
+        preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
     )
     print(
         f"There are {trajectories.n_trajectories} original trajectories. To which we will add the two first trajectories"
@@ -103,9 +116,11 @@ def test_trajectories_extend(height: int):
     print(trajectories)
 
 
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 @pytest.mark.parametrize("height", [4, 5])
-def test_sub_sampling(height: int):
-    trajectories = test_hypergrid_trajectory_sampling(
+def test_sub_sampling(env_name: str, height: int):
+    trajectories = test_trajectory_sampling(
+        env_name,
         height,
         preprocessor_name="Identity",
     )
@@ -118,16 +133,26 @@ def test_sub_sampling(height: int):
     print(sampled_trajectories)
 
 
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 @pytest.mark.parametrize("height", [4, 5])
 @pytest.mark.parametrize("objects", ["trajectories", "transitions"])
 def test_replay_buffer(
+    env_name: str,
     height: int,
     objects: Literal["trajectories", "transitions"],
 ):
-    env = HyperGrid(ndim=2, height=height)
+    if env_name == "HyperGrid":
+        env = HyperGrid(ndim=2, height=height)
+    elif env_name == "DiscreteEBM":
+        if height != 4:
+            pytest.skip("Useless tests")
+        env = DiscreteEBMEnv(ndim=8)
+    else:
+        raise ValueError("Unknown environment name")
     replay_buffer = ReplayBuffer(env, capacity=10, objects_type=objects)
     print(f"After initialization, the replay buffer is {replay_buffer} ")
-    training_objects = test_hypergrid_trajectory_sampling(
+    training_objects = test_trajectory_sampling(
+        env_name,
         height,
         preprocessor_name="Identity",
     )

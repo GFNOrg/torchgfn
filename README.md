@@ -1,4 +1,4 @@
-## Installing the library
+## Installing the packages
 ```bash
 git clone https://github.com/saleml/gfn.git
 cd gfn
@@ -13,11 +13,12 @@ wandb login
 
 
 ## About this repo
-This library serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization used for the GFN loss. 
+This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization used for the GFN loss. 
 
 An example script is provided [here](scripts/train.py). To run the code, use one of the following:
 ```bash
 python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --loss TB 
+python train.py --env DiscreteEBM --env.ndim 8 --n_iterations 10000 --batch_size 64
 python train.py --env HyperGrid --env.ndim 2 --env.height 64 --n_iterations 100000 --loss DB --replay_buffer_size 1000 --logit_PB.module_name Uniform --optim sgd --optim.lr 5e-3 
 python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss FM --optim adam --optim.lr 1e-4
 ```
@@ -69,7 +70,7 @@ The codebase uses `black` formatter.
 
 ## Defining an environment
 A pointed DAG environment (or GFN environment, or environment for short) is a representation for the pointed DAG. The abstract class [Env](gfn/envs/env.py) specifies the requirements for a valid environment definition. To obtain such a representation, the environment needs to specify the following attributes, properties, or methods:
-- The `action_space`. Which should be a `gym.spaces.Discrete` object for discrete environments. The last action should correspond to the exit action.
+- The `action_space`. Which should be a `gymnasium.spaces.Discrete` object for discrete environments. The last action should correspond to the exit action.
 - The initial state `s_0`, as a `torch.Tensor` of arbitrary dimension.
 - (Optional) The sink state `s_f`, as a `torch.Tensor` of the same shape as `s_0`, used to represent complete trajectories only (within a batch of trajectories of different lengths), and never processed by any model. If not specified, it is set to `torch.full_like(s_0, -float('inf'))`.
 - The method `make_States_class` that creates a subclass of [States](gfn/containers/states.py). The instances of the resulting class should represent a batch of states of arbitrary shape, which is useful to define a trajectory, or a batch of trajectories. `s_0` and `s_f`, along with a tuple called `state_shape` should be defined as class variables, and the subclass (of `States`) should implement masking methods, that specify which actions are possible, in a discrete environment.
@@ -78,9 +79,9 @@ A pointed DAG environment (or GFN environment, or environment for short) is a re
 
 If the states (as represented in the `States` class) need to be transformed to another format before being processed (by neural networks for example), then the environment should define a `preprocessor` attribute, which should be an instance of the [base preprocessor class](gfn/envs/preprocessors/base.py). If no preprocessor is defined, the states are used as is (actually transformed using  [`IdentityPreprocessor`](gfn/envs/preprocessors/base.py), which transforms the state tensors to `FloatTensor`s). Implementing your own preprocessor requires defining the `preprocess` function, and the `output_shape` attribute, which is a tuple representing the shape of *one* preprocessed state.
 
-Optionally, you can define a static `get_states_indices` method that assigns a unique integer number to each state if the environment allows it, and a `n_states` property that returns an integer representing the number of states (excluding $s_f$) in the environment.
+Optionally, you can define a static `get_states_indices` method that assigns a unique integer number to each state if the environment allows it, and a `n_states` property that returns an integer representing the number of states (excluding $s_f$) in the environment. `get_terminating_states_indices` can also be implemented and serves the purpose of uniquely identifying terminating states of the environment.
 
-For more details, take a look at [HyperGrid](gfn/envs/hypergrid.py).
+For more details, take a look at [HyperGrid](gfn/envs/hypergrid.py), an environment where all states are terminating states, or at [DiscreteEBM](gfn/envs/discrete_ebm.py), where all trajectories are of the same length but only some states are terminating.
 
 ### Other containers
 Besides the `States` class, other containers of states are available:

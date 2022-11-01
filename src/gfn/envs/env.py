@@ -3,7 +3,7 @@ from copy import deepcopy
 from typing import Optional, Tuple, Union
 
 import torch
-from gym.spaces import Discrete, Space
+from gymnasium.spaces import Discrete, Space
 from torchtyping import TensorType
 
 from gfn.containers.states import States, correct_cast
@@ -40,14 +40,14 @@ class Env(ABC):
     ):
         self.s0 = s0
         if sf is None:
-            sf = torch.full_like(s0, -float("inf"))
+            sf = torch.full(s0.shape, -float("inf"))
         self.sf = sf
         self.action_space = action_space
         self.device = torch.device(device_str) if device_str is not None else s0.device
         self.States = self.make_States_class()
 
         if preprocessor is None:
-            preprocessor = IdentityPreprocessor()
+            preprocessor = IdentityPreprocessor(output_shape=tuple(s0.shape))
 
         self.preprocessor = preprocessor
 
@@ -80,6 +80,11 @@ class Env(ABC):
             "The environment does not support enumeration of states"
         )
 
+    def get_terminating_states_indices(self, states: States) -> TensorLong:
+        return NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
+
     @property
     def n_actions(self) -> int:
         if isinstance(self.action_space, Discrete):
@@ -89,6 +94,12 @@ class Env(ABC):
 
     @property
     def n_states(self) -> int:
+        return NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
+
+    @property
+    def n_terminating_states(self) -> int:
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )

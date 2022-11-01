@@ -6,7 +6,7 @@ from typing import ClassVar, Literal, Tuple, cast
 
 import torch
 from einops import rearrange
-from gym.spaces import Discrete
+from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
 from gfn.containers.states import States
@@ -167,19 +167,24 @@ class HyperGrid(Env):
         return reward
 
     def get_states_indices(self, states: States) -> TensorLong:
-        if isinstance(states, States):
-            states_raw = states.states_tensor
-        else:
-            states_raw = states
+        states_raw = states.states_tensor
+
         canonical_base = self.height ** torch.arange(
             self.ndim - 1, -1, -1, device=states_raw.device
         )
         indices = (canonical_base * states_raw).sum(-1).long()
         return indices
 
+    def get_terminating_states_indices(self, states: States) -> TensorLong:
+        return self.get_states_indices(states)
+
     @property
     def n_states(self) -> int:
         return self.height**self.ndim
+
+    @property
+    def n_terminating_states(self) -> int:
+        return self.n_states
 
     @property
     def true_dist_pmf(self) -> torch.Tensor:

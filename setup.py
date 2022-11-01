@@ -5,5 +5,5 @@ setup(
     version="0.2.0",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
-    install_requires=["numpy", "torch", "torchtyping", "einops", "gym"],
+    install_requires=["numpy", "torch", "torchtyping", "einops", "gymnasium"],
 )

@@ -1,4 +1,5 @@
 from typing import Dict, Optional
+import torch
 
 from gfn.containers import States, Trajectories, Transitions
 from gfn.distributions import EmpiricalTerminatingStatesDistribution
@@ -55,7 +56,12 @@ def validate(
 
     true_logZ = env.log_partition
     true_dist_pmf = env.true_dist_pmf
-    true_dist_pmf = true_dist_pmf.cpu()
+    if isinstance(true_dist_pmf, torch.Tensor):
+        true_dist_pmf = true_dist_pmf.cpu()
+    else:
+        # The environment does not implement a true_dist_pmf property, nor a log_partition property
+        # We cannot validate the parametrization
+        return {}
 
     logZ = None
     if isinstance(parametrization, TBParametrization):
@@ -71,6 +77,7 @@ def validate(
 
     final_states_dist_pmf = final_states_dist.pmf()
     l1_dist = (final_states_dist_pmf - true_dist_pmf).abs().mean().item()
+    print(final_states_dist_pmf, true_dist_pmf)
     validation_info = {"l1_dist": l1_dist}
     if logZ is not None:
         validation_info["logZ_diff"] = abs(logZ - true_logZ)
