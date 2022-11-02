@@ -4,8 +4,7 @@ from typing import Literal
 from simple_parsing import choice, subgroups
 from simple_parsing.helpers import JsonSerializable
 
-from gfn.envs import Env, HyperGrid, DiscreteEBMEnv
-from gfn.envs.discrete_ebm import EnergyFunction
+from gfn.envs import DiscreteEBMEnv, Env, HyperGrid
 
 
 @dataclass
@@ -39,11 +38,13 @@ class HyperGridConfig(BaseEnvConfig):
 @dataclass
 class DiscreteEBMConfig(BaseEnvConfig):
     ndim: int = 4
+    alpha: float = 1.0
     # You can define your own custom energy function, and pass it to the DiscreteEBMEnv constructor.
 
     def parse(self, device_str: Literal["cpu", "cuda"]) -> Env:
         return DiscreteEBMEnv(
             ndim=self.ndim,
+            alpha=self.alpha,
             device_str=device_str,
         )
 
@@ -52,7 +53,8 @@ class DiscreteEBMConfig(BaseEnvConfig):
 class EnvConfig(JsonSerializable):
     env: BaseEnvConfig = subgroups(
         {"HyperGrid": HyperGridConfig, "DiscreteEBM": DiscreteEBMConfig},
-        default=HyperGridConfig(),
+        # default=HyperGridConfig(),
+        default=DiscreteEBMConfig(),
     )
 
     def parse(self, device: Literal["cpu", "cuda"]) -> Env:

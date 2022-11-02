@@ -1,4 +1,5 @@
 from typing import Dict, Optional
+
 import torch
 
 from gfn.containers import States, Trajectories, Transitions
@@ -77,7 +78,6 @@ def validate(
 
     final_states_dist_pmf = final_states_dist.pmf()
     l1_dist = (final_states_dist_pmf - true_dist_pmf).abs().mean().item()
-    print(final_states_dist_pmf, true_dist_pmf)
     validation_info = {"l1_dist": l1_dist}
     if logZ is not None:
         validation_info["logZ_diff"] = abs(logZ - true_logZ)

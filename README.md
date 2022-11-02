@@ -18,7 +18,7 @@ This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/ab
 An example script is provided [here](scripts/train.py). To run the code, use one of the following:
 ```bash
 python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --loss TB 
-python train.py --env DiscreteEBM --env.ndim 8 --n_iterations 10000 --batch_size 64
+python train.py --env DiscreteEBM --env.ndim 4 --env.alpha 0.5 --n_iterations 10000 --batch_size 64 --temperature 2.
 python train.py --env HyperGrid --env.ndim 2 --env.height 64 --n_iterations 100000 --loss DB --replay_buffer_size 1000 --logit_PB.module_name Uniform --optim sgd --optim.lr 5e-3 
 python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss FM --optim adam --optim.lr 1e-4
 ```
