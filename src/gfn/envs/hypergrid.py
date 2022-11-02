@@ -227,3 +227,7 @@ class HyperGrid(Env):
         grid = self.build_grid()
         flat_grid = rearrange(grid.states_tensor, "... ndim -> (...) ndim")
         return self.States(flat_grid)
+
+    @property
+    def terminating_states(self) -> States:
+        return self.all_states

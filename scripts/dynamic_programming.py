@@ -1,6 +1,8 @@
 """This implements a simple dynamic programming algorithm for computing edge flows given a reward function and
 a backward transition probability function. Currently it's implemented for uniform P_B, but can
 trivially be extended to other P_B manually specified. Only discrete environments are handled.
+
+DO NOT USE FOR LARGE ENVIRONMENTS !
 """
 
 import torch
@@ -30,8 +32,10 @@ logit_PB = Uniform(output_dim=env.n_actions - 1)
 
 
 all_states = env.all_states
+terminating_states = env.terminating_states
 
 all_states_indices = env.get_states_indices(all_states)
+terminating_states_indices = env.get_states_indices(terminating_states)
 
 # Zeroth step: Define the necessary containers
 Y = set()  # Contains the state indices that do not need more visits
@@ -41,10 +45,14 @@ Y = set()  # Contains the state indices that do not need more visits
 U = []
 
 # First step: Fill the terminating flows with the rewards and initialize the state flows
-F_edge[all_states_indices, -1] = env.reward(all_states)
-F_state = env.reward(all_states)
+F_edge[terminating_states_indices, -1] = env.reward(terminating_states)
+F_state = torch.zeros(env.n_states)
+F_state[terminating_states_indices] = env.reward(terminating_states)
 
 # Second step: Store the states that have no children besides s_f
+all_states.forward_masks, _ = correct_cast(
+    all_states.forward_masks, all_states.backward_masks
+)
 for index in all_states_indices[all_states.forward_masks.long().sum(1) == 1].numpy():
     U.append((index, F_edge[index, -1].item()))
 
@@ -89,7 +97,7 @@ print(F_edge)
 print("Validating...")
 
 # Sanity check - should get the right pmf
-logF_edge = torch.log(F_edge)
+logF_edge = torch.log(F_edge + 1e-10)
 logF_edge_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
 logF_edge_module.logits = logF_edge
 logF_edge_estimator = LogEdgeFlowEstimator(

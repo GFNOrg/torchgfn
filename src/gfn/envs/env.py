@@ -129,6 +129,17 @@ class Env(ABC):
             "The environment does not support enumeration of states"
         )
 
+    @property
+    def terminating_states(self) -> States:
+        """Returns a batch of all terminating states for environments with enumerable states.
+        The batch_shape should be (n_terminating_states,).
+        This should satisfy:
+        self.get_terminating_states_indices(self.terminating_states) == torch.arange(self.n_terminating_states)
+        """
+        return NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
+
     def reset(
         self, batch_shape: Union[int, Tuple[int]], random: bool = False
     ) -> States:

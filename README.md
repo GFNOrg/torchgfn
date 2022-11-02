@@ -129,4 +129,4 @@ Currently, the implemented losses are:
 - Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](src/gfn/losses/sub_trajectory_balance.py).
 
 ## Solving for the flows using Dynamic Programming
-A simple script that propagates trajectories rewards through the DAG to define edge flows in a deterministic way (by visiting each edge once only) is provided [here](scripts/dynamic_programming.py).
+A simple script that propagates trajectories rewards through the DAG to define edge flows in a deterministic way (by visiting each edge once only) is provided [here](scripts/dynamic_programming.py). Do not use the script on large environments !

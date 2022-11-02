@@ -53,8 +53,7 @@ class DiscreteEBMConfig(BaseEnvConfig):
 class EnvConfig(JsonSerializable):
     env: BaseEnvConfig = subgroups(
         {"HyperGrid": HyperGridConfig, "DiscreteEBM": DiscreteEBMConfig},
-        # default=HyperGridConfig(),
-        default=DiscreteEBMConfig(),
+        default=HyperGridConfig(),
     )
 
     def parse(self, device: Literal["cpu", "cuda"]) -> Env:
