@@ -39,7 +39,7 @@ class BackwardActionsSampler(ActionsSampler):
     pass
 
 
-class DiscreteActionsSampler:
+class DiscreteActionsSampler(ActionsSampler):
     """
     For Discrete environments.
     """
