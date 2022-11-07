@@ -1,6 +1,10 @@
 ## Installing the packages
+The codebase requires python >= 3.10
+
 ```bash
 git clone https://github.com/saleml/gfn.git
+conda create -n gfn python=3.10
+conda activate gfn
 cd gfn
 pip install -e .
 ```
