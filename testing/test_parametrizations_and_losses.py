@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from gfn.envs import HyperGrid, DiscreteEBMEnv
+from gfn.envs import DiscreteEBMEnv, HyperGrid
 from gfn.estimators import (
     LogEdgeFlowEstimator,
     LogitPBEstimator,
