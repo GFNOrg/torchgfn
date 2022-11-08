@@ -1,4 +1,6 @@
 pre-commit
 black
 pytest
-sphinx
+sphinx==5.3.0
+myst-parser==0.18.1
+sphinx_rtd_theme==1.1.1
