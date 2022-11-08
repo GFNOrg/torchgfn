@@ -1,3 +1,5 @@
+# `gfn`: a Python package for GFlowNets
+
 ## Installing the packages
 
 The codebase requires python >= 3.10
