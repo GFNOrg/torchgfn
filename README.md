@@ -33,6 +33,8 @@ python train.py --env HyperGrid --env.ndim 2 --env.height 64 --n_iterations 1000
 python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss FM --optim adam --optim.lr 1e-4
 ```
 
+(⬆️ Those examples require the [`tqdm`](https://github.com/tqdm/tqdm) package to run. `pip install tqdm` or install all extra requirements with `pip install -r requirements.txt`)
+
 ### Example, in a few lines
 
 ```python
