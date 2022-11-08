@@ -3,23 +3,6 @@
 
 .. automodule:: gfn
 
-   
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
 
 .. rubric:: Modules
 
@@ -37,3 +20,12 @@
    gfn.samplers
    gfn.utils
 
+
+.. include:: ./gfn.containers.rst
+.. include:: ./gfn.distributions.rst
+.. include:: ./gfn.envs.rst
+.. include:: ./gfn.estimators.rst
+.. include:: ./gfn.losses.rst
+.. include:: ./gfn.modules.rst
+.. include:: ./gfn.samplers.rst
+.. include:: ./gfn.utils.rst
