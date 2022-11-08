@@ -17,13 +17,13 @@ wandb login
 
 
 ## About this repo
-This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization used for the GFN loss. 
+This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization used for the GFN loss.
 
 An example script is provided [here](scripts/train.py). To run the code, use one of the following:
 ```bash
-python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --loss TB 
+python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --loss TB
 python train.py --env DiscreteEBM --env.ndim 4 --env.alpha 0.5 --n_iterations 10000 --batch_size 64 --temperature 2.
-python train.py --env HyperGrid --env.ndim 2 --env.height 64 --n_iterations 100000 --loss DB --replay_buffer_size 1000 --logit_PB.module_name Uniform --optim sgd --optim.lr 5e-3 
+python train.py --env HyperGrid --env.ndim 2 --env.height 64 --n_iterations 100000 --loss DB --replay_buffer_size 1000 --logit_PB.module_name Uniform --optim sgd --optim.lr 5e-3
 python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss FM --optim adam --optim.lr 1e-4
 ```
 
@@ -62,7 +62,7 @@ for i in range(1000):
 # Contributing
 Before the first commit:
 ```bash
-pip install pre-commit black pytest
+pip install -r requirements-dev.txt
 pre-commit install
 pre-commit run --all-files
 ```
@@ -100,7 +100,7 @@ In most cases, one needs to sample complete trajectories. From a batch of trajec
 
 
 ## Estimators and Modules
-Training GFlowNets requires one or multiple estimators. As of now, only discrete environments are handled. All estimators are subclasses of [FunctionEstimator](src/gfn/estimators.py), implementing a `__call__` function that takes as input a batch of [States](src/gfn/containers/states.py). 
+Training GFlowNets requires one or multiple estimators. As of now, only discrete environments are handled. All estimators are subclasses of [FunctionEstimator](src/gfn/estimators.py), implementing a `__call__` function that takes as input a batch of [States](src/gfn/containers/states.py).
 - [LogEdgeFlowEstimator](src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $\log F(s \rightarrow s')$, including when $s' = s_f$.
 - [LogStateFlowEstimator](src/gfn/estimators.py). It outputs a `(*batch_shape, 1)` tensor representing $\log F(s)$.
 - [LogitPFEstimator](src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $logit(s' \mid s)$, such that $P_F(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$, including when $s' = s_f$.
