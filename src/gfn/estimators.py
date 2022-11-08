@@ -76,6 +76,10 @@ class FunctionEstimator(ABC):
 
 
 class LogEdgeFlowEstimator(FunctionEstimator):
+    r"""Container for estimators $(s \rightarrow s') \mapsto \log F(s \rightarrow s')$.
+    The way it's coded is a function $ s \mapsto (\log F(s \rightarrow (s + a)))_{a \in \mathbb{A}}$,
+    where $s+a$ is the state obtained by performing action $a$ in state $s$."""
+
     def __init__(
         self,
         env: Env,
@@ -85,9 +89,6 @@ class LogEdgeFlowEstimator(FunctionEstimator):
         ] = None,
         **nn_kwargs,
     ) -> None:
-        r"""Container for estimators $(s \rightarrow s') \mapsto \log F(s \rightarrow s')$.
-        The way it's coded is a function $ s \mapsto (\log F(s \rightarrow (s + a)))_{a \in \mathbb{A}}$,
-        where $s+a$ is the state obtained by performing action $a$ in state $s$."""
         if module is not None:
             assert module.output_dim == env.n_actions
         super().__init__(
@@ -100,6 +101,8 @@ class LogEdgeFlowEstimator(FunctionEstimator):
 
 
 class LogStateFlowEstimator(FunctionEstimator):
+    r"""Container for estimators $s \mapsto \log F(s)$."""
+
     def __init__(
         self,
         env: Env,
@@ -109,7 +112,6 @@ class LogStateFlowEstimator(FunctionEstimator):
         ] = None,
         **nn_kwargs,
     ):
-        r"""Container for estimators $s \mapsto \log F(s)$."""
         if module is not None:
             assert module.output_dim == 1
         super().__init__(
@@ -118,6 +120,9 @@ class LogStateFlowEstimator(FunctionEstimator):
 
 
 class LogitPFEstimator(FunctionEstimator):
+    r"""Container for estimators $s \mapsto (u(s + a \mid s))_{a \in \mathbb{A}}$,
+    such that $P_F(s + a \mid s) = \frac{e^{u(s + a \mid s)}}{\sum_{a' \in \mathbb{A}} e^{u(s + a' \mid s)}}$."""
+
     def __init__(
         self,
         env: Env,
@@ -127,8 +132,6 @@ class LogitPFEstimator(FunctionEstimator):
         ] = None,
         **nn_kwargs,
     ):
-        r"""Container for estimators $s \mapsto (u(s + a \mid s))_{a \in \mathbb{A}}$,
-        such that $P_F(s + a \mid s) = \frac{e^{u(s + a \mid s)}}{\sum_{a' \in \mathbb{A}} e^{u(s + a' \mid s)}}$."""
         if module is not None:
             assert module.output_dim == env.n_actions
         super().__init__(
@@ -141,6 +144,9 @@ class LogitPFEstimator(FunctionEstimator):
 
 
 class LogitPBEstimator(FunctionEstimator):
+    r"""Container for estimators $s \mapsto (u(s' - a \mid s')_{a \in \mathbb{A}}$,
+    such that $P_B(s' - a \mid s') = \frac{e^{u(s' - a \mid s')}}{\sum_{a' \in \mathbb{A}} e^{u(s' - a' \mid s')}}$."""
+
     def __init__(
         self,
         env: Env,
@@ -150,8 +156,6 @@ class LogitPBEstimator(FunctionEstimator):
         ] = None,
         **nn_kwargs,
     ):
-        r"""Container for estimators $s \mapsto (u(s' - a \mid s')_{a \in \mathbb{A}}$,
-        such that $P_B(s' - a \mid s') = \frac{e^{u(s' - a \mid s')}}{\sum_{a' \in \mathbb{A}} e^{u(s' - a' \mid s')}}$."""
         if module is not None:
             assert module.output_dim == env.n_actions - 1
         super().__init__(
@@ -164,8 +168,9 @@ class LogitPBEstimator(FunctionEstimator):
 
 
 class LogZEstimator:
+    r"""Container for the estimator $\log Z$."""
+
     def __init__(self, tensor: TensorType[0, float]) -> None:
-        r"""Container for the estimator $\log Z$."""
         self.tensor = tensor
         assert self.tensor.shape == ()
         self.tensor.requires_grad = True
