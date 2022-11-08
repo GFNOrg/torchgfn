@@ -18,16 +18,20 @@ print(sys.path)
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
-root_doc = "_autosummary/index"
+root_doc = "index"
 extensions = [
     "myst_parser",
     "sphinx_math_dollar",
     "sphinx.ext.mathjax",
     "sphinx.ext.autodoc",
-    "sphinx.ext.autosummary",
+    "autoapi.extension",
     "sphinx.ext.napoleon",
 ]
-autosummary_generate = True
+autoapi_type = "python"
+autoapi_dirs = ["../../src/gfn"]
+autoapi_member_order = "alphabetical"
+
+autodoc_typehints = "description"
 mathjax_path = (
     "https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"
 )
