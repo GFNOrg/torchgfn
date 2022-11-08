@@ -13,6 +13,8 @@ OutputTensor = TensorType["batch_shape", "output_dim", float]
 
 
 class FunctionEstimator(ABC):
+    """Base class for function estimators."""
+
     def __init__(
         self,
         env: Env,
@@ -23,7 +25,7 @@ class FunctionEstimator(ABC):
         ] = None,
         **nn_kwargs,
     ) -> None:
-        """Base class for function estimators. Either module or (module_name, output_dim) must be provided.
+        """Either module or (module_name, output_dim) must be provided.
 
         Args:
             env (Env): the environment.
