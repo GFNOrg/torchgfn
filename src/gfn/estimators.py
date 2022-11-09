@@ -77,7 +77,7 @@ class FunctionEstimator(ABC):
 
 class LogEdgeFlowEstimator(FunctionEstimator):
     r"""Container for estimators $(s \rightarrow s') \mapsto \log F(s \rightarrow s')$.
-    The way it's coded is a function $ s \mapsto (\log F(s \rightarrow (s + a)))_{a \in \mathbb{A}}$,
+    The way it's coded is a function $s \mapsto (\log F(s \rightarrow (s + a)))_{a \in \mathbb{A}}$,
     where $s+a$ is the state obtained by performing action $a$ in state $s$."""
 
     def __init__(
@@ -144,7 +144,7 @@ class LogitPFEstimator(FunctionEstimator):
 
 
 class LogitPBEstimator(FunctionEstimator):
-    r"""Container for estimators $s \mapsto (u(s' - a \mid s')_{a \in \mathbb{A}}$,
+    r"""Container for estimators $s \mapsto (u(s' - a \mid s'))_{a \in \mathbb{A}}$,
     such that $P_B(s' - a \mid s') = \frac{e^{u(s' - a \mid s')}}{\sum_{a' \in \mathbb{A}} e^{u(s' - a' \mid s')}}$."""
 
     def __init__(

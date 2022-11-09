@@ -99,6 +99,13 @@ pre-commit run --all-files
 Run `pre-commit` after staging, and before committing. Make sure all the tests pass (By running `pytest`).
 The codebase uses `black` formatter.
 
+To make the docs locally:
+```bash
+cd docs
+make html
+open build/html/index.html
+```
+
 ## Details about the codebase
 
 ### Defining an environment

@@ -5,13 +5,13 @@
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
+import os
+import sys
 
 project = "gfn"
 copyright = "2022, Salem Lahlou"
 author = "Salem Lahlou"
 
-import os
-import sys
 
 sys.path.insert(0, os.path.abspath("../.."))
 print(sys.path)
@@ -54,7 +54,7 @@ exclude_patterns = []
 
 html_static_path = ["_static"]
 
-html_theme = "sphinx_rtd_theme"
+html_theme = "renku"
 html_theme_options = {
     "collapse_navigation": False,
     "navigation_depth": 4,
