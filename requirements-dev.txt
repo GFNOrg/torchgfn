@@ -6,4 +6,4 @@ myst-parser==0.18.1
 sphinx_rtd_theme==1.1.1
 sphinx-math-dollar==1.2.1
 sphinx-autoapi==2.0.0
-renku-sphinx-theme==0.2.2
+renku-sphinx-theme>=0.2.2
