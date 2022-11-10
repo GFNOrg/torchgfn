@@ -1,4 +1,23 @@
-# `gfn`: a Python package for GFlowNets
+<p align="center">
+    <a>
+	    <img src='https://img.shields.io/badge/python-3.10%2B-blueviolet' alt='Python' />
+	</a>
+	<a href='https://gfn.readthedocs.io/en/latest/?badge=latest'>
+    	<img src='https://readthedocs.org/projects/gfn/badge/?version=latest' alt='Documentation Status' />
+	</a>
+    <a>
+	    <img src='https://img.shields.io/badge/code%20style-black-black' />
+	</a>
+</p>
+
+</p>
+<p align="center">
+  <a href="https://gfn.readthedocs.io/en/latest/">Documentation</a>
+</p>
+
+# gfn: a Python package for GFlowNets
+
+
 
 ## Installing the packages
 
