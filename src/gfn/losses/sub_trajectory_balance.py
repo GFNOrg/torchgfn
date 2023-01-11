@@ -30,7 +30,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     def __init__(
         self,
         parametrization: SubTBParametrization,
-        reward_clip_min: float = 1e-5,
+        log_reward_clip_min: float = -12,
         weighing: Literal[
             "DB",
             "ModifiedDB",
@@ -45,7 +45,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     ):
         """
         :param parametrization: parametrization of the model
-        :param reward_clip_min: minimum value of the reward. Rewards lower than this value will be clipped to this value.
+        :param log_reward_clip_min: minimum value of the log-reward. Log-Rewards lower than this value will be clipped to this value. Defaults to -12 (roughly log(1e-5)).
         :param weighing: how to weigh the different sub-trajectories of each trajectory.
             - "DB": Considers all one-step transitions of each trajectory in the batch and weighs them equally (regardless of the length of trajectory).
                     Should be equivalent to DetailedBalance loss.
@@ -63,7 +63,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         # corresponding to sub-trajectories of length i is multiplied by lamda^i
         # where an edge is of length 1. As lamda approaches 1, each loss becomes equally weighted.
         self.parametrization = parametrization
-        self.reward_clip_min = reward_clip_min
+        self.log_reward_clip_min = log_reward_clip_min
         self.actions_sampler = DiscreteActionsSampler(parametrization.logit_PF)
         self.backward_actions_sampler = BackwardDiscreteActionsSampler(
             parametrization.logit_PB
@@ -138,9 +138,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             )
 
             targets = torch.full_like(preds, fill_value=-float("inf"))
-            targets.T[is_terminal_mask[i - 1 :].T] = torch.log(
-                trajectories.rewards[trajectories.when_is_done >= i]  # type: ignore
-            )
+            targets.T[is_terminal_mask[i - 1 :].T] = trajectories.log_rewards[trajectories.when_is_done >= i].clamp_min(self.log_reward_clip_min)  # type: ignore
 
             # For now, the targets contain the log-rewards of the ending sub trajectories
             # We need to add to that the log-probabilities of the backward actions up-to

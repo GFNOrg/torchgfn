@@ -151,10 +151,10 @@ class DiscreteEBMEnv(Env):
     ) -> None:
         states.scatter_(-1, actions.unsqueeze(-1).fmod(self.ndim), -1)
 
-    def reward(self, final_states: States) -> BatchTensor:
+    def log_reward(self, final_states: States) -> BatchTensor:
         raw_states = final_states.states_tensor
         canonical = 2 * raw_states - 1
-        return torch.exp(-self.alpha * self.energy(canonical))
+        return -self.alpha * self.energy(canonical)
 
     def get_states_indices(self, states: States) -> BatchTensor:
         """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3"""
@@ -196,5 +196,5 @@ class DiscreteEBMEnv(Env):
 
     @property
     def log_partition(self) -> float:
-        rewards = self.reward(self.terminating_states)
-        return torch.log(rewards.sum()).item()
+        log_rewards = self.log_reward(self.terminating_states)
+        return torch.logsumexp(log_rewards, -1).item()

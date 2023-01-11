@@ -86,13 +86,13 @@ class DetailedBalance(EdgeDecomposableLoss):
         targets[~valid_transitions_is_done] = valid_log_pb_actions
         log_pb_actions = targets.clone()
         targets[~valid_transitions_is_done] += valid_log_F_s_next
-        assert transitions.rewards is not None
-        valid_transitions_rewards = transitions.rewards[
+        assert transitions.log_rewards is not None
+        valid_transitions_log_rewards = transitions.log_rewards[
             ~transitions.states.is_sink_state
         ]
-        targets[valid_transitions_is_done] = torch.log(
-            valid_transitions_rewards[valid_transitions_is_done]
-        )
+        targets[valid_transitions_is_done] = valid_transitions_log_rewards[
+            valid_transitions_is_done
+        ]
 
         scores = preds - targets
 
@@ -115,7 +115,7 @@ class DetailedBalance(EdgeDecomposableLoss):
         states = transitions.states[mask]
         valid_next_states = transitions.next_states[mask]
         actions = transitions.actions[mask]
-        all_rewards = transitions.all_rewards[mask]
+        all_log_rewards = transitions.all_log_rewards[mask]
 
         valid_pf_logits = self.actions_sampler.get_logits(states)
         valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
@@ -137,14 +137,8 @@ class DetailedBalance(EdgeDecomposableLoss):
             valid_log_pb_all, dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
-        preds = (
-            torch.log(all_rewards[:, 0])
-            + valid_log_pf_actions
-            + valid_log_pf_s_prime_exit
-        )
-        targets = (
-            torch.log(all_rewards[:, 1]) + valid_log_pb_actions + valid_log_pf_s_exit
-        )
+        preds = all_log_rewards[:, 0] + valid_log_pf_actions + valid_log_pf_s_prime_exit
+        targets = all_log_rewards[:, 1] + valid_log_pb_actions + valid_log_pf_s_exit
 
         scores = preds - targets
         if torch.any(torch.isinf(scores)):

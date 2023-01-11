@@ -103,10 +103,10 @@ class FlowMatching(StateDecomposableLoss):
         return (log_incoming_flows - log_outgoing_flows).pow(2).mean()
 
     def reward_matching_loss(self, terminating_states: States) -> LossTensor:
-        assert terminating_states.rewards is not None
+        assert terminating_states.log_rewards is not None
         log_edge_flows = self.parametrization.logF(terminating_states)
         terminating_log_edge_flows = log_edge_flows[:, -1]
-        log_rewards = terminating_states.rewards.log()
+        log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
     def __call__(self, states_tuple: Tuple[States, States]) -> LossTensor:

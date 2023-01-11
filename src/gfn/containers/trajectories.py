@@ -28,7 +28,7 @@ class Trajectories(Container):
         actions: Tensor2D | None = None,
         when_is_done: Tensor1D | None = None,
         is_backward: bool = False,
-        rewards: FloatTensor1D | None = None,
+        log_rewards: FloatTensor1D | None = None,
         log_probs: FloatTensor2D | None = None,
     ) -> None:
         """Container for complete trajectories (starting in s_0 and ending in s_f).
@@ -48,11 +48,11 @@ class Trajectories(Container):
             actions (Tensor2D, optional): The actions of the trajectories. Defaults to None.
             when_is_done (Tensor1D, optional): The time step at which each trajectory ends. Defaults to None.
             is_backward (bool, optional): Whether the trajectories are backward or forward. Defaults to False.
-            rewards (FloatTensor1D, optional): The rewards of the trajectories. Defaults to None.
+            log_rewards (FloatTensor1D, optional): The log_rewards of the trajectories. Defaults to None.
             log_probs (FloatTensor2D, optional): The log probabilities of the trajectories' actions. Defaults to None.
 
         If states is None, then the states are initialized to an empty States object, that can be populated on the fly.
-        If rewards is None, then `env.reward` is used to compute the rewards, at each call of self.rewards
+        If log_rewards is None, then `env.log_reward` is used to compute the rewards, at each call of self.log_rewards
         """
         self.env = env
         self.is_backward = is_backward
@@ -72,7 +72,7 @@ class Trajectories(Container):
             if when_is_done is not None
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
         )
-        self._rewards = rewards
+        self._log_rewards = log_rewards
         self.log_probs = (
             log_probs
             if log_probs is not None
@@ -115,13 +115,16 @@ class Trajectories(Container):
         return self.states[self.when_is_done - 1, torch.arange(self.n_trajectories)]
 
     @property
-    def rewards(self) -> FloatTensor1D | None:
-        if self._rewards is not None:
-            assert self._rewards.shape == (self.n_trajectories,)
-            return self._rewards
+    def log_rewards(self) -> FloatTensor1D | None:
+        if self._log_rewards is not None:
+            assert self._log_rewards.shape == (self.n_trajectories,)
+            return self._log_rewards
         if self.is_backward:
             return None
-        return self.env.reward(self.last_states)
+        try:
+            return self.env.log_reward(self.last_states)
+        except NotImplementedError:
+            return torch.log(self.env.reward(self.last_states))
 
     def __getitem__(self, index: int | Sequence[int]) -> Trajectories:
         "Returns a subset of the `n_trajectories` trajectories."
@@ -135,7 +138,9 @@ class Trajectories(Container):
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
         log_probs = log_probs[:new_max_length]
-        rewards = self._rewards[index] if self._rewards is not None else None
+        log_rewards = (
+            self._log_rewards[index] if self._log_rewards is not None else None
+        )
 
         return Trajectories(
             env=self.env,
@@ -143,7 +148,7 @@ class Trajectories(Container):
             actions=actions,
             when_is_done=when_is_done,
             is_backward=self.is_backward,
-            rewards=rewards,
+            log_rewards=log_rewards,
             log_probs=log_probs,
         )
 
@@ -157,10 +162,12 @@ class Trajectories(Container):
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
         self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
 
-        if self._rewards is not None and other._rewards is not None:
-            self._rewards = torch.cat((self._rewards, other._rewards), dim=0)
+        if self._log_rewards is not None and other._log_rewards is not None:
+            self._log_rewards = torch.cat(
+                (self._log_rewards, other._log_rewards), dim=0
+            )
         else:
-            self._rewards = None
+            self._log_rewards = None
 
     def extend_actions(self, required_first_dim: int) -> None:
         """Extends the actions and log_probs along the first dimension by by adding -1s as necessary.
@@ -242,13 +249,13 @@ class Trajectories(Container):
             if not self.is_backward
             else next_states.is_initial_state
         )
-        if self._rewards is None:
-            rewards = None
+        if self._log_rewards is None:
+            log_rewards = None
         else:
-            rewards = torch.full_like(actions, fill_value=-1.0, dtype=torch.float)
-            rewards[is_done] = torch.cat(
+            log_rewards = torch.full_like(actions, fill_value=-1.0, dtype=torch.float)
+            log_rewards[is_done] = torch.cat(
                 [
-                    self._rewards[self.when_is_done == i]
+                    self._log_rewards[self.when_is_done == i]
                     for i in range(self.when_is_done.max() + 1)
                 ],
                 dim=0,
@@ -261,7 +268,7 @@ class Trajectories(Container):
             is_done=is_done,
             next_states=next_states,
             is_backward=self.is_backward,
-            rewards=rewards,
+            log_rewards=log_rewards,
             log_probs=log_probs,
         )
 
@@ -282,5 +289,5 @@ class Trajectories(Container):
         states = self.states
         intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]
         terminating_states = self.last_states
-        terminating_states.rewards = self.rewards
+        terminating_states.log_rewards = self.log_rewards
         return intermediary_states, terminating_states

@@ -56,7 +56,7 @@ class TrajectoriesSampler:
         trajectories_dones = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
-        trajectories_rewards = torch.zeros(
+        trajectories_log_rewards = torch.zeros(
             n_trajectories, dtype=torch.float, device=device
         )
 
@@ -92,9 +92,16 @@ class TrajectoriesSampler:
                 new_states.is_initial_state if self.is_backward else sink_states_mask
             ) & ~dones
             trajectories_dones[new_dones & ~dones] = step
-            trajectories_rewards[new_dones & ~dones] = self.env.reward(
-                states[new_dones & ~dones]
-            )
+            try:
+                trajectories_log_rewards[new_dones & ~dones] = self.env.log_reward(
+                    states[new_dones & ~dones]
+                )
+            except NotImplementedError:
+                # print(states[new_dones & ~dones])
+                # print(torch.log(self.env.reward(states[new_dones & ~dones])))
+                trajectories_log_rewards[new_dones & ~dones] = torch.log(
+                    self.env.reward(states[new_dones & ~dones])
+                )
             states = new_states
             dones = dones | new_dones
 
@@ -111,7 +118,7 @@ class TrajectoriesSampler:
             actions=trajectories_actions,
             when_is_done=trajectories_dones,
             is_backward=self.is_backward,
-            rewards=trajectories_rewards,
+            log_rewards=trajectories_log_rewards,
             log_probs=trajectories_logprobs,
         )
 
