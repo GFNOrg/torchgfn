@@ -94,11 +94,13 @@ class TrajectoriesSampler:
             trajectories_dones[new_dones & ~dones] = step
             try:
                 trajectories_log_rewards[new_dones & ~dones] = self.env.log_reward(
-                    new_states[new_dones & ~dones]
+                    states[new_dones & ~dones]
                 )
             except NotImplementedError:
+                # print(states[new_dones & ~dones])
+                # print(torch.log(self.env.reward(states[new_dones & ~dones])))
                 trajectories_log_rewards[new_dones & ~dones] = torch.log(
-                    self.env.reward(new_states[new_dones & ~dones])
+                    self.env.reward(states[new_dones & ~dones])
                 )
             states = new_states
             dones = dones | new_dones
