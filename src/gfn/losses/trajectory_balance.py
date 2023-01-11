@@ -34,13 +34,13 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
     def __init__(
         self,
         parametrization: TBParametrization,
-        log_reward_clip_min: float = -5,
+        log_reward_clip_min: float = -12,
         on_policy: bool = False,
     ):
         """Loss object to evaluate the TB loss on a batch of trajectories.
 
         Args:
-            log_reward_clip_min (float, optional): minimal value to clamp the reward to. Defaults to 1e-5.
+            log_reward_clip_min (float, optional): minimal value to clamp the reward to. Defaults to -12 (roughly log(1e-5)).
             on_policy (bool, optional): If True, the log probs stored in the trajectories are used. Defaults to False.
         """
         self.parametrization = parametrization

@@ -30,7 +30,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     def __init__(
         self,
         parametrization: SubTBParametrization,
-        log_reward_clip_min: float = -5,
+        log_reward_clip_min: float = -12,
         weighing: Literal[
             "DB",
             "ModifiedDB",
@@ -45,7 +45,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     ):
         """
         :param parametrization: parametrization of the model
-        :param log_reward_clip_min: minimum value of the log-reward. Rewards lower than this value will be clipped to this value.
+        :param log_reward_clip_min: minimum value of the log-reward. Log-Rewards lower than this value will be clipped to this value. Defaults to -12 (roughly log(1e-5)).
         :param weighing: how to weigh the different sub-trajectories of each trajectory.
             - "DB": Considers all one-step transitions of each trajectory in the batch and weighs them equally (regardless of the length of trajectory).
                     Should be equivalent to DetailedBalance loss.
