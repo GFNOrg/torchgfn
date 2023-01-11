@@ -164,7 +164,7 @@ class SubTBLossConfig(StateFlowBasedLossConfig):
 @dataclass
 class TBLossConfig(PFBasedLossConfig):
     logZ_init: float = 0.0
-    reward_clip_min: float = 1e-5
+    log_reward_clip_min: float = -12
 
     def parse(
         self,
@@ -174,7 +174,7 @@ class TBLossConfig(PFBasedLossConfig):
         logZ_tensor = torch.tensor(self.logZ_init, dtype=torch.float)
         logZ = LogZEstimator(tensor=logZ_tensor)
         parametrization = TBParametrization(logit_PF, logit_PB, logZ)
-        loss = TrajectoryBalance(parametrization, self.reward_clip_min)
+        loss = TrajectoryBalance(parametrization, self.log_reward_clip_min)
         return (parametrization, loss)
 
 
