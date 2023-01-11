@@ -66,6 +66,7 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
         log_rewards = trajectories.log_rewards.clamp_min(self.log_reward_clip_min)  # type: ignore
+        print(log_rewards)
 
         return (
             log_pf_trajectories,

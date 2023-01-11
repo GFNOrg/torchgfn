@@ -196,5 +196,5 @@ class DiscreteEBMEnv(Env):
 
     @property
     def log_partition(self) -> float:
-        rewards = self.reward(self.terminating_states)
-        return torch.log(rewards.sum()).item()
+        log_rewards = self.log_reward(self.terminating_states)
+        return torch.logsumexp(log_rewards, -1).item()
