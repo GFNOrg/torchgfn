@@ -77,8 +77,8 @@ class States(Container, ABC):
             self.forward_masks = forward_masks
             self.backward_masks = backward_masks
 
-        self._rewards = (
-            None  # Useful attribute if we want to store the reward of the states
+        self._log_rewards = (
+            None  # Useful attribute if we want to store the log-reward of the states
         )
 
     @classmethod
@@ -303,9 +303,9 @@ class States(Container, ABC):
         return self.compare(sink_states)
 
     @property
-    def rewards(self) -> RewardsTensor:
-        return self._rewards
+    def log_rewards(self) -> RewardsTensor:
+        return self._log_rewards
 
-    @rewards.setter
-    def rewards(self, rewards: RewardsTensor) -> None:
-        self._rewards = rewards
+    @log_rewards.setter
+    def log_rewards(self, log_rewards: RewardsTensor) -> None:
+        self._log_rewards = log_rewards
