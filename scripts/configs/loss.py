@@ -103,6 +103,7 @@ class StateFlowBasedLossConfig(PFBasedLossConfig, ABC):
     def get_estimators(
         self,
         env: Env,
+        forward_looking: bool = False,
     ) -> Tuple[LogitPFEstimator, LogitPBEstimator, LogStateFlowEstimator]:
 
         logit_PF, logit_PB = super().get_estimators(env)
@@ -116,18 +117,22 @@ class StateFlowBasedLossConfig(PFBasedLossConfig, ABC):
         else:
             torso = None
         logF_state_kwargs["torso"] = torso
-        logF_state = LogStateFlowEstimator(env=env, **self.logF_state.nn_kwargs)
+        logF_state = LogStateFlowEstimator(
+            env=env, forward_looking=forward_looking, **self.logF_state.nn_kwargs
+        )
 
         return (logit_PF, logit_PB, logF_state)
 
 
 @dataclass
 class DBLossConfig(StateFlowBasedLossConfig):
+    forward_looking: bool = False
+
     def parse(
         self,
         env: Env,
     ) -> Tuple[Parametrization, Loss]:
-        logit_PF, logit_PB, logF_state = self.get_estimators(env)
+        logit_PF, logit_PB, logF_state = self.get_estimators(env, self.forward_looking)
 
         parametrization = DBParametrization(logit_PF, logit_PB, logF_state)
         loss = DetailedBalance(parametrization)
@@ -146,13 +151,14 @@ class SubTBLossConfig(StateFlowBasedLossConfig):
         "geometric_within",
         default="geometric_within",
     )
+    forward_looking: bool = False
     lamda: float = 0.9
 
     def parse(
         self,
         env: Env,
     ) -> Tuple[Parametrization, Loss]:
-        logit_PF, logit_PB, logF_state = self.get_estimators(env)
+        logit_PF, logit_PB, logF_state = self.get_estimators(env, self.forward_looking)
 
         parametrization = SubTBParametrization(logit_PF, logit_PB, logF_state)
         loss = SubTrajectoryBalance(
