@@ -152,7 +152,7 @@ class HyperGrid(Env):
     def maskless_backward_step(self, states: StatesTensor, actions: TensorLong) -> None:
         states.scatter_(-1, actions.unsqueeze(-1), -1, reduce="add")
 
-    def reward(self, final_states: States) -> TensorFloat:
+    def true_reward(self, final_states: States) -> TensorFloat:
         final_states_raw = final_states.states_tensor
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states_raw / (self.height - 1) - 0.5)
@@ -165,6 +165,9 @@ class HyperGrid(Env):
             pdf = 1.0 / (2 * torch.pi) ** 0.5 * torch.exp(-(pdf_input**2) / 2)
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
         return reward
+
+    def log_reward(self, final_states: States) -> TensorFloat:
+        return torch.log(self.true_reward(final_states))
 
     def get_states_indices(self, states: States) -> TensorLong:
         states_raw = states.states_tensor

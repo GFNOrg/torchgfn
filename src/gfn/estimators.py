@@ -110,6 +110,7 @@ class LogStateFlowEstimator(FunctionEstimator):
         module_name: Optional[
             Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
         ] = None,
+        forward_looking=False,
         **nn_kwargs,
     ):
         if module is not None:
@@ -117,6 +118,14 @@ class LogStateFlowEstimator(FunctionEstimator):
         super().__init__(
             env, module=module, output_dim=1, module_name=module_name, **nn_kwargs
         )
+        self.forward_looking = forward_looking
+
+    def __call__(self, states: States) -> OutputTensor:
+        out = super().__call__(states)
+        if self.forward_looking:
+            log_rewards = self.env.log_reward(states).unsqueeze(-1)
+            out = out + log_rewards
+        return out
 
 
 class LogitPFEstimator(FunctionEstimator):
