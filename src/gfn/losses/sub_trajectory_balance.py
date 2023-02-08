@@ -84,7 +84,9 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         """
         return torch.cat(
             (
-                torch.zeros(1, trajectories.n_trajectories),
+                torch.zeros(
+                    1, trajectories.n_trajectories, device=log_p_trajectories.device
+                ),
                 log_p_trajectories.cumsum(dim=0),
             ),
             dim=0,
@@ -154,7 +156,11 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             )[:-1][~full_mask[i - 1 : -1]] + log_state_flows[i:][~sink_states_mask[i:]]
 
             flattening_mask = trajectories.when_is_done.lt(
-                torch.arange(i, trajectories.max_length + 1).unsqueeze(-1)
+                torch.arange(
+                    i,
+                    trajectories.max_length + 1,
+                    device=trajectories.when_is_done.device,
+                ).unsqueeze(-1)
             )
             flat_preds = preds[~flattening_mask]
             flat_targets = targets[~flattening_mask]
@@ -278,7 +284,12 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             weights = (
                 (1 - ld)
                 / (1 - ld**trajectories.max_length)
-                * (ld ** torch.arange(trajectories.max_length))
+                * (
+                    ld
+                    ** torch.arange(
+                        trajectories.max_length, device=per_length_losses.device
+                    )
+                )
             )
             assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
