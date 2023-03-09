@@ -67,7 +67,7 @@ class Parametrization(ABC):
 
 @dataclass
 class PFBasedParametrization(Parametrization, ABC):
-    r"Base class for parametrizations that explicitly used $P_F$"
+    r"Base class for parametrizations that explicitly uses $P_F$"
     logit_PF: LogitPFEstimator
     logit_PB: LogitPBEstimator
 
