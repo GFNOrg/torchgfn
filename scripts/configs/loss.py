@@ -19,8 +19,10 @@ from gfn.losses import (
     DetailedBalance,
     FlowMatching,
     FMParametrization,
+    LogPartitionVarianceLoss,
     Loss,
     Parametrization,
+    PFBasedParametrization,
     SubTBParametrization,
     SubTrajectoryBalance,
     TBParametrization,
@@ -185,6 +187,15 @@ class TBLossConfig(PFBasedLossConfig):
 
 
 @dataclass
+class LogPartitionVarianceLossConfig(PFBasedLossConfig):
+    def parse(self, env: Env) -> Tuple[Parametrization, Loss]:
+        logit_PF, logit_PB = self.get_estimators(env)
+        parametrization = PFBasedParametrization(logit_PF, logit_PB)
+        loss = LogPartitionVarianceLoss(parametrization)
+        return (parametrization, loss)
+
+
+@dataclass
 class LossConfig(JsonSerializable):
     loss: BaseLossConfig = subgroups(
         {
@@ -192,6 +203,7 @@ class LossConfig(JsonSerializable):
             "DB": DBLossConfig,
             "TB": TBLossConfig,
             "SubTB": SubTBLossConfig,
+            "ZVar": LogPartitionVarianceLossConfig,
         },
         default=TBLossConfig(),
     )

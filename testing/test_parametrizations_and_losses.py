@@ -12,7 +12,12 @@ from gfn.estimators import (
 from gfn.losses.detailed_balance import DBParametrization, DetailedBalance
 from gfn.losses.flow_matching import FlowMatching, FMParametrization
 from gfn.losses.sub_trajectory_balance import SubTBParametrization, SubTrajectoryBalance
-from gfn.losses.trajectory_balance import TBParametrization, TrajectoryBalance
+from gfn.losses.trajectory_balance import (
+    LogPartitionVarianceLoss,
+    PFBasedParametrization,
+    TBParametrization,
+    TrajectoryBalance,
+)
 from gfn.samplers.actions_samplers import DiscreteActionsSampler
 from gfn.samplers.trajectories_sampler import TrajectoriesSampler
 
@@ -58,6 +63,7 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     [
         ("DB", None),
         ("TB", None),
+        ("ZVar", None),
         ("SubTB", "DB"),
         ("SubTB", "TB"),
         ("SubTB", "ModifiedDB"),
@@ -109,6 +115,9 @@ def test_PFBasedParametrization(
     elif parametrization_name == "TB":
         parametrization = TBParametrization(logit_PF, logit_PB, logZ)
         loss_cls = TrajectoryBalance
+    elif parametrization_name == "ZVar":
+        parametrization = PFBasedParametrization(logit_PF, logit_PB)
+        loss_cls = LogPartitionVarianceLoss
     elif parametrization_name == "SubTB":
         parametrization = SubTBParametrization(logit_PF, logit_PB, logF)
         loss_cls = SubTrajectoryBalance

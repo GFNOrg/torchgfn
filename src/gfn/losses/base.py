@@ -20,6 +20,7 @@ from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 
 # Typing
 LogPTrajectoriesTensor = TensorType["max_length", "n_trajectories", float]
+ScoresTensor = TensorType["n_trajectories", float]
 
 
 @dataclass
@@ -194,6 +195,28 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         log_pb_trajectories[trajectories.actions != -1] = log_pb_trajectories_slice
 
         return log_pf_trajectories, log_pb_trajectories
+
+    def get_trajectories_scores(
+        self, trajectories: Trajectories
+    ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
+
+        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
+            trajectories, no_pf=self.on_policy
+        )
+        if self.on_policy:
+            log_pf_trajectories = trajectories.log_probs
+
+        assert log_pf_trajectories is not None
+        log_pf_trajectories = log_pf_trajectories.sum(dim=0)
+        log_pb_trajectories = log_pb_trajectories.sum(dim=0)
+
+        log_rewards = trajectories.log_rewards.clamp_min(self.log_reward_clip_min)  # type: ignore
+
+        return (
+            log_pf_trajectories,
+            log_pb_trajectories,
+            log_pf_trajectories - log_pb_trajectories - log_rewards,
+        )
 
     @abstractmethod
     def __call__(self, trajectories: Trajectories) -> TensorType[0, float]:
