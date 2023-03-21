@@ -52,9 +52,13 @@ class Parametrization(ABC):
         """
         # TODO: use parameters of the fields instead, loop through them here
         parameters_dict = {}
-        for estimator in self.__dict__.values():
-            parameters_dict.update(estimator.named_parameters())
-
+        for name, estimator in self.__dict__.items():
+            parameters_dict.update(
+                {
+                    f"{name}_{key}": value
+                    for key, value in estimator.named_parameters().items()
+                }
+            )
         return parameters_dict
 
     def save_state_dict(self, path: str):
