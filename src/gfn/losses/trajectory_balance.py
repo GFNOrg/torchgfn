@@ -1,5 +1,9 @@
+"""
+Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.13259)
+and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
+"""
+
 from dataclasses import dataclass
-from typing import Tuple
 
 import torch
 from torchtyping import TensorType
@@ -41,7 +45,8 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
 
         Args:
             log_reward_clip_min (float, optional): minimal value to clamp the reward to. Defaults to -12 (roughly log(1e-5)).
-            on_policy (bool, optional): If True, the log probs stored in the trajectories are used. Defaults to False.
+            on_policy (bool, optional): If True, the log probs stored in the trajectories are used. Which should be faster than
+                                        reevaluating them. Defaults to False.
         """
         self.parametrization = parametrization
         self.log_reward_clip_min = log_reward_clip_min
@@ -51,31 +56,41 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         )
         self.on_policy = on_policy
 
-    def get_scores(
-        self, trajectories: Trajectories
-    ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
+    def __call__(self, trajectories: Trajectories) -> LossTensor:
+        _, _, scores = self.get_trajectories_scores(trajectories)
+        loss = (scores + self.parametrization.logZ.tensor).pow(2).mean()
+        if torch.isnan(loss):
+            raise ValueError("loss is nan")
 
-        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-            trajectories, no_pf=self.on_policy
+        return loss
+
+
+class LogPartitionVarianceLoss(TrajectoryDecomposableLoss):
+    def __init__(
+        self,
+        parametrization: PFBasedParametrization,
+        log_reward_clip_min: float = -12,
+        on_policy: bool = False,
+    ):
+        """Loss object to evaluate the Log Partition Variance Loss (Section 3.2 of
+        [ROBUST SCHEDULING WITH GFLOWNETS](https://arxiv.org/abs/2302.05446))
+
+        Args:
+            on_policy (bool, optional): If True, the log probs stored in the trajectories are used. Which should be faster than
+                                        reevaluating them. Defaults to False.
+        """
+        self.parametrization = parametrization
+        self.log_reward_clip_min = log_reward_clip_min
+        self.actions_sampler = DiscreteActionsSampler(parametrization.logit_PF)
+        self.backward_actions_sampler = BackwardDiscreteActionsSampler(
+            parametrization.logit_PB
         )
-        if self.on_policy:
-            log_pf_trajectories = trajectories.log_probs
 
-        assert log_pf_trajectories is not None
-        log_pf_trajectories = log_pf_trajectories.sum(dim=0)
-        log_pb_trajectories = log_pb_trajectories.sum(dim=0)
-
-        log_rewards = trajectories.log_rewards.clamp_min(self.log_reward_clip_min)  # type: ignore
-
-        return (
-            log_pf_trajectories,
-            log_pb_trajectories,
-            log_pf_trajectories - log_pb_trajectories - log_rewards,
-        )
+        self.on_policy = on_policy
 
     def __call__(self, trajectories: Trajectories) -> LossTensor:
-        _, _, scores = self.get_scores(trajectories)
-        loss = (scores + self.parametrization.logZ.tensor).pow(2).mean()
+        _, _, scores = self.get_trajectories_scores(trajectories)
+        loss = (scores - scores.mean()).pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("loss is nan")
 
