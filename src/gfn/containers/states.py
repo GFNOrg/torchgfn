@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # This allows to use the class name in type hints
 
 from abc import ABC
 from math import prod

@@ -7,6 +7,7 @@ from gymnasium.spaces import Discrete, Space
 from torchtyping import TensorType
 
 from gfn.containers.states import States, correct_cast
+from gfn.containers.actions import Actions
 from gfn.envs.preprocessors import IdentityPreprocessor, Preprocessor
 
 # Typing
