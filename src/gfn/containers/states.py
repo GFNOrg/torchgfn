@@ -1,8 +1,8 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from math import prod
-from typing import ClassVar, Sequence, cast
+from typing import ClassVar, Sequence, cast, Optional
 
 import torch
 from torchtyping import TensorType
@@ -26,8 +26,8 @@ def correct_cast(
     Casts the given masks to the correct type, if they are not None.
     This function is to help with type checking only.
     """
-    forward_masks = cast(ForwardMasksTensor, forward_masks)
-    backward_masks = cast(BackwardMasksTensor, backward_masks)
+    forward_masks = cast(torch.Tensor, forward_masks)
+    backward_masks = cast(torch.Tensor, backward_masks)
     return forward_masks, backward_masks
 
 
@@ -39,11 +39,14 @@ class States(Container, ABC):
     of shape (*state_shape), a batch of states is represented with a States object,
     with the attribute `states_tensor` of shape (*batch_shape, *state_shape). Other
     representations are possible (e.g. state as string, as numpy array, as graph, etc...),
-    but these representations should not be batched.
+    but these representations cannot be batched.
 
-    If the environment's action space is discrete, then each States object is also endowed
-    with a `forward_masks` and `backward_masks` boolean attributes representing which actions
-    are allowed at each state.
+    If the environment's action space is discrete (i.e. the environment subclasses `DiscreteEnv`),
+    then each States object is also endowed with a `forward_masks` and `backward_masks` boolean attributes
+    representing which actions are allowed at each state. This makes it possible to instantly access
+    the allowed actions at each state, without having to call the environment's `validate_actions` method.
+    Put different, `validate_actions` for such environments, directly calls the masks. This is handled in the
+    DiscreteSpace subclass.
 
     A `batch_shape` attribute is also required, to keep track of the batch dimension.
     A trajectory can be represented by a States object with batch_shape = (n_states,).
@@ -59,36 +62,28 @@ class States(Container, ABC):
     s0: ClassVar[OneStateTensor]  # Source state of the DAG
     sf: ClassVar[OneStateTensor]  # Dummy state, used to pad a batch of states
 
-    def __init__(
-        self,
-        states_tensor: StatesTensor,
-        forward_masks: ForwardMasksTensor | None = None,
-        backward_masks: BackwardMasksTensor | None = None,
-    ):
+    def __init__(self, states_tensor: StatesTensor):
         self.states_tensor = states_tensor
         self.batch_shape = tuple(self.states_tensor.shape)[: -len(self.state_shape)]
-        if forward_masks is None and backward_masks is None:
-            try:
-                self.forward_masks, self.backward_masks = self.make_masks()
-                self.update_masks()
-            except NotImplementedError:
-                pass
-        else:
-            self.forward_masks = forward_masks
-            self.backward_masks = backward_masks
-
         self._log_rewards = (
             None  # Useful attribute if we want to store the log-reward of the states
         )
 
     @classmethod
-    def from_batch_shape(cls, batch_shape: tuple[int], random: bool = False) -> States:
+    def from_batch_shape(
+        cls, batch_shape: tuple[int], random: bool = False, sink: bool = False
+    ) -> States:
         """Create a States object with the given batch shape, all initialized to s_0.
         If random is True, the states are initialized randomly. This requires that
         the environment implements the `make_random_states_tensor` class method.
+        If sink is True, the states are initialized to s_f. Both random and sink
+        cannot be True at the same time.
         """
+        assert not (random and sink)
         if random:
             states_tensor = cls.make_random_states_tensor(batch_shape)
+        elif sink:
+            states_tensor = cls.make_sink_states_tensor(batch_shape)
         else:
             states_tensor = cls.make_initial_states_tensor(batch_shape)
         return cls(states_tensor)
@@ -105,21 +100,11 @@ class States(Container, ABC):
             "The environment does not support initialization of random states."
         )
 
-    def make_masks(self) -> tuple[ForwardMasksTensor, BackwardMasksTensor]:
-        """Create the forward and backward masks for the states.
-        This method is called only if the masks are not provided at initialization.
-        """
-        return NotImplementedError(
-            "make_masks method not implemented. Your environment must implement it if discrete"
-        )
-
-    def update_masks(self) -> None:
-        """Update the masks, if necessary.
-        This method should be called after each action is taken.
-        """
-        return NotImplementedError(
-            "update_masks method not implemented. Your environment must implement it if discrete"
-        )
+    @classmethod
+    def make_sink_states_tensor(cls, batch_shape: tuple[int]) -> StatesTensor:
+        state_ndim = len(cls.state_shape)
+        assert cls.sf is not None and state_ndim is not None
+        return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
 
     def __len__(self):
         return prod(self.batch_shape)
@@ -135,34 +120,20 @@ class States(Container, ABC):
         """Access particular states of the batch."""
         # TODO: add more tests for this method
         states = self.states_tensor[index]
-        if self.forward_masks is None and self.backward_masks is None:
-            return self.__class__(states)
-        else:
-            self.forward_masks, self.backward_masks = correct_cast(
-                self.forward_masks, self.backward_masks
-            )
-            forward_masks = self.forward_masks[index]
-            backward_masks = self.backward_masks[index]
-            return self.__class__(
-                states, forward_masks=forward_masks, backward_masks=backward_masks
-            )
+        return self.__class__(states)
+
+    def __setitem__(
+        self, index: int | Sequence[int] | Sequence[bool], states: States
+    ) -> None:
+        """Set particular states of the batch."""
+        self.states_tensor[index] = states.states_tensor
 
     def flatten(self) -> States:
         """Flatten the batch dimension of the states.
         This is useful for example when extracting individual states from trajectories.
         """
         states = self.states_tensor.view(-1, *self.state_shape)
-        if self.forward_masks is None and self.backward_masks is None:
-            return self.__class__(states)
-        else:
-            self.forward_masks, self.backward_masks = correct_cast(
-                self.forward_masks, self.backward_masks
-            )
-            forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
-            backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
-            return self.__class__(
-                states, forward_masks=forward_masks, backward_masks=backward_masks
-            )
+        return self.__class__(states)
 
     def extend(self, other: States) -> None:
         """Collates to another States object of the same batch shape, which should be 1 or 2.
@@ -200,20 +171,6 @@ class States(Container, ABC):
             raise ValueError(
                 f"extend is not implemented for batch shapes {self.batch_shape} and {other_batch_shape}"
             )
-        if self.forward_masks is not None and self.backward_masks is not None:
-            self.forward_masks, self.backward_masks = correct_cast(
-                self.forward_masks, self.backward_masks
-            )
-            other.forward_masks, other.backward_masks = correct_cast(
-                other.forward_masks, other.backward_masks
-            )
-            self.forward_masks = torch.cat(
-                (self.forward_masks, other.forward_masks), dim=len(self.batch_shape) - 1
-            )
-            self.backward_masks = torch.cat(
-                (self.backward_masks, other.backward_masks),
-                dim=len(self.batch_shape) - 1,
-            )
 
     def extend_with_sf(self, required_first_dim: int) -> None:
         """Takes a two-dimensional batch of states (i.e. of batch_shape (a, b)),
@@ -232,34 +189,6 @@ class States(Container, ABC):
                 ),
                 dim=0,
             )
-            if self.forward_masks is not None and self.backward_masks is not None:
-                self.forward_masks, self.backward_masks = correct_cast(
-                    self.forward_masks, self.backward_masks
-                )
-                self.forward_masks = torch.cat(
-                    (
-                        self.forward_masks,
-                        torch.ones(
-                            required_first_dim - self.batch_shape[0],
-                            *self.forward_masks.shape[1:],
-                            dtype=torch.bool,
-                            device=self.device,
-                        ),
-                    ),
-                    dim=0,
-                )
-                self.backward_masks = torch.cat(
-                    (
-                        self.backward_masks,
-                        torch.ones(
-                            required_first_dim - self.batch_shape[0],
-                            *self.backward_masks.shape[1:],
-                            dtype=torch.bool,
-                            device=self.device,
-                        ),
-                    ),
-                    dim=0,
-                )
             self.batch_shape = (required_first_dim, self.batch_shape[1])
         else:
             raise ValueError(
@@ -309,3 +238,121 @@ class States(Container, ABC):
     @log_rewards.setter
     def log_rewards(self, log_rewards: RewardsTensor) -> None:
         self._log_rewards = log_rewards
+
+
+class DiscreteStates(States, ABC):
+    """Base class for states of discrete environments.
+    States are endowed with a `forward_masks` and `backward_masks` boolean attributes
+    representing which actions are allowed at each state. This makes it possible to instantly access
+    the allowed actions at each state, without having to call the environment's `validate_actions` method.
+    Put different, `validate_actions` for such environments, directly calls the masks."""
+
+    n_actions: ClassVar[int]
+    device: ClassVar[torch.device]
+
+    def __init__(
+        self,
+        states_tensor: StatesTensor,
+        forward_masks: Optional[ForwardMasksTensor] = None,
+        backward_masks: Optional[BackwardMasksTensor] = None,
+    ) -> None:
+        super().__init__(states_tensor)
+        if forward_masks is None and backward_masks is None:
+            self.forward_masks, self.backward_masks = self.make_masks()
+            self.update_masks()
+        else:
+            self.forward_masks = forward_masks
+            self.backward_masks = backward_masks
+        self.forward_masks, self.backward_masks = correct_cast(
+            self.forward_masks, self.backward_masks
+        )
+
+    def make_masks(self) -> tuple[ForwardMasksTensor, BackwardMasksTensor]:
+        """Initializes the forward and backward masks for the states.
+        This method is called only if the masks are not provided at initialization.
+        """
+        forward_masks = torch.ones(
+            (*self.batch_shape, self.__class__.n_actions),
+            dtype=torch.bool,
+            device=self.__class__.device,
+        )
+        backward_masks = torch.ones(
+            (*self.batch_shape, self.__class__.n_actions - 1),
+            dtype=torch.bool,
+            device=self.__class__.device,
+        )
+
+        return forward_masks, backward_masks
+
+    @abstractmethod
+    def update_masks(self) -> None:
+        """Update the masks, if necessary.
+        This method should be called after each action is taken.
+        """
+        pass
+
+    def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> States:
+        states = self.states_tensor[index]
+        assert self.forward_masks is not None and self.backward_masks is not None
+        forward_masks = self.forward_masks[index]
+        backward_masks = self.backward_masks[index]
+        return self.__class__(states, forward_masks, backward_masks)
+
+    def __setitem__(
+        self, index: int | Sequence[int] | Sequence[bool], states: States
+    ) -> None:
+        super().__setitem__(index, states)
+        self.forward_masks[index] = states.forward_masks
+        self.backward_masks[index] = states.backward_masks
+
+    def flatten(self) -> States:
+        states = self.states_tensor.view(-1, *self.state_shape)
+        forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
+        backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
+        return self.__class__(states, forward_masks, backward_masks)
+
+    def extend(self, other: States) -> None:
+        super().extend(other)
+        self.forward_masks = torch.cat(
+            (self.forward_masks, other.forward_masks), dim=len(self.batch_shape) - 1
+        )
+        self.backward_masks = torch.cat(
+            (self.backward_masks, other.backward_masks), dim=len(self.batch_shape) - 1
+        )
+
+    def extend_with_sf(self, required_first_dim: int) -> None:
+        super().extend_with_sf(required_first_dim)
+        self.forward_masks = torch.cat(
+            (
+                self.forward_masks,
+                torch.ones(
+                    required_first_dim - self.batch_shape[0],
+                    *self.forward_masks.shape[1:],
+                    dtype=torch.bool,
+                    device=self.device,
+                ),
+            ),
+            dim=0,
+        )
+        self.backward_masks = torch.cat(
+            (
+                self.backward_masks,
+                torch.ones(
+                    required_first_dim - self.batch_shape[0],
+                    *self.backward_masks.shape[1:],
+                    dtype=torch.bool,
+                    device=self.device,
+                ),
+            ),
+            dim=0,
+        )
+
+
+if __name__ == "__main__":
+    from gfn.envs import HyperGrid
+
+    env = HyperGrid()
+
+    states = env.reset(batch_shape=5, random=True)
+
+    print(states)
