@@ -86,11 +86,11 @@ if __name__ == "__main__":
     params = [
         {
             "params": [
-                val for key, val in parametrization.parameters.items() if key != "logZ"
+                val for key, val in parametrization.parameters.items() if "logZ" not in key
             ],
             "lr": 0.001,
         },
-        {"params": [parametrization.parameters["logZ"]], "lr": 0.1},
+        {"params": [val for key, val in parametrization.parameters.items() if "logZ" in key], "lr": 0.1},
     ]
     optimizer = torch.optim.Adam(params)
 
