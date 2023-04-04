@@ -151,11 +151,14 @@ class Env(ABC):
         not_done_actions = actions[~new_sink_states]
 
         new_not_done_states = self.maskless_step(not_done_states, not_done_actions)
+        # if isinstance(new_states, DiscreteStates):
+        #     new_not_done_states.masks = self.update_masks(not_done_states, not_done_actions)
 
         new_states.states_tensor[~new_sink_states] = new_not_done_states
 
         if isinstance(new_states, DiscreteStates):
-            new_states.update_masks()
+            new_states.update_masks()  # TODO: probably use `not_done_actions` (and `not_done_states` `~new_sink_states` ?) as input to update_masks
+            # TODO: or `locals()`
         return new_states
 
     def backward_step(
@@ -277,7 +280,7 @@ class DiscreteEnv(Env, ABC):
 
         class DiscreteEnvActions(Actions):
             action_shape = (1,)
-            dummy_action = torch.tensor([1.0], device=env.device)
+            dummy_action = torch.tensor([1.0], device=env.device)  # Double check
             exit_action = torch.tensor([n_actions - 1], device=env.device)
 
         return DiscreteEnvActions
