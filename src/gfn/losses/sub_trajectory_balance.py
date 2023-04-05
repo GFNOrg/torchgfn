@@ -1,13 +1,11 @@
 from dataclasses import dataclass
-from typing import List, Literal, Tuple
+from typing import List, Literal, Tuple, TYPE_CHECKING
 
 import torch
 from torchtyping import TensorType
 
-from gfn.containers import Trajectories
-from gfn.estimators import LogStateFlowEstimator
 from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
-from gfn.samplers.actions_samplers import (
+from gfn.samplers import (
     BackwardDiscreteActionsSampler,
     DiscreteActionsSampler,
 )
@@ -16,6 +14,10 @@ from gfn.samplers.actions_samplers import (
 ScoresTensor = TensorType[-1, float]
 LossTensor = TensorType[0, float]
 LogPTrajectoriesTensor = TensorType["max_length", "n_trajectories", float]
+
+if TYPE_CHECKING:
+    from gfn.estimators import LogStateFlowEstimator
+    from gfn.containers import Trajectories
 
 
 @dataclass
