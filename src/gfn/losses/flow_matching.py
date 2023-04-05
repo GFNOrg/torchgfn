@@ -1,19 +1,22 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
 
 import torch
 from torchtyping import TensorType
 
-from gfn.containers.states import States, correct_cast
 from gfn.distributions import EmpiricalTrajectoryDistribution, TrajectoryDistribution
-from gfn.envs import Env
-from gfn.estimators import LogEdgeFlowEstimator
 from gfn.losses.base import Parametrization, StateDecomposableLoss
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.utils import correct_cast
 
 # Typing
 ScoresTensor = TensorType["n_states", float]
 LossTensor = TensorType[0, float]
+
+if TYPE_CHECKING:
+   from gfn.envs import Env
+   from gfn.estimators import LogEdgeFlowEstimator
+   from gfn.containers import States
 
 
 @dataclass
