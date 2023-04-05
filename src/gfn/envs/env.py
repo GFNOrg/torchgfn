@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from typing import Optional, Tuple, Union, TYPE_CHECKING
+from typing import Optional, Tuple, Union
 
 import torch
 from gymnasium.spaces import Discrete, Space
 from torchtyping import TensorType
 
+from gfn.containers import States
 from gfn.envs.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.utils import correct_cast
 
@@ -19,9 +20,6 @@ BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
 OneStateTensor = TensorType["state_shape", torch.float]
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
 PmfTensor = TensorType["n_states", torch.float]
-
-if TYPE_CHECKING:
-    from gfn.containers import States
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})

@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import torch
 from torchtyping import TensorType
 
+from gfn.containers import Transitions
+from gfn.estimators import LogStateFlowEstimator
 from gfn.losses.base import EdgeDecomposableLoss, PFBasedParametrization
 from gfn.samplers.actions_samplers import (
     BackwardDiscreteActionsSampler,
@@ -13,10 +14,6 @@ from gfn.samplers.actions_samplers import (
 # Typing
 ScoresTensor = TensorType["n_transitions", float]
 LossTensor = TensorType[0, float]
-
-if TYPE_CHECKING:
-    from gfn.estimators import LogStateFlowEstimator
-    from gfn.containers import Transitions
 
 
 @dataclass

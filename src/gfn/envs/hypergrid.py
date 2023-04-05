@@ -1,13 +1,14 @@
 """
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
-from typing import ClassVar, Literal, Tuple, cast, TYPE_CHECKING
+from typing import ClassVar, Literal, Tuple, cast
 
 import torch
 from einops import rearrange
 from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
+from gfn.containers import States
 from gfn.envs.env import Env
 from gfn.envs.preprocessors import (
     IdentityPreprocessor,
@@ -23,9 +24,6 @@ ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
 BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
 OneStateTensor = TensorType["state_shape", torch.float]
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
-
-if TYPE_CHECKING:
-    from gfn.containers import States
 
 preprocessors_dict = {
     "KHot": KHotPreprocessor,

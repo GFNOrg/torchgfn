@@ -1,16 +1,19 @@
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Tuple, TYPE_CHECKING
+from typing import Tuple
 
 import torch
 from torchtyping import TensorType
 
+from gfn.containers import States, Trajectories, Transitions
 from gfn.distributions import (
     EmpiricalTrajectoryDistribution,
     TrajectoryBasedTerminatingStateDistribution,
     TrajectoryDistribution,
 )
+from gfn.envs import Env
+from gfn.estimators import LogitPBEstimator, LogitPFEstimator
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 from gfn.utils import correct_cast
 
@@ -18,10 +21,6 @@ from gfn.utils import correct_cast
 LogPTrajectoriesTensor = TensorType["max_length", "n_trajectories", float]
 ScoresTensor = TensorType["n_trajectories", float]
 
-if TYPE_CHECKING:
-   from gfn.envs import Env
-   from gfn.estimators import LogitPBEstimator, LogitPFEstimator
-   from gfn.containers import States, Trajectories, Transitions
 
 
 @dataclass

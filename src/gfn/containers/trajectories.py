@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Sequence
 
+if TYPE_CHECKING:
+   from gfn.envs import Env
+   from gfn.containers.states import States
+
 import torch
 from torchtyping import TensorType
 
@@ -14,10 +18,6 @@ FloatTensor2D = TensorType["max_length", "n_trajectories", torch.float]
 Tensor2D2 = TensorType["n_trajectories", "shape"]
 Tensor1D = TensorType["n_trajectories", torch.long]
 FloatTensor1D = TensorType["n_trajectories", torch.float]
-
-if TYPE_CHECKING:
-   from gfn.envs import Env
-   from gfn.containers.states import States
 
 
 class Trajectories(Container):
@@ -211,7 +211,7 @@ class Trajectories(Container):
         new_actions = torch.cat(
             [new_actions, torch.full((1, len(trajectories)), -1)], dim=0
         )
-        new_states = trajectories.env.sf.repeat(
+        new_states = trajectories.env.sf.repeat(  # TODO: "repeat" is not a known member of "None"
             trajectories.when_is_done.max() + 1, len(trajectories), 1
         )
         new_when_is_done = trajectories.when_is_done + 1

@@ -1,9 +1,11 @@
-from typing import Dict, Optional, cast, TYPE_CHECKING
+from typing import Dict, Optional, cast
 
 import torch
 from torchtyping import TensorType
 
+from gfn.containers import States, Trajectories, Transitions
 from gfn.distributions import EmpiricalTerminatingStatesDistribution
+from gfn.envs import Env
 from gfn.losses import (
     EdgeDecomposableLoss,
     Loss,
@@ -16,10 +18,6 @@ from gfn.losses import (
 # Typing.
 ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
 BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
-
-if TYPE_CHECKING:
-   from gfn.envs import Env
-   from gfn.containers import States, Trajectories, Transitions
 
 
 def correct_cast(

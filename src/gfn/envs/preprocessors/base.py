@@ -1,13 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Tuple, TYPE_CHECKING
+from typing import Callable, Tuple
 
 from torchtyping import TensorType
 
+from gfn.containers import States
+
 # Typing
 OutputTensor = TensorType["batch_shape", "dim_in"]
-
-if TYPE_CHECKING:
-    from gfn.containers import States
 
 
 class Preprocessor(ABC):

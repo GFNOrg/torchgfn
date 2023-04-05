@@ -1,17 +1,15 @@
 from abc import ABC
-from typing import Literal, Optional, TYPE_CHECKING
+from typing import Literal, Optional
 
 from torchtyping import TensorType
 
+from gfn.containers import States
+from gfn.envs import Env
 from gfn.envs.preprocessors import EnumPreprocessor
 from gfn.modules import GFNModule, NeuralNet, Tabular, Uniform, ZeroGFNModule
 
 # Typing
 OutputTensor = TensorType["batch_shape", "output_dim", float]
-
-if TYPE_CHECKING:
-   from gfn.envs import Env
-   from gfn.containers import States
 
 
 class FunctionEstimator(ABC):
