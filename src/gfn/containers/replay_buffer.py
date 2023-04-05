@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 from gfn.containers.states import States
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
-from gfn.losses.base import (
+from gfn.losses import (
     EdgeDecomposableLoss,
     Loss,
     StateDecomposableLoss,
@@ -14,7 +14,7 @@ from gfn.losses.base import (
 )
 
 if TYPE_CHECKING:
-    from gfn.envs import Env
+   from gfn.envs import Env
 
 
 class ReplayBuffer:
