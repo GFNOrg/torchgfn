@@ -1,17 +1,20 @@
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
 import torch
 from torchtyping import TensorType
 
-from gfn.containers import States, Trajectories
-from gfn.envs import Env
-from gfn.samplers.actions_samplers import ActionsSampler, BackwardActionsSampler
+from gfn.containers import Trajectories
+from gfn.samplers import ActionsSampler, BackwardActionsSampler
 
 # Typing
 StatesTensor = TensorType["n_trajectories", "state_shape", torch.float]
 ActionsTensor = TensorType["n_trajectories", torch.long]
 LogProbsTensor = TensorType["n_trajectories", torch.float]
 DonesTensor = TensorType["n_trajectories", torch.bool]
+
+if TYPE_CHECKING:
+    from gfn.envs import Env
+    from gfn.containers import States
 
 
 class TrajectoriesSampler:
