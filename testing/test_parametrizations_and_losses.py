@@ -9,17 +9,19 @@ from gfn.estimators import (
     LogStateFlowEstimator,
     LogZEstimator,
 )
-from gfn.losses.detailed_balance import DBParametrization, DetailedBalance
-from gfn.losses.flow_matching import FlowMatching, FMParametrization
-from gfn.losses.sub_trajectory_balance import SubTBParametrization, SubTrajectoryBalance
-from gfn.losses.trajectory_balance import (
+from gfn.losses import (
+    DBParametrization, 
+    DetailedBalance,
+    FlowMatching, 
+    FMParametrization,
+    SubTBParametrization, 
+    SubTrajectoryBalance,
     LogPartitionVarianceLoss,
     PFBasedParametrization,
     TBParametrization,
     TrajectoryBalance,
 )
-from gfn.samplers.actions_samplers import DiscreteActionsSampler
-from gfn.samplers.trajectories_sampler import TrajectoriesSampler
+from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])

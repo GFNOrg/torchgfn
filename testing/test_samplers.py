@@ -7,8 +7,8 @@ from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.envs import DiscreteEBMEnv, HyperGrid
 from gfn.estimators import LogitPBEstimator, LogitPFEstimator
-from gfn.samplers import TrajectoriesSampler
-from gfn.samplers.actions_samplers import (
+from gfn.samplers import (
+    TrajectoriesSampler, 
     BackwardDiscreteActionsSampler,
     DiscreteActionsSampler,
 )
