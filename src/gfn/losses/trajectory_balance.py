@@ -4,14 +4,13 @@ and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import torch
 from torchtyping import TensorType
 
-from gfn.containers import Trajectories
-from gfn.estimators import LogZEstimator
 from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
-from gfn.samplers.actions_samplers import (
+from gfn.samplers import (
     BackwardDiscreteActionsSampler,
     DiscreteActionsSampler,
 )
@@ -19,6 +18,10 @@ from gfn.samplers.actions_samplers import (
 # Typing
 ScoresTensor = TensorType["n_trajectories", float]
 LossTensor = TensorType[0, float]
+
+if TYPE_CHECKING:
+    from gfn.estimators import LogZEstimator
+    from gfn.containers import Trajectories
 
 
 @dataclass
