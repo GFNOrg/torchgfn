@@ -4,9 +4,6 @@ import os
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Sequence
 
-if TYPE_CHECKING:
-    from gfn.envs import Env
-
 import torch
 from torchtyping import TensorType
 
@@ -15,6 +12,9 @@ Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
 Tensor2D2 = TensorType["n_trajectories", "shape"]
 Tensor1D = TensorType["n_trajectories", torch.long]
 FloatTensor1D = TensorType["n_trajectories", torch.float]
+
+if TYPE_CHECKING:
+   from gfn.envs import Env
 
 
 class Container(ABC):
