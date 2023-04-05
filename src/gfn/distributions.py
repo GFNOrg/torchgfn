@@ -1,16 +1,16 @@
 from abc import ABC, abstractmethod
 from collections import Counter
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import torch
 from torchtyping import TensorType
 
-from gfn.containers.states import States
-from gfn.containers.trajectories import Trajectories
-from gfn.envs.env import Env
-
 # Typing
 TensorPmf = TensorType["n_states", float]
+
+if TYPE_CHECKING:
+   from gfn.envs import Env
+   from gfn.containers import States, Trajectories
 
 
 class TrajectoryDistribution(ABC):
