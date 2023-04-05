@@ -1,15 +1,17 @@
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
 import torch
 from einops import rearrange
 from torch.nn.functional import one_hot
 from torchtyping import TensorType
 
-from gfn.containers.states import States
 from gfn.envs.preprocessors.base import Preprocessor
 
 # Typing
 OutputTensor = TensorType["batch_shape", "dim_in"]
+
+if TYPE_CHECKING:
+    from gfn.containers import States
 
 
 class OneHotPreprocessor(Preprocessor):
