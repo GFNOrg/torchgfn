@@ -1,12 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import ClassVar, Literal, Tuple, cast
+from typing import ClassVar, Literal, Tuple, cast, TYPE_CHECKING
 
 import torch
 import torch.nn as nn
 from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
-from gfn.containers.states import States
 from gfn.envs.env import Env
 
 # Typing
@@ -15,6 +14,9 @@ BatchTensor = TensorType["batch_shape"]
 IsingJTensor = TensorType["state_shape", "state_shape", torch.float]
 ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
 BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
+
+if TYPE_CHECKING:
+    from gfn.containers import States
 
 
 class EnergyFunction(nn.Module, ABC):
