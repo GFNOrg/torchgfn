@@ -5,10 +5,6 @@ from typing import TYPE_CHECKING, Sequence
 import torch
 from torchtyping import TensorType
 
-if TYPE_CHECKING:
-    from gfn.envs import Env
-    from gfn.containers.states import States
-
 from gfn.containers.base import Container
 
 # Typing  -- n_transitions is either int or Tuple[int]
@@ -16,6 +12,10 @@ LongTensor = TensorType["n_transitions", torch.long]
 BoolTensor = TensorType["n_transitions", torch.bool]
 FloatTensor = TensorType["n_transitions", torch.float]
 PairFloatTensor = TensorType["n_transitions", 2, torch.float]
+
+if TYPE_CHECKING:
+   from gfn.envs import Env
+   from gfn.containers.states import States
 
 
 class Transitions(Container):
