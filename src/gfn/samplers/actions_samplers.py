@@ -1,17 +1,24 @@
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
 
 import torch
 from torch.distributions import Categorical
 from torchtyping import TensorType
 
-from gfn.containers.states import States, correct_cast
-from gfn.estimators import LogEdgeFlowEstimator, LogitPBEstimator, LogitPFEstimator
+from gfn.containers import States
+from gfn.utils import correct_cast
 
 # Typing
 Tensor2D = TensorType["batch_size", "n_actions"]
 Tensor2D2 = TensorType["batch_size", "n_steps"]
 Tensor1D = TensorType["batch_size", torch.long]
+
+if TYPE_CHECKING:
+    from gfn.estimators import (
+        LogEdgeFlowEstimator, 
+        LogitPBEstimator, 
+        LogitPFEstimator,   
+    )
 
 
 class ActionsSampler(ABC):
