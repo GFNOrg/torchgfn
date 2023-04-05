@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from abc import ABC
 from math import prod
-from typing import ClassVar, Sequence, cast
+from typing import ClassVar, Sequence
 
 import torch
 from torchtyping import TensorType
 
 from gfn.containers.base import Container
+from gfn.utils import correct_cast
+
 
 # Typing
 ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
@@ -16,19 +18,6 @@ StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
 DonesTensor = TensorType["batch_shape", torch.bool]
 RewardsTensor = TensorType["batch_shape", torch.float]
 OneStateTensor = TensorType["state_shape", torch.float]
-
-
-def correct_cast(
-    forward_masks: ForwardMasksTensor | None,
-    backward_masks: BackwardMasksTensor | None,
-) -> tuple[ForwardMasksTensor, BackwardMasksTensor]:
-    """
-    Casts the given masks to the correct type, if they are not None.
-    This function is to help with type checking only.
-    """
-    forward_masks = cast(ForwardMasksTensor, forward_masks)
-    backward_masks = cast(BackwardMasksTensor, backward_masks)
-    return forward_masks, backward_masks
 
 
 class States(Container, ABC):
