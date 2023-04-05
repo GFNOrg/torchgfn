@@ -7,8 +7,8 @@ from typing import ClassVar, Sequence
 import torch
 from torchtyping import TensorType
 
+from gfn.casting import correct_cast
 from gfn.containers.base import Container
-from gfn.utils import correct_cast
 
 
 # Typing
