@@ -303,11 +303,13 @@ class DiscreteStates(States, ABC):
         self, index: int | Sequence[int] | Sequence[bool], states: States
     ) -> None:
         super().__setitem__(index, states)
+        assert self.forward_masks is not None and self.backward_masks is not None
         self.forward_masks[index] = states.forward_masks
         self.backward_masks[index] = states.backward_masks
 
     def flatten(self) -> States:
         states = self.states_tensor.view(-1, *self.state_shape)
+        assert self.forward_masks is not None and self.backward_masks is not None
         forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
         backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
         return self.__class__(states, forward_masks, backward_masks)
@@ -347,13 +349,3 @@ class DiscreteStates(States, ABC):
             ),
             dim=0,
         )
-
-
-if __name__ == "__main__":
-    from gfn.envs import HyperGrid
-
-    env = HyperGrid()
-
-    states = env.reset(batch_shape=5, random=True)
-
-    print(states)

@@ -69,7 +69,46 @@ class Actions(Container, ABC):
 
     def extend(self, other: Actions) -> None:
         """Collates to another Actions object of the same batch shape."""
-        # TODO
+        if len(self.batch_shape) == len(other.batch_shape) == 1:
+            self.batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
+            self.actions_tensor = torch.cat(
+                (self.actions_tensor, other.actions_tensor), dim=0
+            )
+        elif len(self.batch_shape) == len(other.batch_shape) == 2:
+            self.extend_with_dummy_actions(
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
+            )
+            other.extend_with_dummy_actions(
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
+            )
+            self.batch_shape = (
+                self.batch_shape[0],
+                self.batch_shape[1] + other.batch_shape[1],
+            )
+            self.actions_tensor = torch.cat(
+                (self.actions_tensor, other.actions_tensor), dim=1
+            )
+        else:
+            raise NotImplementedError(
+                "extend is only implemented for bi-dimensional actions."
+            )
+
+    def extend_with_dummy_actions(self, required_first_dim: int) -> None:
+        """Extends a bi-dimensional Actions object with dummy actions in the first dimension.
+        This is used to pad trajectories actions"""
+        if len(self.batch_shape) == 2:
+            if self.batch_shape[0] >= required_first_dim:
+                return
+            n = required_first_dim - self.batch_shape[0]
+            dummy_actions = self.__class__.make_dummy_actions((n, self.batch_shape[1]))
+            self.batch_shape = (self.batch_shape[0] + n, self.batch_shape[1])
+            self.actions_tensor = torch.cat(
+                (self.actions_tensor, dummy_actions.actions_tensor), dim=0
+            )
+        else:
+            raise NotImplementedError(
+                "extend_with_dummy_actions is only implemented for bi-dimensional actions."
+            )
 
     def compare(self, other: ActionsTensor) -> BoolTensor:
         """Compares the actions to a tensor of actions.
