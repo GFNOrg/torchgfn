@@ -15,8 +15,6 @@ class Preprocessor(ABC):
     to tensors that can be used as input to neural networks.
     """
 
-    name: str = "Preprocessor"
-
     def __init__(self, output_shape: Tuple[int]) -> None:
         self.output_shape = output_shape
 
@@ -28,14 +26,12 @@ class Preprocessor(ABC):
         return self.preprocess(states)
 
     def __repr__(self):
-        return f"{self.name}, output_shape={self.output_shape}"
+        return f"{self.__class__.__name__}, output_shape={self.output_shape}"
 
 
 class IdentityPreprocessor(Preprocessor):
     """Simple preprocessor applicable to environments with uni-dimensional states.
     This is the default preprocessor used."""
-
-    name = "IdentityPreprocessor"
 
     def preprocess(self, states: States) -> OutputTensor:
         return states.states_tensor.float()
@@ -43,7 +39,6 @@ class IdentityPreprocessor(Preprocessor):
 
 class EnumPreprocessor(Preprocessor):
     "Preprocessor applicable to environments with discrete states."
-    name = "EnumPreprocessor"
 
     def __init__(self, get_states_indices: Callable[[States], OutputTensor]) -> None:
         """Preprocessor for environments with enumerable states (finite number of states).
