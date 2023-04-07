@@ -206,9 +206,10 @@ class Trajectories(Container):
 
     def to_transitions(self) -> Transitions:
         """Returns a `Transitions` object from the trajectories"""
-        states = self.states[:-1][self.actions != -1]
-        next_states = self.states[1:][self.actions != -1]
-        actions = self.actions[self.actions != -1]
+        # TODO: we need tests for this method
+        states = self.states[:-1][~self.actions.is_dummy]
+        next_states = self.states[1:][~self.actions.is_dummy]
+        actions = self.actions[~self.actions.is_dummy]
         is_done = (
             next_states.is_sink_state
             if not self.is_backward
@@ -217,7 +218,9 @@ class Trajectories(Container):
         if self._log_rewards is None:
             log_rewards = None
         else:
-            log_rewards = torch.full_like(actions, fill_value=-1.0, dtype=torch.float)
+            log_rewards = torch.full_like(
+                actions, fill_value=-float("inf"), dtype=torch.float
+            )
             log_rewards[is_done] = torch.cat(
                 [
                     self._log_rewards[self.when_is_done == i]
@@ -225,7 +228,7 @@ class Trajectories(Container):
                 ],
                 dim=0,
             )
-        log_probs = self.log_probs[self.actions != -1]
+        log_probs = self.log_probs[~self.actions.is_dummy]
         return Transitions(
             env=self.env,
             states=states,

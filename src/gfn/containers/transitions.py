@@ -40,7 +40,7 @@ class Transitions(Container):
             is_done (BoolTensor, optional): Whether the action is the exit action. Defaults to None.
             next_states (States, optional): States object with uni-dimensional batch_shape, representing the children of the transitions. Defaults to None.
             is_backward (bool, optional): Whether the transitions are backward transitions (i.e. next_states is the parent of states). Defaults to False.
-            log_rewards (FloatTensor1D, optional): The log-rewards of the transitions (using a default value like -1 for non-terminating transitions). Defaults to None.
+            log_rewards (FloatTensor1D, optional): The log-rewards of the transitions (using a default value like -float('inf') for non-terminating transitions). Defaults to None.
             log_probs (FloatTensor1D, optional): The log-probabilities of the actions. Defaults to None.
 
         When states and next_states are not None, the Transitions is an empty container that can be populated on the go.
@@ -115,7 +115,7 @@ class Transitions(Container):
         else:
             log_rewards = torch.full(
                 (self.n_transitions,),
-                fill_value=-1.0,
+                fill_value=-float("inf"),
                 dtype=torch.float,
                 device=self.states.device,
             )
@@ -135,7 +135,7 @@ class Transitions(Container):
         is_sink_state = self.next_states.is_sink_state
         log_rewards = torch.full(
             (self.n_transitions, 2),
-            fill_value=-1.0,
+            fill_value=-float("inf"),
             dtype=torch.float,
             device=self.states.device,
         )
