@@ -1,6 +1,7 @@
 from abc import ABC
 from typing import Literal, Optional
 
+import torch.nn as nn
 from torchtyping import TensorType
 
 from gfn.containers import States
@@ -13,18 +14,22 @@ OutputTensor = TensorType["batch_shape", "output_dim", float]
 
 
 class FunctionEstimator(ABC):
-    """Base class for function estimators."""
+    """Training a GFlowNet requires parameterizing one or more of the following functions:
+    - $s \mapsto (\log F(s \rightarrow s'))_{s' \in Children(s)}$
+    - $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$
+    - $s' \mapsto (P_B(s \mid s'))_{s \in Parents(s')}$
+    - $s \mapsto (\log F(s))_{s \in States}$
+    This class is the base class for all such function estimators. The estimators need to encapsulate
+    a nn.Module, which takes a a batch of preprocessed states as input and outputs a batch of
+    outputs of the desired shape. When the goal is to represent a probability distribution, the
+    outputs would correspond to the parameters of the distribution, e.g. logits for a categorical
+    distribution for discrete environments.
+    The preprocessor is also encapsulated in the estimator via the
+    environment. These function estimators implement the __call__ method, which takes
+    States objects as inputs and calls the module on the preprocessed states.
+    """
 
-    def __init__(
-        self,
-        env: Env,
-        module: Optional[GFNModule] = None,
-        output_dim: Optional[int] = None,
-        module_name: Optional[
-            Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
-        ] = None,
-        **nn_kwargs,
-    ) -> None:
+    def __init__(self, env: Env, module: nn.Module) -> None:
         """Either module or (module_name, output_dim) must be provided.
 
         Args:
@@ -35,27 +40,27 @@ class FunctionEstimator(ABC):
             **nn_kwargs: Keyword arguments to pass to the module, if module_name is NeuralNet.
         """
         self.env = env
-        if module is None:
-            assert module_name is not None and output_dim is not None
-            if module_name == "NeuralNet":
-                assert len(env.preprocessor.output_shape) == 1
-                input_dim = env.preprocessor.output_shape[0]
-                module = NeuralNet(
-                    input_dim=input_dim,
-                    output_dim=output_dim,
-                    **nn_kwargs,
-                )
-            elif module_name == "Uniform":
-                module = Uniform(output_dim=output_dim)
-            elif module_name == "Zero":
-                module = ZeroGFNModule(output_dim=output_dim)
-            elif module_name == "Tabular":
-                module = Tabular(
-                    n_states=env.n_states,
-                    output_dim=output_dim,
-                )
-            else:
-                raise ValueError(f"Unknown module_name {module_name}")
+        # if module is None:
+        #     assert module_name is not None and output_dim is not None
+        #     if module_name == "NeuralNet":
+        #         assert len(env.preprocessor.output_shape) == 1
+        #         input_dim = env.preprocessor.output_shape[0]
+        #         module = NeuralNet(
+        #             input_dim=input_dim,
+        #             output_dim=output_dim,
+        #             **nn_kwargs,
+        #         )
+        #     elif module_name == "Uniform":
+        #         module = Uniform(output_dim=output_dim)
+        #     elif module_name == "Zero":
+        #         module = ZeroGFNModule(output_dim=output_dim)
+        #     elif module_name == "Tabular":
+        #         module = Tabular(
+        #             n_states=env.n_states,
+        #             output_dim=output_dim,
+        #         )
+        #     else:
+        #         raise ValueError(f"Unknown module_name {module_name}")
         self.module = module
         if isinstance(self.module, Tabular):
             self.preprocessor = EnumPreprocessor(env.get_states_indices)
@@ -66,7 +71,7 @@ class FunctionEstimator(ABC):
         return self.module(self.preprocessor(states))
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.module})"
+        return f"{self.__class__.__name__}({self.env})"
 
     def named_parameters(self) -> dict:
         return dict(self.module.named_parameters())
