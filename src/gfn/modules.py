@@ -10,7 +10,8 @@ InputTensor = TensorType["batch_shape", "input_shape", float]
 OutputTensor = TensorType["batch_shape", "output_dim", float]
 
 
-class GFNModule(ABC):
+class GFNModule(ABC):  # TODO: is this needed actually ? Can't we just use nn.Module ?
+    # TODO: if we remove this, make sure to not use `output_dim` anywhere else.
     """Abstract Base Class for all functions/approximators/estimators used.
     Each module takes a preprocessed tensor as input, and outputs a tensor of logits,
     or log flows. The input dimension of the module (e.g. Neural network), is deduced
@@ -36,7 +37,9 @@ class GFNModule(ABC):
         pass
 
 
-class NeuralNet(nn.Module, GFNModule):
+class NeuralNet(
+    nn.Module, GFNModule
+):  # TODO: this should probably not be part of the core library, but rather in a separate `examples` module
     def __init__(
         self,
         input_dim: int,

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Sequence, TYPE_CHECKING
 
 import torch
 from torchtyping import TensorType
 
+if TYPE_CHECKING:
+    from gfn.envs import Env
+    from gfn.containers.states import States
+    from gfn.containers.actions import Actions
+
 from gfn.containers.base import Container
-from gfn.containers.states import States
-from gfn.envs import Env
 
 # Typing  -- n_transitions is either int or Tuple[int]
 LongTensor = TensorType["n_transitions", torch.long]
@@ -21,7 +24,7 @@ class Transitions(Container):
         self,
         env: Env,
         states: States | None = None,
-        actions: LongTensor | None = None,
+        actions: Actions | None = None,
         is_done: BoolTensor | None = None,
         next_states: States | None = None,
         is_backward: bool = False,
@@ -33,7 +36,7 @@ class Transitions(Container):
         Args:
             env (Env): Environment
             states (States, optional): States object with uni-dimensional batch_shape, representing the parents of the transitions. Defaults to None.
-            actions (LongTensor, optional): Actions chosen at the parents of each transitions. Defaults to None.
+            actions (Actions, optional): Actions chosen at the parents of each transitions. Defaults to None.
             is_done (BoolTensor, optional): Whether the action is the exit action. Defaults to None.
             next_states (States, optional): States object with uni-dimensional batch_shape, representing the children of the transitions. Defaults to None.
             is_backward (bool, optional): Whether the transitions are backward transitions (i.e. next_states is the parent of states). Defaults to False.
@@ -50,10 +53,11 @@ class Transitions(Container):
             else env.States.from_batch_shape(batch_shape=(0,))
         )
         assert len(self.states.batch_shape) == 1
+
         self.actions = (
             actions
             if actions is not None
-            else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
+            else env.Actions.make_dummy_actions(batch_shape=(0,))
         )
         self.is_done = (
             is_done
@@ -177,7 +181,7 @@ class Transitions(Container):
     def extend(self, other: Transitions) -> None:
         "Extend the Transitions object with another Transitions object."
         self.states.extend(other.states)
-        self.actions = torch.cat((self.actions, other.actions), dim=0)
+        self.actions.extend(other.actions)
         self.is_done = torch.cat((self.is_done, other.is_done), dim=0)
         self.next_states.extend(other.next_states)
         if self._log_rewards is not None and other._log_rewards is not None:

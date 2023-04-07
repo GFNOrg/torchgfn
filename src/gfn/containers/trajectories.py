@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-   from gfn.envs import Env
-   from gfn.containers.states import States
+    from gfn.envs import Env
+    from gfn.containers.states import States
+    from gfn.containers.actions import Actions
 
 import torch
 from torchtyping import TensorType
@@ -25,7 +26,7 @@ class Trajectories(Container):
         self,
         env: Env,
         states: States | None = None,
-        actions: Tensor2D | None = None,
+        actions: Actions | None = None,
         when_is_done: Tensor1D | None = None,
         is_backward: bool = False,
         log_rewards: FloatTensor1D | None = None,
@@ -33,19 +34,18 @@ class Trajectories(Container):
     ) -> None:
         """Container for complete trajectories (starting in s_0 and ending in s_f).
         Trajectories are represented as a States object with bi-dimensional batch shape.
+        The actions are represented as an Actions object with bi-dimensional batch shape.
         The first dimension represents the time step, the second dimension represents the trajectory index.
         Because different trajectories may have different lengths, shorter trajectories are padded with
         the tensor representation of the terminal state (s_f or s_0 depending on the direction of the trajectory), and
-        actions is appended with -1's.
-        The actions are represented as a two dimensional tensor with the first dimension representing the time step
-        and the second dimension representing the trajectory index.
+        actions is appended with dummy actions.
         The when_is_done tensor represents the time step at which each trajectory ends.
 
 
         Args:
             env (Env): The environment in which the trajectories are defined.
             states (States, optional): The states of the trajectories. Defaults to None.
-            actions (Tensor2D, optional): The actions of the trajectories. Defaults to None.
+            actions (Actions, optional): The actions of the trajectories. Defaults to None.
             when_is_done (Tensor1D, optional): The time step at which each trajectory ends. Defaults to None.
             is_backward (bool, optional): Whether the trajectories are backward or forward. Defaults to False.
             log_rewards (FloatTensor1D, optional): The log_rewards of the trajectories. Defaults to None.
@@ -65,8 +65,9 @@ class Trajectories(Container):
         self.actions = (
             actions
             if actions is not None
-            else torch.full(size=(0, 0), fill_value=-1, dtype=torch.long)
+            else env.Actions.make_dummy_actions(batch_shape=(0, 0))
         )
+        assert len(self.actions.batch_shape) == 2
         self.when_is_done = (
             when_is_done
             if when_is_done is not None
@@ -92,7 +93,7 @@ class Trajectories(Container):
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length}, First 10 trajectories:"
-            + f"states=\n{trajectories_representation}, actions=\n{self.actions.transpose(0, 1)[:10].numpy()}, "
+            + f"states=\n{trajectories_representation}, actions=\n{self.actions.actions_tensor.transpose(0, 1)[:10].numpy()}, "
             + f"when_is_done={self.when_is_done[:10].numpy()})"
         )
 
@@ -108,7 +109,7 @@ class Trajectories(Container):
         if len(self) == 0:
             return 0
 
-        return self.actions.shape[0]
+        return self.actions.batch_shape.shape[0]
 
     @property
     def last_states(self) -> States:
@@ -154,11 +155,9 @@ class Trajectories(Container):
 
     def extend(self, other: Trajectories) -> None:
         """Extend the trajectories with another set of trajectories."""
-        self.extend_actions(required_first_dim=max(self.max_length, other.max_length))
-        other.extend_actions(required_first_dim=max(self.max_length, other.max_length))
 
+        self.actions.extend(other.actions)
         self.states.extend(other.states)
-        self.actions = torch.cat((self.actions, other.actions), dim=1)
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
         self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
 
@@ -169,43 +168,9 @@ class Trajectories(Container):
         else:
             self._log_rewards = None
 
-    def extend_actions(self, required_first_dim: int) -> None:
-        """Extends the actions and log_probs along the first dimension by by adding -1s as necessary.
-        This is useful for extending trajectories of different lengths."""
-        if self.max_length >= required_first_dim:
-            return
-        self.actions = torch.cat(
-            (
-                self.actions,
-                torch.full(
-                    size=(
-                        required_first_dim - self.actions.shape[0],
-                        self.n_trajectories,
-                    ),
-                    fill_value=-1,
-                    dtype=torch.long,
-                ),
-            ),
-            dim=0,
-        )
-        self.log_probs = torch.cat(
-            (
-                self.log_probs,
-                torch.full(
-                    size=(
-                        required_first_dim - self.log_probs.shape[0],
-                        self.n_trajectories,
-                    ),
-                    fill_value=0,
-                    dtype=torch.float,
-                ),
-            ),
-            dim=0,
-        )
-
     @staticmethod
     def revert_backward_trajectories(trajectories: Trajectories) -> Trajectories:
-
+        # TODO: this isn't used anywhere - it doesn't work as it assumes that the actions are ints. Do we need it?
         assert trajectories.is_backward
         new_actions = torch.full_like(trajectories.actions, -1)
         new_actions = torch.cat(

@@ -55,7 +55,7 @@ class Parametrization(ABC):
         for name, estimator in self.__dict__.items():
             parameters_dict.update(
                 {
-                    f"{name}_{key}": value
+                    f"{name}_{key}": value  # TODO: fix name for logZ
                     for key, value in estimator.named_parameters().items()
                 }
             )
