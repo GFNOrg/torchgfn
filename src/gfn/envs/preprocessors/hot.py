@@ -13,8 +13,6 @@ OutputTensor = TensorType["batch_shape", "dim_in"]
 
 
 class OneHotPreprocessor(Preprocessor):
-    name = "one_hot"
-
     def __init__(
         self,
         n_states: int,
@@ -36,8 +34,6 @@ class OneHotPreprocessor(Preprocessor):
 
 
 class KHotPreprocessor(Preprocessor):
-    name = "k_hot"
-
     def __init__(
         self,
         height: int,
