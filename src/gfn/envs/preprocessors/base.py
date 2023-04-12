@@ -3,7 +3,7 @@ from typing import Callable, Tuple
 
 from torchtyping import TensorType
 
-from gfn.containers import States
+from gfn.states import States
 
 # Typing
 OutputTensor = TensorType["batch_shape", "dim_in"]

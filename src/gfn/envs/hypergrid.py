@@ -8,13 +8,14 @@ from einops import rearrange
 from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
-from gfn.containers import DiscreteStates, DiscreteActions
+from gfn.actions import Actions
 from gfn.envs.env import DiscreteEnv
 from gfn.envs.preprocessors import (
     IdentityPreprocessor,
     KHotPreprocessor,
     OneHotPreprocessor,
 )
+from gfn.states import DiscreteStates
 
 # Typing
 TensorLong = TensorType["batch_shape", torch.long]
@@ -130,7 +131,7 @@ class HyperGrid(DiscreteEnv):
         return HyperGridStates
 
     def maskless_step(
-        self, states: DiscreteStates, actions: DiscreteActions
+        self, states: DiscreteStates, actions: Actions
     ) -> DiscreteStates:
         new_states_tensor = states.states_tensor.scatter(
             -1, actions.actions_tensor, 1, reduce="add"
@@ -139,7 +140,7 @@ class HyperGrid(DiscreteEnv):
         return new_states
 
     def maskless_backward_step(
-        self, states: DiscreteStates, actions: DiscreteActions
+        self, states: DiscreteStates, actions: Actions
     ) -> DiscreteStates:
         new_states_tensor = states.states_tensor.scatter(
             -1, actions.actions_tensor, -1, reduce="add"
