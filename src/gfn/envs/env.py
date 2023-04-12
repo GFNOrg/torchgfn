@@ -6,8 +6,9 @@ import torch
 from gymnasium.spaces import Discrete, Space
 from torchtyping import TensorType
 
+from gfn.actions import Actions
 from gfn.casting import correct_cast
-from gfn.containers import States, DiscreteStates, Actions
+from gfn.states import States, DiscreteStates
 from gfn.envs.preprocessors import IdentityPreprocessor, Preprocessor
 
 # Typing
@@ -125,8 +126,7 @@ class Env(ABC):
         Then, uses `is_action_valid`.
         Returns a boolean indicating whether states/actions pairs are valid."""
         assert states.batch_shape == actions.batch_shape
-        valid_actions = self.is_action_valid(states, actions, backward)
-        return valid_actions
+        return self.is_action_valid(states, actions, backward)
 
     def step(
         self,
@@ -136,8 +136,9 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating sink states in the new batch."""
         new_states = deepcopy(states)
-        valid_states: TensorBool = ~states.is_sink_state
-        valid_actions = actions[valid_states]
+        valid_states_idx: TensorBool = ~states.is_sink_state
+        valid_actions = actions[valid_states_idx]
+        valid_states = states[valid_states_idx]
 
         if not self.validate_actions(valid_states, valid_actions):
             raise NonValidActionsError(
@@ -290,7 +291,7 @@ class DiscreteEnv(Env, ABC):
         self, states: States, actions: Actions, backward: bool = False
     ) -> bool:
         assert states.forward_masks is not None and states.backward_masks is not None
-        masks_tensor = states.backward_mask if backward else states.forward_mask
+        masks_tensor = states.backward_masks if backward else states.forward_masks
         actions_tensor = actions.actions_tensor
         return torch.gather(masks_tensor, 1, actions_tensor).all()
 
