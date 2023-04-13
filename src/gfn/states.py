@@ -8,7 +8,6 @@ import torch
 from torchtyping import TensorType
 
 from gfn.casting import correct_cast
-from gfn.containers.base import Container
 
 
 # Typing
@@ -20,7 +19,7 @@ RewardsTensor = TensorType["batch_shape", torch.float]
 OneStateTensor = TensorType["state_shape", torch.float]
 
 
-class States(Container, ABC):
+class States(ABC):
     """Base class for states, seen as nodes of the DAG.
     For each environment, a States subclass is needed. A `States` object
     is a collection of multiple states (nodes of the DAG). A tensor representation

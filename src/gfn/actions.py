@@ -8,15 +8,13 @@ from math import prod
 import torch
 from torchtyping import TensorType
 
-from gfn.containers.base import Container
-
 # Typing
 OneActionTensor = TensorType["action_shape"]
 ActionsTensor = TensorType["batch_shape", "action_shape"]
 BoolTensor = TensorType["batch_shape", torch.bool]
 
 
-class Actions(Container, ABC):
+class Actions(ABC):
     """Base class for actions for all GFlowNet environments.
     Each environment needs to subclass this class. A generic subclass for discrete actions
     with integer indices is provided.
