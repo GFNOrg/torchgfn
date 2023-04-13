@@ -9,39 +9,61 @@ from gfn.envs.env import NonValidActionsError
 def test_hypergrid_and_preprocessors(
     preprocessor: str,
 ):
-    env = HyperGrid(ndim=2, height=3, preprocessor_name=preprocessor)
+
+    def format_actions(a, env):
+        """Returns a Actions instance from a [batch_size, 1] tensor of actions."""
+        return env.Actions(a)
+
+    def format_tensor(l):
+        """Returns a long tensor with a singleton batch dimension from list l."""
+        return torch.tensor(l, dtype=torch.long).unsqueeze(-1)
+
+    def format_random_tensor(env, n, h):
+        """Returns a long tensor w/ a singleton batch dimension & random actions."""
+        return torch.randint(
+            0, env.n_actions - 1, (n, h), dtype=torch.long).unsqueeze(-1)
+
+    NDIM = 2
+    ENV_HEIGHT = 3
+    BATCH_SIZE = 3
+
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor)
     print(env)
 
     print("\nInstantiating a linear batch of initial states")
-    states = env.reset(batch_shape=3)
+    states = env.reset(batch_shape=BATCH_SIZE)
     print("States:", states)
 
     print("\nTrying the step function starting from 3 instances of s_0")
-    actions = torch.tensor([0, 1, 2], dtype=torch.long)
+    actions = format_actions(format_tensor([0, 1, 2]), env)
     states = env.step(states, actions)
+
     print("After one step:", states)
-    actions = torch.tensor([2, 0, 1], dtype=torch.long)
+    actions = format_actions(format_tensor([2, 0, 1]), env)
     states = env.step(states, actions)
+
     print("After two steps:", states)
-    actions = torch.tensor([2, 0, 1], dtype=torch.long)
+    actions = format_actions(format_tensor([2, 0, 1]), env)
     states = env.step(states, actions)
+
     print("After three steps:", states)
     try:
-        actions = torch.tensor([2, 0, 1], dtype=torch.long)
+        actions = format_actions(format_tensor([2, 0, 1]), env)
         states = env.step(states, actions)
     except NonValidActionsError:
         print("NonValidActionsError raised as expected because of invalid actions")
+
     print(states)
     print("Final rewards:", env.reward(states))
-
     print("\nTrying the backward step function starting from a batch of random states")
-
     print("\nInstantiating a two-dimensional batch of random states")
-    states = env.reset(batch_shape=(2, 3), random=True)
+
+    states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True)
+
     print("States:", states)
     backward_step_ok = False
     while not backward_step_ok:
-        actions = torch.randint(0, env.n_actions - 1, (2, 3), dtype=torch.long)
+        actions = format_actions(format_random_tensor(env, NDIM, ENV_HEIGHT), env)
         print("Actions: ", actions)
         try:
             states = env.backward_step(states, actions)
@@ -103,3 +125,7 @@ def test_get_grid(plot=False):
     print(env.get_states_indices(grid))
 
     print(env.reward(grid))
+
+
+# if __name__ == "__main__":
+#     test_hypergrid_and_preprocessors(preprocessor="Identity")

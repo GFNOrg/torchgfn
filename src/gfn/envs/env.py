@@ -125,6 +125,8 @@ class Env(ABC):
         """First, asserts that states and actions have the same batch_shape.
         Then, uses `is_action_valid`.
         Returns a boolean indicating whether states/actions pairs are valid."""
+        print("states={}".format(states.batch_shape))
+        print("actions={}".format(actions.batch_shape))
         assert states.batch_shape == actions.batch_shape
         return self.is_action_valid(states, actions, backward)
 
@@ -147,7 +149,7 @@ class Env(ABC):
 
         new_sink_states = actions.is_exit
         new_states.states_tensor[new_sink_states] = self.sf
-        new_sink_states = ~valid_states | new_sink_states
+        new_sink_states = ~valid_states_idx | new_sink_states
 
         not_done_states = new_states[~new_sink_states]
         not_done_actions = actions[~new_sink_states]
@@ -156,7 +158,7 @@ class Env(ABC):
         # if isinstance(new_states, DiscreteStates):
         #     new_not_done_states.masks = self.update_masks(not_done_states, not_done_actions)
 
-        new_states.states_tensor[~new_sink_states] = new_not_done_states
+        new_states.states_tensor[~new_sink_states] = new_not_done_states.states_tensor
 
         if isinstance(new_states, DiscreteStates):
             new_states.update_masks()  # TODO: probably use `not_done_actions` (and `not_done_states` `~new_sink_states` ?) as input to update_masks
@@ -171,20 +173,21 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating initial states in the new batch."""
         new_states = deepcopy(states)
-        valid_states: TensorBool = ~new_states.is_initial_state
-        valid_actions = actions[valid_states]
+        valid_states_idx: TensorBool = ~new_states.is_initial_state
+        valid_actions = actions[valid_states_idx]
+        valid_states = states[valid_states_idx]
 
         if not self.validate_actions(valid_states, valid_actions, backward=True):
             raise NonValidActionsError(
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
 
-        not_done_states = new_states.states_tensor[valid_states]
+        not_done_states = new_states.states_tensor[valid_states]  # TODO: why is this different than line 152?
         new_not_done_states = self.maskless_backward_step(
             not_done_states, valid_actions
         )
 
-        new_states.states_tensor[valid_states] = new_not_done_states
+        new_states.states_tensor[valid_states] = new_not_done_states.states_tensor
 
         if isinstance(new_states, DiscreteStates):
             new_states.update_masks()
