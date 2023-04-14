@@ -7,7 +7,7 @@ from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
 from gfn.envs.env import Env
-from gfn.containers import States
+from gfn.states import States
 
 # Typing
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
