@@ -2,7 +2,7 @@ from typing import Dict, Optional
 
 import torch
 
-from gfn.containers import States, Trajectories, Transitions
+from gfn.containers import Trajectories, Transitions
 from gfn.distributions import EmpiricalTerminatingStatesDistribution
 from gfn.envs import Env
 from gfn.losses import (
@@ -13,6 +13,7 @@ from gfn.losses import (
     TBParametrization,
     TrajectoryDecomposableLoss,
 )
+from gfn.states import States
 
 
 def trajectories_to_training_samples(
