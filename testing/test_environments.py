@@ -127,7 +127,7 @@ def test_hypergrid_bwd_step_with_preprocessors(
 
 
 @pytest.mark.parametrize("ndim", [2, 3, 4])
-@pytest.mark.parametrize("env_name", ["HyperGrid"])  # TODO: add back "DiscreteEBM"
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 def test_states_getitem(ndim: int, env_name: str):
     
     ND_BATCH_SHAPE = (2, 3)

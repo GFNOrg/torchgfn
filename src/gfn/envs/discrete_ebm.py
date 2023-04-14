@@ -6,7 +6,7 @@ import torch.nn as nn
 from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
-from gfn.envs.env import Env
+from gfn.envs.env import DiscreteEnv
 from gfn.states import States
 
 # Typing
@@ -40,7 +40,7 @@ class IsingModel(EnergyFunction):
         return -(states * tmp).sum(-1)
 
 
-class DiscreteEBMEnv(Env):
+class DiscreteEBMEnv(DiscreteEnv):
     """Environment for discrete energy-based models, based on https://arxiv.org/pdf/2202.01361.pdf"""
 
     def __init__(
