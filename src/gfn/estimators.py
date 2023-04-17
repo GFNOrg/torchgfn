@@ -1,12 +1,10 @@
-from abc import ABC
-from typing import Literal, Optional
+from abc import ABC, abstractmethod
 
 import torch.nn as nn
+from torch.distributions import Distribution
 from torchtyping import TensorType
 
-from gfn.envs import Env
-from gfn.envs.preprocessors import EnumPreprocessor
-from gfn.modules import GFNModule, NeuralNet, Tabular, Uniform, ZeroGFNModule
+from gfn.envs import Env, DiscreteEnv
 from gfn.states import States
 
 # Typing
@@ -30,45 +28,28 @@ class FunctionEstimator(ABC):
     """
 
     def __init__(self, env: Env, module: nn.Module) -> None:
-        """Either module or (module_name, output_dim) must be provided.
-
+        """
         Args:
             env (Env): the environment.
-            module (Optional[GFNModule], optional): The module to use. Defaults to None.
-            output_dim (Optional[int], optional): Used only if module is None. Defines the output dimension of the module. Defaults to None.
-            module_name (Optional[Literal[NeuralNet, Uniform, Tabular, Zero]], optional): Used only if module is None. What module to use. Defaults to None.
-            **nn_kwargs: Keyword arguments to pass to the module, if module_name is NeuralNet.
+            module (nn.Module): The module to use. If the module is a Tabular module (from `gfn.examples`), then the
+                environment preprocessor needs to be an EnumPreprocessor.
         """
         self.env = env
-        # if module is None:
-        #     assert module_name is not None and output_dim is not None
-        #     if module_name == "NeuralNet":
-        #         assert len(env.preprocessor.output_shape) == 1
-        #         input_dim = env.preprocessor.output_shape[0]
-        #         module = NeuralNet(
-        #             input_dim=input_dim,
-        #             output_dim=output_dim,
-        #             **nn_kwargs,
-        #         )
-        #     elif module_name == "Uniform":
-        #         module = Uniform(output_dim=output_dim)
-        #     elif module_name == "Zero":
-        #         module = ZeroGFNModule(output_dim=output_dim)
-        #     elif module_name == "Tabular":
-        #         module = Tabular(
-        #             n_states=env.n_states,
-        #             output_dim=output_dim,
-        #         )
-        #     else:
-        #         raise ValueError(f"Unknown module_name {module_name}")
         self.module = module
-        if isinstance(self.module, Tabular):
-            self.preprocessor = EnumPreprocessor(env.get_states_indices)
-        else:
-            self.preprocessor = env.preprocessor
+        self.preprocessor = env.preprocessor
+        self.output_dim_is_checked = False
 
     def __call__(self, states: States) -> OutputTensor:
+        if not self.output_dim_is_checked:
+            self.check_output_dim(self.module(self.preprocessor(states)))
+            self.output_dim_is_checked = True
+
         return self.module(self.preprocessor(states))
+
+    @abstractmethod
+    def check_output_dim(self, module_output: OutputTensor) -> None:
+        """Check that the output of the module has the correct shape. Raises an error if not."""
+        pass
 
     def __repr__(self):
         return f"{self.__class__.__name__}({self.env})"
@@ -83,105 +64,57 @@ class FunctionEstimator(ABC):
 class LogEdgeFlowEstimator(FunctionEstimator):
     r"""Container for estimators $(s \rightarrow s') \mapsto \log F(s \rightarrow s')$.
     The way it's coded is a function $s \mapsto (\log F(s \rightarrow (s + a)))_{a \in \mathbb{A}}$,
-    where $s+a$ is the state obtained by performing action $a$ in state $s$."""
+    where $s+a$ is the state obtained by performing action $a$ in state $s$.
 
-    def __init__(
-        self,
-        env: Env,
-        module: Optional[GFNModule] = None,
-        module_name: Optional[
-            Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
-        ] = None,
-        **nn_kwargs,
-    ) -> None:
-        if module is not None:
-            assert module.output_dim == env.n_actions
-        super().__init__(
-            env,
-            module=module,
-            output_dim=env.n_actions,
-            module_name=module_name,
-            **nn_kwargs,
-        )
+    This estimator is used for the flow-matching loss, which only supports discrete environments.
+    # TODO: make it work for continuous environments.
+    """
+
+    def check_output_dim(self, module_output: OutputTensor):
+        if not isinstance(self.env, DiscreteEnv):
+            raise ValueError(
+                "LogEdgeFlowEstimator only supports discrete environments."
+            )
+        if module_output.shape[-1] != self.env.n_actions:
+            raise ValueError(
+                f"LogEdgeFlowEstimator output dimension should be {self.env.n_actions}, but is {module_output.shape[-1]}."
+            )
 
 
 class LogStateFlowEstimator(FunctionEstimator):
     r"""Container for estimators $s \mapsto \log F(s)$."""
 
-    def __init__(
-        self,
-        env: Env,
-        module: Optional[GFNModule] = None,
-        module_name: Optional[
-            Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
-        ] = None,
-        forward_looking=False,
-        **nn_kwargs,
-    ):
-        if module is not None:
-            assert module.output_dim == 1
-        super().__init__(
-            env, module=module, output_dim=1, module_name=module_name, **nn_kwargs
-        )
-        self.forward_looking = forward_looking
-
-    def __call__(self, states: States) -> OutputTensor:
-        out = super().__call__(states)
-        if self.forward_looking:
-            log_rewards = self.env.log_reward(states).unsqueeze(-1)
-            out = out + log_rewards
-        return out
+    def check_output_dim(self, module_output: OutputTensor):
+        if module_output.shape[-1] != 1:
+            raise ValueError(
+                f"LogStateFlowEstimator output dimension should be 1, but is {module_output.shape[-1]}."
+            )
 
 
-class LogitPFEstimator(FunctionEstimator):
-    r"""Container for estimators $s \mapsto (u(s + a \mid s))_{a \in \mathbb{A}}$,
-    such that $P_F(s + a \mid s) = \frac{e^{u(s + a \mid s)}}{\sum_{a' \in \mathbb{A}} e^{u(s + a' \mid s)}}$."""
+class ProbabilityEstimator(FunctionEstimator, ABC):
+    r"""Container for estimators of probability distributions.
+    When calling (via __call__) such an estimator, an extra step is performed, which is to transform
+    the output of the module into a probability distribution. This is done by applying the abstract
+    `to_probability_distribution` method.
 
-    def __init__(
-        self,
-        env: Env,
-        module: Optional[GFNModule] = None,
-        module_name: Optional[
-            Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
-        ] = None,
-        **nn_kwargs,
-    ):
-        if module is not None:
-            assert module.output_dim == env.n_actions
-        super().__init__(
-            env,
-            module=module,
-            output_dim=env.n_actions,
-            module_name=module_name,
-            **nn_kwargs,
-        )
+    The outputs of such an estimator are thus probability distributions, not the parameters of the
+    distributions. For example, for a discrete environment, the output is a tensor of shape
+    (batch_size, n_actions) containing the probabilities of each action.
+    """
 
+    @abstractmethod
+    def to_probability_distribution(
+        self, states: States, module_output: OutputTensor
+    ) -> Distribution:
+        """Transform the output of the module into a probability distribution."""
+        pass
 
-class LogitPBEstimator(FunctionEstimator):
-    r"""Container for estimators $s \mapsto (u(s' - a \mid s'))_{a \in \mathbb{A}}$,
-    such that $P_B(s' - a \mid s') = \frac{e^{u(s' - a \mid s')}}{\sum_{a' \in \mathbb{A}} e^{u(s' - a' \mid s')}}$."""
-
-    def __init__(
-        self,
-        env: Env,
-        module: Optional[GFNModule] = None,
-        module_name: Optional[
-            Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
-        ] = None,
-        **nn_kwargs,
-    ):
-        if module is not None:
-            assert module.output_dim == env.n_actions - 1
-        super().__init__(
-            env,
-            module=module,
-            output_dim=env.n_actions - 1,
-            module_name=module_name,
-            **nn_kwargs,
-        )
+    def __call__(self, states: States) -> Distribution:
+        return self.to_probability_distribution(states, super().__call__(states))
 
 
 class LogZEstimator:
+    # TODO: should this be a FunctionEstimator with a nn.Module as well?
     r"""Container for the estimator $\log Z$."""
 
     def __init__(self, tensor: TensorType[0, float]) -> None:
