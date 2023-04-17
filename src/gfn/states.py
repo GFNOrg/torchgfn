@@ -2,13 +2,10 @@ from __future__ import annotations  # This allows to use the class name in type 
 
 from abc import ABC, abstractmethod
 from math import prod
-from typing import ClassVar, Sequence, Optional
+from typing import ClassVar, Sequence, Optional, cast
 
 import torch
 from torchtyping import TensorType
-
-from gfn.casting import correct_cast
-
 
 # Typing
 ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
@@ -233,7 +230,8 @@ class DiscreteStates(States, ABC):
     States are endowed with a `forward_masks` and `backward_masks` boolean attributes
     representing which actions are allowed at each state. This makes it possible to instantly access
     the allowed actions at each state, without having to call the environment's `validate_actions` method.
-    Put different, `validate_actions` for such environments, directly calls the masks."""
+    Put different, `validate_actions` for such environments, directly calls the masks.
+    """
 
     n_actions: ClassVar[int]
     device: ClassVar[torch.device]
@@ -245,30 +243,22 @@ class DiscreteStates(States, ABC):
         backward_masks: Optional[BackwardMasksTensor] = None,
     ) -> None:
         super().__init__(states_tensor)
-        if forward_masks is None and backward_masks is None:
-            self.forward_masks, self.backward_masks = self.make_masks()
-            self.update_masks()
-        else:
-            self.forward_masks = forward_masks
-            self.backward_masks = backward_masks
-        self.forward_masks, self.backward_masks = correct_cast(
-            self.forward_masks, self.backward_masks
-        )
 
-    def make_masks(self) -> tuple[ForwardMasksTensor, BackwardMasksTensor]:
-        """Initializes the forward and backward masks for the states.
-        This method is called only if the masks are not provided at initialization.
-        """
-        forward_masks = torch.ones(
+        self.forward_masks = torch.ones(
             (*self.batch_shape, self.__class__.n_actions),
             dtype=torch.bool,
             device=self.__class__.device,
         )
-        backward_masks = torch.ones(
+        self.backward_masks = torch.ones(
             (*self.batch_shape, self.__class__.n_actions - 1),
             dtype=torch.bool,
             device=self.__class__.device,
         )
+        if forward_masks is None and backward_masks is None:
+            self.update_masks()
+        else:
+            self.forward_masks = cast(torch.Tensor, forward_masks)
+            self.backward_masks = cast(torch.Tensor, backward_masks)
 
         return forward_masks, backward_masks
 
