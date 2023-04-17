@@ -7,6 +7,8 @@ from torchtyping import TensorType
 ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
 BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
 
+# TODO: remove this file eventually
+
 
 def correct_cast(
     forward_masks: ForwardMasksTensor | None,
