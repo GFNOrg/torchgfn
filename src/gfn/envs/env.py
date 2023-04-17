@@ -109,13 +109,15 @@ class Env(ABC):
     @abstractmethod
     def maskless_step(self, states: States, actions: Actions) -> States:
         """Function that takes a batch of states and actions and returns a batch of next
-        states. Does not need to check whether the actions are valid or the states are sink states."""
+        states. Does not need to check whether the actions are valid or the states are sink states.
+        """
         pass
 
     @abstractmethod
     def maskless_backward_step(self, states: States, actions: Actions) -> States:
         """Function that takes a batch of states and actions and returns a batch of previous
-        states. Does not need to check whether the actions are valid or the states are sink states."""
+        states. Does not need to check whether the actions are valid or the states are sink states.
+        """
         pass
 
     @abstractmethod
@@ -205,6 +207,8 @@ class Env(ABC):
     def log_reward(self, final_states: States) -> TensorFloat:
         """Either this or reward needs to be implemented."""
         raise NotImplementedError("log_reward function not implemented")
+
+    # TODO: some, or all of the following methods should probably move to DiscreteEnv - Basically all DiscreteEnvs should have a Discrete action_space. Do we actually need `action_space` attribute ?
 
     def get_states_indices(self, states: States) -> TensorLong:
         return NotImplementedError(
@@ -302,78 +306,3 @@ class DiscreteEnv(Env, ABC):
         masks_tensor = states.backward_masks if backward else states.forward_masks
         actions_tensor = actions.actions_tensor
         return torch.gather(masks_tensor, 1, actions_tensor).all()
-
-    # @abstractmethod
-    # def is_exit_actions(self, actions: TensorLong) -> TensorBool:
-    #     "Returns True if the action is an exit action."
-    #     pass
-
-    # def reset(
-    #     self, batch_shape: Union[int, Tuple[int]], random: bool = False
-    # ) -> States:
-    #     "Instantiates a batch of initial states."
-    #     if isinstance(batch_shape, int):
-    #         batch_shape = (batch_shape,)
-    #     return self.States.from_batch_shape(batch_shape=batch_shape, random=random)
-
-    # def step(
-    #     self,
-    #     states: States,
-    #     actions: TensorLong,
-    # ) -> States:
-    #     """Function that takes a batch of states and actions and returns a batch of next
-    #     states and a boolean tensor indicating sink states in the new batch."""
-    #     new_states = deepcopy(states)
-    #     valid_states: TensorBool = ~states.is_sink_state
-    #     valid_actions = actions[valid_states]
-
-    #     if new_states.forward_masks is not None:
-    #         new_forward_masks, _ = correct_cast(
-    #             new_states.forward_masks, new_states.backward_masks
-    #         )
-    #         valid_states_masks = new_forward_masks[valid_states]
-    #         valid_actions_bool = all(
-    #             torch.gather(valid_states_masks, 1, valid_actions.unsqueeze(1))
-    #         )
-    #         if not valid_actions_bool:
-    #             raise NonValidActionsError("Actions are not valid")
-
-    #     new_sink_states = self.is_exit_actions(actions)
-    #     new_states.states_tensor[new_sink_states] = self.sf
-    #     new_sink_states = ~valid_states | new_sink_states
-
-    #     not_done_states = new_states.states_tensor[~new_sink_states]
-    #     not_done_actions = actions[~new_sink_states]
-
-    #     self.maskless_step(not_done_states, not_done_actions)
-
-    #     new_states.states_tensor[~new_sink_states] = not_done_states
-
-    #     new_states.update_masks()
-    #     return new_states
-
-    # def backward_step(self, states: States, actions: TensorLong) -> States:
-    #     """Function that takes a batch of states and actions and returns a batch of next
-    #     states and a boolean tensor indicating initial states in the new batch."""
-    #     new_states = deepcopy(states)
-    #     valid_states: TensorBool = ~new_states.is_initial_state
-    #     valid_actions = actions[valid_states]
-
-    #     if new_states.backward_masks is not None:
-    #         _, new_backward_masks = correct_cast(
-    #             new_states.forward_masks, new_states.backward_masks
-    #         )
-    #         valid_states_masks = new_backward_masks[valid_states]
-    #         valid_actions_bool = all(
-    #             torch.gather(valid_states_masks, 1, valid_actions.unsqueeze(1))
-    #         )
-    #         if not valid_actions_bool:
-    #             raise NonValidActionsError("Actions are not valid")
-
-    #     not_done_states = new_states.states_tensor[valid_states]
-    #     self.maskless_backward_step(not_done_states, valid_actions)
-
-    #     new_states.states_tensor[valid_states] = not_done_states
-
-    #     new_states.update_masks()
-    #     return new_states
