@@ -15,6 +15,8 @@ from gfn.losses import FMParametrization
 from gfn.modules import Tabular, Uniform
 from gfn.utils import validate
 
+from gfn.examples.modules import Tabular
+
 parser = ArgumentParser()
 
 parser.add_arguments(EnvConfig, dest="env_config")
@@ -69,7 +71,7 @@ while len(U) > 0:
     )
 
     backward_mask = state_prime.backward_masks[0]
-    pb_logits = logit_PB(env.get_states_indices(state_prime))
+    pb_logits = torch.ones(env.n_actions - 1)
     pb_logits[~backward_mask] = -float("inf")
     pb = torch.softmax(pb_logits, dim=0)
     for i in range(env.n_actions - 1):
