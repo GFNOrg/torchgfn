@@ -86,9 +86,18 @@ class Env(ABC):
         batch_shape: Optional[Union[int, Tuple[int]]] = None,
         random: bool = False,
         sink: bool = False,
+        seed: int = None,
     ) -> States:
-        "Instantiates a batch of initial states. random and sink cannot be both True."
+        """
+        Instantiates a batch of initial states. random and sink cannot be both True.
+        When random is true and seed is not None, environment randomization is fixed by
+        the submitted seed for reproducibility.
+        """
         assert not (random and sink)
+
+        if random and seed is not None:
+            torch.manual_seed(seed)
+
         if batch_shape is None:
             batch_shape = (1,)
         if isinstance(batch_shape, int):
@@ -125,8 +134,6 @@ class Env(ABC):
         """First, asserts that states and actions have the same batch_shape.
         Then, uses `is_action_valid`.
         Returns a boolean indicating whether states/actions pairs are valid."""
-        print("states={}".format(states.batch_shape))
-        print("actions={}".format(actions.batch_shape))
         assert states.batch_shape == actions.batch_shape
         return self.is_action_valid(states, actions, backward)
 
@@ -182,15 +189,13 @@ class Env(ABC):
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
 
-        not_done_states = new_states.states_tensor[valid_states]  # TODO: why is this different than line 152?
-        new_not_done_states = self.maskless_backward_step(
-            not_done_states, valid_actions
-        )
-
-        new_states.states_tensor[valid_states] = new_not_done_states.states_tensor
+        # Calculate the backward step, and update only the states which are not Done.
+        new_not_done_states = self.maskless_backward_step(valid_states, valid_actions)
+        new_states.states_tensor[valid_states_idx] = new_not_done_states.states_tensor
 
         if isinstance(new_states, DiscreteStates):
             new_states.update_masks()
+
         return new_states
 
     def reward(self, final_states: States) -> TensorFloat:

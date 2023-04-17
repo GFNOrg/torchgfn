@@ -6,7 +6,7 @@ from torch.distributions import Categorical
 from torchtyping import TensorType
 
 from gfn.casting import correct_cast
-from gfn.containers import States
+from gfn.states import States
 from gfn.estimators import LogEdgeFlowEstimator, LogitPBEstimator, LogitPFEstimator
 
 # Typing

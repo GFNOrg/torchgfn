@@ -5,12 +5,12 @@ import torch
 from torchtyping import TensorType
 
 from gfn.casting import correct_cast
-from gfn.containers import States
 from gfn.distributions import EmpiricalTrajectoryDistribution, TrajectoryDistribution
 from gfn.envs import Env
 from gfn.estimators import LogEdgeFlowEstimator
 from gfn.losses.base import Parametrization, StateDecomposableLoss
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.states import States
 
 # Typing
 ScoresTensor = TensorType["n_states", float]

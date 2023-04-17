@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Literal
 
-from gfn.containers.states import States
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.losses import (
@@ -14,7 +13,8 @@ from gfn.losses import (
 )
 
 if TYPE_CHECKING:
-   from gfn.envs import Env
+    from gfn.envs import Env
+    from gfn.states import States
 
 
 class ReplayBuffer:
