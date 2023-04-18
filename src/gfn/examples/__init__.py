@@ -1,4 +1,4 @@
-from .examples import (
+from .estimators import (
     DiscretePFEstimator,
     DiscretePBEstimator,
 )
