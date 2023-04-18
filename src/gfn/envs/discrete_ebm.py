@@ -7,7 +7,7 @@ from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
 from gfn.envs.env import DiscreteEnv
-from gfn.states import States
+from gfn.states import DiscreteStates
 
 # Typing
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
@@ -78,13 +78,15 @@ class DiscreteEBMEnv(DiscreteEnv):
 
         super().__init__(action_space=action_space, s0=s0, sf=sf)
 
-    def make_States_class(self) -> type[States]:
+    def make_States_class(self) -> type[DiscreteStates]:
         env = self
 
-        class DiscreteEBMStates(States):
+        class DiscreteEBMStates(DiscreteStates):
             state_shape: ClassVar[tuple[int, ...]] = (env.ndim,)
             s0 = env.s0
             sf = env.sf
+            n_actions = env.action_space.n
+            device = env.device
 
             @classmethod
             def make_random_states_tensor(
@@ -151,18 +153,18 @@ class DiscreteEBMEnv(DiscreteEnv):
     ) -> None:
         states.scatter_(-1, actions.unsqueeze(-1).fmod(self.ndim), -1)
 
-    def log_reward(self, final_states: States) -> BatchTensor:
+    def log_reward(self, final_states: DiscreteStates) -> BatchTensor:
         raw_states = final_states.states_tensor
         canonical = 2 * raw_states - 1
         return -self.alpha * self.energy(canonical)
 
-    def get_states_indices(self, states: States) -> BatchTensor:
+    def get_states_indices(self, states: DiscreteStates) -> BatchTensor:
         """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3"""
         states_raw = states.states_tensor
         canonical_base = 3 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw + 1).mul(canonical_base).sum(-1).long()
 
-    def get_terminating_states_indices(self, states: States) -> BatchTensor:
+    def get_terminating_states_indices(self, states: DiscreteStates) -> BatchTensor:
         states_raw = states.states_tensor
         canonical_base = 2 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw).mul(canonical_base).sum(-1).long()
@@ -176,7 +178,7 @@ class DiscreteEBMEnv(DiscreteEnv):
         return 2**self.ndim
 
     @property
-    def all_states(self) -> States:
+    def all_states(self) -> DiscreteStates:
         # This is brute force !
         digits = torch.arange(3, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
@@ -184,7 +186,7 @@ class DiscreteEBMEnv(DiscreteEnv):
         return self.States(all_states)
 
     @property
-    def terminating_states(self) -> States:
+    def terminating_states(self) -> DiscreteStates:
         digits = torch.arange(2, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
         return self.States(all_states)
