@@ -260,8 +260,6 @@ class DiscreteStates(States, ABC):
             self.forward_masks = cast(torch.Tensor, forward_masks)
             self.backward_masks = cast(torch.Tensor, backward_masks)
 
-        return forward_masks, backward_masks
-
     @abstractmethod
     def update_masks(self) -> None:  # TODO: why doesn't it take `states` as input ?
         # TODO: use the previous mask + action in order to get the new mask (for DAG-GFN environment)
