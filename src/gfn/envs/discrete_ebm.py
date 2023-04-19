@@ -153,6 +153,8 @@ class DiscreteEBMEnv(DiscreteEnv):
         idx_1_states = states[idx_1.squeeze(-1)].states_tensor  
         set_ones = idx_1_states.scatter(-1, idx_1_actions, 1)  # Set to 1.
         states[idx_1.squeeze(-1)].state_tensor = set_ones  # TODO: replace RHS with idx_1_states?
+        
+        return states
 
     def maskless_backward_step(
         self, states: StatesTensor, actions: BatchTensor
