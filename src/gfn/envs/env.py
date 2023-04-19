@@ -158,16 +158,18 @@ class Env(ABC):
 
         new_sink_states_idx = actions.is_exit
         new_states.states_tensor[new_sink_states_idx] = self.sf
-        new_sink_states = ~valid_states_idx | new_sink_states_idx
+        new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
 
-        not_done_states = new_states[~new_sink_states]
-        not_done_actions = actions[~new_sink_states]
+        not_done_states = new_states[~new_sink_states_idx]
+        not_done_actions = actions[~new_sink_states_idx]
 
         new_not_done_states = self.maskless_step(not_done_states, not_done_actions)
         # if isinstance(new_states, DiscreteStates):
         #     new_not_done_states.masks = self.update_masks(not_done_states, not_done_actions)
 
-        new_states.states_tensor[~new_sink_states] = new_not_done_states.states_tensor
+        new_states.states_tensor[
+            ~new_sink_states_idx
+        ] = new_not_done_states.states_tensor
 
         if isinstance(new_states, DiscreteStates):
             new_states.update_masks()  # TODO: probably use `not_done_actions` (and `not_done_states` `~new_sink_states` ?) as input to update_masks
