@@ -140,13 +140,19 @@ class DiscreteEBMEnv(DiscreteEnv):
 
     def maskless_step(self, states: StatesTensor, actions: BatchTensor) -> None:
         # First, we select that actions that replace a -1 with a 0
-        mask_0 = actions < self.ndim
-        states[mask_0] = states[mask_0].scatter(-1, actions[mask_0].unsqueeze(-1), 0)
+        idx_0 = actions.actions_tensor < self.ndim
+        idx_0_actions = actions[idx_0].actions_tensor.unsqueeze(-1)
+        idx_0_states = states[idx_0.squeeze(-1)].states_tensor  
+        set_zeros = idx_0_states.scatter(-1, idx_0_actions, 0)  # Set to 0.
+        states[idx_0.squeeze(-1)].state_tensor = set_zeros  # TODO: replace RHS with idx_0_states?
+
         # Then, we select that actions that replace a -1 with a 1
-        mask_1 = (actions >= self.ndim) & (actions < 2 * self.ndim)
-        states[mask_1] = states[mask_1].scatter(
-            -1, (actions[mask_1] - self.ndim).unsqueeze(-1), 1
-        )
+        idx_1 = (actions.actions_tensor >= self.ndim) & \
+                (actions.actions_tensor < 2 * self.ndim)
+        idx_1_actions = actions[idx_1].actions_tensor.unsqueeze(-1)
+        idx_1_states = states[idx_1.squeeze(-1)].states_tensor  
+        set_ones = idx_1_states.scatter(-1, idx_1_actions, 1)  # Set to 1.
+        states[idx_1.squeeze(-1)].state_tensor = set_ones  # TODO: replace RHS with idx_1_states?
 
     def maskless_backward_step(
         self, states: StatesTensor, actions: BatchTensor
