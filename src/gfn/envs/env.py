@@ -156,9 +156,9 @@ class Env(ABC):
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
 
-        new_sink_states = actions.is_exit
-        new_states.states_tensor[new_sink_states] = self.sf
-        new_sink_states = ~valid_states_idx | new_sink_states
+        new_sink_states_idx = actions.is_exit
+        new_states.states_tensor[new_sink_states_idx] = self.sf
+        new_sink_states = ~valid_states_idx | new_sink_states_idx
 
         not_done_states = new_states[~new_sink_states]
         not_done_actions = actions[~new_sink_states]
