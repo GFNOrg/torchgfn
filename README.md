@@ -59,7 +59,7 @@ python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss
 import torch
 from tqdm import tqdm
 
-from gfn import LogitPBEstimator, LogitPFEstimator, LogZEstimator
+from gfn import DiscretePBEstimator, DiscretePFEstimator, LogZEstimator
 from gfn.envs import HyperGrid
 from gfn.losses import TBParametrization, TrajectoryBalance
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
@@ -68,8 +68,8 @@ if __name__ == "__main__":
 
     env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
-    logit_PF = LogitPFEstimator(env=env, module_name="NeuralNet")
-    logit_PB = LogitPBEstimator(
+    logit_PF = DiscretePFEstimator(env=env, module_name="NeuralNet")
+    logit_PB = DiscretePBEstimator(
         env=env,
         module_name="NeuralNet",
         torso=logit_PF.module.torso,  # To share parameters between PF and PB
@@ -163,8 +163,8 @@ Training GFlowNets requires one or multiple estimators. As of now, only discrete
 
 - [LogEdgeFlowEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $\log F(s \rightarrow s')$, including when $s' = s_f$.
 - [LogStateFlowEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, 1)` tensor representing $\log F(s)$. When used with `forward_looking=True`, $\log F(s)$ is parametrized as the sum of a function approximator and $\log R(s)$ - which is only possible for environments where all states are terminating.
-- [LogitPFEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $logit(s' \mid s)$, such that $P_F(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$, including when $s' = s_f$.
-- [LogitPBEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions - 1)` tensor representing $logit(s' \mid s)$, such that $P_B(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$.
+- [DiscretePFEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $logit(s' \mid s)$, such that $P_F(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$, including when $s' = s_f$.
+- [DiscretePBEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions - 1)` tensor representing $logit(s' \mid s)$, such that $P_B(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$.
 
 Defining an estimator requires the environment, and a [module](https://github.com/saleml/gfn/blob/master/src/gfn/modules.py) instance. Modules inherit from the [GFNModule](https://github.com/saleml/gfn/blob/master/src/gfn/modules.py) class, which can be seen as an extension of `torch.nn.Module`. Alternatively, a module is created by providing which module type to use (e.g. "NeuralNet" or "Uniform" or "Zero"). A Basic MLP is provided as the [NeuralNet](https://github.com/saleml/gfn/blob/master/src/gfn/modules.py) class, but any function approximator should be possible.
 

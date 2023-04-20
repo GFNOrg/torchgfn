@@ -24,7 +24,7 @@ class DBParametrization(PFBasedParametrization):
     to $\mathbb{R}^+$ (which we parametrize with logs, to avoid the non-negativity constraint),
     and $\mathcal{O}_2$ is the set of forward probability functions consistent with the DAG.
     $\mathcal{O}_3$ is the set of backward probability functions consistent with the DAG, or a singleton
-    thereof, if self.logit_PB is a fixed LogitPBEstimator.
+    thereof, if self.logit_PB is a fixed DiscretePBEstimator.
     Useful for the Detailed Balance Loss.
     """
     logF: LogStateFlowEstimator

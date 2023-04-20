@@ -7,7 +7,8 @@ from torchtyping import TensorType
 
 from gfn.casting import correct_cast
 from gfn.states import States
-from gfn.estimators import LogEdgeFlowEstimator, LogitPBEstimator, LogitPFEstimator
+from gfn.estimators import LogEdgeFlowEstimator
+from gfn.examples import DiscretePFEstimator, DiscretePBEstimator
 
 # Typing
 Tensor2D = TensorType["batch_size", "n_actions"]
@@ -47,7 +48,7 @@ class DiscreteActionsSampler(ActionsSampler):
 
     def __init__(
         self,
-        estimator: LogitPFEstimator | LogEdgeFlowEstimator,
+        estimator: DiscretePFEstimator | LogEdgeFlowEstimator,
         temperature: float = 1.0,
         sf_bias: float = 0.0,
         epsilon: float = 0.0,
@@ -133,7 +134,7 @@ class BackwardDiscreteActionsSampler(DiscreteActionsSampler, BackwardActionsSamp
 
     def __init__(
         self,
-        estimator: LogitPBEstimator,
+        estimator: DiscretePBEstimator,
         temperature: float = 1.0,
         epsilon: float = 0.0,
     ) -> None:

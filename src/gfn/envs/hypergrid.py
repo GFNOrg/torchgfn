@@ -102,7 +102,6 @@ class HyperGrid(DiscreteEnv):
         env = self
 
         class HyperGridStates(DiscreteStates):
-
             state_shape: ClassVar[tuple[int, ...]] = (env.ndim,)
             s0 = env.s0
             sf = env.sf
@@ -130,21 +129,19 @@ class HyperGrid(DiscreteEnv):
 
         return HyperGridStates
 
-    def maskless_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
+    def maskless_step(self, states: DiscreteStates, actions: Actions) -> StatesTensor:
         new_states_tensor = states.states_tensor.scatter(
             -1, actions.actions_tensor, 1, reduce="add"
         )
-        new_states = self.States(new_states_tensor)
-        return new_states
+        return new_states_tensor
 
     def maskless_backward_step(
         self, states: DiscreteStates, actions: Actions
-    ) -> DiscreteStates:
+    ) -> StatesTensor:
         new_states_tensor = states.states_tensor.scatter(
             -1, actions.actions_tensor, -1, reduce="add"
         )
-        new_states = self.States(new_states_tensor)
-        return new_states
+        return new_states_tensor
 
     def true_reward(self, final_states: DiscreteStates) -> TensorFloat:
         final_states_raw = final_states.states_tensor
