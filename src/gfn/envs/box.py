@@ -27,6 +27,7 @@ class BoxEnv(Env):
         R2: float = 2.0,
         device_str: Literal["cpu", "cuda"] = "cpu",
     ):
+        assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
         s0 = torch.tensor([0.0, 0.0], device=torch.device(device_str))
         action_space = Box(low=0.0, high=delta, shape=(2,))
