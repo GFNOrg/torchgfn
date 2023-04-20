@@ -26,6 +26,7 @@ from gfn.losses import (
     TBParametrization,
     TrajectoryBalance,
 )
+from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
 
 
 @dataclass

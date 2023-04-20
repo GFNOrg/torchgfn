@@ -4,8 +4,6 @@ import torch
 from gfn.envs import DiscreteEBMEnv, HyperGrid
 from gfn.estimators import (
     LogEdgeFlowEstimator,
-    DiscretePBEstimator,
-    DiscretePFEstimator,
     LogStateFlowEstimator,
     LogZEstimator,
 )
@@ -22,6 +20,7 @@ from gfn.losses import (
     TrajectoryBalance,
 )
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.examples import DiscretePFEstimator, DiscretePBEstimator
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])

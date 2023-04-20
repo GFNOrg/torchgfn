@@ -11,6 +11,7 @@ from gfn.samplers import (
     BackwardDiscreteActionsSampler,
     DiscreteActionsSampler,
 )
+from gfn.examples import DiscretePFEstimator, DiscretePBEstimator
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
