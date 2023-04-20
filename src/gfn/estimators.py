@@ -40,11 +40,12 @@ class FunctionEstimator(ABC):
         self.output_dim_is_checked = False
 
     def __call__(self, states: States) -> OutputTensor:
+        out = self.module(self.preprocessor(states))
         if not self.output_dim_is_checked:
-            self.check_output_dim(self.module(self.preprocessor(states)))
+            self.check_output_dim(out)
             self.output_dim_is_checked = True
 
-        return self.module(self.preprocessor(states))
+        return out
 
     @abstractmethod
     def check_output_dim(self, module_output: OutputTensor) -> None:
