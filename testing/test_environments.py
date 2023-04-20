@@ -1,19 +1,24 @@
 import pytest
 import torch
+import numpy as np
 
-from gfn.envs import DiscreteEBMEnv, HyperGrid
+from gfn.envs import DiscreteEBMEnv, HyperGrid, BoxEnv
 from gfn.envs.env import NonValidActionsError
 
 
 # Utilities.
 def format_actions(a, env):
-    """Returns a Actions instance from a [batch_size, 1] tensor of actions."""
+    """Returns a Actions instance from a [batch_size, *action_shape] tensor of actions."""
     return env.Actions(a)
 
 
-def format_tensor(l):
-    """Returns a long tensor with a singleton batch dimension from list l."""
-    return torch.tensor(l, dtype=torch.long).unsqueeze(-1)
+def format_tensor(l, discrete=True):
+    """If discrete, returns a long tensor with a singleton batch dimension from list l.
+    Otherwise, casts list to a float tensor without unsqueezing"""
+    if discrete:
+        return torch.tensor(l, dtype=torch.long).unsqueeze(-1)
+    else:
+        return torch.tensor(l, dtype=torch.float)
 
 
 def format_random_tensor(env, n, h):
@@ -132,8 +137,70 @@ def test_hypergrid_bwd_step_with_preprocessors(
         states = env.backward_step(states, failing_actions)
 
 
+@pytest.mark.parametrize("delta", [0.1, 0.5, 1.0])
+def test_box_fwd_step(delta: float):
+    env = BoxEnv(delta=delta)
+    BATCH_SIZE = 3
+
+    states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
+    assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, 2)
+
+    failing_actions_lists_at_s0 = [
+        [[delta, delta], [0.01, 0.01], [0.01, 0.01]],
+        [[0.01, 0.01], [0.01, 0.01], [1.0, delta]],
+        [[0.01, 0.01], [delta, 1.0], [0.01, 0.01]],
+    ]
+
+    for failing_actions_list in failing_actions_lists_at_s0:
+        actions = format_actions(
+            format_tensor(failing_actions_list, discrete=False), env
+        )
+        with pytest.raises(NonValidActionsError):
+            states = env.step(states, actions)
+
+    # Trying the step function starting from 3 instances of s_0
+    A, B = None, None
+    for i in range(3):
+        if i == 0:
+            # The following element contains 3 actions within the quarter disk that could be taken from s0
+            actions_list = [
+                [delta / 2 * np.cos(np.pi / 4), delta / 2 * np.sin(np.pi / 4)],
+                [delta / 3 * np.cos(np.pi / 3), delta / 3 * np.sin(np.pi / 3)],
+                [delta / np.sqrt(2), delta / np.sqrt(2)],
+            ]
+        else:
+            assert A is not None and B is not None
+            # The following contains 3 actions within the corresponding quarter circles
+            actions_tensor = torch.tensor([0.2, 0.3, 0.4]) * (B - A) + A
+            actions_tensor *= np.pi / 2
+            actions_tensor = (
+                torch.stack(
+                    [torch.cos(actions_tensor), torch.sin(actions_tensor)], dim=1
+                )
+                * env.delta
+            )
+            actions_tensor[B - A < 0] = torch.tensor([-float("inf"), -float("inf")])
+            actions_list = actions_tensor.tolist()
+
+        actions = format_actions(format_tensor(actions_list, discrete=False), env)
+        states = env.step(states, actions)
+        states_tensor = states.states_tensor
+
+        # The following evaluate the maximum angles of the possible actions
+        A = torch.where(
+            states_tensor[:, 0] <= 1 - env.delta,
+            0.0,
+            2.0 / torch.pi * torch.arccos((1 - states_tensor[:, 0]) / env.delta),
+        )
+        B = torch.where(
+            states_tensor[:, 1] <= 1 - env.delta,
+            1.0,
+            2.0 / torch.pi * torch.arcsin((1 - states_tensor[:, 1]) / env.delta),
+        )
+
+
 @pytest.mark.parametrize("ndim", [2, 3, 4])
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_states_getitem(ndim: int, env_name: str):
     ND_BATCH_SHAPE = (2, 3)
 
@@ -141,6 +208,8 @@ def test_states_getitem(ndim: int, env_name: str):
         env = HyperGrid(ndim=ndim, height=8)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBMEnv(ndim=ndim)
+    elif env_name == "Box":
+        env = BoxEnv(delta=1.0 / ndim)
     else:
         raise ValueError(f"Unknown env_name {env_name}")
 
@@ -151,7 +220,10 @@ def test_states_getitem(ndim: int, env_name: str):
     n_selections = int(torch.sum(selections))
     selected_states = states[selections]
 
-    assert selected_states.states_tensor.shape == (n_selections, ndim)
+    assert selected_states.states_tensor.shape == (
+        n_selections,
+        ndim if env_name != "Box" else 2,
+    )
 
     # Boolean selector off of only the first batch dimension.
     selections = torch.randint(0, 2, (ND_BATCH_SHAPE[0],), dtype=torch.bool)
@@ -161,7 +233,7 @@ def test_states_getitem(ndim: int, env_name: str):
     assert selected_states.states_tensor.shape == (
         n_selections,
         ND_BATCH_SHAPE[1],
-        ndim,
+        ndim if env_name != "Box" else 2,
     )
 
 

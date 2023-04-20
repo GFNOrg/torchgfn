@@ -82,20 +82,20 @@ class BoxEnv(Env):
         self, states: States, actions: Actions, backward: bool = False
     ) -> bool:
         non_exit_actions = actions[~actions.is_exit]
-        non_terminal_states = states.states_tensor[~actions.is_exit]
+        non_terminal_states = states[~actions.is_exit]
 
         s0_states_idx = non_terminal_states.is_initial_state
         if torch.any(s0_states_idx) and backward:
             return False
 
         if not backward:
-            actions_at_s0 = non_exit_actions[s0_states_idx]
+            actions_at_s0 = non_exit_actions[s0_states_idx].actions_tensor
 
             if torch.any(self.norm(actions_at_s0) > self.delta):
                 return False
 
-        non_s0_states = non_terminal_states[~s0_states_idx]
-        non_s0_actions = non_exit_actions[~s0_states_idx]
+        non_s0_states = non_terminal_states[~s0_states_idx].states_tensor
+        non_s0_actions = non_exit_actions[~s0_states_idx].actions_tensor
 
         if torch.any(self.norm(non_s0_actions) != self.delta) or torch.any(
             non_s0_actions < 0
