@@ -27,7 +27,7 @@ class TBParametrization(PFBasedParametrization):
     $\mathcal{O}_1 = \mathbb{R}$ represents the possible values for logZ,
     and $\mathcal{O}_2$ is the set of forward probability functions consistent with the DAG.
     $\mathcal{O}_3$ is the set of backward probability functions consistent with the DAG, or a singleton
-    thereof, if self.logit_PB is a fixed LogitPBEstimator.
+    thereof, if self.logit_PB is a fixed DiscretePBEstimator.
     Useful for the Trajectory Balance Loss.
     """
     logZ: LogZEstimator

@@ -6,9 +6,8 @@ import torch
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.envs import DiscreteEBMEnv, HyperGrid
-from gfn.estimators import LogitPBEstimator, LogitPFEstimator
 from gfn.samplers import (
-    TrajectoriesSampler, 
+    TrajectoriesSampler,
     BackwardDiscreteActionsSampler,
     DiscreteActionsSampler,
 )
@@ -35,7 +34,7 @@ def test_trajectory_sampling(
         raise ValueError("Unknown environment name")
 
     actions_sampler = DiscreteActionsSampler(
-        LogitPFEstimator(env=env, module_name="NeuralNet")
+        DiscretePFEstimator(env=env, module_name="NeuralNet")
     )
 
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
@@ -46,7 +45,7 @@ def test_trajectory_sampling(
     if human_print:
         print("\nTrying the LogitPFActionSampler: ")
 
-    logit_pf_estimator = LogitPFEstimator(env, module_name="NeuralNet")
+    logit_pf_estimator = DiscretePFEstimator(env, module_name="NeuralNet")
 
     logit_pf_actions_sampler = DiscreteActionsSampler(estimator=logit_pf_estimator)
 
@@ -64,7 +63,7 @@ def test_trajectory_sampling(
 
     states = env.reset(batch_shape=20, random=True)
 
-    logit_pb_estimator = LogitPBEstimator(env=env, module_name="NeuralNet")
+    logit_pb_estimator = DiscretePBEstimator(env=env, module_name="NeuralNet")
 
     logit_pb_actions_sampler = BackwardDiscreteActionsSampler(
         estimator=logit_pb_estimator

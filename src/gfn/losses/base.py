@@ -14,14 +14,12 @@ from gfn.distributions import (
     TrajectoryDistribution,
 )
 from gfn.envs import Env
-from gfn.estimators import LogitPBEstimator, LogitPFEstimator
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
 # Typing
 LogPTrajectoriesTensor = TensorType["max_length", "n_trajectories", float]
 ScoresTensor = TensorType["n_trajectories", float]
-
 
 
 @dataclass
@@ -74,8 +72,8 @@ class Parametrization(ABC):
 @dataclass
 class PFBasedParametrization(Parametrization, ABC):
     r"Base class for parametrizations that explicitly uses $P_F$"
-    logit_PF: LogitPFEstimator
-    logit_PB: LogitPBEstimator
+    logit_PF: DiscretePFEstimator
+    logit_PB: DiscretePBEstimator
 
     def Pi(
         self, env: Env, n_samples: int = 1000, **actions_sampler_kwargs
@@ -204,7 +202,6 @@ class TrajectoryDecomposableLoss(Loss, ABC):
     def get_trajectories_scores(
         self, trajectories: Trajectories
     ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
-
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, no_pf=self.on_policy
         )

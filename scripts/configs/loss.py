@@ -9,8 +9,6 @@ from simple_parsing.helpers import JsonSerializable
 from gfn.envs import Env
 from gfn.estimators import (
     LogEdgeFlowEstimator,
-    LogitPBEstimator,
-    LogitPFEstimator,
     LogStateFlowEstimator,
     LogZEstimator,
 )
@@ -59,7 +57,6 @@ class FMLossConfig(BaseLossConfig):
         self,
         env: Env,
     ) -> Tuple[Parametrization, Loss]:
-
         logF_edge = LogEdgeFlowEstimator(
             env=env,
             **self.logF_edge.nn_kwargs,
@@ -80,9 +77,8 @@ class PFBasedLossConfig(BaseLossConfig, ABC):
     def get_estimators(
         self,
         env: Env,
-    ) -> Tuple[LogitPFEstimator, LogitPBEstimator]:
-
-        logit_PF = LogitPFEstimator(env=env, **self.logit_PF.nn_kwargs)
+    ) -> Tuple[DiscretePFEstimator, DiscretePBEstimator]:
+        logit_PF = DiscretePFEstimator(env=env, **self.logit_PF.nn_kwargs)
         logit_PB_kwargs = self.logit_PB.nn_kwargs
         if (
             self.tied
@@ -93,7 +89,7 @@ class PFBasedLossConfig(BaseLossConfig, ABC):
         else:
             torso = None
         logit_PB_kwargs["torso"] = torso
-        logit_PB = LogitPBEstimator(env=env, **logit_PB_kwargs)
+        logit_PB = DiscretePBEstimator(env=env, **logit_PB_kwargs)
 
         return (logit_PF, logit_PB)
 
@@ -106,8 +102,7 @@ class StateFlowBasedLossConfig(PFBasedLossConfig, ABC):
         self,
         env: Env,
         forward_looking: bool = False,
-    ) -> Tuple[LogitPFEstimator, LogitPBEstimator, LogStateFlowEstimator]:
-
+    ) -> Tuple[DiscretePFEstimator, DiscretePBEstimator, LogStateFlowEstimator]:
         logit_PF, logit_PB = super().get_estimators(env)
         logF_state_kwargs = self.logF_state.nn_kwargs
         if (
