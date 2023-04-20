@@ -7,7 +7,8 @@ from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
 from gfn.envs.env import DiscreteEnv
-from gfn.states import States
+from gfn.states import States, DiscreteStates
+from gfn.actions import Actions
 
 # Typing
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
@@ -78,13 +79,15 @@ class DiscreteEBMEnv(DiscreteEnv):
 
         super().__init__(action_space=action_space, s0=s0, sf=sf)
 
-    def make_States_class(self) -> type[States]:
+    def make_States_class(self) -> type[DiscreteStates]:
         env = self
 
-        class DiscreteEBMStates(States):
+        class DiscreteEBMStates(DiscreteStates):
             state_shape: ClassVar[tuple[int, ...]] = (env.ndim,)
             s0 = env.s0
             sf = env.sf
+            n_actions = env.n_actions
+            device = env.device
 
             @classmethod
             def make_random_states_tensor(
@@ -136,20 +139,25 @@ class DiscreteEBMEnv(DiscreteEnv):
     def is_exit_actions(self, actions: BatchTensor) -> BatchTensor:
         return actions == self.n_actions - 1
 
-    def maskless_step(self, states: StatesTensor, actions: BatchTensor) -> None:
+    def maskless_step(self, states: States, actions: Actions) -> StatesTensor:
         # First, we select that actions that replace a -1 with a 0
-        mask_0 = actions < self.ndim
-        states[mask_0] = states[mask_0].scatter(-1, actions[mask_0].unsqueeze(-1), 0)
-        # Then, we select that actions that replace a -1 with a 1
-        mask_1 = (actions >= self.ndim) & (actions < 2 * self.ndim)
-        states[mask_1] = states[mask_1].scatter(
-            -1, (actions[mask_1] - self.ndim).unsqueeze(-1), 1
+        mask_0 = actions.actions_tensor < self.ndim
+        states.states_tensor[mask_0] = states.states_tensor[mask_0].scatter(
+            -1, actions.actions_tensor[mask_0], 0
         )
+        # Then, we select that actions that replace a -1 with a 1
+        mask_1 = (actions.actions_tensor >= self.ndim) & (
+            actions.actions_tensor < 2 * self.ndim
+        )
+        states.states_tensor[mask_1] = states.states_tensor[mask_1].scatter(
+            -1, (actions.actions_tensor[mask_1] - self.ndim), 1
+        )
+        return states.states_tensor
 
-    def maskless_backward_step(
-        self, states: StatesTensor, actions: BatchTensor
-    ) -> None:
-        states.scatter_(-1, actions.unsqueeze(-1).fmod(self.ndim), -1)
+    def maskless_backward_step(self, states: States, actions: Actions) -> StatesTensor:
+        return states.states_tensor.scatter(
+            -1, actions.unsqueeze(-1).fmod(self.ndim), -1
+        )
 
     def log_reward(self, final_states: States) -> BatchTensor:
         raw_states = final_states.states_tensor
