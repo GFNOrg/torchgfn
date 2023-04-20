@@ -107,14 +107,14 @@ class Env(ABC):
         )
 
     @abstractmethod
-    def maskless_step(self, states: States, actions: Actions) -> States:
+    def maskless_step(self, states: States, actions: Actions) -> StatesTensor:
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
         pass
 
     @abstractmethod
-    def maskless_backward_step(self, states: States, actions: Actions) -> States:
+    def maskless_backward_step(self, states: States, actions: Actions) -> StatesTensor:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
@@ -163,15 +163,15 @@ class Env(ABC):
         not_done_states = new_states[~new_sink_states_idx]
         not_done_actions = actions[~new_sink_states_idx]
 
-        new_not_done_states = self.maskless_step(not_done_states, not_done_actions)
+        new_not_done_states_tensor = self.maskless_step(
+            not_done_states, not_done_actions
+        )
         # if isinstance(new_states, DiscreteStates):
         #     new_not_done_states.masks = self.update_masks(not_done_states, not_done_actions)
 
-        new_states.states_tensor[
-            ~new_sink_states_idx
-        ] = new_not_done_states.states_tensor
+        new_states.states_tensor[~new_sink_states_idx] = new_not_done_states_tensor
 
-        if isinstance(new_states, DiscreteStates):
+        if isinstance(new_states, DiscreteStates):  # TODO: move this to DiscreteEnv ?
             new_states.update_masks()  # TODO: probably use `not_done_actions` (and `not_done_states` `~new_sink_states` ?) as input to update_masks
             # TODO: or `locals()`
         return new_states
@@ -194,8 +194,10 @@ class Env(ABC):
             )
 
         # Calculate the backward step, and update only the states which are not Done.
-        new_not_done_states = self.maskless_backward_step(valid_states, valid_actions)
-        new_states.states_tensor[valid_states_idx] = new_not_done_states.states_tensor
+        new_not_done_states_tensor = self.maskless_backward_step(
+            valid_states, valid_actions
+        )
+        new_states.states_tensor[valid_states_idx] = new_not_done_states_tensor
 
         if isinstance(new_states, DiscreteStates):
             new_states.update_masks()
