@@ -140,15 +140,17 @@ class DiscreteEBMEnv(DiscreteEnv):
         return actions == self.n_actions - 1
 
     def maskless_step(self, states: States, actions: Actions) -> StatesTensor:
-        # First, we select that actions that replace a -1 with a 0
-        mask_0 = actions.actions_tensor < self.ndim
+        # First, we select that actions that replace a -1 with a 0.
+        # Remove singleton dimension for broadcasting. TODO: is this correct?
+        mask_0 = (actions.actions_tensor < self.ndim).squeeze(-1)
         states.states_tensor[mask_0] = states.states_tensor[mask_0].scatter(
             -1, actions.actions_tensor[mask_0], 0  # Set indices to 0.
         )
-        # Then, we select that actions that replace a -1 with a 1
-        mask_1 = (actions.actions_tensor >= self.ndim) & (
-            actions.actions_tensor < 2 * self.ndim
-        )
+        # Then, we select that actions that replace a -1 with a 1.
+        mask_1 = (
+            (actions.actions_tensor >= self.ndim) & \
+            (actions.actions_tensor < 2 * self.ndim)
+        ).squeeze(-1)  # Remove singleton dimension for broadcasting.
         states.states_tensor[mask_1] = states.states_tensor[mask_1].scatter(
             -1, (actions.actions_tensor[mask_1] - self.ndim), 1  # Set indices to 1.
         )
@@ -156,7 +158,7 @@ class DiscreteEBMEnv(DiscreteEnv):
 
     def maskless_backward_step(self, states: States, actions: Actions) -> StatesTensor:
         return states.states_tensor.scatter(
-            -1, actions.unsqueeze(-1).fmod(self.ndim), -1
+            -1, actions.actions_tensor.fmod(self.ndim), -1  # TODO: Why is fmod required?
         )
 
     def log_reward(self, final_states: DiscreteStates) -> BatchTensor:

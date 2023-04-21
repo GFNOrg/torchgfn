@@ -136,45 +136,41 @@ def test_HyperGrid_bwd_step_with_preprocessors(
     with pytest.raises(NonValidActionsError):
         states = env.backward_step(states, failing_actions)
 
-#@pytest.mark.parametrize("preprocessor", ["Identity", "OneHot", "KHot"])
 def test_DiscreteEBM_fwd_step():
     NDIM = 2
     BATCH_SIZE = 4
 
     env = DiscreteEBMEnv(ndim=NDIM)
-    states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
+    states = env.reset(batch_shape=BATCH_SIZE, seed=1234)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, NDIM)
 
     # Trying the step function starting from 3 instances of s_0
     passing_actions_lists =[
         [0, 1, 0, 1],
-        [0, 0, 0, 0],
-        [1, 0, 1, 1],
-    ]
-
+        [3, 2, 1, 2],
+    ]  # Only next possible move is [4, 4, 4, 4],
+    
     for actions_list in passing_actions_lists:
         actions = format_actions(format_tensor(actions_list), env)
         states = env.step(states, actions)
 
     # Step 4 fails due an invalid input action (15 is not possible).
-    actions = format_actions(format_tensor([1, 15, 0, 0]), env)
+    actions = format_actions(format_tensor([4, 15, 4, 4]), env)
     with pytest.raises(RuntimeError):
         states = env.step(states, actions)
 
-    # Step 5 fails due an invalid input action (4 is possible but not in this state).
-    actions = format_actions(format_tensor([1, 4, 0, 0]), env)
+    # Step 5 fails due an invalid input action (1 is possible but not in this state).
+    actions = format_actions(format_tensor([1, 4, 4, 4]), env)
     with pytest.raises(NonValidActionsError):
         states = env.step(states, actions)
 
+    expected_rewards = torch.tensor([1, 1, 54.5982, 1])
+    assert (torch.round(env.reward(states), decimals=4) == expected_rewards).all()
 
-    expected_rewards = torch.tensor([0.6, 0.1, 0.6])
-    assert (torch.round(env.reward(states), decimals=7) == expected_rewards).all()
 
-
-#@pytest.mark.parametrize("preprocessor", ["Identity", "OneHot", "KHot"])
 def test_DiscreteEBM_bwd_step():
     NDIM = 2
-    BATCH_SIZE = 8
+    BATCH_SIZE = 3
     SEED = 1234
 
     # Testing the backward method from a batch of random (seeded) state.
@@ -182,28 +178,17 @@ def test_DiscreteEBM_bwd_step():
     states = env.reset(batch_shape=BATCH_SIZE, random=True, seed=SEED)
 
     passing_actions_lists = [
-        [[0, 1, 0], [0, 0, 1]],
-        [[1, 1, 0], [1, 0, 1]],
-        [[0, 0, 1], [0, 2, 1]],
-        [[2, 1, 1], [2, 1, 2]],
-        [[3, 1, 0], [0, 0, 1]],
-        [[0, 1, 0], [0, 0, 1]],
-        [[0, 1, 0], [0, 0, 1]],
-        [[0, 1, 0], [0, 0, 1]],
-        [[0, 1, 0], [0, 0, 1]],
+        [2, 3, 1],
+        [2, 2, 2],
     ]
-
-    failing_actions_list = [[1, 0, 0], [0, 0, 1]]
-
-    import IPython; IPython.embed()
-
     # All passing actions complete sucessfully.
     for passing_actions_list in passing_actions_lists:
         actions = format_actions(format_tensor(passing_actions_list), env)
         states = env.backward_step(states, actions)
 
     # Fails due to an invalid input action.
-    states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED)
+    failing_actions_list = [0, 0, 0]
+    states = env.reset(batch_shape=BATCH_SIZE, random=True, seed=SEED)
     failing_actions = format_actions(format_tensor(failing_actions_list), env)
     with pytest.raises(NonValidActionsError):
         states = env.backward_step(states, failing_actions)
