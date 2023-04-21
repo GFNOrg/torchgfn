@@ -12,7 +12,7 @@ OutputTensor = TensorType["batch_shape", "output_dim", float]
 
 
 class FunctionEstimator(ABC):
-    """Training a GFlowNet requires parameterizing one or more of the following functions:
+    r"""Training a GFlowNet requires parameterizing one or more of the following functions:
     - $s \mapsto (\log F(s \rightarrow s'))_{s' \in Children(s)}$
     - $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$
     - $s' \mapsto (P_B(s \mid s'))_{s \in Parents(s')}$
