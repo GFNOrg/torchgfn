@@ -18,7 +18,7 @@ Tensor1D = TensorType["batch_size", torch.long]
 LogProbsTensor = TensorType["batch_shape", torch.float]
 
 
-class ActionSampler:
+class ActionsSampler:
     """`ActionSampler`s are containers for `ProbabilityEstimator`s"""
 
     def __init__(self, estimator: ProbabilityEstimator) -> None:
