@@ -11,7 +11,12 @@ OutputTensor = TensorType["batch_shape", "output_dim", float]
 
 
 class DiscretePFEstimator(ProbabilityEstimator):
-    r"""Container for estimators $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$"""
+    r"""Container for estimators $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$.
+
+    Note that while this class resembles LogEdgeFlowProbabilityEstimator, they have different semantic meaning.
+    With LogEdgeFlowEstimator, the module output is the log of the flow from the parent to the child,
+    while with DiscretePFEstimator, the module output is arbitrary.
+    """
 
     def check_output_dim(self, module_output: OutputTensor):
         if not isinstance(self.env, DiscreteEnv):

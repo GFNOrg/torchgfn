@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 
 import torch.nn as nn
-from torch.distributions import Distribution
+from torch.distributions import Distribution, Categorical
 from torchtyping import TensorType
 
 from gfn.envs import Env, DiscreteEnv
-from gfn.states import States
+from gfn.states import States, DiscreteStates
 
 # Typing
 OutputTensor = TensorType["batch_shape", "output_dim", float]
@@ -112,6 +112,18 @@ class ProbabilityEstimator(FunctionEstimator, ABC):
 
     def __call__(self, states: States) -> Distribution:
         return self.to_probability_distribution(states, super().__call__(states))
+
+
+class LogEdgeFlowProbabilityEstimator(ProbabilityEstimator, LogEdgeFlowEstimator):
+    r"""Container for estimators $(s \rightarrow s') \mapsto P_F(s' \mid s) = \frac{F(s \rightarrow s')}
+    {\sum_{s' \in Children(s)} F(s \rightarrow s')}$."""
+
+    def to_probability_distribution(
+        self, states: DiscreteStates, module_output: OutputTensor
+    ) -> Distribution:
+        logits = module_output
+        logits[~states.forward_masks] = -float("inf")
+        return Categorical(logits=logits)
 
 
 class LogZEstimator:
