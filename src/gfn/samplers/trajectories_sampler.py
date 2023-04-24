@@ -18,24 +18,37 @@ DonesTensor = TensorType["n_trajectories", torch.bool]
 class TrajectoriesSampler:
     def __init__(
         self,
-        env: Env,
         actions_sampler: ActionsSampler,
+        is_backward: bool = False,
     ):
         """Sample complete trajectories, or completes trajectories from a given batch states, using actions_sampler.
 
         Args:
             env (Env): Environment to sample trajectories from.
             actions_sampler (ActionsSampler): Sampler of actions.
+            is_backward (bool, optional): Whether to sample trajectories backward.
+             If True, the corresponding ActionsSampler's estimator needs to be a ProbabilityDistribution over parents.
+             Defaults to False.
         """
-        self.env = env
+        self.env = actions_sampler.env
         self.actions_sampler = actions_sampler
-        self.is_backward = isinstance(actions_sampler, BackwardActionsSampler)
+        self.is_backward = is_backward
 
     def sample_trajectories(
         self,
         states: Optional[States] = None,
         n_trajectories: Optional[int] = None,
     ) -> Trajectories:
+        """
+        Args:
+            states (Optional[States], optional): If given, trajectories would start from such states.
+             Otherwise, n_trajectories needs to be given. Defaults to None.
+            n_trajectories (Optional[int], optional): If given, a batch of n_trajectories will be sampled all
+             starting from the environment's s_0. Defaults to None.
+
+        Returns:
+            Trajectories: A Trajectories object representing the batch of sampled trajectories.
+        """
         if states is None:
             assert (
                 n_trajectories is not None

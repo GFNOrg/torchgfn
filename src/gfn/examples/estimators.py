@@ -6,12 +6,38 @@ from torchtyping import TensorType
 from gfn.envs import DiscreteEnv
 from gfn.states import DiscreteStates
 
+import torch
+
 # Typing
 OutputTensor = TensorType["batch_shape", "output_dim", float]
 
 
 class DiscretePFEstimator(ProbabilityEstimator):
-    r"""Container for estimators $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$"""
+    r"""Container for estimators $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$.
+
+    Note that while this class resembles LogEdgeFlowProbabilityEstimator, they have different semantic meaning.
+    With LogEdgeFlowEstimator, the module output is the log of the flow from the parent to the child,
+    while with DiscretePFEstimator, the module output is arbitrary.
+    """
+
+    def __init__(
+        self,
+        temperature: float = 1.0,
+        sf_bias: float = 0.0,
+        epsilon: float = 0.0,
+        **kwargs,
+    ):
+        """Initializes a estimator for P_F for discrete environments.
+
+        Args:
+            temperature (float, optional): scalar to divide the logits by before softmax. Defaults to 1.0.
+            sf_bias (float, optional): scalar to subtract from the exit action logit before dividing by temperature. Defaults to 0.0.
+            epsilon (float, optional): with probability epsilon, a random action is chosen. Defaults to 0.0.
+        """
+        super().__init__(**kwargs)
+        self.temperature = temperature
+        self.sf_bias = sf_bias
+        self.epsilon = epsilon
 
     def check_output_dim(self, module_output: OutputTensor):
         if not isinstance(self.env, DiscreteEnv):
@@ -26,8 +52,15 @@ class DiscretePFEstimator(ProbabilityEstimator):
     ) -> Distribution:
         logits = module_output
         logits[~states.forward_masks] = -float("inf")
+        logits[:, -1] -= self.sf_bias
+        probs = torch.softmax(logits / self.temperature, dim=-1)
 
-        return Categorical(logits=logits)
+        uniform_dist_probs = states.forward_masks.float() / states.forward_masks.sum(
+            dim=-1, keepdim=True
+        )
+        probs = (1 - self.epsilon) * probs + self.epsilon * uniform_dist_probs
+
+        return Categorical(probs=probs)
 
 
 class DiscretePBEstimator(ProbabilityEstimator):
