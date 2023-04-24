@@ -1,8 +1,8 @@
+import numpy as np
 import pytest
 import torch
-import numpy as np
 
-from gfn.envs import DiscreteEBMEnv, HyperGrid, BoxEnv
+from gfn.envs import BoxEnv, DiscreteEBMEnv, HyperGrid
 from gfn.envs.env import NonValidActionsError
 
 
@@ -136,20 +136,23 @@ def test_HyperGrid_bwd_step_with_preprocessors(
     with pytest.raises(NonValidActionsError):
         states = env.backward_step(states, failing_actions)
 
+
 def test_DiscreteEBM_fwd_step():
     NDIM = 2
     BATCH_SIZE = 4
 
     env = DiscreteEBMEnv(ndim=NDIM)
-    states = env.reset(batch_shape=BATCH_SIZE, seed=1234)  # Instantiate a batch of initial states
+    states = env.reset(
+        batch_shape=BATCH_SIZE, seed=1234
+    )  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, NDIM)
 
     # Trying the step function starting from 3 instances of s_0
-    passing_actions_lists =[
+    passing_actions_lists = [
         [0, 1, 0, 1],
         [3, 2, 1, 2],
     ]  # Only next possible move is [4, 4, 4, 4],
-    
+
     for actions_list in passing_actions_lists:
         actions = format_actions(format_tensor(actions_list), env)
         states = env.step(states, actions)

@@ -6,9 +6,9 @@ import torch.nn as nn
 from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
-from gfn.envs.env import DiscreteEnv
-from gfn.states import States, DiscreteStates
 from gfn.actions import Actions
+from gfn.envs.env import DiscreteEnv
+from gfn.states import DiscreteStates, States
 
 # Typing
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
@@ -148,9 +148,11 @@ class DiscreteEBMEnv(DiscreteEnv):
         )
         # Then, we select that actions that replace a -1 with a 1.
         mask_1 = (
-            (actions.actions_tensor >= self.ndim) & \
-            (actions.actions_tensor < 2 * self.ndim)
-        ).squeeze(-1)  # Remove singleton dimension for broadcasting.
+            (actions.actions_tensor >= self.ndim)
+            & (actions.actions_tensor < 2 * self.ndim)
+        ).squeeze(
+            -1
+        )  # Remove singleton dimension for broadcasting.
         states.states_tensor[mask_1] = states.states_tensor[mask_1].scatter(
             -1, (actions.actions_tensor[mask_1] - self.ndim), 1  # Set indices to 1.
         )
@@ -158,7 +160,9 @@ class DiscreteEBMEnv(DiscreteEnv):
 
     def maskless_backward_step(self, states: States, actions: Actions) -> StatesTensor:
         return states.states_tensor.scatter(
-            -1, actions.actions_tensor.fmod(self.ndim), -1  # TODO: Why is fmod required?
+            -1,
+            actions.actions_tensor.fmod(self.ndim),
+            -1,  # TODO: Why is fmod required?
         )
 
     def log_reward(self, final_states: DiscreteStates) -> BatchTensor:
