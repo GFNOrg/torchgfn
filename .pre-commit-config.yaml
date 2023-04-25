@@ -21,14 +21,16 @@ repos:
     rev: v1.1.304
     hooks:
       - id: pyright
+        name: pyright
+        entry: pyright
+        args:
+          - --project=pyproject.toml
   - repo: local
     hooks:
       - id: pytest-check
         name: pytest-check
         entry: pytest
-        language: system  # node?
+        language: python
         pass_filenames: false
         types: [python]
         always_run: true
-        args:
-          - --project=pyproject.toml
