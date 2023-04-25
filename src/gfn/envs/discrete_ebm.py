@@ -148,17 +148,19 @@ class DiscreteEBMEnv(DiscreteEnv):
         )
         # Then, we select that actions that replace a -1 with a 1.
         mask_1 = (
-            (actions.actions_tensor >= self.ndim) & \
-            (actions.actions_tensor < 2 * self.ndim)
-        ).squeeze(-1)  # Remove singleton dimension for broadcasting.
+            (actions.actions_tensor >= self.ndim)
+            & (actions.actions_tensor < 2 * self.ndim)
+        ).squeeze(
+            -1
+        )  # Remove singleton dimension for broadcasting.
         states.states_tensor[mask_1] = states.states_tensor[mask_1].scatter(
             -1, (actions.actions_tensor[mask_1] - self.ndim), 1  # Set indices to 1.
         )
         return states.states_tensor
 
     def maskless_backward_step(self, states: States, actions: Actions) -> StatesTensor:
-        # In this env, states are n-dim vectors. s0 is empty (represented as -1), 
-        # so s0=[-1, -1, ..., -1], each action is replacing a -1 with either a 
+        # In this env, states are n-dim vectors. s0 is empty (represented as -1),
+        # so s0=[-1, -1, ..., -1], each action is replacing a -1 with either a
         # 0 or 1. Action i in [0, ndim-1] os replacing s[i] with 0, whereas
         # action i in [ndim, 2*ndim-1] corresponds to replacing s[i - ndim] with 1.
         # A backward action asks "what index should be set back to -1", hence the fmod
