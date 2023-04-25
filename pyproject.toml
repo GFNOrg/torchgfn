@@ -10,7 +10,7 @@ packages = [
 
 [tool.setuptools.package-data]
 "*" = [
-    "path/to/*.txt"
+    "*.txt"
 ]
 
 [project]
