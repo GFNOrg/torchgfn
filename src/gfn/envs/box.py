@@ -1,14 +1,12 @@
 from typing import ClassVar, Literal, Tuple, cast
 
-
 import torch
 from gymnasium.spaces import Box
+from torchtyping import TensorType
 
+from gfn.actions import Actions
 from gfn.envs import Env
 from gfn.states import States
-from gfn.actions import Actions
-
-from torchtyping import TensorType
 
 # Typing
 StatesTensor = TensorType["batch_shape", 2, torch.float]

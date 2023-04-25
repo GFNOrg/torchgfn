@@ -5,11 +5,11 @@ import torch
 from torch.distributions import Categorical
 from torchtyping import TensorType
 
-from gfn.casting import correct_cast
-from gfn.states import States
 from gfn.actions import Actions
+from gfn.casting import correct_cast
 from gfn.estimators import LogEdgeFlowEstimator, ProbabilityEstimator
-from gfn.examples import DiscretePFEstimator, DiscretePBEstimator
+from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
+from gfn.states import States
 
 # Typing
 Tensor2D = TensorType["batch_size", "n_actions"]
