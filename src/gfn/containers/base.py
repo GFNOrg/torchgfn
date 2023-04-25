@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-   from gfn.envs import Env
+    from gfn.envs import Env
 
 import torch
 from torchtyping import TensorType

@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-    from gfn.actions import Actions 
+    from gfn.actions import Actions
     from gfn.envs import Env
-    from gfn.states import States 
+    from gfn.states import States
 
 import torch
 from torchtyping import TensorType
