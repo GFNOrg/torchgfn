@@ -86,8 +86,8 @@ class Transitions(Container):
         return self.n_transitions
 
     def __repr__(self):
-        states_tensor = self.states.states_tensor
-        next_states_tensor = self.next_states.states_tensor
+        states_tensor = self.states.tensor
+        next_states_tensor = self.next_states.tensor
 
         states_repr = ",\t".join(
             [

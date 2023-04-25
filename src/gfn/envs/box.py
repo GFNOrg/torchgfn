@@ -69,10 +69,10 @@ class BoxEnv(Env):
         return BoxActions
 
     def maskless_step(self, states: States, actions: Actions) -> StatesTensor:
-        return states.states_tensor + actions.actions_tensor
+        return states.tensor + actions.tensor
 
     def maskless_backward_step(self, states: States, actions: Actions) -> StatesTensor:
-        return states.states_tensor - actions.actions_tensor
+        return states.tensor - actions.tensor
 
     @staticmethod
     def norm(x: StatesTensor) -> torch.Tensor:
@@ -89,13 +89,13 @@ class BoxEnv(Env):
             return False
 
         if not backward:
-            actions_at_s0 = non_exit_actions[s0_states_idx].actions_tensor
+            actions_at_s0 = non_exit_actions[s0_states_idx].tensor
 
             if torch.any(self.norm(actions_at_s0) > self.delta):
                 return False
 
         non_s0_states = non_terminal_states[~s0_states_idx].states_tensor
-        non_s0_actions = non_exit_actions[~s0_states_idx].actions_tensor
+        non_s0_actions = non_exit_actions[~s0_states_idx].tensor
 
         if torch.any(self.norm(non_s0_actions) != self.delta) or torch.any(
             non_s0_actions < 0
@@ -119,7 +119,7 @@ class BoxEnv(Env):
 
     def log_reward(self, final_states: States) -> TensorFloat:
         R0, R1, R2 = (self.R0, self.R1, self.R2)
-        ax = abs(final_states.states_tensor - 0.5)
+        ax = abs(final_states.tensor - 0.5)
         reward = (
             R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
         )

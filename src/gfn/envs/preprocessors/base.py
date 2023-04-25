@@ -34,7 +34,7 @@ class IdentityPreprocessor(Preprocessor):
     This is the default preprocessor used."""
 
     def preprocess(self, states: States) -> OutputTensor:
-        return states.states_tensor.float()
+        return states.tensor.float()
 
 
 class EnumPreprocessor(Preprocessor):

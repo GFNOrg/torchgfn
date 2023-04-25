@@ -28,27 +28,27 @@ class Actions(ABC):
     # The following class variable corresponds to $s \rightarrow s_f$ transitions
     exit_action: ClassVar[OneActionTensor]  # action to exit the environment
 
-    def __init__(self, actions_tensor: ActionsTensor):
+    def __init__(self, tensor: ActionsTensor):
         """Initialize actions from a tensor.
         Args:
-            actions_tensor: tensor of actions
+            tensor: tensor of actions
         """
-        self.actions_tensor = actions_tensor
-        self.batch_shape = tuple(self.actions_tensor.shape)[: -len(self.action_shape)]
+        self.tensor = tensor
+        self.batch_shape = tuple(self.tensor.shape)[: -len(self.action_shape)]
 
     @classmethod
     def make_dummy_actions(cls, batch_shape: tuple[int]) -> Actions:
         """Creates an Actions object with the given batch shape, filled with dummy actions."""
         action_ndim = len(cls.action_shape)
-        actions_tensor = cls.dummy_action.repeat(*batch_shape, *((1,) * action_ndim))
-        return cls(actions_tensor)
+        tensor = cls.dummy_action.repeat(*batch_shape, *((1,) * action_ndim))
+        return cls(tensor)
 
     @classmethod
     def make_exit_actions(cls, batch_shape: tuple[int]) -> Actions:
         """Creates an Actions object with the given batch shape, filled with exit actions."""
-        action_ndim = len(cls.action_shape)
-        actions_tensor = cls.exit_action.repeat(*batch_shape, *((1,) * action_ndim))
-        return cls(actions_tensor)
+        n_actions_dim = len(cls.action_shape)
+        tensor = cls.exit_action.repeat(*batch_shape, *((1,) * n_actions_dim))
+        return cls(tensor)
 
     def __len__(self) -> int:
         return prod(self.batch_shape)
@@ -59,18 +59,18 @@ class Actions(ABC):
 
     @property
     def device(self) -> torch.device:
-        return self.actions_tensor.device
+        return self.tensor.device
 
     def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> Actions:
-        actions = self.actions_tensor[index]
+        actions = self.tensor[index]
         return self.__class__(actions)
 
     def extend(self, other: Actions) -> None:
         """Collates to another Actions object of the same batch shape."""
         if len(self.batch_shape) == len(other.batch_shape) == 1:
             self.batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
-            self.actions_tensor = torch.cat(
-                (self.actions_tensor, other.actions_tensor), dim=0
+            self.tensor = torch.cat(
+                (self.tensor, other.tensor), dim=0
             )
         elif len(self.batch_shape) == len(other.batch_shape) == 2:
             self.extend_with_dummy_actions(
@@ -83,8 +83,8 @@ class Actions(ABC):
                 self.batch_shape[0],
                 self.batch_shape[1] + other.batch_shape[1],
             )
-            self.actions_tensor = torch.cat(
-                (self.actions_tensor, other.actions_tensor), dim=1
+            self.tensor = torch.cat(
+                (self.tensor, other.tensor), dim=1
             )
         else:
             raise NotImplementedError(
@@ -100,8 +100,8 @@ class Actions(ABC):
             n = required_first_dim - self.batch_shape[0]
             dummy_actions = self.__class__.make_dummy_actions((n, self.batch_shape[1]))
             self.batch_shape = (self.batch_shape[0] + n, self.batch_shape[1])
-            self.actions_tensor = torch.cat(
-                (self.actions_tensor, dummy_actions.actions_tensor), dim=0
+            self.tensor = torch.cat(
+                (self.tensor, dummy_actions.tensor), dim=0
             )
         else:
             raise NotImplementedError(
@@ -115,7 +115,7 @@ class Actions(ABC):
         Returns:
             boolean tensor of shape batch_shape indicating whether the actions are equal
         """
-        out = self.actions_tensor == other
+        out = self.tensor == other
         action_ndim = len(self.__class__.action_shape)
         for _ in range(action_ndim):
             out = out.all(dim=-1)

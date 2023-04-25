@@ -60,11 +60,11 @@ class TrajectoriesSampler:
             ), "States should be a linear batch of states"
             n_trajectories = states.batch_shape[0]
 
-        device = states.states_tensor.device
+        device = states.tensor.device
 
         dones = states.is_initial_state if self.is_backward else states.is_sink_state
 
-        trajectories_states: List[StatesTensor] = [states.states_tensor]
+        trajectories_states: List[StatesTensor] = [states.tensor]
         trajectories_actions: List[ActionsTensor] = []
         trajectories_logprobs: List[LogProbsTensor] = []
         trajectories_dones = torch.zeros(
@@ -119,7 +119,7 @@ class TrajectoriesSampler:
             states = new_states
             dones = dones | new_dones
 
-            trajectories_states += [states.states_tensor]
+            trajectories_states += [states.tensor]
 
         trajectories_states = torch.stack(trajectories_states, dim=0)
         trajectories_states = self.env.States(states_tensor=trajectories_states)

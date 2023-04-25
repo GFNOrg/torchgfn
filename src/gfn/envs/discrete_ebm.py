@@ -122,14 +122,14 @@ class DiscreteEBMEnv(DiscreteEnv):
                 self.forward_masks = cast(ForwardMasksTensor, self.forward_masks)
                 self.backward_masks = cast(BackwardMasksTensor, self.backward_masks)
 
-                self.forward_masks[..., : env.ndim] = self.states_tensor == -1
+                self.forward_masks[..., : env.ndim] = self.tensor == -1
                 self.forward_masks[..., env.ndim : 2 * env.ndim] = (
                     self.states_tensor == -1
                 )
                 self.forward_masks[..., -1] = torch.all(
                     self.states_tensor != -1, dim=-1
                 )
-                self.backward_masks[..., : env.ndim] = self.states_tensor == 0
+                self.backward_masks[..., : env.ndim] = self.tensor == 0
                 self.backward_masks[..., env.ndim : 2 * env.ndim] = (
                     self.states_tensor == 1
                 )
@@ -142,21 +142,20 @@ class DiscreteEBMEnv(DiscreteEnv):
     def maskless_step(self, states: States, actions: Actions) -> StatesTensor:
         # First, we select that actions that replace a -1 with a 0.
         # Remove singleton dimension for broadcasting. TODO: is this correct?
-        mask_0 = (actions.actions_tensor < self.ndim).squeeze(-1)
-        states.states_tensor[mask_0] = states.states_tensor[mask_0].scatter(
-            -1, actions.actions_tensor[mask_0], 0  # Set indices to 0.
+        mask_0 = (actions.tensor < self.ndim).squeeze(-1)
+        states.tensor[mask_0] = states.tensor[mask_0].scatter(
+            -1, actions.tensor[mask_0], 0  # Set indices to 0.
         )
         # Then, we select that actions that replace a -1 with a 1.
         mask_1 = (
-            (actions.actions_tensor >= self.ndim)
-            & (actions.actions_tensor < 2 * self.ndim)
+            (actions.tensor >= self.ndim) & (actions.tensor < 2 * self.ndim)
         ).squeeze(
             -1
         )  # Remove singleton dimension for broadcasting.
-        states.states_tensor[mask_1] = states.states_tensor[mask_1].scatter(
-            -1, (actions.actions_tensor[mask_1] - self.ndim), 1  # Set indices to 1.
+        states.tensor[mask_1] = states.tensor[mask_1].scatter(
+            -1, (actions.tensor[mask_1] - self.ndim), 1  # Set indices to 1.
         )
-        return states.states_tensor
+        return states.tensor
 
     def maskless_backward_step(self, states: States, actions: Actions) -> StatesTensor:
         # In this env, states are n-dim vectors. s0 is empty (represented as -1),
@@ -165,25 +164,25 @@ class DiscreteEBMEnv(DiscreteEnv):
         # action i in [ndim, 2*ndim-1] corresponds to replacing s[i - ndim] with 1.
         # A backward action asks "what index should be set back to -1", hence the fmod
         # to enable wrapping of indices.
-        return states.states_tensor.scatter(
+        return states.tensor.scatter(
             -1,
-            actions.actions_tensor.fmod(self.ndim),
+            actions.tensor.fmod(self.ndim),
             -1,
         )
 
     def log_reward(self, final_states: DiscreteStates) -> BatchTensor:
-        raw_states = final_states.states_tensor
+        raw_states = final_states.tensor
         canonical = 2 * raw_states - 1
         return -self.alpha * self.energy(canonical)
 
     def get_states_indices(self, states: DiscreteStates) -> BatchTensor:
         """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3"""
-        states_raw = states.states_tensor
+        states_raw = states.tensor
         canonical_base = 3 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw + 1).mul(canonical_base).sum(-1).long()
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> BatchTensor:
-        states_raw = states.states_tensor
+        states_raw = states.tensor
         canonical_base = 2 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw).mul(canonical_base).sum(-1).long()
 

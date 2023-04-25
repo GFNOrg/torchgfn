@@ -81,7 +81,7 @@ class Trajectories(Container):
         )
 
     def __repr__(self) -> str:
-        states = self.states.states_tensor.transpose(0, 1)
+        states = self.states.tensor.transpose(0, 1)
         assert states.ndim == 3
         trajectories_representation = ""
         for traj in states[:10]:
@@ -93,7 +93,7 @@ class Trajectories(Container):
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length}, First 10 trajectories:"
-            + f"states=\n{trajectories_representation}, actions=\n{self.actions.actions_tensor.transpose(0, 1)[:10].numpy()}, "
+            + f"states=\n{trajectories_representation}, actions=\n{self.actions.tensor.transpose(0, 1)[:10].numpy()}, "
             + f"when_is_done={self.when_is_done[:10].numpy()})"
         )
 
@@ -189,7 +189,7 @@ class Trajectories(Container):
             ].flip(0)
             new_states[
                 : trajectories.when_is_done[i] + 1, i
-            ] = trajectories.states.states_tensor[
+            ] = trajectories.states.tensor[
                 : trajectories.when_is_done[i] + 1, i
             ].flip(
                 0

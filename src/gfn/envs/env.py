@@ -157,7 +157,7 @@ class Env(ABC):
             )
 
         new_sink_states_idx = actions.is_exit
-        new_states.states_tensor[new_sink_states_idx] = self.sf
+        new_states.tensor[new_sink_states_idx] = self.sf
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
 
         not_done_states = new_states[~new_sink_states_idx]
@@ -169,7 +169,7 @@ class Env(ABC):
         # if isinstance(new_states, DiscreteStates):
         #     new_not_done_states.masks = self.update_masks(not_done_states, not_done_actions)
 
-        new_states.states_tensor[~new_sink_states_idx] = new_not_done_states_tensor
+        new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
 
         if isinstance(new_states, DiscreteStates):  # TODO: move this to DiscreteEnv ?
             new_states.update_masks()  # TODO: probably use `not_done_actions` (and `not_done_states` `~new_sink_states` ?) as input to update_masks
@@ -197,7 +197,7 @@ class Env(ABC):
         new_not_done_states_tensor = self.maskless_backward_step(
             valid_states, valid_actions
         )
-        new_states.states_tensor[valid_states_idx] = new_not_done_states_tensor
+        new_states.tensor[valid_states_idx] = new_not_done_states_tensor
 
         if isinstance(new_states, DiscreteStates):
             new_states.update_masks()
@@ -308,5 +308,4 @@ class DiscreteEnv(Env, ABC):
     ) -> bool:
         assert states.forward_masks is not None and states.backward_masks is not None
         masks_tensor = states.backward_masks if backward else states.forward_masks
-        actions_tensor = actions.actions_tensor
-        return torch.gather(masks_tensor, 1, actions_tensor).all()
+        return torch.gather(masks_tensor, 1, actions.tensor).all()

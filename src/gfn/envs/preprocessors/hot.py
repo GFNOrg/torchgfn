@@ -53,7 +53,7 @@ class KHotPreprocessor(Preprocessor):
         self.get_states_indices = get_states_indices
 
     def preprocess(self, states):
-        states_tensor = states.states_tensor
+        states_tensor = states.tensor
         assert (
             states_tensor.dtype == torch.long
         ), "K Hot preprocessing only works for integer states"

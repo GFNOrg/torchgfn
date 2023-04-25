@@ -124,27 +124,27 @@ class HyperGrid(DiscreteEnv):
                 self.forward_masks = cast(ForwardMasksTensor, self.forward_masks)
                 self.backward_masks = cast(BackwardMasksTensor, self.backward_masks)
 
-                self.forward_masks[..., :-1] = self.states_tensor != env.height - 1
-                self.backward_masks = self.states_tensor != 0
+                self.forward_masks[..., :-1] = self.tensor != env.height - 1
+                self.backward_masks = self.tensor != 0
 
         return HyperGridStates
 
     def maskless_step(self, states: DiscreteStates, actions: Actions) -> StatesTensor:
-        new_states_tensor = states.states_tensor.scatter(
-            -1, actions.actions_tensor, 1, reduce="add"
+        new_states_tensor = states.tensor.scatter(
+            -1, actions.tensor, 1, reduce="add"
         )
         return new_states_tensor
 
     def maskless_backward_step(
         self, states: DiscreteStates, actions: Actions
     ) -> StatesTensor:
-        new_states_tensor = states.states_tensor.scatter(
-            -1, actions.actions_tensor, -1, reduce="add"
+        new_states_tensor = states.tensor.scatter(
+            -1, actions.tensor, -1, reduce="add"
         )
         return new_states_tensor
 
     def true_reward(self, final_states: DiscreteStates) -> TensorFloat:
-        final_states_raw = final_states.states_tensor
+        final_states_raw = final_states.tensor
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states_raw / (self.height - 1) - 0.5)
         if not self.reward_cos:
@@ -161,7 +161,7 @@ class HyperGrid(DiscreteEnv):
         return torch.log(self.true_reward(final_states))
 
     def get_states_indices(self, states: DiscreteStates) -> TensorLong:
-        states_raw = states.states_tensor
+        states_raw = states.tensor
 
         canonical_base = self.height ** torch.arange(
             self.ndim - 1, -1, -1, device=states_raw.device
@@ -219,7 +219,7 @@ class HyperGrid(DiscreteEnv):
     @property
     def all_states(self) -> DiscreteStates:
         grid = self.build_grid()
-        flat_grid = rearrange(grid.states_tensor, "... ndim -> (...) ndim")
+        flat_grid = rearrange(grid.tensor, "... ndim -> (...) ndim")
         return self.States(flat_grid)
 
     @property
