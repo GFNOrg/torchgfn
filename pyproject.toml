@@ -1,7 +1,96 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = [
+    "gfn",
+]
+
+[tool.setuptools.package-data]
+"*" = [
+    "path/to/*.txt"
+]
+
+[project]
+name = "gfn"
+version = "0.2.0"
+
+authors = [
+  { name="Salem Lahou", email="lahlosal@mila.quebec" },
+  { name="Joseph Viviano", email="joseph@viviano.ca" },
+  { name="Victor Schmidt", email="schmidtv@mila.quebec" },
+]
+
+description = "A Python package for GFlowNets"
+readme = "README.md"
+requires-python = ">=3.10"
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "einops", 
+    "gymnasium",
+    "numpy", 
+    "torch", 
+    "torchtyping",
+]
+
+
+[project.optional-dependencies]
+wandb = [
+    "simple-parsing==0.0.20",
+    "tqdm",
+    "wandb",
+]
+
+dev = [
+    "black==22.3.0",
+    "myst-parser==0.18.1",
+    "pre-commit",
+    "pytest",
+    "renku-sphinx-theme",
+    "sphinx_rtd_theme==1.1.1",
+    "sphinx-autoapi==2.0.0",
+    "sphinx-math-dollar==1.2.1",
+    "sphinx==5.3.0",
+    "tox",
+]
+
+[project.urls]
+"Homepage" = "https://gfn.readthedocs.io/en/latest/"
+"Bug Tracker" = "https://github.com/saleml/gfn/issues"
+
+
+# TODO: Could use for examples? Or something else?
+# [project.scripts]
+# gfn_example = "gfn.examples:main"
+
+[tool.black]
+py36 = true
+include = '\.pyi?$'
+exclude = '''/(\.git|\.hg|\.mypy_cache|\.tox|\.venv|build)/g'''
+
+[tool.tox]
+legacy_tox_ini = '''
+[tox]
+min_version = 4.0
+env_list = test_env
+
+[testenv]
+deps = pytest
+commands = pytest -s
+'''
+
 [tool.pyright]
 
 include = [
-    "gfn/**",
+    "src/gfn/**",
 ]
 
 exclude = [
@@ -19,7 +108,7 @@ typeshedPath = "typeshed"
 enableTypeIgnoreComments = true
 
 # This is required as the CI pre-commit does not download the module (i.e. numpy)
-#   Therefore, we have to ignore missing imports
+# Therefore, we have to ignore missing imports
 reportMissingImports = "none"
 
 reportUnknownMemberType = "none"
@@ -30,6 +119,6 @@ reportPrivateUsage = "warning"
 reportUntypedFunctionDecorator = "none"
 reportMissingTypeStubs = false
 reportUnboundVariable = "warning"
-reportGeneralTypeIssues ="none"
+reportGeneralTypeIssues = "none"
 
-[tool.pytest.ini_options]
+#[tool.pytest.ini_options]
