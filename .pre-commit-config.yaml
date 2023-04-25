@@ -7,15 +7,28 @@ repos:
     hooks:
       - id: black
         language_version: python3.10
-  -   repo: https://github.com/pre-commit/pre-commit-hooks
-      rev: v2.0.0
-      hooks:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v2.0.0
+    hooks:
       - id: flake8
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        files: "\\.(py)$"
+        args: [--settings-path=pyproject.toml]
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.304
+    hooks:
+      - id: pyright
   - repo: local
     hooks:
       - id: pytest-check
         name: pytest-check
         entry: pytest
-        language: system
+        language: system  # node?
         pass_filenames: false
+        types: [python]
         always_run: true
+        args:
+          - --project=pyproject.toml

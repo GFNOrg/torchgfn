@@ -10,10 +10,7 @@ from torchtyping import TensorType
 from gfn.containers import Trajectories
 from gfn.estimators import LogZEstimator
 from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
-from gfn.samplers import (
-    BackwardDiscreteActionsSampler,
-    DiscreteActionsSampler,
-)
+from gfn.samplers import BackwardDiscreteActionsSampler, DiscreteActionsSampler
 
 # Typing
 ScoresTensor = TensorType["n_trajectories", float]

@@ -8,8 +8,8 @@ from torchtyping import TensorType
 
 from gfn.actions import Actions
 from gfn.casting import correct_cast
-from gfn.states import States, DiscreteStates
 from gfn.envs.preprocessors import IdentityPreprocessor, Preprocessor
+from gfn.states import DiscreteStates, States
 
 # Typing
 TensorLong = TensorType["batch_shape", torch.long]

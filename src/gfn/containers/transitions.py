@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 import torch
 from torchtyping import TensorType
