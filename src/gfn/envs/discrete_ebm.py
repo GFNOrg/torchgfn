@@ -157,8 +157,14 @@ class DiscreteEBMEnv(DiscreteEnv):
         return states.states_tensor
 
     def maskless_backward_step(self, states: States, actions: Actions) -> StatesTensor:
+        # In this env, states are n-dim vectors. s0 is empty (represented as -1), 
+        # so s0=[-1, -1, ..., -1], each action is replacing a -1 with either a 
+        # 0 or 1. Action i in [0, ndim-1] os replacing s[i] with 0, whereas
+        # action i in [ndim, 2*ndim-1] corresponds to replacing s[i - ndim] with 1.
+        # A backward action asks "what index should be set back to -1", hence the fmod
+        # to enable wrapping of indices.
         return states.states_tensor.scatter(
-            -1, actions.actions_tensor.fmod(self.ndim), -1  # TODO: Why is fmod required?
+            -1, actions.actions_tensor.fmod(self.ndim), -1
         )
 
     def log_reward(self, final_states: DiscreteStates) -> BatchTensor:
