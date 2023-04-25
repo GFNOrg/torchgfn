@@ -6,9 +6,9 @@ import torch.nn as nn
 from gymnasium.spaces import Discrete
 from torchtyping import TensorType
 
-from gfn.envs.env import DiscreteEnv
-from gfn.states import States, DiscreteStates
 from gfn.actions import Actions
+from gfn.envs.env import DiscreteEnv
+from gfn.states import DiscreteStates, States
 
 # Typing
 StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
@@ -166,7 +166,9 @@ class DiscreteEBMEnv(DiscreteEnv):
         # A backward action asks "what index should be set back to -1", hence the fmod
         # to enable wrapping of indices.
         return states.states_tensor.scatter(
-            -1, actions.actions_tensor.fmod(self.ndim), -1
+            -1,
+            actions.actions_tensor.fmod(self.ndim),
+            -1,
         )
 
     def log_reward(self, final_states: DiscreteStates) -> BatchTensor:
