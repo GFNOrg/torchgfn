@@ -104,8 +104,7 @@ class States(ABC):
     def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> States:
         """Access particular states of the batch."""
         # TODO: add more tests for this method
-        states = self.tensor[index]
-        return self.__class__(states)
+        return self.__class__(self.tensor[index])
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: States
@@ -297,27 +296,20 @@ class DiscreteStates(States, ABC):
 
     def extend_with_sf(self, required_first_dim: int) -> None:
         super().extend_with_sf(required_first_dim)
-        self.forward_masks = torch.cat(
-            (
-                self.forward_masks,
-                torch.ones(
-                    required_first_dim - self.batch_shape[0],
-                    *self.forward_masks.shape[1:],
-                    dtype=torch.bool,
-                    device=self.device,
+
+        def _extend(masks, first_dim):
+            return torch.cat(
+                (
+                    masks,
+                    torch.ones(
+                        first_dim - self.batch_shape[0],
+                        *masks.shape[1:],
+                        dtype=torch.bool,
+                        device=self.device,
+                    ),
                 ),
-            ),
-            dim=0,
-        )
-        self.backward_masks = torch.cat(
-            (
-                self.backward_masks,
-                torch.ones(
-                    required_first_dim - self.batch_shape[0],
-                    *self.backward_masks.shape[1:],
-                    dtype=torch.bool,
-                    device=self.device,
-                ),
-            ),
-            dim=0,
-        )
+                dim=0,
+            )
+
+        self.forward_masks = _extend(self.forward_masks)
+        self.backward_masks = _extend(self.backward_masks)

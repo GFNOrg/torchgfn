@@ -46,8 +46,8 @@ class Actions(ABC):
     @classmethod
     def make_exit_actions(cls, batch_shape: tuple[int]) -> Actions:
         """Creates an Actions object with the given batch shape, filled with exit actions."""
-        n_actions_dim = len(cls.action_shape)
-        tensor = cls.exit_action.repeat(*batch_shape, *((1,) * n_actions_dim))
+        action_ndim = len(cls.action_shape)
+        tensor = cls.exit_action.repeat(*batch_shape, *((1,) * action_ndim))
         return cls(tensor)
 
     def __len__(self) -> int:
@@ -66,12 +66,11 @@ class Actions(ABC):
         return self.__class__(actions)
 
     def extend(self, other: Actions) -> None:
+        # TODO: generalize?
         """Collates to another Actions object of the same batch shape."""
         if len(self.batch_shape) == len(other.batch_shape) == 1:
             self.batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
-            self.tensor = torch.cat(
-                (self.tensor, other.tensor), dim=0
-            )
+            self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
         elif len(self.batch_shape) == len(other.batch_shape) == 2:
             self.extend_with_dummy_actions(
                 required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
@@ -83,9 +82,7 @@ class Actions(ABC):
                 self.batch_shape[0],
                 self.batch_shape[1] + other.batch_shape[1],
             )
-            self.tensor = torch.cat(
-                (self.tensor, other.tensor), dim=1
-            )
+            self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
         else:
             raise NotImplementedError(
                 "extend is only implemented for bi-dimensional actions."
@@ -100,9 +97,7 @@ class Actions(ABC):
             n = required_first_dim - self.batch_shape[0]
             dummy_actions = self.__class__.make_dummy_actions((n, self.batch_shape[1]))
             self.batch_shape = (self.batch_shape[0] + n, self.batch_shape[1])
-            self.tensor = torch.cat(
-                (self.tensor, dummy_actions.tensor), dim=0
-            )
+            self.tensor = torch.cat((self.tensor, dummy_actions.tensor), dim=0)
         else:
             raise NotImplementedError(
                 "extend_with_dummy_actions is only implemented for bi-dimensional actions."
@@ -115,9 +110,9 @@ class Actions(ABC):
         Returns:
             boolean tensor of shape batch_shape indicating whether the actions are equal
         """
-        out = self.tensor == other
+        out = self.tensor == other.tensor
         action_ndim = len(self.__class__.action_shape)
-        for _ in range(action_ndim):
+        for _ in range(action_ndim):  # TODO: this seems over complex?
             out = out.all(dim=-1)
         return out
 
