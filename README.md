@@ -50,7 +50,7 @@ python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss
 
 ### Example, in a few lines
 
-This example requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[wandb]`.
+This example requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]`.
 
 ```python
 import torch
