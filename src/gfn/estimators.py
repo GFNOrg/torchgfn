@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 
 import torch.nn as nn
-from torch.distributions import Distribution, Categorical
+from torch.distributions import Categorical, Distribution
 from torchtyping import TensorType
 
-from gfn.envs import Env, DiscreteEnv
-from gfn.states import States, DiscreteStates
+from gfn.envs import DiscreteEnv, Env
+from gfn.states import DiscreteStates, States
 
 # Typing
 OutputTensor = TensorType["batch_shape", "output_dim", float]

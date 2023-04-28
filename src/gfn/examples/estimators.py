@@ -1,12 +1,10 @@
-from gfn.estimators import ProbabilityEstimator
-
-from torch.distributions import Distribution, Categorical
+import torch
+from torch.distributions import Categorical, Distribution
 from torchtyping import TensorType
 
 from gfn.envs import DiscreteEnv
+from gfn.estimators import ProbabilityEstimator
 from gfn.states import DiscreteStates
-
-import torch
 
 # Typing
 OutputTensor = TensorType["batch_shape", "output_dim", float]

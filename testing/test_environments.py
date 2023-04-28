@@ -1,8 +1,8 @@
+import numpy as np
 import pytest
 import torch
-import numpy as np
 
-from gfn.envs import DiscreteEBMEnv, HyperGrid, BoxEnv
+from gfn.envs import BoxEnv, DiscreteEBMEnv, HyperGrid
 from gfn.envs.env import NonValidActionsError
 
 

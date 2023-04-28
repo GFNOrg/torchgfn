@@ -88,7 +88,6 @@ commands = pytest -s
 '''
 
 [tool.pyright]
-
 include = [
     "src/gfn/**",
 ]
@@ -110,7 +109,6 @@ enableTypeIgnoreComments = true
 # This is required as the CI pre-commit does not download the module (i.e. numpy)
 # Therefore, we have to ignore missing imports
 reportMissingImports = "none"
-
 reportUnknownMemberType = "none"
 reportUnknownParameterType = "none"
 reportUnknownVariableType = "none"
@@ -121,4 +119,11 @@ reportMissingTypeStubs = false
 reportUnboundVariable = "warning"
 reportGeneralTypeIssues = "none"
 
-#[tool.pytest.ini_options]
+# Black-compatibility enforced.
+[tool.isort]
+line_length = 89
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true

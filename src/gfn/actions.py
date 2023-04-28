@@ -1,10 +1,9 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
-
 from abc import ABC
+from math import prod
 from typing import ClassVar, Sequence
 
-from math import prod
 import torch
 from torchtyping import TensorType
 
