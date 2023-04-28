@@ -7,11 +7,8 @@ from simple_parsing import choice, subgroups
 from simple_parsing.helpers import JsonSerializable
 
 from gfn.envs import Env
-from gfn.estimators import (
-    LogEdgeFlowEstimator,
-    LogStateFlowEstimator,
-    LogZEstimator,
-)
+from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
+from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
 from gfn.losses import (
     DBParametrization,
     DetailedBalance,
@@ -26,7 +23,6 @@ from gfn.losses import (
     TBParametrization,
     TrajectoryBalance,
 )
-from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
 
 
 @dataclass

@@ -6,12 +6,12 @@ import torch
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.envs import DiscreteEBMEnv, HyperGrid
+from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
 from gfn.samplers import (
-    TrajectoriesSampler,
     BackwardDiscreteActionsSampler,
     DiscreteActionsSampler,
+    TrajectoriesSampler,
 )
-from gfn.examples import DiscretePFEstimator, DiscretePBEstimator
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])

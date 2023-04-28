@@ -17,25 +17,22 @@
 
 # gfn: a Python package for GFlowNets
 
-
-
 ## Installing the packages
 
-The codebase requires python >= 3.10
+The codebase requires `python >= 3.10`.
 
 ```bash
 git clone https://github.com/saleml/gfn.git
 conda create -n gfn python=3.10
 conda activate gfn
 cd gfn
-pip install -e .
+pip install .
 ```
 
-Optionally, to run scripts, and for [wandb](https://wandb.ai) logging
+To install a version of the codebase that supports [wandb](https://wandb.ai) logging,
 
 ```bash
-pip install -r requirements.txt
-wandb login
+pip install .[scripts]
 ```
 
 ## About this repo
@@ -53,7 +50,7 @@ python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss
 
 ### Example, in a few lines
 
-(⬇️ This example require the [`tqdm`](https://github.com/tqdm/tqdm) package to run. `pip install tqdm` or install all extra requirements with `pip install -r requirements.txt`)
+This example requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]`.
 
 ```python
 import torch
@@ -110,7 +107,7 @@ if __name__ == "__main__":
 Before the first commit:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -e .[dev,wandb]
 pre-commit install
 pre-commit run --all-files
 ```
@@ -119,6 +116,7 @@ Run `pre-commit` after staging, and before committing. Make sure all the tests p
 The codebase uses `black` formatter.
 
 To make the docs locally:
+
 ```bash
 cd docs
 make html
