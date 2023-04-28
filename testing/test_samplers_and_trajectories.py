@@ -6,7 +6,7 @@ import torch
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.envs import DiscreteEBMEnv, HyperGrid
-from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
+from gfn.examples import DiscretePBEstimator, DiscretePFEstimator, NeuralNet
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 
 
@@ -30,11 +30,13 @@ def test_trajectory_sampling(
     else:
         raise ValueError("Unknown environment name")
 
-    actions_sampler = DiscreteActionsSampler(
-        DiscretePFEstimator(env=env, module_name="NeuralNet")
+    logit_pf_module = NeuralNet(
+        input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions
     )
+    logit_pf_estimator = DiscretePFEstimator(env=env, module=logit_pf_module)
+    actions_sampler = ActionsSampler(estimator=logit_pf_estimator)
 
-    trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
+    trajectories_sampler = TrajectoriesSampler(actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
     if human_print:
         print(trajectories)
@@ -42,13 +44,9 @@ def test_trajectory_sampling(
     if human_print:
         print("\nTrying the LogitPFActionSampler: ")
 
-    logit_pf_estimator = DiscretePFEstimator(env, module_name="NeuralNet")
-
-    logit_pf_actions_sampler = DiscreteActionsSampler(estimator=logit_pf_estimator)
-
     trajectories_sampler = TrajectoriesSampler(
         env,
-        actions_sampler=logit_pf_actions_sampler,
+        actions_sampler=actions_sampler,
     )
 
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
@@ -60,13 +58,14 @@ def test_trajectory_sampling(
 
     states = env.reset(batch_shape=20, random=True)
 
-    logit_pb_estimator = DiscretePBEstimator(env=env, module_name="NeuralNet")
-
-    logit_pb_actions_sampler = BackwardDiscreteActionsSampler(
-        estimator=logit_pb_estimator
+    logit_pb_module = NeuralNet(
+        input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions - 1
     )
+    logit_pb_estimator = DiscretePBEstimator(env=env, module=logit_pb_module)
 
-    bw_trajectories_sampler = TrajectoriesSampler(env, logit_pb_actions_sampler)
+    bw_actions_sampler = ActionsSampler(estimator=logit_pb_estimator)
+
+    bw_trajectories_sampler = TrajectoriesSampler(bw_actions_sampler, is_backward=True)
 
     states = env.reset(batch_shape=5, random=True)
     bw_trajectories = bw_trajectories_sampler.sample_trajectories(states)

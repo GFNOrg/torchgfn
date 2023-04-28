@@ -1,9 +1,10 @@
 import torch
-from torch.distributions import Categorical, Distribution
+from torch.distributions import Distribution
 from torchtyping import TensorType
 
 from gfn.envs import DiscreteEnv
 from gfn.estimators import ProbabilityEstimator
+from gfn.examples.distributions import UnsqueezedCategorical
 from gfn.states import DiscreteStates
 
 # Typing
@@ -58,7 +59,7 @@ class DiscretePFEstimator(ProbabilityEstimator):
         )
         probs = (1 - self.epsilon) * probs + self.epsilon * uniform_dist_probs
 
-        return Categorical(probs=probs)
+        return UnsqueezedCategorical(probs=probs)
 
 
 class DiscretePBEstimator(ProbabilityEstimator):
@@ -78,4 +79,4 @@ class DiscretePBEstimator(ProbabilityEstimator):
         logits = module_output
         logits[~states.backward_masks] = -float("inf")
 
-        return Categorical(logits=logits)
+        return UnsqueezedCategorical(logits=logits)
