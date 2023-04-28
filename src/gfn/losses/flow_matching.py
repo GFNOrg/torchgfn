@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
-from torchtyping import TensorType
 
 from gfn.casting import correct_cast
 from gfn.distributions import EmpiricalTrajectoryDistribution, TrajectoryDistribution
