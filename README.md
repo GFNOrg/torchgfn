@@ -32,7 +32,7 @@ pip install .
 To install a version of the codebase that supports [wandb](https://wandb.ai) logging,
 
 ```bash
-pip install .[wandb]
+pip install .[scripts]
 ```
 
 ## About this repo

@@ -34,16 +34,16 @@ classifiers = [
 ]
 
 dependencies = [
-    "einops", 
+    "einops",
     "gymnasium",
-    "numpy", 
-    "torch", 
+    "numpy",
+    "torch",
     "torchtyping",
 ]
 
 
 [project.optional-dependencies]
-wandb = [
+scripts = [
     "simple-parsing==0.0.20",
     "tqdm",
     "wandb",
