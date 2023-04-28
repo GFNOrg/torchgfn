@@ -1,13 +1,7 @@
+# TODO: remove this file eventually
 from typing import cast
 
-import torch
-from torchtyping import TensorType
-
-# Typing.
-ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
-BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
-
-# TODO: remove this file eventually
+from gfn.typing import ForwardMasksTensor, BackwardMasksTensor
 
 
 def correct_cast(
