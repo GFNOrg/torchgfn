@@ -85,7 +85,7 @@ class TrajectoriesSampler:
             log_probs = torch.full(
                 (n_trajectories,), fill_value=0, dtype=torch.float, device=device
             )
-            actions_log_probs, valid_actions = self.actions_sampler.sample(
+            valid_actions, actions_log_probs = self.actions_sampler.sample(
                 states[~dones]
             )
             actions[~dones] = valid_actions
