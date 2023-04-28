@@ -8,10 +8,10 @@ from gfn.containers import Trajectories
 from gfn.estimators import LogStateFlowEstimator
 from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
 from gfn.samplers import BackwardDiscreteActionsSampler, DiscreteActionsSampler
+from gfn.typing import LossTensor
 
 # Typing
 ScoresTensor = TensorType[-1, float]
-LossTensor = TensorType[0, float]
 LogPTrajectoriesTensor = TensorType["max_length", "n_trajectories", float]
 
 

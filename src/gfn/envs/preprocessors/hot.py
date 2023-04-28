@@ -3,26 +3,23 @@ from typing import Callable
 import torch
 from einops import rearrange
 from torch.nn.functional import one_hot
-from torchtyping import TensorType
 
 from gfn.envs.preprocessors.base import Preprocessor
 from gfn.states import States
-
-# Typing
-OutputTensor = TensorType["batch_shape", "dim_in"]
+from gfn.typing import BatchOutputTensor
 
 
 class OneHotPreprocessor(Preprocessor):
     def __init__(
         self,
         n_states: int,
-        get_states_indices: Callable[[States], OutputTensor],
+        get_states_indices: Callable[[States], BatchOutputTensor],
     ) -> None:
         """One Hot Preprocessor for environments with enumerable states (finite number of states).
 
         Args:
             n_states (int): The total number of states in the environment (not including s_f).
-            get_states_indices (Callable[[States], OutputTensor]): function that returns the unique indices of the states.
+            get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
         """
         super().__init__(output_shape=(n_states,))
         self.get_states_indices = get_states_indices
@@ -38,14 +35,14 @@ class KHotPreprocessor(Preprocessor):
         self,
         height: int,
         ndim: int,
-        get_states_indices: Callable[[States], OutputTensor],
+        get_states_indices: Callable[[States], BatchOutputTensor],
     ) -> None:
         """K Hot Preprocessor for environments with enumerable states (finite number of states) with a grid structure.
 
         Args:
             height (int): number of unique values per dimension.
             ndim (int): number of dimensions.
-            get_states_indices (Callable[[States], OutputTensor]): function that returns the unique indices of the states.
+            get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
         """
         super().__init__(output_shape=(height * ndim,))
         self.height = height

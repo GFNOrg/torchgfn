@@ -4,24 +4,20 @@ from typing import Optional, Tuple, Union
 
 import torch
 from gymnasium.spaces import Discrete, Space
-from torchtyping import TensorType
 
 from gfn.actions import Actions
 from gfn.casting import correct_cast
 from gfn.envs.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
-
-# Typing
-TensorLong = TensorType["batch_shape", torch.long]
-TensorFloat = TensorType["batch_shape", torch.float]
-TensorBool = TensorType["batch_shape", torch.bool]
-ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
-BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
-OneStateTensor = TensorType["state_shape", torch.float]
-StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
-OneActionTensor = TensorType["action_shape"]
-ActionsTensor = TensorType["batch_shape", "action_shape"]
-PmfTensor = TensorType["n_states", torch.float]
+from gfn.typing import (
+    BatchBoolTensor,
+    BatchFloatTensor,
+    BatchLongTensor,
+    OneStateTensor,
+    OneStateTensor,
+    PmfTensor,
+    StatesFloatTensor,
+)
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
@@ -107,14 +103,14 @@ class Env(ABC):
         )
 
     @abstractmethod
-    def maskless_step(self, states: States, actions: Actions) -> StatesTensor:
+    def maskless_step(self, states: States, actions: Actions) -> StatesFloatTensor:
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
         pass
 
     @abstractmethod
-    def maskless_backward_step(self, states: States, actions: Actions) -> StatesTensor:
+    def maskless_backward_step(self, states: States, actions: Actions) -> StatesFloatTensor:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
@@ -147,7 +143,7 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating sink states in the new batch."""
         new_states = deepcopy(states)
-        valid_states_idx: TensorBool = ~states.is_sink_state
+        valid_states_idx: BatchBoolTensor = ~states.is_sink_state
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
@@ -184,7 +180,7 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating initial states in the new batch."""
         new_states = deepcopy(states)
-        valid_states_idx: TensorBool = ~new_states.is_initial_state
+        valid_states_idx: BatchBoolTensor = ~new_states.is_initial_state
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
@@ -204,22 +200,22 @@ class Env(ABC):
 
         return new_states
 
-    def reward(self, final_states: States) -> TensorFloat:
+    def reward(self, final_states: States) -> BatchFloatTensor:
         """Either this or log_reward needs to be implemented."""
         return torch.exp(self.log_reward(final_states))
 
-    def log_reward(self, final_states: States) -> TensorFloat:
+    def log_reward(self, final_states: States) -> BatchFloatTensor:
         """Either this or reward needs to be implemented."""
         raise NotImplementedError("log_reward function not implemented")
 
     # TODO: some, or all of the following methods should probably move to DiscreteEnv - Basically all DiscreteEnvs should have a Discrete action_space. Do we actually need `action_space` attribute ?
 
-    def get_states_indices(self, states: States) -> TensorLong:
+    def get_states_indices(self, states: States) -> BatchLongTensor:
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
-    def get_terminating_states_indices(self, states: States) -> TensorLong:
+    def get_terminating_states_indices(self, states: States) -> BatchLongTensor:
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )

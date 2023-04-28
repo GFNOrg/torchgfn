@@ -7,10 +7,10 @@ from torchtyping import TensorType
 from gfn.actions import Actions
 from gfn.envs.env import Env
 from gfn.states import States
+from gfn.envs.typing import BatchFloatTensor
 
 # Typing
 StatesTensor = TensorType["batch_shape", 2, torch.float]
-TensorFloat = TensorType["batch_shape", torch.float]
 OneActionTensor = TensorType[2]
 
 
@@ -115,7 +115,7 @@ class BoxEnv(Env):
 
         return True
 
-    def log_reward(self, final_states: States) -> TensorFloat:
+    def log_reward(self, final_states: States) -> BatchFloatTensor:
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states.tensor - 0.5)
         reward = (

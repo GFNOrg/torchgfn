@@ -176,25 +176,36 @@ class Trajectories(Container):
         new_actions = torch.cat(
             [new_actions, torch.full((1, len(trajectories)), -1)], dim=0
         )
-        new_states = trajectories.env.sf.repeat(  # TODO: "repeat" is not a known member of "None"
+        
+        # env.sf should never be None unless something went wrong during class instantiation.
+        if trajectories.env.sf is None:
+            raise AttributeError(
+                "Something went wrong during the instantiation of environment {}".format(
+                    trajectories.env)
+                )
+
+        new_states = trajectories.env.sf.repeat( 
             trajectories.when_is_done.max() + 1, len(trajectories), 1
         )
         new_when_is_done = trajectories.when_is_done + 1
+
         for i in range(len(trajectories)):
             new_actions[trajectories.when_is_done[i], i] = (
                 trajectories.env.n_actions - 1
             )
+            
             new_actions[: trajectories.when_is_done[i], i] = trajectories.actions[
                 : trajectories.when_is_done[i], i
             ].flip(0)
+            
             new_states[
                 : trajectories.when_is_done[i] + 1, i
-            ] = trajectories.states.tensor[
-                : trajectories.when_is_done[i] + 1, i
-            ].flip(
+            ] = trajectories.states.tensor[: trajectories.when_is_done[i] + 1, i].flip(
                 0
             )
+
         new_states = trajectories.env.States(new_states)
+
         return Trajectories(
             env=trajectories.env,
             states=new_states,
