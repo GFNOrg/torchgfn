@@ -16,7 +16,7 @@ from gfn.losses import (
     TBParametrization,
     TrajectoryBalance,
 )
-from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])

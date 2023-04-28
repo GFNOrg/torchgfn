@@ -4,8 +4,7 @@ import torch
 from torchtyping import TensorType
 
 from gfn.containers import Trajectories
-from gfn.envs import Env
-from gfn.samplers import ActionsSampler, BackwardActionsSampler
+from gfn.samplers import ActionsSampler
 from gfn.states import States
 
 # Typing

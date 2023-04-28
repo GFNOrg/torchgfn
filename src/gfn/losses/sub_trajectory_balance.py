@@ -7,7 +7,7 @@ from torchtyping import TensorType
 from gfn.containers import Trajectories
 from gfn.estimators import LogStateFlowEstimator
 from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
-from gfn.samplers import BackwardDiscreteActionsSampler, DiscreteActionsSampler
+from gfn.samplers import ActionsSampler
 
 # Typing
 ScoresTensor = TensorType[-1, float]

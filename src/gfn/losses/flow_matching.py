@@ -9,7 +9,7 @@ from gfn.distributions import EmpiricalTrajectoryDistribution, TrajectoryDistrib
 from gfn.envs import Env
 from gfn.estimators import LogEdgeFlowEstimator
 from gfn.losses.base import Parametrization, StateDecomposableLoss
-from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
 # Typing
