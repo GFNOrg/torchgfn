@@ -5,12 +5,7 @@ from math import prod
 from typing import ClassVar, Sequence
 
 import torch
-from torchtyping import TensorType
-
-# Typing
-OneActionTensor = TensorType["action_shape"]
-ActionsTensor = TensorType["batch_shape", "action_shape"]
-BoolTensor = TensorType["batch_shape", torch.bool]
+from gfn.typing import BatchActionsTensor, BatchBoolTensor, OneActionTensor
 
 
 class Actions(ABC):
@@ -27,7 +22,7 @@ class Actions(ABC):
     # The following class variable corresponds to $s \rightarrow s_f$ transitions
     exit_action: ClassVar[OneActionTensor]  # action to exit the environment
 
-    def __init__(self, tensor: ActionsTensor):
+    def __init__(self, tensor: BatchActionsTensor):
         """Initialize actions from a tensor.
         Args:
             tensor: tensor of actions
@@ -102,7 +97,7 @@ class Actions(ABC):
                 "extend_with_dummy_actions is only implemented for bi-dimensional actions."
             )
 
-    def compare(self, other: ActionsTensor) -> BoolTensor:
+    def compare(self, other: BatchActionsTensor) -> BatchBoolTensor:
         """Compares the actions to a tensor of actions.
         Args:
             other: tensor of actions
@@ -116,7 +111,7 @@ class Actions(ABC):
         return out
 
     @property
-    def is_dummy(self) -> BoolTensor:
+    def is_dummy(self) -> BatchBoolTensor:
         """Returns a boolean tensor indicating whether the actions are dummy actiosn."""
         dummy_actions_tensor = self.__class__.dummy_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))
@@ -124,7 +119,7 @@ class Actions(ABC):
         return self.compare(dummy_actions_tensor)
 
     @property
-    def is_exit(self) -> BoolTensor:
+    def is_exit(self) -> BatchBoolTensor:
         """Returns a boolean tensor indicating whether the actions are exit actions."""
         exit_actions_tensor = self.__class__.exit_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))

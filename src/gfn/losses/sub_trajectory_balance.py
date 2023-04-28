@@ -9,10 +9,11 @@ from gfn.estimators import LogStateFlowEstimator
 from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
 from gfn.samplers import BackwardDiscreteActionsSampler, DiscreteActionsSampler
 from gfn.typing import LossTensor
+from gfn.typing import TrajectoriesFloatTensor2D as LogPTrajectoriesTensor
 
 # Typing
-ScoresTensor = TensorType[-1, float]
-LogPTrajectoriesTensor = TensorType["max_length", "n_trajectories", float]
+ScoresTensor = TensorType[-1, float]  # TODO: What does -1 mean here? Is it 
+                                      #       equivilant to 0?
 
 
 @dataclass

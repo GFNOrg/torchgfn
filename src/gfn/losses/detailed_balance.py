@@ -10,10 +10,8 @@ from gfn.samplers.actions_samplers import (
     BackwardDiscreteActionsSampler,
     DiscreteActionsSampler,
 )
-
-# Typing
-ScoresTensor = TensorType["n_transitions", float]
-LossTensor = TensorType[0, float]
+from gfn.typing import TrajectoriesFloatTensor1D as ScoresTensor
+from gfn.typing import LossTensor
 
 
 @dataclass

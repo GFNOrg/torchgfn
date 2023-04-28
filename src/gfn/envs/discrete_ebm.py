@@ -12,7 +12,7 @@ from gfn.states import DiscreteStates, States
 from gfn.typing import (
     ForwardMasksTensor, BackwardMasksTensor, StatesFloatTensor, BatchGenericTensor)
 
-# Typing
+# Typing specific to Ising Model environment.
 IsingJTensor = TensorType["state_shape", "state_shape", torch.float]
 
 

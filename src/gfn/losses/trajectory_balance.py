@@ -5,7 +5,6 @@ and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 from dataclasses import dataclass
 
 import torch
-from torchtyping import TensorType
 
 from gfn.containers import Trajectories
 from gfn.estimators import LogZEstimator

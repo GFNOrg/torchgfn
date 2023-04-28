@@ -6,14 +6,14 @@ from torch.nn.functional import one_hot
 
 from gfn.envs.preprocessors.base import Preprocessor
 from gfn.states import States
-from gfn.typing import BatchOutputTensor
+from gfn.typing import BatchInputTensor
 
 
 class OneHotPreprocessor(Preprocessor):
     def __init__(
         self,
         n_states: int,
-        get_states_indices: Callable[[States], BatchOutputTensor],
+        get_states_indices: Callable[[States], BatchInputTensor],
     ) -> None:
         """One Hot Preprocessor for environments with enumerable states (finite number of states).
 
@@ -35,7 +35,7 @@ class KHotPreprocessor(Preprocessor):
         self,
         height: int,
         ndim: int,
-        get_states_indices: Callable[[States], BatchOutputTensor],
+        get_states_indices: Callable[[States], BatchInputTensor],
     ) -> None:
         """K Hot Preprocessor for environments with enumerable states (finite number of states) with a grid structure.
 

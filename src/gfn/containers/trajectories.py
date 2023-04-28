@@ -8,17 +8,14 @@ if TYPE_CHECKING:
     from gfn.states import States
 
 import torch
-from torchtyping import TensorType
 
 from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
-
-# Typing  --- n_transitions is an int
-Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
-FloatTensor2D = TensorType["max_length", "n_trajectories", torch.float]
-Tensor2D2 = TensorType["n_trajectories", "shape"]
-Tensor1D = TensorType["n_trajectories", torch.long]
-FloatTensor1D = TensorType["n_trajectories", torch.float]
+from gfn.typing import (
+    TrajectoriesFloatTensor2D, 
+    TrajectoriesLongTensor1D, 
+    TrajectoriesFloatTensor1D,
+)
 
 
 class Trajectories(Container):
@@ -27,10 +24,10 @@ class Trajectories(Container):
         env: Env,
         states: States | None = None,
         actions: Actions | None = None,
-        when_is_done: Tensor1D | None = None,
+        when_is_done: TrajectoriesLongTensor1D | None = None,
         is_backward: bool = False,
-        log_rewards: FloatTensor1D | None = None,
-        log_probs: FloatTensor2D | None = None,
+        log_rewards: TrajectoriesFloatTensor1D | None = None,
+        log_probs: TrajectoriesFloatTensor2D | None = None,
     ) -> None:
         """Container for complete trajectories (starting in s_0 and ending in s_f).
         Trajectories are represented as a States object with bi-dimensional batch shape.
@@ -46,10 +43,10 @@ class Trajectories(Container):
             env (Env): The environment in which the trajectories are defined.
             states (States, optional): The states of the trajectories. Defaults to None.
             actions (Actions, optional): The actions of the trajectories. Defaults to None.
-            when_is_done (Tensor1D, optional): The time step at which each trajectory ends. Defaults to None.
+            when_is_done (TrajectoriesLongTensor1D, optional): The time step at which each trajectory ends. Defaults to None.
             is_backward (bool, optional): Whether the trajectories are backward or forward. Defaults to False.
-            log_rewards (FloatTensor1D, optional): The log_rewards of the trajectories. Defaults to None.
-            log_probs (FloatTensor2D, optional): The log probabilities of the trajectories' actions. Defaults to None.
+            log_rewards (TrajectoriesFloatTensor1D, optional): The log_rewards of the trajectories. Defaults to None.
+            log_probs (TrajectoriesFloatTensor2D, optional): The log probabilities of the trajectories' actions. Defaults to None.
 
         If states is None, then the states are initialized to an empty States object, that can be populated on the fly.
         If log_rewards is None, then `env.log_reward` is used to compute the rewards, at each call of self.log_rewards
@@ -116,7 +113,7 @@ class Trajectories(Container):
         return self.states[self.when_is_done - 1, torch.arange(self.n_trajectories)]
 
     @property
-    def log_rewards(self) -> FloatTensor1D | None:
+    def log_rewards(self) -> TrajectoriesFloatTensor1D | None:
         if self._log_rewards is not None:
             assert self._log_rewards.shape == (self.n_trajectories,)
             return self._log_rewards

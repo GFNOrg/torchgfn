@@ -6,9 +6,7 @@ from torchtyping import TensorType
 
 from gfn.envs import DiscreteEnv, Env
 from gfn.states import DiscreteStates, States
-
-# Typing
-OutputTensor = TensorType["batch_shape", "output_dim", float]
+from gfn.typing import BatchOutputFloatTensor
 
 
 class FunctionEstimator(ABC):
@@ -39,7 +37,7 @@ class FunctionEstimator(ABC):
         self.preprocessor = env.preprocessor
         self.output_dim_is_checked = False
 
-    def __call__(self, states: States) -> OutputTensor:
+    def __call__(self, states: States) -> BatchOutputFloatTensor:
         out = self.module(self.preprocessor(states))
         if not self.output_dim_is_checked:
             self.check_output_dim(out)
@@ -48,7 +46,7 @@ class FunctionEstimator(ABC):
         return out
 
     @abstractmethod
-    def check_output_dim(self, module_output: OutputTensor) -> None:
+    def check_output_dim(self, module_output: BatchOutputFloatTensor) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
         pass
 
@@ -71,7 +69,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
     # TODO: make it work for continuous environments.
     """
 
-    def check_output_dim(self, module_output: OutputTensor):
+    def check_output_dim(self, module_output: BatchOutputFloatTensor):
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError(
                 "LogEdgeFlowEstimator only supports discrete environments."
@@ -85,7 +83,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
 class LogStateFlowEstimator(FunctionEstimator):
     r"""Container for estimators $s \mapsto \log F(s)$."""
 
-    def check_output_dim(self, module_output: OutputTensor):
+    def check_output_dim(self, module_output: BatchOutputFloatTensor):
         if module_output.shape[-1] != 1:
             raise ValueError(
                 f"LogStateFlowEstimator output dimension should be 1, but is {module_output.shape[-1]}."
@@ -105,7 +103,7 @@ class ProbabilityEstimator(FunctionEstimator, ABC):
 
     @abstractmethod
     def to_probability_distribution(
-        self, states: States, module_output: OutputTensor
+        self, states: States, module_output: BatchOutputFloatTensor
     ) -> Distribution:
         """Transform the output of the module into a probability distribution."""
         pass
@@ -119,7 +117,7 @@ class LogEdgeFlowProbabilityEstimator(ProbabilityEstimator, LogEdgeFlowEstimator
     {\sum_{s' \in Children(s)} F(s \rightarrow s')}$."""
 
     def to_probability_distribution(
-        self, states: DiscreteStates, module_output: OutputTensor
+        self, states: DiscreteStates, module_output: BatchOutputFloatTensor
     ) -> Distribution:
         logits = module_output
         logits[~states.forward_masks] = -float("inf")

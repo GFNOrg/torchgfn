@@ -9,7 +9,7 @@ from gfn.envs.env import Env
 from gfn.states import States
 from gfn.envs.typing import BatchFloatTensor
 
-# Typing
+# Typing specific to Box environment.
 StatesTensor = TensorType["batch_shape", 2, torch.float]
 OneActionTensor = TensorType[2]
 

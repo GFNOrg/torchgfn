@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
-from torchtyping import TensorType
 
 from gfn.casting import correct_cast
 from gfn.containers import Trajectories, Transitions
@@ -17,10 +16,9 @@ from gfn.envs import Env
 from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 from gfn.states import States
-
-# Typing
-LogPTrajectoriesTensor = TensorType["max_length", "n_trajectories", float]
-ScoresTensor = TensorType["n_trajectories", float]
+from gfn.types import TrajectoriesFloatTensor2D as LogPTrajectoriesTensor
+from gfn.types import TrajectoriesFloatTensor1D as ScoresTensor
+from gfn.types import LossTensor
 
 
 @dataclass
@@ -96,19 +94,19 @@ class Loss(ABC):
         self.parametrization = parametrization
 
     @abstractmethod
-    def __call__(self, *args, **kwargs) -> TensorType[0, float]:
+    def __call__(self, *args, **kwargs) -> LossTensor:
         pass
 
 
 class EdgeDecomposableLoss(Loss, ABC):
     @abstractmethod
-    def __call__(self, edges: Transitions) -> TensorType[0, float]:
+    def __call__(self, edges: Transitions) -> LossTensor:
         pass
 
 
 class StateDecomposableLoss(Loss, ABC):
     @abstractmethod
-    def __call__(self, states_tuple: Tuple[States, States]) -> TensorType[0, float]:
+    def __call__(self, states_tuple: Tuple[States, States]) -> LossTensor:
         """Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a tuple of states,
         the first one being the internal states of the trajectories (i.e. non-terminal states), and the second one
         being the terminal states of the trajectories. If these two are not handled differently, then they should be
@@ -222,5 +220,5 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         )
 
     @abstractmethod
-    def __call__(self, trajectories: Trajectories) -> TensorType[0, float]:
+    def __call__(self, trajectories: Trajectories) -> LossTensor:
         pass
