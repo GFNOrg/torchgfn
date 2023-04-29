@@ -5,6 +5,7 @@ from math import prod
 from typing import ClassVar, Sequence
 
 import torch
+
 from gfn.typing import BatchActionsTensor, BatchBoolTensor, OneActionTensor
 
 

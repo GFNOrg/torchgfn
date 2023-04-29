@@ -36,7 +36,9 @@ class IdentityPreprocessor(Preprocessor):
 class EnumPreprocessor(Preprocessor):
     "Preprocessor applicable to environments with discrete states."
 
-    def __init__(self, get_states_indices: Callable[[States], BatchInputTensor]) -> None:
+    def __init__(
+        self, get_states_indices: Callable[[States], BatchInputTensor]
+    ) -> None:
         """Preprocessor for environments with enumerable states (finite number of states).
         Each state is represented by a unique integer (>= 0) index.
 

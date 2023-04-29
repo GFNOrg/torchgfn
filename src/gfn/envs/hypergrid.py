@@ -16,11 +16,11 @@ from gfn.envs.preprocessors import (
 )
 from gfn.states import DiscreteStates
 from gfn.typing import (
-    ForwardMasksTensor,
     BackwardMasksTensor,
-    StatesFloatTensor,
-    BatchTensorLong,
     BatchTensorFloat,
+    BatchTensorLong,
+    ForwardMasksTensor,
+    StatesFloatTensor,
 )
 
 preprocessors_dict = {
@@ -126,7 +126,9 @@ class HyperGrid(DiscreteEnv):
 
         return HyperGridStates
 
-    def maskless_step(self, states: DiscreteStates, actions: Actions) -> StatesFloatTensor:
+    def maskless_step(
+        self, states: DiscreteStates, actions: Actions
+    ) -> StatesFloatTensor:
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
         return new_states_tensor
 

@@ -10,8 +10,8 @@ from gfn.estimators import LogEdgeFlowEstimator
 from gfn.losses.base import Parametrization, StateDecomposableLoss
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 from gfn.states import States
-from gfn.typing import TrajectoriesFloatTensor1D as ScoresTensor
 from gfn.typing import LossTensor
+from gfn.typing import TrajectoriesFloatTensor1D as ScoresTensor
 
 
 @dataclass

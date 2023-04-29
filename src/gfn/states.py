@@ -6,14 +6,10 @@ from typing import ClassVar, Optional, Sequence, cast
 
 import torch
 
-from gfn.typing import (
-    ForwardMasksTensor, 
-    BackwardMasksTensor, 
-    StatesFloatTensor, 
-    OneStateTensor
-)
+from gfn.typing import BackwardMasksTensor
 from gfn.typing import BatchBoolTensor as DonesTensor
 from gfn.typing import BatchFloatTensor as RewardsTensor
+from gfn.typing import ForwardMasksTensor, OneStateTensor, StatesFloatTensor
 
 
 class States(ABC):

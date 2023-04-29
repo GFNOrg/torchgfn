@@ -10,7 +10,11 @@ from gfn.actions import Actions
 from gfn.envs.env import DiscreteEnv
 from gfn.states import DiscreteStates, States
 from gfn.typing import (
-    ForwardMasksTensor, BackwardMasksTensor, StatesFloatTensor, BatchGenericTensor)
+    BackwardMasksTensor,
+    BatchGenericTensor,
+    ForwardMasksTensor,
+    StatesFloatTensor,
+)
 
 # Typing specific to Ising Model environment.
 IsingJTensor = TensorType["state_shape", "state_shape", torch.float]
@@ -155,7 +159,9 @@ class DiscreteEBMEnv(DiscreteEnv):
         )
         return states.tensor
 
-    def maskless_backward_step(self, states: States, actions: Actions) -> StatesFloatTensor:
+    def maskless_backward_step(
+        self, states: States, actions: Actions
+    ) -> StatesFloatTensor:
         # In this env, states are n-dim vectors. s0 is empty (represented as -1),
         # so s0=[-1, -1, ..., -1], each action is replacing a -1 with either a
         # 0 or 1. Action i in [0, ndim-1] os replacing s[i] with 0, whereas
@@ -179,7 +185,9 @@ class DiscreteEBMEnv(DiscreteEnv):
         canonical_base = 3 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw + 1).mul(canonical_base).sum(-1).long()
 
-    def get_terminating_states_indices(self, states: DiscreteStates) -> BatchGenericTensor:
+    def get_terminating_states_indices(
+        self, states: DiscreteStates
+    ) -> BatchGenericTensor:
         states_raw = states.tensor
         canonical_base = 2 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw).mul(canonical_base).sum(-1).long()

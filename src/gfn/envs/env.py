@@ -14,7 +14,6 @@ from gfn.typing import (
     BatchFloatTensor,
     BatchLongTensor,
     OneStateTensor,
-    OneStateTensor,
     PmfTensor,
     StatesFloatTensor,
 )
@@ -110,7 +109,9 @@ class Env(ABC):
         pass
 
     @abstractmethod
-    def maskless_backward_step(self, states: States, actions: Actions) -> StatesFloatTensor:
+    def maskless_backward_step(
+        self, states: States, actions: Actions
+    ) -> StatesFloatTensor:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
         """

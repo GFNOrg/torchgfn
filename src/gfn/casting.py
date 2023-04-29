@@ -1,7 +1,7 @@
 # TODO: remove this file eventually
 from typing import cast
 
-from gfn.typing import ForwardMasksTensor, BackwardMasksTensor
+from gfn.typing import BackwardMasksTensor, ForwardMasksTensor
 
 
 def correct_cast(

@@ -9,8 +9,8 @@ from gfn.samplers.actions_samplers import (
     BackwardDiscreteActionsSampler,
     DiscreteActionsSampler,
 )
-from gfn.typing import TrajectoriesFloatTensor1D as ScoresTensor
 from gfn.typing import LossTensor
+from gfn.typing import TrajectoriesFloatTensor1D as ScoresTensor
 
 
 @dataclass

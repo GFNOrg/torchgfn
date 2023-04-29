@@ -9,7 +9,7 @@ from gfn.casting import correct_cast
 from gfn.estimators import LogEdgeFlowEstimator, ProbabilityEstimator
 from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
 from gfn.states import States
-from gfn.transitions import BatchLongTensor, BatchFloatTensor, BatchActionsTensor
+from gfn.transitions import BatchActionsTensor, BatchFloatTensor, BatchLongTensor
 
 
 class ActionsSampler:

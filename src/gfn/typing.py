@@ -1,5 +1,5 @@
-from torchtyping import TensorType
 import torch
+from torchtyping import TensorType
 
 # Types specific to the handling of actions masking.
 ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
@@ -29,8 +29,10 @@ BatchActionsTensor = TensorType["batch_shape", "action_shape"]
 BatchStepsTensor = TensorType["batch_size", "n_steps"]  # TODO: remove? unusued?
 
 # Types specific to environment preprocessing.
-BatchInputTensor = TensorType["batch_shape", "input_dim"]  # Note: Should we specify precision?
-BatchInputFloatTensor = TensorType["batch_shape", "input_dim", float]  
+BatchInputTensor = TensorType[
+    "batch_shape", "input_dim"
+]  # Note: Should we specify precision?
+BatchInputFloatTensor = TensorType["batch_shape", "input_dim", float]
 BatchOutputFloatTensor = TensorType["batch_shape", "output_dim", float]
 
 # Types specific to handling single states/actions.
@@ -50,9 +52,9 @@ TrajectoriesFloatTensor2D = TensorType["max_length", "n_trajectories", torch.flo
 TrajectoriesLongTensor2D = TensorType["max_length", "n_trajectories", torch.long]
 
 # To Remove:
-#TrajectoriesTensor2D2 = TensorType["n_trajectories", "shape"]
-#TrajectoriesTensor1D = TensorType["n_trajectories", torch.long]
-#TrajectoriesFloatTensor1D = TensorType["n_trajectories", torch.float]
+# TrajectoriesTensor2D2 = TensorType["n_trajectories", "shape"]
+# TrajectoriesTensor1D = TensorType["n_trajectories", torch.long]
+# TrajectoriesFloatTensor1D = TensorType["n_trajectories", torch.float]
 
-#Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
-#Tensor2D2 = TensorType["n_trajectories", "shape"]
+# Tensor2D = TensorType["max_length", "n_trajectories", torch.long]
+# Tensor2D2 = TensorType["n_trajectories", "shape"]

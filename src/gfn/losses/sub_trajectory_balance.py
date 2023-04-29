@@ -12,8 +12,8 @@ from gfn.typing import LossTensor
 from gfn.typing import TrajectoriesFloatTensor2D as LogPTrajectoriesTensor
 
 # Typing
-ScoresTensor = TensorType[-1, float]  # TODO: What does -1 mean here? Is it 
-                                      #       equivilant to 0?
+ScoresTensor = TensorType[-1, float]  # TODO: What does -1 mean here? Is it
+#       equivilant to 0?
 
 
 @dataclass

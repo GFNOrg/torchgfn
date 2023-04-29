@@ -16,9 +16,9 @@ from gfn.envs import Env
 from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 from gfn.states import States
-from gfn.types import TrajectoriesFloatTensor2D as LogPTrajectoriesTensor
-from gfn.types import TrajectoriesFloatTensor1D as ScoresTensor
 from gfn.types import LossTensor
+from gfn.types import TrajectoriesFloatTensor1D as ScoresTensor
+from gfn.types import TrajectoriesFloatTensor2D as LogPTrajectoriesTensor
 
 
 @dataclass

@@ -6,10 +6,10 @@ from gfn.containers import Trajectories
 from gfn.envs import Env
 from gfn.samplers import ActionsSampler, BackwardActionsSampler
 from gfn.states import States
-from gfn.typing import TrajectoriesStatesTensor
-from gfn.typing import TrajectoriesLongTensor1D as ActionsTensor
-from gfn.typing import TrajectoriesFloatTensor1D as LogProbsTensor
 from gfn.typing import TrajectoriesBoolTensor1D as DonesTensor
+from gfn.typing import TrajectoriesFloatTensor1D as LogProbsTensor
+from gfn.typing import TrajectoriesLongTensor1D as ActionsTensor
+from gfn.typing import TrajectoriesStatesTensor
 
 
 class TrajectoriesSampler:

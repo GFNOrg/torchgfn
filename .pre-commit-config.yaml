@@ -18,7 +18,7 @@ repos:
         files: "\\.(py)$"
         args: [--settings-path=pyproject.toml]
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.304
+    rev: v1.1.305
     hooks:
       - id: pyright
         name: pyright
