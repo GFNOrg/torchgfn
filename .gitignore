@@ -76,8 +76,6 @@ docs/_build/
 target/
 
 # Jupyter Notebook
-.ipynb_checkpoints
-
 # IPython
 profile_default/
 ipython_config.py
@@ -179,8 +177,6 @@ wandb/
 *.out
 
 scripts.py
-
-*.ipynb
 
 models/
 
