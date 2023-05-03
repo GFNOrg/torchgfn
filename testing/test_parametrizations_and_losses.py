@@ -3,7 +3,7 @@ import torch
 
 from gfn.envs import DiscreteEBMEnv, HyperGrid
 from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
-from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
+from gfn.utils import DiscretePBEstimator, DiscretePFEstimator
 from gfn.losses import (
     DBParametrization,
     DetailedBalance,
