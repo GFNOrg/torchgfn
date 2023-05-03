@@ -103,13 +103,13 @@ class QuarterCircle(Distribution):
         else:
             sampled_next_states = self.centers - sampled_actions
         # TODO: do we need to return actions or next states here? -- logprobs are ok, but the previous 4 lines might not be
-        return sampled_next_states
+        return sampled_actions
 
-    def log_prob(self, sampled_next_states):
-        if self.northeastern:
-            sampled_actions = sampled_next_states - self.centers
-        else:
-            sampled_actions = self.centers - sampled_next_states
+    def log_prob(self, sampled_actions):
+        # if self.northeastern:
+        #     sampled_actions = sampled_next_states - self.centers
+        # else:
+        #     sampled_actions = self.centers - sampled_next_states
 
         sampled_angles = torch.arccos(sampled_actions[:, 0] / self.delta)
 
@@ -212,8 +212,45 @@ class QuarterCircleWithExit(Distribution):
     the `exit_action` [-inf, -inf] is sampled. The `log_prob` function needs to change accordingly
     """
 
-    # TODO
-    pass
+    def __init__(
+        self,
+        delta: float,
+        centers: TType["n_states", 2],
+        exit_probability: TType["n_states"],
+        mixture_logits: TType["n_states", "n_components"],
+        alpha: TType["n_states", "n_components"],
+        beta: TType["n_states", "n_components"],
+    ):
+        self.dist_without_exit = QuarterCircle(
+            delta=delta,
+            northeastern=True,
+            centers=centers,
+            mixture_logits=mixture_logits,
+            alpha=alpha,
+            beta=beta,
+        )
+        self.exit_probability = exit_probability
+        self.exit = torch.bernoulli(self.exit_proba).bool()
+        self.exit_action = torch.FloatTensor(
+            [-float("inf"), -float("inf")], device=centers.device
+        )
+
+        # exit probability should be 1 when torch.norm(1 - states, dim=1) <= env.delta or when torch.any(states >= 1 - env.epsilon, dim=-1)
+        # TODO: check that here or elsewhere ?
+
+    def rsample(self, sample_shape=()):
+        actions = self.dist_without_exit.rsample(sample_shape)
+        actions[self.exit] = self.exit_action
+
+        return actions
+
+    def log_prob(self, sampled_actions):
+        logprobs = torch.full_like(self.exit_probability, fill_value=-float("inf"))
+        logprobs[~self.exit] = self.dist_without_exit.log_prob(
+            sampled_actions[~self.exit]
+        )
+        logprobs[self.exit] = logprobs[self.exit] + torch.log(1 - self.exit_probability)
+        return logprobs
 
 
 class BoxForwardDist(Distribution):
@@ -222,5 +259,5 @@ class BoxForwardDist(Distribution):
     we use QuarterCircleWithExit(northeaster=True). Not that `centers` represents a batch of states,
     some of which can be [0, 0]."""
 
-    # TODO
+    # TODO: do we really need this ? Or should the estimator handle the mapping ?
     pass
