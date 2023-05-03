@@ -6,7 +6,7 @@ import torch
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.envs import DiscreteEBMEnv, HyperGrid
-from gfn.examples import DiscretePBEstimator, DiscretePFEstimator, NeuralNet
+from gfn.utils import DiscretePBEstimator, DiscretePFEstimator, NeuralNet
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 
 

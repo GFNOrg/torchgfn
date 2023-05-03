@@ -50,33 +50,33 @@ python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss
 
 ### Example, in a few lines
 
-This example requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]`.
+This example, which shows how to use the library for a simple discrete environment, requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]`.
 
 ```python
 import torch
 from tqdm import tqdm
 
-from gfn import DiscretePBEstimator, DiscretePFEstimator, LogZEstimator
 from gfn.envs import HyperGrid
+from gfn.estimators import LogZEstimator
 from gfn.losses import TBParametrization, TrajectoryBalance
-from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
+from gfn.utils import NeuralNet, DiscretePFEstimator, DiscretePBEstimator
 
 if __name__ == "__main__":
 
     env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
-    logit_PF = DiscretePFEstimator(env=env, module_name="NeuralNet")
-    logit_PB = DiscretePBEstimator(
-        env=env,
-        module_name="NeuralNet",
-        torso=logit_PF.module.torso,  # To share parameters between PF and PB
-    )
+    module_PF = NeuralNet(input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions)
+    module_PB = NeuralNet(input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions - 1,     torso=module_PF.torso)
+
+    logit_PF = DiscretePFEstimator(env=env, module=module_PF)
+    logit_PB = DiscretePBEstimator(env=env, module=module_PB)
     logZ = LogZEstimator(torch.tensor(0.0))
 
     parametrization = TBParametrization(logit_PF, logit_PB, logZ)
 
-    actions_sampler = DiscreteActionsSampler(estimator=logit_PF)
-    trajectories_sampler = TrajectoriesSampler(env=env, actions_sampler=actions_sampler)
+    actions_sampler = ActionsSampler(estimator=logit_PF)
+    trajectories_sampler = TrajectoriesSampler(actions_sampler=actions_sampler)
 
     loss_fn = TrajectoryBalance(parametrization=parametrization)
 
