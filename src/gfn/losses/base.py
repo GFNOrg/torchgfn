@@ -14,7 +14,7 @@ from gfn.distributions import (
     TrajectoryDistribution,
 )
 from gfn.envs import Env
-from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
+from gfn.utils import DiscretePBEstimator, DiscretePFEstimator
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
