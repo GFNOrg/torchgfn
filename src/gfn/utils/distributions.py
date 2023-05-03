@@ -9,7 +9,12 @@ class UnsqueezedCategorical(Categorical):
     are unsqueezed to be of shape (batch_size, 1) instead of (batch_size,).
 
     This is used in `DiscretePFEstimator` and `DiscretePBEstimator`, which in turn are used in
-    `ActionsSampler`."""
+    `ActionsSampler`.
+
+    "Why do we need this?" one might wonder. The discrete environment implement a `DiscreteActions` class
+    (see `gfn/envs/env.py::DiscreteEnv) with an `action_shape = (1,)`. This means, according to
+    `gfn/actions.py::Actions`, that tensors representing actions in discrete environments should be of shape
+    (batch_shape, 1)"""
 
     def sample(self, sample_shape=torch.Size()):
         return super().sample(sample_shape).unsqueeze(-1)
