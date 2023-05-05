@@ -1,6 +1,6 @@
 import torch
-from torch.distributions import Categorical, Distribution
 import torch.nn as nn
+from torch.distributions import Categorical, Distribution
 from torchtyping import TensorType
 
 from gfn.envs import DiscreteEnv, Env
