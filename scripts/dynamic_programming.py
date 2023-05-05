@@ -12,9 +12,8 @@ from simple_parsing import ArgumentParser
 from gfn.casting import correct_cast
 from gfn.estimators import LogEdgeFlowEstimator
 from gfn.losses import FMParametrization
-from gfn.modules import Tabular, Uniform
 from gfn.utils import validate
-from gfn.utils.modules import Tabular
+from gfn.utils.modules import Tabular, Uniform
 
 parser = ArgumentParser()
 

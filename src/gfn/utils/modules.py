@@ -87,3 +87,19 @@ class Tabular(nn.Module):
         assert preprocessed_states.dtype == torch.long
         outputs = self.table[preprocessed_states.squeeze(-1)]
         return outputs
+
+
+class Uniform(nn.Module):
+    def __init__(self, output_dim: int) -> None:
+        """Implements a zero function approximator, i.e. a function that always outputs 0.
+
+        Args:
+            output_dim (int): Output dimension.
+        """
+        self.output_dim = output_dim
+
+    def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
+        out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
+            preprocessed_states.device
+        )
+        return out
