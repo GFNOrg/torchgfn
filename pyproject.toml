@@ -6,7 +6,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "torchgfn"
 packages = [{include = "gfn", from = "src"}]
-version = "0.1.1"
+version = "0.1.2"
 description = "A torch inplementation of GFlowNets"
 authors = ["Salem Lahou <salemlahlou9@gmail.com>", "Joseph Viviano <joseph@viviano.ca>", "Victor Schmidt <vsch@pm.me>"]
 license = "MIT"
@@ -25,25 +25,24 @@ numpy = ">=1.21.2"
 torch = ">=1.9.0"
 torchtyping = ">=0.1.4"
 
-
-[tool.poetry.group.scripts.dependencies] 
-simple-parsing = "0.0.20"
-tqdm = "*"
-wandb = "*"
-
-
-[tool.poetry.group.dev.dependencies] 
-black = "22.3.0"
-myst-parser = "0.18.1"
-pre-commit = "*"
-pytest = "*"
-renku-sphinx-theme = "*"
-sphinx_rtd_theme = "1.1.1"
-sphinx-autoapi = "2.0.0"
-sphinx-math-dollar = "1.2.1"
-sphinx = "5.3.0"
-tox = "*"
-
+[tool.poetry.extras]
+dev = [
+    "pre-commit",
+    "pytest",
+    "renku-sphinx-theme",
+    "sphinx_rtd_theme",
+    "sphinx-autoapi",
+    "sphinx-math-dollar",
+    "sphinx",
+    "tox",
+]
+scripts = [
+    "tqdm",
+    "wandb",
+]
+"black==22.3.0"
+"myst-parser==0.18.1",
+"simple-parsing==0.0.20",
 
 [project.urls]
 "Homepage" = "https://gfn.readthedocs.io/en/latest/"
