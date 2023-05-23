@@ -15,7 +15,7 @@ packages = [
 
 [project]
 name = "gfn"
-version = "0.1.0"
+version = "0.1.1"
 
 authors = [
   { name="Salem Lahou", email="salemlahlou9@gmail.com" },
