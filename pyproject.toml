@@ -53,7 +53,7 @@ black = "22.3.0"
 myst-parser = "0.18.1"
 pre-commit = "*"
 pytest = "*"
-renku-sphinx-theme",
+renku-sphinx-theme = "*"
 sphinx_rtd_theme = "1.1.1"
 sphinx-autoapi = "2.0.0"
 sphinx-math-dollar = "1.2.1"
