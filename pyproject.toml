@@ -33,3 +33,24 @@ reportUnboundVariable = "warning"
 reportGeneralTypeIssues ="none"
 
 [tool.pytest.ini_options]
+
+[tool.poetry]
+name = "torchgfn"
+version = "0.1.0"
+description = "A torch inplementation of GFlowNets"
+authors = ["Salem Lahou <salemlahlou9@gmail.com>, Joseph Viviano <joseph@viviano.ca>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+einops = "^0.6.1"
+gymnasium = "^0.28.1"
+numpy = "torch"
+
+[tool.poetry.group.dev.dependencies]
+torchtyping = "^0.1.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
