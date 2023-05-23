@@ -33,13 +33,13 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-dependencies = [
-    "einops",
-    "gymnasium",
-    "numpy",
-    "torch",
-    "torchtyping",
-]
+[tool.poetry.dependencies]
+python = "^3.10"
+einops = ">=0.6.1"
+gymnasium = ">=0.28.1"
+numpy = ">=1.21.2"
+torch = ">=1.9.0"
+torchtyping = ">=0.1.4"
 
 
 [tool.poetry.group.scripts.dependencies] 
@@ -128,16 +128,6 @@ description = "A torch inplementation of GFlowNets"
 authors = ["Salem Lahou <salemlahlou9@gmail.com>", "Joseph Viviano <joseph@viviano.ca>", "Victor Schmidt <vsch@pm.me>"]
 license = "MIT"
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.10"
-einops = ">=0.6.1"
-gymnasium = ">=0.28.1"
-numpy = ">=1.21.2"
-torch = ">=1.9.0"
-
-[tool.poetry.group.dev.dependencies]
-torchtyping = ">=0.1.4"
 
 
 # Black-compatibility enforced.
