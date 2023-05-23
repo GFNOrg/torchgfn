@@ -1,3 +1,0 @@
-tqdm
-simple-parsing==0.0.20
-wandb
