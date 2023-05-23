@@ -42,25 +42,24 @@ dependencies = [
 ]
 
 
-[project.optional-dependencies]
-scripts = [
-    "simple-parsing==0.0.20",
-    "tqdm",
-    "wandb",
-]
+[tool.poetry.group.scripts.dependencies] 
+simple-parsing = "0.0.20"
+tqdm = "*"
+wandb = "*"
 
-dev = [
-    "black==22.3.0",
-    "myst-parser==0.18.1",
-    "pre-commit",
-    "pytest",
-    "renku-sphinx-theme",
-    "sphinx_rtd_theme==1.1.1",
-    "sphinx-autoapi==2.0.0",
-    "sphinx-math-dollar==1.2.1",
-    "sphinx==5.3.0",
-    "tox",
-]
+
+[tool.poetry.group.dev.dependencies] 
+black = "22.3.0"
+myst-parser = "0.18.1"
+pre-commit = "*"
+pytest = "*"
+renku-sphinx-theme",
+sphinx_rtd_theme = "1.1.1"
+sphinx-autoapi = "2.0.0"
+sphinx-math-dollar = "1.2.1"
+sphinx = "5.3.0"
+tox = "*"
+
 
 [project.urls]
 "Homepage" = "https://gfn.readthedocs.io/en/latest/"
