@@ -28,13 +28,13 @@ git clone https://github.com/saleml/gfn.git
 conda create -n gfn python=3.10
 conda activate gfn
 cd gfn
-pip install -e .
+pip install .
 ```
 
 Optionally, to run scripts, and for [wandb](https://wandb.ai) logging
 
 ```bash
-pip install -r requirements.txt
+pip install .[scripts]
 wandb login
 ```
 
@@ -53,7 +53,7 @@ python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss
 
 ### Example, in a few lines
 
-(⬇️ This example require the [`tqdm`](https://github.com/tqdm/tqdm) package to run. `pip install tqdm` or install all extra requirements with `pip install -r requirements.txt`)
+(⬇️ This example require the [`tqdm`](https://github.com/tqdm/tqdm) package to run. `pip install tqdm` or install all extra requirements with `pip install .[scripts]`)
 
 ```python
 import torch
@@ -110,7 +110,7 @@ if __name__ == "__main__":
 Before the first commit:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install .[dev]
 pre-commit install
 pre-commit run --all-files
 ```
