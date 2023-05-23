@@ -13,12 +13,6 @@ license = "MIT"
 readme = "README.md"
 
 
-authors = [
-  { name="Salem Lahou", email="salemlahlou9@gmail.com" },
-  { name="Joseph Viviano", email="joseph@viviano.ca" },
-  { name="Victor Schmidt", email="schmidtv@mila.quebec" },
-]
-
 description = "A Python package for GFlowNets"
 readme = "README.md"
 requires-python = ">=3.10"
