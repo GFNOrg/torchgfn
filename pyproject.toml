@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -118,6 +118,28 @@ reportUntypedFunctionDecorator = "none"
 reportMissingTypeStubs = false
 reportUnboundVariable = "warning"
 reportGeneralTypeIssues = "none"
+
+[tool.pytest.ini_options]
+
+[tool.poetry]
+name = "torchgfn"
+packages = [{include = "gfn", from = "src"}]
+version = "0.1.0"
+description = "A torch inplementation of GFlowNets"
+authors = ["Salem Lahou <salemlahlou9@gmail.com>", "Joseph Viviano <joseph@viviano.ca>", "Victor Schmidt <vsch@pm.me>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+einops = ">=0.6.1"
+gymnasium = ">=0.28.1"
+numpy = ">=1.21.2"
+torch = ">=1.9.0"
+
+[tool.poetry.group.dev.dependencies]
+torchtyping = ">=0.1.4"
+
 
 # Black-compatibility enforced.
 [tool.isort]
