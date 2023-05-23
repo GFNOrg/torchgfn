@@ -30,7 +30,7 @@ class BaseOptimConfig(JsonSerializable, ABC):
                 "lr": self.lr,
             }
         ]
-        if "logZ" in parametrization.parameters:
+        if any(["logZ" in p for p in  parametrization.parameters.keys()]):
             params.append(
                 {
                     "params": [
