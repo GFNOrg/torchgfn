@@ -11,12 +11,6 @@ description = "A torch inplementation of GFlowNets"
 authors = ["Salem Lahou <salemlahlou9@gmail.com>", "Joseph Viviano <joseph@viviano.ca>", "Victor Schmidt <vsch@pm.me>"]
 license = "MIT"
 readme = "README.md"
-
-
-description = "A Python package for GFlowNets"
-readme = "README.md"
-requires-python = ">=3.10"
-
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
