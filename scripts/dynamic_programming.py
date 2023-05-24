@@ -30,14 +30,6 @@ if __name__ == "__main__":
 
     config = load_config(parser)
 
-    torch.manual_seed(config["seed"])
-    if config["no_cuda"]:
-        device_str = "cpu"
-    else:
-        device_str = "cuda" if torch.cuda.is_available() else "cpu"
-
-    config["device"] = device_str
-
     env = make_env(config)
 
     F_edge = torch.zeros(env.n_states, env.n_actions)
