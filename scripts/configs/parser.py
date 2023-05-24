@@ -85,9 +85,20 @@ def create_dict_from_args(args: list, sep: str = "."):
     Keys in different dictionary levels are separated by sep.
     """
     return_dict = {}
-    for arg in args:
-        arg = arg.strip("--")
-        parts = arg.split("=") if "=" in arg else (arg, "True")
+    ignore_next = False
+    for a, arg in enumerate(args):
+        if ignore_next:
+            ignore_next = False
+            continue
+        arg = arg.strip("-").replace("-", "_")
+        if "=" in arg:
+            parts = arg.split("=")
+        else:
+            if a == len(args) - 1 or args[a + 1].startswith("--"):
+                parts = [arg, True]
+            else:
+                parts = [arg, args[a + 1]]
+                ignore_next = True
         if len(parts) == 2:
             keys_concat, val = parts
         elif len(parts) > 2:
