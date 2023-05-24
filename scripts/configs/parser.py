@@ -1,4 +1,5 @@
 import ast
+import collections
 from argparse import ArgumentParser
 from copy import deepcopy
 from os.path import expandvars
@@ -20,9 +21,6 @@ def resolve(path: Union[str, Path]) -> Path:
         The resolved path.
     """
     return Path(expandvars(path)).expanduser().resolve()
-
-
-import collections
 
 
 def update(orig_dict: dict, new_dict: dict) -> dict:
