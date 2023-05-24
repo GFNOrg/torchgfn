@@ -1,15 +1,14 @@
 from dataclasses import dataclass
 from typing import Tuple
 
-from simple_parsing.helpers import JsonSerializable
-
+import inspect
 from gfn.envs import Env
 from gfn.losses import FMParametrization, Parametrization, PFBasedParametrization
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 
 
 @dataclass
-class SamplerConfig(JsonSerializable):
+class SamplerConfig:
     temperature: float = 1.0
     sf_bias: float = 0.0
     epsilon: float = 0.0
@@ -40,3 +39,17 @@ class SamplerConfig(JsonSerializable):
         )
 
         return trajectories_sampler, on_policy
+
+
+def make_sampler(
+    config: dict, env: Env, parametrization: Parametrization
+) -> Tuple[TrajectoriesSampler, bool]:
+    name = config["sampler"]["name"]
+    if not name:
+        sampler_class = SamplerConfig
+    else:
+        raise ValueError("Invalid sampler name: {}".format(name))
+
+    args = inspect.getfullargspec(sampler_class.__init__).args
+    sampler_config = {k: v for k, v in config["sampler"].items() if k in args}
+    return sampler_class(**sampler_config).parse(env, parametrization)
