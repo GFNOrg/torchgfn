@@ -94,7 +94,8 @@ class Uniform(nn.Module):
         """Implements a zero function approximator, i.e. a function that always outputs 0.
 
         Args:
-            output_dim (int): Output dimension.
+            output_dim (int): Output dimension. This is typically n_actions if it implements
+                a Uniform PF, or n_actions-1 if it implements a Uniform PB.
         """
         self.output_dim = output_dim
 
