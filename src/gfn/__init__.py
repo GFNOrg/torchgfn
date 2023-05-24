@@ -5,3 +5,7 @@ from .estimators import (
     LogStateFlowEstimator,
     LogZEstimator,
 )
+
+import importlib.metadata as met
+
+__version__ = met.version("gfn")
