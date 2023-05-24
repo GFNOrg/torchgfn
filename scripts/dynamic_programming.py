@@ -5,17 +5,16 @@ trivially be extended to other P_B manually specified. Only discrete environment
 DO NOT USE FOR LARGE ENVIRONMENTS !
 """
 
+from argparse import ArgumentParser
+
 import torch
+from configs import load_config, make_env
 
 from gfn.containers.states import correct_cast
 from gfn.estimators import LogEdgeFlowEstimator
 from gfn.losses import FMParametrization
 from gfn.modules import Tabular, Uniform
 from gfn.utils import validate
-
-from argparse import ArgumentParser
-from configs import load_config, make_env, make_loss, make_optim, make_sampler
-
 
 if __name__ == "__main__":
     parser = ArgumentParser()
