@@ -1,3 +1,3 @@
 import importlib.metadata as met
 
-___version__ = met.version("gfn")
+__version__ = met.version("gfn")
