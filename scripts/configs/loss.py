@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Tuple, Literal
 import inspect
 
@@ -50,7 +50,7 @@ class BaseLossConfig(ABC):
 
 @dataclass
 class FMLossConfig(BaseLossConfig):
-    logF_edge: GFNModuleConfig = GFNModuleConfig()
+    logF_edge: GFNModuleConfig = field(default_factory=GFNModuleConfig)
     alpha: float = 1.0
 
     def parse(
@@ -70,8 +70,8 @@ class FMLossConfig(BaseLossConfig):
 
 @dataclass
 class PFBasedLossConfig(BaseLossConfig, ABC):
-    logit_PF: GFNModuleConfig = GFNModuleConfig()
-    logit_PB: GFNModuleConfig = GFNModuleConfig()
+    logit_PF: GFNModuleConfig = field(default_factory=GFNModuleConfig)
+    logit_PB: GFNModuleConfig = field(default_factory=GFNModuleConfig)
     tied: bool = True
 
     def get_estimators(
@@ -96,7 +96,7 @@ class PFBasedLossConfig(BaseLossConfig, ABC):
 
 @dataclass
 class StateFlowBasedLossConfig(PFBasedLossConfig, ABC):
-    logF_state: GFNModuleConfig = GFNModuleConfig()
+    logF_state: GFNModuleConfig = field(default_factory=GFNModuleConfig)
 
     def get_estimators(
         self,
