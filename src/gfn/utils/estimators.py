@@ -87,15 +87,3 @@ class DiscretePBEstimator(ProbabilityEstimator):
         logits[~states.backward_masks] = -float("inf")
 
         return UnsqueezedCategorical(logits=logits)
-
-
-class BoxPFEStimator(ProbabilityEstimator):
-    r"""Estimator for P_F for the Box environment. Uses the BoxForwardDist distribution"""
-    # TODO
-    pass
-
-
-class BoxPBEstimator(ProbabilityEstimator):
-    r"""Estimator for P_B for the Box environment. Uses the QuarterCircle(northeastern=False) distribution"""
-    # TODO
-    pass
