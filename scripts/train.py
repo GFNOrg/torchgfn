@@ -6,7 +6,7 @@ from simple_parsing.helpers.serialization import encode
 from tqdm import tqdm, trange
 
 from gfn.containers.replay_buffer import ReplayBuffer
-from gfn.utils import trajectories_to_training_samples, validate
+from gfn.utils.common import trajectories_to_training_samples, validate
 
 parser = ArgumentParser()
 
