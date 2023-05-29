@@ -23,20 +23,28 @@
 
 The codebase requires python >= 3.10
 
+To install the latest stable version:
+
+```bash
+pip install torchgfn
+```
+
+Optionally, to run scripts:
+
+```bash
+pip install torchgfn[scripts]
+```
+
+To install the cutting edge version (from the `main` branch):
+
 ```bash
 git clone https://github.com/saleml/gfn.git
-conda create -n gfn python=3.10
+conda create -n gfn python=3.11
 conda activate gfn
 cd gfn
 pip install .
 ```
 
-Optionally, to run scripts, and for [wandb](https://wandb.ai) logging
-
-```bash
-pip install .[scripts]
-wandb login
-```
 
 ## About this repo
 
