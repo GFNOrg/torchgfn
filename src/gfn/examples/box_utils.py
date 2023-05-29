@@ -70,8 +70,8 @@ class QuarterCircle(Distribution):
 
         return min_angles, max_angles
 
-    def rsample(self, sample_shape=()):
-        base_01_samples = self.base_dist.rsample(sample_shape=sample_shape)
+    def sample(self, sample_shape=()):
+        base_01_samples = self.base_dist.sample(sample_shape=sample_shape)
 
         sampled_angles = (
             self.min_angles + (self.max_angles - self.min_angles) * base_01_samples
@@ -80,7 +80,7 @@ class QuarterCircle(Distribution):
 
         sampled_actions = self.delta * torch.stack(
             [torch.cos(sampled_angles), torch.sin(sampled_angles)],
-            dim=1,
+            dim=-1,
         )
 
         if self.northeastern:
@@ -96,7 +96,7 @@ class QuarterCircle(Distribution):
         # else:
         #     sampled_actions = self.centers - sampled_next_states
 
-        sampled_angles = torch.arccos(sampled_actions[:, 0] / self.delta)
+        sampled_angles = torch.arccos(sampled_actions[..., 0] / self.delta)
 
         sampled_angles = sampled_angles / (torch.pi / 2)
 
@@ -153,11 +153,11 @@ class QuarterDisk(Distribution):
             Beta(alpha_theta, beta_theta),
         )
 
-    def rsample(self, sample_shape=()):
-        base_r_01_samples = self.base_r_dist.rsample(sample_shape=sample_shape)
-        base_theta_01_samples = self.base_theta_dist.rsample(sample_shape=sample_shape)
+    def sample(self, sample_shape=()):
+        base_r_01_samples = self.base_r_dist.sample(sample_shape=sample_shape)
+        base_theta_01_samples = self.base_theta_dist.sample(sample_shape=sample_shape)
 
-        sampled_actions = (
+        sampled_actions = self.delta * (
             torch.stack(
                 [
                     base_r_01_samples
@@ -165,9 +165,8 @@ class QuarterDisk(Distribution):
                     base_r_01_samples
                     * torch.sin(torch.pi / 2.0 * base_theta_01_samples),
                 ],
-                dim=1,
+                dim=-1,
             )
-            * self.delta
         )
 
         return sampled_actions
@@ -183,7 +182,7 @@ class QuarterDisk(Distribution):
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
             + self.base_theta_dist.log_prob(base_theta_01_samples)
-            - torch.log(self.delta)
+            - np.log(self.delta)
             - np.log(np.pi / 2.0)
             - torch.log(base_r_01_samples * self.delta)
         )
@@ -223,8 +222,8 @@ class QuarterCircleWithExit(Distribution):
         # exit probability should be 1 when torch.norm(1 - states, dim=1) <= env.delta or when torch.any(states >= 1 - env.epsilon, dim=-1)
         # TODO: check that here or elsewhere ?
 
-    def rsample(self, sample_shape=()):
-        actions = self.dist_without_exit.rsample(sample_shape)
+    def sample(self, sample_shape=()):
+        actions = self.dist_without_exit.sample(sample_shape)
         actions[self.exit] = self.exit_action
 
         return actions
@@ -261,11 +260,12 @@ class BoxPBEstimator(ProbabilityEstimator):
 
 
 if __name__ == "__main__":
+    # This code tests the QuarterCircle distribution and makes some plots
     delta = 0.1
     centers = torch.FloatTensor([[0.03, 0.06], [0.2, 0.3], [0.95, 0.7]])
     mixture_logits = torch.FloatTensor([[0.0], [0.0], [0.0]])
     alpha = torch.FloatTensor([[1.0], [1.0], [1.0]])
-    beta = torch.FloatTensor([[1.0], [1.0], [1.0]])
+    beta = torch.FloatTensor([[1.1], [1.0], [1.0]])
 
     northeastern = True
     dist = QuarterCircle(
@@ -278,6 +278,68 @@ if __name__ == "__main__":
     )
 
     n_samples = 10
-    samples = dist.rsample(sample_shape=(n_samples,))
-    print(samples)
+    samples = dist.sample(sample_shape=(n_samples,))
     print(dist.log_prob(samples))
+
+    # plot the [0, 1] x [0, 1] square, and the centers,
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    ax.set_xlim([-0.2, 1.2])
+    ax.set_ylim([-0.2, 1.2])
+
+    # plot circles of radius delta around each center and around (0, 0)
+    for i in range(centers.shape[0]):
+        ax.add_patch(
+            plt.Circle(centers[i], delta, fill=False, color="red", linestyle="dashed")
+        )
+    ax.add_patch(plt.Circle([0, 0], delta, fill=False, color="red", linestyle="dashed"))
+
+    # add each center to its corresponding sampled actions and plot them
+    for i in range(centers.shape[0]):
+        ax.scatter(
+            samples[:, i, 0] + centers[i, 0],
+            samples[:, i, 1] + centers[i, 1],
+            s=0.2,
+            marker="x",
+        )
+        ax.scatter(centers[i, 0], centers[i, 1], color="red")
+
+    northeastern = False
+    dist_backward = QuarterCircle(
+        delta=delta,
+        northeastern=northeastern,
+        centers=centers[1:],
+        mixture_logits=mixture_logits[1:],
+        alpha=alpha[1:],
+        beta=beta[1:],
+    )
+
+    samples_backward = dist_backward.sample(sample_shape=(n_samples,))
+    print(dist_backward.log_prob(samples_backward))
+
+    # add to the plot a subtraction of the sampled actions from the centers, and plot them
+    for i in range(centers[1:].shape[0]):
+        ax.scatter(
+            centers[1:][i, 0] - samples_backward[:, i, 0],
+            centers[1:][i, 1] - samples_backward[:, i, 1],
+            s=0.2,
+            marker="x",
+        )
+
+    quarter_disk_dist = QuarterDisk(
+        delta=delta,
+        mixture_logits=torch.FloatTensor([0.0]),
+        alpha_r=torch.FloatTensor([1.0]),
+        beta_r=torch.FloatTensor([1.0]),
+        alpha_theta=torch.FloatTensor([1.0]),
+        beta_theta=torch.FloatTensor([1.0]),
+    )
+
+    samples_disk = quarter_disk_dist.sample(sample_shape=(n_samples * 3,))
+    print(quarter_disk_dist.log_prob(samples_disk))
+
+    # add to the plot samples_disk
+    ax.scatter(samples_disk[:, 0], samples_disk[:, 1], s=0.1, marker="x")
+
+    plt.show()
