@@ -15,7 +15,9 @@ class EnergyFunction(nn.Module, ABC):
     """Base class for energy functions"""
 
     @abstractmethod
-    def forward(self, states: TensorType["batch_shape", "state_shape", torch.float]) -> TensorType["batch_shape"]:
+    def forward(
+        self, states: TensorType["batch_shape", "state_shape", torch.float]
+    ) -> TensorType["batch_shape"]:
         pass
 
 
@@ -28,7 +30,9 @@ class IsingModel(EnergyFunction):
         self.linear = nn.Linear(J.shape[0], 1, bias=False)
         self.linear.weight.data = J
 
-    def forward(self, states: TensorType["batch_shape", "state_shape", torch.float]) -> TensorType["batch_shape"]:
+    def forward(
+        self, states: TensorType["batch_shape", "state_shape", torch.float]
+    ) -> TensorType["batch_shape"]:
         states = states.float()
         tmp = self.linear(states)
         return -(states * tmp).sum(-1)
@@ -99,7 +103,7 @@ class DiscreteEBMEnv(DiscreteEnv):
             ) -> Tuple[
                 TensorType["batch_shape", "n_actions", torch.bool],
                 TensorType["batch_shape", "n_actions - 1", torch.bool],
-                ]:
+            ]:
                 forward_masks = torch.zeros(
                     self.batch_shape + (env.n_actions,),
                     device=env.device,
@@ -115,8 +119,14 @@ class DiscreteEBMEnv(DiscreteEnv):
 
             def update_masks(self) -> None:
                 # The following two lines are for typing only.
-                self.forward_masks = cast(TensorType["batch_shape", "n_actions", torch.bool], self.forward_masks)
-                self.backward_masks = cast(TensorType["batch_shape", "n_actions - 1", torch.bool], self.backward_masks)
+                self.forward_masks = cast(
+                    TensorType["batch_shape", "n_actions", torch.bool],
+                    self.forward_masks,
+                )
+                self.backward_masks = cast(
+                    TensorType["batch_shape", "n_actions - 1", torch.bool],
+                    self.backward_masks,
+                )
 
                 self.forward_masks[..., : env.ndim] = self.tensor == -1
                 self.forward_masks[..., env.ndim : 2 * env.ndim] = (
@@ -132,10 +142,14 @@ class DiscreteEBMEnv(DiscreteEnv):
 
         return DiscreteEBMStates
 
-    def is_exit_actions(self, actions: TensorType["batch_shape"]) -> TensorType["batch_shape"]:
+    def is_exit_actions(
+        self, actions: TensorType["batch_shape"]
+    ) -> TensorType["batch_shape"]:
         return actions == self.n_actions - 1
 
-    def maskless_step(self, states: States, actions: Actions) -> TensorType["batch_shape", "state_shape", torch.float]:
+    def maskless_step(
+        self, states: States, actions: Actions
+    ) -> TensorType["batch_shape", "state_shape", torch.float]:
         # First, we select that actions that replace a -1 with a 0.
         # Remove singleton dimension for broadcasting. TODO: is this correct?
         mask_0 = (actions.tensor < self.ndim).squeeze(-1)

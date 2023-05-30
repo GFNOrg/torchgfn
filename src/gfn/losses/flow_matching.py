@@ -13,7 +13,6 @@ from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
 
-
 @dataclass
 class FMParametrization(Parametrization):
     r"""
@@ -42,7 +41,9 @@ class FlowMatching(StateDecomposableLoss):
         self.env = parametrization.logF.env
         self.alpha = alpha
 
-    def flow_matching_loss(self, states: States) -> TType["n_trajectories", torch.float]:
+    def flow_matching_loss(
+        self, states: States
+    ) -> TType["n_trajectories", torch.float]:
         """
         Compute the FM for the given states, defined as the log-sum incoming flows minus log-sum outgoing flows.
         The states should not include s0. The batch shape should be (n_states,).

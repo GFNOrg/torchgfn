@@ -59,7 +59,9 @@ class TrajectoriesSampler:
 
         dones = states.is_initial_state if self.is_backward else states.is_sink_state
 
-        trajectories_states: List[TensorType["n_trajectories", "state_shape", torch.float]] = [states.tensor]
+        trajectories_states: List[
+            TensorType["n_trajectories", "state_shape", torch.float]
+        ] = [states.tensor]
         trajectories_actions: List[TensorType["n_trajectories", torch.long]] = []
         trajectories_logprobs: List[TensorType["n_trajectories", torch.float]] = []
         trajectories_dones = torch.zeros(

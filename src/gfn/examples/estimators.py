@@ -7,7 +7,6 @@ from gfn.estimators import ProbabilityEstimator
 from gfn.states import DiscreteStates
 
 
-
 class DiscretePFEstimator(ProbabilityEstimator):
     r"""Container for estimators $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$.
 
@@ -44,7 +43,9 @@ class DiscretePFEstimator(ProbabilityEstimator):
             )
 
     def to_probability_distribution(
-        self, states: DiscreteStates, module_output: TensorType["batch_shape", "output_dim"]
+        self,
+        states: DiscreteStates,
+        module_output: TensorType["batch_shape", "output_dim"],
     ) -> Distribution:
         logits = module_output
         logits[~states.forward_masks] = -float("inf")
@@ -71,7 +72,9 @@ class DiscretePBEstimator(ProbabilityEstimator):
             )
 
     def to_probability_distribution(
-        self, states: DiscreteStates, module_output: TensorType["batch_shape", "output_dim"]
+        self,
+        states: DiscreteStates,
+        module_output: TensorType["batch_shape", "output_dim"],
     ) -> Distribution:
         logits = module_output
         logits[~states.backward_masks] = -float("inf")

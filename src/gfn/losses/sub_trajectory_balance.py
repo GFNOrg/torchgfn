@@ -86,7 +86,9 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
 
     def get_scores(
         self, trajectories: Trajectories
-    ) -> Tuple[List[TType[-1, float]], List[TType[-1, float]]]:  # TODO: why -1 here? Is it equivilant to 0?
+    ) -> Tuple[
+        List[TType[-1, float]], List[TType[-1, float]]
+    ]:  # TODO: why -1 here? Is it equivilant to 0?
         """
         Returns two elements:
         - A list of tensors, each of which representing the scores of all sub-trajectories of length k, for k in [1, ..., trajectories.max_length].

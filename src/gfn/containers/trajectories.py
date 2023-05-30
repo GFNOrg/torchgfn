@@ -23,7 +23,8 @@ class Trajectories(Container):
         when_is_done: TensorType["n_trajectories", torch.long] | None = None,
         is_backward: bool = False,
         log_rewards: TensorType["n_trajectories", torch.float] | None = None,
-        log_probs: TensorType["max_length", "n_trajectories", torch.float] | None = None,
+        log_probs: TensorType["max_length", "n_trajectories", torch.float]
+        | None = None,
     ) -> None:
         """Container for complete trajectories (starting in s_0 and ending in s_f).
         Trajectories are represented as a States object with bi-dimensional batch shape.

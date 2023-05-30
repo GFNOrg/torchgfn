@@ -120,9 +120,10 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         temperature: float = 1.0,
         epsilon=0.0,
         no_pf: bool = False,
-    ) -> Tuple[TType["max_length", "n_trajectories", torch.float] | None,
-               TType["max_length", "n_trajectories", torch.float]
-            ]:
+    ) -> Tuple[
+        TType["max_length", "n_trajectories", torch.float] | None,
+        TType["max_length", "n_trajectories", torch.float],
+    ]:
         """Evaluate log_pf and log_pb for each action in each trajectory in the batch.
         This is useful when the policy used to sample the trajectories is different from the one used to evaluate the loss.
 
@@ -200,10 +201,11 @@ class TrajectoryDecomposableLoss(Loss, ABC):
 
     def get_trajectories_scores(
         self, trajectories: Trajectories
-    ) -> Tuple[TType["n_trajectories", torch.float],
-               TType["n_trajectories", torch.float],
-               TType["n_trajectories", torch.float],
-            ]:
+    ) -> Tuple[
+        TType["n_trajectories", torch.float],
+        TType["n_trajectories", torch.float],
+        TType["n_trajectories", torch.float],
+    ]:
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, no_pf=self.on_policy
         )

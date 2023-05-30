@@ -37,7 +37,9 @@ class States(ABC):
 
     state_shape: ClassVar[tuple[int, ...]]  # Shape of one state
     s0: ClassVar[TensorType["state_shape", torch.float]]  # Source state of the DAG
-    sf: ClassVar[TensorType["state_shape", torch.float]]  # Dummy state, used to pad a batch of states
+    sf: ClassVar[
+        TensorType["state_shape", torch.float]
+    ]  # Dummy state, used to pad a batch of states
 
     def __init__(self, tensor: TensorType["batch_shape", "state_shape", torch.float]):
         self.tensor = tensor
@@ -66,19 +68,25 @@ class States(ABC):
         return cls(tensor)
 
     @classmethod
-    def make_initial_states_tensor(cls, batch_shape: tuple[int]) -> TensorType["batch_shape", "state_shape", torch.float]:
+    def make_initial_states_tensor(
+        cls, batch_shape: tuple[int]
+    ) -> TensorType["batch_shape", "state_shape", torch.float]:
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
         return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
 
     @classmethod
-    def make_random_states_tensor(cls, batch_shape: tuple[int]) -> TensorType["batch_shape", "state_shape", torch.float]:
+    def make_random_states_tensor(
+        cls, batch_shape: tuple[int]
+    ) -> TensorType["batch_shape", "state_shape", torch.float]:
         raise NotImplementedError(
             "The environment does not support initialization of random states."
         )
 
     @classmethod
-    def make_sink_states_tensor(cls, batch_shape: tuple[int]) -> TensorType["batch_shape", "state_shape", torch.float]:
+    def make_sink_states_tensor(
+        cls, batch_shape: tuple[int]
+    ) -> TensorType["batch_shape", "state_shape", torch.float]:
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
         return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
@@ -167,7 +175,9 @@ class States(ABC):
                 f"extend_with_sf is not implemented for batch shapes {self.batch_shape}"
             )
 
-    def compare(self, other: TensorType["batch_shape", "state_shape", torch.float]) -> TensorType["batch_shape", torch.bool]:
+    def compare(
+        self, other: TensorType["batch_shape", "state_shape", torch.float]
+    ) -> TensorType["batch_shape", torch.bool]:
         """Given a tensor of states, returns a tensor of booleans indicating whether the states
         are equal to the states in self.
 
@@ -226,8 +236,12 @@ class DiscreteStates(States, ABC):
     def __init__(
         self,
         tensor: TensorType["batch_shape", "state_shape", torch.float],
-        forward_masks: Optional[TensorType["batch_shape", "n_actions", torch.bool]] = None,
-        backward_masks: Optional[TensorType["batch_shape", "n_actions - 1", torch.bool]] = None,
+        forward_masks: Optional[
+            TensorType["batch_shape", "n_actions", torch.bool]
+        ] = None,
+        backward_masks: Optional[
+            TensorType["batch_shape", "n_actions - 1", torch.bool]
+        ] = None,
     ) -> None:
         super().__init__(tensor)
 

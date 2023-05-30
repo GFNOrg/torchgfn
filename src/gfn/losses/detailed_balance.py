@@ -103,7 +103,9 @@ class DetailedBalance(EdgeDecomposableLoss):
 
         return loss
 
-    def get_modified_scores(self, transitions: Transitions) -> TType["n_trajectories", torch.float]:
+    def get_modified_scores(
+        self, transitions: Transitions
+    ) -> TType["n_trajectories", torch.float]:
         "DAG-GFN-style detailed balance, for when all states are connected to the sink"
         if transitions.is_backward:
             raise ValueError("Backward transitions are not supported")

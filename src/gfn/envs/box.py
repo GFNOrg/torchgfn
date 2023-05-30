@@ -61,10 +61,14 @@ class BoxEnv(Env):
 
         return BoxActions
 
-    def maskless_step(self, states: States, actions: Actions) -> TensorType["batch_shape", 2, torch.float]:
+    def maskless_step(
+        self, states: States, actions: Actions
+    ) -> TensorType["batch_shape", 2, torch.float]:
         return states.tensor + actions.tensor
 
-    def maskless_backward_step(self, states: States, actions: Actions) -> TensorType["batch_shape", 2, torch.float]:
+    def maskless_backward_step(
+        self, states: States, actions: Actions
+    ) -> TensorType["batch_shape", 2, torch.float]:
         return states.tensor - actions.tensor
 
     @staticmethod
@@ -110,7 +114,9 @@ class BoxEnv(Env):
 
         return True
 
-    def log_reward(self, final_states: States) -> TensorType["batch_shape", torch.float]:
+    def log_reward(
+        self, final_states: States
+    ) -> TensorType["batch_shape", torch.float]:
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states.tensor - 0.5)
         reward = (

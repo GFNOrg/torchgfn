@@ -18,7 +18,9 @@ class Actions(ABC):
     # The following class variable represents the shape of a single action
     action_shape: ClassVar[tuple[int, ...]]  # all actions need to have the same shape
     # The following class variable is padded to shorter trajectories
-    dummy_action: ClassVar[TensorType["action_shape"]]  # dummy action for the environment
+    dummy_action: ClassVar[
+        TensorType["action_shape"]
+    ]  # dummy action for the environment
     # The following class variable corresponds to $s \rightarrow s_f$ transitions
     exit_action: ClassVar[TensorType["action_shape"]]  # action to exit the environment
 
@@ -97,7 +99,9 @@ class Actions(ABC):
                 "extend_with_dummy_actions is only implemented for bi-dimensional actions."
             )
 
-    def compare(self, other: TensorType["batch_shape", "action_shape"]) -> TensorType["batch_shape", torch.bool]:
+    def compare(
+        self, other: TensorType["batch_shape", "action_shape"]
+    ) -> TensorType["batch_shape", torch.bool]:
         """Compares the actions to a tensor of actions.
         Args:
             other: tensor of actions

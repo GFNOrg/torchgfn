@@ -12,8 +12,6 @@ from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
 from gfn.states import States
 
 
-
-
 class ActionsSampler:
     """`ActionSampler`s are containers for `ProbabilityEstimator`s"""
 
@@ -21,7 +19,9 @@ class ActionsSampler:
         self.estimator = estimator
         self.env = estimator.env
 
-    def sample(self, states: States) -> Tuple[Actions, TensorType["batch_shape", torch.float]]:
+    def sample(
+        self, states: States
+    ) -> Tuple[Actions, TensorType["batch_shape", torch.float]]:
         """Samples actions from the given states.
 
         Args:
