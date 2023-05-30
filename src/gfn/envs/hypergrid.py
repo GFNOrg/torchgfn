@@ -160,7 +160,9 @@ class HyperGrid(DiscreteEnv):
     ) -> TT["batch_shape", torch.float]:
         return torch.log(self.true_reward(final_states))
 
-    def get_states_indices(self, states: DiscreteStates) -> TT["batch_shape", torch.long]:
+    def get_states_indices(
+        self, states: DiscreteStates
+    ) -> TT["batch_shape", torch.long]:
         states_raw = states.tensor
 
         canonical_base = self.height ** torch.arange(
@@ -169,7 +171,9 @@ class HyperGrid(DiscreteEnv):
         indices = (canonical_base * states_raw).sum(-1).long()
         return indices
 
-    def get_terminating_states_indices(self, states: DiscreteStates) -> TT["batch_shape", torch.long]:
+    def get_terminating_states_indices(
+        self, states: DiscreteStates
+    ) -> TT["batch_shape", torch.long]:
         return self.get_states_indices(states)
 
     @property

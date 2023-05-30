@@ -36,9 +36,7 @@ class FunctionEstimator(ABC):
         self.preprocessor = env.preprocessor
         self.output_dim_is_checked = False
 
-    def __call__(
-        self, states: States
-    ) -> TT["batch_shape", "output_dim", float]:
+    def __call__(self, states: States) -> TT["batch_shape", "output_dim", float]:
         out = self.module(self.preprocessor(states))
         if not self.output_dim_is_checked:
             self.check_output_dim(out)
@@ -72,9 +70,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
     # TODO: make it work for continuous environments.
     """
 
-    def check_output_dim(
-        self, module_output: TT["batch_shape", "output_dim", float]
-    ):
+    def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError(
                 "LogEdgeFlowEstimator only supports discrete environments."
@@ -88,9 +84,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
 class LogStateFlowEstimator(FunctionEstimator):
     r"""Container for estimators $s \mapsto \log F(s)$."""
 
-    def check_output_dim(
-        self, module_output: TT["batch_shape", "output_dim", float]
-    ):
+    def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
         if module_output.shape[-1] != 1:
             raise ValueError(
                 f"LogStateFlowEstimator output dimension should be 1, but is {module_output.shape[-1]}."

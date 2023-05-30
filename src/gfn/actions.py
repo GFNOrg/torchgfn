@@ -18,9 +18,7 @@ class Actions(ABC):
     # The following class variable represents the shape of a single action
     action_shape: ClassVar[tuple[int, ...]]  # all actions need to have the same shape
     # The following class variable is padded to shorter trajectories
-    dummy_action: ClassVar[
-        TT["action_shape"]
-    ]  # dummy action for the environment
+    dummy_action: ClassVar[TT["action_shape"]]  # dummy action for the environment
     # The following class variable corresponds to $s \rightarrow s_f$ transitions
     exit_action: ClassVar[TT["action_shape"]]  # action to exit the environment
 

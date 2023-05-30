@@ -191,7 +191,9 @@ class DiscreteEBMEnv(DiscreteEnv):
         canonical_base = 3 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw + 1).mul(canonical_base).sum(-1).long()
 
-    def get_terminating_states_indices(self, states: DiscreteStates) -> TT["batch_shape"]:
+    def get_terminating_states_indices(
+        self, states: DiscreteStates
+    ) -> TT["batch_shape"]:
         states_raw = states.tensor
         canonical_base = 2 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw).mul(canonical_base).sum(-1).long()

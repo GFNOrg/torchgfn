@@ -236,12 +236,8 @@ class DiscreteStates(States, ABC):
     def __init__(
         self,
         tensor: TT["batch_shape", "state_shape", torch.float],
-        forward_masks: Optional[
-            TT["batch_shape", "n_actions", torch.bool]
-        ] = None,
-        backward_masks: Optional[
-            TT["batch_shape", "n_actions - 1", torch.bool]
-        ] = None,
+        forward_masks: Optional[TT["batch_shape", "n_actions", torch.bool]] = None,
+        backward_masks: Optional[TT["batch_shape", "n_actions - 1", torch.bool]] = None,
     ) -> None:
         super().__init__(tensor)
 
