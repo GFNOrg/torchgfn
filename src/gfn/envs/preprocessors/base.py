@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Callable, Tuple
-from torchtyping import TensorType
 
+from torchtyping import TensorType
 
 from gfn.states import States
 

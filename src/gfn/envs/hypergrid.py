@@ -17,7 +17,6 @@ from gfn.envs.preprocessors import (
 )
 from gfn.states import DiscreteStates
 
-
 preprocessors_dict = {
     "KHot": KHotPreprocessor,
     "OneHot": OneHotPreprocessor,
