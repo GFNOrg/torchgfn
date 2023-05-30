@@ -8,7 +8,7 @@
 import os
 import sys
 
-project = "gfn"
+project = "torchgfn"
 copyright = "2022, Salem Lahlou"
 author = "Salem Lahlou"
 
@@ -28,7 +28,7 @@ extensions = [
     "sphinx.ext.napoleon",
 ]
 autoapi_type = "python"
-autoapi_dirs = ["../../src/gfn"]
+autoapi_dirs = ["../../src/torchgfn"]
 autoapi_member_order = "alphabetical"
 
 autodoc_typehints = "description"
