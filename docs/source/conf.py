@@ -28,7 +28,7 @@ extensions = [
     "sphinx.ext.napoleon",
 ]
 autoapi_type = "python"
-autoapi_dirs = ["../../src/torchgfn"]
+autoapi_dirs = ["../../src/gfn"]
 autoapi_member_order = "alphabetical"
 
 autodoc_typehints = "description"
