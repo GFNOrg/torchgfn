@@ -16,9 +16,7 @@ def correct_cast(
     Casts the given masks to the correct type, if they are not None.
     This function is to help with type checking only.
     """
-    forward_masks = cast(
-        TT["batch_shape", "n_actions", torch.bool], forward_masks
-    )
+    forward_masks = cast(TT["batch_shape", "n_actions", torch.bool], forward_masks)
     backward_masks = cast(
         TT["batch_shape", "n_actions - 1", torch.bool], backward_masks
     )
