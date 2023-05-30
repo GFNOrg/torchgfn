@@ -3,7 +3,6 @@ from typing import List, Optional
 import torch
 from torchtyping import TensorType
 
-
 from gfn.containers import Trajectories
 from gfn.envs import Env
 from gfn.samplers import ActionsSampler, BackwardActionsSampler
