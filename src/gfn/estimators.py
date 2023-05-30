@@ -28,7 +28,7 @@ class FunctionEstimator(ABC):
         """
         Args:
             env (Env): the environment.
-            module (nn.Module): The module to use. If the module is a Tabular module (from `gfn.examples`), then the
+            module (nn.Module): The module to use. If the module is a Tabular module (from `gfn.utils`), then the
                 environment preprocessor needs to be an EnumPreprocessor.
         """
         self.env = env

@@ -2,13 +2,10 @@ from abc import ABC, abstractmethod
 from typing import Tuple
 
 import torch
-from torch.distributions import Categorical
 from torchtyping import TensorType
 
 from gfn.actions import Actions
-from gfn.casting import correct_cast
-from gfn.estimators import LogEdgeFlowEstimator, ProbabilityEstimator
-from gfn.examples import DiscretePBEstimator, DiscretePFEstimator
+from gfn.estimators import ProbabilityEstimator
 from gfn.states import States
 
 

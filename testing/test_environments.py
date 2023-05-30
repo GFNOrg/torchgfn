@@ -12,13 +12,15 @@ def format_actions(a, env):
     return env.Actions(a)
 
 
-def format_tensor(l, discrete=True):
-    """If discrete, returns a long tensor with a singleton batch dimension from list l.
-    Otherwise, casts list to a float tensor without unsqueezing"""
+def format_tensor(list_, discrete=True):
+    """
+    If discrete, returns a long tensor with a singleton batch dimension from list
+    ``list_``. Otherwise, casts list to a float tensor without unsqueezing
+    """
     if discrete:
-        return torch.tensor(l, dtype=torch.long).unsqueeze(-1)
+        return torch.tensor(list_, dtype=torch.long).unsqueeze(-1)
     else:
-        return torch.tensor(l, dtype=torch.float)
+        return torch.tensor(list_, dtype=torch.float)
 
 
 def format_random_tensor(env, n, h):

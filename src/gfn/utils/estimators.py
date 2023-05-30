@@ -1,8 +1,9 @@
 import torch
+import torch.nn as nn
 from torch.distributions import Categorical, Distribution
 from torchtyping import TensorType
 
-from gfn.envs import DiscreteEnv
+from gfn.envs import DiscreteEnv, Env
 from gfn.estimators import ProbabilityEstimator
 from gfn.states import DiscreteStates
 
@@ -17,10 +18,11 @@ class DiscretePFEstimator(ProbabilityEstimator):
 
     def __init__(
         self,
+        env: Env,
+        module: nn.Module,
         temperature: float = 1.0,
         sf_bias: float = 0.0,
         epsilon: float = 0.0,
-        **kwargs,
     ):
         """Initializes a estimator for P_F for discrete environments.
 
@@ -29,7 +31,7 @@ class DiscretePFEstimator(ProbabilityEstimator):
             sf_bias (float, optional): scalar to subtract from the exit action logit before dividing by temperature. Defaults to 0.0.
             epsilon (float, optional): with probability epsilon, a random action is chosen. Defaults to 0.0.
         """
-        super().__init__(**kwargs)
+        super().__init__(env, module)
         self.temperature = temperature
         self.sf_bias = sf_bias
         self.epsilon = epsilon
