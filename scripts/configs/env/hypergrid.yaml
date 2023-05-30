@@ -1,0 +1,7 @@
+ndim: 2
+height: 8
+R0: 0.1
+R1: 0.5
+R2: 2.0
+reward_cos: False
+preprocessor_name: KHot # choice("KHot", "OneHot", "Identity", default="KHot")

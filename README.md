@@ -23,20 +23,28 @@
 
 The codebase requires python >= 3.10
 
+To install the latest stable version:
+
+```bash
+pip install torchgfn
+```
+
+Optionally, to run scripts:
+
+```bash
+pip install torchgfn[scripts]
+```
+
+To install the cutting edge version (from the `main` branch):
+
 ```bash
 git clone https://github.com/saleml/gfn.git
-conda create -n gfn python=3.10
+conda create -n gfn python=3.11
 conda activate gfn
 cd gfn
-pip install -e .
+pip install .
 ```
 
-Optionally, to run scripts, and for [wandb](https://wandb.ai) logging
-
-```bash
-pip install -r requirements.txt
-wandb login
-```
 
 ## About this repo
 
@@ -45,15 +53,15 @@ This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/ab
 An example script is provided [here](https://github.com/saleml/gfn/blob/master/scripts/train.py). To run the code, use one of the following:
 
 ```bash
-python train.py --env HyperGrid --env.ndim 4 --env.height 8 --n_iterations 100000 --loss TB
-python train.py --env DiscreteEBM --env.ndim 4 --env.alpha 0.5 --n_iterations 10000 --batch_size 64 --temperature 2.
-python train.py --env HyperGrid --env.ndim 2 --env.height 64 --n_iterations 100000 --loss DB --replay_buffer_size 1000 --logit_PB.module_name Uniform --optim sgd --optim.lr 5e-3
-python train.py --env HyperGrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss FM --optim adam --optim.lr 1e-4
+python train.py --env hypergrid --env.ndim 4 --env.height 8 --n_iterations 100000 --loss trajectory-balance
+python train.py --env discrete-ebm --env.ndim 4 --env.alpha 0.5 --n_iterations 10000 --batch_size 64 --sampler.temperature 2.
+python train.py --env hypergrid --env.ndim 2 --env.height 64 --n_iterations 100000 --loss detailed-balance --logit_PB.module_name Uniform --optim adam --optim.lr 1e-3 --batch_size 64
+python train.py --env hypergrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss flowmatching --optim adam --optim.lr 1e-4
 ```
 
 ### Example, in a few lines
 
-(⬇️ This example require the [`tqdm`](https://github.com/tqdm/tqdm) package to run. `pip install tqdm` or install all extra requirements with `pip install -r requirements.txt`)
+(⬇️ This example require the [`tqdm`](https://github.com/tqdm/tqdm) package to run. `pip install tqdm` or install all extra requirements with `pip install .[scripts]`)
 
 ```python
 import torch
@@ -110,7 +118,7 @@ if __name__ == "__main__":
 Before the first commit:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install .[dev]
 pre-commit install
 pre-commit run --all-files
 ```

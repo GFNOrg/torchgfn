@@ -1,10 +1,9 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Tuple
+from dataclasses import dataclass, field
+from typing import Tuple, Literal
+import inspect
 
 import torch
-from simple_parsing import choice, subgroups
-from simple_parsing.helpers import JsonSerializable
 
 from gfn.envs import Env
 from gfn.estimators import (
@@ -31,10 +30,9 @@ from gfn.losses import (
 
 
 @dataclass
-class GFNModuleConfig(JsonSerializable):
-    module_name: str = choice(
-        "NeuralNet", "Tabular", "Uniform", "Zero", default="NeuralNet"
-    )
+class GFNModuleConfig:
+    module_name: Literal["NeuralNet", "Tabular", "Uniform", "Zero"] = "NeuralNet"
+
     n_hidden_layers: int = 2
     hidden_dim: int = 256
     activation_fn: str = "relu"
@@ -44,7 +42,7 @@ class GFNModuleConfig(JsonSerializable):
 
 
 @dataclass
-class BaseLossConfig(JsonSerializable, ABC):
+class BaseLossConfig(ABC):
     @abstractmethod
     def parse(self, env: Env, **kwargs) -> Tuple[Parametrization, Loss]:
         pass
@@ -52,14 +50,13 @@ class BaseLossConfig(JsonSerializable, ABC):
 
 @dataclass
 class FMLossConfig(BaseLossConfig):
-    logF_edge: GFNModuleConfig = GFNModuleConfig()
+    logF_edge: GFNModuleConfig = field(default_factory=GFNModuleConfig)
     alpha: float = 1.0
 
     def parse(
         self,
         env: Env,
     ) -> Tuple[Parametrization, Loss]:
-
         logF_edge = LogEdgeFlowEstimator(
             env=env,
             **self.logF_edge.nn_kwargs,
@@ -73,15 +70,14 @@ class FMLossConfig(BaseLossConfig):
 
 @dataclass
 class PFBasedLossConfig(BaseLossConfig, ABC):
-    logit_PF: GFNModuleConfig = GFNModuleConfig()
-    logit_PB: GFNModuleConfig = GFNModuleConfig()
+    logit_PF: GFNModuleConfig = field(default_factory=GFNModuleConfig)
+    logit_PB: GFNModuleConfig = field(default_factory=GFNModuleConfig)
     tied: bool = True
 
     def get_estimators(
         self,
         env: Env,
     ) -> Tuple[LogitPFEstimator, LogitPBEstimator]:
-
         logit_PF = LogitPFEstimator(env=env, **self.logit_PF.nn_kwargs)
         logit_PB_kwargs = self.logit_PB.nn_kwargs
         if (
@@ -100,14 +96,13 @@ class PFBasedLossConfig(BaseLossConfig, ABC):
 
 @dataclass
 class StateFlowBasedLossConfig(PFBasedLossConfig, ABC):
-    logF_state: GFNModuleConfig = GFNModuleConfig()
+    logF_state: GFNModuleConfig = field(default_factory=GFNModuleConfig)
 
     def get_estimators(
         self,
         env: Env,
         forward_looking: bool = False,
     ) -> Tuple[LogitPFEstimator, LogitPBEstimator, LogStateFlowEstimator]:
-
         logit_PF, logit_PB = super().get_estimators(env)
         logF_state_kwargs = self.logF_state.nn_kwargs
         if (
@@ -143,7 +138,7 @@ class DBLossConfig(StateFlowBasedLossConfig):
 
 @dataclass
 class SubTBLossConfig(StateFlowBasedLossConfig):
-    weighing: str = choice(
+    weighing: Literal[
         "equal",
         "equal_within",
         "geometric",
@@ -151,8 +146,7 @@ class SubTBLossConfig(StateFlowBasedLossConfig):
         "DB",
         "ModifiedDB",
         "geometric_within",
-        default="geometric_within",
-    )
+    ] = "geometric_within"
     forward_looking: bool = False
     lamda: float = 0.9
 
@@ -195,18 +189,19 @@ class LogPartitionVarianceLossConfig(PFBasedLossConfig):
         return (parametrization, loss)
 
 
-@dataclass
-class LossConfig(JsonSerializable):
-    loss: BaseLossConfig = subgroups(
-        {
-            "FM": FMLossConfig,
-            "DB": DBLossConfig,
-            "TB": TBLossConfig,
-            "SubTB": SubTBLossConfig,
-            "ZVar": LogPartitionVarianceLossConfig,
-        },
-        default=TBLossConfig(),
-    )
+def make_loss(config: dict, env: Env) -> Tuple[Parametrization, Loss]:
+    name = config["loss"]["name"]
+    if name.lower() == "flowmatching".lower():
+        loss_class = FMLossConfig
+    elif name.lower() == "detailed-balance".lower():
+        loss_class = DBLossConfig
+    elif name.lower() == "trajectory-balance".lower():
+        loss_class = TBLossConfig
+    elif name.lower() == "sub-tb".lower():
+        loss_class = SubTBLossConfig
+    else:
+        raise ValueError("Invalid loss name: {}".format(name))
 
-    def parse(self, env: Env) -> Tuple[Parametrization, Loss]:
-        return self.loss.parse(env=env)
+    args = inspect.getfullargspec(loss_class.__init__).args
+    loss_config = {k: v for k, v in config["loss"].items() if k in args}
+    return loss_class(**loss_config).parse(env)

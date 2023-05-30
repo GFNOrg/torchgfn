@@ -1,0 +1,7 @@
+weighing:
+  geometric_within # choice(
+  #     "equal", "equal_within", "geometric", "TB", "DB", "ModifiedDB", "geometric_within",
+  #     default="geometric_within"
+  # )
+forward_looking: False
+lamda: 0.9
