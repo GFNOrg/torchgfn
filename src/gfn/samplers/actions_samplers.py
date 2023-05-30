@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Tuple
 
 import torch
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.estimators import ProbabilityEstimator
@@ -18,7 +18,7 @@ class ActionsSampler:
 
     def sample(
         self, states: States
-    ) -> Tuple[Actions, TensorType["batch_shape", torch.float]]:
+    ) -> Tuple[Actions, TT["batch_shape", torch.float]]:
         """Samples actions from the given states.
 
         Args:
@@ -45,7 +45,7 @@ class ActionsSampler:
 #     """
 
 #     @abstractmethod
-#     def sample(self, states: States) -> Tuple[TensorType["batch_shape", torch.long], TensorType["batch_shape", torch.long]]:
+#     def sample(self, states: States) -> Tuple[TT["batch_shape", torch.long], TT["batch_shape", torch.long]]:
 #         """
 #         Args:
 #             states (States): A batch of states.
@@ -99,7 +99,7 @@ class ActionsSampler:
 #         logits = self.estimator(states)
 #         return logits
 
-#     def get_logits(self, states: States) -> TensorType["batch_shape", "action_shape"]:
+#     def get_logits(self, states: States) -> TT["batch_shape", "action_shape"]:
 #         """Transforms the raw logits by masking illegal actions.
 
 #         Raises:
@@ -121,7 +121,7 @@ class ActionsSampler:
 #     def get_probs(
 #         self,
 #         states: States,
-#     ) -> TensorType["batch_shape", "action_shape"]:
+#     ) -> TT["batch_shape", "action_shape"]:
 #         """
 #         Returns:
 #             The probabilities of each action in each state in the batch.
@@ -131,7 +131,7 @@ class ActionsSampler:
 #         probs = torch.softmax(logits / self.temperature, dim=-1)
 #         return probs
 
-#     def sample(self, states: States) -> Tuple[TensorType["batch_shape", torch.long], TensorType["batch_shape", torch.long]]:
+#     def sample(self, states: States) -> Tuple[TT["batch_shape", torch.long], TT["batch_shape", torch.long]]:
 #         probs = self.get_probs(states)
 #         states.forward_masks, _ = correct_cast(
 #             states.forward_masks, states.backward_masks
@@ -166,7 +166,7 @@ class ActionsSampler:
 #             estimator, temperature=temperature, sf_bias=0.0, epsilon=epsilon
 #         )
 
-#     def get_logits(self, states: States) -> TensorType["batch_shape", "action_shape"]:
+#     def get_logits(self, states: States) -> TT["batch_shape", "action_shape"]:
 #         logits = self.get_raw_logits(states)
 #         if torch.any(torch.all(torch.isnan(logits), 1)):
 #             raise ValueError("NaNs in estimator")
@@ -176,7 +176,7 @@ class ActionsSampler:
 #         logits[~states.backward_masks] = -float("inf")
 #         return logits
 
-#     def get_probs(self, states: States) -> TensorType["batch_shape", "action_shape"]:
+#     def get_probs(self, states: States) -> TT["batch_shape", "action_shape"]:
 #         logits = self.get_logits(states)
 #         probs = torch.softmax(logits / self.temperature, dim=-1)
 #         # The following line is hack that works: when probs are nan, it means

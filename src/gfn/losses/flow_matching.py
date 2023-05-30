@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
-from torchtyping import TensorType as TType
+from torchtyping import TensorType as TT
 
 from gfn.casting import correct_cast
 from gfn.distributions import EmpiricalTrajectoryDistribution, TrajectoryDistribution
@@ -43,7 +43,7 @@ class FlowMatching(StateDecomposableLoss):
 
     def flow_matching_loss(
         self, states: States
-    ) -> TType["n_trajectories", torch.float]:
+    ) -> TT["n_trajectories", torch.float]:
         """
         Compute the FM for the given states, defined as the log-sum incoming flows minus log-sum outgoing flows.
         The states should not include s0. The batch shape should be (n_states,).
@@ -101,14 +101,14 @@ class FlowMatching(StateDecomposableLoss):
 
         return (log_incoming_flows - log_outgoing_flows).pow(2).mean()
 
-    def reward_matching_loss(self, terminating_states: States) -> TType[0, float]:
+    def reward_matching_loss(self, terminating_states: States) -> TT[0, float]:
         assert terminating_states.log_rewards is not None
         log_edge_flows = self.parametrization.logF(terminating_states)
         terminating_log_edge_flows = log_edge_flows[:, -1]
         log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
-    def __call__(self, states_tuple: Tuple[States, States]) -> TType[0, float]:
+    def __call__(self, states_tuple: Tuple[States, States]) -> TT[0, float]:
         intermediary_states, terminating_states = states_tuple
         fm_loss = self.flow_matching_loss(intermediary_states)
         rm_loss = self.reward_matching_loss(terminating_states)

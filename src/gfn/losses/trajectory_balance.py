@@ -5,7 +5,7 @@ and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 from dataclasses import dataclass
 
 import torch
-from torchtyping import TensorType as TType
+from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.estimators import LogZEstimator
@@ -48,7 +48,7 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         )
         self.on_policy = on_policy
 
-    def __call__(self, trajectories: Trajectories) -> TType[0, float]:
+    def __call__(self, trajectories: Trajectories) -> TT[0, float]:
         _, _, scores = self.get_trajectories_scores(trajectories)
         loss = (scores + self.parametrization.logZ.tensor).pow(2).mean()
         if torch.isnan(loss):
@@ -80,7 +80,7 @@ class LogPartitionVarianceLoss(TrajectoryDecomposableLoss):
 
         self.on_policy = on_policy
 
-    def __call__(self, trajectories: Trajectories) -> TType[0, float]:
+    def __call__(self, trajectories: Trajectories) -> TT[0, float]:
         _, _, scores = self.get_trajectories_scores(trajectories)
         loss = (scores - scores.mean()).pow(2).mean()
         if torch.isnan(loss):

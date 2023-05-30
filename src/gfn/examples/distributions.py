@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 
 class UnsqueezedCategorical(Categorical):
@@ -29,10 +29,10 @@ class QuarterCircle(Distribution):
         self,
         delta: float,
         northeastern: bool,
-        centers: TensorType["n_states", 2],
-        mixture_logits: TensorType["n_states", "n_components"],
-        alpha: TensorType["n_states", "n_components"],
-        beta: TensorType["n_states", "n_components"],
+        centers: TT["n_states", 2],
+        mixture_logits: TT["n_states", "n_components"],
+        alpha: TT["n_states", "n_components"],
+        beta: TT["n_states", "n_components"],
     ):
         self.delta = delta
         self.northeastern = northeastern
@@ -138,11 +138,11 @@ class QuarterDisk(Distribution):
     def __init__(
         self,
         delta: float,
-        mixture_logits: TensorType["n_components"],
-        alpha_r: TensorType["n_components"],
-        beta_r: TensorType["n_components"],
-        alpha_theta: TensorType["n_components"],
-        beta_theta: TensorType["n_components"],
+        mixture_logits: TT["n_components"],
+        alpha_r: TT["n_components"],
+        beta_r: TT["n_components"],
+        alpha_theta: TT["n_components"],
+        beta_theta: TT["n_components"],
     ):
         self.delta = delta
         self.mixture_logits = mixture_logits

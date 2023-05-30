@@ -2,7 +2,7 @@ from typing import ClassVar, Literal, Tuple, cast
 
 import torch
 from gymnasium.spaces import Box
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.envs.env import Env
@@ -42,7 +42,7 @@ class BoxEnv(Env):
             @classmethod
             def make_random_states_tensor(
                 cls, batch_shape: Tuple[int, ...]
-            ) -> TensorType["batch_shape", 2, torch.float]:
+            ) -> TT["batch_shape", 2, torch.float]:
                 return torch.rand(batch_shape + (2,), device=env.device)
 
         return BoxStates
@@ -52,10 +52,10 @@ class BoxEnv(Env):
 
         class BoxActions(Actions):
             action_shape: ClassVar[Tuple[int, ...]] = (2,)
-            dummy_action: ClassVar[TensorType[2]] = torch.tensor(
+            dummy_action: ClassVar[TT[2]] = torch.tensor(
                 [-float("inf"), -float("inf")], device=env.device
             )
-            exit_action: ClassVar[TensorType[2]] = torch.tensor(
+            exit_action: ClassVar[TT[2]] = torch.tensor(
                 [-float("inf"), -float("inf")], device=env.device
             )
 
@@ -63,16 +63,16 @@ class BoxEnv(Env):
 
     def maskless_step(
         self, states: States, actions: Actions
-    ) -> TensorType["batch_shape", 2, torch.float]:
+    ) -> TT["batch_shape", 2, torch.float]:
         return states.tensor + actions.tensor
 
     def maskless_backward_step(
         self, states: States, actions: Actions
-    ) -> TensorType["batch_shape", 2, torch.float]:
+    ) -> TT["batch_shape", 2, torch.float]:
         return states.tensor - actions.tensor
 
     @staticmethod
-    def norm(x: TensorType["batch_shape", 2, torch.float]) -> torch.Tensor:
+    def norm(x: TT["batch_shape", 2, torch.float]) -> torch.Tensor:
         return torch.norm(x, dim=-1)
 
     def is_action_valid(
@@ -114,9 +114,7 @@ class BoxEnv(Env):
 
         return True
 
-    def log_reward(
-        self, final_states: States
-    ) -> TensorType["batch_shape", torch.float]:
+    def log_reward(self, final_states: States) -> TT["batch_shape", torch.float]:
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states.tensor - 0.5)
         reward = (

@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 from gfn.envs import DiscreteEnv, Env
 from gfn.states import DiscreteStates, States
@@ -38,7 +38,7 @@ class FunctionEstimator(ABC):
 
     def __call__(
         self, states: States
-    ) -> TensorType["batch_shape", "output_dim", float]:
+    ) -> TT["batch_shape", "output_dim", float]:
         out = self.module(self.preprocessor(states))
         if not self.output_dim_is_checked:
             self.check_output_dim(out)
@@ -48,7 +48,7 @@ class FunctionEstimator(ABC):
 
     @abstractmethod
     def check_output_dim(
-        self, module_output: TensorType["batch_shape", "output_dim", float]
+        self, module_output: TT["batch_shape", "output_dim", float]
     ) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
         pass
@@ -73,7 +73,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
     """
 
     def check_output_dim(
-        self, module_output: TensorType["batch_shape", "output_dim", float]
+        self, module_output: TT["batch_shape", "output_dim", float]
     ):
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError(
@@ -89,7 +89,7 @@ class LogStateFlowEstimator(FunctionEstimator):
     r"""Container for estimators $s \mapsto \log F(s)$."""
 
     def check_output_dim(
-        self, module_output: TensorType["batch_shape", "output_dim", float]
+        self, module_output: TT["batch_shape", "output_dim", float]
     ):
         if module_output.shape[-1] != 1:
             raise ValueError(
@@ -112,7 +112,7 @@ class ProbabilityEstimator(FunctionEstimator, ABC):
     def to_probability_distribution(
         self,
         states: States,
-        module_output: TensorType["batch_shape", "output_dim", float],
+        module_output: TT["batch_shape", "output_dim", float],
     ) -> Distribution:
         """Transform the output of the module into a probability distribution."""
         pass
@@ -128,7 +128,7 @@ class LogEdgeFlowProbabilityEstimator(ProbabilityEstimator, LogEdgeFlowEstimator
     def to_probability_distribution(
         self,
         states: DiscreteStates,
-        module_output: TensorType["batch_shape", "output_dim", float],
+        module_output: TT["batch_shape", "output_dim", float],
     ) -> Distribution:
         logits = module_output
         logits[~states.forward_masks] = -float("inf")
@@ -139,7 +139,7 @@ class LogZEstimator:
     # TODO: should this be a FunctionEstimator with a nn.Module as well?
     r"""Container for the estimator $\log Z$."""
 
-    def __init__(self, tensor: TensorType[0, float]) -> None:
+    def __init__(self, tensor: TT[0, float]) -> None:
         self.tensor = tensor
         assert self.tensor.shape == ()
         self.tensor.requires_grad = True

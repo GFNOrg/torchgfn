@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Callable, Tuple
 
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 from gfn.states import States
 
@@ -16,10 +16,10 @@ class Preprocessor(ABC):
         self.output_shape = output_shape
 
     @abstractmethod
-    def preprocess(self, states: States) -> TensorType["batch_shape", "input_dim"]:
+    def preprocess(self, states: States) -> TT["batch_shape", "input_dim"]:
         pass
 
-    def __call__(self, states: States) -> TensorType["batch_shape", "input_dim"]:
+    def __call__(self, states: States) -> TT["batch_shape", "input_dim"]:
         return self.preprocess(states)
 
     def __repr__(self):
@@ -30,7 +30,7 @@ class IdentityPreprocessor(Preprocessor):
     """Simple preprocessor applicable to environments with uni-dimensional states.
     This is the default preprocessor used."""
 
-    def preprocess(self, states: States) -> TensorType["batch_shape", "input_dim"]:
+    def preprocess(self, states: States) -> TT["batch_shape", "input_dim"]:
         return states.tensor.float()
 
 
@@ -39,7 +39,7 @@ class EnumPreprocessor(Preprocessor):
 
     def __init__(
         self,
-        get_states_indices: Callable[[States], TensorType["batch_shape", "input_dim"]],
+        get_states_indices: Callable[[States], TT["batch_shape", "input_dim"]],
     ) -> None:
         """Preprocessor for environments with enumerable states (finite number of states).
         Each state is represented by a unique integer (>= 0) index.

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
-from torchtyping import TensorType as TType
+from torchtyping import TensorType as TT
 
 from gfn.casting import correct_cast
 from gfn.containers import Trajectories, Transitions
@@ -92,19 +92,19 @@ class Loss(ABC):
         self.parametrization = parametrization
 
     @abstractmethod
-    def __call__(self, *args, **kwargs) -> TType[0, float]:
+    def __call__(self, *args, **kwargs) -> TT[0, float]:
         pass
 
 
 class EdgeDecomposableLoss(Loss, ABC):
     @abstractmethod
-    def __call__(self, edges: Transitions) -> TType[0, float]:
+    def __call__(self, edges: Transitions) -> TT[0, float]:
         pass
 
 
 class StateDecomposableLoss(Loss, ABC):
     @abstractmethod
-    def __call__(self, states_tuple: Tuple[States, States]) -> TType[0, float]:
+    def __call__(self, states_tuple: Tuple[States, States]) -> TT[0, float]:
         """Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a tuple of states,
         the first one being the internal states of the trajectories (i.e. non-terminal states), and the second one
         being the terminal states of the trajectories. If these two are not handled differently, then they should be
@@ -121,8 +121,8 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         epsilon=0.0,
         no_pf: bool = False,
     ) -> Tuple[
-        TType["max_length", "n_trajectories", torch.float] | None,
-        TType["max_length", "n_trajectories", torch.float],
+        TT["max_length", "n_trajectories", torch.float] | None,
+        TT["max_length", "n_trajectories", torch.float],
     ]:
         """Evaluate log_pf and log_pb for each action in each trajectory in the batch.
         This is useful when the policy used to sample the trajectories is different from the one used to evaluate the loss.
@@ -202,9 +202,9 @@ class TrajectoryDecomposableLoss(Loss, ABC):
     def get_trajectories_scores(
         self, trajectories: Trajectories
     ) -> Tuple[
-        TType["n_trajectories", torch.float],
-        TType["n_trajectories", torch.float],
-        TType["n_trajectories", torch.float],
+        TT["n_trajectories", torch.float],
+        TT["n_trajectories", torch.float],
+        TT["n_trajectories", torch.float],
     ]:
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, no_pf=self.on_policy
@@ -225,5 +225,5 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         )
 
     @abstractmethod
-    def __call__(self, trajectories: Trajectories) -> TType[0, float]:
+    def __call__(self, trajectories: Trajectories) -> TT[0, float]:
         pass

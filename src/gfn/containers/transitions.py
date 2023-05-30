@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 import torch
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
@@ -19,11 +19,11 @@ class Transitions(Container):
         env: Env,
         states: States | None = None,
         actions: Actions | None = None,
-        is_done: TensorType["n_transitions", torch.bool] | None = None,
+        is_done: TT["n_transitions", torch.bool] | None = None,
         next_states: States | None = None,
         is_backward: bool = False,
-        log_rewards: TensorType["n_transitions", torch.float] | None = None,
-        log_probs: TensorType["n_transitions", torch.float] | None = None,
+        log_rewards: TT["n_transitions", torch.float] | None = None,
+        log_probs: TT["n_transitions", torch.float] | None = None,
     ):
         """Container for transitions.
 
@@ -101,7 +101,7 @@ class Transitions(Container):
         return self.states[self.is_done]
 
     @property
-    def log_rewards(self) -> TensorType["n_transitions", torch.float] | None:
+    def log_rewards(self) -> TT["n_transitions", torch.float] | None:
         if self._log_rewards is not None:
             return self._log_rewards
         if self.is_backward:
@@ -120,7 +120,7 @@ class Transitions(Container):
             return log_rewards
 
     @property
-    def all_log_rewards(self) -> TensorType["n_transitions", 2, torch.float]:
+    def all_log_rewards(self) -> TT["n_transitions", 2, torch.float]:
         """This is applicable to environments where all states are terminating.
         This function evaluates the rewards for all transitions that do not end in the sink state.
         This is useful for the Modified Detailed Balance loss."""

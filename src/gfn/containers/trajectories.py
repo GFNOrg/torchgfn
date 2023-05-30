@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from gfn.states import States
 
 import torch
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
@@ -20,10 +20,10 @@ class Trajectories(Container):
         env: Env,
         states: States | None = None,
         actions: Actions | None = None,
-        when_is_done: TensorType["n_trajectories", torch.long] | None = None,
+        when_is_done: TT["n_trajectories", torch.long] | None = None,
         is_backward: bool = False,
-        log_rewards: TensorType["n_trajectories", torch.float] | None = None,
-        log_probs: TensorType["max_length", "n_trajectories", torch.float]
+        log_rewards: TT["n_trajectories", torch.float] | None = None,
+        log_probs: TT["max_length", "n_trajectories", torch.float]
         | None = None,
     ) -> None:
         """Container for complete trajectories (starting in s_0 and ending in s_f).
@@ -110,7 +110,7 @@ class Trajectories(Container):
         return self.states[self.when_is_done - 1, torch.arange(self.n_trajectories)]
 
     @property
-    def log_rewards(self) -> TensorType["n_trajectories", torch.float] | None:
+    def log_rewards(self) -> TT["n_trajectories", torch.float] | None:
         if self._log_rewards is not None:
             assert self._log_rewards.shape == (self.n_trajectories,)
             return self._log_rewards
