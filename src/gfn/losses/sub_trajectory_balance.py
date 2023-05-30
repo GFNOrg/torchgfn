@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import List, Literal, Tuple
 
 import torch
-from tensortyping import TensorType as TType
+from torchtyping import TensorType as TType
 
 from gfn.containers import Trajectories
 from gfn.estimators import LogStateFlowEstimator

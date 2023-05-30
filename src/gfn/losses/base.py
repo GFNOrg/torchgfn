@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
-from tensortyping import TensorType as TType
+from torchtyping import TensorType as TType
 
 from gfn.casting import correct_cast
 from gfn.containers import Trajectories, Transitions

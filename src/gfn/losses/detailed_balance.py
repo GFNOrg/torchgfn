@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import torch
-from tensortyping import TensorType as TType
+from torchtyping import TensorType as TType
 
 from gfn.containers import Transitions
 from gfn.estimators import LogStateFlowEstimator
