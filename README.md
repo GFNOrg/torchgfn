@@ -2,8 +2,8 @@
     <a>
 	    <img src='https://img.shields.io/badge/python-3.10%2B-blueviolet' alt='Python' />
 	</a>
-	<a href='https://gfn.readthedocs.io/en/latest/?badge=latest'>
-    	<img src='https://readthedocs.org/projects/gfn/badge/?version=latest' alt='Documentation Status' />
+	<a href='https://torchgfn.readthedocs.io/en/latest/?badge=latest'>
+    	<img src='https://readthedocs.org/projects/torchgfn/badge/?version=latest' alt='Documentation Status' />
 	</a>
     <a>
 	    <img src='https://img.shields.io/badge/code%20style-black-black' />
@@ -12,7 +12,7 @@
 
 </p>
 <p align="center">
-  <a href="https://gfn.readthedocs.io/en/latest/">Documentation</a> ~ <a href="https://github.com/saleml/gfn">Code</a>
+  <a href="https://torchgfn.readthedocs.io/en/latest/">Documentation</a> ~ <a href="https://github.com/saleml/torchgfn">Code</a>
 </p>
 
 # gfn: a Python package for GFlowNets

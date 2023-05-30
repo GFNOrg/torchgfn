@@ -58,7 +58,7 @@ scripts = ["tqdm", "wandb", "simple-parsing"]
 all = ["pre-commit", "pytest", "renku-sphinx-theme", "sphinx_rtd_theme", "sphinx-autoapi", "sphinx-math-dollar", "sphinx", "tox", "black", "myst-parser", "tqdm", "wandb", "simple-parsing"]
 
 [project.urls]
-"Homepage" = "https://gfn.readthedocs.io/en/latest/"
+"Homepage" = "https://torchgfn.readthedocs.io/en/latest/"
 "Bug Tracker" = "https://github.com/saleml/gfn/issues"
 
 
