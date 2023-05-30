@@ -16,9 +16,7 @@ class ActionsSampler:
         self.estimator = estimator
         self.env = estimator.env
 
-    def sample(
-        self, states: States
-    ) -> Tuple[Actions, TT["batch_shape", torch.float]]:
+    def sample(self, states: States) -> Tuple[Actions, TT["batch_shape", torch.float]]:
         """Samples actions from the given states.
 
         Args:
