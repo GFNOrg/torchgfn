@@ -9,35 +9,26 @@ from torchtyping import TensorType
 from gfn.actions import Actions
 from gfn.envs.env import DiscreteEnv
 from gfn.states import DiscreteStates, States
-from gfn.typing import (
-    BackwardMasksTensor,
-    BatchGenericTensor,
-    ForwardMasksTensor,
-    StatesFloatTensor,
-)
-
-# Typing specific to Ising Model environment.
-IsingJTensor = TensorType["state_shape", "state_shape", torch.float]
 
 
 class EnergyFunction(nn.Module, ABC):
     """Base class for energy functions"""
 
     @abstractmethod
-    def forward(self, states: StatesFloatTensor) -> BatchGenericTensor:
+    def forward(self, states: TensorType["batch_shape", "state_shape", torch.float]) -> TensorType["batch_shape"]:
         pass
 
 
 class IsingModel(EnergyFunction):
     """Ising model energy function"""
 
-    def __init__(self, J: IsingJTensor):
+    def __init__(self, J: TensorType["state_shape", "state_shape", torch.float]):
         super().__init__()
         self.J = J
         self.linear = nn.Linear(J.shape[0], 1, bias=False)
         self.linear.weight.data = J
 
-    def forward(self, states: StatesFloatTensor) -> BatchGenericTensor:
+    def forward(self, states: TensorType["batch_shape", "state_shape", torch.float]) -> TensorType["batch_shape"]:
         states = states.float()
         tmp = self.linear(states)
         return -(states * tmp).sum(-1)
@@ -94,7 +85,7 @@ class DiscreteEBMEnv(DiscreteEnv):
             @classmethod
             def make_random_states_tensor(
                 cls, batch_shape: Tuple[int, ...]
-            ) -> StatesFloatTensor:
+            ) -> TensorType["batch_shape", "state_shape", torch.float]:
                 return torch.randint(
                     -1,
                     2,
@@ -105,7 +96,10 @@ class DiscreteEBMEnv(DiscreteEnv):
 
             def make_masks(
                 self,
-            ) -> Tuple[ForwardMasksTensor, BackwardMasksTensor]:
+            ) -> Tuple[
+                TensorType["batch_shape", "n_actions", torch.bool],
+                TensorType["batch_shape", "n_actions - 1", torch.bool],
+                ]:
                 forward_masks = torch.zeros(
                     self.batch_shape + (env.n_actions,),
                     device=env.device,
@@ -121,8 +115,8 @@ class DiscreteEBMEnv(DiscreteEnv):
 
             def update_masks(self) -> None:
                 # The following two lines are for typing only.
-                self.forward_masks = cast(ForwardMasksTensor, self.forward_masks)
-                self.backward_masks = cast(BackwardMasksTensor, self.backward_masks)
+                self.forward_masks = cast(TensorType["batch_shape", "n_actions", torch.bool], self.forward_masks)
+                self.backward_masks = cast(TensorType["batch_shape", "n_actions - 1", torch.bool], self.backward_masks)
 
                 self.forward_masks[..., : env.ndim] = self.tensor == -1
                 self.forward_masks[..., env.ndim : 2 * env.ndim] = (
@@ -138,10 +132,10 @@ class DiscreteEBMEnv(DiscreteEnv):
 
         return DiscreteEBMStates
 
-    def is_exit_actions(self, actions: BatchGenericTensor) -> BatchGenericTensor:
+    def is_exit_actions(self, actions: TensorType["batch_shape"]) -> TensorType["batch_shape"]:
         return actions == self.n_actions - 1
 
-    def maskless_step(self, states: States, actions: Actions) -> StatesFloatTensor:
+    def maskless_step(self, states: States, actions: Actions) -> TensorType["batch_shape", "state_shape", torch.float]:
         # First, we select that actions that replace a -1 with a 0.
         # Remove singleton dimension for broadcasting. TODO: is this correct?
         mask_0 = (actions.tensor < self.ndim).squeeze(-1)
@@ -161,7 +155,7 @@ class DiscreteEBMEnv(DiscreteEnv):
 
     def maskless_backward_step(
         self, states: States, actions: Actions
-    ) -> StatesFloatTensor:
+    ) -> TensorType["batch_shape", "state_shape", torch.float]:
         # In this env, states are n-dim vectors. s0 is empty (represented as -1),
         # so s0=[-1, -1, ..., -1], each action is replacing a -1 with either a
         # 0 or 1. Action i in [0, ndim-1] os replacing s[i] with 0, whereas
@@ -174,12 +168,12 @@ class DiscreteEBMEnv(DiscreteEnv):
             -1,
         )
 
-    def log_reward(self, final_states: DiscreteStates) -> BatchGenericTensor:
+    def log_reward(self, final_states: DiscreteStates) -> TensorType["batch_shape"]:
         raw_states = final_states.tensor
         canonical = 2 * raw_states - 1
         return -self.alpha * self.energy(canonical)
 
-    def get_states_indices(self, states: DiscreteStates) -> BatchGenericTensor:
+    def get_states_indices(self, states: DiscreteStates) -> TensorType["batch_shape"]:
         """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3"""
         states_raw = states.tensor
         canonical_base = 3 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
@@ -187,7 +181,7 @@ class DiscreteEBMEnv(DiscreteEnv):
 
     def get_terminating_states_indices(
         self, states: DiscreteStates
-    ) -> BatchGenericTensor:
+    ) -> TensorType["batch_shape"]:
         states_raw = states.tensor
         canonical_base = 2 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw).mul(canonical_base).sum(-1).long()

@@ -5,11 +5,7 @@ from math import prod
 from typing import ClassVar, Optional, Sequence, cast
 
 import torch
-
-from gfn.typing import BackwardMasksTensor
-from gfn.typing import BatchBoolTensor as DonesTensor
-from gfn.typing import BatchFloatTensor as RewardsTensor
-from gfn.typing import ForwardMasksTensor, OneStateTensor, StatesFloatTensor
+from torchtyping import TensorType
 
 
 class States(ABC):
@@ -40,10 +36,10 @@ class States(ABC):
     """
 
     state_shape: ClassVar[tuple[int, ...]]  # Shape of one state
-    s0: ClassVar[OneStateTensor]  # Source state of the DAG
-    sf: ClassVar[OneStateTensor]  # Dummy state, used to pad a batch of states
+    s0: ClassVar[TensorType["state_shape", torch.float]]  # Source state of the DAG
+    sf: ClassVar[TensorType["state_shape", torch.float]]  # Dummy state, used to pad a batch of states
 
-    def __init__(self, tensor: StatesFloatTensor):
+    def __init__(self, tensor: TensorType["batch_shape", "state_shape", torch.float]):
         self.tensor = tensor
         self.batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
         self._log_rewards = (
@@ -70,19 +66,19 @@ class States(ABC):
         return cls(tensor)
 
     @classmethod
-    def make_initial_states_tensor(cls, batch_shape: tuple[int]) -> StatesFloatTensor:
+    def make_initial_states_tensor(cls, batch_shape: tuple[int]) -> TensorType["batch_shape", "state_shape", torch.float]:
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
         return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
 
     @classmethod
-    def make_random_states_tensor(cls, batch_shape: tuple[int]) -> StatesFloatTensor:
+    def make_random_states_tensor(cls, batch_shape: tuple[int]) -> TensorType["batch_shape", "state_shape", torch.float]:
         raise NotImplementedError(
             "The environment does not support initialization of random states."
         )
 
     @classmethod
-    def make_sink_states_tensor(cls, batch_shape: tuple[int]) -> StatesFloatTensor:
+    def make_sink_states_tensor(cls, batch_shape: tuple[int]) -> TensorType["batch_shape", "state_shape", torch.float]:
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
         return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
@@ -171,15 +167,15 @@ class States(ABC):
                 f"extend_with_sf is not implemented for batch shapes {self.batch_shape}"
             )
 
-    def compare(self, other: StatesFloatTensor) -> DonesTensor:
+    def compare(self, other: TensorType["batch_shape", "state_shape", torch.float]) -> TensorType["batch_shape", torch.bool]:
         """Given a tensor of states, returns a tensor of booleans indicating whether the states
         are equal to the states in self.
 
         Args:
-            other (StatesFloatTensor): Tensor of states to compare to.
+            other: Tensor of states to compare to.
 
         Returns:
-            DonesTensor: Tensor of booleans indicating whether the states are equal to the states in self.
+            Tensor of booleans indicating whether the states are equal to the states in self.
         """
         out = self.tensor == other
         state_ndim = len(self.__class__.state_shape)
@@ -188,7 +184,7 @@ class States(ABC):
         return out
 
     @property
-    def is_initial_state(self) -> DonesTensor:
+    def is_initial_state(self) -> TensorType["batch_shape", torch.bool]:
         r"""Return a boolean tensor of shape=(*batch_shape,),
         where True means that the state is $s_0$ of the DAG.
         """
@@ -198,7 +194,7 @@ class States(ABC):
         return self.compare(source_states_tensor)
 
     @property
-    def is_sink_state(self) -> DonesTensor:
+    def is_sink_state(self) -> TensorType["batch_shape", torch.bool]:
         r"""Return a boolean tensor of shape=(*batch_shape,),
         where True means that the state is $s_f$ of the DAG.
         """
@@ -208,11 +204,11 @@ class States(ABC):
         return self.compare(sink_states)
 
     @property
-    def log_rewards(self) -> RewardsTensor:
+    def log_rewards(self) -> TensorType["batch_shape", torch.float]:
         return self._log_rewards
 
     @log_rewards.setter
-    def log_rewards(self, log_rewards: RewardsTensor) -> None:
+    def log_rewards(self, log_rewards: TensorType["batch_shape", torch.float]) -> None:
         self._log_rewards = log_rewards
 
 
@@ -229,9 +225,9 @@ class DiscreteStates(States, ABC):
 
     def __init__(
         self,
-        tensor: StatesFloatTensor,
-        forward_masks: Optional[ForwardMasksTensor] = None,
-        backward_masks: Optional[BackwardMasksTensor] = None,
+        tensor: TensorType["batch_shape", "state_shape", torch.float],
+        forward_masks: Optional[TensorType["batch_shape", "n_actions", torch.bool]] = None,
+        backward_masks: Optional[TensorType["batch_shape", "n_actions - 1", torch.bool]] = None,
     ) -> None:
         super().__init__(tensor)
 

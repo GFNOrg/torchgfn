@@ -5,8 +5,7 @@ from math import prod
 from typing import ClassVar, Sequence
 
 import torch
-
-from gfn.typing import BatchActionsTensor, BatchBoolTensor, OneActionTensor
+from torchtyping import TensorType
 
 
 class Actions(ABC):
@@ -19,11 +18,11 @@ class Actions(ABC):
     # The following class variable represents the shape of a single action
     action_shape: ClassVar[tuple[int, ...]]  # all actions need to have the same shape
     # The following class variable is padded to shorter trajectories
-    dummy_action: ClassVar[OneActionTensor]  # dummy action for the environment
+    dummy_action: ClassVar[TensorType["action_shape"]]  # dummy action for the environment
     # The following class variable corresponds to $s \rightarrow s_f$ transitions
-    exit_action: ClassVar[OneActionTensor]  # action to exit the environment
+    exit_action: ClassVar[TensorType["action_shape"]]  # action to exit the environment
 
-    def __init__(self, tensor: BatchActionsTensor):
+    def __init__(self, tensor: TensorType["batch_shape", "action_shape"]):
         """Initialize actions from a tensor.
         Args:
             tensor: tensor of actions
@@ -98,7 +97,7 @@ class Actions(ABC):
                 "extend_with_dummy_actions is only implemented for bi-dimensional actions."
             )
 
-    def compare(self, other: BatchActionsTensor) -> BatchBoolTensor:
+    def compare(self, other: TensorType["batch_shape", "action_shape"]) -> TensorType["batch_shape", torch.bool]:
         """Compares the actions to a tensor of actions.
         Args:
             other: tensor of actions
@@ -112,7 +111,7 @@ class Actions(ABC):
         return out
 
     @property
-    def is_dummy(self) -> BatchBoolTensor:
+    def is_dummy(self) -> TensorType["batch_shape", torch.bool]:
         """Returns a boolean tensor indicating whether the actions are dummy actiosn."""
         dummy_actions_tensor = self.__class__.dummy_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))
@@ -120,7 +119,7 @@ class Actions(ABC):
         return self.compare(dummy_actions_tensor)
 
     @property
-    def is_exit(self) -> BatchBoolTensor:
+    def is_exit(self) -> TensorType["batch_shape", torch.bool]:
         """Returns a boolean tensor indicating whether the actions are exit actions."""
         exit_actions_tensor = self.__class__.exit_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))

@@ -1,15 +1,13 @@
 from typing import List, Optional
 
 import torch
+from torchtyping import TensorType
+
 
 from gfn.containers import Trajectories
 from gfn.envs import Env
 from gfn.samplers import ActionsSampler, BackwardActionsSampler
 from gfn.states import States
-from gfn.typing import TrajectoriesBoolTensor1D as DonesTensor
-from gfn.typing import TrajectoriesFloatTensor1D as LogProbsTensor
-from gfn.typing import TrajectoriesLongTensor1D as ActionsTensor
-from gfn.typing import TrajectoriesStatesTensor
 
 
 class TrajectoriesSampler:
@@ -61,9 +59,9 @@ class TrajectoriesSampler:
 
         dones = states.is_initial_state if self.is_backward else states.is_sink_state
 
-        trajectories_states: List[TrajectoriesStatesTensor] = [states.tensor]
-        trajectories_actions: List[ActionsTensor] = []
-        trajectories_logprobs: List[LogProbsTensor] = []
+        trajectories_states: List[TensorType["n_trajectories", "state_shape", torch.float]] = [states.tensor]
+        trajectories_actions: List[TensorType["n_trajectories", torch.long]] = []
+        trajectories_logprobs: List[TensorType["n_trajectories", torch.float]] = []
         trajectories_dones = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )

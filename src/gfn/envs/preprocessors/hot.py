@@ -3,17 +3,18 @@ from typing import Callable
 import torch
 from einops import rearrange
 from torch.nn.functional import one_hot
+from torchtyping import TensorType
+
 
 from gfn.envs.preprocessors.base import Preprocessor
 from gfn.states import States
-from gfn.typing import BatchInputTensor
 
 
 class OneHotPreprocessor(Preprocessor):
     def __init__(
         self,
         n_states: int,
-        get_states_indices: Callable[[States], BatchInputTensor],
+        get_states_indices: Callable[[States], TensorType["batch_shape", "input_dim"]],
     ) -> None:
         """One Hot Preprocessor for environments with enumerable states (finite number of states).
 
@@ -35,7 +36,7 @@ class KHotPreprocessor(Preprocessor):
         self,
         height: int,
         ndim: int,
-        get_states_indices: Callable[[States], BatchInputTensor],
+        get_states_indices: Callable[[States], TensorType["batch_shape", "input_dim"]],
     ) -> None:
         """K Hot Preprocessor for environments with enumerable states (finite number of states) with a grid structure.
 

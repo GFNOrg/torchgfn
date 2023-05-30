@@ -4,19 +4,12 @@ from typing import Optional, Tuple, Union
 
 import torch
 from gymnasium.spaces import Discrete, Space
+from torchtyping import TensorType
 
 from gfn.actions import Actions
 from gfn.casting import correct_cast
 from gfn.envs.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
-from gfn.typing import (
-    BatchBoolTensor,
-    BatchFloatTensor,
-    BatchLongTensor,
-    OneStateTensor,
-    PmfTensor,
-    StatesFloatTensor,
-)
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
@@ -29,8 +22,8 @@ class Env(ABC):
     def __init__(
         self,
         action_space: Space,
-        s0: OneStateTensor,
-        sf: Optional[OneStateTensor] = None,
+        s0: TensorType["state_shape", torch.float],
+        sf: Optional[TensorType["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -45,8 +38,8 @@ class Env(ABC):
                 In order to be processed by the library, unique actions need to be
                 converted to a unique tensor of arbitrary shape. Such a tensor is used to create an `Actions` object.
                 The `flatten` method in `gymnasium.spaces.utils` can be used for this purpose.
-            s0 (OneStateTensor): Representation of the initial state. All individual states would be of the same shape.
-            sf (Optional[OneStateTensor], optional): Representation of the final state. Only used for a human readable representation of
+            s0: Representation of the initial state. All individual states would be of the same shape.
+            sf (optional): Representation of the final state. Only used for a human readable representation of
                 the states or trajectories.
             device_str (Optional[str], optional): 'cpu' or 'cuda'. Defaults to None, in which case the device is inferred from s0.
             preprocessor (Optional[Preprocessor], optional): a Preprocessor object that converts raw states to a tensor that can be fed
@@ -102,7 +95,7 @@ class Env(ABC):
         )
 
     @abstractmethod
-    def maskless_step(self, states: States, actions: Actions) -> StatesFloatTensor:
+    def maskless_step(self, states: States, actions: Actions) -> TensorType["batch_shape", "state_shape", torch.float]:
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
@@ -111,7 +104,7 @@ class Env(ABC):
     @abstractmethod
     def maskless_backward_step(
         self, states: States, actions: Actions
-    ) -> StatesFloatTensor:
+    ) -> TensorType["batch_shape", "state_shape", torch.float]:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
@@ -144,7 +137,7 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating sink states in the new batch."""
         new_states = deepcopy(states)
-        valid_states_idx: BatchBoolTensor = ~states.is_sink_state
+        valid_states_idx: TensorType["batch_shape", torch.bool] = ~states.is_sink_state
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
@@ -181,7 +174,7 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating initial states in the new batch."""
         new_states = deepcopy(states)
-        valid_states_idx: BatchBoolTensor = ~new_states.is_initial_state
+        valid_states_idx: TensorType["batch_shape", torch.bool] = ~new_states.is_initial_state
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
@@ -201,22 +194,22 @@ class Env(ABC):
 
         return new_states
 
-    def reward(self, final_states: States) -> BatchFloatTensor:
+    def reward(self, final_states: States) -> TensorType["batch_shape", torch.float]:
         """Either this or log_reward needs to be implemented."""
         return torch.exp(self.log_reward(final_states))
 
-    def log_reward(self, final_states: States) -> BatchFloatTensor:
+    def log_reward(self, final_states: States) -> TensorType["batch_shape", torch.float]:
         """Either this or reward needs to be implemented."""
         raise NotImplementedError("log_reward function not implemented")
 
     # TODO: some, or all of the following methods should probably move to DiscreteEnv - Basically all DiscreteEnvs should have a Discrete action_space. Do we actually need `action_space` attribute ?
 
-    def get_states_indices(self, states: States) -> BatchLongTensor:
+    def get_states_indices(self, states: States) -> TensorType["batch_shape", torch.long]:
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
-    def get_terminating_states_indices(self, states: States) -> BatchLongTensor:
+    def get_terminating_states_indices(self, states: States) -> TensorType["batch_shape", torch.long]:
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
@@ -243,7 +236,7 @@ class Env(ABC):
         )
 
     @property
-    def true_dist_pmf(self) -> PmfTensor:
+    def true_dist_pmf(self) -> TensorType["n_states", torch.float]:
         "Returns a one-dimensional tensor representing the true distribution."
         return NotImplementedError(
             "The environment does not support enumeration of states"

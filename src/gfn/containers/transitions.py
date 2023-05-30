@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 import torch
+from torchtyping import TensorType
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
@@ -10,11 +11,6 @@ if TYPE_CHECKING:
     from gfn.states import States
 
 from gfn.containers.base import Container
-from gfn.typing import (
-    TransitionBoolTensor,
-    TransitionFloatTensor,
-    TransitionPairFloatTensor,
-)
 
 
 class Transitions(Container):
@@ -23,23 +19,23 @@ class Transitions(Container):
         env: Env,
         states: States | None = None,
         actions: Actions | None = None,
-        is_done: TransitionBoolTensor | None = None,
+        is_done: TensorType["n_transitions", torch.bool] | None = None,
         next_states: States | None = None,
         is_backward: bool = False,
-        log_rewards: TransitionFloatTensor | None = None,
-        log_probs: TransitionFloatTensor | None = None,
+        log_rewards: TensorType["n_transitions", torch.float] | None = None,
+        log_probs: TensorType["n_transitions", torch.float] | None = None,
     ):
         """Container for transitions.
 
         Args:
-            env (Env): Environment
-            states (States, optional): States object with uni-dimensional batch_shape, representing the parents of the transitions. Defaults to None.
-            actions (Actions, optional): Actions chosen at the parents of each transitions. Defaults to None.
-            is_done (TransitionBoolTensor, optional): Whether the action is the exit action. Defaults to None.
-            next_states (States, optional): States object with uni-dimensional batch_shape, representing the children of the transitions. Defaults to None.
-            is_backward (bool, optional): Whether the transitions are backward transitions (i.e. next_states is the parent of states). Defaults to False.
-            log_rewards (TransitionFloatTensor1D, optional): The log-rewards of the transitions (using a default value like -float('inf') for non-terminating transitions). Defaults to None.
-            log_probs (TransitionFloatTensor1D, optional): The log-probabilities of the actions. Defaults to None.
+            env: Environment
+            states (optional): States object with uni-dimensional batch_shape, representing the parents of the transitions. Defaults to None.
+            actions (optional): Actions chosen at the parents of each transitions. Defaults to None.
+            is_done (optional): Whether the action is the exit action. Defaults to None.
+            next_states (optional): States object with uni-dimensional batch_shape, representing the children of the transitions. Defaults to None.
+            is_backward (optional): Whether the transitions are backward transitions (i.e. next_states is the parent of states). Defaults to False.
+            log_rewards (optional): The log-rewards of the transitions (using a default value like -float('inf') for non-terminating transitions). Defaults to None.
+            log_probs (optional): The log-probabilities of the actions. Defaults to None.
 
         When states and next_states are not None, the Transitions is an empty container that can be populated on the go.
         """
@@ -105,7 +101,7 @@ class Transitions(Container):
         return self.states[self.is_done]
 
     @property
-    def log_rewards(self) -> TransitionFloatTensor | None:
+    def log_rewards(self) -> TensorType["n_transitions", torch.float] | None:
         if self._log_rewards is not None:
             return self._log_rewards
         if self.is_backward:
@@ -124,7 +120,7 @@ class Transitions(Container):
             return log_rewards
 
     @property
-    def all_log_rewards(self) -> TransitionPairFloatTensor:
+    def all_log_rewards(self) -> TensorType["n_transitions", 2, torch.float]:
         """This is applicable to environments where all states are terminating.
         This function evaluates the rewards for all transitions that do not end in the sink state.
         This is useful for the Modified Detailed Balance loss."""

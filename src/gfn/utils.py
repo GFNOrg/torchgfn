@@ -2,6 +2,7 @@ from typing import Dict, Optional
 
 import torch
 
+
 from gfn.containers import Trajectories, Transitions
 from gfn.distributions import EmpiricalTerminatingStatesDistribution
 from gfn.envs import Env

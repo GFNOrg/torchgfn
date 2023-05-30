@@ -3,11 +3,11 @@ from collections import Counter
 from typing import Optional
 
 import torch
+from torchtyping import TensorType
 
 from gfn.containers import Trajectories
 from gfn.envs import Env
 from gfn.states import States
-from gfn.typing import PmfTensor
 
 
 class TrajectoryDistribution(ABC):
@@ -29,7 +29,7 @@ class TerminatingStatesDistribution(ABC):
     """
 
     @abstractmethod
-    def pmf(self) -> PmfTensor:
+    def pmf(self) -> TensorType["n_states", torch.float]:
         """
         Compute the probability mass function of the distribution.
         """
@@ -62,7 +62,7 @@ class EmpiricalTerminatingStatesDistribution(TerminatingStatesDistribution):
         self.states_to_indices = env.get_terminating_states_indices
         self.env_n_terminating_states = env.n_terminating_states
 
-    def pmf(self) -> PmfTensor:
+    def pmf(self) -> TensorType["n_states", torch.float]:
         states_indices = self.states_to_indices(self.states).cpu().numpy().tolist()
         counter = Counter(states_indices)
         counter_list = [
@@ -95,7 +95,7 @@ class TrajectoryBasedTerminatingStateDistribution(TerminatingStatesDistribution)
         trajectories = self.trajectory_distribution.sample(n_final_states)
         return trajectories.last_states
 
-    def pmf(self) -> PmfTensor:
+    def pmf(self) -> TensorType["n_states", torch.float]:
         """
         Compute the probability mass function of the distribution.
         """
