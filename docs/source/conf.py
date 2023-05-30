@@ -8,7 +8,7 @@
 import os
 import sys
 
-project = "gfn"
+project = "torchgfn"
 copyright = "2022, Salem Lahlou"
 author = "Salem Lahlou"
 
