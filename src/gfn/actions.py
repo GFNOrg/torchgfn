@@ -107,9 +107,11 @@ class Actions(ABC):
             boolean tensor of shape batch_shape indicating whether the actions are equal
         """
         out = self.tensor == other.tensor
-        action_ndim = len(self.__class__.action_shape)
-        for _ in range(action_ndim):  # TODO: this seems over complex?
-            out = out.all(dim=-1)
+        n_batch_dims = len(self.__class__.batch_shape)
+
+        # Flattens all action dims, which we reduce all over.
+        out = out.flatten(start_dim=n_batch_dims).all(dim=-1)
+
         return out
 
     @property
