@@ -6,7 +6,7 @@ from typing import ClassVar, Literal, Tuple, cast
 import torch
 from einops import rearrange
 from gymnasium.spaces import Discrete
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.envs.env import DiscreteEnv
@@ -16,15 +16,6 @@ from gfn.envs.preprocessors import (
     OneHotPreprocessor,
 )
 from gfn.states import DiscreteStates
-
-# Typing
-TensorLong = TensorType["batch_shape", torch.long]
-TensorFloat = TensorType["batch_shape", torch.float]
-TensorBool = TensorType["batch_shape", torch.bool]
-ForwardMasksTensor = TensorType["batch_shape", "n_actions", torch.bool]
-BackwardMasksTensor = TensorType["batch_shape", "n_actions - 1", torch.bool]
-OneStateTensor = TensorType["state_shape", torch.float]
-StatesTensor = TensorType["batch_shape", "state_shape", torch.float]
 
 preprocessors_dict = {
     "KHot": KHotPreprocessor,
@@ -111,7 +102,7 @@ class HyperGrid(DiscreteEnv):
             @classmethod
             def make_random_states_tensor(
                 cls, batch_shape: Tuple[int, ...]
-            ) -> StatesTensor:
+            ) -> TT["batch_shape", "state_shape", torch.float]:
                 "Creates a batch of random states."
                 states_tensor = torch.randint(
                     0, env.height, batch_shape + env.s0.shape, device=env.device
@@ -121,30 +112,37 @@ class HyperGrid(DiscreteEnv):
             def update_masks(self) -> None:
                 "Update the masks based on the current states."
                 # The following two lines are for typing only.
-                self.forward_masks = cast(ForwardMasksTensor, self.forward_masks)
-                self.backward_masks = cast(BackwardMasksTensor, self.backward_masks)
+                self.forward_masks = cast(
+                    TT["batch_shape", "n_actions", torch.bool],
+                    self.forward_masks,
+                )
+                self.backward_masks = cast(
+                    TT["batch_shape", "n_actions - 1", torch.bool],
+                    self.backward_masks,
+                )
 
-                self.forward_masks[..., :-1] = self.states_tensor != env.height - 1
-                self.backward_masks = self.states_tensor != 0
+                self.forward_masks[..., :-1] = self.tensor != env.height - 1
+                self.backward_masks = self.tensor != 0
 
         return HyperGridStates
 
-    def maskless_step(self, states: DiscreteStates, actions: Actions) -> StatesTensor:
-        new_states_tensor = states.states_tensor.scatter(
-            -1, actions.actions_tensor, 1, reduce="add"
-        )
+    def maskless_step(
+        self, states: DiscreteStates, actions: Actions
+    ) -> TT["batch_shape", "state_shape", torch.float]:
+        new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
         return new_states_tensor
 
     def maskless_backward_step(
         self, states: DiscreteStates, actions: Actions
-    ) -> StatesTensor:
-        new_states_tensor = states.states_tensor.scatter(
-            -1, actions.actions_tensor, -1, reduce="add"
-        )
+    ) -> TT["batch_shape", "state_shape", torch.float]:
+        new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
         return new_states_tensor
 
-    def true_reward(self, final_states: DiscreteStates) -> TensorFloat:
-        final_states_raw = final_states.states_tensor
+    def true_reward(
+        self, final_states: DiscreteStates
+    ) -> TT["batch_shape", torch.float]:
+        """TODO: Equation governing reward should be placed here."""
+        final_states_raw = final_states.tensor
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states_raw / (self.height - 1) - 0.5)
         if not self.reward_cos:
@@ -157,11 +155,15 @@ class HyperGrid(DiscreteEnv):
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
         return reward
 
-    def log_reward(self, final_states: DiscreteStates) -> TensorFloat:
+    def log_reward(
+        self, final_states: DiscreteStates
+    ) -> TT["batch_shape", torch.float]:
         return torch.log(self.true_reward(final_states))
 
-    def get_states_indices(self, states: DiscreteStates) -> TensorLong:
-        states_raw = states.states_tensor
+    def get_states_indices(
+        self, states: DiscreteStates
+    ) -> TT["batch_shape", torch.long]:
+        states_raw = states.tensor
 
         canonical_base = self.height ** torch.arange(
             self.ndim - 1, -1, -1, device=states_raw.device
@@ -169,7 +171,9 @@ class HyperGrid(DiscreteEnv):
         indices = (canonical_base * states_raw).sum(-1).long()
         return indices
 
-    def get_terminating_states_indices(self, states: DiscreteStates) -> TensorLong:
+    def get_terminating_states_indices(
+        self, states: DiscreteStates
+    ) -> TT["batch_shape", torch.long]:
         return self.get_states_indices(states)
 
     @property
@@ -219,7 +223,7 @@ class HyperGrid(DiscreteEnv):
     @property
     def all_states(self) -> DiscreteStates:
         grid = self.build_grid()
-        flat_grid = rearrange(grid.states_tensor, "... ndim -> (...) ndim")
+        flat_grid = rearrange(grid.tensor, "... ndim -> (...) ndim")
         return self.States(flat_grid)
 
     @property

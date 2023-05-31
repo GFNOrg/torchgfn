@@ -1,14 +1,11 @@
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 from gfn.envs import DiscreteEnv, Env
 from gfn.estimators import ProbabilityEstimator
 from gfn.states import DiscreteStates
-
-# Typing
-OutputTensor = TensorType["batch_shape", "output_dim", float]
 
 
 class DiscretePFEstimator(ProbabilityEstimator):
@@ -39,7 +36,7 @@ class DiscretePFEstimator(ProbabilityEstimator):
         self.sf_bias = sf_bias
         self.epsilon = epsilon
 
-    def check_output_dim(self, module_output: OutputTensor):
+    def check_output_dim(self, module_output: TT["batch_shape", "output_dim"]):
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError("DiscretePFEstimator only supports discrete environments.")
         if module_output.shape[-1] != self.env.n_actions:
@@ -48,7 +45,9 @@ class DiscretePFEstimator(ProbabilityEstimator):
             )
 
     def to_probability_distribution(
-        self, states: DiscreteStates, module_output: OutputTensor
+        self,
+        states: DiscreteStates,
+        module_output: TT["batch_shape", "output_dim"],
     ) -> Distribution:
         logits = module_output
         logits[~states.forward_masks] = -float("inf")
@@ -66,7 +65,7 @@ class DiscretePFEstimator(ProbabilityEstimator):
 class DiscretePBEstimator(ProbabilityEstimator):
     r"""Container for estimators $s \mapsto (P_B(s' \mid s))_{s' \in Parents(s)}$"""
 
-    def check_output_dim(self, module_output: OutputTensor):
+    def check_output_dim(self, module_output: TT["batch_shape", "output_dim"]):
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError("DiscretePBEstimator only supports discrete environments.")
         if module_output.shape[-1] != self.env.n_actions - 1:
@@ -75,7 +74,9 @@ class DiscretePBEstimator(ProbabilityEstimator):
             )
 
     def to_probability_distribution(
-        self, states: DiscreteStates, module_output: OutputTensor
+        self,
+        states: DiscreteStates,
+        module_output: TT["batch_shape", "output_dim"],
     ) -> Distribution:
         logits = module_output
         logits[~states.backward_masks] = -float("inf")

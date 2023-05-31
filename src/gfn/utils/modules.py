@@ -4,11 +4,7 @@ from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
-from torchtyping import TensorType
-
-# Typing
-InputTensor = TensorType["batch_shape", "input_shape", float]
-OutputTensor = TensorType["batch_shape", "output_dim", float]
+from torchtyping import TensorType as TT
 
 
 class NeuralNet(nn.Module):
@@ -52,7 +48,9 @@ class NeuralNet(nn.Module):
         self.last_layer = nn.Linear(self.torso.hidden_dim, output_dim)
         self.device = None
 
-    def forward(self, preprocessed_states: InputTensor) -> OutputTensor:
+    def forward(
+        self, preprocessed_states: TT["batch_shape", "input_dim", float]
+    ) -> TT["batch_shape", "output_dim", float]:
         if self.device is None:
             self.device = preprocessed_states.device
             self.to(self.device)
@@ -80,7 +78,9 @@ class Tabular(nn.Module):
 
         self.device = None
 
-    def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
+    def __call__(
+        self, preprocessed_states: TT["batch_shape", "input_dim", float]
+    ) -> TT["batch_shape", "output_dim", float]:
         if self.device is None:
             self.device = preprocessed_states.device
             self.table = self.table.to(self.device)

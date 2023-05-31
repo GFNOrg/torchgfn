@@ -246,7 +246,7 @@ def test_box_fwd_step(delta: float):
 
         actions = format_actions(format_tensor(actions_list, discrete=False), env)
         states = env.step(states, actions)
-        states_tensor = states.states_tensor
+        states_tensor = states.tensor
 
         # The following evaluate the maximum angles of the possible actions
         A = torch.where(
@@ -282,7 +282,7 @@ def test_states_getitem(ndim: int, env_name: str):
     n_selections = int(torch.sum(selections))
     selected_states = states[selections]
 
-    assert selected_states.states_tensor.shape == (
+    assert selected_states.tensor.shape == (
         n_selections,
         ndim if env_name != "Box" else 2,
     )
@@ -292,7 +292,7 @@ def test_states_getitem(ndim: int, env_name: str):
     n_selections = int(torch.sum(selections))
     selected_states = states[selections]
 
-    assert selected_states.states_tensor.shape == (
+    assert selected_states.tensor.shape == (
         n_selections,
         ND_BATCH_SHAPE[1],
         ndim if env_name != "Box" else 2,
