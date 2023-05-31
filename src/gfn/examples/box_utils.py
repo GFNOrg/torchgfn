@@ -1,4 +1,6 @@
 """This file contains utilitary functions for the Box environment."""
+from typing import Tuple
+
 import numpy as np
 import torch
 
@@ -44,7 +46,7 @@ class QuarterCircle(Distribution):
 
         self.min_angles, self.max_angles = self.get_min_and_max_angles()
 
-    def get_min_and_max_angles(self):
+    def get_min_and_max_angles(self) -> Tuple[TType["n_states"], TType["n_states"]]:
         if self.northeastern:
             min_angles = torch.where(
                 self.centers[:, 0] <= 1 - self.delta,
@@ -70,7 +72,9 @@ class QuarterCircle(Distribution):
 
         return min_angles, max_angles
 
-    def sample(self, sample_shape=()):
+    def sample(
+        self, sample_shape: torch.Size = torch.Size()
+    ) -> TType["sample_shape", 2]:
         base_01_samples = self.base_dist.sample(sample_shape=sample_shape)
 
         sampled_angles = (
@@ -83,19 +87,9 @@ class QuarterCircle(Distribution):
             dim=-1,
         )
 
-        if self.northeastern:
-            sampled_next_states = self.centers + sampled_actions
-        else:
-            sampled_next_states = self.centers - sampled_actions
-        # TODO: do we need to return actions or next states here? -- logprobs are ok, but the previous 4 lines might not be
         return sampled_actions
 
-    def log_prob(self, sampled_actions):
-        # if self.northeastern:
-        #     sampled_actions = sampled_next_states - self.centers
-        # else:
-        #     sampled_actions = self.centers - sampled_next_states
-
+    def log_prob(self, sampled_actions: TType["batch_size", 2]) -> TType["batch_size"]:
         sampled_angles = torch.arccos(sampled_actions[..., 0] / self.delta)
 
         sampled_angles = sampled_angles / (torch.pi / 2)
@@ -153,7 +147,9 @@ class QuarterDisk(Distribution):
             Beta(alpha_theta, beta_theta),
         )
 
-    def sample(self, sample_shape=()):
+    def sample(
+        self, sample_shape: torch.Size = torch.Size()
+    ) -> TType["sample_shape", 2]:
         base_r_01_samples = self.base_r_dist.sample(sample_shape=sample_shape)
         base_theta_01_samples = self.base_theta_dist.sample(sample_shape=sample_shape)
 
@@ -171,7 +167,7 @@ class QuarterDisk(Distribution):
 
         return sampled_actions
 
-    def log_prob(self, sampled_actions):
+    def log_prob(self, sampled_actions: TType["batch_size", 2]) -> TType["batch_size"]:
         base_r_01_samples = (
             torch.sqrt(torch.sum(sampled_actions**2, dim=1)) / self.delta
         )
@@ -214,7 +210,6 @@ class QuarterCircleWithExit(Distribution):
             beta=beta,
         )
         self.exit_probability = exit_probability
-        self.exit = torch.bernoulli(self.exit_proba).bool()
         self.exit_action = torch.FloatTensor(
             [-float("inf"), -float("inf")], device=centers.device
         )
@@ -224,7 +219,9 @@ class QuarterCircleWithExit(Distribution):
 
     def sample(self, sample_shape=()):
         actions = self.dist_without_exit.sample(sample_shape)
-        actions[self.exit] = self.exit_action
+        repeated_exit_probability = self.exit_probability.repeat(sample_shape + (1,))
+        exit_mask = torch.bernoulli(repeated_exit_probability).bool()
+        actions[exit_mask] = self.exit_action
 
         return actions
 
@@ -342,4 +339,17 @@ if __name__ == "__main__":
     # add to the plot samples_disk
     ax.scatter(samples_disk[:, 0], samples_disk[:, 1], s=0.1, marker="x")
 
-    plt.show()
+    # plt.show()
+
+    quarter_circle_with_exit_dist = QuarterCircleWithExit(
+        delta=delta,
+        centers=centers,
+        mixture_logits=mixture_logits,
+        alpha=alpha,
+        beta=beta,
+        exit_probability=torch.FloatTensor([0.5, 0.5, 0.5]),
+    )
+
+    samples_exit = quarter_circle_with_exit_dist.sample(sample_shape=(n_samples,))
+
+    print(samples_exit)
