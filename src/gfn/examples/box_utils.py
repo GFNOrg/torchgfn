@@ -5,9 +5,11 @@ import numpy as np
 import torch
 
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
-from torchtyping import TensorType as TType
+from torchtyping import TensorType as TType, TensorType as TT
 
+from gfn.envs import BoxEnv
 from gfn.estimators import ProbabilityEstimator
+from gfn.states import States
 
 
 class QuarterCircle(Distribution):
@@ -15,9 +17,12 @@ class QuarterCircle(Distribution):
     ones or the southwestern ones, centered at a point in (0, 1)^2. The distributions
     are Mixture of Beta distributions on the possible angle range.
 
+    When a state is of norm <= delta, and northeastern=False, then the distribution is a Dirac at the
+    state (i.e. the only possible parent is s_0).
+
     Adapted from https://github.com/saleml/continuous-gfn/blob/master/sampling.py
 
-    This is useful for the `Box` environment
+    This is useful for the `Box` environment.
     """
 
     def __init__(
@@ -87,6 +92,14 @@ class QuarterCircle(Distribution):
             dim=-1,
         )
 
+        if not self.northeastern:
+            # when centers are of norm <= delta, the distribution is a Dirac at the center
+            sampled_actions = torch.where(
+                torch.norm(self.centers, dim=-1) <= self.delta,
+                self.centers,
+                sampled_actions,
+            )
+
         return sampled_actions
 
     def log_prob(self, sampled_actions: TType["batch_size", 2]) -> TType["batch_size"]:
@@ -106,6 +119,14 @@ class QuarterCircle(Distribution):
             - np.log(np.pi / 2)
             - torch.log(self.max_angles - self.min_angles)
         )
+
+        if not self.northeastern:
+            # when centers are of norm <= delta, the distribution is a Dirac at the center
+            logprobs = torch.where(
+                torch.norm(self.centers, dim=-1) <= self.delta,
+                torch.zeros_like(logprobs),
+                logprobs,
+            )
 
         return logprobs
 
@@ -201,6 +222,7 @@ class QuarterCircleWithExit(Distribution):
         alpha: TType["n_states", "n_components"],
         beta: TType["n_states", "n_components"],
     ):
+        self.centers = centers
         self.dist_without_exit = QuarterCircle(
             delta=delta,
             northeastern=True,
@@ -214,13 +236,13 @@ class QuarterCircleWithExit(Distribution):
             [-float("inf"), -float("inf")], device=centers.device
         )
 
-        # exit probability should be 1 when torch.norm(1 - states, dim=1) <= env.delta or when torch.any(states >= 1 - env.epsilon, dim=-1)
-        # TODO: check that here or elsewhere ?
-
     def sample(self, sample_shape=()):
         actions = self.dist_without_exit.sample(sample_shape)
         repeated_exit_probability = self.exit_probability.repeat(sample_shape + (1,))
         exit_mask = torch.bernoulli(repeated_exit_probability).bool()
+
+        # When torch.norm(1 - states, dim=1) <= env.delta, we have to exit
+        exit_mask[torch.norm(1 - self.centers, dim=1) <= self.delta] = True
         actions[exit_mask] = self.exit_action
 
         return actions
@@ -231,29 +253,112 @@ class QuarterCircleWithExit(Distribution):
             sampled_actions[~self.exit]
         )
         logprobs[self.exit] = logprobs[self.exit] + torch.log(1 - self.exit_probability)
+        # When torch.norm(1 - states, dim=1) <= env.delta, logprobs should be 0
+        logprobs[torch.norm(1 - self.centers, dim=1) <= self.delta] = 0.0
         return logprobs
-
-
-class BoxForwardDist(Distribution):
-    """Mixes the QuarterCircleWithExit(northeastern=True) with QuarterDisk. The parameter `centers`
-    controls which distribution is called. When the center is [0, 0], we use QuarterDisk, otherwise,
-    we use QuarterCircleWithExit(northeaster=True). Not that `centers` represents a batch of states,
-    some of which can be [0, 0]."""
-
-    # TODO: do we really need this ? Or should the estimator handle the mapping ?
-    pass
 
 
 class BoxPFEStimator(ProbabilityEstimator):
     r"""Estimator for P_F for the Box environment. Uses the BoxForwardDist distribution"""
-    # TODO
-    pass
+
+    def __init__(
+        self,
+        env: BoxEnv,
+        module: torch.nn.Module,
+        n_components_s0: int,
+        n_components: int,
+    ):
+        super().__init__(env, module)
+        self.n_components_s0 = n_components_s0
+        self.n_components = n_components
+
+    def check_output_dim(
+        self, module_output: TT["batch_shape", "output_dim", float]
+    ) -> None:
+        # Not implemented because the module output shape is different for s_0 and for other states
+        pass
+
+    def to_probability_distribution(
+        self, states: States, module_output: TT["batch_shape", "output_dim", float]
+    ) -> Distribution:
+        # First, we verify that the batch shape of states is 1
+        assert len(states.batch_shape) == 1
+        # Then, we check that if one of the states is [0, 0] then all of them are
+        if torch.any(states == 0.0):
+            assert torch.all(states == 0)
+            # we also check that module_output is of shape n_components_s0 * 5
+            assert module_output.shape == (self.n_components_s0, 5)
+            # In this case, we use the QuarterDisk distribution
+            mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta = torch.split(
+                module_output, 1, dim=-1
+            )
+            return QuarterDisk(
+                delta=self.env.delta,
+                mixture_logits=mixture_logits,
+                alpha_r=alpha_r,
+                beta_r=beta_r,
+                alpha_theta=alpha_theta,
+                beta_theta=beta_theta,
+            )
+        else:
+            # we check that the module_output is of shape (*batch_shape, 1 + 3 * n_components)
+            assert module_output.shape == states.batch_shape + (
+                1 + 3 * self.n_components,
+            )
+            # In this case, we use the QuarterCircleWithExit distribution
+            exit_probability, mixture_logits, alpha, beta = torch.split(
+                module_output,
+                [1, self.n_components, self.n_components, self.n_components],
+                dim=-1,
+            )
+            exit_probability = exit_probability.squeeze(-1)
+            return QuarterCircleWithExit(
+                delta=self.env.delta,
+                northeastern=True,
+                centers=states,
+                exit_probability=exit_probability,
+                mixture_logits=mixture_logits,
+                alpha=alpha,
+                beta=beta,
+            )
 
 
 class BoxPBEstimator(ProbabilityEstimator):
     r"""Estimator for P_B for the Box environment. Uses the QuarterCircle(northeastern=False) distribution"""
-    # TODO
-    pass
+
+    def __init__(
+        self,
+        env: BoxEnv,
+        module: torch.nn.Module,
+        n_components_s0: int,
+        n_components: int,
+    ):
+        super().__init__(env, module)
+        self.n_components_s0 = n_components_s0
+        self.n_components = n_components
+
+    def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
+        if module_output.shape[-1] != 3 * self.n_components:
+            raise ValueError(
+                f"module_output.shape[-1] should be {3 * self.n_components}, but is {module_output.shape[-1]}"
+            )
+
+    def to_probability_distribution(
+        self, states: States, module_output: TT["batch_shape", "output_dim", float]
+    ) -> Distribution:
+        # First, we verify that the batch shape of states is 1
+        assert len(states.batch_shape) == 1
+        mixture_logits, alpha, beta = torch.split(
+            module_output, self.n_components, dim=-1
+        )
+        return QuarterCircle(
+            delta=self.env.delta,
+            northeastern=False,
+            centers=states,
+            mixture_logits=mixture_logits,
+            alpha=alpha,
+            beta=beta,
+        )
 
 
 if __name__ == "__main__":
