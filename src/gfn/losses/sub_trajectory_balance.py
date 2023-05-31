@@ -2,17 +2,12 @@ from dataclasses import dataclass
 from typing import List, Literal, Tuple
 
 import torch
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.estimators import LogStateFlowEstimator
 from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
 from gfn.samplers import ActionsSampler
-
-# Typing
-ScoresTensor = TensorType[-1, float]
-LossTensor = TensorType[0, float]
-LogPTrajectoriesTensor = TensorType["max_length", "n_trajectories", float]
 
 
 @dataclass
@@ -72,8 +67,8 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     def cumulative_logprobs(
         self,
         trajectories: Trajectories,
-        log_p_trajectories: LogPTrajectoriesTensor,
-    ) -> LogPTrajectoriesTensor:
+        log_p_trajectories: TT["max_length", "n_trajectories", torch.float],
+    ) -> TT["max_length", "n_trajectories", torch.float]:
         """
         :param trajectories: trajectories
         :param log_p_trajectories: log probabilities of each transition in each trajectory
@@ -91,7 +86,9 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
 
     def get_scores(
         self, trajectories: Trajectories
-    ) -> Tuple[List[ScoresTensor], List[ScoresTensor]]:
+    ) -> Tuple[
+        List[TT[-1, float]], List[TT[-1, float]]
+    ]:  # TODO: why -1 here? Is it equivilant to 0?
         """
         Returns two elements:
         - A list of tensors, each of which representing the scores of all sub-trajectories of length k, for k in [1, ..., trajectories.max_length].
@@ -176,7 +173,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             flattening_masks,
         )
 
-    def __call__(self, trajectories: Trajectories) -> LossTensor:
+    def __call__(self, trajectories: Trajectories) -> TT[0, float]:
         (
             scores,
             flattening_masks,

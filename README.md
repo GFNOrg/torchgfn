@@ -107,7 +107,7 @@ if __name__ == "__main__":
 Before the first commit:
 
 ```bash
-pip install -e .[dev,wandb]
+pip install -e .[dev,scripts]
 pre-commit install
 pre-commit run --all-files
 ```

@@ -1,16 +1,12 @@
 from dataclasses import dataclass
 
 import torch
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 from gfn.containers import Transitions
 from gfn.estimators import LogStateFlowEstimator
 from gfn.losses.base import EdgeDecomposableLoss, PFBasedParametrization
 from gfn.samplers import ActionsSampler
-
-# Typing
-ScoresTensor = TensorType["n_transitions", float]
-LossTensor = TensorType[0, float]
 
 
 @dataclass
@@ -95,7 +91,7 @@ class DetailedBalance(EdgeDecomposableLoss):
 
         return (valid_log_pf_actions, log_pb_actions, scores)
 
-    def __call__(self, transitions: Transitions) -> LossTensor:
+    def __call__(self, transitions: Transitions) -> TT[0, float]:
         _, _, scores = self.get_scores(transitions)
         loss = torch.mean(scores**2)
 
@@ -104,7 +100,9 @@ class DetailedBalance(EdgeDecomposableLoss):
 
         return loss
 
-    def get_modified_scores(self, transitions: Transitions) -> ScoresTensor:
+    def get_modified_scores(
+        self, transitions: Transitions
+    ) -> TT["n_trajectories", torch.float]:
         "DAG-GFN-style detailed balance, for when all states are connected to the sink"
         if transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
