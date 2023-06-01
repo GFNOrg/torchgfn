@@ -292,7 +292,7 @@ class DiscreteEnv(Env, ABC):
 
         class DiscreteEnvActions(Actions):
             action_shape = (1,)
-            dummy_action = torch.tensor([1.0], device=env.device)  # Double check
+            dummy_action = torch.tensor([-1], device=env.device)  # Double check
             exit_action = torch.tensor([n_actions - 1], device=env.device)
 
         return DiscreteEnvActions
