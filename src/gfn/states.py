@@ -41,7 +41,7 @@ class States(ABC):
         TT["state_shape", torch.float]
     ]  # Dummy state, used to pad a batch of states
 
-    def __init__(self, tensor: TT["batch_shape", "state_shape", torch.float]):
+    def __init__(self, tensor: TT["batch_shape", "state_shape"]):
         self.tensor = tensor
         self.batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
         self._log_rewards = (
