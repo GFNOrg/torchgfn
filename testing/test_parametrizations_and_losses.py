@@ -2,7 +2,12 @@ import pytest
 import torch
 
 from gfn.envs import DiscreteEBMEnv, HyperGrid
-from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
+from gfn.estimators import (
+    LogEdgeFlowEstimator,
+    LogStateFlowEstimator,
+    LogZEstimator,
+    ProbabilityEstimator,
+)
 from gfn.losses import (
     DBParametrization,
     DetailedBalance,
@@ -86,8 +91,8 @@ def test_PFBasedParametrization(
     else:
         raise ValueError("Unknown environment name")
 
-    logit_PF = DiscretePFEstimator(env, module_name=module_name)
-    logit_PB = DiscretePBEstimator(env, module_name=module_name)
+    logit_PF = ProbabilityEstimator(env, module_name=module_name)
+    logit_PB = ProbabilityEstimator(env, module_name=module_name)
     if tie_pb_to_pf:
         logit_PB.module.torso = logit_PF.module.torso
     logF = LogStateFlowEstimator(
@@ -171,8 +176,8 @@ def test_subTB_vs_TB(
 
     env = HyperGrid(ndim=ndim, height=7, preprocessor_name=preprocessor_name)
 
-    logit_PF = DiscretePFEstimator(env, module_name=module_name)
-    logit_PB = DiscretePBEstimator(env, module_name=module_name)
+    logit_PF = ProbabilityEstimator(env, module_name=module_name)
+    logit_PB = ProbabilityEstimator(env, module_name=module_name)
     logF = LogStateFlowEstimator(env, forward_looking=False, module_name="Zero")
     logZ = LogZEstimator(torch.tensor(0.0))
     actions_sampler = ActionsSampler(estimator=logit_PF)
