@@ -1,5 +1,4 @@
 import torch
-from torch.distributions import Distribution
 import torch.nn as nn
 from torch.distributions import Distribution
 from torchtyping import TensorType as TT
