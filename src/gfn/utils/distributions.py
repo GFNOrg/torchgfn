@@ -1,6 +1,6 @@
 import torch
 from torch.distributions import Categorical
-from torchtyping import TensorType as TType
+from torchtyping import TensorType as TT
 
 
 class UnsqueezedCategorical(Categorical):
@@ -15,5 +15,5 @@ class UnsqueezedCategorical(Categorical):
     `gfn/actions.py::Actions`, that tensors representing actions in discrete environments should be of shape
     (batch_shape, 1)"""
 
-    def sample(self, sample_shape=torch.Size()) -> TType["sample_shape", 1]:
+    def sample(self, sample_shape=torch.Size()) -> TT["sample_shape", 1]:
         return super().sample(sample_shape).unsqueeze(-1)

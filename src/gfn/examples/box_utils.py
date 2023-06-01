@@ -3,9 +3,8 @@ from typing import Tuple
 
 import numpy as np
 import torch
-
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
-from torchtyping import TensorType as TType, TensorType as TT
+from torchtyping import TensorType as TT
 
 from gfn.envs import BoxEnv
 from gfn.estimators import ProbabilityEstimator
@@ -29,10 +28,10 @@ class QuarterCircle(Distribution):
         self,
         delta: float,
         northeastern: bool,
-        centers: TType["n_states", 2],
-        mixture_logits: TType["n_states", "n_components"],
-        alpha: TType["n_states", "n_components"],
-        beta: TType["n_states", "n_components"],
+        centers: TT["n_states", 2],
+        mixture_logits: TT["n_states", "n_components"],
+        alpha: TT["n_states", "n_components"],
+        beta: TT["n_states", "n_components"],
     ):
         self.delta = delta
         self.northeastern = northeastern
@@ -51,7 +50,7 @@ class QuarterCircle(Distribution):
 
         self.min_angles, self.max_angles = self.get_min_and_max_angles()
 
-    def get_min_and_max_angles(self) -> Tuple[TType["n_states"], TType["n_states"]]:
+    def get_min_and_max_angles(self) -> Tuple[TT["n_states"], TT["n_states"]]:
         if self.northeastern:
             min_angles = torch.where(
                 self.centers[:, 0] <= 1 - self.delta,
@@ -77,9 +76,7 @@ class QuarterCircle(Distribution):
 
         return min_angles, max_angles
 
-    def sample(
-        self, sample_shape: torch.Size = torch.Size()
-    ) -> TType["sample_shape", 2]:
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> TT["sample_shape", 2]:
         base_01_samples = self.base_dist.sample(sample_shape=sample_shape)
 
         sampled_angles = (
@@ -102,7 +99,7 @@ class QuarterCircle(Distribution):
 
         return sampled_actions
 
-    def log_prob(self, sampled_actions: TType["batch_size", 2]) -> TType["batch_size"]:
+    def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
         sampled_angles = torch.arccos(sampled_actions[..., 0] / self.delta)
 
         sampled_angles = sampled_angles / (torch.pi / 2)
@@ -143,11 +140,11 @@ class QuarterDisk(Distribution):
     def __init__(
         self,
         delta: float,
-        mixture_logits: TType["n_components"],
-        alpha_r: TType["n_components"],
-        beta_r: TType["n_components"],
-        alpha_theta: TType["n_components"],
-        beta_theta: TType["n_components"],
+        mixture_logits: TT["n_components"],
+        alpha_r: TT["n_components"],
+        beta_r: TT["n_components"],
+        alpha_theta: TT["n_components"],
+        beta_theta: TT["n_components"],
     ):
         self.delta = delta
         self.mixture_logits = mixture_logits
@@ -168,9 +165,7 @@ class QuarterDisk(Distribution):
             Beta(alpha_theta, beta_theta),
         )
 
-    def sample(
-        self, sample_shape: torch.Size = torch.Size()
-    ) -> TType["sample_shape", 2]:
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> TT["sample_shape", 2]:
         base_r_01_samples = self.base_r_dist.sample(sample_shape=sample_shape)
         base_theta_01_samples = self.base_theta_dist.sample(sample_shape=sample_shape)
 
@@ -188,7 +183,7 @@ class QuarterDisk(Distribution):
 
         return sampled_actions
 
-    def log_prob(self, sampled_actions: TType["batch_size", 2]) -> TType["batch_size"]:
+    def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
         base_r_01_samples = (
             torch.sqrt(torch.sum(sampled_actions**2, dim=1)) / self.delta
         )
@@ -216,11 +211,11 @@ class QuarterCircleWithExit(Distribution):
     def __init__(
         self,
         delta: float,
-        centers: TType["n_states", 2],
-        exit_probability: TType["n_states"],
-        mixture_logits: TType["n_states", "n_components"],
-        alpha: TType["n_states", "n_components"],
-        beta: TType["n_states", "n_components"],
+        centers: TT["n_states", 2],
+        exit_probability: TT["n_states"],
+        mixture_logits: TT["n_states", "n_components"],
+        alpha: TT["n_states", "n_components"],
+        beta: TT["n_states", "n_components"],
     ):
         self.centers = centers
         self.dist_without_exit = QuarterCircle(
