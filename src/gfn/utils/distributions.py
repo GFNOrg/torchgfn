@@ -17,3 +17,6 @@ class UnsqueezedCategorical(Categorical):
 
     def sample(self, sample_shape=torch.Size()) -> TT["sample_shape", 1]:
         return super().sample(sample_shape).unsqueeze(-1)
+
+    def log_prob(self, sample: TT["sample_shape", 1]) -> TT["sample_shape"]:
+        return super().log_prob(sample.squeeze(-1))
