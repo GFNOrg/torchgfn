@@ -1,5 +1,5 @@
 """This file contains utilitary functions for the Box environment."""
-from typing import Tuple
+from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
@@ -9,6 +9,7 @@ from torchtyping import TensorType as TT
 from gfn.envs import BoxEnv
 from gfn.estimators import ProbabilityEstimator
 from gfn.states import States
+from gfn.utils import NeuralNet
 
 
 class QuarterCircle(Distribution):
@@ -251,6 +252,67 @@ class QuarterCircleWithExit(Distribution):
         # When torch.norm(1 - states, dim=1) <= env.delta, logprobs should be 0
         logprobs[torch.norm(1 - self.centers, dim=1) <= self.delta] = 0.0
         return logprobs
+
+
+class BoxPFNeuralNet(NeuralNet):
+    def __init__(
+        self,
+        hidden_dim: int,
+        n_hidden_layers: int,
+        n_components_s0: int,
+        n_components: int,
+        **kwargs,
+    ):
+        input_dim = 2
+        output_dim = 1 + 3 * n_components
+        super().__init__(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            output_dim=output_dim,
+            **kwargs,
+        )
+
+        self.PFs0 = torch.nn.Parameter(torch.zeros(n_components_s0, 5))
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", 2, float]
+    ) -> TT["batch_shape", 5] | TT["batch_shape", "1 + 3 * n_components"]:
+        if torch.all(preprocessed_states == 0):
+            return self.PFs0
+        else:
+            out = super().forward(preprocessed_states)
+            # apply sigmoid to all except the dimensions between 1 + self.n_components and 1 + 2 * self.n_components
+            out[:, : 1 + self.n_components] = torch.sigmoid(
+                out[:, : 1 + self.n_components]
+            )
+            out[:, 1 + 2 * self.n_components :] = torch.sigmoid(
+                out[:, 1 + 2 * self.n_components :]
+            )
+            return out
+
+
+class BoxPBNeuralNet(NeuralNet):
+    def __init__(
+        self, hidden_dim: int, n_hidden_layers: int, n_components: int, **kwargs
+    ):
+        input_dim = 2
+        output_dim = 3 * n_components
+        super().__init__(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            output_dim=output_dim,
+            **kwargs,
+        )
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", 2, float]
+    ) -> TT["batch_shape", "3 * n_components"]:
+        out = super().forward(preprocessed_states)
+        # apply sigmoid to all except the dimensions between 0 and self.n_components
+        out[:, self.n_components :] = torch.sigmoid(out[:, self.n_components :])
+        return out
 
 
 class BoxPFEStimator(ProbabilityEstimator):
