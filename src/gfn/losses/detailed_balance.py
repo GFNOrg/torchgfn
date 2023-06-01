@@ -27,10 +27,8 @@ class DetailedBalance(EdgeDecomposableLoss):
     def __init__(self, parametrization: DBParametrization, on_policy: bool = False):
         "If on_policy is True, the log probs stored in the transitions are used."
         self.parametrization = parametrization
-        self.actions_sampler = DiscreteActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = BackwardDiscreteActionsSampler(
-            parametrization.logit_PB
-        )
+        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
+        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
         self.on_policy = on_policy
 
     def get_scores(self, transitions: Transitions):

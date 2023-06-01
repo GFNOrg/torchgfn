@@ -39,7 +39,7 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     print(parametrization.Pi(env, n_samples=10).sample())
     print(parametrization.parameters.keys())
 
-    actions_sampler = DiscreteActionsSampler(log_F_edge)
+    actions_sampler = ActionsSampler(log_F_edge)
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
     states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
@@ -97,7 +97,7 @@ def test_PFBasedParametrization(
     )
     logZ = LogZEstimator(torch.tensor(0.0))
 
-    actions_sampler = DiscreteActionsSampler(estimator=logit_PF)
+    actions_sampler = ActionsSampler(estimator=logit_PF)
 
     trajectories_sampler = TrajectoriesSampler(
         env=env,
@@ -175,7 +175,7 @@ def test_subTB_vs_TB(
     logit_PB = DiscretePBEstimator(env, module_name=module_name)
     logF = LogStateFlowEstimator(env, forward_looking=False, module_name="Zero")
     logZ = LogZEstimator(torch.tensor(0.0))
-    actions_sampler = DiscreteActionsSampler(estimator=logit_PF)
+    actions_sampler = ActionsSampler(estimator=logit_PF)
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
 

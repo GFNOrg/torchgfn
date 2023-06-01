@@ -28,7 +28,7 @@ class SamplerConfig(JsonSerializable):
             raise ValueError(
                 f"Cannot parse sampler for parametrization {parametrization}"
             )
-        actions_sampler = DiscreteActionsSampler(
+        actions_sampler = ActionsSampler(
             estimator=estimator,
             temperature=self.temperature,
             epsilon=self.epsilon,

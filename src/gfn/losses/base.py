@@ -14,7 +14,7 @@ from gfn.distributions import (
     TrajectoryDistribution,
 )
 from gfn.envs import Env
-from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
 from gfn.utils import DiscretePBEstimator, DiscretePFEstimator
 
@@ -75,9 +75,7 @@ class PFBasedParametrization(Parametrization, ABC):
     def Pi(
         self, env: Env, n_samples: int = 1000, **actions_sampler_kwargs
     ) -> TrajectoryDistribution:
-        actions_sampler = DiscreteActionsSampler(
-            self.logit_PF, **actions_sampler_kwargs
-        )
+        actions_sampler = ActionsSampler(self.logit_PF, **actions_sampler_kwargs)
         trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
         trajectories = trajectories_sampler.sample_trajectories(
             n_trajectories=n_samples
