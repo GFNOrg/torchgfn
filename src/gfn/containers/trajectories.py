@@ -86,7 +86,7 @@ class Trajectories(Container):
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length}, First 10 trajectories:"
-            + f"states=\n{trajectories_representation}, actions=\n{self.actions.tensor.transpose(0, 1)[:10].numpy()}, "
+            + f"states=\n{trajectories_representation}, actions=\n{self.actions.tensor.squeeze().transpose(0, 1)[:10].numpy()}, "
             + f"when_is_done={self.when_is_done[:10].numpy()})"
         )
 
@@ -102,7 +102,7 @@ class Trajectories(Container):
         if len(self) == 0:
             return 0
 
-        return self.actions.batch_shape.shape[0]
+        return self.actions.batch_shape[0]
 
     @property
     def last_states(self) -> States:
