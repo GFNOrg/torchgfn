@@ -9,6 +9,7 @@ from gfn.samplers import ActionsSampler, BackwardActionsSampler
 from gfn.states import States
 
 
+# TODO: Consider making this whole class a method of `ActionsSampler`.
 class TrajectoriesSampler:
     def __init__(
         self,
