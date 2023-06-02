@@ -37,7 +37,7 @@ class QuarterCircle(Distribution):
         self.delta = delta
         self.northeastern = northeastern
         self.centers = centers
-        self.n_states = centers.shape[0]
+        self.n_states = centers.batch_shape[0]
         self.n_components = mixture_logits.shape[1]
 
         assert mixture_logits.shape == (self.n_states, self.n_components)
@@ -54,25 +54,29 @@ class QuarterCircle(Distribution):
     def get_min_and_max_angles(self) -> Tuple[TT["n_states"], TT["n_states"]]:
         if self.northeastern:
             min_angles = torch.where(
-                self.centers[:, 0] <= 1 - self.delta,
+                self.centers.tensor[:, 0] <= 1 - self.delta,
                 0.0,
-                2.0 / torch.pi * torch.arccos((1 - self.centers[:, 0]) / self.delta),
+                2.0
+                / torch.pi
+                * torch.arccos((1 - self.centers.tensor[:, 0]) / self.delta),
             )
             max_angles = torch.where(
-                self.centers[:, 1] <= 1 - self.delta,
+                self.centers.tensor[:, 1] <= 1 - self.delta,
                 1.0,
-                2.0 / torch.pi * torch.arcsin((1 - self.centers[:, 1]) / self.delta),
+                2.0
+                / torch.pi
+                * torch.arcsin((1 - self.centers.tensor[:, 1]) / self.delta),
             )
         else:
             min_angles = torch.where(
-                self.centers[:, 0] >= self.delta,
+                self.centers.tensor[:, 0] >= self.delta,
                 0.0,
-                2.0 / torch.pi * torch.arccos((self.centers[:, 0]) / self.delta),
+                2.0 / torch.pi * torch.arccos((self.centers.tensor[:, 0]) / self.delta),
             )
             max_angles = torch.where(
-                self.centers[:, 1] >= self.delta,
+                self.centers.tensor[:, 1] >= self.delta,
                 1.0,
-                2.0 / torch.pi * torch.arcsin((self.centers[:, 1]) / self.delta),
+                2.0 / torch.pi * torch.arcsin((self.centers.tensor[:, 1]) / self.delta),
             )
 
         return min_angles, max_angles
@@ -92,9 +96,32 @@ class QuarterCircle(Distribution):
 
         if not self.northeastern:
             # when centers are of norm <= delta, the distribution is a Dirac at the center
+            centers_in_quarter_disk = (
+                torch.norm(self.centers.tensor, dim=-1) <= self.delta
+            )
+            # repeat the centers_in_quarter_disk tensor to be of shape (*centers.batch_shape, 2)
+            centers_in_quarter_disk = centers_in_quarter_disk.unsqueeze(-1).repeat(
+                *([1] * len(self.centers.batch_shape)), 2
+            )
             sampled_actions = torch.where(
-                torch.norm(self.centers, dim=-1) <= self.delta,
-                self.centers,
+                centers_in_quarter_disk,
+                self.centers.tensor,
+                sampled_actions,
+            )
+
+            # Sometimes, when a point is at the border of the square (e.g. (1e-8, something) or (something, 1e-9))
+            # Then the approximation errors lead to the sampled_actions being slightly larger than the state or slightly
+            # negative at the low coordinate. So what we do is we set the sampled_action to be half that coordinate
+
+            sampled_actions = torch.where(
+                sampled_actions > self.centers.tensor,
+                self.centers.tensor / 2,
+                sampled_actions,
+            )
+
+            sampled_actions = torch.where(
+                sampled_actions < 0,
+                self.centers.tensor / 2,
                 sampled_actions,
             )
 
@@ -109,6 +136,25 @@ class QuarterCircle(Distribution):
             self.max_angles - self.min_angles
         )
 
+        # Ugly hack: when some of the sampled actions are -infinity (exit action), the corresponding value is nan
+        # And we don't really care about the log prob of the exit action
+        # So we first need to replace nans by anything between 0 and 1, say 0.5
+        base_01_samples = torch.where(
+            torch.isnan(base_01_samples),
+            torch.ones_like(base_01_samples) * 0.5,
+            base_01_samples,
+        )
+
+        # Another hack: when backward (northeastern=False), sometimes the sampled_actions are equal to the centers
+        # In this case, the base_01_samples are close to 0 because of approximations errors. But they do not count
+        # when evaluating the logpros, so we just bump them to 1e-6 so that Beta.log_prob does not throw an error
+        if not self.northeastern:
+            base_01_samples = torch.where(
+                torch.norm(sampled_actions, dim=-1) <= self.delta,
+                torch.ones_like(base_01_samples) * 1e-6,
+                base_01_samples,
+            )
+
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
 
         logprobs = (
@@ -121,7 +167,7 @@ class QuarterCircle(Distribution):
         if not self.northeastern:
             # when centers are of norm <= delta, the distribution is a Dirac at the center
             logprobs = torch.where(
-                torch.norm(self.centers, dim=-1) <= self.delta,
+                torch.norm(self.centers.tensor, dim=-1) <= self.delta,
                 torch.zeros_like(logprobs),
                 logprobs,
             )
@@ -140,6 +186,7 @@ class QuarterDisk(Distribution):
 
     def __init__(
         self,
+        batch_shape: Tuple[int],
         delta: float,
         mixture_logits: TT["n_components"],
         alpha_r: TT["n_components"],
@@ -147,6 +194,7 @@ class QuarterDisk(Distribution):
         alpha_theta: TT["n_components"],
         beta_theta: TT["n_components"],
     ):
+        self._batch_shape = batch_shape
         self.delta = delta
         self.mixture_logits = mixture_logits
         self.n_components = mixture_logits.shape[0]
@@ -167,8 +215,12 @@ class QuarterDisk(Distribution):
         )
 
     def sample(self, sample_shape: torch.Size = torch.Size()) -> TT["sample_shape", 2]:
-        base_r_01_samples = self.base_r_dist.sample(sample_shape=sample_shape)
-        base_theta_01_samples = self.base_theta_dist.sample(sample_shape=sample_shape)
+        base_r_01_samples = self.base_r_dist.sample(
+            sample_shape=self._batch_shape + sample_shape
+        )
+        base_theta_01_samples = self.base_theta_dist.sample(
+            sample_shape=self._batch_shape + sample_shape
+        )
 
         sampled_actions = self.delta * (
             torch.stack(
@@ -218,6 +270,7 @@ class QuarterCircleWithExit(Distribution):
         alpha: TT["n_states", "n_components"],
         beta: TT["n_states", "n_components"],
     ):
+        self.delta = delta
         self.centers = centers
         self.dist_without_exit = QuarterCircle(
             delta=delta,
@@ -238,19 +291,21 @@ class QuarterCircleWithExit(Distribution):
         exit_mask = torch.bernoulli(repeated_exit_probability).bool()
 
         # When torch.norm(1 - states, dim=1) <= env.delta, we have to exit
-        exit_mask[torch.norm(1 - self.centers, dim=1) <= self.delta] = True
+        exit_mask[torch.norm(1 - self.centers.tensor, dim=1) <= self.delta] = True
         actions[exit_mask] = self.exit_action
 
         return actions
 
     def log_prob(self, sampled_actions):
-        logprobs = torch.full_like(self.exit_probability, fill_value=-float("inf"))
-        logprobs[~self.exit] = self.dist_without_exit.log_prob(
-            sampled_actions[~self.exit]
+        exit = torch.all(
+            sampled_actions == torch.full_like(sampled_actions[0], -float("inf")), 1
         )
-        logprobs[self.exit] = logprobs[self.exit] + torch.log(1 - self.exit_probability)
+        logprobs = torch.full_like(self.exit_probability, fill_value=-float("inf"))
+        logprobs[~exit] = self.dist_without_exit.log_prob(sampled_actions)[~exit]
+        logprobs[~exit] = logprobs[~exit] + torch.log(1 - self.exit_probability)[~exit]
+        logprobs[exit] = torch.log(self.exit_probability[exit])
         # When torch.norm(1 - states, dim=1) <= env.delta, logprobs should be 0
-        logprobs[torch.norm(1 - self.centers, dim=1) <= self.delta] = 0.0
+        logprobs[torch.norm(1 - self.centers.tensor, dim=1) <= self.delta] = 0.0
         return logprobs
 
 
@@ -273,21 +328,25 @@ class BoxPFNeuralNet(NeuralNet):
             **kwargs,
         )
 
+        self.n_components_s0 = n_components_s0
+        self.n_components = n_components
+
         self.PFs0 = torch.nn.Parameter(torch.zeros(n_components_s0, 5))
 
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
     ) -> TT["batch_shape", 5] | TT["batch_shape", "1 + 3 * n_components"]:
         if torch.all(preprocessed_states == 0):
-            return self.PFs0
+            # apply sigmoid to self.PFs0[:, 1:] and return it
+            out = self.PFs0.clone()
+            out[:, 1:] = torch.sigmoid(out[:, 1:])
+            return out
         else:
             out = super().forward(preprocessed_states)
-            # apply sigmoid to all except the dimensions between 1 + self.n_components and 1 + 2 * self.n_components
-            out[:, : 1 + self.n_components] = torch.sigmoid(
-                out[:, : 1 + self.n_components]
-            )
-            out[:, 1 + 2 * self.n_components :] = torch.sigmoid(
-                out[:, 1 + 2 * self.n_components :]
+            # apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
+            out[:, 0] = torch.sigmoid(out[:, 0])
+            out[:, 1 + self.n_components :] = torch.sigmoid(
+                out[:, 1 + self.n_components :]
             )
             return out
 
@@ -298,6 +357,7 @@ class BoxPBNeuralNet(NeuralNet):
     ):
         input_dim = 2
         output_dim = 3 * n_components
+
         super().__init__(
             input_dim=input_dim,
             hidden_dim=hidden_dim,
@@ -305,6 +365,8 @@ class BoxPBNeuralNet(NeuralNet):
             output_dim=output_dim,
             **kwargs,
         )
+
+        self.n_components = n_components
 
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
@@ -324,10 +386,14 @@ class BoxPFEStimator(ProbabilityEstimator):
         module: torch.nn.Module,
         n_components_s0: int,
         n_components: int,
+        min_concentration: float = 0.1,
+        max_concentration: float = 2.0,
     ):
         super().__init__(env, module)
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
+        self.min_concentration = min_concentration
+        self.max_concentration = max_concentration
 
     def check_output_dim(
         self, module_output: TT["batch_shape", "output_dim", float]
@@ -343,15 +409,31 @@ class BoxPFEStimator(ProbabilityEstimator):
         # Then, we check that if one of the states is [0, 0] then all of them are
         # TODO: is there a way to bypass this ? Could we write a custom distribution
         # TODO: that sometimes returns a QuarterDisk and sometimes a QuarterCircle(northwestern=True) ?
-        if torch.any(states == 0.0):
-            assert torch.all(states == 0)
+        if torch.any(states.is_initial_state):
+            assert torch.all(states.is_initial_state)
             # we also check that module_output is of shape n_components_s0 * 5
             assert module_output.shape == (self.n_components_s0, 5)
             # In this case, we use the QuarterDisk distribution
             mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta = torch.split(
                 module_output, 1, dim=-1
             )
+            mixture_logits = mixture_logits.view(-1)
+
+            alpha_r = self.min_concentration + (
+                self.max_concentration - self.min_concentration
+            ) * alpha_r.view(-1)
+            beta_r = self.min_concentration + (
+                self.max_concentration - self.min_concentration
+            ) * beta_r.view(-1)
+            alpha_theta = self.min_concentration + (
+                self.max_concentration - self.min_concentration
+            ) * alpha_theta.view(-1)
+            beta_theta = self.min_concentration + (
+                self.max_concentration - self.min_concentration
+            ) * beta_theta.view(-1)
+
             return QuarterDisk(
+                batch_shape=states.batch_shape,
                 delta=self.env.delta,
                 mixture_logits=mixture_logits,
                 alpha_r=alpha_r,
@@ -370,10 +452,17 @@ class BoxPFEStimator(ProbabilityEstimator):
                 [1, self.n_components, self.n_components, self.n_components],
                 dim=-1,
             )
+            alpha = (
+                self.min_concentration
+                + (self.max_concentration - self.min_concentration) * alpha
+            )
+            beta = (
+                self.min_concentration
+                + (self.max_concentration - self.min_concentration) * beta
+            )
             exit_probability = exit_probability.squeeze(-1)
             return QuarterCircleWithExit(
                 delta=self.env.delta,
-                northeastern=True,
                 centers=states,
                 exit_probability=exit_probability,
                 mixture_logits=mixture_logits,
@@ -389,11 +478,9 @@ class BoxPBEstimator(ProbabilityEstimator):
         self,
         env: BoxEnv,
         module: torch.nn.Module,
-        n_components_s0: int,
         n_components: int,
     ):
         super().__init__(env, module)
-        self.n_components_s0 = n_components_s0
         self.n_components = n_components
 
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
