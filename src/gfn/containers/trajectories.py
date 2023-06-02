@@ -156,6 +156,8 @@ class Trajectories(Container):
 
         # For log_probs, we first need to make the first dimensions of self.log_probs and other.log_probs equal
         # (i.e. the number of steps in the trajectories), and then concatenate them
+
+        # TODO: the following if/elif can be factorized in a function
         if self.log_probs.shape[0] < other.log_probs.shape[0]:
             self.log_probs = torch.cat(
                 (
@@ -260,8 +262,11 @@ class Trajectories(Container):
         if self._log_rewards is None:
             log_rewards = None
         else:
-            log_rewards = torch.full_like(
-                actions, fill_value=-float("inf"), dtype=torch.float
+            log_rewards = torch.full(
+                actions.batch_shape,
+                fill_value=-float("inf"),
+                dtype=torch.float,
+                device=actions.device,
             )
             log_rewards[is_done] = torch.cat(
                 [
