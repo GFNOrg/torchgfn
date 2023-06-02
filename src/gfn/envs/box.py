@@ -94,9 +94,10 @@ class BoxEnv(Env):
         non_s0_states = non_terminal_states[~s0_states_idx].tensor
         non_s0_actions = non_exit_actions[~s0_states_idx].tensor
 
-        if torch.any(self.norm(non_s0_actions) != self.delta) or torch.any(
-            non_s0_actions < 0
-        ):
+        if (
+            not backward
+            and torch.any(torch.abs(self.norm(non_s0_actions) - self.delta) > 1e-5)
+        ) or torch.any(non_s0_actions < 0):
             return False
 
         if not backward and torch.any(non_s0_states + non_s0_actions > 1):
