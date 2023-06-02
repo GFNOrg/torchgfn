@@ -53,7 +53,7 @@ class BoxEnv(Env):
         class BoxActions(Actions):
             action_shape: ClassVar[Tuple[int, ...]] = (2,)
             dummy_action: ClassVar[TT[2]] = torch.tensor(
-                [-float("inf"), -float("inf")], device=env.device
+                [float("inf"), float("inf")], device=env.device
             )
             exit_action: ClassVar[TT[2]] = torch.tensor(
                 [-float("inf"), -float("inf")], device=env.device
