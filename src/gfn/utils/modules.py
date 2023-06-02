@@ -99,7 +99,9 @@ class Uniform(nn.Module):
         """
         self.output_dim = output_dim
 
-    def __call__(self, preprocessed_states: InputTensor) -> OutputTensor:
+    def __call__(
+        self, preprocessed_states: TT["batch_shape", "input_dim", float]
+    ) -> TT["batch_shape", "output_dim", float]:
         out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
             preprocessed_states.device
         )

@@ -4,8 +4,7 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
-from gfn.envs import Env
-from gfn.samplers import ActionsSampler, BackwardActionsSampler
+from gfn.samplers import ActionsSampler
 from gfn.states import States
 
 
@@ -82,7 +81,7 @@ class TrajectoriesSampler:
             log_probs = torch.full(
                 (n_trajectories,), fill_value=0, dtype=torch.float, device=device
             )
-            actions_log_probs, valid_actions = self.actions_sampler.sample(
+            valid_actions, actions_log_probs = self.actions_sampler.sample(
                 states[~dones]
             )
             actions[~dones] = valid_actions

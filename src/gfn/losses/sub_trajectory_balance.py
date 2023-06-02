@@ -7,7 +7,7 @@ from torchtyping import TensorType as TT
 from gfn.containers import Trajectories
 from gfn.estimators import LogStateFlowEstimator
 from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
-from gfn.samplers import BackwardDiscreteActionsSampler, DiscreteActionsSampler
+from gfn.samplers import ActionsSampler
 
 
 @dataclass
@@ -56,10 +56,8 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         # where an edge is of length 1. As lamda approaches 1, each loss becomes equally weighted.
         self.parametrization = parametrization
         self.log_reward_clip_min = log_reward_clip_min
-        self.actions_sampler = DiscreteActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = BackwardDiscreteActionsSampler(
-            parametrization.logit_PB
-        )
+        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
+        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
         self.weighing = weighing
         self.lamda = lamda
         self.on_policy = on_policy

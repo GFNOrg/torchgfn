@@ -129,16 +129,10 @@ class DiscreteEBMEnv(DiscreteEnv):
                 )
 
                 self.forward_masks[..., : env.ndim] = self.tensor == -1
-                self.forward_masks[..., env.ndim : 2 * env.ndim] = (
-                    self.states_tensor == -1
-                )
-                self.forward_masks[..., -1] = torch.all(
-                    self.states_tensor != -1, dim=-1
-                )
+                self.forward_masks[..., env.ndim : 2 * env.ndim] = self.tensor == -1
+                self.forward_masks[..., -1] = torch.all(self.tensor != -1, dim=-1)
                 self.backward_masks[..., : env.ndim] = self.tensor == 0
-                self.backward_masks[..., env.ndim : 2 * env.ndim] = (
-                    self.states_tensor == 1
-                )
+                self.backward_masks[..., env.ndim : 2 * env.ndim] = self.tensor == 1
 
         return DiscreteEBMStates
 
