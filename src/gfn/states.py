@@ -307,7 +307,7 @@ class DiscreteStates(States, ABC):
                 (
                     masks,
                     torch.ones(
-                        first_dim - self.batch_shape[0],
+                        first_dim - masks.shape[0],
                         *masks.shape[1:],
                         dtype=torch.bool,
                         device=self.device,
@@ -316,5 +316,5 @@ class DiscreteStates(States, ABC):
                 dim=0,
             )
 
-        self.forward_masks = _extend(self.forward_masks)
-        self.backward_masks = _extend(self.backward_masks)
+        self.forward_masks = _extend(self.forward_masks, required_first_dim)
+        self.backward_masks = _extend(self.backward_masks, required_first_dim)
