@@ -153,6 +153,42 @@ class Trajectories(Container):
         self.actions.extend(other.actions)
         self.states.extend(other.states)
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
+
+        # For log_probs, we first need to make the first dimensions of self.log_probs and other.log_probs equal
+        # (i.e. the number of steps in the trajectories), and then concatenate them
+        if self.log_probs.shape[0] < other.log_probs.shape[0]:
+            self.log_probs = torch.cat(
+                (
+                    self.log_probs,
+                    torch.full(
+                        size=(
+                            other.log_probs.shape[0] - self.log_probs.shape[0],
+                            self.log_probs.shape[1],
+                        ),
+                        fill_value=0,
+                        dtype=torch.float,
+                        device=self.log_probs.device,
+                    ),
+                ),
+                dim=0,
+            )
+        elif self.log_probs.shape[0] > other.log_probs.shape[0]:
+            other.log_probs = torch.cat(
+                (
+                    other.log_probs,
+                    torch.full(
+                        size=(
+                            self.log_probs.shape[0] - other.log_probs.shape[0],
+                            other.log_probs.shape[1],
+                        ),
+                        fill_value=0,
+                        dtype=torch.float,
+                        device=other.log_probs.device,
+                    ),
+                ),
+                dim=0,
+            )
+
         self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
 
         if self._log_rewards is not None and other._log_rewards is not None:
