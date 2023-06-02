@@ -15,12 +15,12 @@ class States(ABC):
     is a collection of multiple states (nodes of the DAG). A tensor representation
     of the states is required for batching. If a state is represented with a tensor
     of shape (*state_shape), a batch of states is represented with a States object,
-    with the attribute `tensor` of shape (*batch_shape, *state_shape). Other
+    with the attribute `tensor` of shape `(*batch_shape, *state_shape)`. Other
     representations are possible (e.g. state as string, numpy array, graph, etc...),
     but these representations cannot be batched.
 
     If the environment's action space is discrete (i.e. the environment subclasses
-    `DiscreteEnv`), then each States object is also endowed with a `forward_masks` and
+    `DiscreteEnv`), then each `States` object is also endowed with a `forward_masks` and
     `backward_masks` boolean attributes representing which actions are allowed at each
     state. This makes it possible to instantly access the allowed actions at each state,
     without having to call the environment's `validate_actions` method. Put different,
@@ -28,14 +28,14 @@ class States(ABC):
     in the DiscreteSpace subclass.
 
     A `batch_shape` attribute is also required, to keep track of the batch dimension.
-    A trajectory can be represented by a States object with batch_shape = (n_states,).
+    A trajectory can be represented by a States object with `batch_shape = (n_states,)`.
     Multiple trajectories can be represented by a States object with
-    batch_shape = (n_states, n_trajectories).
+    `batch_shape = (n_states, n_trajectories)`.
 
     Because multiple trajectories can have different lengths, batching requires
     appending a dummy tensor to trajectories that are shorter than the longest
-    trajectory. The dummy state is the `s_f` attribute of the environment
-    (e.g. [-1, ..., -1], or [-inf, ..., -inf], etc...). Which is never processed,
+    trajectory. The dummy state is the $s_f$ attribute of the environment
+    (e.g. `[-1, ..., -1]`, or `[-inf, ..., -inf]`, etc...). Which is never processed,
     and is used to pad the batch of states only.
 
     Args:
@@ -66,10 +66,10 @@ class States(ABC):
     ) -> States:
         """Create a States object with the given batch shape.
 
-        By default, all states are initialized to `s_0`, the initial state. Optionally,
+        By default, all states are initialized to $s_0$, the initial state. Optionally,
         one can initialize random state, which requires that the environment implements
         the `make_random_states_tensor` class method. Sink can be used to initialize
-        states at `s_f`, the sink state. Both random and sink cannot be True at the
+        states at $s_f$, the sink state. Both random and sink cannot be True at the
         same time.
 
         Args:
@@ -95,7 +95,7 @@ class States(ABC):
     def make_initial_states_tensor(
         cls, batch_shape: tuple[int]
     ) -> TT["batch_shape", "state_shape", torch.float]:
-        """Makes a tensor with a `batch_shape` of states consisting of `s_0`s."""
+        """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
         return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
@@ -113,7 +113,7 @@ class States(ABC):
     def make_sink_states_tensor(
         cls, batch_shape: tuple[int]
     ) -> TT["batch_shape", "state_shape", torch.float]:
-        """Makes a tensor with a `batch_shape` of states consisting of `s_f`s."""
+        """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
         return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
@@ -157,8 +157,8 @@ class States(ABC):
             other (States): Batch of states to concatenate to.
 
         Raises:
-            ValueError: if self.batch_shape != other.batch_shape or if
-            self.batch_shape != (1,) or (2,).
+            ValueError: if `self.batch_shape != other.batch_shape` or if
+            `self.batch_shape != (1,) or (2,)`.
         """
         other_batch_shape = other.batch_shape
         if len(other_batch_shape) == len(self.batch_shape) == 1:
@@ -188,9 +188,10 @@ class States(ABC):
     def extend_with_sf(self, required_first_dim: int) -> None:
         """Extends a 2-dimensional batch of states along the first batch dimension.
 
-        Given a batch of states (i.e. of batch_shape (a, b)), extends `a` it to a States
-        object of `batch_shape` = (required_first_dim, b), by adding the required number
-        of `s_f` tensors. This is useful to extend trajectories of different lengths.
+        Given a batch of states (i.e. of `batch_shape=(a, b)`), extends `a` it to a
+        States object of `batch_shape = (required_first_dim, b)`, by adding the
+        required number of $s_f$ tensors. This is useful to extend trajectories of
+        different lengths.
 
         Args:
             required_first_dim: The size of the first batch dimension post-expansion.
@@ -218,14 +219,13 @@ class States(ABC):
     def compare(
         self, other: TT["batch_shape", "state_shape", torch.float]
     ) -> TT["batch_shape", torch.bool]:
-        """Given a tensor of states, returns a tensor of booleans indicating whether the states
-        are equal to the states in self.
+        """Computes elementwise equality between state tensor with an external tensor.
 
         Args:
             other: Tensor of states to compare to.
 
-        Returns:
-            Tensor of booleans indicating whether the states are equal to the states in self.
+        Returns: Tensor of booleans indicating whether the states are equal to the
+            states in self.
         """
         out = self.tensor == other
         state_ndim = len(self.__class__.state_shape)
@@ -235,9 +235,7 @@ class States(ABC):
 
     @property
     def is_initial_state(self) -> TT["batch_shape", torch.bool]:
-        r"""Return a boolean tensor of shape=(*batch_shape,),
-        where True means that the state is $s_0$ of the DAG.
-        """
+        """Return a tensor that is True for states that are $s_0$ of the DAG."""
         source_states_tensor = self.__class__.s0.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.state_shape))
         )
@@ -245,9 +243,7 @@ class States(ABC):
 
     @property
     def is_sink_state(self) -> TT["batch_shape", torch.bool]:
-        r"""Return a boolean tensor of shape=(*batch_shape,),
-        where True means that the state is $s_f$ of the DAG.
-        """
+        """Return a tensor that is True for states that are $s_f$ of the DAG."""
         sink_states = self.__class__.sf.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.state_shape))
         )
@@ -264,10 +260,22 @@ class States(ABC):
 
 class DiscreteStates(States, ABC):
     """Base class for states of discrete environments.
-    States are endowed with a `forward_masks` and `backward_masks` boolean attributes
-    representing which actions are allowed at each state. This makes it possible to instantly access
-    the allowed actions at each state, without having to call the environment's `validate_actions` method.
-    Put different, `validate_actions` for such environments, directly calls the masks.
+
+    States are endowed with a `forward_masks` and `backward_masks`: boolean attributes
+    representing which actions are allowed at each state. This is the mechanism by
+    which all elements of the library (including an environment's `validate_actions`
+    method) verifies the allowed actions at each state.
+
+    Args:
+        tensor: A batch of states.
+        forward_masks (optional): Initializes a boolean tensor of allowable forward
+            policy actions.
+        backward_masks (optional): Initializes a boolean tensor of allowable backward
+            policy actions.
+
+    Attributes:
+        forward_masks: A boolean tensor of allowable forward policy actions.
+        backward_masks:  A boolean tensor of allowable backward policy actions.
     """
 
     n_actions: ClassVar[int]
@@ -300,9 +308,7 @@ class DiscreteStates(States, ABC):
     @abstractmethod
     def update_masks(self) -> None:  # TODO: why doesn't it take `states` as input ?
         # TODO: use the previous mask + action in order to get the new mask (for DAG-GFN environment)
-        """Update the masks, if necessary.
-        This method should be called after each action is taken.
-        """
+        """Updates the masks, called after each action is taken."""
         pass
 
     def _check_both_forward_backward_masks_exist(self):
@@ -339,7 +345,17 @@ class DiscreteStates(States, ABC):
             (self.backward_masks, other.backward_masks), dim=len(self.batch_shape) - 1
         )
 
+    # TODO: rename to extend_masks_with_sf?
     def extend_with_sf(self, required_first_dim: int) -> None:
+        """Extends forward and backward masks along the first batch dimension.
+
+        After extending the state along the first batch dimensions with $s_f$ by
+        `required_first_dim`, also extends both forward and backward masks with ones
+        along the first dimension by `required_first_dim`.
+
+        Args:
+            required_first_dim: The size of the first batch dimension post-expansion.
+        """
         super().extend_with_sf(required_first_dim)
 
         def _extend(masks, first_dim):
