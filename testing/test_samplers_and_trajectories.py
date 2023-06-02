@@ -5,45 +5,70 @@ import torch
 
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
-from gfn.envs import DiscreteEBMEnv, HyperGrid
+from gfn.envs import DiscreteEBMEnv, HyperGrid, BoxEnv
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.utils import DiscretePBEstimator, DiscretePFEstimator, NeuralNet
+from gfn.examples.box_utils import (
+    BoxPFEStimator,
+    BoxPFNeuralNet,
+    BoxPBEstimator,
+    BoxPBNeuralNet,
+)
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 @pytest.mark.parametrize("preprocessor_name", ["KHot", "OneHot", "Identity"])
+@pytest.mark.parametrize("delta", [0.1, 0.5, 0.8])
 def test_trajectory_sampling(
-    env_name: str,
-    preprocessor_name: str,
+    env_name: str, preprocessor_name: str, delta: float
 ) -> Trajectories:
     if env_name == "HyperGrid":
+        if delta != 0.1:
+            pytest.skip("Useless tests")
         env = HyperGrid(ndim=2, height=8, preprocessor_name=preprocessor_name)
     elif env_name == "DiscreteEBM":
-        if preprocessor_name != "Identity":
+        if preprocessor_name != "Identity" or delta != 0.1:
             pytest.skip("Useless tests")
         env = DiscreteEBMEnv(ndim=8)
+    elif env_name == "Box":
+        if preprocessor_name != "Identity":
+            pytest.skip("Useless tests")
+        env = BoxEnv(delta=delta)
     else:
         raise ValueError("Unknown environment name")
 
-    logit_pf_module = NeuralNet(
-        input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions
-    )
-    logit_pf_estimator = DiscretePFEstimator(env=env, module=logit_pf_module)
-    actions_sampler = ActionsSampler(estimator=logit_pf_estimator)
+    if env_name == "Box":
+        pf_module = BoxPFNeuralNet(
+            hidden_dim=32, n_hidden_layers=2, n_components=3, n_components_s0=2
+        )
+        pb_module = BoxPBNeuralNet(
+            hidden_dim=32,
+            n_hidden_layers=2,
+            n_components=3,
+            torso=pf_module.torso,
+        )
+        pf_estimator = BoxPFEStimator(
+            env=env, module=pf_module, n_components=3, n_components_s0=2
+        )
+        pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=3)
+    else:
+        logit_pf_module = NeuralNet(
+            input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions
+        )
+        logit_pb_module = NeuralNet(
+            input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions - 1
+        )
+        pf_estimator = DiscretePFEstimator(env=env, module=logit_pf_module)
+        pb_estimator = DiscretePBEstimator(env=env, module=logit_pb_module)
+
+    actions_sampler = ActionsSampler(estimator=pf_estimator)
 
     trajectories_sampler = TrajectoriesSampler(actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
 
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
 
-    states = env.reset(batch_shape=20, random=True)
-
-    logit_pb_module = NeuralNet(
-        input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions - 1
-    )
-    logit_pb_estimator = DiscretePBEstimator(env=env, module=logit_pb_module)
-
-    bw_actions_sampler = ActionsSampler(estimator=logit_pb_estimator)
+    bw_actions_sampler = ActionsSampler(estimator=pb_estimator)
 
     bw_trajectories_sampler = TrajectoriesSampler(bw_actions_sampler, is_backward=True)
 
