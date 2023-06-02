@@ -2,7 +2,12 @@ import pytest
 import torch
 
 from gfn.envs import DiscreteEBMEnv, HyperGrid
-from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
+from gfn.estimators import (
+    LogEdgeFlowEstimator,
+    LogStateFlowEstimator,
+    LogZEstimator,
+    ProbabilityEstimator,
+)
 from gfn.losses import (
     DBParametrization,
     DetailedBalance,
@@ -15,8 +20,7 @@ from gfn.losses import (
     TBParametrization,
     TrajectoryBalance,
 )
-from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
-from gfn.utils import DiscretePBEstimator, DiscretePFEstimator
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
@@ -40,7 +44,7 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     print(parametrization.Pi(env, n_samples=10).sample())
     print(parametrization.parameters.keys())
 
-    actions_sampler = DiscreteActionsSampler(log_F_edge)
+    actions_sampler = ActionsSampler(log_F_edge)
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
     states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
@@ -87,8 +91,8 @@ def test_PFBasedParametrization(
     else:
         raise ValueError("Unknown environment name")
 
-    logit_PF = DiscretePFEstimator(env, module_name=module_name)
-    logit_PB = DiscretePBEstimator(env, module_name=module_name)
+    logit_PF = ProbabilityEstimator(env, module_name=module_name)
+    logit_PB = ProbabilityEstimator(env, module_name=module_name)
     if tie_pb_to_pf:
         logit_PB.module.torso = logit_PF.module.torso
     logF = LogStateFlowEstimator(
@@ -98,7 +102,7 @@ def test_PFBasedParametrization(
     )
     logZ = LogZEstimator(torch.tensor(0.0))
 
-    actions_sampler = DiscreteActionsSampler(estimator=logit_PF)
+    actions_sampler = ActionsSampler(estimator=logit_PF)
 
     trajectories_sampler = TrajectoriesSampler(
         env=env,
@@ -172,11 +176,11 @@ def test_subTB_vs_TB(
 
     env = HyperGrid(ndim=ndim, height=7, preprocessor_name=preprocessor_name)
 
-    logit_PF = DiscretePFEstimator(env, module_name=module_name)
-    logit_PB = DiscretePBEstimator(env, module_name=module_name)
+    logit_PF = ProbabilityEstimator(env, module_name=module_name)
+    logit_PB = ProbabilityEstimator(env, module_name=module_name)
     logF = LogStateFlowEstimator(env, forward_looking=False, module_name="Zero")
     logZ = LogZEstimator(torch.tensor(0.0))
-    actions_sampler = DiscreteActionsSampler(estimator=logit_PF)
+    actions_sampler = ActionsSampler(estimator=logit_PF)
     trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
     trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
 

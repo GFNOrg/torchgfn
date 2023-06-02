@@ -5,7 +5,7 @@ from simple_parsing.helpers import JsonSerializable
 
 from gfn.envs import Env
 from gfn.losses import FMParametrization, Parametrization, PFBasedParametrization
-from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
 
 
 @dataclass
@@ -28,7 +28,7 @@ class SamplerConfig(JsonSerializable):
             raise ValueError(
                 f"Cannot parse sampler for parametrization {parametrization}"
             )
-        actions_sampler = DiscreteActionsSampler(
+        actions_sampler = ActionsSampler(
             estimator=estimator,
             temperature=self.temperature,
             epsilon=self.epsilon,

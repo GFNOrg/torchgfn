@@ -10,7 +10,7 @@ from torchtyping import TensorType as TT
 from gfn.containers import Trajectories
 from gfn.estimators import LogZEstimator
 from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
-from gfn.samplers import BackwardDiscreteActionsSampler, DiscreteActionsSampler
+from gfn.samplers import ActionsSampler
 
 
 @dataclass
@@ -42,10 +42,8 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         """
         self.parametrization = parametrization
         self.log_reward_clip_min = log_reward_clip_min
-        self.actions_sampler = DiscreteActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = BackwardDiscreteActionsSampler(
-            parametrization.logit_PB
-        )
+        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
+        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
         self.on_policy = on_policy
 
     def __call__(self, trajectories: Trajectories) -> TT[0, float]:
@@ -73,10 +71,8 @@ class LogPartitionVarianceLoss(TrajectoryDecomposableLoss):
         """
         self.parametrization = parametrization
         self.log_reward_clip_min = log_reward_clip_min
-        self.actions_sampler = DiscreteActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = BackwardDiscreteActionsSampler(
-            parametrization.logit_PB
-        )
+        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
+        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
 
         self.on_policy = on_policy
 

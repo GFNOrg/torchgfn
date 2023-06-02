@@ -9,7 +9,7 @@ from gfn.distributions import EmpiricalTrajectoryDistribution, TrajectoryDistrib
 from gfn.envs import Env
 from gfn.estimators import LogEdgeFlowEstimator
 from gfn.losses.base import Parametrization, StateDecomposableLoss
-from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
 
@@ -26,7 +26,7 @@ class FMParametrization(Parametrization):
     def Pi(
         self, env: Env, n_samples: int = 1000, **actions_sampler_kwargs
     ) -> TrajectoryDistribution:
-        actions_sampler = DiscreteActionsSampler(self.logF, **actions_sampler_kwargs)
+        actions_sampler = ActionsSampler(self.logF, **actions_sampler_kwargs)
         trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
         trajectories = trajectories_sampler.sample_trajectories(
             n_trajectories=n_samples

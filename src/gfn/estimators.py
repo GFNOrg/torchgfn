@@ -20,7 +20,7 @@ class FunctionEstimator(ABC):
     outputs would correspond to the parameters of the distribution, e.g. logits for a categorical
     distribution for discrete environments.
     The preprocessor is also encapsulated in the estimator via the
-    environment. These function estimators implement the __call__ method, which takes
+    environment. These function estimators implement the `__call__` method, which takes
     States objects as inputs and calls the module on the preprocessed states.
     """
 
@@ -93,13 +93,12 @@ class LogStateFlowEstimator(FunctionEstimator):
 
 class ProbabilityEstimator(FunctionEstimator, ABC):
     r"""Container for estimators of probability distributions.
-    When calling (via __call__) such an estimator, an extra step is performed, which is to transform
+    When calling (via `__call__`) such an estimator, an extra step is performed, which is to transform
     the output of the module into a probability distribution. This is done by applying the abstract
     `to_probability_distribution` method.
 
     The outputs of such an estimator are thus probability distributions, not the parameters of the
-    distributions. For example, for a discrete environment, the output is a tensor of shape
-    (batch_size, n_actions) containing the probabilities of each action.
+    distributions.
     """
 
     @abstractmethod
