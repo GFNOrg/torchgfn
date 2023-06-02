@@ -78,13 +78,12 @@ def test_trajectory_sampling(
     return trajectories, bw_trajectories
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
-@pytest.mark.parametrize("height", [4, 5])
-def test_trajectories_getitem(env_name: str, height: int):
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+def test_trajectories_getitem(env_name: str):
     trajectories, _ = test_trajectory_sampling(
         env_name,
-        height,
         preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
+        delta=0.1,
     )
     print(f"There are {trajectories.n_trajectories} original trajectories")
     print(trajectories)
@@ -93,13 +92,12 @@ def test_trajectories_getitem(env_name: str, height: int):
     print(trajectories[torch.tensor([1, 2], dtype=torch.long)])
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
-@pytest.mark.parametrize("height", [4, 5])
-def test_trajectories_extend(env_name: str, height: int):
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+def test_trajectories_extend(env_name: str):
     trajectories, _ = test_trajectory_sampling(
         env_name,
-        height,
         preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
+        delta=0.1,
     )
     print(
         f"There are {trajectories.n_trajectories} original trajectories. To which we will add the two first trajectories"
@@ -108,13 +106,12 @@ def test_trajectories_extend(env_name: str, height: int):
     print(trajectories)
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
-@pytest.mark.parametrize("height", [4, 5])
-def test_sub_sampling(env_name: str, height: int):
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+def test_sub_sampling(env_name: str):
     trajectories, _ = test_trajectory_sampling(
         env_name,
-        height,
         preprocessor_name="Identity",
+        delta=0.1,
     )
     print(
         f"There are {trajectories.n_trajectories} original trajectories, from which we will sample 2"
@@ -125,28 +122,26 @@ def test_sub_sampling(env_name: str, height: int):
     print(sampled_trajectories)
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
-@pytest.mark.parametrize("height", [4, 5])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 @pytest.mark.parametrize("objects", ["trajectories", "transitions"])
 def test_replay_buffer(
     env_name: str,
-    height: int,
     objects: Literal["trajectories", "transitions"],
 ):
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=2, height=height)
+        env = HyperGrid(ndim=2, height=4)
     elif env_name == "DiscreteEBM":
-        if height != 4:
-            pytest.skip("Useless tests")
         env = DiscreteEBMEnv(ndim=8)
+    elif env_name == "Box":
+        env = BoxEnv(delta=0.1)
     else:
         raise ValueError("Unknown environment name")
     replay_buffer = ReplayBuffer(env, capacity=10, objects_type=objects)
     print(f"After initialization, the replay buffer is {replay_buffer} ")
     training_objects, _ = test_trajectory_sampling(
         env_name,
-        height,
         preprocessor_name="Identity",
+        delta=0.1,
     )
     if objects == "trajectories":
         replay_buffer.add(
