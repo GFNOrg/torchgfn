@@ -59,6 +59,25 @@ class Actions(ABC):
         actions = self.tensor[index]
         return self.__class__(actions)
 
+    def __setitem__(
+        self, index: int | Sequence[int] | Sequence[bool], actions: Actions
+    ) -> None:
+        """Set particular actions of the batch."""
+        self.tensor[index] = actions.tensor
+
+    @classmethod
+    def stack(cls, actions_list: list[Actions]) -> Actions:
+        """Stacks a list of Actions objects into a single Actions object.
+
+        The individual actions need to have the same batch shape. An example application is when the individual actions represent
+        per-step actions of a batch of trajectories (in which case, the common batch_shape would be (n_trajectories,), and the
+        resulting Actions object would have batch_shape (n_steps, n_trajectories).
+        """
+        actions_tensor = torch.stack(
+            [actions.tensor for actions in actions_list], dim=0
+        )
+        return cls(actions_tensor)
+
     def extend(self, other: Actions) -> None:
         # TODO: generalize?
         """Collates to another Actions object of the same batch shape."""
