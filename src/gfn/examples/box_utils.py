@@ -283,7 +283,10 @@ class BoxPFEStimator(ProbabilityEstimator):
         # TODO: that sometimes returns a QuarterDisk and sometimes a QuarterCircle(northwestern=True) ?
         if torch.any(states == 0.0):
             assert torch.all(states == 0)
-            # we also check that module_output is of shape n_components_s0 * 5
+            # we also check that module_output is of shape n_components_s0 * 5, why:
+            # We need n_components_s0 for the mixture logits, n_components_s0 for the alphas of r,
+            # n_components_s0 for the betas of r, n_components_s0 for the alphas of theta and
+            # n_components_s0 for the betas of theta
             assert module_output.shape == (self.n_components_s0, 5)
             # In this case, we use the QuarterDisk distribution
             mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta = torch.split(
@@ -298,7 +301,9 @@ class BoxPFEStimator(ProbabilityEstimator):
                 beta_theta=beta_theta,
             )
         else:
-            # we check that the module_output is of shape (*batch_shape, 1 + 3 * n_components)
+            # we check that the module_output is of shape (*batch_shape, 1 + 3 * n_components), why:
+            # We need one scalar for the exit probability, n_components for the alphas, n_components for the betas
+            # and n_components for the mixture logits
             assert module_output.shape == states.batch_shape + (
                 1 + 3 * self.n_components,
             )
