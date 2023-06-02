@@ -409,8 +409,8 @@ class BoxPFEStimator(ProbabilityEstimator):
         # Then, we check that if one of the states is [0, 0] then all of them are
         # TODO: is there a way to bypass this ? Could we write a custom distribution
         # TODO: that sometimes returns a QuarterDisk and sometimes a QuarterCircle(northwestern=True) ?
-        if torch.any(states == 0.0):
-            assert torch.all(states == 0)
+        if torch.any(states.tensor == 0.0):
+            assert torch.all(states.tensor == 0)
             # we also check that module_output is of shape n_components_s0 * 5, why:
             # We need n_components_s0 for the mixture logits, n_components_s0 for the alphas of r,
             # n_components_s0 for the betas of r, n_components_s0 for the alphas of theta and
