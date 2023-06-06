@@ -21,13 +21,13 @@ from gfn.utils import DiscretePBEstimator, DiscretePFEstimator
 
 @dataclass
 class Parametrization(ABC):
-    """
-    Abstract Base Class for Flow Parametrizations,
-    as defined in Sec. 3 of GFlowNets Foundations.
-    All attributes should be estimators, and should either have a GFNModule or attribute called `module`,
-    or torch.Tensor attribute called `tensor` with requires_grad=True.
-    """
+    """Abstract Base Class for Flow Parametrizations.
 
+    Flow paramaterizations are defined in Sec. 3 of [GFlowNets Foundations](link).
+
+    All attributes should be estimators, and should either have a GFNModule or attribute
+    called `module`, or torch.Tensor attribute called `tensor` with requires_grad=True.
+    """
     @abstractmethod
     def Pi(self, env: Env, n_samples: int, **kwargs) -> TrajectoryDistribution:
         pass
@@ -84,7 +84,7 @@ class PFBasedParametrization(Parametrization, ABC):
 
 
 class Loss(ABC):
-    "Abstract Base Class for all GFN Losses"
+    """Abstract Base Class for all GFN Losses."""
 
     def __init__(self, parametrization: Parametrization):
         self.parametrization = parametrization
@@ -103,10 +103,14 @@ class EdgeDecomposableLoss(Loss, ABC):
 class StateDecomposableLoss(Loss, ABC):
     @abstractmethod
     def __call__(self, states_tuple: Tuple[States, States]) -> TT[0, float]:
-        """Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a tuple of states,
-        the first one being the internal states of the trajectories (i.e. non-terminal states), and the second one
-        being the terminal states of the trajectories. If these two are not handled differently, then they should be
-        concatenated together."""
+        """Given a batch of non-terminal and terminal states, compute a loss.
+
+        Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
+        tuple of states, the first one being the internal states of the trajectories
+        (i.e. non-terminal states), and the second one being the terminal states of the
+        trajectories. If these two are not handled differently, then they should be
+        concatenated together.
+        """
         pass
 
 
@@ -123,22 +127,27 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         TT["max_length", "n_trajectories", torch.float],
     ]:
         """Evaluate log_pf and log_pb for each action in each trajectory in the batch.
-        This is useful when the policy used to sample the trajectories is different from the one used to evaluate the loss.
+
+        This is useful when the policy used to sample the trajectories is different from
+        the one used to evaluate the loss.
+
+        Temperature, epsilon, and no_pf correspond to how the actions_sampler
+        evaluates each action.
 
         Args:
-            trajectories (Trajectories): Trajectories to evaluate.
-            fill_value (float, optional): Value to use for invalid states (i.e. s_f that is added to shorter trajectories). Defaults to 0.0.
-
-            The next parameters correspond to how the actions_sampler evaluates each action.
-            temperature (float, optional): Temperature to use for the softmax. Defaults to 1.0.
-            epsilon (float, optional): Epsilon to use for the softmax. Defaults to 0.0.
-            no_pf (bool, optional): Whether to evaluate log_pf as well. Defaults to False.
-
-        Raises:
-            ValueError: if the trajectories are backward.
+            trajectories: Trajectories to evaluate.
+            fill_value: Value to use for invalid states (i.e. $s_f$ that is added to
+                shorter trajectories).
+            temperature: Temperature to use for the softmax.
+            epsilon: Epsilon to use for the softmax.
+            no_pf: Whether to evaluate log_pf as well.
 
         Returns: A tuple of float tensors of shape (max_length, n_trajectories) containing
             the log_pf and log_pb for each action in each trajectory. The first one can be None.
+
+        Raises:
+            ValueError: if the trajectories are backward.
+            AssertionError: when actions and states dimensions mismatch.
         """
         # fill value is the value used for invalid states (sink state usually)
         if trajectories.is_backward:
@@ -204,6 +213,7 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
     ]:
+        """Given a batch of trajectories, calculate forward & backward policy scores."""
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, no_pf=self.on_policy
         )

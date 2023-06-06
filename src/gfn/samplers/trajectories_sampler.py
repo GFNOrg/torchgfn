@@ -9,20 +9,30 @@ from gfn.states import States
 
 
 # TODO: Consider making this whole class a method of `ActionsSampler`.
+# TODO: Remove the need for this sampler to contain the environment.
 class TrajectoriesSampler:
+    """Sample complete trajectories using actions_sampler.
+
+    Can be used to either sample trajectories from $s_0$, or complete a batch
+    of partially-completed trajectories from a given batch states.
+
+    Attributes:
+        env: the Evironment instance from the ActionsSampler.
+        actions_sampler: the ActionsSampler instance.
+        is_backward: if True, samples actions backward (a distribution over parents).
+    """
     def __init__(
         self,
         actions_sampler: ActionsSampler,
         is_backward: bool = False,
     ):
-        """Sample complete trajectories, or completes trajectories from a given batch states, using actions_sampler.
-
+        """Initalizes a TrajectoriesSampler.
         Args:
-            env (Env): Environment to sample trajectories from.
-            actions_sampler (ActionsSampler): Sampler of actions.
-            is_backward (bool, optional): Whether to sample trajectories backward.
-             If True, the corresponding ActionsSampler's estimator needs to be a ProbabilityDistribution over parents.
-             Defaults to False.
+            env: Environment to sample trajectories from.
+            actions_sampler: Sampler of actions.
+            is_backward: Whether to sample trajectories backward. If True, the
+                corresponding ActionsSampler's estimator needs to be a
+                ProbabilityDistribution over parents.
         """
         self.env = actions_sampler.env
         self.actions_sampler = actions_sampler
@@ -33,15 +43,19 @@ class TrajectoriesSampler:
         states: Optional[States] = None,
         n_trajectories: Optional[int] = None,
     ) -> Trajectories:
-        """
-        Args:
-            states (Optional[States], optional): If given, trajectories would start from such states.
-             Otherwise, n_trajectories needs to be given. Defaults to None.
-            n_trajectories (Optional[int], optional): If given, a batch of n_trajectories will be sampled all
-             starting from the environment's s_0. Defaults to None.
+        """Sample trajectories sequentially.
 
-        Returns:
-            Trajectories: A Trajectories object representing the batch of sampled trajectories.
+        Args:
+            states: If given, trajectories would start from such states. Otherwise,
+                trajectories are sampled from $s_o$ and n_trajectories must be provided.
+            n_trajectories: If given, a batch of n_trajectories will be sampled all
+                starting from the environment's s_0.
+
+        Returns: A Trajectories object representing the batch of sampled trajectories.
+
+        Raises:
+            AssertionError: When both states and n_trajectories are specified.
+            AssertionError: When states are not linear.
         """
         if states is None:
             assert (

@@ -8,33 +8,51 @@ from gfn.envs import DiscreteEnv, Env
 from gfn.states import DiscreteStates, States
 
 
+# TODO: Is is true that this is only ever used for Action probability distributions?
+# TODO: Remove environment from here (instead accept n_actions or similar)?
+# TODO
 class FunctionEstimator(ABC):
-    r"""Training a GFlowNet requires parameterizing one or more of the following functions:
+    r"""Base class for modules mapping states to action probability distributions.
+
+    Training a GFlowNet requires parameterizing one or more of the following functions:
     - $s \mapsto (\log F(s \rightarrow s'))_{s' \in Children(s)}$
     - $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$
     - $s' \mapsto (P_B(s \mid s'))_{s \in Parents(s')}$
     - $s \mapsto (\log F(s))_{s \in States}$
-    This class is the base class for all such function estimators. The estimators need to encapsulate
-    a nn.Module, which takes a a batch of preprocessed states as input and outputs a batch of
-    outputs of the desired shape. When the goal is to represent a probability distribution, the
-    outputs would correspond to the parameters of the distribution, e.g. logits for a categorical
-    distribution for discrete environments.
-    The preprocessor is also encapsulated in the estimator via the
-    environment. These function estimators implement the `__call__` method, which takes
-    States objects as inputs and calls the module on the preprocessed states.
+
+    This class is the base class for all such function estimators. The estimators need
+    to encapsulate a `nn.Module`, which takes a a batch of preprocessed states as input
+    and outputs a batch of outputs of the desired shape. When the goal is to represent
+    a probability distribution, the outputs would correspond to the parameters of the
+    distribution, e.g. logits for a categorical distribution for discrete environments.
+
+    The preprocessor is also encapsulated in the estimator via the environment.
+    These function estimators implement the `__call__` method, which takes `States`
+    objects as inputs and calls the module on the preprocessed states.
+
+    Attributes:
+        env: the environment.
+        module: The module to use. If the module is a Tabular module (from
+            `gfn.utils.modules`), then the environment preprocessor needs to be an
+            `EnumPreprocessor`.
+        preprocessor: Preprocessor from the environment.
+        output_dim_is_checked: Flag for tracking whether the output dimenions of
+            the states (after being preprocessed and transformed by the modules) have
+            been verified.
     """
 
     def __init__(self, env: Env, module: nn.Module) -> None:
-        """
+        """Initalize the FunctionEstimator with an environment and a module.
         Args:
-            env (Env): the environment.
-            module (nn.Module): The module to use. If the module is a Tabular module (from `gfn.utils`), then the
-                environment preprocessor needs to be an EnumPreprocessor.
+            env: the environment.
+            module: The module to use. If the module is a Tabular module (from
+                `gfn.utils.modules`), then the environment preprocessor needs to be an
+                `EnumPreprocessor`.
         """
         self.env = env
         self.module = module
-        self.preprocessor = env.preprocessor
-        self.output_dim_is_checked = False
+        self.preprocessor = env.preprocessor  # TODO: passed explicitly?
+        self.output_dim_is_checked = False  # TODO: private?
 
     def __call__(self, states: States) -> TT["batch_shape", "output_dim", float]:
         out = self.module(self.preprocessor(states))
@@ -61,15 +79,16 @@ class FunctionEstimator(ABC):
         self.module.load_state_dict(state_dict)
 
 
+# TODO: make it work for continuous environments.
 class LogEdgeFlowEstimator(FunctionEstimator):
     r"""Container for estimators $(s \rightarrow s') \mapsto \log F(s \rightarrow s')$.
+
     The way it's coded is a function $s \mapsto (\log F(s \rightarrow (s + a)))_{a \in \mathbb{A}}$,
     where $s+a$ is the state obtained by performing action $a$ in state $s$.
 
-    This estimator is used for the flow-matching loss, which only supports discrete environments.
-    # TODO: make it work for continuous environments.
+    This estimator is used for the flow-matching loss, which only supports discrete
+    environments.
     """
-
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError(
@@ -93,14 +112,14 @@ class LogStateFlowEstimator(FunctionEstimator):
 
 class ProbabilityEstimator(FunctionEstimator, ABC):
     r"""Container for estimators of probability distributions.
-    When calling (via `__call__`) such an estimator, an extra step is performed, which is to transform
-    the output of the module into a probability distribution. This is done by applying the abstract
-    `to_probability_distribution` method.
 
-    The outputs of such an estimator are thus probability distributions, not the parameters of the
-    distributions.
+    When calling (via `__call__`) such an estimator, an extra step is performed, which
+    is to transform the output of the module into a probability distribution. This is
+    done by applying the abstract `to_probability_distribution` method.
+
+    The outputs of such an estimator are thus probability distributions, not the
+    parameters of the distributions.
     """
-
     @abstractmethod
     def to_probability_distribution(
         self,
@@ -115,9 +134,11 @@ class ProbabilityEstimator(FunctionEstimator, ABC):
 
 
 class LogEdgeFlowProbabilityEstimator(ProbabilityEstimator, LogEdgeFlowEstimator):
-    r"""Container for estimators $(s \rightarrow s') \mapsto P_F(s' \mid s) = \frac{F(s \rightarrow s')}
-    {\sum_{s' \in Children(s)} F(s \rightarrow s')}$."""
+    r"""Container for Log Edge Flow Probability Estimator
 
+    $(s \rightarrow s') \mapsto P_F(s' \mid s) = \frac{F(s \rightarrow s')}
+        {\sum_{s' \in Children(s)} F(s \rightarrow s')}$.
+    """
     def to_probability_distribution(
         self,
         states: DiscreteStates,

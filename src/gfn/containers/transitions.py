@@ -14,6 +14,20 @@ from gfn.containers.base import Container
 
 
 class Transitions(Container):
+    """Container for the transitions.
+
+    Attributes:
+        env: environment.
+        is_backward: Whether the transitions are backward transitions (i.e.
+            `next_states` is the parent of states).
+        states: States object with uni-dimensional `batch_shape`, representing the
+            parents of the transitions.
+        actions: Actions chosen at the parents of each transitions.
+        is_done: Whether the action is the exit action.
+        next_states: States object with uni-dimensional `batch_shape`, representing
+            the children of the transitions.
+        log_probs: The log-probabilities of the actions.
+    """
     def __init__(
         self,
         env: Env,
@@ -25,19 +39,28 @@ class Transitions(Container):
         log_rewards: TT["n_transitions", torch.float] | None = None,
         log_probs: TT["n_transitions", torch.float] | None = None,
     ):
-        """Container for transitions.
+        """Instantiates a container for transitions.
+
+        When states and next_states are not None, the Transitions is an empty container
+        that can be populated on the go.
 
         Args:
             env: Environment
-            states (optional): States object with uni-dimensional batch_shape, representing the parents of the transitions. Defaults to None.
-            actions (optional): Actions chosen at the parents of each transitions. Defaults to None.
-            is_done (optional): Whether the action is the exit action. Defaults to None.
-            next_states (optional): States object with uni-dimensional batch_shape, representing the children of the transitions. Defaults to None.
-            is_backward (optional): Whether the transitions are backward transitions (i.e. next_states is the parent of states). Defaults to False.
-            log_rewards (optional): The log-rewards of the transitions (using a default value like -float('inf') for non-terminating transitions). Defaults to None.
-            log_probs (optional): The log-probabilities of the actions. Defaults to None.
+            states: States object with uni-dimensional `batch_shape`, representing the
+                parents of the transitions.
+            actions: Actions chosen at the parents of each transitions.
+            is_done: Whether the action is the exit action.
+            next_states: States object with uni-dimensional `batch_shape`, representing
+                the children of the transitions.
+            is_backward: Whether the transitions are backward transitions (i.e.
+                `next_states` is the parent of states).
+            log_rewards: The log-rewards of the transitions (using a default value like
+                `-float('inf')` for non-terminating transitions).
+            log_probs: The log-probabilities of the actions.
 
-        When states and next_states are not None, the Transitions is an empty container that can be populated on the go.
+        Raises:
+            AssertionError: If states and next_states do not have matching
+                `batch_shapes`.
         """
         self.env = env
         self.is_backward = is_backward
@@ -67,9 +90,7 @@ class Transitions(Container):
             len(self.next_states.batch_shape) == 1
             and self.states.batch_shape == self.next_states.batch_shape
         )
-
         self._log_rewards = log_rewards
-
         self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
 
     @property
@@ -119,11 +140,19 @@ class Transitions(Container):
                 log_rewards[self.is_done] = torch.log(self.env.reward(self.last_states))
             return log_rewards
 
+    # TODO: seems to be only useful for Modified Detailed Balance loss - might be useful
+    # to consider this in a future refactor.
     @property
     def all_log_rewards(self) -> TT["n_transitions", 2, torch.float]:
-        """This is applicable to environments where all states are terminating.
-        This function evaluates the rewards for all transitions that do not end in the sink state.
-        This is useful for the Modified Detailed Balance loss."""
+        """Calculate all log rewards for the transitions.
+
+        This is applicable to environments where all states are terminating. This
+        function evaluates the rewards for all transitions that do not end in the sink
+        state. This is useful for the Modified Detailed Balance loss.
+
+        Raises:
+            NotImplementedError: when used for backward transitions.
+        """
         if self.is_backward:
             raise NotImplementedError("Not implemented for backward transitions")
         is_sink_state = self.next_states.is_sink_state
@@ -150,7 +179,7 @@ class Transitions(Container):
         return log_rewards
 
     def __getitem__(self, index: int | Sequence[int]) -> Transitions:
-        "Access particular transitions of the batch."
+        """Access particular transitions of the batch."""
         if isinstance(index, int):
             index = [index]
         states = self.states[index]
@@ -173,7 +202,7 @@ class Transitions(Container):
         )
 
     def extend(self, other: Transitions) -> None:
-        "Extend the Transitions object with another Transitions object."
+        """Extend the Transitions object with another Transitions object."""
         self.states.extend(other.states)
         self.actions.extend(other.actions)
         self.is_done = torch.cat((self.is_done, other.is_done), dim=0)

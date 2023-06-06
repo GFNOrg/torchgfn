@@ -15,7 +15,8 @@ from gfn.states import States
 
 @dataclass
 class FMParametrization(Parametrization):
-    r"""
+    r"""Flow Matching Parameterization dataclass, with edge flow extimator.
+
     $\mathcal{O}_{edge}$ is the set of functions from the non-terminating edges
     to $\mathbb{R}^+$. Which is equivalent to the set of functions from the internal nodes
     (i.e. without $s_f$) to $(\mathbb{R})^{n_actions}$, without the exit action (No need for
@@ -34,19 +35,39 @@ class FMParametrization(Parametrization):
         return EmpiricalTrajectoryDistribution(trajectories)
 
 
+# TODO: Should this loss live within the Parameterization, as a method?
+# TODO: Should this be called FlowMatchingLoss?
 class FlowMatching(StateDecomposableLoss):
+    """Loss object for the Flow Matching objective.
+
+    This method is described in section x.xx of [THIS PAPER](https://arxiv.org/abs/???))
+
+    Attributes:
+        parameterization: a FMParameterization instance.
+        env: the environment from within the parameterization.
+        alpha: weight for the reward matching loss.
+    """
     def __init__(self, parametrization: FMParametrization, alpha=1.0) -> None:
-        "alpha is the weight of the reward matching loss"
+        """Instantiate the FlowMatching Loss object.
+
+        Args:
+            parameterization: a FMParameterization instance.
+            alpha: weight for the reward matching loss.
+        """
         self.parametrization = parametrization
         self.env = parametrization.logF.env
         self.alpha = alpha
 
     def flow_matching_loss(self, states: States) -> TT["n_trajectories", torch.float]:
-        """
-        Compute the FM for the given states, defined as the log-sum incoming flows minus log-sum outgoing flows.
-        The states should not include s0. The batch shape should be (n_states,).
+        """Computes the FM for the provided states.
 
-        As of now, only discrete environments are handled.
+        The Flow Matching loss is defined as the log-sum incoming flows minus log-sum
+        outgoing flows. The states should not include $s_0$. The batch shape should be
+        `(n_states,)`. As of now, only discrete environments are handled.
+
+        Raises:
+            AssertionError: If the batch shape is not linear.
+            AssertionError: If any state is at $s_0$.
         """
 
         assert len(states.batch_shape) == 1
@@ -64,7 +85,8 @@ class FlowMatching(StateDecomposableLoss):
         )
 
         for action_idx in range(self.env.n_actions - 1):
-            # TODO: can this be done in a vectorized way? Maybe by "repeating" the states and creating a big actions tensor?
+            # TODO: can this be done in a vectorized way? Maybe by "repeating" the
+            # states and creating a big actions tensor?
             valid_backward_mask = states.backward_masks[:, action_idx]
             valid_forward_mask = states.forward_masks[:, action_idx]
             valid_backward_states = states[valid_backward_mask]
@@ -100,13 +122,16 @@ class FlowMatching(StateDecomposableLoss):
         return (log_incoming_flows - log_outgoing_flows).pow(2).mean()
 
     def reward_matching_loss(self, terminating_states: States) -> TT[0, float]:
+        """Calculates the reward matching loss from the terminating states."""
         assert terminating_states.log_rewards is not None
         log_edge_flows = self.parametrization.logF(terminating_states)
         terminating_log_edge_flows = log_edge_flows[:, -1]
         log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
+    # TODO: should intermeidary_states and terminating_states be two input args?
     def __call__(self, states_tuple: Tuple[States, States]) -> TT[0, float]:
+        """Calculates flow matching loss from intermediate and terminating states."""
         intermediary_states, terminating_states = states_tuple
         fm_loss = self.flow_matching_loss(intermediary_states)
         rm_loss = self.reward_matching_loss(terminating_states)

@@ -38,9 +38,6 @@ class States(ABC):
     (e.g. `[-1, ..., -1]`, or `[-inf, ..., -inf]`, etc...). Which is never processed,
     and is used to pad the batch of states only.
 
-    Args:
-        tensor: Tensor representing a batch of states.
-
     Attributes:
         tensor: Tensor representing a batch of states.
         batch_shape: Sizes of the batch dimensions.
@@ -54,6 +51,10 @@ class States(ABC):
     ]  # Dummy state, used to pad a batch of states
 
     def __init__(self, tensor: TT["batch_shape", "state_shape"]):
+        """Initalize the State container with a batch of states.
+        Args:
+            tensor: Tensor representing a batch of states.
+        """
         self.tensor = tensor
         self.batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
         self._log_rewards = (
@@ -266,13 +267,6 @@ class DiscreteStates(States, ABC):
     which all elements of the library (including an environment's `validate_actions`
     method) verifies the allowed actions at each state.
 
-    Args:
-        tensor: A batch of states.
-        forward_masks (optional): Initializes a boolean tensor of allowable forward
-            policy actions.
-        backward_masks (optional): Initializes a boolean tensor of allowable backward
-            policy actions.
-
     Attributes:
         forward_masks: A boolean tensor of allowable forward policy actions.
         backward_masks:  A boolean tensor of allowable backward policy actions.
@@ -287,6 +281,14 @@ class DiscreteStates(States, ABC):
         forward_masks: Optional[TT["batch_shape", "n_actions", torch.bool]] = None,
         backward_masks: Optional[TT["batch_shape", "n_actions - 1", torch.bool]] = None,
     ) -> None:
+        """Initalize a DiscreteStates container with a batch of states and masks.
+        Args:
+            tensor: A batch of states.
+            forward_masks (optional): Initializes a boolean tensor of allowable forward
+                policy actions.
+            backward_masks (optional): Initializes a boolean tensor of allowable backward
+                policy actions.
+        """
         super().__init__(tensor)
 
         self.forward_masks = torch.ones(
