@@ -73,12 +73,12 @@ if __name__ == "__main__":
     logit_PB = DiscretePBEstimator(env=env, module=module_PB)
     logZ = LogZEstimator(torch.tensor(0.0))
 
+    parametrization = TBParametrization(logit_PF, logit_PB, logZ)
+
     actions_sampler = ActionsSampler(estimator=logit_PF)
     trajectories_sampler = TrajectoriesSampler(actions_sampler=actions_sampler)
 
-    #parametrization = TBParametrization(logit_PF, logit_PB, logZ)
-    #loss_fn = TrajectoryBalance(parametrization=parametrization)
-    tb_model = TBParametrization(logit_PF, logit_PB, logZ)
+    loss_fn = TrajectoryBalance(parametrization=parametrization)
 
     params = [
         {
@@ -94,9 +94,7 @@ if __name__ == "__main__":
     for i in (pbar := tqdm(range(1000))):
         trajectories = trajectories_sampler.sample(n_trajectories=16)
         optimizer.zero_grad()
-        #loss = loss_fn(trajectories)
-        loss = tb_model.loss(trajectories)
-
+        loss = loss_fn(trajectories)
         loss.backward()
         optimizer.step()
         if i % 25 == 0:
