@@ -30,7 +30,8 @@ class TBParametrization(PFBasedParametrization):
 class TrajectoryBalance(TrajectoryDecomposableLoss):
     """Loss object to evaluate the TB loss on a batch of trajectories.
 
-    This method is described in x.xx of [REFERENCE HERE](https://arxiv.org/abs/???))
+    This method is described in 2.3 of
+    [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782))
 
     Attributes:
         parametrization: a TBParamaterization (Trajectory Balance) instance.
