@@ -8,11 +8,6 @@ from torchtyping import TensorType as TT
 
 from gfn.casting import correct_cast
 from gfn.containers import Trajectories, Transitions
-from gfn.distributions import (
-    EmpiricalTrajectoryDistribution,
-    TrajectoryBasedTerminatingStateDistribution,
-    TrajectoryDistribution,
-)
 from gfn.envs import Env
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
@@ -28,16 +23,30 @@ class Parametrization(ABC):
     All attributes should be estimators, and should either have a GFNModule or attribute
     called `module`, or torch.Tensor attribute called `tensor` with requires_grad=True.
     """
+
     @abstractmethod
-    def Pi(self, env: Env, n_samples: int, **kwargs) -> TrajectoryDistribution:
+    def sample_trajectories(self, n_samples: int) -> Trajectories:
+        """Sample a specific number of complete trajectories.
+
+        Args:
+            n_samples: number of trajectories to be sampled.
+
+        Returns:
+            Trajectories: sampled trajectories object.
+        """
         pass
 
-    def P_T(
-        self, env: Env, n_samples: int, **kwargs
-    ) -> TrajectoryBasedTerminatingStateDistribution:
-        return TrajectoryBasedTerminatingStateDistribution(
-            self.Pi(env, n_samples, **kwargs)
-        )
+    def sample_terminating_states(self, n_samples: int) -> States:
+        """Rolls out the parametrization's policy and returns the terminating states.
+
+        Args:
+            n_samples: number of terminating states to be sampled.
+
+        Returns:
+            States: sampled terminating states object.
+        """
+        trajectories = self.sample_trajectories(n_samples)
+        return trajectories.last_states
 
     @property
     def parameters(self) -> dict:
@@ -72,15 +81,13 @@ class PFBasedParametrization(Parametrization, ABC):
     logit_PF: DiscretePFEstimator
     logit_PB: DiscretePBEstimator
 
-    def Pi(
-        self, env: Env, n_samples: int = 1000, **actions_sampler_kwargs
-    ) -> TrajectoryDistribution:
-        actions_sampler = ActionsSampler(self.logit_PF, **actions_sampler_kwargs)
-        trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
+    def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
+        actions_sampler = ActionsSampler(self.logit_PF)
+        trajectories_sampler = TrajectoriesSampler(actions_sampler)
         trajectories = trajectories_sampler.sample_trajectories(
             n_trajectories=n_samples
         )
-        return EmpiricalTrajectoryDistribution(trajectories)
+        return trajectories
 
 
 class Loss(ABC):

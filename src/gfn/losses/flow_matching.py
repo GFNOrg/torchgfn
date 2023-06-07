@@ -5,7 +5,7 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.casting import correct_cast
-from gfn.distributions import EmpiricalTrajectoryDistribution, TrajectoryDistribution
+from gfn.containers import Trajectories
 from gfn.envs import Env
 from gfn.estimators import LogEdgeFlowEstimator
 from gfn.losses.base import Parametrization, StateDecomposableLoss
@@ -24,15 +24,13 @@ class FMParametrization(Parametrization):
     """
     logF: LogEdgeFlowEstimator
 
-    def Pi(
-        self, env: Env, n_samples: int = 1000, **actions_sampler_kwargs
-    ) -> TrajectoryDistribution:
-        actions_sampler = ActionsSampler(self.logF, **actions_sampler_kwargs)
-        trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
+    def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
+        actions_sampler = ActionsSampler(self.logF)
+        trajectories_sampler = TrajectoriesSampler(actions_sampler)
         trajectories = trajectories_sampler.sample_trajectories(
             n_trajectories=n_samples
         )
-        return EmpiricalTrajectoryDistribution(trajectories)
+        return trajectories
 
 
 # TODO: Should this loss live within the Parameterization, as a method?
@@ -48,6 +46,7 @@ class FlowMatching(StateDecomposableLoss):
         env: the environment from within the parameterization.
         alpha: weight for the reward matching loss.
     """
+
     def __init__(self, parametrization: FMParametrization, alpha=1.0) -> None:
         """Instantiate the FlowMatching Loss object.
 

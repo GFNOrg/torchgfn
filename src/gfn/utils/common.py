@@ -1,9 +1,10 @@
+from collections import Counter
 from typing import Dict, Optional
 
 import torch
+from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories, Transitions
-from gfn.distributions import EmpiricalTerminatingStatesDistribution
 from gfn.envs import Env
 from gfn.losses import (
     EdgeDecomposableLoss,
@@ -40,6 +41,17 @@ def trajectories_to_training_samples(
         return trajectories.to_transitions()
     else:
         raise ValueError(f"Loss {loss_fn} is not supported.")
+
+
+def get_terminating_state_dist_pmf(env: Env, states: States) -> TT["n_states", float]:
+    states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
+    counter = Counter(states_indices)
+    counter_list = [
+        counter[state_idx] if state_idx in counter else 0
+        for state_idx in range(env.n_terminating_states)
+    ]
+
+    return torch.tensor(counter_list, dtype=torch.float) / len(states_indices)
 
 
 def validate(
@@ -79,15 +91,13 @@ def validate(
     if isinstance(parametrization, TBParametrization):
         logZ = parametrization.logZ.tensor.item()
     if visited_terminating_states is None:
-        final_states_dist = parametrization.P_T(env, n_validation_samples)
-    else:
-        final_states_dist = EmpiricalTerminatingStatesDistribution(
-            env, visited_terminating_states[-n_validation_samples:]
+        terminating_states = parametrization.sample_terminating_states(
+            n_validation_samples
         )
-        n_visited_states = visited_terminating_states.batch_shape[0]
-        n_validation_samples = min(n_visited_states, n_validation_samples)
+    else:
+        terminating_states = visited_terminating_states[-n_validation_samples:]
 
-    final_states_dist_pmf = final_states_dist.pmf()
+    final_states_dist_pmf = get_terminating_state_dist_pmf(env, terminating_states)
     l1_dist = (final_states_dist_pmf - true_dist_pmf).abs().mean().item()
     validation_info = {"l1_dist": l1_dist}
     if logZ is not None:
