@@ -20,7 +20,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     """Loss object to evaluate the Sub Trajectory Balance Loss.
 
     This method is described in section 3 of
-    [Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259)).
+    [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782).
 
     Attributes:
         parametrization: a SubTBParametrization instance.
