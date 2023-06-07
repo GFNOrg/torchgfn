@@ -34,6 +34,10 @@ class Actions(ABC):
             tensor: tensor of actions
         """
         self.tensor = tensor
+        assert len(tensor.shape) > len(self.action_shape), (
+            f"Actions tensor has shape {tensor.shape}, "
+            f"but the action shape is {self.action_shape}."
+        )
         self.batch_shape = tuple(self.tensor.shape)[: -len(self.action_shape)]
 
     @classmethod
