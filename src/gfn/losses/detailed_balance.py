@@ -11,7 +11,7 @@ from gfn.samplers import ActionsSampler
 
 @dataclass
 class DBParametrization(PFBasedParametrization):
-    r"""The Detail Balance Parameterization dataclass.
+    r"""The Detailed Balance Parameterization dataclass.
 
     Corresponds to $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2 \times
     \mathcal{O}_3$, where $\mathcal{O}_1$ is the set of functions from the internal
@@ -23,12 +23,13 @@ class DBParametrization(PFBasedParametrization):
     """
     logF: LogStateFlowEstimator
 
+
 # TODO: Should this loss live within the Parameterization, as a method?
 # TODO: Should this be called DetaiedBalanceLoss?
 class DetailedBalance(EdgeDecomposableLoss):
-    """Loss object for the Flow Matching objective.
+    """Loss object for the Detailed Balance objective.
 
-    This method is described in section x.xx of [THIS PAPER](https://arxiv.org/abs/???))
+    This method is described in section 3.2 of [this paper](https://arxiv.org/abs/2111.09266))
 
     Attributes:
         parameterization: a DBParametrization instance.
@@ -36,6 +37,7 @@ class DetailedBalance(EdgeDecomposableLoss):
         backwards_actions_sampler: ActionsSampler for the backwards policy.
         on_policy: whether the log probs stored in the transitions are used.
     """
+
     def __init__(self, parametrization: DBParametrization, on_policy: bool = False):
         """Instantiates a DetailedBalance instance.
         Args:

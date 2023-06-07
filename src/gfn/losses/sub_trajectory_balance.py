@@ -15,12 +15,12 @@ class SubTBParametrization(PFBasedParametrization):
     r"""Exactly the same as DBParametrization."""
     logF: LogStateFlowEstimator
 
+
 # TODO: Should this loss live within the Parameterization, as a method?
 class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     """Loss object to evaluate the Sub Trajectory Balance Loss.
 
-    This method is described in section x.xx of
-    [THIS PAPER](https://arxiv.org/abs/???))
+    This method is described in section 3 of [this paper](https://arxiv.org/abs/2201.13259))
 
     Attributes:
         parametrization: a SubTBParametrization instance.
@@ -31,6 +31,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         lamda: discount factor for longer trajectories.
         on_policy: whether the loss is computed on-policy.
     """
+
     def __init__(
         self,
         parametrization: SubTBParametrization,

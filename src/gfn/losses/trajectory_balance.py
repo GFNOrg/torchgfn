@@ -25,18 +25,20 @@ class TBParametrization(PFBasedParametrization):
     """
     logZ: LogZEstimator
 
+
 # TODO: rename to TrajectoryBalanceLoss.
 # TODO: Should this loss live within the Parameterization, as a method?
 class TrajectoryBalance(TrajectoryDecomposableLoss):
     """Loss object to evaluate the TB loss on a batch of trajectories.
 
-    This method is described in x.xx of [REFERENCE HERE](https://arxiv.org/abs/???))
+    This method is described in section 2.3 of [this paper](https://arxiv.org/abs/2209.12782))
 
     Attributes:
         parametrization: a TBParamaterization (Trajectory Balance) instance.
         log_reward_clip_min: minimal value to clamp rewards to.
         on_policy: stores whether log probabilities stored in trajectories are used.
     """
+
     def __init__(
         self,
         parametrization: TBParametrization,
@@ -80,6 +82,7 @@ class LogPartitionVarianceLoss(TrajectoryDecomposableLoss):
         actions_sampler: Forward policy actions sampler.
         backward_actions_sampler: Backward policy actions sampler.
     """
+
     def __init__(
         self,
         parametrization: PFBasedParametrization,
