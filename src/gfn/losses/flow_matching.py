@@ -4,7 +4,6 @@ from typing import Tuple
 import torch
 from torchtyping import TensorType as TT
 
-from gfn.casting import correct_cast
 from gfn.containers import Trajectories
 from gfn.envs import Env
 from gfn.estimators import LogEdgeFlowEstimator
@@ -72,10 +71,6 @@ class FlowMatching(StateDecomposableLoss):
         assert len(states.batch_shape) == 1
         assert not torch.any(states.is_initial_state)
 
-        states.forward_masks, states.backward_masks = correct_cast(
-            states.forward_masks, states.backward_masks
-        )
-
         incoming_log_flows = torch.full_like(
             states.backward_masks, -float("inf"), dtype=torch.float
         )
@@ -90,10 +85,7 @@ class FlowMatching(StateDecomposableLoss):
             valid_forward_mask = states.forward_masks[:, action_idx]
             valid_backward_states = states[valid_backward_mask]
             valid_forward_states = states[valid_forward_mask]
-            _, valid_backward_states.backward_masks = correct_cast(
-                valid_backward_states.forward_masks,
-                valid_backward_states.backward_masks,
-            )
+
             backward_actions = torch.full_like(
                 valid_backward_states.backward_masks[:, 0], action_idx, dtype=torch.long
             )

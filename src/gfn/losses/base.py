@@ -6,7 +6,6 @@ from typing import Tuple
 import torch
 from torchtyping import TensorType as TT
 
-from gfn.casting import correct_cast
 from gfn.containers import Trajectories, Transitions
 from gfn.estimators import ProbabilityEstimator
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
@@ -172,9 +171,6 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         if valid_states.batch_shape != tuple(valid_actions.shape):
             raise AssertionError("Something wrong happening with log_pf evaluations")
 
-        valid_states.forward_masks, valid_states.backward_masks = correct_cast(
-            valid_states.forward_masks, valid_states.backward_masks
-        )
         log_pf_trajectories = None
         if not no_pf:
             valid_pf_logits = self.actions_sampler.get_logits(valid_states)
