@@ -53,10 +53,10 @@ def test_trajectory_sampling(
         pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=3)
     else:
         logit_pf_module = NeuralNet(
-            input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions
+            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
         )
         logit_pb_module = NeuralNet(
-            input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions - 1
+            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
         )
         pf_estimator = DiscretePFEstimator(env=env, module=logit_pf_module)
         pb_estimator = DiscretePBEstimator(env=env, module=logit_pb_module)

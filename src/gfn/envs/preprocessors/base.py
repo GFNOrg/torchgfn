@@ -12,8 +12,8 @@ class Preprocessor(ABC):
     to tensors that can be used as input to neural networks.
     """
 
-    def __init__(self, output_shape: Tuple[int]) -> None:
-        self.output_shape = output_shape
+    def __init__(self, output_dim: int) -> None:
+        self.output_dim = output_dim
 
     @abstractmethod
     def preprocess(self, states: States) -> TT["batch_shape", "input_dim"]:
@@ -23,7 +23,7 @@ class Preprocessor(ABC):
         return self.preprocess(states)
 
     def __repr__(self):
-        return f"{self.__class__.__name__}, output_shape={self.output_shape}"
+        return f"{self.__class__.__name__}, output_dim={self.output_dim}"
 
 
 class IdentityPreprocessor(Preprocessor):
@@ -47,7 +47,7 @@ class EnumPreprocessor(Preprocessor):
         Args:
             get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
         """
-        super().__init__(output_shape=(1,))
+        super().__init__(output_dim=1)
         self.get_states_indices = get_states_indices
 
     def preprocess(self, states):

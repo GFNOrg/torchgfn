@@ -55,7 +55,11 @@ class Env(ABC):
         self.Actions = self.make_Actions_class()
 
         if preprocessor is None:
-            preprocessor = IdentityPreprocessor(output_shape=tuple(s0.shape))
+            assert (
+                s0.ndim == 1
+            ), "The default preprocessor can only be used for uni-dimensional states."
+            output_dim = s0.shape[0]
+            preprocessor = IdentityPreprocessor(output_dim=output_dim)
 
         self.preprocessor = preprocessor
 

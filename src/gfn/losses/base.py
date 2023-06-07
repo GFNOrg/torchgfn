@@ -132,10 +132,14 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         TT["max_length", "n_trajectories", torch.float] | None,
         TT["max_length", "n_trajectories", torch.float],
     ]:
-        """Evaluate log_pf and log_pb for each action in each trajectory in the batch.
+        """Evaluates logprobs for each transition in each trajectory in the batch.
+
+        More specifically it evaluates $\log P_F (s' \mid s)$ and $\log P_B(s \mid s')$
+        for each transition in each trajectory in the batch.
 
         This is useful when the policy used to sample the trajectories is different from
-        the one used to evaluate the loss.
+        the one used to evaluate the loss. Otherwise we can use the logprobs directly
+        from the trajectories.
 
         Temperature, epsilon, and no_pf correspond to how the actions_sampler
         evaluates each action.
