@@ -10,7 +10,6 @@ from gfn.states import DiscreteStates, States
 
 # TODO: Is is true that this is only ever used for Action probability distributions?
 # TODO: Remove environment from here (instead accept n_actions or similar)?
-# TODO
 class FunctionEstimator(ABC):
     r"""Base class for modules mapping states to action probability distributions.
 
@@ -89,6 +88,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
     This estimator is used for the flow-matching loss, which only supports discrete
     environments.
     """
+
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError(
@@ -120,6 +120,7 @@ class ProbabilityEstimator(FunctionEstimator, ABC):
     The outputs of such an estimator are thus probability distributions, not the
     parameters of the distributions.
     """
+
     @abstractmethod
     def to_probability_distribution(
         self,
@@ -139,6 +140,7 @@ class LogEdgeFlowProbabilityEstimator(ProbabilityEstimator, LogEdgeFlowEstimator
     $(s \rightarrow s') \mapsto P_F(s' \mid s) = \frac{F(s \rightarrow s')}
         {\sum_{s' \in Children(s)} F(s \rightarrow s')}$.
     """
+
     def to_probability_distribution(
         self,
         states: DiscreteStates,
