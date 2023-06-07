@@ -8,6 +8,7 @@ from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.envs.env import DiscreteEnv
+from gfn.envs.preprocessors import IdentityPreprocessor, EnumPreprocessor
 from gfn.states import DiscreteStates, States
 
 
@@ -47,6 +48,7 @@ class DiscreteEBMEnv(DiscreteEnv):
         energy: EnergyFunction | None = None,
         alpha: float = 1.0,
         device_str: Literal["cpu", "cuda"] = "cpu",
+        preprocessor_name: Literal["Identity", "Enum"] = "Identity",
     ):
         """Discrete EBM environment.
 
@@ -74,7 +76,18 @@ class DiscreteEBMEnv(DiscreteEnv):
         # Action i in [0, ndim - 1] corresponds to replacing s[i] with 0
         # Action i in [ndim, 2 * ndim - 1] corresponds to replacing s[i - ndim] with 1
 
-        super().__init__(action_space=action_space, s0=s0, sf=sf)
+        if preprocessor_name == "Identity":
+            preprocessor = IdentityPreprocessor(output_dim=ndim)
+        elif preprocessor_name == "Enum":
+            preprocessor = EnumPreprocessor(
+                get_states_indices=self.get_states_indices,
+            )
+        else:
+            raise ValueError(f"Unknown preprocessor {preprocessor_name}")
+
+        super().__init__(
+            action_space=action_space, s0=s0, sf=sf, preprocessor=preprocessor
+        )
 
     def make_States_class(self) -> type[DiscreteStates]:
         env = self
