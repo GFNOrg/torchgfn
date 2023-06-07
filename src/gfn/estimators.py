@@ -5,7 +5,7 @@ from torch.distributions import Categorical, Distribution
 from torchtyping import TensorType as TT
 
 from gfn.envs import DiscreteEnv, Env
-from gfn.states import DiscreteStates, States
+from gfn.states import States
 
 
 # TODO: Is is true that this is only ever used for Action probability distributions?
@@ -132,23 +132,6 @@ class ProbabilityEstimator(FunctionEstimator, ABC):
 
     def __call__(self, states: States) -> Distribution:
         return self.to_probability_distribution(states, super().__call__(states))
-
-
-class LogEdgeFlowProbabilityEstimator(ProbabilityEstimator, LogEdgeFlowEstimator):
-    r"""Container for Log Edge Flow Probability Estimator
-
-    $(s \rightarrow s') \mapsto P_F(s' \mid s) = \frac{F(s \rightarrow s')}
-        {\sum_{s' \in Children(s)} F(s \rightarrow s')}$.
-    """
-
-    def to_probability_distribution(
-        self,
-        states: DiscreteStates,
-        module_output: TT["batch_shape", "output_dim", float],
-    ) -> Distribution:
-        logits = module_output
-        logits[~states.forward_masks] = -float("inf")
-        return Categorical(logits=logits)
 
 
 class LogZEstimator:

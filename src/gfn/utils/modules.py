@@ -9,6 +9,7 @@ from torchtyping import TensorType as TT
 
 class NeuralNet(nn.Module):
     """Implements a basic MLP."""
+
     def __init__(
         self,
         input_dim: int,
@@ -85,6 +86,8 @@ class Tabular(nn.Module):
             output_dim (int): Output dimension.
         """
 
+        super().__init__()
+
         self.table = torch.zeros(
             (n_states, output_dim),
             dtype=torch.float,
@@ -93,7 +96,7 @@ class Tabular(nn.Module):
         self.table = nn.parameter.Parameter(self.table)
         self.device = None
 
-    def __call__(
+    def forward(
         self, preprocessed_states: TT["batch_shape", "input_dim", float]
     ) -> TT["batch_shape", "output_dim", float]:
         if self.device is None:
@@ -110,7 +113,6 @@ class Uniform(nn.Module):
     Attributes:
         output_dim: The size of the output space.
     """
-
 
     def __init__(self, output_dim: int) -> None:
         """Initializes the uniform function approximiator.

@@ -4,7 +4,7 @@ from torch.distributions import Distribution
 from torchtyping import TensorType as TT
 
 from gfn.envs import DiscreteEnv, Env
-from gfn.estimators import ProbabilityEstimator
+from gfn.estimators import ProbabilityEstimator, LogEdgeFlowEstimator
 from gfn.states import DiscreteStates
 from gfn.utils.distributions import UnsqueezedCategorical
 
@@ -23,6 +23,7 @@ class DiscretePFEstimator(ProbabilityEstimator):
             temperature.
         epsilon: with probability epsilon, a random action is chosen.
     """
+
     def __init__(
         self,
         env: Env,
@@ -75,6 +76,27 @@ class DiscretePFEstimator(ProbabilityEstimator):
         probs = (1 - self.epsilon) * probs + self.epsilon * uniform_dist_probs
 
         return UnsqueezedCategorical(probs=probs)
+
+
+class LogEdgeFlowProbabilityEstimator(ProbabilityEstimator, LogEdgeFlowEstimator):
+    r"""Container for Log Edge Flows based Probability Estimators.
+
+    $(s \rightarrow s') \mapsto P_F(s' \mid s) = \frac{F(s \rightarrow s')}
+        {\sum_{s' \in Children(s)} F(s \rightarrow s')}$.
+    """
+
+    @classmethod
+    def from_LogEdgeFlowEstimator(cls, log_edge_flow_estimator: LogEdgeFlowEstimator):
+        return cls(log_edge_flow_estimator.env, log_edge_flow_estimator.module)
+
+    def to_probability_distribution(
+        self,
+        states: DiscreteStates,
+        module_output: TT["batch_shape", "output_dim", float],
+    ) -> Distribution:
+        logits = module_output
+        logits[~states.forward_masks] = -float("inf")
+        return UnsqueezedCategorical(logits=logits)
 
 
 class DiscretePBEstimator(ProbabilityEstimator):

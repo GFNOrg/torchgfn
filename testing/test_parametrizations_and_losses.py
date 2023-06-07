@@ -20,6 +20,7 @@ from gfn.losses import (
     TBParametrization,
     TrajectoryBalance,
 )
+from gfn.utils.modules import NeuralNet, Tabular, Uniform
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 
 
@@ -27,26 +28,40 @@ from gfn.samplers import ActionsSampler, TrajectoriesSampler
 @pytest.mark.parametrize("ndim", [2, 3])
 @pytest.mark.parametrize(
     "module_name",
-    ["NeuralNet", "Zero", "Tabular"],
+    ["NeuralNet", "Tabular"],
 )
 def test_FM(env_name: int, ndim: int, module_name: str):
     # TODO: once the flow matching loss implemented, add a test for it here, as done for the other parametrizations
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim)
+        env = HyperGrid(
+            ndim=ndim, preprocessor_name="Enum" if module_name == "Tabular" else "KHot"
+        )
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBMEnv(ndim=ndim)
+        env = DiscreteEBMEnv(
+            ndim=ndim,
+            preprocessor_name="Enum" if module_name == "Tabular" else "Identity",
+        )
     else:
         raise ValueError("Unknown environment name")
 
-    log_F_edge = LogEdgeFlowEstimator(env=env, module_name=module_name)
+    if module_name == "NeuralNet":
+        module = NeuralNet(
+            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
+        )
+    elif module_name == "Tabular":
+        module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
+    else:
+        raise ValueError("Unknown module name")
+
+    log_F_edge = LogEdgeFlowEstimator(env=env, module=module)
     parametrization = FMParametrization(log_F_edge)
 
-    print(parametrization.Pi(env, n_samples=10).sample())
+    print(parametrization.sample_trajectories(n_samples=10))
+    print(parametrization.sample_terminating_states(n_samples=10))
     print(parametrization.parameters.keys())
 
-    actions_sampler = ActionsSampler(log_F_edge)
-    trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
+    trajectories = parametrization.sample_trajectories(n_samples=10)
+
     states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
 
     loss = FlowMatching(parametrization)

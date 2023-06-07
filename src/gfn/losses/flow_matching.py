@@ -5,16 +5,16 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
-from gfn.envs import Env
 from gfn.estimators import LogEdgeFlowEstimator
 from gfn.losses.base import Parametrization, StateDecomposableLoss
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
-from gfn.states import States
+from gfn.states import DiscreteStates
+from gfn.utils.estimators import LogEdgeFlowProbabilityEstimator
 
 
 @dataclass
 class FMParametrization(Parametrization):
-    r"""Flow Matching Parameterization dataclass, with edge flow extimator.
+    r"""Flow Matching Parameterization dataclass, with edge flow estimator.
 
     $\mathcal{O}_{edge}$ is the set of functions from the non-terminating edges
     to $\mathbb{R}^+$. Which is equivalent to the set of functions from the internal nodes
@@ -24,7 +24,10 @@ class FMParametrization(Parametrization):
     logF: LogEdgeFlowEstimator
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
-        actions_sampler = ActionsSampler(self.logF)
+        probability_estimator = (
+            LogEdgeFlowProbabilityEstimator.from_LogEdgeFlowEstimator(self.logF)
+        )
+        actions_sampler = ActionsSampler(probability_estimator)
         trajectories_sampler = TrajectoriesSampler(actions_sampler)
         trajectories = trajectories_sampler.sample_trajectories(
             n_trajectories=n_samples
@@ -56,7 +59,9 @@ class FlowMatching(StateDecomposableLoss):
         self.env = parametrization.logF.env
         self.alpha = alpha
 
-    def flow_matching_loss(self, states: States) -> TT["n_trajectories", torch.float]:
+    def flow_matching_loss(
+        self, states: DiscreteStates
+    ) -> TT["n_trajectories", torch.float]:
         """Computes the FM for the provided states.
 
         The Flow Matching loss is defined as the log-sum incoming flows minus log-sum
@@ -88,7 +93,8 @@ class FlowMatching(StateDecomposableLoss):
 
             backward_actions = torch.full_like(
                 valid_backward_states.backward_masks[:, 0], action_idx, dtype=torch.long
-            )
+            ).unsqueeze(-1)
+            backward_actions = self.env.Actions(backward_actions)
 
             valid_backward_states_parents = self.env.backward_step(
                 valid_backward_states, backward_actions
@@ -112,7 +118,7 @@ class FlowMatching(StateDecomposableLoss):
 
         return (log_incoming_flows - log_outgoing_flows).pow(2).mean()
 
-    def reward_matching_loss(self, terminating_states: States) -> TT[0, float]:
+    def reward_matching_loss(self, terminating_states: DiscreteStates) -> TT[0, float]:
         """Calculates the reward matching loss from the terminating states."""
         assert terminating_states.log_rewards is not None
         log_edge_flows = self.parametrization.logF(terminating_states)
@@ -120,8 +126,10 @@ class FlowMatching(StateDecomposableLoss):
         log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
-    # TODO: should intermeidary_states and terminating_states be two input args?
-    def __call__(self, states_tuple: Tuple[States, States]) -> TT[0, float]:
+    # TODO: should intermediary_states and terminating_states be two input args?
+    def __call__(
+        self, states_tuple: Tuple[DiscreteStates, DiscreteStates]
+    ) -> TT[0, float]:
         """Calculates flow matching loss from intermediate and terminating states."""
         intermediary_states, terminating_states = states_tuple
         fm_loss = self.flow_matching_loss(intermediary_states)
