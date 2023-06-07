@@ -81,8 +81,6 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         """
         self.parametrization = parametrization
         self.log_reward_clip_min = log_reward_clip_min
-        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
         self.weighing = weighing
         # Lamda is a discount factor for longer trajectories. The part of the loss
         # corresponding to sub-trajectories of length i is multiplied by lamda^i

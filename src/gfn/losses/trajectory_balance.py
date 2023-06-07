@@ -55,8 +55,6 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         """
         self.parametrization = parametrization
         self.log_reward_clip_min = log_reward_clip_min
-        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
         self.on_policy = on_policy
 
     def __call__(self, trajectories: Trajectories) -> TT[0, float]:
@@ -100,8 +98,6 @@ class LogPartitionVarianceLoss(TrajectoryDecomposableLoss):
         """
         self.parametrization = parametrization
         self.log_reward_clip_min = log_reward_clip_min
-        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
         self.on_policy = on_policy
 
     def __call__(self, trajectories: Trajectories) -> TT[0, float]:

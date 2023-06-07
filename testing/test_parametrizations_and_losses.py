@@ -23,6 +23,8 @@ from gfn.losses import (
 from gfn.utils.modules import NeuralNet, Tabular, Uniform
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 
+from test_samplers_and_trajectories import test_trajectory_sampling
+
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 @pytest.mark.parametrize("ndim", [2, 3])
@@ -68,7 +70,48 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     print(loss(states_tuple))
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+@pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
+def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
+    if preprocessor_name == "KHot" and env_name != "HyperGrid":
+        pytest.skip("KHot preprocessor only implemented for HyperGrid")
+    trajectories, _, pf_estimator, pb_estimator = test_trajectory_sampling(
+        env_name, preprocessor_name, delta=0.1
+    )
+    logZ = LogZEstimator(torch.tensor(0.0))
+    parametrization = TBParametrization(pf_estimator, pb_estimator, logZ)
+    loss_on = TrajectoryBalance(parametrization, on_policy=True)
+    loss_off = TrajectoryBalance(parametrization, on_policy=False)
+    log_pfs_on, log_pbs_on = loss_on.get_pfs_and_pbs(trajectories)
+    log_pfs_off, log_pbs_off = loss_off.get_pfs_and_pbs(trajectories)
+    print(log_pfs_on, log_pbs_on, log_pfs_off, log_pbs_off)
+
+
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+@pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
+def test_get_scores(env_name: str, preprocessor_name: str):
+    if preprocessor_name == "KHot" and env_name != "HyperGrid":
+        pytest.skip("KHot preprocessor only implemented for HyperGrid")
+    trajectories, _, pf_estimator, pb_estimator = test_trajectory_sampling(
+        env_name, preprocessor_name, delta=0.1
+    )
+    logZ = LogZEstimator(torch.tensor(0.0))
+    parametrization = TBParametrization(pf_estimator, pb_estimator, logZ)
+    loss_on = TrajectoryBalance(parametrization, on_policy=True)
+    loss_off = TrajectoryBalance(parametrization, on_policy=False)
+    scores_on = loss_on.get_trajectories_scores(trajectories)
+    scores_off = loss_off.get_trajectories_scores(trajectories)
+    print(scores_on)
+    print(scores_off)
+    assert all(
+        [torch.all(scores_on[i] == scores_off[i]) for i in range(len(scores_on))]
+    )
+
+
+# test_get_scores("Box", "Identity")
+
+
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 @pytest.mark.parametrize("ndim", [2, 3])
 @pytest.mark.parametrize(
     ("module_name", "tie_pb_to_pf"),
@@ -106,10 +149,10 @@ def test_PFBasedParametrization(
     else:
         raise ValueError("Unknown environment name")
 
-    logit_PF = ProbabilityEstimator(env, module_name=module_name)
-    logit_PB = ProbabilityEstimator(env, module_name=module_name)
+    pf = ProbabilityEstimator(env, module_name=module_name)
+    pb = ProbabilityEstimator(env, module_name=module_name)
     if tie_pb_to_pf:
-        logit_PB.module.torso = logit_PF.module.torso
+        pb.module.torso = pf.module.torso
     logF = LogStateFlowEstimator(
         env,
         forward_looking=forward_looking,
@@ -117,7 +160,7 @@ def test_PFBasedParametrization(
     )
     logZ = LogZEstimator(torch.tensor(0.0))
 
-    actions_sampler = ActionsSampler(estimator=logit_PF)
+    actions_sampler = ActionsSampler(estimator=pf)
 
     trajectories_sampler = TrajectoriesSampler(
         env=env,
@@ -126,16 +169,16 @@ def test_PFBasedParametrization(
 
     loss_kwargs = {}
     if parametrization_name == "DB":
-        parametrization = DBParametrization(logit_PF, logit_PB, logF)
+        parametrization = DBParametrization(pf, pb, logF)
         loss_cls = DetailedBalance
     elif parametrization_name == "TB":
-        parametrization = TBParametrization(logit_PF, logit_PB, logZ)
+        parametrization = TBParametrization(pf, pb, logZ)
         loss_cls = TrajectoryBalance
     elif parametrization_name == "ZVar":
-        parametrization = PFBasedParametrization(logit_PF, logit_PB)
+        parametrization = PFBasedParametrization(pf, pb)
         loss_cls = LogPartitionVarianceLoss
     elif parametrization_name == "SubTB":
-        parametrization = SubTBParametrization(logit_PF, logit_PB, logF)
+        parametrization = SubTBParametrization(pf, pb, logF)
         loss_cls = SubTrajectoryBalance
         loss_kwargs = {"weighing": sub_tb_weighing}
     else:
