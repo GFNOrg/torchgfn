@@ -19,8 +19,8 @@ class SubTBParametrization(PFBasedParametrization):
 class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     """Loss object to evaluate the Sub Trajectory Balance Loss.
 
-    This method is described in section x.xx of
-    [THIS PAPER](https://arxiv.org/abs/???))
+    This method is described in section 3 of
+    [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782).
 
     Attributes:
         parametrization: a SubTBParametrization instance.

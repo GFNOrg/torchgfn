@@ -26,9 +26,10 @@ class DBParametrization(PFBasedParametrization):
 # TODO: Should this loss live within the Parameterization, as a method?
 # TODO: Should this be called DetaiedBalanceLoss?
 class DetailedBalance(EdgeDecomposableLoss):
-    """Loss object for the Flow Matching objective.
+    """Loss object for the Detailed Balance objective.
 
-    This method is described in section x.xx of [THIS PAPER](https://arxiv.org/abs/???))
+    This method is described in section
+    3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
         parameterization: a DBParametrization instance.

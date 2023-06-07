@@ -40,7 +40,8 @@ class FMParametrization(Parametrization):
 class FlowMatching(StateDecomposableLoss):
     """Loss object for the Flow Matching objective.
 
-    This method is described in section x.xx of [THIS PAPER](https://arxiv.org/abs/???))
+    This method is described in section
+    3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
         parameterization: a FMParameterization instance.
