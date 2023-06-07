@@ -8,10 +8,9 @@ from torchtyping import TensorType as TT
 
 from gfn.casting import correct_cast
 from gfn.containers import Trajectories, Transitions
-from gfn.envs import Env
+from gfn.estimators import ProbabilityEstimator
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
-from gfn.utils import DiscretePBEstimator, DiscretePFEstimator
 
 
 @dataclass
@@ -78,11 +77,11 @@ class Parametrization(ABC):
 @dataclass
 class PFBasedParametrization(Parametrization, ABC):
     r"Base class for parametrizations that explicitly uses $P_F$"
-    logit_PF: DiscretePFEstimator
-    logit_PB: DiscretePBEstimator
+    PF: ProbabilityEstimator
+    PB: ProbabilityEstimator
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
-        actions_sampler = ActionsSampler(self.logit_PF)
+        actions_sampler = ActionsSampler(self.PF)
         trajectories_sampler = TrajectoriesSampler(actions_sampler)
         trajectories = trajectories_sampler.sample_trajectories(
             n_trajectories=n_samples
