@@ -14,7 +14,29 @@ from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
 
 
+# TODO: remove env from this class?
 class Trajectories(Container):
+    """Container for complete trajectories (starting in $s_0$ and ending in $s_f$).
+
+    Trajectories are represented as a States object with bi-dimensional batch shape.
+    Actions are represented as an Actions object with bi-dimensional batch shape.
+    The first dimension represents the time step, the second dimension represents
+    the trajectory index. Because different trajectories may have different lengths,
+    shorter trajectories are padded with the tensor representation of the terminal
+    state ($s_f$ or $s_0$ depending on the direction of the trajectory), and
+    actions is appended with dummy actions. The `when_is_done` tensor represents
+    the time step at which each trajectory ends.
+
+    Attributes:
+        env: The environment in which the trajectories are defined.
+        states: The states of the trajectories.
+        actions: The actions of the trajectories.
+        when_is_done: The time step at which each trajectory ends.
+        is_backward: Whether the trajectories are backward or forward.
+        log_rewards: The log_rewards of the trajectories.
+        log_probs: The log probabilities of the trajectories' actions.
+
+    """
     def __init__(
         self,
         env: Env,
@@ -25,27 +47,19 @@ class Trajectories(Container):
         log_rewards: TT["n_trajectories", torch.float] | None = None,
         log_probs: TT["max_length", "n_trajectories", torch.float] | None = None,
     ) -> None:
-        """Container for complete trajectories (starting in s_0 and ending in s_f).
-        Trajectories are represented as a States object with bi-dimensional batch shape.
-        The actions are represented as an Actions object with bi-dimensional batch shape.
-        The first dimension represents the time step, the second dimension represents the trajectory index.
-        Because different trajectories may have different lengths, shorter trajectories are padded with
-        the tensor representation of the terminal state (s_f or s_0 depending on the direction of the trajectory), and
-        actions is appended with dummy actions.
-        The when_is_done tensor represents the time step at which each trajectory ends.
-
-
+        """
         Args:
             env: The environment in which the trajectories are defined.
-            states (optional): The states of the trajectories. Defaults to None.
-            actions (optional): The actions of the trajectories. Defaults to None.
-            when_is_done (optional): The time step at which each trajectory ends. Defaults to None.
+            states: The states of the trajectories. Defaults to None.
+            actions: The actions of the trajectories. Defaults to None.
+            when_is_done: The time step at which each trajectory ends. Defaults to None.
             is_backward: Whether the trajectories are backward or forward. Defaults to False.
-            log_rewards (optional): The log_rewards of the trajectories. Defaults to None.
-            log_probs (optional): The log probabilities of the trajectories' actions. Defaults to None.
+            log_rewards: The log_rewards of the trajectories. Defaults to None.
+            log_probs: The log probabilities of the trajectories' actions. Defaults to None.
 
-        If states is None, then the states are initialized to an empty States object, that can be populated on the fly.
-        If log_rewards is None, then `env.log_reward` is used to compute the rewards, at each call of self.log_rewards
+        If states is None, then the states are initialized to an empty States object,
+        that can be populated on the fly. If log_rewards is None, then `env.log_reward`
+        is used to compute the rewards, at each call of self.log_rewards
         """
         self.env = env
         self.is_backward = is_backward
@@ -122,7 +136,7 @@ class Trajectories(Container):
             return torch.log(self.env.reward(self.last_states))
 
     def __getitem__(self, index: int | Sequence[int]) -> Trajectories:
-        "Returns a subset of the `n_trajectories` trajectories."
+        """Returns a subset of the `n_trajectories` trajectories."""
         if isinstance(index, int):
             index = [index]
         when_is_done = self.when_is_done[index]
@@ -148,7 +162,14 @@ class Trajectories(Container):
         )
 
     def extend(self, other: Trajectories) -> None:
-        """Extend the trajectories with another set of trajectories."""
+        """Extend the trajectories with another set of trajectories.
+
+        Extends along all attributes in turn (actions, states, when_is_done, log_probs,
+        log_rewards).
+
+        Args:
+            other: an external set of Trajectories.
+        """
 
         self.actions.extend(other.actions)
         self.states.extend(other.states)
@@ -202,14 +223,17 @@ class Trajectories(Container):
 
     @staticmethod
     def revert_backward_trajectories(trajectories: Trajectories) -> Trajectories:
-        # TODO: this isn't used anywhere - it doesn't work as it assumes that the actions are ints. Do we need it?
+        """Reverses a trajectory, but not compatible with continuous GFN. Remove."""
+        # TODO: this isn't used anywhere - it doesn't work as it assumes that the
+        # actions are ints. Do we need it?
         assert trajectories.is_backward
         new_actions = torch.full_like(trajectories.actions, -1)
         new_actions = torch.cat(
             [new_actions, torch.full((1, len(trajectories)), -1)], dim=0
         )
 
-        # env.sf should never be None unless something went wrong during class instantiation.
+        # env.sf should never be None unless something went wrong during class
+        # instantiation.
         if trajectories.env.sf is None:
             raise AttributeError(
                 "Something went wrong during the instantiation of environment {}".format(
@@ -249,7 +273,7 @@ class Trajectories(Container):
         )
 
     def to_transitions(self) -> Transitions:
-        """Returns a `Transitions` object from the trajectories"""
+        """Returns a `Transitions` object from the trajectories."""
         # TODO: we need tests for this method
         states = self.states[:-1][~self.actions.is_dummy]
         next_states = self.states[1:][~self.actions.is_dummy]
@@ -292,14 +316,16 @@ class Trajectories(Container):
         states = self.states.flatten()
         return states[~states.is_sink_state]
 
+    # TODO: this is a very weird method. I wonder why we need it? Would be helpful
+    # to have an example.
     def to_non_initial_intermediary_and_terminating_states(
         self,
     ) -> tuple[States, States]:
-        """Returns a tuple of `States` objects from the trajectories, containing all non-initial intermediary and all terminating states in the trajectories
+        """Returns all intermediate and terminiating `States` from the trajectories.
 
-        Returns:
-            Tuple[States, States]: - All the intermediary states in the trajectories that are not s0.
-                                   - All the terminating states in the trajectories that are not s0.
+        Returns: a tuple containing all the intermediary states in the trajectories
+            that are not s0, and all the terminating states in the trajectories that
+            are not s0.
         """
         states = self.states
         intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]

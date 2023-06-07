@@ -12,11 +12,17 @@ from gfn.utils.distributions import UnsqueezedCategorical
 class DiscretePFEstimator(ProbabilityEstimator):
     r"""Container for estimators $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$.
 
-    Note that while this class resembles LogEdgeFlowProbabilityEstimator, they have different semantic meaning.
-    With LogEdgeFlowEstimator, the module output is the log of the flow from the parent to the child,
-    while with DiscretePFEstimator, the module output is arbitrary.
-    """
+    Note that while this class resembles LogEdgeFlowProbabilityEstimator, they have
+    different semantic meaning. With LogEdgeFlowEstimator, the module output is the log
+    of the flow from the parent to the child, while with DiscretePFEstimator, the
+    module output is arbitrary.
 
+    Attributes:
+        temperature: scalar to divide the logits by before softmax.
+        sf_bias: scalar to subtract from the exit action logit before dividing by
+            temperature.
+        epsilon: with probability epsilon, a random action is chosen.
+    """
     def __init__(
         self,
         env: Env,
@@ -28,9 +34,10 @@ class DiscretePFEstimator(ProbabilityEstimator):
         """Initializes a estimator for P_F for discrete environments.
 
         Args:
-            temperature (float, optional): scalar to divide the logits by before softmax. Defaults to 1.0.
-            sf_bias (float, optional): scalar to subtract from the exit action logit before dividing by temperature. Defaults to 0.0.
-            epsilon (float, optional): with probability epsilon, a random action is chosen. Defaults to 0.0.
+            temperature: scalar to divide the logits by before softmax.
+            sf_bias: scalar to subtract from the exit action logit before dividing by
+                temperature.
+            epsilon: with probability epsilon, a random action is chosen.
         """
         super().__init__(env, module)
         self.temperature = temperature
@@ -38,6 +45,12 @@ class DiscretePFEstimator(ProbabilityEstimator):
         self.epsilon = epsilon
 
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
+        """Ensures the output dimensions are correct.
+        Raises:
+            ValueError: If this Estimator is initalized with a continuous environment.
+            ValueError: If this Estimator output shape does not match the number of
+                environment actions.
+        """
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError("DiscretePFEstimator only supports discrete environments.")
         if module_output.shape[-1] != self.env.n_actions:
@@ -50,6 +63,7 @@ class DiscretePFEstimator(ProbabilityEstimator):
         states: DiscreteStates,
         module_output: TT["batch_shape", "output_dim", float],
     ) -> Distribution:
+        """Returns a probability distribution given a batch of states and module output."""
         logits = module_output
         logits[~states.forward_masks] = -float("inf")
         logits[:, -1] -= self.sf_bias
@@ -67,6 +81,12 @@ class DiscretePBEstimator(ProbabilityEstimator):
     r"""Container for estimators $s \mapsto (P_B(s' \mid s))_{s' \in Parents(s)}$"""
 
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
+        """Ensures the output dimensions are correct.
+        Raises:
+            ValueError: If this Estimator is initalized with a continuous environment.
+            ValueError: If this Estimator output shape does not match the number of
+                environment actions.
+        """
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError("DiscretePBEstimator only supports discrete environments.")
         if module_output.shape[-1] != self.env.n_actions - 1:
@@ -79,6 +99,7 @@ class DiscretePBEstimator(ProbabilityEstimator):
         states: DiscreteStates,
         module_output: TT["batch_shape", "output_dim", float],
     ) -> Distribution:
+        """Returns a probability distribution given a batch of states and module output."""
         logits = module_output
         logits[~states.backward_masks] = -float("inf")
 

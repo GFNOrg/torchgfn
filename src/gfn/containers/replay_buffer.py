@@ -18,6 +18,16 @@ if TYPE_CHECKING:
 
 
 class ReplayBuffer:
+    """A replay buffer of trajectories or transitions.
+
+    Attributes:
+        env: the Environment instance.
+        loss_fn: the Loss instance
+        capacity: the size of the buffer.
+        training_objects: the buffer of objects used for training.
+        terminating_states: a States class representation of $s_f$.
+        objects_type: the type of buffer (transitions, trajectories, or states).
+    """
     def __init__(
         self,
         env: Env,
@@ -25,6 +35,13 @@ class ReplayBuffer:
         objects_type: Literal["transitions", "trajectories", "states"] | None = None,
         capacity: int = 1000,
     ):
+        """Intantiates a replay buffer.
+        Args:
+            env: the Environment instance.
+            loss_fn: the Loss instance.
+            capacity: the size of the buffer.
+            objects_type: the type of buffer (transitions, trajectories, or states).
+        """
         self.env = env
         self.capacity = capacity
         self.terminating_states = None
@@ -55,6 +72,7 @@ class ReplayBuffer:
         return self.capacity if self._is_full else self._index
 
     def add(self, training_objects: Transitions | Trajectories | tuple[States]):
+        """Adds a training object to the buffer."""
         terminating_states = None
         if isinstance(training_objects, tuple):
             assert self.objects_type == "states" and self.terminating_states is not None
@@ -74,6 +92,7 @@ class ReplayBuffer:
             self.terminating_states = self.terminating_states[-self.capacity :]
 
     def sample(self, n_trajectories: int) -> Transitions | Trajectories | tuple[States]:
+        """Samples `n_trajectories` training objects from the buffer."""
         if self.terminating_states is not None:
             return (
                 self.training_objects.sample(n_trajectories),
@@ -82,11 +101,13 @@ class ReplayBuffer:
         return self.training_objects.sample(n_trajectories)
 
     def save(self, directory: str):
+        """Saves the buffer to disk."""
         self.training_objects.save(os.path.join(directory, "training_objects"))
         if self.terminating_states is not None:
             self.terminating_states.save(os.path.join(directory, "terminating_states"))
 
     def load(self, directory: str):
+        """Loads the buffer from disk."""
         self.training_objects.load(os.path.join(directory, "training_objects"))
         self._index = len(self.training_objects)
         if self.terminating_states is not None:

@@ -11,27 +11,52 @@ from gfn.samplers import ActionsSampler
 
 @dataclass
 class DBParametrization(PFBasedParametrization):
-    r"""
-    Corresponds to $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where
-    $\mathcal{O}_1$ is the set of functions from the internal states (no $s_f$)
-    to $\mathbb{R}^+$ (which we parametrize with logs, to avoid the non-negativity constraint),
-    and $\mathcal{O}_2$ is the set of forward probability functions consistent with the DAG.
-    $\mathcal{O}_3$ is the set of backward probability functions consistent with the DAG, or a singleton
-    thereof, if self.logit_PB is a fixed DiscretePBEstimator.
-    Useful for the Detailed Balance Loss.
+    r"""The Detail Balance Parameterization dataclass.
+
+    Corresponds to $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2 \times
+    \mathcal{O}_3$, where $\mathcal{O}_1$ is the set of functions from the internal
+    states (no $s_f$) to $\mathbb{R}^+$ (which we parametrize with logs, to avoid the
+    non-negativity constraint), and $\mathcal{O}_2$ is the set of forward probability
+    functions consistent with the DAG. $\mathcal{O}_3$ is the set of backward
+    probability functions consistent with the DAG, or a singleton thereof, if
+    `self.logit_PB` is a fixed `DiscretePBEstimator`.
     """
     logF: LogStateFlowEstimator
 
-
+# TODO: Should this loss live within the Parameterization, as a method?
+# TODO: Should this be called DetaiedBalanceLoss?
 class DetailedBalance(EdgeDecomposableLoss):
+    """Loss object for the Flow Matching objective.
+
+    This method is described in section x.xx of [THIS PAPER](https://arxiv.org/abs/???))
+
+    Attributes:
+        parameterization: a DBParametrization instance.
+        actions_sampler: ActionsSampler for the forwards policy.
+        backwards_actions_sampler: ActionsSampler for the backwards policy.
+        on_policy: whether the log probs stored in the transitions are used.
+    """
     def __init__(self, parametrization: DBParametrization, on_policy: bool = False):
-        "If on_policy is True, the log probs stored in the transitions are used."
+        """Instantiates a DetailedBalance instance.
+        Args:
+            parameterization: a DBParametrization instance.
+            on_policy: whether model is being trained on-policy.
+        """
         self.parametrization = parametrization
         self.actions_sampler = ActionsSampler(parametrization.logit_PF)
         self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
         self.on_policy = on_policy
 
     def get_scores(self, transitions: Transitions):
+        """Given a batch of transitions, calculate the scores.
+
+        Args:
+            transitions: a batch of transitions.
+
+        Raises:
+            ValueError: when supplied with backward transitions.
+            AssertionError: when log rewards of transitions are None.
+        """
         if transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
         states = transitions.states
@@ -101,7 +126,12 @@ class DetailedBalance(EdgeDecomposableLoss):
     def get_modified_scores(
         self, transitions: Transitions
     ) -> TT["n_trajectories", torch.float]:
-        "DAG-GFN-style detailed balance, for when all states are connected to the sink"
+        """DAG-GFN-style detailed balance, when all states are connected to the sink.
+
+        Raises:
+            ValueError: when backward transitions are supplied (not supported).
+            ValueError: when the computed scores contain `inf`.
+        """
         if transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
         mask = ~transitions.next_states.is_sink_state

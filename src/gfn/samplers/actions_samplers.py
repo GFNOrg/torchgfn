@@ -9,8 +9,14 @@ from gfn.estimators import ProbabilityEstimator
 from gfn.states import States
 
 
+# TODO: Environment should not live inside the estimator and here... needs refactor.
 class ActionsSampler:
-    """`ActionSampler`s are containers for `ProbabilityEstimator`s"""
+    """`ActionSampler`s are containers for `ProbabilityEstimator`s.
+
+    Attributes:
+        estimator: the submitted ProbabilityEstimator.
+        env: the Environment instance inside the ProbabilityEstimator.
+    """
 
     def __init__(self, estimator: ProbabilityEstimator) -> None:
         self.estimator = estimator
@@ -23,10 +29,11 @@ class ActionsSampler:
             states (States): A batch of states.
 
         Returns:
-            A tuple of tensors:
+            A tuple of tensors containing:
              - An Actions object containing the sampled actions.
-             - A tensor of shape (*batch_shape,) containing the log probabilities of the sampled actions under
-                the probability distribution of the given states.
+             - A tensor of shape (*batch_shape,) containing the log probabilities of
+                the sampled actions under the probability distribution of the given
+                states.
         """
         dist = self.estimator(states)
         with torch.no_grad():
@@ -36,7 +43,8 @@ class ActionsSampler:
         return self.env.Actions(actions), log_probs
 
 
-"The rest of the file is obsolete"
+# TODO: Remove rest of file.
+
 # class ActionsSampler2(ABC):
 #     """
 #     Base class for action sampling methods.

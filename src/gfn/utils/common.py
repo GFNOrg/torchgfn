@@ -19,8 +19,17 @@ from gfn.states import States
 def trajectories_to_training_samples(
     trajectories: Trajectories, loss_fn: Loss
 ) -> States | Transitions | Trajectories:
-    """Converts a Trajectories container to a States, Transitions or Trajectories container,
-    depending on the loss.
+    """Converts Trajectories into States, Transitions or Trajectories.
+
+    This converts a Trajectories container into a States, Transitions, or Trajectories
+    container, depending on the loss.
+
+    Args:
+        trajectories: a Trajectories container.
+        loss_fn: a Loss instance.
+
+    Raises:
+        ValueError: if the submitted Loss is not currently suppored by the function.
     """
     if isinstance(loss_fn, StateDecomposableLoss):
         # return trajectories.to_states()
@@ -40,8 +49,10 @@ def validate(
     visited_terminating_states: Optional[States] = None,
 ) -> Dict[str, float]:
     """Evaluates the current parametrization on the given environment.
-    This is for environments with known target reward. The validation is done by computing the l1 distance between the
-    learned empirical and the target distributions.
+
+    This is for environments with known target reward. The validation is done by
+    computing the l1 distance between the learned empirical and the target
+    distributions.
 
     Args:
         env: The environment to evaluate the parametrization on.
@@ -50,10 +61,9 @@ def validate(
         visited_terminating_states: The terminating states visited during training. If given, the pmf is obtained from
             these last n_validation_samples states. Otherwise, n_validation_samples are resampled for evaluation.
 
-    Returns:
-        Dict[str, float]: A dictionary containing the l1 validation metric. If the parametrization is a TBParametrization,
-        i.e. contains LogZ, then the (absolute) difference between the learned and the target LogZ is also returned in the
-        dictionary.
+    Returns: A dictionary containing the l1 validation metric. If the parametrization
+        is a TBParametrization, i.e. contains LogZ, then the (absolute) difference
+        between the learned and the target LogZ is also returned in the dictionary.
     """
 
     true_logZ = env.log_partition

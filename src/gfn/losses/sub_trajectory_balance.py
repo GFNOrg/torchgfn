@@ -12,17 +12,29 @@ from gfn.samplers import ActionsSampler
 
 @dataclass
 class SubTBParametrization(PFBasedParametrization):
-    r"""
-    Exactly the same as DBParametrization
-    """
+    r"""Exactly the same as DBParametrization."""
     logF: LogStateFlowEstimator
 
-
+# TODO: Should this loss live within the Parameterization, as a method?
 class SubTrajectoryBalance(TrajectoryDecomposableLoss):
+    """Loss object to evaluate the Sub Trajectory Balance Loss.
+
+    This method is described in section x.xx of
+    [THIS PAPER](https://arxiv.org/abs/???))
+
+    Attributes:
+        parametrization: a SubTBParametrization instance.
+        log_reward_clip_min: Threshold below which all log rewards will be clamped.
+        weighting: sub-trajectories weighting scheme.
+        actions_sampler: Forward policy actions sampler.
+        backward_actions_sampler: Backward policy actions sampler.
+        lamda: discount factor for longer trajectories.
+        on_policy: whether the loss is computed on-policy.
+    """
     def __init__(
         self,
         parametrization: SubTBParametrization,
-        log_reward_clip_min: float = -12,
+        log_reward_clip_min: float = -12,  # roughly log(1e-5)
         weighing: Literal[
             "DB",
             "ModifiedDB",
@@ -35,30 +47,46 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         lamda: float = 0.9,
         on_policy: bool = False,
     ):
+        """Instantiates the Sub Trajectory Balance Loss.
+
+        Args:
+            parametrization: parametrization of the model
+            log_reward_clip_min: minimum value of the log-reward. Log-Rewards lower than
+                this value will be clipped to this value.
+            weighing: how to weigh the different sub-trajectories of each trajectory.
+                - "DB": Considers all one-step transitions of each trajectory in the
+                    batch and weighs them equally (regardless of the length of
+                    trajectory). Should be equivalent to DetailedBalance loss.
+                - "ModifiedDB": Considers all one-step transitions of each trajectory
+                    in the batch and weighs them inversely proportional to the
+                    trajectory length. This ensures that the loss is not dominated by
+                    long trajectories. Each trajectory contributes equally to the loss.
+                - "TB": Considers only the full trajectory. Should be equivalent to
+                    TrajectoryBalance loss.
+                - "equal_within": Each sub-trajectory of each trajectory is weighed
+                    equally within the trajectory. Then each trajectory is weighed
+                    equally within the batch.
+                - "equal": Each sub-trajectory of each trajectory is weighed equally
+                    within the set of all sub-trajectories.
+                - "geometric_within": Each sub-trajectory of each trajectory is weighed
+                    proportionally to (lamda ** len(sub_trajectory)), within each
+                    trajectory.
+                - "geometric": Each sub-trajectory of each trajectory is weighed
+                    proportionally to (lamda ** len(sub_trajectory)), within the set of
+                    all sub-trajectories.
+            lamda: parameter for geometric weighing.
+            on_policy: whether the loss is computed on-policy (in which case the log
+                probs stored in the trajectories are used) or off-policy
         """
-        :param parametrization: parametrization of the model
-        :param log_reward_clip_min: minimum value of the log-reward. Log-Rewards lower than this value will be clipped to this value. Defaults to -12 (roughly log(1e-5)).
-        :param weighing: how to weigh the different sub-trajectories of each trajectory.
-            - "DB": Considers all one-step transitions of each trajectory in the batch and weighs them equally (regardless of the length of trajectory).
-                    Should be equivalent to DetailedBalance loss.
-            - "ModifiedDB": Considers all one-step transitions of each trajectory in the batch and weighs them inversely proportional to the trajectory length.
-                    This ensures that the loss is not dominated by long trajectories. Each trajectory contributes equally to the loss.
-            - "TB": Considers only the full trajectory. Should be equivalent to TrajectoryBalance loss.
-            - "equal_within": Each sub-trajectory of each trajectory is weighed equally within the trajectory. Then each trajectory is weighed equally within the batch.
-            - "equal": Each sub-trajectory of each trajectory is weighed equally within the set of all sub-trajectories.
-            - "geometric_within": Each sub-trajectory of each trajectory is weighed proportionally to (lamda ** len(sub_trajectory)), within each trajectory.
-            - "geometric": Each sub-trajectory of each trajectory is weighed proportionally to (lamda ** len(sub_trajectory)), within the set of all sub-trajectories.
-        :param lamda: parameter for geometric weighing
-        :param on_policy: whether the loss is computed on-policy (in which case the log probs stored in the trajectories are used) or off-policy
-        """
-        # Lamda is a discount factor for longer trajectories. The part of the loss
-        # corresponding to sub-trajectories of length i is multiplied by lamda^i
-        # where an edge is of length 1. As lamda approaches 1, each loss becomes equally weighted.
         self.parametrization = parametrization
         self.log_reward_clip_min = log_reward_clip_min
         self.actions_sampler = ActionsSampler(parametrization.logit_PF)
         self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
         self.weighing = weighing
+        # Lamda is a discount factor for longer trajectories. The part of the loss
+        # corresponding to sub-trajectories of length i is multiplied by lamda^i
+        # where an edge is of length 1. As lamda approaches 1, each loss becomes equally
+        # weighted.
         self.lamda = lamda
         self.on_policy = on_policy
 
@@ -67,10 +95,13 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         trajectories: Trajectories,
         log_p_trajectories: TT["max_length", "n_trajectories", torch.float],
     ) -> TT["max_length", "n_trajectories", torch.float]:
-        """
-        :param trajectories: trajectories
-        :param log_p_trajectories: log probabilities of each transition in each trajectory
-        :return: cumulative sum of log probabilities of each trajectory
+        """Calculates the cumulative log probabilities for all trajectories.
+
+        Args:
+            trajectories: a batch of trajectories.
+            log_p_trajectories: log probabilities of each transition in each trajectory.
+
+        Returns: cumulative sum of log probabilities of each trajectory.
         """
         return torch.cat(
             (
@@ -82,18 +113,25 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             dim=0,
         )
 
+    # TODO: This is a long function, worth trying to simplify.
     def get_scores(
         self, trajectories: Trajectories
     ) -> Tuple[
         List[TT[-1, float]], List[TT[-1, float]]
     ]:  # TODO: why -1 here? Is it equivilant to 0?
-        """
-        Returns two elements:
-        - A list of tensors, each of which representing the scores of all sub-trajectories of length k, for k in [1, ..., trajectories.max_length].
-            where the score of a sub-trajectory tau is log P_F(tau) + log F(tau_0) - log P_B(tau) - log F(tau_{-1}). The shape of the k-th tensor
-            is (trajectories.max_length - k + 1, trajectories.n_trajectories), k starting from 1.
-        - A list of tensors representing what should be masked out in the each element of the first list, given that not all sub-trajectories
-            of length k exist for each trajectory. The entries of those tensors are True if the corresponding sub-trajectory does not exist.
+        """Scores all submitted trajectories.
+
+        Returns:
+            - A list of tensors, each of which representing the scores of all
+                sub-trajectories of length k, for k in `[1, ...,
+                trajectories.max_length]`, where the score of a sub-trajectory tau is
+                $log P_F(tau) + log F(tau_0) - log P_B(tau) - log F(tau_{-1})$. The
+                shape of the k-th tensor is `(trajectories.max_length - k + 1,
+                trajectories.n_trajectories)`, k starting from 1.
+            - A list of tensors representing what should be masked out in the each
+                element of the first list, given that not all sub-trajectories
+                of length k exist for each trajectory. The entries of those tensors are
+                True if the corresponding sub-trajectory does not exist.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, fill_value=-float("inf"), no_pf=self.on_policy
@@ -132,6 +170,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             )
 
             targets = torch.full_like(preds, fill_value=-float("inf"))
+            # TODO: Fix this oneliner for readability.
             targets.T[is_terminal_mask[i - 1 :].T] = trajectories.log_rewards[trajectories.when_is_done >= i].clamp_min(self.log_reward_clip_min)  # type: ignore
 
             # For now, the targets contain the log-rewards of the ending sub trajectories
@@ -171,6 +210,10 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             flattening_masks,
         )
 
+    # TODO: inespect whether there exists code which can be factored out in the below
+    # if-else block statements, or whether it makes sense to move each method to it's
+    # own private method of this class, or even an external function which is called.
+    # TODO: This is a long function, can it be simplified?
     def __call__(self, trajectories: Trajectories) -> TT[0, float]:
         (
             scores,
@@ -241,12 +284,11 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
                     trajectories.max_length * (trajectories.max_length + 1) / 2
                 ),
             )
-            r"""
-            Now we need to divide each column by n + (n-1) lambda +...+ 1*lambda^{n-1}
-            where n is the length of the trajectory corresponding to that column
-            We can do it the ugly way, or using the cool identity:
-            https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
-            """
+
+            # Now we need to divide each column by n + (n-1) lambda +...+ 1*lambda^{n-1}
+            # where n is the length of the trajectory corresponding to that column
+            # We can do it the ugly way, or using the cool identity:
+            # https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
             per_trajectory_denominator = (
                 1.0
                 / (1 - self.lamda) ** 2

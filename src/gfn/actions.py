@@ -10,20 +10,26 @@ from torchtyping import TensorType as TT
 
 class Actions(ABC):
     """Base class for actions for all GFlowNet environments.
-    Each environment needs to subclass this class. A generic subclass for discrete actions
-    with integer indices is provided.
-    Note that all actions need to have the same shape.
+
+    Each environment needs to subclass this class. A generic subclass for discrete
+    actions with integer indices is provided Note that all actions need to have the
+    same shape.
+
+    Attributes:
+        tensor: a batch of actions with shape (*batch_shape, *actions_ndims).
+        batch_shape: the batch_shape from the input tensor.
     """
 
-    # The following class variable represents the shape of a single action
-    action_shape: ClassVar[tuple[int, ...]]  # all actions need to have the same shape
-    # The following class variable is padded to shorter trajectories
-    dummy_action: ClassVar[TT["action_shape"]]  # dummy action for the environment
-    # The following class variable corresponds to $s \rightarrow s_f$ transitions
-    exit_action: ClassVar[TT["action_shape"]]  # action to exit the environment
+    # The following class variable represents the shape of a single action.
+    action_shape: ClassVar[tuple[int, ...]]  # All actions need to have the same shape.
+    # The following class variable is padded to shorter trajectories.
+    dummy_action: ClassVar[TT["action_shape"]]  # Dummy action for the environment.
+    # The following class variable corresponds to $s \rightarrow s_f$ transitions.
+    exit_action: ClassVar[TT["action_shape"]]  # Action to exit the environment.
 
     def __init__(self, tensor: TT["batch_shape", "action_shape"]):
         """Initialize actions from a tensor.
+
         Args:
             tensor: tensor of actions
         """
@@ -32,14 +38,14 @@ class Actions(ABC):
 
     @classmethod
     def make_dummy_actions(cls, batch_shape: tuple[int]) -> Actions:
-        """Creates an Actions object with the given batch shape, filled with dummy actions."""
+        """Creates an Actions object of dummy actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.dummy_action.repeat(*batch_shape, *((1,) * action_ndim))
         return cls(tensor)
 
     @classmethod
     def make_exit_actions(cls, batch_shape: tuple[int]) -> Actions:
-        """Creates an Actions object with the given batch shape, filled with exit actions."""
+        """Creates an Actions object of exit actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.exit_action.repeat(*batch_shape, *((1,) * action_ndim))
         return cls(tensor)
@@ -69,9 +75,11 @@ class Actions(ABC):
     def stack(cls, actions_list: list[Actions]) -> Actions:
         """Stacks a list of Actions objects into a single Actions object.
 
-        The individual actions need to have the same batch shape. An example application is when the individual actions represent
-        per-step actions of a batch of trajectories (in which case, the common batch_shape would be (n_trajectories,), and the
-        resulting Actions object would have batch_shape (n_steps, n_trajectories).
+        The individual actions need to have the same batch shape. An example application
+        is when the individual actions represent per-step actions of a batch of
+        trajectories (in which case, the common batch_shape would be (n_trajectories,),
+        and the resulting Actions object would have batch_shape (n_steps,
+        n_trajectories).
         """
         actions_tensor = torch.stack(
             [actions.tensor for actions in actions_list], dim=0
@@ -102,8 +110,14 @@ class Actions(ABC):
             )
 
     def extend_with_dummy_actions(self, required_first_dim: int) -> None:
-        """Extends a bi-dimensional Actions object with dummy actions in the first dimension.
-        This is used to pad trajectories actions"""
+        """Extends an Actions instance along the first dimension with dummy actions.
+
+        The Actions instance batch_shape must be 2-dimensional. This is used to pad
+        trajectories actions.
+
+        Args:
+            required_first_dim: the target size of the first dimension post expansion.
+        """
         if len(self.batch_shape) == 2:
             if self.batch_shape[0] >= required_first_dim:
                 return
@@ -120,10 +134,11 @@ class Actions(ABC):
         self, other: TT["batch_shape", "action_shape"]
     ) -> TT["batch_shape", torch.bool]:
         """Compares the actions to a tensor of actions.
+
         Args:
             other: tensor of actions
-        Returns:
-            boolean tensor of shape batch_shape indicating whether the actions are equal
+        Returns: boolean tensor of shape batch_shape indicating whether the actions are
+            equal.
         """
         out = self.tensor == other
         n_batch_dims = len(self.batch_shape)
@@ -135,7 +150,7 @@ class Actions(ABC):
 
     @property
     def is_dummy(self) -> TT["batch_shape", torch.bool]:
-        """Returns a boolean tensor indicating whether the actions are dummy actiosn."""
+        """Returns a boolean tensor indicating whether the actions are dummy actions."""
         dummy_actions_tensor = self.__class__.dummy_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))
         )
