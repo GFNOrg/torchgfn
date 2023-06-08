@@ -129,7 +129,7 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         TT["max_length", "n_trajectories", torch.float],
         TT["max_length", "n_trajectories", torch.float],
     ]:
-        """Evaluates logprobs for each transition in each trajectory in the batch.
+        r"""Evaluates logprobs for each transition in each trajectory in the batch.
 
         More specifically it evaluates $\log P_F (s' \mid s)$ and $\log P_B(s \mid s')$
         for each transition in each trajectory in the batch.
