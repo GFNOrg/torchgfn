@@ -59,15 +59,14 @@ class NeuralNet(nn.Module):
         Args:
             preprocessed_states: a batch of states appropriately preprocessed for
                 ingestion by the MLP.
-        Returns: logits (not activated) representing a distribution over actions or
-            a set of continuious values.
+        Returns: out, a set of continuous variables.
         """
         if self.device is None:
             self.device = preprocessed_states.device
             self.to(self.device)
-        logits = self.torso(preprocessed_states)
-        logits = self.last_layer(logits)
-        return logits
+        out = self.torso(preprocessed_states)
+        out = self.last_layer(out)
+        return out
 
 
 class Tabular(nn.Module):
@@ -125,6 +124,7 @@ class DiscreteUniform(nn.Module):
             output_dim (int): Output dimension. This is typically n_actions if it
                 implements a Uniform PF, or n_actions-1 if it implements a Uniform PB.
         """
+        super().__init__()
         self.output_dim = output_dim
 
     def forward(
