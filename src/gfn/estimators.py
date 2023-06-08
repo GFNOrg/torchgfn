@@ -101,13 +101,30 @@ class LogEdgeFlowEstimator(FunctionEstimator):
 
 
 class LogStateFlowEstimator(FunctionEstimator):
-    r"""Container for estimators $s \mapsto \log F(s)$."""
+    r"""Container for estimators $s \mapsto \log F(s)$.
+
+    When used with `forward_looking=True`, $\log F(s)$ is parametrized as the sum
+    of a function approximator and $\log R(s)$ - which is only possible for environments
+    where all states are terminating."""
+
+    def __init__(
+        self, env: Env, module: nn.Module, forward_looking: bool = False
+    ) -> None:
+        super().__init__(env, module)
+        self.forward_looking = forward_looking
 
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
         if module_output.shape[-1] != 1:
             raise ValueError(
                 f"LogStateFlowEstimator output dimension should be 1, but is {module_output.shape[-1]}."
             )
+
+    def __call__(self, states: States) -> TT["batch_shape", 1, float]:
+        out = super().__call__(states)
+        if self.forward_looking:
+            log_rewards = self.env.log_reward(states).unsqueeze(-1)
+            out = out + log_rewards
+        return out
 
 
 class ProbabilityEstimator(FunctionEstimator, ABC):
