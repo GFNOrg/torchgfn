@@ -11,7 +11,7 @@ from gfn.samplers import ActionsSampler
 
 @dataclass
 class DBParametrization(PFBasedParametrization):
-    r"""The Detail Balance Parameterization dataclass.
+    r"""The Detailed Balance Parameterization dataclass.
 
     Corresponds to $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2 \times
     \mathcal{O}_3$, where $\mathcal{O}_1$ is the set of functions from the internal
@@ -22,6 +22,7 @@ class DBParametrization(PFBasedParametrization):
     `self.logit_PB` is a fixed `DiscretePBEstimator`.
     """
     logF: LogStateFlowEstimator
+
 
 # TODO: Should this loss live within the Parameterization, as a method?
 # TODO: Should this be called DetaiedBalanceLoss?
@@ -37,16 +38,14 @@ class DetailedBalance(EdgeDecomposableLoss):
         backwards_actions_sampler: ActionsSampler for the backwards policy.
         on_policy: whether the log probs stored in the transitions are used.
     """
+
     def __init__(self, parametrization: DBParametrization, on_policy: bool = False):
         """Instantiates a DetailedBalance instance.
         Args:
             parameterization: a DBParametrization instance.
             on_policy: whether model is being trained on-policy.
         """
-        self.parametrization = parametrization
-        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
-        self.on_policy = on_policy
+        super().__init__(parametrization, on_policy)
 
     def get_scores(self, transitions: Transitions):
         """Given a batch of transitions, calculate the scores.
@@ -64,18 +63,16 @@ class DetailedBalance(EdgeDecomposableLoss):
         actions = transitions.actions
 
         # uncomment next line for debugging
-        # assert transitions.states.is_sink_state.equal(transitions.actions == -1)
+        # assert transitions.states.is_sink_state.equal(transitions.actions.is_dummy)
 
-        if states.batch_shape != tuple(actions.shape):
+        if states.batch_shape != tuple(actions.batch_shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
         if self.on_policy:
             valid_log_pf_actions = transitions.log_probs
         else:
-            valid_pf_logits = self.actions_sampler.get_logits(states)
-            valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
-            valid_log_pf_actions = torch.gather(
-                valid_log_pf_all, dim=-1, index=actions.unsqueeze(-1)
-            ).squeeze(-1)
+            valid_log_pf_actions = self.parametrization.pf(states).log_prob(
+                actions.tensor
+            )
 
         valid_log_F_s = self.parametrization.logF(states).squeeze(-1)
 
@@ -88,12 +85,11 @@ class DetailedBalance(EdgeDecomposableLoss):
 
         # automatically removes invalid transitions (i.e. s_f -> s_f)
         valid_next_states = transitions.next_states[~transitions.is_done]
-        non_exit_actions = actions[actions != transitions.env.n_actions - 1]
-        valid_pb_logits = self.backward_actions_sampler.get_logits(valid_next_states)
-        valid_log_pb_all = valid_pb_logits.log_softmax(dim=-1)
-        valid_log_pb_actions = torch.gather(
-            valid_log_pb_all, dim=-1, index=non_exit_actions.unsqueeze(-1)
-        ).squeeze(-1)
+        non_exit_actions = actions[~actions.is_exit]
+
+        valid_log_pb_actions = self.parametrization.pb(valid_next_states).log_prob(
+            non_exit_actions.tensor
+        )
 
         valid_transitions_is_done = transitions.is_done[
             ~transitions.states.is_sink_state

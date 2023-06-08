@@ -15,6 +15,7 @@ class SubTBParametrization(PFBasedParametrization):
     r"""Exactly the same as DBParametrization."""
     logF: LogStateFlowEstimator
 
+
 # TODO: Should this loss live within the Parameterization, as a method?
 class SubTrajectoryBalance(TrajectoryDecomposableLoss):
     """Loss object to evaluate the Sub Trajectory Balance Loss.
@@ -31,6 +32,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         lamda: discount factor for longer trajectories.
         on_policy: whether the loss is computed on-policy.
     """
+
     def __init__(
         self,
         parametrization: SubTBParametrization,
@@ -78,17 +80,14 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             on_policy: whether the loss is computed on-policy (in which case the log
                 probs stored in the trajectories are used) or off-policy
         """
-        self.parametrization = parametrization
+        super().__init__(parametrization, on_policy)
         self.log_reward_clip_min = log_reward_clip_min
-        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
         self.weighing = weighing
         # Lamda is a discount factor for longer trajectories. The part of the loss
         # corresponding to sub-trajectories of length i is multiplied by lamda^i
         # where an edge is of length 1. As lamda approaches 1, each loss becomes equally
         # weighted.
         self.lamda = lamda
-        self.on_policy = on_policy
 
     def cumulative_logprobs(
         self,
@@ -134,10 +133,8 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
                 True if the corresponding sub-trajectory does not exist.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-            trajectories, fill_value=-float("inf"), no_pf=self.on_policy
+            trajectories, fill_value=-float("inf")
         )
-        if self.on_policy:
-            log_pf_trajectories = trajectories.log_probs
 
         log_pf_trajectories_cum = self.cumulative_logprobs(
             trajectories, log_pf_trajectories
@@ -153,7 +150,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         log_state_flows[mask[:-1]] = self.parametrization.logF(valid_states).squeeze(-1)
 
         sink_states_mask = log_state_flows == -float("inf")
-        is_terminal_mask = trajectories.actions == trajectories.env.n_actions - 1
+        is_terminal_mask = trajectories.actions.is_exit
         full_mask = sink_states_mask | is_terminal_mask
 
         flattening_masks = []

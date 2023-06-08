@@ -5,12 +5,11 @@ from torch.distributions import Categorical, Distribution
 from torchtyping import TensorType as TT
 
 from gfn.envs import DiscreteEnv, Env
-from gfn.states import DiscreteStates, States
+from gfn.states import States
 
 
 # TODO: Is is true that this is only ever used for Action probability distributions?
 # TODO: Remove environment from here (instead accept n_actions or similar)?
-# TODO
 class FunctionEstimator(ABC):
     r"""Base class for modules mapping states to action probability distributions.
 
@@ -89,6 +88,7 @@ class LogEdgeFlowEstimator(FunctionEstimator):
     This estimator is used for the flow-matching loss, which only supports discrete
     environments.
     """
+
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
         if not isinstance(self.env, DiscreteEnv):
             raise ValueError(
@@ -101,13 +101,30 @@ class LogEdgeFlowEstimator(FunctionEstimator):
 
 
 class LogStateFlowEstimator(FunctionEstimator):
-    r"""Container for estimators $s \mapsto \log F(s)$."""
+    r"""Container for estimators $s \mapsto \log F(s)$.
+
+    When used with `forward_looking=True`, $\log F(s)$ is parametrized as the sum
+    of a function approximator and $\log R(s)$ - which is only possible for environments
+    where all states are terminating."""
+
+    def __init__(
+        self, env: Env, module: nn.Module, forward_looking: bool = False
+    ) -> None:
+        super().__init__(env, module)
+        self.forward_looking = forward_looking
 
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
         if module_output.shape[-1] != 1:
             raise ValueError(
                 f"LogStateFlowEstimator output dimension should be 1, but is {module_output.shape[-1]}."
             )
+
+    def __call__(self, states: States) -> TT["batch_shape", 1, float]:
+        out = super().__call__(states)
+        if self.forward_looking:
+            log_rewards = self.env.log_reward(states).unsqueeze(-1)
+            out = out + log_rewards
+        return out
 
 
 class ProbabilityEstimator(FunctionEstimator, ABC):
@@ -120,6 +137,7 @@ class ProbabilityEstimator(FunctionEstimator, ABC):
     The outputs of such an estimator are thus probability distributions, not the
     parameters of the distributions.
     """
+
     @abstractmethod
     def to_probability_distribution(
         self,
@@ -131,22 +149,6 @@ class ProbabilityEstimator(FunctionEstimator, ABC):
 
     def __call__(self, states: States) -> Distribution:
         return self.to_probability_distribution(states, super().__call__(states))
-
-
-class LogEdgeFlowProbabilityEstimator(ProbabilityEstimator, LogEdgeFlowEstimator):
-    r"""Container for Log Edge Flow Probability Estimator
-
-    $(s \rightarrow s') \mapsto P_F(s' \mid s) = \frac{F(s \rightarrow s')}
-        {\sum_{s' \in Children(s)} F(s \rightarrow s')}$.
-    """
-    def to_probability_distribution(
-        self,
-        states: DiscreteStates,
-        module_output: TT["batch_shape", "output_dim", float],
-    ) -> Distribution:
-        logits = module_output
-        logits[~states.forward_masks] = -float("inf")
-        return Categorical(logits=logits)
 
 
 class LogZEstimator:

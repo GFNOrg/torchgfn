@@ -21,7 +21,7 @@ class OneHotPreprocessor(Preprocessor):
             n_states (int): The total number of states in the environment (not including s_f).
             get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
         """
-        super().__init__(output_shape=(n_states,))
+        super().__init__(output_dim=n_states)
         self.get_states_indices = get_states_indices
         self.output_dim = n_states
 
@@ -44,7 +44,7 @@ class KHotPreprocessor(Preprocessor):
             ndim (int): number of dimensions.
             get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
         """
-        super().__init__(output_shape=(height * ndim,))
+        super().__init__(output_dim=height * ndim)
         self.height = height
         self.ndim = ndim
         self.get_states_indices = get_states_indices

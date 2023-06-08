@@ -38,7 +38,7 @@ class ActionsSampler:
         dist = self.estimator(states)
         with torch.no_grad():
             actions = dist.sample()
-            log_probs = dist.log_prob(actions)
+        log_probs = dist.log_prob(actions)
 
         return self.env.Actions(actions), log_probs
 

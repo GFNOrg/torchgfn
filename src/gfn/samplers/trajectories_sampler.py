@@ -21,6 +21,7 @@ class TrajectoriesSampler:
         actions_sampler: the ActionsSampler instance.
         is_backward: if True, samples actions backward (a distribution over parents).
     """
+
     def __init__(
         self,
         actions_sampler: ActionsSampler,

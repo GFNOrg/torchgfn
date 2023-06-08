@@ -25,6 +25,7 @@ class TBParametrization(PFBasedParametrization):
     """
     logZ: LogZEstimator
 
+
 # TODO: rename to TrajectoryBalanceLoss.
 # TODO: Should this loss live within the Parameterization, as a method?
 class TrajectoryBalance(TrajectoryDecomposableLoss):
@@ -38,6 +39,7 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         log_reward_clip_min: minimal value to clamp rewards to.
         on_policy: stores whether log probabilities stored in trajectories are used.
     """
+
     def __init__(
         self,
         parametrization: TBParametrization,
@@ -52,11 +54,8 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
             on_policy: If True, the log probs stored in the trajectories are used,
                 which should be faster than reevaluating them.
         """
-        self.parametrization = parametrization
+        super().__init__(parametrization, on_policy)
         self.log_reward_clip_min = log_reward_clip_min
-        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
-        self.on_policy = on_policy
 
     def __call__(self, trajectories: Trajectories) -> TT[0, float]:
         _, _, scores = self.get_trajectories_scores(trajectories)
@@ -81,6 +80,7 @@ class LogPartitionVarianceLoss(TrajectoryDecomposableLoss):
         actions_sampler: Forward policy actions sampler.
         backward_actions_sampler: Backward policy actions sampler.
     """
+
     def __init__(
         self,
         parametrization: PFBasedParametrization,
@@ -96,11 +96,8 @@ class LogPartitionVarianceLoss(TrajectoryDecomposableLoss):
             on_policy: If True, the log probs stored in the trajectories are used.
                 Which should be faster than reevaluating them.
         """
-        self.parametrization = parametrization
+        super().__init__(parametrization, on_policy)
         self.log_reward_clip_min = log_reward_clip_min
-        self.actions_sampler = ActionsSampler(parametrization.logit_PF)
-        self.backward_actions_sampler = ActionsSampler(parametrization.logit_PB)
-        self.on_policy = on_policy
 
     def __call__(self, trajectories: Trajectories) -> TT[0, float]:
         """Given a batch of trajectories, return a batch of losses.

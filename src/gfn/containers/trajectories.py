@@ -37,6 +37,7 @@ class Trajectories(Container):
         log_probs: The log probabilities of the trajectories' actions.
 
     """
+
     def __init__(
         self,
         env: Env,
