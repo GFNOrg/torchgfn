@@ -158,7 +158,7 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         valid_actions = trajectories.actions[~trajectories.actions.is_dummy]
 
         # uncomment next line for debugging
-        # assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions == -1)
+        # assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions.is_dummy)
 
         if valid_states.batch_shape != tuple(valid_actions.batch_shape):
             raise AssertionError("Something wrong happening with log_pf evaluations")

@@ -149,7 +149,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         log_state_flows[mask[:-1]] = self.parametrization.logF(valid_states).squeeze(-1)
 
         sink_states_mask = log_state_flows == -float("inf")
-        is_terminal_mask = trajectories.actions == trajectories.env.n_actions - 1
+        is_terminal_mask = trajectories.actions.is_exit
         full_mask = sink_states_mask | is_terminal_mask
 
         flattening_masks = []
