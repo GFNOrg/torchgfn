@@ -44,8 +44,7 @@ class DetailedBalance(EdgeDecomposableLoss):
             parameterization: a DBParametrization instance.
             on_policy: whether model is being trained on-policy.
         """
-        self.parametrization = parametrization
-        self.on_policy = on_policy
+        super().__init__(parametrization, on_policy)
 
     def get_scores(self, transitions: Transitions):
         """Given a batch of transitions, calculate the scores.

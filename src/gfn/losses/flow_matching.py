@@ -55,7 +55,7 @@ class FlowMatching(StateDecomposableLoss):
             parameterization: a FMParameterization instance.
             alpha: weight for the reward matching loss.
         """
-        self.parametrization = parametrization
+        super().__init__(parametrization)
         self.env = parametrization.logF.env
         self.alpha = alpha
 

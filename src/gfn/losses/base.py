@@ -91,8 +91,9 @@ class PFBasedParametrization(Parametrization, ABC):
 class Loss(ABC):
     """Abstract Base Class for all GFN Losses."""
 
-    def __init__(self, parametrization: Parametrization):
+    def __init__(self, parametrization: Parametrization, on_policy: bool = False):
         self.parametrization = parametrization
+        self.on_policy = on_policy
 
     @abstractmethod
     def __call__(self, *args, **kwargs) -> TT[0, float]:
@@ -124,9 +125,8 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         self,
         trajectories: Trajectories,
         fill_value: float = 0.0,
-        no_pf: bool = False,
     ) -> Tuple[
-        TT["max_length", "n_trajectories", torch.float] | None,
+        TT["max_length", "n_trajectories", torch.float],
         TT["max_length", "n_trajectories", torch.float],
     ]:
         """Evaluates logprobs for each transition in each trajectory in the batch.
@@ -142,7 +142,6 @@ class TrajectoryDecomposableLoss(Loss, ABC):
             trajectories: Trajectories to evaluate.
             fill_value: Value to use for invalid states (i.e. $s_f$ that is added to
                 shorter trajectories).
-            no_pf: Whether to evaluate log_pf as well.
 
         Returns: A tuple of float tensors of shape (max_length, n_trajectories) containing
             the log_pf and log_pb for each action in each trajectory. The first one can be None.
@@ -164,8 +163,9 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         if valid_states.batch_shape != tuple(valid_actions.batch_shape):
             raise AssertionError("Something wrong happening with log_pf evaluations")
 
-        log_pf_trajectories = None
-        if not no_pf:
+        if self.on_policy:
+            log_pf_trajectories = trajectories.log_probs
+        else:
             valid_log_pf_actions = self.parametrization.pf(valid_states).log_prob(
                 valid_actions.tensor
             )
@@ -204,11 +204,7 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         TT["n_trajectories", torch.float],
     ]:
         """Given a batch of trajectories, calculate forward & backward policy scores."""
-        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-            trajectories, no_pf=self.on_policy
-        )
-        if self.on_policy:
-            log_pf_trajectories = trajectories.log_probs
+        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(trajectories)
 
         assert log_pf_trajectories is not None
         log_pf_trajectories = log_pf_trajectories.sum(dim=0)

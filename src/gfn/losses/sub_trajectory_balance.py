@@ -79,7 +79,7 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
             on_policy: whether the loss is computed on-policy (in which case the log
                 probs stored in the trajectories are used) or off-policy
         """
-        self.parametrization = parametrization
+        super().__init__(parametrization, on_policy)
         self.log_reward_clip_min = log_reward_clip_min
         self.weighing = weighing
         # Lamda is a discount factor for longer trajectories. The part of the loss
@@ -87,7 +87,6 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
         # where an edge is of length 1. As lamda approaches 1, each loss becomes equally
         # weighted.
         self.lamda = lamda
-        self.on_policy = on_policy
 
     def cumulative_logprobs(
         self,
@@ -133,10 +132,8 @@ class SubTrajectoryBalance(TrajectoryDecomposableLoss):
                 True if the corresponding sub-trajectory does not exist.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-            trajectories, fill_value=-float("inf"), no_pf=self.on_policy
+            trajectories, fill_value=-float("inf")
         )
-        if self.on_policy:
-            log_pf_trajectories = trajectories.log_probs
 
         log_pf_trajectories_cum = self.cumulative_logprobs(
             trajectories, log_pf_trajectories
