@@ -62,7 +62,7 @@ class DetailedBalance(EdgeDecomposableLoss):
         actions = transitions.actions
 
         # uncomment next line for debugging
-        # assert transitions.states.is_sink_state.equal(transitions.actions == -1)
+        # assert transitions.states.is_sink_state.equal(transitions.actions.is_dummy)
 
         if states.batch_shape != tuple(actions.batch_shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
