@@ -1,7 +1,8 @@
 import pytest
 import torch
+from test_samplers_and_trajectories import test_trajectory_sampling
 
-from gfn.envs import DiscreteEBMEnv, HyperGrid, BoxEnv
+from gfn.envs import BoxEnv, DiscreteEBMEnv, HyperGrid
 from gfn.estimators import (
     LogEdgeFlowEstimator,
     LogStateFlowEstimator,
@@ -10,10 +11,10 @@ from gfn.estimators import (
 )
 from gfn.examples.box_utils import (
     BoxPBEstimator,
-    BoxPFEStimator,
-    BoxPFNeuralNet,
     BoxPBNeuralNet,
     BoxPBUniform,
+    BoxPFEStimator,
+    BoxPFNeuralNet,
 )
 from gfn.losses import (
     DBParametrization,
@@ -27,11 +28,9 @@ from gfn.losses import (
     TBParametrization,
     TrajectoryBalance,
 )
-from gfn.utils.modules import NeuralNet, Tabular, DiscreteUniform
-from gfn.utils.estimators import DiscretePBEstimator, DiscretePFEstimator
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
-
-from test_samplers_and_trajectories import test_trajectory_sampling
+from gfn.utils.estimators import DiscretePBEstimator, DiscretePFEstimator
+from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
 
 @pytest.mark.parametrize(

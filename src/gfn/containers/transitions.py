@@ -28,6 +28,7 @@ class Transitions(Container):
             the children of the transitions.
         log_probs: The log-probabilities of the actions.
     """
+
     def __init__(
         self,
         env: Env,

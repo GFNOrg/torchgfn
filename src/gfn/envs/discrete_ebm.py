@@ -8,7 +8,7 @@ from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.envs.env import DiscreteEnv
-from gfn.envs.preprocessors import IdentityPreprocessor, EnumPreprocessor
+from gfn.envs.preprocessors import EnumPreprocessor, IdentityPreprocessor
 from gfn.states import DiscreteStates, States
 
 
