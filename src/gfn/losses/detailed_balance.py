@@ -29,7 +29,8 @@ class DBParametrization(PFBasedParametrization):
 class DetailedBalance(EdgeDecomposableLoss):
     """Loss object for the Detailed Balance objective.
 
-    This method is described in section 3.2 of [this paper](https://arxiv.org/abs/2111.09266))
+    This method is described in section
+    3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
         parameterization: a DBParametrization instance.
