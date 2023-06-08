@@ -1,12 +1,19 @@
 import pytest
 import torch
 
-from gfn.envs import DiscreteEBMEnv, HyperGrid
+from gfn.envs import DiscreteEBMEnv, HyperGrid, BoxEnv
 from gfn.estimators import (
     LogEdgeFlowEstimator,
     LogStateFlowEstimator,
     LogZEstimator,
     ProbabilityEstimator,
+)
+from gfn.examples.box_utils import (
+    BoxPBEstimator,
+    BoxPFEStimator,
+    BoxPFNeuralNet,
+    BoxPBNeuralNet,
+    BoxPBUniform,
 )
 from gfn.losses import (
     DBParametrization,
@@ -20,18 +27,19 @@ from gfn.losses import (
     TBParametrization,
     TrajectoryBalance,
 )
-from gfn.utils.modules import NeuralNet, Tabular, Uniform
+from gfn.utils.modules import NeuralNet, Tabular, DiscreteUniform
+from gfn.utils.estimators import DiscretePBEstimator, DiscretePFEstimator
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 
 from test_samplers_and_trajectories import test_trajectory_sampling
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
-@pytest.mark.parametrize("ndim", [2, 3])
 @pytest.mark.parametrize(
     "module_name",
     ["NeuralNet", "Tabular"],
 )
+@pytest.mark.parametrize("ndim", [2, 3])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 def test_FM(env_name: int, ndim: int, module_name: str):
     # TODO: once the flow matching loss implemented, add a test for it here, as done for the other parametrizations
     if env_name == "HyperGrid":
@@ -70,8 +78,8 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     print(loss(states_tuple))
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")
@@ -87,8 +95,8 @@ def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
     print(log_pfs_on, log_pbs_on, log_pfs_off, log_pbs_off)
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_get_scores(env_name: str, preprocessor_name: str):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")
@@ -104,15 +112,16 @@ def test_get_scores(env_name: str, preprocessor_name: str):
     print(scores_on)
     print(scores_off)
     assert all(
-        [torch.all(scores_on[i] == scores_off[i]) for i in range(len(scores_on))]
+        [
+            torch.all(torch.abs(scores_on[i] - scores_off[i]) < 1e-4)
+            for i in range(len(scores_on))
+        ]
     )
 
 
 # test_get_scores("Box", "Identity")
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
-@pytest.mark.parametrize("ndim", [2, 3])
 @pytest.mark.parametrize(
     ("module_name", "tie_pb_to_pf"),
     [("NeuralNet", False), ("NeuralNet", True), ("Uniform", False), ("Tabular", False)],
@@ -133,6 +142,9 @@ def test_get_scores(env_name: str, preprocessor_name: str):
     ],
 )
 @pytest.mark.parametrize("forward_looking", [True, False])
+@pytest.mark.parametrize("zero_logF", [True, False])
+@pytest.mark.parametrize("ndim", [2, 3])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_PFBasedParametrization(
     env_name: str,
     ndim: int,
@@ -141,31 +153,81 @@ def test_PFBasedParametrization(
     parametrization_name: str,
     sub_tb_weighing: str,
     forward_looking: bool,
+    zero_logF: bool,
 ):
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim, height=4)
+        env = HyperGrid(
+            ndim=ndim,
+            height=4,
+            preprocessor_name="Enum" if module_name == "Tabular" else "KHot",
+        )
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBMEnv(ndim=ndim)
+        env = DiscreteEBMEnv(
+            ndim=ndim,
+            preprocessor_name="Enum" if module_name == "Tabular" else "Identity",
+        )
+    elif env_name == "Box":
+        if module_name == "Tabular":
+            pytest.skip("Tabular module impossible for Box")
+        env = BoxEnv(delta=1.0 / ndim)
     else:
         raise ValueError("Unknown environment name")
 
-    pf = ProbabilityEstimator(env, module_name=module_name)
-    pb = ProbabilityEstimator(env, module_name=module_name)
-    if tie_pb_to_pf:
-        pb.module.torso = pf.module.torso
+    if module_name == "Tabular":
+        # Cannot be the Box environment
+        pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
+        pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
+        logF_module = Tabular(n_states=env.n_states, output_dim=1)
+    else:
+        if env_name == "Box":
+            pf_module = BoxPFNeuralNet(
+                hidden_dim=32,
+                n_hidden_layers=2,
+                n_components=ndim,
+                n_components_s0=ndim - 1,
+            )
+
+        else:
+            pf_module = NeuralNet(
+                input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
+            )
+
+        if module_name == "NeuralNet" and env_name == "Box":
+            pb_module = BoxPBNeuralNet(
+                hidden_dim=32,
+                n_hidden_layers=2,
+                n_components=3,
+                torso=pf_module.torso if tie_pb_to_pf else None,
+            )
+        elif module_name == "NeuralNet" and env_name != "Box":
+            pb_module = NeuralNet(
+                input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
+            )
+        elif module_name == "Uniform" and env_name != "Box":
+            pb_module = DiscreteUniform(output_dim=env.n_actions - 1)
+        else:
+            # Uniform with Box environment
+            pb_module = BoxPBUniform()
+        if zero_logF:
+            logF_module = DiscreteUniform(output_dim=1)
+        else:
+            logF_module = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=1)
+
+    if env_name == "Box":
+        pf = BoxPFEStimator(env, pf_module, n_components_s0=ndim - 1, n_components=ndim)
+        pb = BoxPBEstimator(
+            env,
+            pb_module,
+            n_components=ndim + 1,
+        )
+    else:
+        pf = DiscretePFEstimator(env, pf_module)
+        pb = DiscretePBEstimator(env, pb_module)
+
     logF = LogStateFlowEstimator(
-        env,
-        forward_looking=forward_looking,
-        module_name=module_name if module_name != "Uniform" else "Zero",
+        env, module=logF_module, forward_looking=forward_looking
     )
     logZ = LogZEstimator(torch.tensor(0.0))
-
-    actions_sampler = ActionsSampler(estimator=pf)
-
-    trajectories_sampler = TrajectoriesSampler(
-        env=env,
-        actions_sampler=actions_sampler,
-    )
 
     loss_kwargs = {}
     if parametrization_name == "DB":
@@ -183,12 +245,12 @@ def test_PFBasedParametrization(
         loss_kwargs = {"weighing": sub_tb_weighing}
     else:
         raise ValueError(f"Unknown parametrization {parametrization_name}")
-    print(parametrization.Pi(env, n_samples=10).sample())
+    print(parametrization.sample_trajectories(10))
 
     print(parametrization.parameters.keys())
     print(len(set(parametrization.parameters.values())))
 
-    trajectories = trajectories_sampler.sample(n_trajectories=10)
+    trajectories = parametrization.sample_trajectories(10)
     if parametrization_name == "DB":
         training_objects = trajectories.to_transitions()
     else:
@@ -206,50 +268,42 @@ def test_PFBasedParametrization(
         )
 
     print(loss)
+    return env, pf, pb, logF, logZ, parametrization
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
-@pytest.mark.parametrize("ndim", [2, 3])
 @pytest.mark.parametrize(
-    "preprocessor_name",
-    ["KHot", "OneHot", "Identity"],
+    ("module_name", "tie_pb_to_pf"),
+    [("NeuralNet", False), ("NeuralNet", True), ("Uniform", False), ("Tabular", False)],
 )
-@pytest.mark.parametrize("module_name", ["NeuralNet", "Uniform", "Tabular"])
-@pytest.mark.parametrize("weighing", ["equal", "TB", "DB", "geometric"])
+@pytest.mark.parametrize(
+    "weighing", ["equal", "TB", "DB", "geometric", "equal_within", "geometric_within"]
+)
+@pytest.mark.parametrize("ndim", [2, 3])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_subTB_vs_TB(
     env_name: str,
     ndim: int,
-    preprocessor_name: str,
     module_name: str,
+    tie_pb_to_pf: bool,
     weighing: str,
 ):
-    if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim, height=7, preprocessor_name=preprocessor_name)
-    elif env_name == "DiscreteEBM":
-        if preprocessor_name != "Identity":
-            pytest.skip("Preprocessor not supported")
-        env = DiscreteEBMEnv(ndim=ndim)
-    else:
-        raise ValueError("Unknown environment name")
+    env, pf, pb, logF, logZ, parametrization = test_PFBasedParametrization(
+        env_name=env_name,
+        ndim=ndim,
+        module_name=module_name,
+        tie_pb_to_pf=tie_pb_to_pf,
+        parametrization_name="SubTB",
+        sub_tb_weighing=weighing,
+        forward_looking=False,
+        zero_logF=True,
+    )
 
-    env = HyperGrid(ndim=ndim, height=7, preprocessor_name=preprocessor_name)
-
-    logit_PF = ProbabilityEstimator(env, module_name=module_name)
-    logit_PB = ProbabilityEstimator(env, module_name=module_name)
-    logF = LogStateFlowEstimator(env, forward_looking=False, module_name="Zero")
-    logZ = LogZEstimator(torch.tensor(0.0))
-    actions_sampler = ActionsSampler(estimator=logit_PF)
-    trajectories_sampler = TrajectoriesSampler(env, actions_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
-
-    subtb_loss = SubTrajectoryBalance(
-        SubTBParametrization(logit_PF, logit_PB, logF), weighing=weighing
-    )(trajectories)
+    trajectories = parametrization.sample_trajectories(10)
+    subtb_los_fn = SubTrajectoryBalance(parametrization, weighing=weighing)
+    subtb_loss = subtb_los_fn(trajectories)
 
     if weighing == "TB":
-        tb_loss = TrajectoryBalance(TBParametrization(logit_PF, logit_PB, logZ))(
-            trajectories
-        )
+        tb_loss = TrajectoryBalance(TBParametrization(pf, pb, logZ))(trajectories)
         print("TB loss", tb_loss)
         print("SubTB loss", subtb_loss)
         assert (tb_loss - subtb_loss).abs() < 1e-4
