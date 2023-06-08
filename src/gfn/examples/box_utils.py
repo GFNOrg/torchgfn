@@ -387,7 +387,10 @@ class BoxPBUniform(torch.nn.Module):
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
     ) -> TT["batch_shape", 3]:
-        return torch.ones(preprocessed_states.shape[:-1] + (3,))
+        # return (1, 1, 1) for all states, thus the "+ (3,)".
+        return torch.ones(
+            preprocessed_states.shape[:-1] + (3,), device=preprocessed_states.device
+        )
 
 
 class BoxPFEStimator(ProbabilityEstimator):
