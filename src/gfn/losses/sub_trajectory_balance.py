@@ -13,6 +13,9 @@ from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
 class SubTBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
     r"""Parameterization for the Sub Trajectory Balance Loss.
 
+    This method is described in [Learning GFlowNets from partial episodes
+    for improved convergence and stability](https://arxiv.org/abs/2209.12782).
+
     Attributes:
         logF: a LogStateFlowEstimator instance.
         on_policy: boolean indicating whether we need to reevaluate the log probs.
@@ -33,7 +36,7 @@ class SubTBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
                 within the set of all sub-trajectories.
             - "geometric_within": Each sub-trajectory of each trajectory is weighed
                 proportionally to (lamda ** len(sub_trajectory)), within each
-                trajectory.
+                trajectory. THIS CORRESPONDS TO THE ONE IN THE PAPER.
             - "geometric": Each sub-trajectory of each trajectory is weighed
                 proportionally to (lamda ** len(sub_trajectory)), within the set of
                 all sub-trajectories.
@@ -50,7 +53,7 @@ class SubTBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
         "equal",
         "geometric_within",
         "equal_within",
-    ] = "geometric"
+    ] = "geometric_within"
     lamda: float = 0.9
     log_reward_clip_min: float = -12  # roughly log(1e-5)
 
