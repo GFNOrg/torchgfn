@@ -1,36 +1,34 @@
 """
 The goal of this script is to reproduce some of the published results on the HyperGrid
-environment. Run one of the following commands to reproduce some of the results in 
+environment. Run one of the following commands to reproduce some of the results in
 [Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259)
 
 python train_hypergrid.py --ndim 4 --height 8 --R0 {0.1, 0.01, 0.001} --tied {--uniform} --loss {TB, DB}
 python train_hypergrid.py --ndim 2 --height 64 --R0 {0.1, 0.01, 0.001} --tied {--uniform} --loss {TB, DB}
 
-And run one of the following to reproduce some of the results in 
+And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 """
 
+from argparse import ArgumentParser
+
 import torch
 import wandb
-from argparse import ArgumentParser
 from tqdm import tqdm, trange
-
-from gfn.utils.common import trajectories_to_training_samples, validate
 
 from gfn.envs import HyperGrid
 from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
-from gfn.utils.estimators import DiscretePFEstimator, DiscretePBEstimator
-from gfn.utils.modules import NeuralNet, DiscreteUniform, Tabular
-
 from gfn.losses import (
-    FMParametrization,
-    TBParametrization,
     DBParametrization,
-    SubTBParametrization,
+    FMParametrization,
     LogPartitionVarianceParametrization,
+    SubTBParametrization,
+    TBParametrization,
 )
-
+from gfn.utils.common import trajectories_to_training_samples, validate
+from gfn.utils.estimators import DiscretePBEstimator, DiscretePFEstimator
+from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
 parser = ArgumentParser()
 
