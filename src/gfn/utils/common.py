@@ -4,18 +4,16 @@ from typing import Dict, Optional
 import torch
 from torchtyping import TensorType as TT
 
-from gfn.envs import Env
-from gfn.losses import Parametrization, TBParametrization
-from gfn.states import States
-
 from gfn.containers import Trajectories, Transitions
+from gfn.envs import Env
 from gfn.losses import (
-    FMParametrization,
     DBParametrization,
-    TBParametrization,
+    FMParametrization,
     Parametrization,
+    TBParametrization,
     TrajectoryDecomposableLoss,
 )
+from gfn.states import States
 
 
 def trajectories_to_training_samples(
