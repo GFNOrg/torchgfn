@@ -6,7 +6,7 @@ from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.estimators import LogEdgeFlowEstimator
-from gfn.losses.base import Parametrization, StateDecomposableLoss
+from gfn.losses.base import Parametrization
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import DiscreteStates
 from gfn.utils.estimators import LogEdgeFlowProbabilityEstimator
@@ -20,8 +20,19 @@ class FMParametrization(Parametrization):
     to $\mathbb{R}^+$. Which is equivalent to the set of functions from the internal nodes
     (i.e. without $s_f$) to $(\mathbb{R})^{n_actions}$, without the exit action (No need for
     positivity if we parametrize log-flows).
+
+    The loss is described in section
+    3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
+
+    Attributes:
+        logF: LogEdgeFlowEstimator
+        alpha: weight for the reward matching loss.
     """
     logF: LogEdgeFlowEstimator
+    alpha: float = 1.0
+
+    def __post_init__(self) -> None:
+        self.env = self.logF.env
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
         probability_estimator = (
@@ -33,32 +44,6 @@ class FMParametrization(Parametrization):
             n_trajectories=n_samples
         )
         return trajectories
-
-
-# TODO: Should this loss live within the Parameterization, as a method?
-# TODO: Should this be called FlowMatchingLoss?
-class FlowMatching(StateDecomposableLoss):
-    """Loss object for the Flow Matching objective.
-
-    This method is described in section
-    3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
-
-    Attributes:
-        parameterization: a FMParameterization instance.
-        env: the environment from within the parameterization.
-        alpha: weight for the reward matching loss.
-    """
-
-    def __init__(self, parametrization: FMParametrization, alpha=1.0) -> None:
-        """Instantiate the FlowMatching Loss object.
-
-        Args:
-            parameterization: a FMParameterization instance.
-            alpha: weight for the reward matching loss.
-        """
-        super().__init__(parametrization)
-        self.env = parametrization.logF.env
-        self.alpha = alpha
 
     def flow_matching_loss(
         self, states: DiscreteStates
@@ -101,16 +86,16 @@ class FlowMatching(StateDecomposableLoss):
                 valid_backward_states, backward_actions
             )
 
-            incoming_log_flows[
-                valid_backward_mask, action_idx
-            ] = self.parametrization.logF(valid_backward_states_parents)[:, action_idx]
-            outgoing_log_flows[
-                valid_forward_mask, action_idx
-            ] = self.parametrization.logF(valid_forward_states)[:, action_idx]
+            incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
+                valid_backward_states_parents
+            )[:, action_idx]
+            outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
+                valid_forward_states
+            )[:, action_idx]
 
         # Now the exit action
         valid_forward_mask = states.forward_masks[:, -1]
-        outgoing_log_flows[valid_forward_mask, -1] = self.parametrization.logF(
+        outgoing_log_flows[valid_forward_mask, -1] = self.logF(
             states[valid_forward_mask]
         )[:, -1]
 
@@ -122,16 +107,19 @@ class FlowMatching(StateDecomposableLoss):
     def reward_matching_loss(self, terminating_states: DiscreteStates) -> TT[0, float]:
         """Calculates the reward matching loss from the terminating states."""
         assert terminating_states.log_rewards is not None
-        log_edge_flows = self.parametrization.logF(terminating_states)
+        log_edge_flows = self.logF(terminating_states)
         terminating_log_edge_flows = log_edge_flows[:, -1]
         log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
     # TODO: should intermediary_states and terminating_states be two input args?
-    def __call__(
-        self, states_tuple: Tuple[DiscreteStates, DiscreteStates]
-    ) -> TT[0, float]:
-        """Calculates flow matching loss from intermediate and terminating states."""
+    def loss(self, states_tuple: Tuple[DiscreteStates, DiscreteStates]) -> TT[0, float]:
+        """Given a batch of non-terminal and terminal states, compute a loss.
+
+        Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
+        tuple of states, the first one being the internal states of the trajectories
+        (i.e. non-terminal states), and the second one being the terminal states of the
+        trajectories."""
         intermediary_states, terminating_states = states_tuple
         fm_loss = self.flow_matching_loss(intermediary_states)
         rm_loss = self.reward_matching_loss(terminating_states)

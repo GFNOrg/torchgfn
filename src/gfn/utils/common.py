@@ -4,43 +4,9 @@ from typing import Dict, Optional
 import torch
 from torchtyping import TensorType as TT
 
-from gfn.containers import Trajectories, Transitions
 from gfn.envs import Env
-from gfn.losses import (
-    EdgeDecomposableLoss,
-    Loss,
-    Parametrization,
-    StateDecomposableLoss,
-    TBParametrization,
-    TrajectoryDecomposableLoss,
-)
+from gfn.losses import Parametrization, TBParametrization
 from gfn.states import States
-
-
-def trajectories_to_training_samples(
-    trajectories: Trajectories, loss_fn: Loss
-) -> States | Transitions | Trajectories:
-    """Converts Trajectories into States, Transitions or Trajectories.
-
-    This converts a Trajectories container into a States, Transitions, or Trajectories
-    container, depending on the loss.
-
-    Args:
-        trajectories: a Trajectories container.
-        loss_fn: a Loss instance.
-
-    Raises:
-        ValueError: if the submitted Loss is not currently suppored by the function.
-    """
-    if isinstance(loss_fn, StateDecomposableLoss):
-        # return trajectories.to_states()
-        return trajectories.to_non_initial_intermediary_and_terminating_states()
-    elif isinstance(loss_fn, TrajectoryDecomposableLoss):
-        return trajectories
-    elif isinstance(loss_fn, EdgeDecomposableLoss):
-        return trajectories.to_transitions()
-    else:
-        raise ValueError(f"Loss {loss_fn} is not supported.")
 
 
 def get_terminating_state_dist_pmf(env: Env, states: States) -> TT["n_states", float]:
