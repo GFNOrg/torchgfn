@@ -331,7 +331,7 @@ class BoxPFNeuralNet(NeuralNet):
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
 
-        self.PFs0 = torch.nn.Parameter(torch.zeros(n_components_s0, 5))
+        self.PFs0 = torch.nn.Parameter(torch.zeros(n_components_s0, 5))  # +1 to handle he exit probability.
 
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
@@ -392,6 +392,8 @@ class BoxPFEStimator(ProbabilityEstimator):
         super().__init__(env, module)
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
+        self._n_split_components = max(n_components_s0, n_components)
+
         self.min_concentration = min_concentration
         self.max_concentration = max_concentration
 
@@ -409,71 +411,147 @@ class BoxPFEStimator(ProbabilityEstimator):
         # Then, we check that if one of the states is [0, 0] then all of them are
         # TODO: is there a way to bypass this ? Could we write a custom distribution
         # TODO: that sometimes returns a QuarterDisk and sometimes a QuarterCircle(northwestern=True) ?
-        if torch.any(states.tensor == 0.0):
-            assert torch.all(states.tensor == 0)
-            # we also check that module_output is of shape n_components_s0 * 5, why:
-            # We need n_components_s0 for the mixture logits, n_components_s0 for the alphas of r,
-            # n_components_s0 for the betas of r, n_components_s0 for the alphas of theta and
-            # n_components_s0 for the betas of theta
-            assert module_output.shape == (self.n_components_s0, 5)
-            # In this case, we use the QuarterDisk distribution
-            mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta = torch.split(
-                module_output, 1, dim=-1
-            )
-            mixture_logits = mixture_logits.view(-1)
 
-            alpha_r = self.min_concentration + (
-                self.max_concentration - self.min_concentration
-            ) * alpha_r.view(-1)
-            beta_r = self.min_concentration + (
-                self.max_concentration - self.min_concentration
-            ) * beta_r.view(-1)
-            alpha_theta = self.min_concentration + (
-                self.max_concentration - self.min_concentration
-            ) * alpha_theta.view(-1)
-            beta_theta = self.min_concentration + (
-                self.max_concentration - self.min_concentration
-            ) * beta_theta.view(-1)
+        # TODO: REMOVE ALL THIS BLOCK OF COMMENT.
+        # handle state = 0 case: use the QuarterDisk distribution.
+        # we also check that module_output is of shape n_components_s0 * 5, why:
+        # We need n_components_s0 for the mixture logits, n_components_s0 for the alphas of r,
+        # n_components_s0 for the betas of r, n_components_s0 for the alphas of theta and
+        # n_components_s0 for the betas of theta
+        # assert module_output.shape == (self._n_split_components, 5)
 
-            return QuarterDisk(
-                batch_shape=states.batch_shape,
-                delta=self.env.delta,
-                mixture_logits=mixture_logits,
-                alpha_r=alpha_r,
-                beta_r=beta_r,
-                alpha_theta=alpha_theta,
-                beta_theta=beta_theta,
-            )
-        else:
-            # we check that the module_output is of shape (*batch_shape, 1 + 3 * n_components), why:
-            # We need one scalar for the exit probability, n_components for the alphas, n_components for the betas
-            # and n_components for the mixture logits
-            assert module_output.shape == states.batch_shape + (
-                1 + 3 * self.n_components,
-            )
-            # In this case, we use the QuarterCircleWithExit distribution
-            exit_probability, mixture_logits, alpha, beta = torch.split(
-                module_output,
-                [1, self.n_components, self.n_components, self.n_components],
-                dim=-1,
-            )
-            alpha = (
-                self.min_concentration
-                + (self.max_concentration - self.min_concentration) * alpha
-            )
-            beta = (
-                self.min_concentration
-                + (self.max_concentration - self.min_concentration) * beta
-            )
-            exit_probability = exit_probability.squeeze(-1)
-            return QuarterCircleWithExit(
-                delta=self.env.delta,
-                centers=states,
-                exit_probability=exit_probability,
-                mixture_logits=mixture_logits,
-                alpha=alpha,
-                beta=beta,
-            )
+        # The module_output is of shape (*batch_shape, 1 + 5 * n_components), why:
+        # We need:
+        #   + one scalar for the exit probability,
+        #   + self.n_components for the alpha_theta
+        #   + self.n_components for the betas_theta
+        #   + self.n_components for the mixture logits
+        # but we also need compatibility with the s0 state, which has two additional
+        # parameters:
+        #   + self.n_s0_components for the alpha_r
+        #   + self.n_s0_components for the beta_r
+        # and finally, we want to be able to give a different number of parameters to
+        # s0 and st. So we need to use
+        # self._n_split_components = max(n_components_s0, n_components) to split on
+        # the larger size, and then index to slice out the smaller size when
+        # n_components < n_components_s0.
+        # Note: output_size  = [exit_prob, mix_log, a_r, b_r, a_t, b_t].
+
+        assert module_output.shape == states.batch_shape + (
+            1 + 5 * self._n_split_components,
+        )
+
+        exit_probability, mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta = torch.split(
+            module_output,
+            [
+                1,
+                self._n_split_components,
+                self._n_split_components,
+                self._n_split_components,
+                self._n_split_components,
+                self._n_split_components,
+            ],  # 1 + 5 max(n_comps_s0, n_comps_st)
+            dim=-1,
+        )
+
+
+        # Handling the s_0 case:
+        _, mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta = torch.split(
+            module_output, 1, dim=-1
+        )
+
+        mixture_logits = mixture_logits.view(-1)
+
+        def _normalize(x):
+            return self.min_concentration + (
+                self.max_concentration - self.min_concentration
+            ) * x.view(-1)
+
+        alpha_r = _normalize(alpha_r)
+        beta_r = _normalize(beta_r)
+        alpha_theta = _normalize(alpha_theta)
+        beta_theta = _normalize(beta_theta)
+
+        # In this case, we use the QuarterCircleWithExit distribution
+        # currently  3 * n_components + 1, should be  1 + ( 5 * n_components )
+
+        alpha = (
+            self.min_concentration
+            + (self.max_concentration - self.min_concentration) * alpha_theta
+        )
+        beta = (
+            self.min_concentration
+            + (self.max_concentration - self.min_concentration) * beta_theta
+        )
+
+        return DistributionWrapper(
+            states,
+            env,
+            delta,
+            mixture_logits,
+            alpha_r,
+            beta_r,
+            alpha_theta,
+            beta_theta,
+            alpha,
+            beta,
+            exit_probability.squeeze(-1),
+        )
+
+
+class DistributionWrapper(Distribution):
+    def __init__(
+            self,
+            states,
+            env,
+            delta,
+            mixture_logits,
+            alpha_r,
+            beta_r,
+            alpha_theta,
+            beta_theta,
+            exit_probability
+        ):
+
+        self.env = env
+        self.idx = (
+            torch.where(states.tensor == 0)[0],  # states.is_initial
+            torch.where(states.tensor != 0)[0],  # ~states.is_initial
+        )
+        self._output_shape = states.tensor.shape
+        self.quarter_disk = QuarterDisk(
+            batch_shape=states.tensor.shape[0],
+            delta=delta,
+            mixture_logits=mixture_logits,
+            alpha_r=alpha_r,
+            beta_r=beta_r,
+            alpha_theta=alpha_theta,
+            beta_theta=beta_theta,
+        )
+        self.quarter_circ = QuarterCircleWithExit(
+            delta=self.env.delta,
+            centers=states[states.tensor != 0],  # Remove initial states.
+            exit_probability=exit_probability,
+            mixture_logits=mixture_logits,
+            alpha=alpha,
+            beta=beta,
+        )  # no sample_shape req as it is stored in centers.
+
+    def sample(self, sample_shape=()):
+
+        output = torch.zeros(sample_shape + self._output_shape)
+
+        n_disk_samples = len(self.idx[0])
+        sample_disk = self.quarter_disk.sample(
+            sample_shape=sample_shape + (n_disk_samples, )
+        )
+        sample_circ = self.quarter_circ.sample(sample_shape=sample_shape)
+
+        output = output.scatter_(0, self.idx[0], sample_disk)
+        output = output.scatter_(0, self.idx[1], sample_circ)
+
+        return output
+
 
 
 class BoxPBEstimator(ProbabilityEstimator):
