@@ -12,6 +12,10 @@ from gfn.states import States
 from gfn.utils import NeuralNet
 
 
+PI_2_INV = 2.0 / torch.pi
+PI_2 = torch.pi / 2.0
+
+
 class QuarterCircle(Distribution):
     """Represents distributions on quarter circles (or parts thereof), either the northeastern
     ones or the southwestern ones, centered at a point in (0, 1)^2. The distributions
@@ -56,27 +60,23 @@ class QuarterCircle(Distribution):
             min_angles = torch.where(
                 self.centers.tensor[:, 0] <= 1 - self.delta,
                 0.0,
-                2.0
-                / torch.pi
-                * torch.arccos((1 - self.centers.tensor[:, 0]) / self.delta),
+                PI_2_INV * torch.arccos((1 - self.centers.tensor[:, 0]) / self.delta),
             )
             max_angles = torch.where(
                 self.centers.tensor[:, 1] <= 1 - self.delta,
                 1.0,
-                2.0
-                / torch.pi
-                * torch.arcsin((1 - self.centers.tensor[:, 1]) / self.delta),
+                PI_2_INV * torch.arcsin((1 - self.centers.tensor[:, 1]) / self.delta),
             )
         else:
             min_angles = torch.where(
                 self.centers.tensor[:, 0] >= self.delta,
                 0.0,
-                2.0 / torch.pi * torch.arccos((self.centers.tensor[:, 0]) / self.delta),
+                PI_2_INV * torch.arccos((self.centers.tensor[:, 0]) / self.delta),
             )
             max_angles = torch.where(
                 self.centers.tensor[:, 1] >= self.delta,
                 1.0,
-                2.0 / torch.pi * torch.arcsin((self.centers.tensor[:, 1]) / self.delta),
+                PI_2_INV * torch.arcsin((self.centers.tensor[:, 1]) / self.delta),
             )
 
         return min_angles, max_angles
@@ -87,7 +87,7 @@ class QuarterCircle(Distribution):
         sampled_angles = (
             self.min_angles + (self.max_angles - self.min_angles) * base_01_samples
         )
-        sampled_angles = torch.pi / 2 * sampled_angles
+        sampled_angles = PI_2 * sampled_angles
 
         sampled_actions = self.delta * torch.stack(
             [torch.cos(sampled_angles), torch.sin(sampled_angles)],
@@ -128,9 +128,7 @@ class QuarterCircle(Distribution):
         return sampled_actions
 
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
-        sampled_angles = torch.arccos(sampled_actions[..., 0] / self.delta)
-
-        sampled_angles = sampled_angles / (torch.pi / 2)
+        sampled_angles = torch.arccos(sampled_actions[..., 0] / self.delta) / (PI_2)
 
         base_01_samples = (sampled_angles - self.min_angles) / (
             self.max_angles - self.min_angles
@@ -225,10 +223,8 @@ class QuarterDisk(Distribution):
         sampled_actions = self.delta * (
             torch.stack(
                 [
-                    base_r_01_samples
-                    * torch.cos(torch.pi / 2.0 * base_theta_01_samples),
-                    base_r_01_samples
-                    * torch.sin(torch.pi / 2.0 * base_theta_01_samples),
+                    base_r_01_samples * torch.cos(PI_2 * base_theta_01_samples),
+                    base_r_01_samples * torch.sin(PI_2 * base_theta_01_samples),
                 ],
                 dim=-1,
             )
@@ -242,7 +238,7 @@ class QuarterDisk(Distribution):
         )
         base_theta_01_samples = torch.arccos(
             sampled_actions[:, 0] / (base_r_01_samples * self.delta)
-        ) / (torch.pi / 2.0)
+        ) / PI_2
 
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
@@ -331,7 +327,8 @@ class BoxPFNeuralNet(NeuralNet):
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
 
-        self.PFs0 = torch.nn.Parameter(torch.zeros(n_components_s0, 5))  # + 1 to handle he exit probability.
+        # + 1 to handle he exit probability.
+        self.PFs0 = torch.nn.Parameter(torch.zeros(n_components_s0, 5))
 
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
