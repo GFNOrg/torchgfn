@@ -331,24 +331,27 @@ class BoxPFNeuralNet(NeuralNet):
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
 
-        self.PFs0 = torch.nn.Parameter(torch.zeros(n_components_s0, 5))  # +1 to handle he exit probability.
+        self.PFs0 = torch.nn.Parameter(torch.zeros(n_components_s0, 5))  # + 1 to handle he exit probability.
 
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", 5] | TT["batch_shape", "1 + 3 * n_components"]:
-        if torch.all(preprocessed_states == 0):
-            # apply sigmoid to self.PFs0[:, 1:] and return it
-            out = self.PFs0.clone()
-            out[:, 1:] = torch.sigmoid(out[:, 1:])
-            return out
-        else:
-            out = super().forward(preprocessed_states)
-            # apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
-            out[:, 0] = torch.sigmoid(out[:, 0])
-            out[:, 1 + self.n_components :] = torch.sigmoid(
-                out[:, 1 + self.n_components :]
-            )
-            return out
+    ) -> TT["batch_shape", "1 + 5 * n_components"]:
+        # First calculate network outputs (for all t > 0).
+        out = super().forward(preprocessed_states)
+
+        # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
+        out[:, 0] = torch.sigmoid(out[:, 0])
+        out[:, 1 + self.n_components :] = torch.sigmoid(
+            out[:, 1 + self.n_components :]
+        )
+
+        # overwrite the network outputs with PFs0 in the case that the state is 0.0.
+        idx_s0 = torch.where(preprocessed_states == 0.)[0]
+        out_s0 = self.PFs0.clone()
+        out_s0[:, 1:] = torch.sigmoid(out[:, 1:])
+        out[idx_s0, :] = out_s0[idx_s0, :]
+
+        return out
 
 
 class BoxPBNeuralNet(NeuralNet):
