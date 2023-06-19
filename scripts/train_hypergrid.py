@@ -66,7 +66,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tabular", action="store_true", help="Use a lookup table for F, PF, PB"
     )
-    parser.add_argument("--uniform", action="store_true", help="Use a uniform PB")
+    parser.add_argument("--uniform_pb", action="store_true", help="Use a uniform PB")
     parser.add_argument(
         "--tied", action="store_true", help="Tie the parameters of PF, PB, and F"
     )
@@ -129,7 +129,7 @@ if __name__ == "__main__":
         # We need a DiscretePFEstimator and a DiscretePBEstimator
         if args.tabular:
             pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
-            if not args.uniform:
+            if not args.uniform_pb:
                 pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
         else:
             pf_module = NeuralNet(
@@ -138,7 +138,7 @@ if __name__ == "__main__":
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
             )
-            if not args.uniform:
+            if not args.uniform_pb:
                 pb_module = NeuralNet(
                     input_dim=env.preprocessor.output_dim,
                     output_dim=env.n_actions - 1,
@@ -146,7 +146,7 @@ if __name__ == "__main__":
                     n_hidden_layers=args.n_hidden,
                     torso=pf_module.torso if args.tied else None,
                 )
-        if args.uniform:
+        if args.uniform_pb:
             pb_module = DiscreteUniform(env.n_actions - 1)
 
         assert (
