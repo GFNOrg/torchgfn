@@ -104,6 +104,7 @@ if use_wandb:
 env = HyperGrid(
     args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
 )
+parametrization = pb_module = pf_module = pf_estimator = pb_estimator = None
 
 # 2. Create the necessary modules, estimators, and parametrizations
 if args.loss == "FM":
@@ -142,11 +143,23 @@ else:
             )
     if args.uniform:
         pb_module = DiscreteUniform(env.n_actions - 1)
+
+    assert pf_module is not None, f"pf_module is None. Command-line arguments: {args}"
+    assert pb_module is not None, f"pb_module is None. Command-line arguments: {args}"
+
     pf_estimator = DiscretePFEstimator(env=env, module=pf_module)
     pb_estimator = DiscretePBEstimator(env=env, module=pb_module)
 
 if args.loss in ("DB", "SubTB"):
     # We need a LogStateFlowEstimator
+
+    assert (
+        pf_estimator is not None
+    ), f"pf_estimator is None. Command-line arguments: {args}"
+    assert (
+        pb_estimator is not None
+    ), f"pb_estimator is None. Command-line arguments: {args}"
+
     if args.tabular:
         module = Tabular(n_states=env.n_states, output_dim=1)
     else:
@@ -161,7 +174,10 @@ if args.loss in ("DB", "SubTB"):
 
     if args.loss == "DB":
         parametrization = DBParametrization(
-            pf=pf_estimator, pb=pb_estimator, logF=logF_estimator, on_policy=True
+            pf=pf_estimator,
+            pb=pb_estimator,
+            logF=logF_estimator,
+            on_policy=True,
         )
     else:
         parametrization = SubTBParametrization(
@@ -176,12 +192,19 @@ elif args.loss == "TB":
     # We need a LogZEstimator
     logZ = LogZEstimator(tensor=torch.tensor(0.0, device=env.device))
     parametrization = TBParametrization(
-        pf=pf_estimator, pb=pb_estimator, logZ=logZ, on_policy=True
+        pf=pf_estimator,
+        pb=pb_estimator,
+        logZ=logZ,
+        on_policy=True,
     )
 elif args.loss == "ZVar":
     parametrization = LogPartitionVarianceParametrization(
-        pf=pf_estimator, pb=pb_estimator, on_policy=True
+        pf=pf_estimator,
+        pb=pb_estimator,
+        on_policy=True,
     )
+
+assert parametrization is not None, f"No parametrization for loss {args.loss}"
 
 # 3. Create the optimizer
 params = [
