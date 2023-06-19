@@ -33,19 +33,32 @@ from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 if __name__ == "__main__":
     parser = ArgumentParser()
 
-    parser.add_argument("--no_cuda", action="store_true")
-
-    parser.add_argument("--ndim", type=int, default=2)
-    parser.add_argument("--height", type=int, default=64)
-    parser.add_argument("--R0", type=float, default=0.1)
-    parser.add_argument("--R1", type=float, default=0.5)
-    parser.add_argument("--R2", type=float, default=2.0)
-
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
 
     parser.add_argument(
-        "--loss", type=str, choices=["FM", "TB", "DB", "SubTB", "ZVar"], default="TB"
+        "--ndim", type=int, default=2, help="Dimensionality of the hyper grid"
+    )
+    parser.add_argument("--height", type=int, default=64, help="Size of each dimension")
+    parser.add_argument("--R0", type=float, default=0.1, help="R0 reward factor")
+    parser.add_argument("--R1", type=float, default=0.5, help="R1 reward factor")
+    parser.add_argument("--R2", type=float, default=2.0, help="R2 reward factor")
+
+    parser.add_argument(
+        "--seed", type=int, default=0, help="Random seed for reproducibility"
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=16,
+        help="Batch size, i.e. number of trajectories to sample per training iteration",
+    )
+
+    parser.add_argument(
+        "--loss",
+        type=str,
+        choices=["FM", "TB", "DB", "SubTB", "ZVar"],
+        default="TB",
+        help="Loss parameterization to train with",
     )
     parser.add_argument(
         "--subTB_weighing",
@@ -60,25 +73,62 @@ if __name__ == "__main__":
             "equal_within",
         ],
         default="geometric_within",
+        help="Weighing scheme for the SubTB loss",
     )
-    parser.add_argument("--subTB_lambda", type=float, default=0.9)
+    parser.add_argument(
+        "--subTB_lambda", type=float, default=0.9, help="SubTB lambda scale factor"
+    )
 
     parser.add_argument(
-        "--tabular", action="store_true", help="Use a lookup table for F, PF, PB"
+        "--tabular",
+        action="store_true",
+        help="Use a lookup table for F, PF, PB instead of an estimator",
     )
     parser.add_argument("--uniform_pb", action="store_true", help="Use a uniform PB")
     parser.add_argument(
         "--tied", action="store_true", help="Tie the parameters of PF, PB, and F"
     )
-    parser.add_argument("--hidden_dim", type=int, default=256)
-    parser.add_argument("--n_hidden", type=int, default=2)
+    parser.add_argument(
+        "--hidden_dim",
+        type=int,
+        default=256,
+        help="Hidden dimension of the estimators' neural network modules.",
+    )
+    parser.add_argument(
+        "--n_hidden",
+        type=int,
+        default=2,
+        help="Number of hidden layers (of size `hidden_dim`) in the estimators'"
+        + " neural network modules",
+    )
 
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--lr_Z", type=float, default=0.1)
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-3,
+        help="Learning rate for the estimators' modules",
+    )
+    parser.add_argument(
+        "--lr_Z",
+        type=float,
+        default=0.1,
+        help="Specific learning rate for Z (only used for TB loss)",
+    )
 
-    parser.add_argument("--n_trajectories", type=int, default=int(1e6))
+    parser.add_argument(
+        "--n_trajectories",
+        type=int,
+        default=int(1e6),
+        help="Total budget of trajectories to train on. "
+        + "Training iterations = n_trajectories // batch_size",
+    )
 
-    parser.add_argument("--validation_interval", type=int, default=100)
+    parser.add_argument(
+        "--validation_interval",
+        type=int,
+        default=100,
+        help="How often (in training steps) to validate the parameterization",
+    )
     parser.add_argument(
         "--validation_samples",
         type=int,
@@ -86,7 +136,13 @@ if __name__ == "__main__":
         help="Number of validation samples to use to evaluate the pmf.",
     )
 
-    parser.add_argument("--wandb", type=str, default="")
+    parser.add_argument(
+        "--wandb",
+        type=str,
+        default="",
+        help="Wandb project name. Disabled by default. Set to a string to enable "
+        + "wandb logging",
+    )
 
     args = parser.parse_args()
 
