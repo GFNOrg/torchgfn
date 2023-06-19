@@ -150,59 +150,59 @@ else:
     pf_estimator = DiscretePFEstimator(env=env, module=pf_module)
     pb_estimator = DiscretePBEstimator(env=env, module=pb_module)
 
-if args.loss in ("DB", "SubTB"):
-    # We need a LogStateFlowEstimator
+    if args.loss in ("DB", "SubTB"):
+        # We need a LogStateFlowEstimator
 
-    assert (
-        pf_estimator is not None
-    ), f"pf_estimator is None. Command-line arguments: {args}"
-    assert (
-        pb_estimator is not None
-    ), f"pb_estimator is None. Command-line arguments: {args}"
+        assert (
+            pf_estimator is not None
+        ), f"pf_estimator is None. Command-line arguments: {args}"
+        assert (
+            pb_estimator is not None
+        ), f"pb_estimator is None. Command-line arguments: {args}"
 
-    if args.tabular:
-        module = Tabular(n_states=env.n_states, output_dim=1)
-    else:
-        module = NeuralNet(
-            input_dim=env.preprocessor.output_dim,
-            output_dim=1,
-            hidden_dim=args.hidden_dim,
-            n_hidden_layers=args.n_hidden,
-            torso=pf_module.torso if args.tied else None,
-        )
-    logF_estimator = LogStateFlowEstimator(env=env, module=module)
+        if args.tabular:
+            module = Tabular(n_states=env.n_states, output_dim=1)
+        else:
+            module = NeuralNet(
+                input_dim=env.preprocessor.output_dim,
+                output_dim=1,
+                hidden_dim=args.hidden_dim,
+                n_hidden_layers=args.n_hidden,
+                torso=pf_module.torso if args.tied else None,
+            )
+        logF_estimator = LogStateFlowEstimator(env=env, module=module)
 
-    if args.loss == "DB":
-        parametrization = DBParametrization(
+        if args.loss == "DB":
+            parametrization = DBParametrization(
+                pf=pf_estimator,
+                pb=pb_estimator,
+                logF=logF_estimator,
+                on_policy=True,
+            )
+        else:
+            parametrization = SubTBParametrization(
+                pf=pf_estimator,
+                pb=pb_estimator,
+                logF=logF_estimator,
+                on_policy=True,
+                weighing=args.subTB_weighing,
+                lamda=args.subTB_lambda,
+            )
+    elif args.loss == "TB":
+        # We need a LogZEstimator
+        logZ = LogZEstimator(tensor=torch.tensor(0.0, device=env.device))
+        parametrization = TBParametrization(
             pf=pf_estimator,
             pb=pb_estimator,
-            logF=logF_estimator,
+            logZ=logZ,
             on_policy=True,
         )
-    else:
-        parametrization = SubTBParametrization(
+    elif args.loss == "ZVar":
+        parametrization = LogPartitionVarianceParametrization(
             pf=pf_estimator,
             pb=pb_estimator,
-            logF=logF_estimator,
             on_policy=True,
-            weighing=args.subTB_weighing,
-            lamda=args.subTB_lambda,
         )
-elif args.loss == "TB":
-    # We need a LogZEstimator
-    logZ = LogZEstimator(tensor=torch.tensor(0.0, device=env.device))
-    parametrization = TBParametrization(
-        pf=pf_estimator,
-        pb=pb_estimator,
-        logZ=logZ,
-        on_policy=True,
-    )
-elif args.loss == "ZVar":
-    parametrization = LogPartitionVarianceParametrization(
-        pf=pf_estimator,
-        pb=pb_estimator,
-        on_policy=True,
-    )
 
 assert parametrization is not None, f"No parametrization for loss {args.loss}"
 
