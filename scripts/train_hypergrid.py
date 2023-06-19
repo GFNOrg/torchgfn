@@ -106,7 +106,12 @@ if __name__ == "__main__":
     )
     parametrization = pb_module = pf_module = pf_estimator = pb_estimator = None
 
-    # 2. Create the necessary modules, estimators, and parametrizations
+    # 2. Create the parameterization.
+    #    For this we need modules and estimators.
+    #    Depending on the loss, we may need several estimators:
+    #       one (forward only) for FM loss,
+    #       two (forward and backward) or other losses
+    #       three (same, + logZ) estimators for TB.
     if args.loss == "FM":
         # We need a LogEdgeFlowEstimator
         if args.tabular:
