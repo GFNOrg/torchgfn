@@ -28,6 +28,7 @@ class ReplayBuffer:
         terminating_states: a States class representation of $s_f$.
         objects_type: the type of buffer (transitions, trajectories, or states).
     """
+
     def __init__(
         self,
         env: Env,

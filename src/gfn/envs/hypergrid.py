@@ -11,17 +11,12 @@ from torchtyping import TensorType as TT
 from gfn.actions import Actions
 from gfn.envs.env import DiscreteEnv
 from gfn.envs.preprocessors import (
+    EnumPreprocessor,
     IdentityPreprocessor,
     KHotPreprocessor,
     OneHotPreprocessor,
 )
 from gfn.states import DiscreteStates
-
-preprocessors_dict = {
-    "KHot": KHotPreprocessor,
-    "OneHot": OneHotPreprocessor,
-    "Identity": IdentityPreprocessor,
-}
 
 
 class HyperGrid(DiscreteEnv):
@@ -34,7 +29,7 @@ class HyperGrid(DiscreteEnv):
         R2: float = 2.0,
         reward_cos: bool = False,
         device_str: Literal["cpu", "cuda"] = "cpu",
-        preprocessor_name: Literal["KHot", "OneHot", "Identity"] = "KHot",
+        preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"] = "KHot",
     ):
         """HyperGrid environment from the GFlowNets paper.
         The states are represented as 1-d tensors of length `ndim` with values in
@@ -67,7 +62,7 @@ class HyperGrid(DiscreteEnv):
         action_space = Discrete(ndim + 1)
 
         if preprocessor_name == "Identity":
-            preprocessor = IdentityPreprocessor(output_shape=(ndim,))
+            preprocessor = IdentityPreprocessor(output_dim=ndim)
         elif preprocessor_name == "KHot":
             preprocessor = KHotPreprocessor(
                 height=height, ndim=ndim, get_states_indices=self.get_states_indices
@@ -75,6 +70,10 @@ class HyperGrid(DiscreteEnv):
         elif preprocessor_name == "OneHot":
             preprocessor = OneHotPreprocessor(
                 n_states=self.n_states,
+                get_states_indices=self.get_states_indices,
+            )
+        elif preprocessor_name == "Enum":
+            preprocessor = EnumPreprocessor(
                 get_states_indices=self.get_states_indices,
             )
         else:

@@ -52,14 +52,14 @@ def test_trajectory_sampling(
         )
         pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=3)
     else:
-        logit_pf_module = NeuralNet(
-            input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions
+        pf_module = NeuralNet(
+            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
         )
-        logit_pb_module = NeuralNet(
-            input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions - 1
+        pb_module = NeuralNet(
+            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
         )
-        pf_estimator = DiscretePFEstimator(env=env, module=logit_pf_module)
-        pb_estimator = DiscretePBEstimator(env=env, module=logit_pb_module)
+        pf_estimator = DiscretePFEstimator(env=env, module=pf_module)
+        pb_estimator = DiscretePBEstimator(env=env, module=pb_module)
 
     actions_sampler = ActionsSampler(estimator=pf_estimator)
 
@@ -75,12 +75,12 @@ def test_trajectory_sampling(
     states = env.reset(batch_shape=5, random=True)
     bw_trajectories = bw_trajectories_sampler.sample_trajectories(states)
 
-    return trajectories, bw_trajectories
+    return trajectories, bw_trajectories, pf_estimator, pb_estimator
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_trajectories_getitem(env_name: str):
-    trajectories, _ = test_trajectory_sampling(
+    trajectories, *_ = test_trajectory_sampling(
         env_name,
         preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
         delta=0.1,
@@ -94,7 +94,7 @@ def test_trajectories_getitem(env_name: str):
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_trajectories_extend(env_name: str):
-    trajectories, _ = test_trajectory_sampling(
+    trajectories, *_ = test_trajectory_sampling(
         env_name,
         preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
         delta=0.1,
@@ -108,7 +108,7 @@ def test_trajectories_extend(env_name: str):
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_sub_sampling(env_name: str):
-    trajectories, _ = test_trajectory_sampling(
+    trajectories, *_ = test_trajectory_sampling(
         env_name,
         preprocessor_name="Identity",
         delta=0.1,
@@ -138,7 +138,7 @@ def test_replay_buffer(
         raise ValueError("Unknown environment name")
     replay_buffer = ReplayBuffer(env, capacity=10, objects_type=objects)
     print(f"After initialization, the replay buffer is {replay_buffer} ")
-    training_objects, _ = test_trajectory_sampling(
+    training_objects, *_ = test_trajectory_sampling(
         env_name,
         preprocessor_name="Identity",
         delta=0.1,

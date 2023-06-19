@@ -316,7 +316,9 @@ class DiscreteStates(States, ABC):
     def _check_both_forward_backward_masks_exist(self):
         assert self.forward_masks is not None and self.backward_masks is not None
 
-    def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> States:
+    def __getitem__(
+        self, index: int | Sequence[int] | Sequence[bool]
+    ) -> DiscreteStates:
         states = self.tensor[index]
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks[index]
@@ -324,14 +326,14 @@ class DiscreteStates(States, ABC):
         return self.__class__(states, forward_masks, backward_masks)
 
     def __setitem__(
-        self, index: int | Sequence[int] | Sequence[bool], states: States
+        self, index: int | Sequence[int] | Sequence[bool], states: DiscreteStates
     ) -> None:
         super().__setitem__(index, states)
         self._check_both_forward_backward_masks_exist()
         self.forward_masks[index] = states.forward_masks
         self.backward_masks[index] = states.backward_masks
 
-    def flatten(self) -> States:
+    def flatten(self) -> DiscreteStates:
         states = self.tensor.view(-1, *self.state_shape)
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])

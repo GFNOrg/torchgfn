@@ -1,14 +1,16 @@
 """This file contains some examples of modules that can be used with GFN."""
 
-from typing import Literal, Optional
+from typing import Iterator, Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
+from torch.nn.parameter import Parameter
 from torchtyping import TensorType as TT
 
 
 class NeuralNet(nn.Module):
     """Implements a basic MLP."""
+
     def __init__(
         self,
         input_dim: int,
@@ -57,15 +59,14 @@ class NeuralNet(nn.Module):
         Args:
             preprocessed_states: a batch of states appropriately preprocessed for
                 ingestion by the MLP.
-        Returns: logits (not activated) representing a distribution over actions or
-            a set of continuious values.
+        Returns: out, a set of continuous variables.
         """
         if self.device is None:
             self.device = preprocessed_states.device
             self.to(self.device)
-        logits = self.torso(preprocessed_states)
-        logits = self.last_layer(logits)
-        return logits
+        out = self.torso(preprocessed_states)
+        out = self.last_layer(out)
+        return out
 
 
 class Tabular(nn.Module):
@@ -85,6 +86,8 @@ class Tabular(nn.Module):
             output_dim (int): Output dimension.
         """
 
+        super().__init__()
+
         self.table = torch.zeros(
             (n_states, output_dim),
             dtype=torch.float,
@@ -93,7 +96,7 @@ class Tabular(nn.Module):
         self.table = nn.parameter.Parameter(self.table)
         self.device = None
 
-    def __call__(
+    def forward(
         self, preprocessed_states: TT["batch_shape", "input_dim", float]
     ) -> TT["batch_shape", "output_dim", float]:
         if self.device is None:
@@ -104,13 +107,15 @@ class Tabular(nn.Module):
         return outputs
 
 
-class Uniform(nn.Module):
-    """Implements a zero function approximator (a function that always outputs 0).
+class DiscreteUniform(nn.Module):
+    """Implements a uniform distribution over discrete actions.
+
+    It uses a zero function approximator (a function that always outputs 0) to be used as
+    logits by a DiscretePBEstimator.
 
     Attributes:
         output_dim: The size of the output space.
     """
-
 
     def __init__(self, output_dim: int) -> None:
         """Initializes the uniform function approximiator.
@@ -119,12 +124,16 @@ class Uniform(nn.Module):
             output_dim (int): Output dimension. This is typically n_actions if it
                 implements a Uniform PF, or n_actions-1 if it implements a Uniform PB.
         """
+        super().__init__()
         self.output_dim = output_dim
 
-    def __call__(
+    def forward(
         self, preprocessed_states: TT["batch_shape", "input_dim", float]
     ) -> TT["batch_shape", "output_dim", float]:
         out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
             preprocessed_states.device
         )
         return out
+
+    def named_parameters(self) -> Iterator[Tuple[str, Parameter]]:
+        return iter([])

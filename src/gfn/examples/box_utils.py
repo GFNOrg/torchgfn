@@ -427,6 +427,22 @@ class BoxPBNeuralNet(NeuralNet):
         return out
 
 
+class BoxPBUniform(torch.nn.Module):
+    """A module to be used to create a uniform PB distribution for the Box environment
+
+    A module that returns (1, 1, 1) for all states. Used with QuarterCircle, it leads to a
+    uniform distribution over parents in the south-western part of circle.
+    """
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", 2, float]
+    ) -> TT["batch_shape", 3]:
+        # return (1, 1, 1) for all states, thus the "+ (3,)".
+        return torch.ones(
+            preprocessed_states.shape[:-1] + (3,), device=preprocessed_states.device
+        )
+
+
 class BoxPFEStimator(ProbabilityEstimator):
     r"""Estimator for P_F for the Box environment. Uses the BoxForwardDist distribution"""
 
