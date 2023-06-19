@@ -55,7 +55,7 @@ class Parametrization(ABC):
         for name, estimator in self.__dict__.items():
             parameters_dict.update(
                 {
-                    f"{name}_{key}": value
+                    f"{name}.{key}": value
                     for key, value in estimator.named_parameters().items()
                 }
             )
@@ -203,7 +203,6 @@ class TrajectoryDecomposableLoss(Loss, ABC):
     def get_trajectories_scores(
         self, trajectories: Trajectories
     ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
-
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, no_pf=self.on_policy
         )
