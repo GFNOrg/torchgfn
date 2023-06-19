@@ -192,10 +192,10 @@ params = [
         "lr": args.lr,
     }
 ]
-if "logZ_logZ" in parametrization.parameters:
+if "logZ.logZ" in parametrization.parameters:
     params.append(
         {
-            "params": [parametrization.parameters["logZ_logZ"]],
+            "params": [parametrization.parameters["logZ.logZ"]],
             "lr": args.lr_Z,
         }
     )
