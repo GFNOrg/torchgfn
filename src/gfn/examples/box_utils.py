@@ -234,11 +234,13 @@ class QuarterDisk(Distribution):
 
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
         base_r_01_samples = (
-            torch.sqrt(torch.sum(sampled_actions**2, dim=-1)) / self.delta  # changes from 1 to -1.
+            torch.sqrt(torch.sum(sampled_actions**2, dim=-1))
+            / self.delta  # changes from 1 to -1.
         )
-        base_theta_01_samples = torch.arccos(
-            sampled_actions[..., -1] / (base_r_01_samples * self.delta)
-        ) / PI_2
+        base_theta_01_samples = (
+            torch.arccos(sampled_actions[..., -1] / (base_r_01_samples * self.delta))
+            / PI_2
+        )
 
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
@@ -291,8 +293,12 @@ class QuarterCircleWithExit(Distribution):
         # self.centers.tensor.shape! Do we need `sample_shape` at all, if not, we should
         # remove it.
         if sample_shape:
-            raise NotImplementedError("User defined sample_shape not supported currently.")
-        exit_mask[torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta] = True  # should be -1?
+            raise NotImplementedError(
+                "User defined sample_shape not supported currently."
+            )
+        exit_mask[
+            torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta
+        ] = True  # should be -1?
         actions[exit_mask] = self.exit_action
 
         return actions
@@ -306,7 +312,9 @@ class QuarterCircleWithExit(Distribution):
         logprobs[~exit] = logprobs[~exit] + torch.log(1 - self.exit_probability)[~exit]
         logprobs[exit] = torch.log(self.exit_probability[exit])
         # When torch.norm(1 - states, dim=1) <= env.delta, logprobs should be 0
-        logprobs[torch.norm(1 - self.centers.tensor, dim=1) <= self.delta] = 0.0  # should be -1?
+        logprobs[
+            torch.norm(1 - self.centers.tensor, dim=1) <= self.delta
+        ] = 0.0  # should be -1?
         return logprobs
 
 
@@ -356,9 +364,12 @@ class BoxPFNeuralNet(NeuralNet):
         all_components_mask = torch.cat(
             (
                 torch.ones(1, self._n_comp_min),  # The used elements of the state.
-                torch.zeros(1, self._n_comp_diff)  # The unused elements of the state.
-            ), dim=-1
-        ).repeat(5, -1)  # [1, 5 * n_components_max]
+                torch.zeros(1, self._n_comp_diff),  # The unused elements of the state.
+            ),
+            dim=-1,
+        ).repeat(
+            5, -1
+        )  # [1, 5 * n_components_max]
 
         # First element is always present. In s_0, this elements will always be zero.
         # [1, 1 + 5 * n_components_max]
@@ -378,27 +389,27 @@ class BoxPFNeuralNet(NeuralNet):
 
         # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
         out[:, 0] = torch.sigmoid(out[:, 0])
-        out[:, 1 + self.n_components :] = torch.sigmoid(
-            out[:, 1 + self.n_components :]
-        )
+        out[:, 1 + self.n_components :] = torch.sigmoid(out[:, 1 + self.n_components :])
 
         # Add all-zero components for stack-ability with self.PFs0.
-        out = torch.cat(( out, torch.zeros(B, 2 * self._n_comp_max) ))
+        out = torch.cat((out, torch.zeros(B, 2 * self._n_comp_max)))
 
         # Explicitly mask the unused components for t>0 state-representations.
         if self.n_components < self.n_components_s0:
             out = out * self.components_mask
 
         # Add the all_zero vector for exit probability.
-        out_s0 = torch.repeat_interleave(self.PFs0.clone(), B, dim=0)  # [B, 5 * n_components_max]
-        out_s0 = torch.cat( (torch.zeros(B, 1), out_s0), dim=-1)
+        out_s0 = torch.repeat_interleave(
+            self.PFs0.clone(), B, dim=0
+        )  # [B, 5 * n_components_max]
+        out_s0 = torch.cat((torch.zeros(B, 1), out_s0), dim=-1)
 
         # Explicitly mask the unused components for t=0 state-representations.
         if self.n_components_s0 < self.n_components:
             out_s0 = out_s0 * self.components_mask
 
         # Overwrite the network outputs with PFs0 in the case that the state is 0.0.
-        idx_s0 = torch.where(preprocessed_states == 0.)[0]
+        idx_s0 = torch.where(preprocessed_states == 0.0)[0]
         # out_s0[:, 1:] = torch.sigmoid(out[:, 1:])  # TODO: why is this here?
         out[idx_s0, :] = out_s0[idx_s0, :]  # TODO: scatter?
 
@@ -496,11 +507,16 @@ class BoxPFEStimator(ProbabilityEstimator):
         # and finally, we want to be able to give a different number of parameters to
         # s0 and st. So we need to use self._n_comp_max to split on the larger size, and
         # then index to slice out the smaller size when appropriate.
-        assert module_output.shape == states.batch_shape + (
-            1 + 5 * self._n_comp_max,
-        )
+        assert module_output.shape == states.batch_shape + (1 + 5 * self._n_comp_max,)
 
-        exit_probability, mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta = torch.split(
+        (
+            exit_probability,
+            mixture_logits,
+            alpha_r,
+            beta_r,
+            alpha_theta,
+            beta_theta,
+        ) = torch.split(
             module_output,
             [
                 1,  # Unique to QuarterCircleWithExit.
@@ -542,23 +558,27 @@ class BoxPFEStimator(ProbabilityEstimator):
 
 class DistributionWrapper(Distribution):
     def __init__(
-            self,
-            states,
-            env,
-            delta,
-            mixture_logits,
-            alpha_r,
-            beta_r,
-            alpha_theta,
-            beta_theta,
-            exit_probability,
-            n_components,
-            n_components_s0,
-        ):
+        self,
+        states,
+        env,
+        delta,
+        mixture_logits,
+        alpha_r,
+        beta_r,
+        alpha_theta,
+        beta_theta,
+        exit_probability,
+        n_components,
+        n_components_s0,
+    ):
 
         self.env = env
-        self.idx_is_inital = torch.where(states.tensor == 0)[0]  # TODO: states.is_initial
-        self.idx_not_inital = torch.where(states.tensor != 0)[0]  # TODO: ~states.is_initial
+        self.idx_is_inital = torch.where(states.tensor == 0)[
+            0
+        ]  # TODO: states.is_initial
+        self.idx_not_inital = torch.where(states.tensor != 0)[
+            0
+        ]  # TODO: ~states.is_initial
         self._output_shape = states.tensor.shape
         self.quarter_disk = QuarterDisk(
             batch_shape=states.tensor.shape[0],
@@ -584,7 +604,7 @@ class DistributionWrapper(Distribution):
 
         n_disk_samples = len(self.idx_is_inital)
         sample_disk = self.quarter_disk.sample(
-            sample_shape=sample_shape + (n_disk_samples, )
+            sample_shape=sample_shape + (n_disk_samples,)
         )
         sample_circ = self.quarter_circ.sample(sample_shape=sample_shape)
 
@@ -672,7 +692,9 @@ if __name__ == "__main__":
     # plot circles of radius delta around each center and around (0, 0)
     for i in range(centers.tensor.shape[0]):
         ax.add_patch(
-            plt.Circle(centers[i].tensor, delta, fill=False, color="red", linestyle="dashed")
+            plt.Circle(
+                centers[i].tensor, delta, fill=False, color="red", linestyle="dashed"
+            )
         )
     ax.add_patch(plt.Circle([0, 0], delta, fill=False, color="red", linestyle="dashed"))
 
