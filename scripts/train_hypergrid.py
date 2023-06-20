@@ -49,15 +49,6 @@ parser.add_argument(
 parser.add_argument(
     "--subTB_weighing",
     type=str,
-    choices=[
-        "DB",
-        "ModifiedDB",
-        "TB",
-        "geometric",
-        "equal",
-        "geometric_within",
-        "equal_within",
-    ],
     default="geometric_within",
 )
 parser.add_argument("--subTB_lambda", type=float, default=0.9)
