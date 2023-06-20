@@ -80,16 +80,14 @@ def test_trajectory_sampling(
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_trajectories_getitem(env_name: str):
-    trajectories, *_ = test_trajectory_sampling(
-        env_name,
-        preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
-        delta=0.1,
-    )
-    print(f"There are {trajectories.n_trajectories} original trajectories")
-    print(trajectories)
-    print(trajectories[0])
-    print(trajectories[[1, 0]])
-    print(trajectories[torch.tensor([1, 2], dtype=torch.long)])
+    try:
+        trajectories, *_ = test_trajectory_sampling(
+            env_name,
+            preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
+            delta=0.1,
+        )
+    except Exception as e:
+        raise ValueError(f"Error while testing {env_name}") from e
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
@@ -99,11 +97,10 @@ def test_trajectories_extend(env_name: str):
         preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
         delta=0.1,
     )
-    print(
-        f"There are {trajectories.n_trajectories} original trajectories. To which we will add the two first trajectories"
-    )
-    trajectories.extend(trajectories[[1, 0]])
-    print(trajectories)
+    try:
+        trajectories.extend(trajectories[[1, 0]])
+    except Exception as e:
+        raise ValueError(f"Error while testing {env_name}") from e
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
@@ -113,13 +110,10 @@ def test_sub_sampling(env_name: str):
         preprocessor_name="Identity",
         delta=0.1,
     )
-    print(
-        f"There are {trajectories.n_trajectories} original trajectories, from which we will sample 2"
-    )
-    print(trajectories)
-    sampled_trajectories = trajectories.sample(n_samples=2)
-    print("The two sampled trajectories are:")
-    print(sampled_trajectories)
+    try:
+        sampled_trajectories = trajectories.sample(n_samples=2)
+    except Exception as e:
+        raise ValueError(f"Error while testing {env_name}") from e
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
@@ -137,30 +131,23 @@ def test_replay_buffer(
     else:
         raise ValueError("Unknown environment name")
     replay_buffer = ReplayBuffer(env, capacity=10, objects_type=objects)
-    print(f"After initialization, the replay buffer is {replay_buffer} ")
     training_objects, *_ = test_trajectory_sampling(
         env_name,
         preprocessor_name="Identity",
         delta=0.1,
     )
-    if objects == "trajectories":
-        replay_buffer.add(
-            training_objects[
-                training_objects.when_is_done != training_objects.max_length
-            ]
-        )
-    else:
-        training_objects = training_objects.to_transitions()
-        replay_buffer.add(training_objects)
+    try:
+        if objects == "trajectories":
+            replay_buffer.add(
+                training_objects[
+                    training_objects.when_is_done != training_objects.max_length
+                ]
+            )
+        else:
+            training_objects = training_objects.to_transitions()
+            replay_buffer.add(training_objects)
 
-    print(
-        f"After adding {len(training_objects)} trajectories, the replay buffer is {replay_buffer} \n {replay_buffer.training_objects} "
-    )
-    replay_buffer.add(training_objects)
-    print(
-        f"After adding {len(training_objects)} trajectories, the replay buffer is {replay_buffer} \n {replay_buffer.training_objects}  "
-    )
-    replay_buffer.add(training_objects)
-    print(
-        f"After adding {len(training_objects)} trajectories, the replay buffer is {replay_buffer} \n {replay_buffer.training_objects}  "
-    )
+        replay_buffer.add(training_objects)
+        replay_buffer.add(training_objects)
+    except Exception as e:
+        raise ValueError(f"Error while testing {env_name}") from e
