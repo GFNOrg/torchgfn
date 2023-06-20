@@ -30,56 +30,57 @@ from gfn.utils.common import trajectories_to_training_samples, validate
 from gfn.utils.estimators import DiscretePBEstimator, DiscretePFEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
-parser = ArgumentParser()
 
-parser.add_argument("--no_cuda", action="store_true")
+if __name__ == "__main__":
+    parser = ArgumentParser()
 
-parser.add_argument("--ndim", type=int, default=2)
-parser.add_argument("--height", type=int, default=64)
-parser.add_argument("--R0", type=float, default=0.1)
-parser.add_argument("--R1", type=float, default=0.5)
-parser.add_argument("--R2", type=float, default=2.0)
+    parser.add_argument("--no_cuda", action="store_true")
 
-parser.add_argument("--seed", type=int, default=0)
-parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--ndim", type=int, default=2)
+    parser.add_argument("--height", type=int, default=64)
+    parser.add_argument("--R0", type=float, default=0.1)
+    parser.add_argument("--R1", type=float, default=0.5)
+    parser.add_argument("--R2", type=float, default=2.0)
 
-parser.add_argument(
-    "--loss", type=str, choices=["FM", "TB", "DB", "SubTB", "ZVar"], default="TB"
-)
-parser.add_argument(
-    "--subTB_weighing",
-    type=str,
-    default="geometric_within",
-)
-parser.add_argument("--subTB_lambda", type=float, default=0.9)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--batch_size", type=int, default=16)
 
-parser.add_argument(
-    "--tabular", action="store_true", help="Use a lookup table for F, PF, PB"
-)
-parser.add_argument("--uniform", action="store_true", help="Use a uniform PB")
-parser.add_argument(
-    "--tied", action="store_true", help="Tie the parameters of PF, PB, and F"
-)
-parser.add_argument("--hidden_dim", type=int, default=256)
-parser.add_argument("--n_hidden", type=int, default=2)
+    parser.add_argument(
+        "--loss", type=str, choices=["FM", "TB", "DB", "SubTB", "ZVar"], default="TB"
+    )
+    parser.add_argument(
+        "--subTB_weighing",
+        type=str,
+        default="geometric_within",
+    )
+    parser.add_argument("--subTB_lambda", type=float, default=0.9)
 
-parser.add_argument("--lr", type=float, default=1e-3)
-parser.add_argument("--lr_Z", type=float, default=0.1)
+    parser.add_argument(
+        "--tabular", action="store_true", help="Use a lookup table for F, PF, PB"
+    )
+    parser.add_argument("--uniform", action="store_true", help="Use a uniform PB")
+    parser.add_argument(
+        "--tied", action="store_true", help="Tie the parameters of PF, PB, and F"
+    )
+    parser.add_argument("--hidden_dim", type=int, default=256)
+    parser.add_argument("--n_hidden", type=int, default=2)
 
-parser.add_argument("--n_trajectories", type=int, default=int(1e6))
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr_Z", type=float, default=0.1)
 
-parser.add_argument("--validation_interval", type=int, default=100)
-parser.add_argument(
-    "--validation_samples",
-    type=int,
-    default=200000,
-    help="Number of validation samples to use to evaluate the pmf.",
-)
+    parser.add_argument("--n_trajectories", type=int, default=int(1e6))
 
-parser.add_argument("--wandb", type=str, default="")
+    parser.add_argument("--validation_interval", type=int, default=100)
+    parser.add_argument(
+        "--validation_samples",
+        type=int,
+        default=200000,
+        help="Number of validation samples to use to evaluate the pmf.",
+    )
 
+    parser.add_argument("--wandb", type=str, default="")
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
 seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
 torch.manual_seed(args.seed)
