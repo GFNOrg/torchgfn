@@ -240,11 +240,13 @@ class QuarterDisk(Distribution):
             sampled_actions[:, 0] / (base_r_01_samples * self.delta)
         ) / PI_2
 
+        import IPython; IPython.embed()
+        sys.exit()
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
             + self.base_theta_dist.log_prob(base_theta_01_samples)
             - np.log(self.delta)
-            - np.log(np.pi / 2.0)
+            - np.log(PI_2)
             - torch.log(base_r_01_samples * self.delta)
         )
 
@@ -498,12 +500,12 @@ class BoxPFEStimator(ProbabilityEstimator):
         exit_probability, mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta = torch.split(
             module_output,
             [
-                1,
-                self._n_comp_max,
-                self._n_comp_max,
-                self._n_comp_max,
-                self._n_comp_max,
-                self._n_comp_max,
+                1,  # Unique to QuarterCircleWithExit.
+                self._n_comp_max,  # Shared by QuarterDisk and QuarterCircleWithExit.
+                self._n_comp_max,  # Shared by QuarterDisk and QuarterCircleWithExit.
+                self._n_comp_max,  # Shared by QuarterDisk and QuarterCircleWithExit.
+                self._n_comp_max,  # Unique to QuarterDisk.
+                self._n_comp_max,  # Unique to QuarterDisk.
             ],
             dim=-1,
         )
@@ -520,11 +522,10 @@ class BoxPFEStimator(ProbabilityEstimator):
         alpha_theta = _normalize(alpha_theta)
         beta_theta = _normalize(beta_theta)
 
-        # In this case, we use the QuarterCircleWithExit distribution
-        # currently  3 * n_components + 1, should be  1 + ( 5 * n_components )
         return DistributionWrapper(
             states,
             self.env,
+            self.env.delta,
             mixture_logits,
             alpha_r,
             beta_r,
@@ -541,6 +542,7 @@ class DistributionWrapper(Distribution):
             self,
             states,
             env,
+            delta,
             mixture_logits,
             alpha_r,
             beta_r,
@@ -552,44 +554,41 @@ class DistributionWrapper(Distribution):
         ):
 
         self.env = env
-        self.idx = (
-            torch.where(states.tensor == 0)[0],  # states.is_initial
-            torch.where(states.tensor != 0)[0],  # ~states.is_initial
-        )
+        self.idx_is_inital = torch.where(states.tensor == 0)[0]  # TODO: states.is_initial
+        self.idx_not_inital = torch.where(states.tensor != 0)[0]  # TODO: ~states.is_initial
         self._output_shape = states.tensor.shape
         self.quarter_disk = QuarterDisk(
             batch_shape=states.tensor.shape[0],
             delta=delta,
-            mixture_logits=mixture_logits,
-            alpha_r=alpha_r,
-            beta_r=beta_r,
-            alpha_theta=alpha_theta,
-            beta_theta=beta_theta,
+            mixture_logits=mixture_logits[self.idx_is_inital, :n_components_s0],
+            alpha_r=alpha_r[self.idx_is_inital, :n_components_s0],
+            beta_r=beta_r[self.idx_is_inital, :n_components_s0],
+            alpha_theta=alpha_theta[self.idx_is_inital, :n_components_s0],
+            beta_theta=beta_theta[self.idx_is_inital, :n_components_s0],
         )
         self.quarter_circ = QuarterCircleWithExit(
             delta=self.env.delta,
             centers=states[states.tensor != 0],  # Remove initial states.
-            exit_probability=exit_probability,
-            mixture_logits=mixture_logits,
-            alpha=alpha,
-            beta=beta,
+            exit_probability=exit_probability[self.idx_not_inital, :],
+            mixture_logits=mixture_logits[self.idx_not_inital, :n_components],
+            alpha=alpha_r[self.idx_not_inital, :n_components],  # TODO: verify.
+            beta=beta_r[self.idx_not_inital, :n_components],  # TODO: verify
         )  # no sample_shape req as it is stored in centers.
 
     def sample(self, sample_shape=()):
 
         output = torch.zeros(sample_shape + self._output_shape)
 
-        n_disk_samples = len(self.idx[0])
+        n_disk_samples = len(self.idx_is_inital)
         sample_disk = self.quarter_disk.sample(
             sample_shape=sample_shape + (n_disk_samples, )
         )
         sample_circ = self.quarter_circ.sample(sample_shape=sample_shape)
 
-        output = output.scatter_(0, self.idx[0], sample_disk)
-        output = output.scatter_(0, self.idx[1], sample_circ)
+        output = output.scatter_(0, self.idx_is_inital, sample_disk)
+        output = output.scatter_(0, self.idx_not_inital, sample_circ)
 
         return output
-
 
 
 class BoxPBEstimator(ProbabilityEstimator):
@@ -631,15 +630,24 @@ class BoxPBEstimator(ProbabilityEstimator):
 if __name__ == "__main__":
     # This code tests the QuarterCircle distribution and makes some plots
     delta = 0.1
-    centers = torch.FloatTensor([[0.03, 0.06], [0.2, 0.3], [0.95, 0.7]])
+
+    environment = BoxEnv(
+        delta=delta,
+        R0=0.1,
+        R1=0.5,
+        R2=2.0,
+        device_str="cpu",
+    )
+    States = environment.make_States_class()
+
+    centers = States(torch.FloatTensor([[0.03, 0.06], [0.2, 0.3], [0.95, 0.7]]))
     mixture_logits = torch.FloatTensor([[0.0], [0.0], [0.0]])
     alpha = torch.FloatTensor([[1.0], [1.0], [1.0]])
     beta = torch.FloatTensor([[1.1], [1.0], [1.0]])
 
-    northeastern = True
     dist = QuarterCircle(
         delta=delta,
-        northeastern=northeastern,
+        northeastern=True,
         centers=centers,
         mixture_logits=mixture_logits,
         alpha=alpha,
@@ -648,31 +656,30 @@ if __name__ == "__main__":
 
     n_samples = 10
     samples = dist.sample(sample_shape=(n_samples,))
-    print(dist.log_prob(samples))
+    print("log_probs of the samples:\n{}\n".format(dist.log_prob(samples)))
 
-    # plot the [0, 1] x [0, 1] square, and the centers,
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt  # plot the [0, 1] x [0, 1] square, and the centers.
 
     fig, ax = plt.subplots()
     ax.set_xlim([-0.2, 1.2])
     ax.set_ylim([-0.2, 1.2])
 
     # plot circles of radius delta around each center and around (0, 0)
-    for i in range(centers.shape[0]):
+    for i in range(centers.tensor.shape[0]):
         ax.add_patch(
-            plt.Circle(centers[i], delta, fill=False, color="red", linestyle="dashed")
+            plt.Circle(centers[i].tensor, delta, fill=False, color="red", linestyle="dashed")
         )
     ax.add_patch(plt.Circle([0, 0], delta, fill=False, color="red", linestyle="dashed"))
 
     # add each center to its corresponding sampled actions and plot them
-    for i in range(centers.shape[0]):
+    for i in range(centers.tensor.shape[0]):
         ax.scatter(
-            samples[:, i, 0] + centers[i, 0],
-            samples[:, i, 1] + centers[i, 1],
+            samples[:, i, 0] + centers[i].tensor[0],
+            samples[:, i, 1] + centers[i].tensor[1],
             s=0.2,
             marker="x",
         )
-        ax.scatter(centers[i, 0], centers[i, 1], color="red")
+        ax.scatter(centers[i].tensor[0], centers[i].tensor[1], color="red")
 
     northeastern = False
     dist_backward = QuarterCircle(
@@ -685,18 +692,24 @@ if __name__ == "__main__":
     )
 
     samples_backward = dist_backward.sample(sample_shape=(n_samples,))
-    print(dist_backward.log_prob(samples_backward))
+    print(
+        "log_probs of the backward samples:\n{}\n".format(
+            dist_backward.log_prob(samples_backward)
+        )
+    )
 
-    # add to the plot a subtraction of the sampled actions from the centers, and plot them
-    for i in range(centers[1:].shape[0]):
+    # Add to the plot a subtraction of the sampled actions from the centers.
+    for i in range(centers[1:].tensor.shape[0]):
         ax.scatter(
-            centers[1:][i, 0] - samples_backward[:, i, 0],
-            centers[1:][i, 1] - samples_backward[:, i, 1],
+            centers[1:].tensor[i, 0] - samples_backward[:, i, 0],
+            centers[1:].tensor[i, 1] - samples_backward[:, i, 1],
             s=0.2,
             marker="x",
         )
 
+    delta = 0.2  # TODO: this does not work with 0.1, why? Triage with Salem.
     quarter_disk_dist = QuarterDisk(
+        batch_shape=centers.batch_shape,
         delta=delta,
         mixture_logits=torch.FloatTensor([0.0]),
         alpha_r=torch.FloatTensor([1.0]),
@@ -705,12 +718,13 @@ if __name__ == "__main__":
         beta_theta=torch.FloatTensor([1.0]),
     )
 
-    samples_disk = quarter_disk_dist.sample(sample_shape=(n_samples * 3,))
-    print(quarter_disk_dist.log_prob(samples_disk))
-
-    # add to the plot samples_disk
+    samples_disk = quarter_disk_dist.sample(sample_shape=(n_samples,))  # TODO: Removed the * 3 -- why was it there? Needed to remove.
+    print(
+        "log_probs of the forward disk samples:\n{}\n:".format(
+            quarter_disk_dist.log_prob(samples_disk)
+        )
+    )
     ax.scatter(samples_disk[:, 0], samples_disk[:, 1], s=0.1, marker="x")
-
     # plt.show()
 
     quarter_circle_with_exit_dist = QuarterCircleWithExit(
