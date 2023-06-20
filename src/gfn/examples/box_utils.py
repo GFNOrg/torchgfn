@@ -234,14 +234,12 @@ class QuarterDisk(Distribution):
 
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
         base_r_01_samples = (
-            torch.sqrt(torch.sum(sampled_actions**2, dim=1)) / self.delta
+            torch.sqrt(torch.sum(sampled_actions**2, dim=-1)) / self.delta  # changes from 1 to -1.
         )
         base_theta_01_samples = torch.arccos(
-            sampled_actions[:, 0] / (base_r_01_samples * self.delta)
+            sampled_actions[..., -1] / (base_r_01_samples * self.delta)
         ) / PI_2
 
-        import IPython; IPython.embed()
-        sys.exit()
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
             + self.base_theta_dist.log_prob(base_theta_01_samples)
@@ -289,7 +287,12 @@ class QuarterCircleWithExit(Distribution):
         exit_mask = torch.bernoulli(repeated_exit_probability).bool()
 
         # When torch.norm(1 - states, dim=1) <= env.delta, we have to exit
-        exit_mask[torch.norm(1 - self.centers.tensor, dim=1) <= self.delta] = True
+        # TODO: this will BREAK with sample_shape defined not matching
+        # self.centers.tensor.shape! Do we need `sample_shape` at all, if not, we should
+        # remove it.
+        if sample_shape:
+            raise NotImplementedError("User defined sample_shape not supported currently.")
+        exit_mask[torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta] = True  # should be -1?
         actions[exit_mask] = self.exit_action
 
         return actions
@@ -303,7 +306,7 @@ class QuarterCircleWithExit(Distribution):
         logprobs[~exit] = logprobs[~exit] + torch.log(1 - self.exit_probability)[~exit]
         logprobs[exit] = torch.log(self.exit_probability[exit])
         # When torch.norm(1 - states, dim=1) <= env.delta, logprobs should be 0
-        logprobs[torch.norm(1 - self.centers.tensor, dim=1) <= self.delta] = 0.0
+        logprobs[torch.norm(1 - self.centers.tensor, dim=1) <= self.delta] = 0.0  # should be -1?
         return logprobs
 
 
@@ -630,6 +633,7 @@ class BoxPBEstimator(ProbabilityEstimator):
 if __name__ == "__main__":
     # This code tests the QuarterCircle distribution and makes some plots
     delta = 0.1
+    n_samples = 10
 
     environment = BoxEnv(
         delta=delta,
@@ -654,7 +658,8 @@ if __name__ == "__main__":
         beta=beta,
     )
 
-    n_samples = 10
+    # TODO: Should we remove all `sample_shape` args here? Should we remove the
+    # functionality altogether?`
     samples = dist.sample(sample_shape=(n_samples,))
     print("log_probs of the samples:\n{}\n".format(dist.log_prob(samples)))
 
@@ -691,6 +696,8 @@ if __name__ == "__main__":
         beta=beta[1:],
     )
 
+    # TODO: Should we remove all `sample_shape` args here? Should we remove the
+    # functionality altogether?`
     samples_backward = dist_backward.sample(sample_shape=(n_samples,))
     print(
         "log_probs of the backward samples:\n{}\n".format(
@@ -718,9 +725,9 @@ if __name__ == "__main__":
         beta_theta=torch.FloatTensor([1.0]),
     )
 
-    samples_disk = quarter_disk_dist.sample(sample_shape=(n_samples,))  # TODO: Removed the * 3 -- why was it there? Needed to remove.
+    samples_disk = quarter_disk_dist.sample()
     print(
-        "log_probs of the forward disk samples:\n{}\n:".format(
+        "log_probs of the forward disk samples:\n{}\n".format(
             quarter_disk_dist.log_prob(samples_disk)
         )
     )
@@ -736,6 +743,5 @@ if __name__ == "__main__":
         exit_probability=torch.FloatTensor([0.5, 0.5, 0.5]),
     )
 
-    samples_exit = quarter_circle_with_exit_dist.sample(sample_shape=(n_samples,))
-
-    print(samples_exit)
+    samples_exit = quarter_circle_with_exit_dist.sample()
+    print("exit_samples:\n{}\n".format(samples_exit))
