@@ -11,7 +11,6 @@ from gfn.estimators import ProbabilityEstimator
 from gfn.states import States
 from gfn.utils import NeuralNet
 
-
 PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0
 
@@ -318,244 +317,6 @@ class QuarterCircleWithExit(Distribution):
         return logprobs
 
 
-class BoxPFNeuralNet(NeuralNet):
-    def __init__(
-        self,
-        hidden_dim: int,
-        n_hidden_layers: int,
-        n_components_s0: int,
-        n_components: int,
-        **kwargs,
-    ):
-
-        self._n_comp_max = max(n_components_s0, n_components)
-        self._n_comp_min = min(n_components_s0, n_components)
-        self._n_comp_diff = self._n_comp_max - self._n_comp_min
-        self.n_components_s0 = n_components_s0
-        self.n_components = n_components
-
-        input_dim = 2
-
-        # Note on module output size: We need the outputs of this neural network to
-        # stack with outputs at s_0. Therefore the output size will be
-        # 1 + 3 * self._n_comp_max values, but the user will notice that the full state
-        # size is 1 + 5 * self._n_comp_max. This is because the final two components are
-        # only used by s_0. Therefore, for s_t>0, 2 "dummy" constant all_zero
-        # self._n_comp_max components will be added to the neural network outputs.
-        output_dim = 1 + 3 * max(n_components, n_components_s0)
-
-        super().__init__(
-            input_dim=input_dim,
-            hidden_dim=hidden_dim,
-            n_hidden_layers=n_hidden_layers,
-            output_dim=output_dim,
-            **kwargs,
-        )
-        # Does not include the + 1 to handle the exit probability (which is
-        # impossible at t=0).
-        self.PFs0 = torch.nn.Parameter(torch.zeros(n_components_s0, 5))
-
-        # For the smaller component space (whether it be for s_0 or s_t>0), the unused
-        # components will be zeroed out by self.components_mask.
-        self.components_mask = self._compute_all_components_mask()
-
-    def _compute_all_components_mask(self):
-        """Masks unused elements of the smaller state representation."""
-        all_components_mask = torch.cat(
-            (
-                torch.ones(1, self._n_comp_min),  # The used elements of the state.
-                torch.zeros(1, self._n_comp_diff),  # The unused elements of the state.
-            ),
-            dim=-1,
-        ).repeat(
-            5, -1
-        )  # [1, 5 * n_components_max]
-
-        # First element is always present. In s_0, this elements will always be zero.
-        # [1, 1 + 5 * n_components_max]
-        all_components_mask = torch.cat((torch.ones(1, 1), all_components_mask), dim=-1)
-
-        # This mask should never be updated during backprop.
-        all_components_mask.requires_grad = False
-
-        return all_components_mask.bool()
-
-    def forward(
-        self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", "1 + 5 * n_components"]:
-        # First calculate network outputs (for all t > 0).
-        out = super().forward(preprocessed_states)
-        B, W = out.shape()
-
-        # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
-        out[:, 0] = torch.sigmoid(out[:, 0])
-        out[:, 1 + self.n_components :] = torch.sigmoid(out[:, 1 + self.n_components :])
-
-        # Add all-zero components for stack-ability with self.PFs0.
-        out = torch.cat((out, torch.zeros(B, 2 * self._n_comp_max)))
-
-        # Explicitly mask the unused components for t>0 state-representations.
-        if self.n_components < self.n_components_s0:
-            out = out * self.components_mask
-
-        # Add the all_zero vector for exit probability.
-        out_s0 = torch.repeat_interleave(
-            self.PFs0.clone(), B, dim=0
-        )  # [B, 5 * n_components_max]
-        out_s0 = torch.cat((torch.zeros(B, 1), out_s0), dim=-1)
-
-        # Explicitly mask the unused components for t=0 state-representations.
-        if self.n_components_s0 < self.n_components:
-            out_s0 = out_s0 * self.components_mask
-
-        # Overwrite the network outputs with PFs0 in the case that the state is 0.0.
-        idx_s0 = torch.where(preprocessed_states == 0.0)[0]
-        # out_s0[:, 1:] = torch.sigmoid(out[:, 1:])  # TODO: why is this here?
-        out[idx_s0, :] = out_s0[idx_s0, :]  # TODO: scatter?
-
-        return out
-
-
-class BoxPBNeuralNet(NeuralNet):
-    def __init__(
-        self, hidden_dim: int, n_hidden_layers: int, n_components: int, **kwargs
-    ):
-        input_dim = 2
-        output_dim = 3 * n_components
-
-        super().__init__(
-            input_dim=input_dim,
-            hidden_dim=hidden_dim,
-            n_hidden_layers=n_hidden_layers,
-            output_dim=output_dim,
-            **kwargs,
-        )
-
-        self.n_components = n_components
-
-    def forward(
-        self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", "3 * n_components"]:
-        out = super().forward(preprocessed_states)
-        # Apply sigmoid to all except the dimensions between 0 and self.n_components.
-        out[:, self.n_components :] = torch.sigmoid(out[:, self.n_components :])
-        # TODO: maybe mask the unused components.
-        return out
-
-
-class BoxPBUniform(torch.nn.Module):
-    """A module to be used to create a uniform PB distribution for the Box environment
-
-    A module that returns (1, 1, 1) for all states. Used with QuarterCircle, it leads to a
-    uniform distribution over parents in the south-western part of circle.
-    """
-
-    def forward(
-        self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", 3]:
-        # return (1, 1, 1) for all states, thus the "+ (3,)".
-        return torch.ones(
-            preprocessed_states.shape[:-1] + (3,), device=preprocessed_states.device
-        )
-
-
-class BoxPFEStimator(ProbabilityEstimator):
-    r"""Estimator for P_F for the Box environment. Uses the BoxForwardDist distribution"""
-
-    def __init__(
-        self,
-        env: BoxEnv,
-        module: torch.nn.Module,
-        n_components_s0: int,
-        n_components: int,
-        min_concentration: float = 0.1,
-        max_concentration: float = 2.0,
-    ):
-        super().__init__(env, module)
-        self._n_comp_max = max(n_components_s0, n_components)
-        self._n_comp_min = min(n_components_s0, n_components)
-        self._n_comp_diff = self._n_comp_max - self._n_comp_min
-        self.n_components_s0 = n_components_s0
-        self.n_components = n_components
-
-        self.min_concentration = min_concentration
-        self.max_concentration = max_concentration
-        self.env = env
-
-    def check_output_dim(
-        self, module_output: TT["batch_shape", "output_dim", float]
-    ) -> None:
-        # TODO: add this check.
-        pass
-
-    def to_probability_distribution(
-        self, states: States, module_output: TT["batch_shape", "output_dim", float]
-    ) -> Distribution:
-        # First, we verify that the batch shape of states is 1
-        assert len(states.batch_shape) == 1
-
-        # The module_output is of shape (*batch_shape, 1 + 5 * max_n_components), why:
-        # We need:
-        #   + one scalar for the exit probability,
-        #   + self.n_components for the alpha_theta
-        #   + self.n_components for the betas_theta
-        #   + self.n_components for the mixture logits
-        # but we also need compatibility with the s0 state, which has two additional
-        # parameters:
-        #   + self.n_s0_components for the alpha_r
-        #   + self.n_s0_components for the beta_r
-        # and finally, we want to be able to give a different number of parameters to
-        # s0 and st. So we need to use self._n_comp_max to split on the larger size, and
-        # then index to slice out the smaller size when appropriate.
-        assert module_output.shape == states.batch_shape + (1 + 5 * self._n_comp_max,)
-
-        (
-            exit_probability,
-            mixture_logits,
-            alpha_r,
-            beta_r,
-            alpha_theta,
-            beta_theta,
-        ) = torch.split(
-            module_output,
-            [
-                1,  # Unique to QuarterCircleWithExit.
-                self._n_comp_max,  # Shared by QuarterDisk and QuarterCircleWithExit.
-                self._n_comp_max,  # Shared by QuarterDisk and QuarterCircleWithExit.
-                self._n_comp_max,  # Shared by QuarterDisk and QuarterCircleWithExit.
-                self._n_comp_max,  # Unique to QuarterDisk.
-                self._n_comp_max,  # Unique to QuarterDisk.
-            ],
-            dim=-1,
-        )
-
-        mixture_logits = mixture_logits.view(-1)
-
-        def _normalize(x):
-            return self.min_concentration + (
-                self.max_concentration - self.min_concentration
-            ) * x.view(-1)
-
-        alpha_r = _normalize(alpha_r)
-        beta_r = _normalize(beta_r)
-        alpha_theta = _normalize(alpha_theta)
-        beta_theta = _normalize(beta_theta)
-
-        return DistributionWrapper(
-            states,
-            self.env,
-            self.env.delta,
-            mixture_logits,
-            alpha_r,
-            beta_r,
-            alpha_theta,
-            beta_theta,
-            exit_probability.squeeze(-1),
-            self.n_components,
-            self.n_components_s0,
-        )
-
-
 class DistributionWrapper(Distribution):
     def __init__(
         self,
@@ -612,6 +373,312 @@ class DistributionWrapper(Distribution):
         output = output.scatter_(0, self.idx_not_inital, sample_circ)
 
         return output
+
+
+class BoxPFNeuralNet(NeuralNet):
+    """A deep neural network for the forward policy.
+
+    Attributes:
+        n_components_s0: the number of components for each s=0 distribution parameter.
+        n_components: the number of components for each s=t>0 distribution parameter.
+        PFs0: the parameters for the s=0 distribution.
+        components_mask: a binary mask used to remove unused components from either
+            self.PFs0 or super().forward(states), depending on which has the smaller
+            number of components.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        n_hidden_layers: int,
+        n_components_s0: int,
+        n_components: int,
+        **kwargs,
+    ):
+        """Insantiates the neural network for the forward policy.
+
+        Args:
+            hidden_dim: the size of each hidden layer.
+            n_hidden_layers: the number of hidden layers.
+            n_components_s0: the number of output components for each s=0 distribution
+                parameter.
+            n_components: the number of output components for each s=t>0 distribution
+                parameter.
+            **kwargs: passed to the NeuralNet class.
+
+        """
+        self._n_comp_max = max(n_components_s0, n_components)
+        self._n_comp_min = min(n_components_s0, n_components)
+        self._n_comp_diff = self._n_comp_max - self._n_comp_min
+        self.n_components_s0 = n_components_s0
+        self.n_components = n_components
+
+        input_dim = 2
+
+        # Note on module output size: We need the outputs of this neural network to
+        # stack with outputs at s_0. Therefore the output size will be
+        # 1 + 3 * self._n_comp_max values, but the user will notice that the full state
+        # size is 1 + 5 * self._n_comp_max. This is because the final two components are
+        # only used by s_0. Therefore, for s_t>0, 2 "dummy" constant all_zero
+        # self._n_comp_max components will be added to the neural network outputs.
+        output_dim = 1 + 3 * max(n_components, n_components_s0)
+
+        super().__init__(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            output_dim=output_dim,
+            **kwargs,
+        )
+        # Does not include the + 1 to handle the exit probability (which is
+        # impossible at t=0).
+        self.PFs0 = torch.nn.Parameter(torch.zeros(1, 5 * n_components_s0))
+
+        # For the smaller component space (whether it be for s_0 or s_t>0), the unused
+        # components will be zeroed out by self.components_mask.
+        self.components_mask = self._compute_all_components_mask()
+
+    def _compute_all_components_mask(self):
+        """Masks unused elements of the smaller state representation."""
+        all_components_mask = torch.cat(
+            (
+                torch.ones(1, self._n_comp_min),  # The used elements of the state.
+                torch.zeros(1, self._n_comp_diff),  # The unused elements of the state.
+            ),
+            dim=-1,
+        ).repeat(
+            1, 5  # [1, 5 * n_components_max]
+        )
+
+        # First element is always present. In s_0, this element will always be zero.
+        all_components_mask = torch.cat(
+            (torch.ones(1, 1), all_components_mask),
+            dim=-1,  # [1, 1 + 5 * n_components_max]
+        )
+
+        # This mask should never be updated during backprop.
+        all_components_mask.requires_grad = False
+
+        return all_components_mask.bool()
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", 2, float]
+    ) -> TT["batch_shape", "1 + 5 * n_components"]:
+        # First calculate network outputs (for all t > 0).
+        out = super().forward(preprocessed_states)
+        B, W = out.shape
+
+        # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
+        out[:, 0] = torch.sigmoid(out[:, 0])
+        out[:, 1 + self.n_components :] = torch.sigmoid(out[:, 1 + self.n_components :])
+
+        # Add all-zero components for stack-ability with self.PFs0.
+        out = torch.cat((out, torch.zeros(B, 2 * self._n_comp_max)), dim=-1)
+
+        # Explicitly mask the unused components for t>0 state-representations.
+        if self.n_components < self.n_components_s0:
+            out = out * self.components_mask
+
+        # Add the all_zero vector for exit probability.
+        out_s0 = torch.repeat_interleave(
+            self.PFs0.clone(), B, dim=0
+        )  # [B, 5 * n_components_max]
+        out_s0 = torch.cat((torch.zeros(B, 1), out_s0), dim=-1)
+
+        # Explicitly mask the unused components for t=0 state-representations.
+        if self.n_components_s0 < self.n_components:
+            out_s0 = out_s0 * self.components_mask
+
+        # Overwrite the network outputs with PFs0 in the case that the state is 0.0.
+        idx_s0 = torch.where(preprocessed_states == 0.0)[0]
+        # out_s0[:, 1:] = torch.sigmoid(out[:, 1:])  # TODO: why is this here?
+        out[idx_s0, :] = out_s0[idx_s0, :]  # TODO: scatter?
+
+        return out
+
+
+class BoxPBNeuralNet(NeuralNet):
+    """A deep neural network for the backward policy.
+
+    Attributes:
+        n_components: the number of components for each distribution parameter.
+    """
+
+    def __init__(
+        self, hidden_dim: int, n_hidden_layers: int, n_components: int, **kwargs
+    ):
+        """Insantiates the neural network.
+
+        Args:
+            hidden_dim: the size of each hidden layer.
+            n_hidden_layers: the number of hidden layers.
+            n_components: the number of output components for each distribution
+                parameter.
+            **kwargs: passed to the NeuralNet class.
+        """
+        input_dim = 2
+        output_dim = 3 * n_components
+
+        super().__init__(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            output_dim=output_dim,
+            **kwargs,
+        )
+
+        self.n_components = n_components
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", 2, float]
+    ) -> TT["batch_shape", "3 * n_components"]:
+        out = super().forward(preprocessed_states)
+
+        # Apply sigmoid to all except the dimensions between 0 and self.n_components.
+        out[:, self.n_components :] = torch.sigmoid(out[:, self.n_components :])
+
+        return out
+
+
+class BoxPBUniform(torch.nn.Module):
+    """A module to be used to create a uniform PB distribution for the Box environment
+
+    A module that returns (1, 1, 1) for all states. Used with QuarterCircle, it leads to a
+    uniform distribution over parents in the south-western part of circle.
+    """
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", 2, float]
+    ) -> TT["batch_shape", 3]:
+        # return (1, 1, 1) for all states, thus the "+ (3,)".
+        return torch.ones(
+            preprocessed_states.shape[:-1] + (3,), device=preprocessed_states.device
+        )
+
+
+def split_PF_module_output(
+    output: TT["batch_shape", "output_dim", float], n_comp_max: int
+):
+    """Splits the module output into the expected parameter sets.
+
+    Args:
+        output: the module_output from the P_F model.
+        n_comp_max: the larger number of the two n_components and n_components_s0.
+
+    Returns:
+        exit_probability: A probability unique to QuarterCircleWithExit.
+        mixture_logits: Parameters shared by QuarterDisk and QuarterCircleWithExit.
+        alpha_r: Parameters shared by QuarterDisk and QuarterCircleWithExit.
+        beta_r: Parameters shared by QuarterDisk and QuarterCircleWithExit.
+        alpha_theta: Parameters unique to QuarterDisk.
+        beta_theta: Parameters unique to QuarterDisk.
+    """
+    (
+        exit_probability,  # Unique to QuarterCircleWithExit.
+        mixture_logits,  # Shared by QuarterDisk and QuarterCircleWithExit.
+        alpha_r,  # Shared by QuarterDisk and QuarterCircleWithExit.
+        beta_r,  # Shared by QuarterDisk and QuarterCircleWithExit.
+        alpha_theta,  # Unique to QuarterDisk.
+        beta_theta,  # Unique to QuarterDisk.
+    ) = torch.split(
+        output,
+        [
+            1,  # Unique to QuarterCircleWithExit.
+            n_comp_max,  # Shared by QuarterDisk and QuarterCircleWithExit.
+            n_comp_max,  # Shared by QuarterDisk and QuarterCircleWithExit.
+            n_comp_max,  # Shared by QuarterDisk and QuarterCircleWithExit.
+            n_comp_max,  # Unique to QuarterDisk.
+            n_comp_max,  # Unique to QuarterDisk.
+        ],
+        dim=-1,
+    )
+
+    return (exit_probability, mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta)
+
+
+class BoxPFEstimator(ProbabilityEstimator):
+    r"""Estimator for P_F for the Box environment. Uses the BoxForwardDist distribution."""
+
+    def __init__(
+        self,
+        env: BoxEnv,
+        module: torch.nn.Module,
+        n_components_s0: int,
+        n_components: int,
+        min_concentration: float = 0.1,
+        max_concentration: float = 2.0,
+    ):
+        super().__init__(env, module)
+        self._n_comp_max = max(n_components_s0, n_components)
+        self._n_comp_min = min(n_components_s0, n_components)
+        self._n_comp_diff = self._n_comp_max - self._n_comp_min
+        self.n_components_s0 = n_components_s0
+        self.n_components = n_components
+
+        self.min_concentration = min_concentration
+        self.max_concentration = max_concentration
+        self.env = env
+
+    def check_output_dim(
+        self, module_output: TT["batch_shape", "output_dim", float]
+    ) -> None:
+        # TODO: add this check.
+        pass
+
+    def to_probability_distribution(
+        self, states: States, module_output: TT["batch_shape", "output_dim", float]
+    ) -> Distribution:
+        # First, we verify that the batch shape of states is 1
+        assert len(states.batch_shape) == 1
+
+        # The module_output is of shape (*batch_shape, 1 + 5 * max_n_components), why:
+        # We need:
+        #   + one scalar for the exit probability,
+        #   + self.n_components for the alpha_theta
+        #   + self.n_components for the betas_theta
+        #   + self.n_components for the mixture logits
+        # but we also need compatibility with the s0 state, which has two additional
+        # parameters:
+        #   + self.n_s0_components for the alpha_r
+        #   + self.n_s0_components for the beta_r
+        # and finally, we want to be able to give a different number of parameters to
+        # s0 and st. So we need to use self._n_comp_max to split on the larger size, and
+        # then index to slice out the smaller size when appropriate.
+        assert module_output.shape == states.batch_shape + (1 + 5 * self._n_comp_max,)
+
+        (
+            exit_probability,
+            mixture_logits,
+            alpha_r,
+            beta_r,
+            alpha_theta,
+            beta_theta,
+        ) = split_PF_module_output(module_output, self._n_comp_max)
+        mixture_logits = mixture_logits.view(-1)
+
+        def _normalize(x):
+            return self.min_concentration + (
+                self.max_concentration - self.min_concentration
+            ) * x.view(-1)
+
+        alpha_r = _normalize(alpha_r)
+        beta_r = _normalize(beta_r)
+        alpha_theta = _normalize(alpha_theta)
+        beta_theta = _normalize(beta_theta)
+
+        return DistributionWrapper(
+            states,
+            self.env,
+            self.env.delta,
+            mixture_logits,
+            alpha_r,
+            beta_r,
+            alpha_theta,
+            beta_theta,
+            exit_probability.squeeze(-1),
+            self.n_components,
+            self.n_components_s0,
+        )
 
 
 class BoxPBEstimator(ProbabilityEstimator):
@@ -754,7 +821,8 @@ if __name__ == "__main__":
         )
     )
     ax.scatter(samples_disk[:, 0], samples_disk[:, 1], s=0.1, marker="x")
-    # plt.show()
+    # plt.show()  # TODO: Come up with a good test or two here that instead of printing
+    # to screen, does something that's easy to verify in code / the terminal.
 
     quarter_circle_with_exit_dist = QuarterCircleWithExit(
         delta=delta,
@@ -767,3 +835,97 @@ if __name__ == "__main__":
 
     samples_exit = quarter_circle_with_exit_dist.sample()
     print("exit_samples:\n{}\n".format(samples_exit))
+
+    # TODO: This will be a set of tests for the mixed distribution code.
+    # Simple test to assess the new multi-distribution estimator.
+    centers_start = States(torch.FloatTensor([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]))
+    centers_mixed = States(torch.FloatTensor([[0.03, 0.06], [0.0, 0.0], [0.0, 0.0]]))
+    centers_intermediate = States(
+        torch.FloatTensor([[0.03, 0.06], [0.2, 0.3], [0.95, 0.7]])
+    )
+
+    hidden_dim = 10
+    n_hidden_layers = 2
+    n_components = 4
+    n_components_s0 = 5
+
+    net_forward = BoxPFNeuralNet(
+        hidden_dim=hidden_dim,
+        n_hidden_layers=n_hidden_layers,
+        n_components=n_components,
+        n_components_s0=n_components_s0,
+    )
+    net_backward = BoxPBNeuralNet(
+        hidden_dim=hidden_dim,
+        n_hidden_layers=n_hidden_layers,
+        n_components=n_components,
+    )
+
+    estimator_forward = BoxPFEstimator(
+        env=environment,
+        module=net_forward,
+        n_components_s0=n_components_s0,
+        n_components=n_components,
+    )
+    estimator_backward = BoxPBEstimator(
+        env=environment, module=net_forward, n_components=n_components
+    )
+
+    out_start = net_forward(centers_start.tensor)
+    out_mixed = net_forward(centers_mixed.tensor)
+    out_intermediate = net_forward(centers_intermediate.tensor)
+
+    # The starting distriutions are all zero at init.
+    assert torch.all(out_start == 0)
+
+    # Check the mixed_distribution.
+    assert torch.all(torch.sum(out_mixed == 0, -1)[1:])  # Second two elems are s_0.
+
+    # Retrieve the non-s0 elem and split:
+    (
+        exit_probability,
+        mixture_logits,
+        alpha_r,
+        beta_r,
+        alpha_theta,
+        beta_theta,
+    ) = split_PF_module_output(
+        out_mixed[0, :].unsqueeze(0), max(n_components_s0, n_components)
+    )
+
+    assert exit_probability > 0
+
+    def _assert_correct_parameter_masking(x):
+        B, P = x.shape
+        assert (
+            torch.sum(x == 0) == (n_components_s0 - n_components) * B
+        )  # max - min == 1.
+        assert torch.all(x[..., -1] == 0)  # Zeroed elem should be final one.
+
+    _assert_correct_parameter_masking(mixture_logits)
+    _assert_correct_parameter_masking(alpha_r)
+    _assert_correct_parameter_masking(beta_r)
+
+    # These are all zero, because they're only used at s_0.
+    assert torch.sum(alpha_theta == 0) == max(n_components_s0, n_components)
+    assert torch.sum(beta_theta == 0) == max(n_components_s0, n_components)
+
+    # Now check the batch of all-intermediate states.
+    B, P = out_intermediate.shape
+    (
+        exit_probability,
+        mixture_logits,
+        alpha_r,
+        beta_r,
+        alpha_theta,
+        beta_theta,
+    ) = split_PF_module_output(out_intermediate, max(n_components_s0, n_components))
+
+    assert len(exit_probability > 0) == B  # All exit probabilities are non-zero.
+
+    _assert_correct_parameter_masking(mixture_logits)
+    _assert_correct_parameter_masking(alpha_r)
+    _assert_correct_parameter_masking(beta_r)
+
+    assert torch.sum(alpha_theta == 0) == B * max(n_components_s0, n_components)
+    assert torch.sum(beta_theta == 0) == B * max(n_components_s0, n_components)
