@@ -54,16 +54,12 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     log_F_edge = LogEdgeFlowEstimator(env=env, module=module)
     parametrization = FMParametrization(log_F_edge)
 
-    print(parametrization.sample_trajectories(n_samples=10))
-    print(parametrization.sample_terminating_states(n_samples=10))
-    print(parametrization.parameters.keys())
-
     trajectories = parametrization.sample_trajectories(n_samples=10)
 
     states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
 
     loss = parametrization.loss(states_tuple)
-    print(loss)
+    assert loss >= 0
 
 
 test_FM("DiscreteEBM", 2, "NeuralNet")
@@ -85,9 +81,11 @@ def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
         pf_estimator, pb_estimator, on_policy=False, logZ=logZ
     )
 
-    log_pfs_on, log_pbs_on = parametrization_on.get_pfs_and_pbs(trajectories)
-    log_pfs_off, log_pbs_off = parametrization_off.get_pfs_and_pbs(trajectories)
-    print(log_pfs_on, log_pbs_on, log_pfs_off, log_pbs_off)
+    try:
+        log_pfs_on, log_pbs_on = parametrization_on.get_pfs_and_pbs(trajectories)
+        log_pfs_off, log_pbs_off = parametrization_off.get_pfs_and_pbs(trajectories)
+    except Exception as e:
+        raise ValueError("Error in get_pfs_and_pbs") from e
 
 
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
@@ -107,17 +105,12 @@ def test_get_scores(env_name: str, preprocessor_name: str):
     )
     scores_on = parametrization_on.get_trajectories_scores(trajectories)
     scores_off = parametrization_off.get_trajectories_scores(trajectories)
-    print(scores_on)
-    print(scores_off)
     assert all(
         [
             torch.all(torch.abs(scores_on[i] - scores_off[i]) < 1e-4)
             for i in range(len(scores_on))
         ]
     )
-
-
-# test_get_scores("Box", "Identity")
 
 
 @pytest.mark.parametrize(
@@ -239,17 +232,16 @@ def test_PFBasedParametrization(
         )
     else:
         raise ValueError(f"Unknown parametrization {parametrization_name}")
-    print(parametrization.sample_trajectories(10))
-
-    print(parametrization.parameters.keys())
-    print(len(set(parametrization.parameters.values())))
 
     trajectories = parametrization.sample_trajectories(10)
     if parametrization_name == "DB":
         training_objects = trajectories.to_transitions()
     else:
         training_objects = trajectories
-    loss = parametrization.loss(training_objects)
+    try:
+        loss = parametrization.loss(training_objects)
+    except Exception as e:
+        raise ValueError("Loss computation failed") from e
 
     if parametrization_name == "TB":
         assert torch.all(
@@ -260,7 +252,6 @@ def test_PFBasedParametrization(
             < 1e-5
         )
 
-    print(loss)
     return env, pf, pb, logF, logZ, parametrization
 
 
@@ -296,6 +287,4 @@ def test_subTB_vs_TB(
 
     if weighing == "TB":
         tb_loss = TBParametrization(pf, pb, logZ=logZ).loss(trajectories)
-        print("TB loss", tb_loss)
-        print("SubTB loss", subtb_loss)
         assert (tb_loss - subtb_loss).abs() < 1e-4
