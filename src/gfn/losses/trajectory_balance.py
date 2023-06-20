@@ -37,6 +37,9 @@ class TBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
 
         The trajectory balance loss is described in 2.3 of
         [Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259))
+
+        Raises:
+            ValueError: if the loss is NaN.
         """
         _, _, scores = self.get_trajectories_scores(trajectories)
         loss = (scores + self.logZ.tensor).pow(2).mean()
@@ -55,6 +58,9 @@ class LogPartitionVarianceParametrization(
     Attributes:
         on_policy: boolean indicating whether we need to reevaluate the log probs.
         log_reward_clip_min: minimal value to clamp the reward to.
+
+    Raises:
+        ValueError: if the loss is NaN.
     """
 
     on_policy: bool = False
