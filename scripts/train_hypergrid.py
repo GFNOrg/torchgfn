@@ -30,15 +30,10 @@ from gfn.utils.common import trajectories_to_training_samples, validate
 from gfn.utils.estimators import DiscretePBEstimator, DiscretePFEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
-
 if __name__ == "__main__":
     parser = ArgumentParser()
 
-    parser.add_argument(
-        "--no_cuda",
-        action="store_true",
-        help="If set, then don't use CUDA even if it's available",
-    )
+    parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
 
     parser.add_argument(
         "--ndim", type=int, default=2, help="Number of dimensions in the environment"
@@ -56,7 +51,12 @@ if __name__ == "__main__":
         default=0,
         help="Random seed, if 0 then a random seed is used",
     )
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=16,
+        help="Batch size, i.e. number of trajectories to sample per training iteration",
+    )
 
     parser.add_argument(
         "--loss",
@@ -78,51 +78,58 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tabular",
         action="store_true",
-        help="If set, use a lookup table for F, PF, PB",
+        help="Use a lookup table for F, PF, PB instead of an estimator",
     )
+    parser.add_argument("--uniform_pb", action="store_true", help="Use a uniform PB")
     parser.add_argument(
-        "--uniform_pb", action="store_true", help="If set, use a uniform PB"
-    )
-    parser.add_argument(
-        "--tied",
-        action="store_true",
-        help="If set, tie the parameters of PF, PB, and F",
+        "--tied", action="store_true", help="Tie the parameters of PF, PB, and F"
     )
     parser.add_argument(
         "--hidden_dim",
         type=int,
         default=256,
-        help="Dimension of the neural network inner layers",
+        help="Hidden dimension of the estimators' neural network modules.",
     )
     parser.add_argument(
-        "--n_hidden", type=int, default=2, help="Number of hidden layers"
+        "--n_hidden",
+        type=int,
+        default=2,
+        help="Number of hidden layers (of size `hidden_dim`) in the estimators'"
+        + " neural network modules",
     )
 
     parser.add_argument(
-        "--lr", type=float, default=1e-3, help="Learning rate for everything but logZ"
+        "--lr",
+        type=float,
+        default=1e-3,
+        help="Learning rate for the estimators' modules",
     )
     parser.add_argument(
-        "--lr_Z", type=float, default=0.1, help="Learning rate for logZ"
+        "--lr_Z",
+        type=float,
+        default=0.1,
+        help="Specific learning rate for Z (only used for TB loss)",
     )
 
     parser.add_argument(
         "--n_trajectories",
         type=int,
         default=int(1e6),
-        help="Number of total trajectories to use for training",
+        help="Total budget of trajectories to train on. "
+        + "Training iterations = n_trajectories // batch_size",
     )
 
     parser.add_argument(
         "--validation_interval",
         type=int,
         default=100,
-        help="Number of training steps between validation steps",
+        help="How often (in training steps) to validate the parameterization",
     )
     parser.add_argument(
         "--validation_samples",
         type=int,
         default=200000,
-        help="Number of validation samples to use to evaluate the probability mass function",
+        help="Number of validation samples to use to evaluate the probability mass function.",
     )
 
     parser.add_argument(
@@ -132,6 +139,7 @@ if __name__ == "__main__":
         help="Name of the wandb project. If empty, don't use wandb",
     )
 
+    args = parser.parse_args()
     args = parser.parse_args()
 
     seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
@@ -149,9 +157,15 @@ if __name__ == "__main__":
         args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
     )
 
-    # 2. Create the necessary modules, estimators, and parametrizations
+    # 2. Create the parameterization.
+    #    For this we need modules and estimators.
+    #    Depending on the loss, we may need several estimators:
+    #       one (forward only) for FM loss,
+    #       two (forward and backward) or other losses
+    #       three (same, + logZ) estimators for TB.
+    parametrization = None
     if args.loss == "FM":
-        # We need a LogEdgeFlowEstimator to use the FM loss
+        # We need a LogEdgeFlowEstimator
         if args.tabular:
             module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
         else:
@@ -164,7 +178,8 @@ if __name__ == "__main__":
         estimator = LogEdgeFlowEstimator(env=env, module=module)
         parametrization = FMParametrization(estimator)
     else:
-        # We need a DiscretePFEstimator and a DiscretePBEstimator to use TB/SubTB/DB/ZVar
+        pb_module = None
+        # We need a DiscretePFEstimator and a DiscretePBEstimator
         if args.tabular:
             pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
             if not args.uniform_pb:
@@ -186,46 +201,72 @@ if __name__ == "__main__":
                 )
         if args.uniform_pb:
             pb_module = DiscreteUniform(env.n_actions - 1)
+
+        assert (
+            pf_module is not None
+        ), f"pf_module is None. Command-line arguments: {args}"
+        assert (
+            pb_module is not None
+        ), f"pb_module is None. Command-line arguments: {args}"
+
         pf_estimator = DiscretePFEstimator(env=env, module=pf_module)
         pb_estimator = DiscretePBEstimator(env=env, module=pb_module)
 
-    if args.loss in ("DB", "SubTB"):
-        # We need a LogStateFlowEstimator
-        if args.tabular:
-            module = Tabular(n_states=env.n_states, output_dim=1)
-        else:
-            module = NeuralNet(
-                input_dim=env.preprocessor.output_dim,
-                output_dim=1,
-                hidden_dim=args.hidden_dim,
-                n_hidden_layers=args.n_hidden,
-                torso=pf_module.torso if args.tied else None,
-            )
-        logF_estimator = LogStateFlowEstimator(env=env, module=module)
+        if args.loss in ("DB", "SubTB"):
+            # We need a LogStateFlowEstimator
 
-        if args.loss == "DB":
-            parametrization = DBParametrization(
-                pf=pf_estimator, pb=pb_estimator, logF=logF_estimator, on_policy=True
-            )
-        else:
-            parametrization = SubTBParametrization(
+            assert (
+                pf_estimator is not None
+            ), f"pf_estimator is None. Command-line arguments: {args}"
+            assert (
+                pb_estimator is not None
+            ), f"pb_estimator is None. Command-line arguments: {args}"
+
+            if args.tabular:
+                module = Tabular(n_states=env.n_states, output_dim=1)
+            else:
+                module = NeuralNet(
+                    input_dim=env.preprocessor.output_dim,
+                    output_dim=1,
+                    hidden_dim=args.hidden_dim,
+                    n_hidden_layers=args.n_hidden,
+                    torso=pf_module.torso if args.tied else None,
+                )
+            logF_estimator = LogStateFlowEstimator(env=env, module=module)
+
+            if args.loss == "DB":
+                parametrization = DBParametrization(
+                    pf=pf_estimator,
+                    pb=pb_estimator,
+                    logF=logF_estimator,
+                    on_policy=True,
+                )
+            else:
+                parametrization = SubTBParametrization(
+                    pf=pf_estimator,
+                    pb=pb_estimator,
+                    logF=logF_estimator,
+                    on_policy=True,
+                    weighing=args.subTB_weighing,
+                    lamda=args.subTB_lambda,
+                )
+        elif args.loss == "TB":
+            # We need a LogZEstimator
+            logZ = LogZEstimator(tensor=torch.tensor(0.0, device=env.device))
+            parametrization = TBParametrization(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                logF=logF_estimator,
+                logZ=logZ,
                 on_policy=True,
-                weighing=args.subTB_weighing,
-                lamda=args.subTB_lambda,
             )
-    elif args.loss == "TB":
-        # We need a LogZEstimator
-        logZ = LogZEstimator(tensor=torch.tensor(0.0, device=env.device))
-        parametrization = TBParametrization(
-            pf=pf_estimator, pb=pb_estimator, logZ=logZ, on_policy=True
-        )
-    elif args.loss == "ZVar":
-        parametrization = LogPartitionVarianceParametrization(
-            pf=pf_estimator, pb=pb_estimator, on_policy=True
-        )
+        elif args.loss == "ZVar":
+            parametrization = LogPartitionVarianceParametrization(
+                pf=pf_estimator,
+                pb=pb_estimator,
+                on_policy=True,
+            )
+
+    assert parametrization is not None, f"No parametrization for loss {args.loss}"
 
     # 3. Create the optimizer
     params = [
@@ -238,10 +279,10 @@ if __name__ == "__main__":
             "lr": args.lr,
         }
     ]
-    if "logZ_logZ" in parametrization.parameters:
+    if "logZ.logZ" in parametrization.parameters:
         params.append(
             {
-                "params": [parametrization.parameters["logZ_logZ"]],
+                "params": [parametrization.parameters["logZ.logZ"]],
                 "lr": args.lr_Z,
             }
         )
