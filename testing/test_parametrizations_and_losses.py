@@ -8,7 +8,7 @@ from gfn.examples.box_utils import (
     BoxPBEstimator,
     BoxPBNeuralNet,
     BoxPBUniform,
-    BoxPFEStimator,
+    BoxPFEstimator,
     BoxPFNeuralNet,
 )
 from gfn.losses import (
@@ -205,7 +205,7 @@ def test_PFBasedParametrization(
             logF_module = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=1)
 
     if env_name == "Box":
-        pf = BoxPFEStimator(env, pf_module, n_components_s0=ndim - 1, n_components=ndim)
+        pf = BoxPFEstimator(env, pf_module, n_components_s0=ndim - 1, n_components=ndim)
         pb = BoxPBEstimator(
             env,
             pb_module,

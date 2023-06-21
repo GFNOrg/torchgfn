@@ -9,7 +9,7 @@ from gfn.envs import BoxEnv, DiscreteEBMEnv, HyperGrid
 from gfn.examples.box_utils import (
     BoxPBEstimator,
     BoxPBNeuralNet,
-    BoxPFEStimator,
+    BoxPFEstimator,
     BoxPFNeuralNet,
 )
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
@@ -47,7 +47,7 @@ def test_trajectory_sampling(
             n_components=3,
             torso=pf_module.torso,
         )
-        pf_estimator = BoxPFEStimator(
+        pf_estimator = BoxPFEstimator(
             env=env, module=pf_module, n_components=3, n_components_s0=2
         )
         pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=3)
