@@ -36,15 +36,20 @@ if __name__ == "__main__":
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
 
     parser.add_argument(
-        "--ndim", type=int, default=2, help="Dimensionality of the hyper grid"
+        "--ndim", type=int, default=2, help="Number of dimensions in the environment"
     )
-    parser.add_argument("--height", type=int, default=64, help="Size of each dimension")
-    parser.add_argument("--R0", type=float, default=0.1, help="R0 reward factor")
-    parser.add_argument("--R1", type=float, default=0.5, help="R1 reward factor")
-    parser.add_argument("--R2", type=float, default=2.0, help="R2 reward factor")
+    parser.add_argument(
+        "--height", type=int, default=64, help="Height of the environment"
+    )
+    parser.add_argument("--R0", type=float, default=0.1, help="Environment's R0")
+    parser.add_argument("--R1", type=float, default=0.5, help="Environment's R1")
+    parser.add_argument("--R2", type=float, default=2.0, help="Environment's R2")
 
     parser.add_argument(
-        "--seed", type=int, default=0, help="Random seed for reproducibility"
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed, if 0 then a random seed is used",
     )
     parser.add_argument(
         "--batch_size",
@@ -58,25 +63,16 @@ if __name__ == "__main__":
         type=str,
         choices=["FM", "TB", "DB", "SubTB", "ZVar"],
         default="TB",
-        help="Loss parameterization to train with",
+        help="Loss function to use",
     )
     parser.add_argument(
         "--subTB_weighing",
         type=str,
-        choices=[
-            "DB",
-            "ModifiedDB",
-            "TB",
-            "geometric",
-            "equal",
-            "geometric_within",
-            "equal_within",
-        ],
         default="geometric_within",
-        help="Weighing scheme for the SubTB loss",
+        help="Weighing scheme for SubTB",
     )
     parser.add_argument(
-        "--subTB_lambda", type=float, default=0.9, help="SubTB lambda scale factor"
+        "--subTB_lambda", type=float, default=0.9, help="Lambda parameter for SubTB"
     )
 
     parser.add_argument(
@@ -133,17 +129,17 @@ if __name__ == "__main__":
         "--validation_samples",
         type=int,
         default=200000,
-        help="Number of validation samples to use to evaluate the pmf.",
+        help="Number of validation samples to use to evaluate the probability mass function.",
     )
 
     parser.add_argument(
-        "--wandb",
+        "--wandb_project",
         type=str,
         default="",
-        help="Wandb project name. Disabled by default. Set to a string to enable "
-        + "wandb logging",
+        help="Name of the wandb project. If empty, don't use wandb",
     )
 
+    args = parser.parse_args()
     args = parser.parse_args()
 
     seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
@@ -151,16 +147,15 @@ if __name__ == "__main__":
 
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
-    use_wandb = len(args.wandb) > 0
+    use_wandb = len(args.wandb_project) > 0
     if use_wandb:
-        wandb.init(project=args.wandb)
+        wandb.init(project=args.wandb_project)
         wandb.config.update(args)
 
     # 1. Create the environment
     env = HyperGrid(
         args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
     )
-    parametrization = pb_module = pf_module = pf_estimator = pb_estimator = None
 
     # 2. Create the parameterization.
     #    For this we need modules and estimators.
@@ -168,6 +163,7 @@ if __name__ == "__main__":
     #       one (forward only) for FM loss,
     #       two (forward and backward) or other losses
     #       three (same, + logZ) estimators for TB.
+    parametrization = None
     if args.loss == "FM":
         # We need a LogEdgeFlowEstimator
         if args.tabular:
@@ -182,6 +178,7 @@ if __name__ == "__main__":
         estimator = LogEdgeFlowEstimator(env=env, module=module)
         parametrization = FMParametrization(estimator)
     else:
+        pb_module = None
         # We need a DiscretePFEstimator and a DiscretePBEstimator
         if args.tabular:
             pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
@@ -301,10 +298,9 @@ if __name__ == "__main__":
         training_samples = trajectories_to_training_samples(
             trajectories, parametrization
         )
-        training_objects = training_samples
 
         optimizer.zero_grad()
-        loss = parametrization.loss(training_objects)
+        loss = parametrization.loss(training_samples)
         loss.backward()
         optimizer.step()
 
