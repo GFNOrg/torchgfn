@@ -1,12 +1,12 @@
 from dataclasses import dataclass
+from typing import Tuple
 
 import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Transitions
 from gfn.estimators import LogStateFlowEstimator
-from gfn.losses.base import EdgeDecomposableLoss, PFBasedParametrization
-from gfn.samplers import ActionsSampler
+from gfn.losses.base import PFBasedParametrization
 
 
 @dataclass
@@ -20,34 +20,22 @@ class DBParametrization(PFBasedParametrization):
     functions consistent with the DAG. $\mathcal{O}_3$ is the set of backward
     probability functions consistent with the DAG, or a singleton thereof, if
     `self.logit_PB` is a fixed `DiscretePBEstimator`.
-    """
-    logF: LogStateFlowEstimator
-
-
-# TODO: Should this loss live within the Parameterization, as a method?
-# TODO: Should this be called DetaiedBalanceLoss?
-class DetailedBalance(EdgeDecomposableLoss):
-    """Loss object for the Detailed Balance objective.
-
-    This method is described in section
-    3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
-        parameterization: a DBParametrization instance.
-        actions_sampler: ActionsSampler for the forwards policy.
-        backwards_actions_sampler: ActionsSampler for the backwards policy.
-        on_policy: whether the log probs stored in the transitions are used.
+        logF: a LogStateFlowEstimator instance.
+        on_policy: boolean indicating whether we need to reevaluate the log probs.
+
     """
+    logF: LogStateFlowEstimator
+    on_policy: bool = False
 
-    def __init__(self, parametrization: DBParametrization, on_policy: bool = False):
-        """Instantiates a DetailedBalance instance.
-        Args:
-            parameterization: a DBParametrization instance.
-            on_policy: whether model is being trained on-policy.
-        """
-        super().__init__(parametrization, on_policy)
-
-    def get_scores(self, transitions: Transitions):
+    def get_scores(
+        self, transitions: Transitions
+    ) -> Tuple[
+        TT["n_transitions", float],
+        TT["n_transitions", float],
+        TT["n_transitions", float],
+    ]:
         """Given a batch of transitions, calculate the scores.
 
         Args:
@@ -70,11 +58,9 @@ class DetailedBalance(EdgeDecomposableLoss):
         if self.on_policy:
             valid_log_pf_actions = transitions.log_probs
         else:
-            valid_log_pf_actions = self.parametrization.pf(states).log_prob(
-                actions.tensor
-            )
+            valid_log_pf_actions = self.pf(states).log_prob(actions.tensor)
 
-        valid_log_F_s = self.parametrization.logF(states).squeeze(-1)
+        valid_log_F_s = self.logF(states).squeeze(-1)
 
         preds = valid_log_pf_actions + valid_log_F_s
 
@@ -87,7 +73,7 @@ class DetailedBalance(EdgeDecomposableLoss):
         valid_next_states = transitions.next_states[~transitions.is_done]
         non_exit_actions = actions[~actions.is_exit]
 
-        valid_log_pb_actions = self.parametrization.pb(valid_next_states).log_prob(
+        valid_log_pb_actions = self.pb(valid_next_states).log_prob(
             non_exit_actions.tensor
         )
 
@@ -95,7 +81,7 @@ class DetailedBalance(EdgeDecomposableLoss):
             ~transitions.states.is_sink_state
         ]
 
-        valid_log_F_s_next = self.parametrization.logF(valid_next_states).squeeze(-1)
+        valid_log_F_s_next = self.logF(valid_next_states).squeeze(-1)
         targets[~valid_transitions_is_done] = valid_log_pb_actions
         log_pb_actions = targets.clone()
         targets[~valid_transitions_is_done] += valid_log_F_s_next
@@ -111,7 +97,11 @@ class DetailedBalance(EdgeDecomposableLoss):
 
         return (valid_log_pf_actions, log_pb_actions, scores)
 
-    def __call__(self, transitions: Transitions) -> TT[0, float]:
+    def loss(self, transitions: Transitions) -> TT[0, float]:
+        """Detailed balance loss.
+
+        The detailed balance loss is described in section
+        3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266)."""
         _, _, scores = self.get_scores(transitions)
         loss = torch.mean(scores**2)
 
@@ -120,6 +110,7 @@ class DetailedBalance(EdgeDecomposableLoss):
 
         return loss
 
+    # TODO: adapt this !
     def get_modified_scores(
         self, transitions: Transitions
     ) -> TT["n_trajectories", torch.float]:
@@ -165,3 +156,7 @@ class DetailedBalance(EdgeDecomposableLoss):
             raise ValueError("scores contains inf")
 
         return scores
+
+    def modifieddb_loss(self, transitions: Transitions) -> TT[0, float]:
+        # TODO
+        pass

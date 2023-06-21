@@ -5,12 +5,6 @@ from typing import TYPE_CHECKING, Literal
 
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
-from gfn.losses import (
-    EdgeDecomposableLoss,
-    Loss,
-    StateDecomposableLoss,
-    TrajectoryDecomposableLoss,
-)
 
 if TYPE_CHECKING:
     from gfn.envs import Env
@@ -32,11 +26,10 @@ class ReplayBuffer:
     def __init__(
         self,
         env: Env,
-        loss_fn: Loss | None = None,
         objects_type: Literal["transitions", "trajectories", "states"] | None = None,
         capacity: int = 1000,
     ):
-        """Intantiates a replay buffer.
+        """Instantiates a replay buffer.
         Args:
             env: the Environment instance.
             loss_fn: the Loss instance.
@@ -46,22 +39,18 @@ class ReplayBuffer:
         self.env = env
         self.capacity = capacity
         self.terminating_states = None
-        if objects_type == "trajectories" or isinstance(
-            loss_fn, TrajectoryDecomposableLoss
-        ):
+        if objects_type == "trajectories":
             self.training_objects = Trajectories(env)
             self.objects_type = "trajectories"
-        elif objects_type == "transitions" or isinstance(loss_fn, EdgeDecomposableLoss):
+        elif objects_type == "transitions":
             self.training_objects = Transitions(env)
             self.objects_type = "transitions"
-        elif objects_type == "states" or isinstance(loss_fn, StateDecomposableLoss):
+        elif objects_type == "states":
             self.training_objects = env.States.from_batch_shape((0,))
             self.terminating_states = env.States.from_batch_shape((0,))
             self.objects_type = "states"
         else:
-            raise ValueError(
-                f"Unknown objects_type: {objects_type} and loss_fn: {loss_fn}"
-            )
+            raise ValueError(f"Unknown objects_type: {objects_type}")
 
         self._is_full = False
         self._index = 0

@@ -6,8 +6,8 @@ from typing import Tuple
 import torch
 from torchtyping import TensorType as TT
 
-from gfn.containers import Trajectories, Transitions
-from gfn.estimators import ProbabilityEstimator
+from gfn.containers import Trajectories
+from gfn.estimators import FunctionEstimator, LogZEstimator, ProbabilityEstimator
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
@@ -55,10 +55,15 @@ class Parametrization(ABC):
         """
         # TODO: use parameters of the fields instead, loop through them here
         parameters_dict = {}
-        for name, estimator in self.__dict__.items():
+        for name, value in self.__dict__.items():
+            if isinstance(value, FunctionEstimator) or isinstance(value, LogZEstimator):
+                estimator = value
+            else:
+                continue
+
             parameters_dict.update(
                 {
-                    f"{name}_{key}": value  # TODO: fix name for logZ
+                    f"{name}.{key}": value
                     for key, value in estimator.named_parameters().items()
                 }
             )
@@ -75,7 +80,12 @@ class Parametrization(ABC):
 
 @dataclass
 class PFBasedParametrization(Parametrization, ABC):
-    r"Base class for parametrizations that explicitly uses $P_F$"
+    r"""Base class for parametrizations that explicitly uses $P_F$
+
+    Attributes:
+        pf: ProbabilityEstimator
+        pb: ProbabilityEstimator
+    """
     pf: ProbabilityEstimator
     pb: ProbabilityEstimator
 
@@ -88,39 +98,7 @@ class PFBasedParametrization(Parametrization, ABC):
         return trajectories
 
 
-class Loss(ABC):
-    """Abstract Base Class for all GFN Losses."""
-
-    def __init__(self, parametrization: Parametrization, on_policy: bool = False):
-        self.parametrization = parametrization
-        self.on_policy = on_policy
-
-    @abstractmethod
-    def __call__(self, *args, **kwargs) -> TT[0, float]:
-        pass
-
-
-class EdgeDecomposableLoss(Loss, ABC):
-    @abstractmethod
-    def __call__(self, edges: Transitions) -> TT[0, float]:
-        pass
-
-
-class StateDecomposableLoss(Loss, ABC):
-    @abstractmethod
-    def __call__(self, states_tuple: Tuple[States, States]) -> TT[0, float]:
-        """Given a batch of non-terminal and terminal states, compute a loss.
-
-        Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
-        tuple of states, the first one being the internal states of the trajectories
-        (i.e. non-terminal states), and the second one being the terminal states of the
-        trajectories. If these two are not handled differently, then they should be
-        concatenated together.
-        """
-        pass
-
-
-class TrajectoryDecomposableLoss(Loss, ABC):
+class TrajectoryDecomposableLoss(ABC):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
@@ -166,9 +144,7 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         if self.on_policy:
             log_pf_trajectories = trajectories.log_probs
         else:
-            valid_log_pf_actions = self.parametrization.pf(valid_states).log_prob(
-                valid_actions.tensor
-            )
+            valid_log_pf_actions = self.pf(valid_states).log_prob(valid_actions.tensor)
             log_pf_trajectories = torch.full_like(
                 trajectories.actions.tensor[..., 0],
                 fill_value=fill_value,
@@ -179,9 +155,9 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         non_initial_valid_states = valid_states[~valid_states.is_initial_state]
         non_exit_valid_actions = valid_actions[~valid_actions.is_exit]
 
-        valid_log_pb_actions = self.parametrization.pb(
-            non_initial_valid_states
-        ).log_prob(non_exit_valid_actions.tensor)
+        valid_log_pb_actions = self.pb(non_initial_valid_states).log_prob(
+            non_exit_valid_actions.tensor
+        )
 
         log_pb_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],
@@ -217,7 +193,3 @@ class TrajectoryDecomposableLoss(Loss, ABC):
             log_pb_trajectories,
             log_pf_trajectories - log_pb_trajectories - log_rewards,
         )
-
-    @abstractmethod
-    def __call__(self, trajectories: Trajectories) -> TT[0, float]:
-        pass
