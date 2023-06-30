@@ -1,8 +1,16 @@
 import inspect
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
-from gfn.envs import DiscreteEBMEnv, Env, HyperGrid
+from gfn.envs import Env
+from gfn.utils import add_root_to_path
+
+add_root_to_path()
+
+from examples.envs.discrete_ebm import DiscreteEBMEnv
+from examples.envs.hypergrid import HyperGrid
 
 
 @dataclass

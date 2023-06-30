@@ -1,15 +1,19 @@
 """This file contains utilitary functions for the Box environment."""
-from typing import Literal, Optional, Tuple
+import sys
+from typing import Tuple
 
 import numpy as np
 import torch
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
 from torchtyping import TensorType as TT
 
-from gfn.envs import BoxEnv
 from gfn.estimators import ProbabilityEstimator
 from gfn.states import States
-from gfn.utils import NeuralNet
+from gfn.utils import NeuralNet, add_root_to_path
+
+add_root_to_path()
+
+from examples.envs import BoxEnv
 
 PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0
@@ -332,7 +336,6 @@ class DistributionWrapper(Distribution):
         n_components,
         n_components_s0,
     ):
-
         self.env = env
         self.idx_is_inital = torch.where(states.tensor == 0)[
             0
@@ -360,7 +363,6 @@ class DistributionWrapper(Distribution):
         )  # no sample_shape req as it is stored in centers.
 
     def sample(self, sample_shape=()):
-
         output = torch.zeros(sample_shape + self._output_shape)
 
         n_disk_samples = len(self.idx_is_inital)
