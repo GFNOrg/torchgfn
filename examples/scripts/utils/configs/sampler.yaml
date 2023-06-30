@@ -1,0 +1,4 @@
+shared:
+  temperature: 1.0
+  sf_bias: 0.0
+  epsilon: 0.0

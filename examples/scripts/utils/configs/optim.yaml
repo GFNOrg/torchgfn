@@ -1,0 +1,9 @@
+shared:
+  lr: 0.001
+  lr_Z: 0.1
+
+adam:
+  betas: [0.9, 0.999]
+
+sgd:
+  momentum: 0.0

@@ -140,19 +140,17 @@ def load_named_config(namespace: str, value: str) -> dict:
     Returns:
         dict: Config for that namespace
     """
-    base = resolve(Path(__file__)).parent
-    config = safe_load((base / f"{namespace}/base.yaml").read_text())
+    base = resolve(Path(__file__)).parent / "configs"
+    config = safe_load((base / f"{namespace}.yaml").read_text())
 
     if value is None:
-        return config
+        return config["shared"]
 
-    value = value.replace(".yaml", "")
-    value = base / f"{namespace}/{value}.yaml"
+    value = value.replace(".yaml", "").replace("-", "_")
 
-    if not value.exists():
-        raise ValueError(f"Config {value.name} does not exist in {str(base)}.")
+    assert value in config
 
-    return update(config, safe_load(value.read_text()))
+    return update(config["shared"], config[value])
 
 
 def load_config(parser: ArgumentParser) -> dict:
@@ -169,7 +167,7 @@ def load_config(parser: ArgumentParser) -> dict:
         dict: GFlowNet run config
     """
     config, cli = parse_args_to_dict(parser)
-    namespaces = set(b.parent.name for b in Path(__file__).parent.glob("*/base.yaml"))
+    namespaces = set(f.stem for f in Path(__file__).parent.glob("*.yaml"))
     for namespace in namespaces:
         value = config.get(namespace.replace(".yaml", ""))
         config[namespace] = load_named_config(namespace, value)
