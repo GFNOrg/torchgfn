@@ -131,7 +131,7 @@ class QuarterCircle(Distribution):
 
         base_01_samples = (sampled_angles - self.min_angles) / (
             self.max_angles - self.min_angles
-        )
+        ).clamp_(min=1e-6, max=1 - 1e-6)
 
         # Ugly hack: when some of the sampled actions are -infinity (exit action), the corresponding value is nan
         # And we don't really care about the log prob of the exit action
@@ -140,7 +140,7 @@ class QuarterCircle(Distribution):
             torch.isnan(base_01_samples),
             torch.ones_like(base_01_samples) * 0.5,
             base_01_samples,
-        )
+        ).clamp_(min=1e-6, max=1 - 1e-6)
 
         # Another hack: when backward (northeastern=False), sometimes the sampled_actions are equal to the centers
         # In this case, the base_01_samples are close to 0 because of approximations errors. But they do not count
@@ -150,7 +150,7 @@ class QuarterCircle(Distribution):
                 torch.norm(sampled_actions, dim=-1) <= self.delta,
                 torch.ones_like(base_01_samples) * 1e-6,
                 base_01_samples,
-            )
+            ).clamp_(min=1e-6, max=1 - 1e-6)
 
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
 
@@ -169,6 +169,9 @@ class QuarterCircle(Distribution):
                 logprobs,
             )
 
+        if torch.any(torch.isinf(logprobs)):
+            raise ValueError("logprobs contains inf")
+
         return logprobs
 
 
@@ -183,7 +186,6 @@ class QuarterDisk(Distribution):
 
     def __init__(
         self,
-        batch_shape: Tuple[int],
         delta: float,
         mixture_logits: TT["n_components"],
         alpha_r: TT["n_components"],
@@ -191,7 +193,6 @@ class QuarterDisk(Distribution):
         alpha_theta: TT["n_components"],
         beta_theta: TT["n_components"],
     ):
-        self._batch_shape = batch_shape
         self.delta = delta
         self.mixture_logits = mixture_logits
         self.n_components = mixture_logits.shape[0]
@@ -212,12 +213,8 @@ class QuarterDisk(Distribution):
         )
 
     def sample(self, sample_shape: torch.Size = torch.Size()) -> TT["sample_shape", 2]:
-        base_r_01_samples = self.base_r_dist.sample(
-            sample_shape=self._batch_shape + sample_shape
-        )
-        base_theta_01_samples = self.base_theta_dist.sample(
-            sample_shape=self._batch_shape + sample_shape
-        )
+        base_r_01_samples = self.base_r_dist.sample(sample_shape=sample_shape)
+        base_theta_01_samples = self.base_theta_dist.sample(sample_shape=sample_shape)
 
         sampled_actions = self.delta * (
             torch.stack(
@@ -239,7 +236,7 @@ class QuarterDisk(Distribution):
         base_theta_01_samples = (
             torch.arccos(sampled_actions[..., -1] / (base_r_01_samples * self.delta))
             / PI_2
-        )
+        ).clamp_(1e-6, 1 - 1e-6)
 
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
@@ -248,6 +245,9 @@ class QuarterDisk(Distribution):
             - np.log(PI_2)
             - torch.log(base_r_01_samples * self.delta)
         )
+
+        if torch.any(torch.isinf(logprobs)):
+            raise ValueError("logprobs contains inf")
 
         return logprobs
 
@@ -320,9 +320,9 @@ class QuarterCircleWithExit(Distribution):
 class DistributionWrapper(Distribution):
     def __init__(
         self,
-        states,
-        env,
-        delta,
+        states: States,
+        env: BoxEnv,
+        delta: float,
         mixture_logits,
         alpha_r,
         beta_r,
@@ -332,47 +332,71 @@ class DistributionWrapper(Distribution):
         n_components,
         n_components_s0,
     ):
-
         self.env = env
-        self.idx_is_inital = torch.where(states.tensor == 0)[
+        self.idx_is_initial = torch.where(torch.all(states.tensor == 0, 1))[
             0
         ]  # TODO: states.is_initial
-        self.idx_not_inital = torch.where(states.tensor != 0)[
+        self.idx_not_initial = torch.where(torch.any(states.tensor != 0, 1))[
             0
         ]  # TODO: ~states.is_initial
         self._output_shape = states.tensor.shape
-        self.quarter_disk = QuarterDisk(
-            batch_shape=states.tensor.shape[0],
-            delta=delta,
-            mixture_logits=mixture_logits[self.idx_is_inital, :n_components_s0],
-            alpha_r=alpha_r[self.idx_is_inital, :n_components_s0],
-            beta_r=beta_r[self.idx_is_inital, :n_components_s0],
-            alpha_theta=alpha_theta[self.idx_is_inital, :n_components_s0],
-            beta_theta=beta_theta[self.idx_is_inital, :n_components_s0],
-        )
-        self.quarter_circ = QuarterCircleWithExit(
-            delta=self.env.delta,
-            centers=states[states.tensor != 0],  # Remove initial states.
-            exit_probability=exit_probability[self.idx_not_inital, :],
-            mixture_logits=mixture_logits[self.idx_not_inital, :n_components],
-            alpha=alpha_r[self.idx_not_inital, :n_components],  # TODO: verify.
-            beta=beta_r[self.idx_not_inital, :n_components],  # TODO: verify
-        )  # no sample_shape req as it is stored in centers.
+        self.quarter_disk = None
+        if len(self.idx_is_initial) > 0:
+            self.quarter_disk = QuarterDisk(
+                delta=delta,
+                mixture_logits=mixture_logits[self.idx_is_initial[0], :n_components_s0],
+                alpha_r=alpha_r[self.idx_is_initial[0], :n_components_s0],
+                beta_r=beta_r[self.idx_is_initial[0], :n_components_s0],
+                alpha_theta=alpha_theta[self.idx_is_initial[0], :n_components_s0],
+                beta_theta=beta_theta[self.idx_is_initial[0], :n_components_s0],
+            )
+        self.quarter_circ = None
+        if len(self.idx_not_initial) > 0:
+            self.quarter_circ = QuarterCircleWithExit(
+                delta=self.env.delta,
+                centers=states[self.idx_not_initial],  # Remove initial states.
+                exit_probability=exit_probability[self.idx_not_initial],
+                mixture_logits=mixture_logits[self.idx_not_initial, :n_components],
+                alpha=alpha_r[self.idx_not_initial, :n_components],  # TODO: verify.
+                beta=beta_r[self.idx_not_initial, :n_components],  # TODO: verify
+            )  # no sample_shape req as it is stored in centers.
 
     def sample(self, sample_shape=()):
-
         output = torch.zeros(sample_shape + self._output_shape)
 
-        n_disk_samples = len(self.idx_is_inital)
-        sample_disk = self.quarter_disk.sample(
-            sample_shape=sample_shape + (n_disk_samples,)
-        )
-        sample_circ = self.quarter_circ.sample(sample_shape=sample_shape)
+        n_disk_samples = len(self.idx_is_initial)
+        if n_disk_samples > 0:
+            assert self.quarter_disk is not None
+            sample_disk = self.quarter_disk.sample(
+                sample_shape=sample_shape + (n_disk_samples,)
+            )
+            output[self.idx_is_initial] = sample_disk
+        if len(self.idx_not_initial) > 0:
+            assert self.quarter_circ is not None
+            sample_circ = self.quarter_circ.sample(sample_shape=sample_shape)
+            output[self.idx_not_initial] = sample_circ
 
-        output = output.scatter_(0, self.idx_is_inital, sample_disk)
-        output = output.scatter_(0, self.idx_not_inital, sample_circ)
+        # output = output.scatter_(0, self.idx_is_initial, sample_disk)
+        # output = output.scatter_(0, self.idx_not_initial, sample_circ)
 
         return output
+
+    def log_prob(self, sampled_actions):
+        log_prob = torch.zeros(sampled_actions.shape[:-1])
+        n_disk_samples = len(self.idx_is_initial)
+        if n_disk_samples > 0:
+            assert self.quarter_disk is not None
+            log_prob[self.idx_is_initial] = self.quarter_disk.log_prob(
+                sampled_actions[self.idx_is_initial]
+            )
+        if len(self.idx_not_initial) > 0:
+            assert self.quarter_circ is not None
+            log_prob[self.idx_not_initial] = self.quarter_circ.log_prob(
+                sampled_actions[self.idx_not_initial]
+            )
+        if torch.any(torch.isinf(log_prob)):
+            raise ValueError("log_prob contains inf")
+        return log_prob
 
 
 class BoxPFNeuralNet(NeuralNet):
@@ -421,7 +445,7 @@ class BoxPFNeuralNet(NeuralNet):
         # size is 1 + 5 * self._n_comp_max. This is because the final two components are
         # only used by s_0. Therefore, for s_t>0, 2 "dummy" constant all_zero
         # self._n_comp_max components will be added to the neural network outputs.
-        output_dim = 1 + 3 * max(n_components, n_components_s0)
+        output_dim = 1 + 3 * self._n_comp_max
 
         super().__init__(
             input_dim=input_dim,
@@ -432,7 +456,7 @@ class BoxPFNeuralNet(NeuralNet):
         )
         # Does not include the + 1 to handle the exit probability (which is
         # impossible at t=0).
-        self.PFs0 = torch.nn.Parameter(torch.zeros(1, 5 * n_components_s0))
+        self.PFs0 = torch.nn.Parameter(torch.zeros(1, 5 * self._n_comp_max))
 
         # For the smaller component space (whether it be for s_0 or s_t>0), the unused
         # components will be zeroed out by self.components_mask.
@@ -468,10 +492,6 @@ class BoxPFNeuralNet(NeuralNet):
         out = super().forward(preprocessed_states)
         B, W = out.shape
 
-        # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
-        out[:, 0] = torch.sigmoid(out[:, 0])
-        out[:, 1 + self.n_components :] = torch.sigmoid(out[:, 1 + self.n_components :])
-
         # Add all-zero components for stack-ability with self.PFs0.
         out = torch.cat((out, torch.zeros(B, 2 * self._n_comp_max)), dim=-1)
 
@@ -490,9 +510,15 @@ class BoxPFNeuralNet(NeuralNet):
             out_s0 = out_s0 * self.components_mask
 
         # Overwrite the network outputs with PFs0 in the case that the state is 0.0.
-        idx_s0 = torch.where(preprocessed_states == 0.0)[0]
+        idx_s0 = torch.all(preprocessed_states == 0.0, 1)
         # out_s0[:, 1:] = torch.sigmoid(out[:, 1:])  # TODO: why is this here?
         out[idx_s0, :] = out_s0[idx_s0, :]  # TODO: scatter?
+
+        # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
+        # These are the components that represent the concentration parameters of the Betas, before normalizing, and should
+        # thus be between 0 and 1
+        out[:, 0] = torch.sigmoid(out[:, 0])
+        out[:, 1 + self.n_components :] = torch.sigmoid(out[:, 1 + self.n_components :])
 
         return out
 
@@ -654,12 +680,13 @@ class BoxPFEstimator(ProbabilityEstimator):
             alpha_theta,
             beta_theta,
         ) = split_PF_module_output(module_output, self._n_comp_max)
-        mixture_logits = mixture_logits.view(-1)
+        mixture_logits = mixture_logits  # .contiguous().view(-1)
 
         def _normalize(x):
-            return self.min_concentration + (
-                self.max_concentration - self.min_concentration
-            ) * x.view(-1)
+            return (
+                self.min_concentration
+                + (self.max_concentration - self.min_concentration) * x
+            )  # .contiguous().view(-1)
 
         alpha_r = _normalize(alpha_r)
         beta_r = _normalize(beta_r)
@@ -803,9 +830,8 @@ if __name__ == "__main__":
             marker="x",
         )
 
-    delta = 0.2  # TODO: this does not work with 0.1, why? Triage with Salem.
+    delta = 0.1  # TODO: this does not work with 0.1, why? Triage with Salem. ? Salem: Doesn't it ???
     quarter_disk_dist = QuarterDisk(
-        batch_shape=centers.batch_shape,
         delta=delta,
         mixture_logits=torch.FloatTensor([0.0]),
         alpha_r=torch.FloatTensor([1.0]),
@@ -814,7 +840,7 @@ if __name__ == "__main__":
         beta_theta=torch.FloatTensor([1.0]),
     )
 
-    samples_disk = quarter_disk_dist.sample()
+    samples_disk = quarter_disk_dist.sample(sample_shape=centers.batch_shape)
     print(
         "log_probs of the forward disk samples:\n{}\n".format(
             quarter_disk_dist.log_prob(samples_disk)
@@ -846,8 +872,8 @@ if __name__ == "__main__":
 
     hidden_dim = 10
     n_hidden_layers = 2
-    n_components = 4
-    n_components_s0 = 5
+    n_components = 5
+    n_components_s0 = 6
 
     net_forward = BoxPFNeuralNet(
         hidden_dim=hidden_dim,
@@ -875,7 +901,6 @@ if __name__ == "__main__":
     out_mixed = net_forward(centers_mixed.tensor)
     out_intermediate = net_forward(centers_intermediate.tensor)
 
-
     # Check the mixed_distribution.
     assert torch.all(torch.sum(out_mixed == 0, -1)[1:])  # Second two elems are s_0.
 
@@ -895,18 +920,21 @@ if __name__ == "__main__":
 
     def _assert_correct_parameter_masking(x):
         B, P = x.shape
-        assert (
-            torch.sum(x == 0) == (n_components_s0 - n_components) * B
-        )  # max - min == 1.
-        assert torch.all(x[..., -1] == 0)  # Zeroed elem should be final one.
+        if n_components_s0 > n_components:
+            assert (
+                torch.sum(x == 0.5) == (n_components_s0 - n_components) * B
+            )  # max - min == 1.
+            assert torch.all(
+                x[..., -1] == 0.5
+            )  # Zeroed elem should be final one (before sigmoid).
 
     _assert_correct_parameter_masking(mixture_logits)
     _assert_correct_parameter_masking(alpha_r)
     _assert_correct_parameter_masking(beta_r)
 
-    # These are all zero, because they're only used at s_0.
-    assert torch.sum(alpha_theta == 0) == max(n_components_s0, n_components)
-    assert torch.sum(beta_theta == 0) == max(n_components_s0, n_components)
+    # These are all 0.5, because they're only used at s_0.
+    assert torch.sum(alpha_theta == 0.5) == max(n_components_s0, n_components)
+    assert torch.sum(beta_theta == 0.5) == max(n_components_s0, n_components)
 
     # Now check the batch of all-intermediate states.
     B, P = out_intermediate.shape
@@ -925,5 +953,5 @@ if __name__ == "__main__":
     _assert_correct_parameter_masking(alpha_r)
     _assert_correct_parameter_masking(beta_r)
 
-    assert torch.sum(alpha_theta == 0) == B * max(n_components_s0, n_components)
-    assert torch.sum(beta_theta == 0) == B * max(n_components_s0, n_components)
+    assert torch.sum(alpha_theta == 0.5) == B * max(n_components_s0, n_components)
+    assert torch.sum(beta_theta == 0.5) == B * max(n_components_s0, n_components)

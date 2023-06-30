@@ -39,6 +39,8 @@ class ActionsSampler:
         with torch.no_grad():
             actions = dist.sample()
         log_probs = dist.log_prob(actions)
+        if torch.any(torch.isinf(log_probs)):
+            raise RuntimeError("Log probabilities are inf. This should not happen.")
 
         return self.env.Actions(actions), log_probs
 
