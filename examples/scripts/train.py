@@ -2,8 +2,8 @@ import json
 from argparse import ArgumentParser
 
 import torch
-from utils import load_config, make_env, make_loss, make_optim, make_sampler
 from tqdm import tqdm, trange
+from utils import load_config, make_env, make_loss, make_optim, make_sampler
 
 import wandb
 from gfn.containers.replay_buffer import ReplayBuffer

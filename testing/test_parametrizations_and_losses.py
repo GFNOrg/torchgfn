@@ -14,9 +14,6 @@ from gfn.utils import add_root_to_path
 from gfn.utils.estimators import DiscretePBEstimator, DiscretePFEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
-from pathlib import Path
-import sys
-
 add_root_to_path()
 
 from examples.envs import BoxEnv, DiscreteEBMEnv, HyperGrid

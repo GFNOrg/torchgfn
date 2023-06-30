@@ -2,8 +2,12 @@ import numpy as np
 import pytest
 import torch
 
-from gfn.envs import BoxEnv, DiscreteEBMEnv, HyperGrid
 from gfn.envs.env import NonValidActionsError
+from gfn.utils import add_root_to_path
+
+add_root_to_path()
+
+from examples.envs import BoxEnv, DiscreteEBMEnv, HyperGrid
 
 
 # Utilities.
