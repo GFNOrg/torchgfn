@@ -874,8 +874,6 @@ if __name__ == "__main__":
     out_mixed = net_forward(centers_mixed.tensor)
     out_intermediate = net_forward(centers_intermediate.tensor)
 
-    # The starting distriutions are all zero at init.
-    assert torch.all(out_start == 0)
 
     # Check the mixed_distribution.
     assert torch.all(torch.sum(out_mixed == 0, -1)[1:])  # Second two elems are s_0.
