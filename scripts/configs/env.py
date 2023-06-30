@@ -1,26 +1,19 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from simple_parsing import choice, subgroups
-from simple_parsing.helpers import JsonSerializable
-
 from gfn.envs import DiscreteEBMEnv, Env, HyperGrid
+import inspect
 
 
 @dataclass
-class BaseEnvConfig(JsonSerializable):
-    ...
-
-
-@dataclass
-class HyperGridConfig(BaseEnvConfig):
+class HyperGridConfig:
     ndim: int = 2
     height: int = 8
     R0: float = 0.1
     R1: float = 0.5
     R2: float = 2.0
     reward_cos: bool = False
-    preprocessor_name: str = choice("KHot", "OneHot", "Identity", default="KHot")
+    preprocessor_name: Literal["KHot", "OneHot", "Identity"] = "KHot"
 
     def parse(self, device_str: Literal["cpu", "cuda"]) -> Env:
         return HyperGrid(
@@ -36,7 +29,7 @@ class HyperGridConfig(BaseEnvConfig):
 
 
 @dataclass
-class DiscreteEBMConfig(BaseEnvConfig):
+class DiscreteEBMConfig:
     ndim: int = 4
     alpha: float = 1.0
     # You can define your own custom energy function, and pass it to the DiscreteEBMEnv constructor.
@@ -49,12 +42,21 @@ class DiscreteEBMConfig(BaseEnvConfig):
         )
 
 
-@dataclass
-class EnvConfig(JsonSerializable):
-    env: BaseEnvConfig = subgroups(
-        {"HyperGrid": HyperGridConfig, "DiscreteEBM": DiscreteEBMConfig},
-        default=HyperGridConfig(),
-    )
+def make_env(config: dict) -> Env:
+    assert config["env"]["device"] in [
+        "cpu",
+        "cuda",
+    ], "Invalid device: {}. Must be 'cpu' or 'cuda'".format(config["env"]["device"])
 
-    def parse(self, device: Literal["cpu", "cuda"]) -> Env:
-        return self.env.parse(device)
+    name = config["env"]["name"]
+    device = config["env"]["device"]
+    if name.lower() == "hypergrid".lower():
+        env_class = HyperGridConfig
+    elif name.lower() == "discrete-ebm".lower():
+        env_class = DiscreteEBMConfig
+    else:
+        raise ValueError("Invalid env name: {}".format(name))
+
+    args = inspect.getfullargspec(env_class.__init__).args
+    env_config = {k: v for k, v in config["env"].items() if k in args}
+    return env_class(**env_config).parse(device)
