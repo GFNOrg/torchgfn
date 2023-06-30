@@ -39,16 +39,10 @@ pip install .[scripts]
 
 This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization used for the GFN loss.
 
-An example script is provided [here](https://github.com/saleml/gfn/blob/master/scripts/train.py). To run the code, use one of the following:
+Example script are provided [here](./examples/scripts/).
 
-```bash
-python train.py --env hypergrid --env.ndim 4 --env.height 8 --n_iterations 100000 --loss trajectory-balance
-python train.py --env discrete-ebm --env.ndim 4 --env.alpha 0.5 --n_iterations 10000 --batch_size 64 --sampler.temperature 2.
-python train.py --env hypergrid --env.ndim 2 --env.height 64 --n_iterations 100000 --loss detailed-balance --logit_PB.module_name Uniform --optim adam --optim.lr 1e-3 --batch_size 64
-python train.py --env hypergrid --env.ndim 4 --env.height 8 --env.R0 0.01 --loss flowmatching --optim adam --optim.lr 1e-4
-```
 
-### Example, in a few lines
+### Standalone example
 
 This example, which shows how to use the library for a simple discrete environment, requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]`.
 
@@ -56,18 +50,22 @@ This example, which shows how to use the library for a simple discrete environme
 import torch
 from tqdm import tqdm
 
-from gfn.envs import HyperGrid
 from gfn.estimators import LogZEstimator
-from gfn.losses import TBParametrization, TrajectoryBalance
+from gfn.losses import TBParametrization
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
-from gfn.utils import NeuralNet, DiscretePFEstimator, DiscretePBEstimator
+from gfn.utils import NeuralNet, DiscretePFEstimator, DiscretePBEstimator, add_root_to_path
+
+# just making sure the examples/ folder is available in the Python path
+add_root_to_path()
+
+from examples.envs import HyperGrid
 
 if __name__ == "__main__":
 
     env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
-    module_PF = NeuralNet(input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions)
-    module_PB = NeuralNet(input_dim=env.preprocessor.output_shape[0], output_dim=env.n_actions - 1,     torso=module_PF.torso)
+    module_PF = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
+    module_PB = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1,     torso=module_PF.torso)
 
     logit_PF = DiscretePFEstimator(env=env, module=module_PF)
     logit_PB = DiscretePBEstimator(env=env, module=module_PB)
@@ -77,8 +75,6 @@ if __name__ == "__main__":
 
     actions_sampler = ActionsSampler(estimator=logit_PF)
     trajectories_sampler = TrajectoriesSampler(actions_sampler=actions_sampler)
-
-    loss_fn = TrajectoryBalance(parametrization=parametrization)
 
     params = [
         {
@@ -94,12 +90,11 @@ if __name__ == "__main__":
     for i in (pbar := tqdm(range(1000))):
         trajectories = trajectories_sampler.sample(n_trajectories=16)
         optimizer.zero_grad()
-        loss = loss_fn(trajectories)
+        loss = parametrization.loss(trajectories)
         loss.backward()
         optimizer.step()
         if i % 25 == 0:
             pbar.set_postfix({"loss": loss.item()})
-
 ```
 
 ## Contributing
@@ -127,20 +122,11 @@ open build/html/index.html
 
 ### Defining an environment
 
-A pointed DAG environment (or GFN environment, or environment for short) is a representation for the pointed DAG. The abstract class [Env](https://github.com/saleml/gfn/blob/master/src/gfn/envs/env.py) specifies the requirements for a valid environment definition. To obtain such a representation, the environment needs to specify the following attributes, properties, or methods:
+See [examples](./examples/envs/)
 
-- The `action_space`. Which should be a `gymnasium.spaces.Discrete` object for discrete environments. The last action should correspond to the exit action.
-- The initial state `s_0`, as a `torch.Tensor` of arbitrary dimension.
-- (Optional) The sink state `s_f`, as a `torch.Tensor` of the same shape as `s_0`, used to represent complete trajectories only (within a batch of trajectories of different lengths), and never processed by any model. If not specified, it is set to `torch.full_like(s_0, -float('inf'))`.
-- The method `make_States_class` that creates a subclass of [States](https://github.com/saleml/gfn/blob/master/src/gfn/containers/states.py). The instances of the resulting class should represent a batch of states of arbitrary shape, which is useful to define a trajectory, or a batch of trajectories. `s_0` and `s_f`, along with a tuple called `state_shape` should be defined as class variables, and the subclass (of `States`) should implement masking methods, that specify which actions are possible, in a discrete environment.
-- The methods `maskless_step` and `maskless_backward_step` that specify how an action changes a state (going forward and backward). These functions do not need to handle masking, checking whether actions are allowed, checking whether a state is the sink state, etc... These checks are handled in `Env.step` and `Env.backward_step`
-- The `log_reward` function that assigns a nonnegative reward to every terminating state (i.e. state with all $s_f$ as a child in the DAG). If `log_reward` is not implemented, `reward` needs to be.
+### States
 
-If the states (as represented in the `States` class) need to be transformed to another format before being processed (by neural networks for example), then the environment should define a `preprocessor` attribute, which should be an instance of the [base preprocessor class](https://github.com/saleml/gfn/blob/master/src/gfn/envs/preprocessors/base.py). If no preprocessor is defined, the states are used as is (actually transformed using  [`IdentityPreprocessor`](https://github.com/saleml/gfn/blob/master/src/gfn/envs/preprocessors/base.py), which transforms the state tensors to `FloatTensor`s). Implementing your own preprocessor requires defining the `preprocess` function, and the `output_shape` attribute, which is a tuple representing the shape of *one* preprocessed state.
-
-Optionally, you can define a static `get_states_indices` method that assigns a unique integer number to each state if the environment allows it, and a `n_states` property that returns an integer representing the number of states (excluding $s_f$) in the environment. `get_terminating_states_indices` can also be implemented and serves the purpose of uniquely identifying terminating states of the environment.
-
-For more details, take a look at [HyperGrid](https://github.com/saleml/gfn/blob/master/src/gfn/envs/hypergrid.py), an environment where all states are terminating states, or at [DiscreteEBM](https://github.com/saleml/gfn/blob/master/src/gfn/envs/discrete_ebm.py), where all trajectories are of the same length but only some states are terminating.
+**TODO**
 
 ### Other containers
 
