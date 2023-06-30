@@ -2,7 +2,6 @@ import inspect
 from dataclasses import dataclass
 from typing import Tuple
 
-
 from gfn.envs import Env
 from gfn.losses import FMParametrization, Parametrization, PFBasedParametrization
 from gfn.samplers import ActionsSampler, TrajectoriesSampler

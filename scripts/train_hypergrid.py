@@ -14,9 +14,9 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 from argparse import ArgumentParser
 
 import torch
-import wandb
 from tqdm import tqdm, trange
 
+import wandb
 from gfn.envs import HyperGrid
 from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
 from gfn.losses import (

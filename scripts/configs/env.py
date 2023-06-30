@@ -1,8 +1,8 @@
+import inspect
 from dataclasses import dataclass
 from typing import Literal
 
 from gfn.envs import DiscreteEBMEnv, Env, HyperGrid
-import inspect
 
 
 @dataclass

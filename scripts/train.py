@@ -1,10 +1,11 @@
-import torch
-import wandb
-from configs import load_config, make_env, make_loss, make_optim, make_sampler
 import json
-from tqdm import tqdm, trange
 from argparse import ArgumentParser
 
+import torch
+from configs import load_config, make_env, make_loss, make_optim, make_sampler
+from tqdm import tqdm, trange
+
+import wandb
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.utils.common import trajectories_to_training_samples, validate
 

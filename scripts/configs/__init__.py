@@ -1,4 +1,6 @@
-from .env import EnvConfig
-from .loss import LossConfig
-from .optim import OptimConfig
-from .sampler import SamplerConfig
+# flake8: noqa
+from .env import make_env
+from .loss import make_loss
+from .optim import make_optim
+from .parser import load_config
+from .sampler import make_sampler
