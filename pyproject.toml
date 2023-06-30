@@ -37,7 +37,6 @@ sphinx-math-dollar = { version = "*", optional = true }
 sphinx_rtd_theme = { version = "*", optional = true }
 tox = { version = "*", optional = true }
 # scripts deps  TODO: move this into `tool.poetry.extras`?
-simple-parsing = { version = "0.0.20", optional = true }
 tqdm = { version = "*", optional = true }
 wandb = { version = "*", optional = true }
 
@@ -56,7 +55,20 @@ dev = [
     "tox"
 ]
 scripts = ["tqdm", "wandb"]
-all = ["pre-commit", "pytest", "renku-sphinx-theme", "sphinx_rtd_theme", "sphinx-autoapi", "sphinx-math-dollar", "sphinx", "tox", "black", "myst-parser", "tqdm", "wandb"]
+all = [
+    "pre-commit",
+    "pytest",
+    "renku-sphinx-theme",
+    "sphinx_rtd_theme",
+    "sphinx-autoapi",
+    "sphinx-math-dollar",
+    "sphinx",
+    "tox",
+    "black",
+    "myst-parser",
+    "tqdm",
+    "wandb"
+]
 
 [project.urls]
 "Homepage" = "https://gfn.readthedocs.io/en/latest/"
