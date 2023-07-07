@@ -1,6 +1,6 @@
 """This file contains utilitary functions for the Box environment."""
-import sys
-from typing import Tuple
+# TODO: add type annotations everywhere
+from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
@@ -58,25 +58,25 @@ class QuarterCircle(Distribution):
     def get_min_and_max_angles(self) -> Tuple[TT["n_states"], TT["n_states"]]:
         if self.northeastern:
             min_angles = torch.where(
-                self.centers.tensor[:, 0] <= 1 - self.delta,
+                self.centers.tensor[..., 0] <= 1 - self.delta,
                 0.0,
-                PI_2_INV * torch.arccos((1 - self.centers.tensor[:, 0]) / self.delta),
+                PI_2_INV * torch.arccos((1 - self.centers.tensor[..., 0]) / self.delta),
             )
             max_angles = torch.where(
-                self.centers.tensor[:, 1] <= 1 - self.delta,
+                self.centers.tensor[..., 1] <= 1 - self.delta,
                 1.0,
-                PI_2_INV * torch.arcsin((1 - self.centers.tensor[:, 1]) / self.delta),
+                PI_2_INV * torch.arcsin((1 - self.centers.tensor[..., 1]) / self.delta),
             )
         else:
             min_angles = torch.where(
-                self.centers.tensor[:, 0] >= self.delta,
+                self.centers.tensor[..., 0] >= self.delta,
                 0.0,
-                PI_2_INV * torch.arccos((self.centers.tensor[:, 0]) / self.delta),
+                PI_2_INV * torch.arccos((self.centers.tensor[..., 0]) / self.delta),
             )
             max_angles = torch.where(
-                self.centers.tensor[:, 1] >= self.delta,
+                self.centers.tensor[..., 1] >= self.delta,
                 1.0,
-                PI_2_INV * torch.arcsin((self.centers.tensor[:, 1]) / self.delta),
+                PI_2_INV * torch.arcsin((self.centers.tensor[..., 1]) / self.delta),
             )
 
         return min_angles, max_angles
@@ -124,6 +124,20 @@ class QuarterCircle(Distribution):
                 self.centers.tensor / 2,
                 sampled_actions,
             )
+        else:
+            # When at the border of the square,
+            # the approximation errors might lead to the sampled_actions being slightly negative at the high coordinate
+            # We set the sampled_action to be 0
+            # This is actually of no impact, given that the true action that would be sampled is the exit action
+            sampled_actions = torch.where(
+                sampled_actions < 0,
+                0,
+                sampled_actions,
+            )
+        if torch.any(
+            torch.abs(torch.norm(sampled_actions, dim=-1) - self.delta) > 1e-5
+        ):
+            raise ValueError("Sampled actions should be positive")
 
         return sampled_actions
 
@@ -148,7 +162,7 @@ class QuarterCircle(Distribution):
         # when evaluating the logpros, so we just bump them to 1e-6 so that Beta.log_prob does not throw an error
         if not self.northeastern:
             base_01_samples = torch.where(
-                torch.norm(sampled_actions, dim=-1) <= self.delta,
+                torch.norm(self.centers.tensor, dim=-1) <= self.delta,
                 torch.ones_like(base_01_samples) * 1e-6,
                 base_01_samples,
             ).clamp_(min=1e-6, max=1 - 1e-6)
@@ -159,7 +173,8 @@ class QuarterCircle(Distribution):
             base_01_logprobs
             - np.log(self.delta)
             - np.log(np.pi / 2)
-            - torch.log(self.max_angles - self.min_angles)
+            - torch.log((self.max_angles - self.min_angles).clamp_(min=1e-6))
+            # The clamp doesn't really matter, because if we need to clamp, it means the actual action is exit action
         )
 
         if not self.northeastern:
@@ -170,8 +185,8 @@ class QuarterCircle(Distribution):
                 logprobs,
             )
 
-        if torch.any(torch.isinf(logprobs)):
-            raise ValueError("logprobs contains inf")
+        if torch.any(torch.isinf(logprobs)) or torch.any(torch.isnan(logprobs)):
+            raise ValueError("logprobs contains inf or nan")
 
         return logprobs
 
@@ -267,8 +282,10 @@ class QuarterCircleWithExit(Distribution):
         mixture_logits: TT["n_states", "n_components"],
         alpha: TT["n_states", "n_components"],
         beta: TT["n_states", "n_components"],
+        epsilon: float = 1e-4,
     ):
         self.delta = delta
+        self.epsilon = epsilon
         self.centers = centers
         self.dist_without_exit = QuarterCircle(
             delta=delta,
@@ -288,7 +305,6 @@ class QuarterCircleWithExit(Distribution):
         repeated_exit_probability = self.exit_probability.repeat(sample_shape + (1,))
         exit_mask = torch.bernoulli(repeated_exit_probability).bool()
 
-        # When torch.norm(1 - states, dim=1) <= env.delta, we have to exit
         # TODO: this will BREAK with sample_shape defined not matching
         # self.centers.tensor.shape! Do we need `sample_shape` at all, if not, we should
         # remove it.
@@ -296,9 +312,12 @@ class QuarterCircleWithExit(Distribution):
             raise NotImplementedError(
                 "User defined sample_shape not supported currently."
             )
+        # When torch.norm(1 - states, dim=-1) <= env.delta or
+        # torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1), we have to exit
         exit_mask[
             torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta
         ] = True  # should be -1?
+        exit_mask[torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1)] = True
         actions[exit_mask] = self.exit_action
 
         return actions
@@ -311,10 +330,12 @@ class QuarterCircleWithExit(Distribution):
         logprobs[~exit] = self.dist_without_exit.log_prob(sampled_actions)[~exit]
         logprobs[~exit] = logprobs[~exit] + torch.log(1 - self.exit_probability)[~exit]
         logprobs[exit] = torch.log(self.exit_probability[exit])
-        # When torch.norm(1 - states, dim=1) <= env.delta, logprobs should be 0
+        # When torch.norm(1 - states, dim=-1) <= env.delta, logprobs should be 0
+        # When torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1), logprobs should be 0
         logprobs[
-            torch.norm(1 - self.centers.tensor, dim=1) <= self.delta
+            torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta
         ] = 0.0  # should be -1?
+        logprobs[torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1)] = 0.0
         return logprobs
 
 
@@ -360,6 +381,7 @@ class DistributionWrapper(Distribution):
                 mixture_logits=mixture_logits[self.idx_not_initial, :n_components],
                 alpha=alpha_r[self.idx_not_initial, :n_components],  # TODO: verify.
                 beta=beta_r[self.idx_not_initial, :n_components],  # TODO: verify
+                epsilon=self.env.epsilon,
             )  # no sample_shape req as it is stored in centers.
 
     def sample(self, sample_shape=()):
@@ -453,6 +475,7 @@ class BoxPFNeuralNet(NeuralNet):
             hidden_dim=hidden_dim,
             n_hidden_layers=n_hidden_layers,
             output_dim=output_dim,
+            activation_fn="elu",
             **kwargs,
         )
         # Does not include the + 1 to handle the exit probability (which is
@@ -512,14 +535,15 @@ class BoxPFNeuralNet(NeuralNet):
 
         # Overwrite the network outputs with PFs0 in the case that the state is 0.0.
         idx_s0 = torch.all(preprocessed_states == 0.0, 1)
-        # out_s0[:, 1:] = torch.sigmoid(out[:, 1:])  # TODO: why is this here?
         out[idx_s0, :] = out_s0[idx_s0, :]  # TODO: scatter?
 
         # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
         # These are the components that represent the concentration parameters of the Betas, before normalizing, and should
         # thus be between 0 and 1
-        out[:, 0] = torch.sigmoid(out[:, 0])
-        out[:, 1 + self.n_components :] = torch.sigmoid(out[:, 1 + self.n_components :])
+        out[..., 0] = torch.sigmoid(out[..., 0])
+        out[..., 1 + self.n_components :] = torch.sigmoid(
+            out[..., 1 + self.n_components :]
+        )
 
         return out
 
@@ -534,7 +558,7 @@ class BoxPBNeuralNet(NeuralNet):
     def __init__(
         self, hidden_dim: int, n_hidden_layers: int, n_components: int, **kwargs
     ):
-        """Insantiates the neural network.
+        """Instantiates the neural network.
 
         Args:
             hidden_dim: the size of each hidden layer.
@@ -551,6 +575,7 @@ class BoxPBNeuralNet(NeuralNet):
             hidden_dim=hidden_dim,
             n_hidden_layers=n_hidden_layers,
             output_dim=output_dim,
+            activation_fn="elu",
             **kwargs,
         )
 
@@ -562,7 +587,7 @@ class BoxPBNeuralNet(NeuralNet):
         out = super().forward(preprocessed_states)
 
         # Apply sigmoid to all except the dimensions between 0 and self.n_components.
-        out[:, self.n_components :] = torch.sigmoid(out[:, self.n_components :])
+        out[..., self.n_components :] = torch.sigmoid(out[..., self.n_components :])
 
         return out
 
@@ -717,9 +742,15 @@ class BoxPBEstimator(ProbabilityEstimator):
         env: BoxEnv,
         module: torch.nn.Module,
         n_components: int,
+        min_concentration: float = 0.1,
+        max_concentration: float = 2.0,
     ):
         super().__init__(env, module)
+        self.module = module
         self.n_components = n_components
+
+        self.min_concentration = min_concentration
+        self.max_concentration = max_concentration
 
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
         if module_output.shape[-1] != 3 * self.n_components:
@@ -735,6 +766,16 @@ class BoxPBEstimator(ProbabilityEstimator):
         mixture_logits, alpha, beta = torch.split(
             module_output, self.n_components, dim=-1
         )
+
+        def _normalize(x):
+            return (
+                self.min_concentration
+                + (self.max_concentration - self.min_concentration) * x
+            )  # .contiguous().view(-1)
+
+        if not isinstance(self.module, BoxPBUniform):
+            alpha = _normalize(alpha)
+            beta = _normalize(beta)
         return QuarterCircle(
             delta=self.env.delta,
             northeastern=False,
@@ -831,7 +872,7 @@ if __name__ == "__main__":
             marker="x",
         )
 
-    delta = 0.1  # TODO: this does not work with 0.1, why? Triage with Salem. ? Salem: Doesn't it ???
+    delta = 0.1
     quarter_disk_dist = QuarterDisk(
         delta=delta,
         mixture_logits=torch.FloatTensor([0.0]),
@@ -858,6 +899,7 @@ if __name__ == "__main__":
         alpha=alpha,
         beta=beta,
         exit_probability=torch.FloatTensor([0.5, 0.5, 0.5]),
+        epsilon=1e-4,
     )
 
     samples_exit = quarter_circle_with_exit_dist.sample()
