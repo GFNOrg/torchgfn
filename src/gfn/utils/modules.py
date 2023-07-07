@@ -17,7 +17,7 @@ class NeuralNet(nn.Module):
         output_dim: int,
         hidden_dim: Optional[int] = 256,
         n_hidden_layers: Optional[int] = 2,
-        activation_fn: Optional[Literal["relu", "tanh"]] = "relu",
+        activation_fn: Optional[Literal["relu", "tanh", "elu"]] = "relu",
         torso: Optional[nn.Module] = None,
     ):
         """Instantiates a MLP instance.
@@ -39,7 +39,12 @@ class NeuralNet(nn.Module):
                 n_hidden_layers is not None and n_hidden_layers >= 0
             ), "n_hidden_layers must be >= 0"
             assert activation_fn is not None, "activation_fn must be provided"
-            activation = nn.ReLU if activation_fn == "relu" else nn.Tanh
+            if activation_fn == "elu":
+                activation = nn.ELU
+            elif activation_fn == "relu":
+                activation = nn.ReLU
+            elif activation_fn == "tanh":
+                activation = nn.Tanh
             self.torso = [nn.Linear(input_dim, hidden_dim), activation()]
             for _ in range(n_hidden_layers - 1):
                 self.torso.append(nn.Linear(hidden_dim, hidden_dim))
