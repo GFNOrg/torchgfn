@@ -1,5 +1,6 @@
 from typing import ClassVar, Literal, Tuple, cast
 
+from math import log
 import torch
 from gymnasium.spaces import Box
 from torchtyping import TensorType as TT
@@ -18,10 +19,12 @@ class BoxEnv(Env):
         R0: float = 0.1,
         R1: float = 0.5,
         R2: float = 2.0,
+        epsilon: float = 1e-4,
         device_str: Literal["cpu", "cuda"] = "cpu",
     ):
         assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
+        self.epsilon = epsilon
         s0 = torch.tensor([0.0, 0.0], device=torch.device(device_str))
         action_space = Box(low=0.0, high=delta, shape=(2,))
 
@@ -123,3 +126,7 @@ class BoxEnv(Env):
         )
 
         return reward.log()
+
+    @property
+    def log_partition(self) -> float:
+        return log(self.R0 + (2 * 0.25) ** 2 * self.R1 + (2 * 0.1) ** 2 * self.R2)
