@@ -249,8 +249,10 @@ class QuarterDisk(Distribution):
             torch.sqrt(torch.sum(sampled_actions**2, dim=-1))
             / self.delta  # changes from 1 to -1.
         )
+
+        # Calculating the angle between the initial state and all future positions.
         base_theta_01_samples = (
-            torch.arccos(sampled_actions[..., -1] / (base_r_01_samples * self.delta))
+            torch.arccos(sampled_actions[..., 0] / (base_r_01_samples * self.delta))
             / PI_2
         ).clamp_(1e-6, 1 - 1e-6)
 
@@ -488,26 +490,12 @@ class BoxPFNeuralNet(NeuralNet):
 
     def _compute_all_components_mask(self):
         """Masks unused elements of the smaller state representation."""
-        all_components_mask = torch.cat(
-            (
-                torch.ones(1, self._n_comp_min),  # The used elements of the state.
-                torch.zeros(1, self._n_comp_diff),  # The unused elements of the state.
-            ),
-            dim=-1,
-        ).repeat(
-            1, 5  # [1, 5 * n_components_max]
+        mask = (
+            torch.arange(5 * self._n_comp_max).fmod(self._n_comp_max) < self._n_comp_min
         )
+        mask = torch.cat((torch.ones(1, 1), mask), dim=-1)  # [1, 1 + 5 * n_comps_max]
 
-        # First element is always present. In s_0, this element will always be zero.
-        all_components_mask = torch.cat(
-            (torch.ones(1, 1), all_components_mask),
-            dim=-1,  # [1, 1 + 5 * n_components_max]
-        )
-
-        # This mask should never be updated during backprop.
-        all_components_mask.requires_grad = False
-
-        return all_components_mask.bool()
+        return mask.bool()
 
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
@@ -537,13 +525,11 @@ class BoxPFNeuralNet(NeuralNet):
         idx_s0 = torch.all(preprocessed_states == 0.0, 1)
         out[idx_s0, :] = out_s0[idx_s0, :]  # TODO: scatter?
 
-        # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
-        # These are the components that represent the concentration parameters of the Betas, before normalizing, and should
-        # thus be between 0 and 1
+        # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_comp_max
+        # These are the components that represent the concentration parameters of the
+        # Betas, before normalizing, and should therefore be between 0 and 1.
         out[..., 0] = torch.sigmoid(out[..., 0])
-        out[..., 1 + self.n_components :] = torch.sigmoid(
-            out[..., 1 + self.n_components :]
-        )
+        out[..., 1 + self.n_comp_max :] = torch.sigmoid(out[..., 1 + self.n_comp_max :])
 
         return out
 
@@ -620,18 +606,18 @@ def split_PF_module_output(
     Returns:
         exit_probability: A probability unique to QuarterCircleWithExit.
         mixture_logits: Parameters shared by QuarterDisk and QuarterCircleWithExit.
-        alpha_r: Parameters shared by QuarterDisk and QuarterCircleWithExit.
-        beta_r: Parameters shared by QuarterDisk and QuarterCircleWithExit.
-        alpha_theta: Parameters unique to QuarterDisk.
-        beta_theta: Parameters unique to QuarterDisk.
+        alpha_theta: Parameters shared by QuarterDisk and QuarterCircleWithExit.
+        beta_theta: Parameters shared by QuarterDisk and QuarterCircleWithExit.
+        alpha_r: Parameters unique to QuarterDisk.
+        beta_r: Parameters unique to QuarterDisk.
     """
     (
         exit_probability,  # Unique to QuarterCircleWithExit.
         mixture_logits,  # Shared by QuarterDisk and QuarterCircleWithExit.
-        alpha_r,  # Shared by QuarterDisk and QuarterCircleWithExit.
-        beta_r,  # Shared by QuarterDisk and QuarterCircleWithExit.
-        alpha_theta,  # Unique to QuarterDisk.
-        beta_theta,  # Unique to QuarterDisk.
+        alpha_theta,  # Shared by QuarterDisk and QuarterCircleWithExit.
+        beta_theta,  # Shared by QuarterDisk and QuarterCircleWithExit.
+        alpha_r,  # Unique to QuarterDisk.
+        beta_r,  # Unique to QuarterDisk.
     ) = torch.split(
         output,
         [
@@ -645,7 +631,7 @@ def split_PF_module_output(
         dim=-1,
     )
 
-    return (exit_probability, mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta)
+    return (exit_probability, mixture_logits, alpha_theta, beta_theta, alpha_r, beta_r)
 
 
 class BoxPFEstimator(ProbabilityEstimator):
@@ -701,10 +687,10 @@ class BoxPFEstimator(ProbabilityEstimator):
         (
             exit_probability,
             mixture_logits,
-            alpha_r,
-            beta_r,
             alpha_theta,
             beta_theta,
+            alpha_r,
+            beta_r,
         ) = split_PF_module_output(module_output, self._n_comp_max)
         mixture_logits = mixture_logits  # .contiguous().view(-1)
 
@@ -951,10 +937,10 @@ if __name__ == "__main__":
     (
         exit_probability,
         mixture_logits,
-        alpha_r,
-        beta_r,
         alpha_theta,
         beta_theta,
+        alpha_r,
+        beta_r,
     ) = split_PF_module_output(
         out_mixed[0, :].unsqueeze(0), max(n_components_s0, n_components)
     )
@@ -984,10 +970,10 @@ if __name__ == "__main__":
     (
         exit_probability,
         mixture_logits,
-        alpha_r,
-        beta_r,
         alpha_theta,
         beta_theta,
+        alpha_r,
+        beta_r,
     ) = split_PF_module_output(out_intermediate, max(n_components_s0, n_components))
 
     assert len(exit_probability > 0) == B  # All exit probabilities are non-zero.
