@@ -484,9 +484,9 @@ class BoxPFNeuralNet(NeuralNet):
         # impossible at t=0).
         self.PFs0 = torch.nn.Parameter(torch.zeros(1, 5 * self._n_comp_max))
 
-        # For the smaller component space (whether it be for s_0 or s_t>0), the unused
-        # components will be zeroed out by self.components_mask.
-        self.components_mask = self._compute_all_components_mask()
+        # # For the smaller component space (whether it be for s_0 or s_t>0), the unused
+        # # components will be zeroed out by self.components_mask.
+        # self.components_mask = self._compute_all_components_mask()
 
     def _compute_all_components_mask(self):
         """Masks unused elements of the smaller state representation."""
@@ -494,6 +494,7 @@ class BoxPFNeuralNet(NeuralNet):
             torch.arange(5 * self._n_comp_max).fmod(self._n_comp_max) < self._n_comp_min
         )
         mask = torch.cat((torch.ones(1), mask), dim=-1)  # [1, 1 + 5 * n_comps_max]
+        #mask.requires_grad = False
 
         return mask.bool()
 
@@ -509,7 +510,7 @@ class BoxPFNeuralNet(NeuralNet):
 
         # Explicitly mask the unused components for t>0 state-representations.
         if self.n_components < self.n_components_s0:
-            out = out * self.components_mask
+            out = out * self._compute_all_components_mask()
 
         # Add the all_zero vector for exit probability.
         out_s0 = torch.repeat_interleave(
