@@ -34,6 +34,8 @@ from gfn.examples.box_utils import (
     BoxPBUniform,
 )
 
+# BoxPFNeuralNet = BoxPFNeuralNet_old
+
 from sklearn.neighbors import KernelDensity
 from scipy.special import logsumexp
 
@@ -275,6 +277,7 @@ if __name__ == "__main__":
         n_components=args.n_components,
         n_components_s0=args.n_components_s0,
     )
+    print("UNIFORM {}".format(args.uniform_pb))
     if args.uniform_pb:
         pb_module = BoxPBUniform()
     else:
@@ -300,7 +303,7 @@ if __name__ == "__main__":
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
-
+    logZ = None
     if args.loss in ("DB", "SubTB"):
         # We need a LogStateFlowEstimator
 
@@ -392,6 +395,64 @@ if __name__ == "__main__":
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
         trajectories = parametrization.sample_trajectories(n_samples=args.batch_size)
+        # Debug:
+        # from tmp import (
+        #     sample_trajectories,
+        #     Box2,
+        #     CirclePF2,
+        #     CirclePB2,
+        #     evaluate_backward_logprobs,
+        # )
+
+        # fw_module = CirclePF2(
+        #     hidden_dim=args.hidden_dim,
+        #     n_hidden_layers=args.n_hidden,
+        #     n_components=args.n_components,
+        #     n_components_s0=args.n_components_s0,
+        #     beta_min=args.min_concentration,
+        #     beta_max=args.max_concentration - args.min_concentration,
+        # )
+        # fw_module.load_state_dict(pf_module.state_dict())
+        # bw_module = CirclePB2(
+        #     hidden_dim=args.hidden_dim,
+        #     n_hidden_layers=args.n_hidden,
+        #     n_components=args.n_components,
+        #     beta_min=args.min_concentration,
+        #     beta_max=args.max_concentration - args.min_concentration,
+        # )
+        # bw_module.load_state_dict(pb_module.state_dict())
+        # env2 = Box2(
+        #     delta=env.delta, R0=env.R0, R1=env.R1, R2=env.R2, epsilon=env.epsilon
+        # )
+        # trajectories2, actionss, logprobs, all_logprobs = sample_trajectories(
+        #     env2, fw_module, n_trajectories=args.batch_size
+        # )
+        # when_is_done = torch.all(trajectories2 == -float("inf"), -1).long().argmax(1)
+        # trajectories3 = trajectories.__class__(
+        #     env,
+        #     env.States(trajectories2.transpose(0, 1)),
+        #     env.Actions(actionss.transpose(0, 1)),
+        #     when_is_done,
+        #     log_probs=all_logprobs.transpose(0, 1),
+        # )
+
+        # # trajectories3[3].log_probs
+        # # pf_estimator(trajectories3[3].states[0]).log_prob(trajectories3[3].actions.tensor[0])
+        # # pf_estimator(trajectories3[3].states[0]).quarter_disk.base_r_dist.mixture_distribution.logits.softmax(0)
+        # # pf_estimator(trajectories3[3].states[0]).quarter_disk.base_r_dist.component_distribution.concentration0
+        # # pf_estimator(trajectories3[3].states[0]).quarter_disk.base_r_dist.component_distribution.concentration1
+        # # fw_module.to_dist(trajectories3[3].states[0].tensor)[0].component_distribution.concentration0
+        # # fw_module.to_dist(trajectories3[3].states[0].tensor)[0].component_distribution.concentration1
+        # bw_logprobs, _ = evaluate_backward_logprobs(env2, bw_module, trajectories2)
+        # loss2 = torch.mean(
+        #     (
+        #         parametrization.logZ.tensor
+        #         + logprobs
+        #         - bw_logprobs
+        #         - env.reward(trajectories3.last_states).log()
+        #     )
+        #     ** 2
+        # )
         training_samples = trajectories_to_training_samples(
             trajectories, parametrization
         )
@@ -399,12 +460,14 @@ if __name__ == "__main__":
         optimizer.zero_grad()
         loss = parametrization.loss(training_samples)
         loss.backward()
-        for p in parametrization.parameters.values():
+        for k, p in parametrization.parameters.items():
+            if "logZ" in k:
+                continue
             p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
 
-        visited_terminating_states.extend(trajectories.last_states)
+        # visited_terminating_states.extend(trajectories.last_states)
 
         states_visited += len(trajectories)
 
@@ -430,19 +493,6 @@ if __name__ == "__main__":
             )
             jsd = estimate_jsd(kde, true_kde)
 
-            def plot():
-                import matplotlib.pyplot as plt
-
-                n = 100
-                test_states = get_test_states(n)
-                log_dens = kde.score_samples(test_states)
-                fig = plt.imshow(
-                    np.exp(log_dens).reshape(n, n), origin="lower", extent=[0, 1, 0, 1]
-                )
-                plt.colorbar()
-                plt.show()
-
-            # plot()
             if use_wandb:
                 wandb.log({"JSD": jsd}, step=iteration)
 
