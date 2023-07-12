@@ -134,19 +134,24 @@ class QuarterCircle(Distribution):
                 0,
                 sampled_actions,
             )
-        if torch.any(
-            torch.abs(torch.norm(sampled_actions, dim=-1) - self.delta) > 1e-5
-        ):
-            raise ValueError("Sampled actions should be positive")
+            if torch.any(
+                torch.abs(torch.norm(sampled_actions, dim=-1) - self.delta) > 1e-5
+            ):
+                raise ValueError("Sampled actions should be of norm delta ish")
 
         return sampled_actions
 
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
+        sampled_actions.clamp_(
+            min=0.0, max=self.delta
+        )  # Should be the case already - just to avoid numerical issues
         sampled_angles = torch.arccos(sampled_actions[..., 0] / self.delta) / (PI_2)
 
         base_01_samples = (sampled_angles - self.min_angles) / (
             self.max_angles - self.min_angles
-        ).clamp_(min=1e-6, max=1 - 1e-6)
+        )
+        if not self.northeastern:
+            base_01_samples.clamp_(min=1e-4, max=1 - 1e-4)
 
         # Ugly hack: when some of the sampled actions are -infinity (exit action), the corresponding value is nan
         # And we don't really care about the log prob of the exit action
@@ -247,10 +252,11 @@ class QuarterDisk(Distribution):
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
         base_r_01_samples = (
             torch.sqrt(torch.sum(sampled_actions**2, dim=-1))
-            / self.delta  # changes from 1 to -1.
+            / self.delta  # changes from 0 to 1.
         )
+        # Debugging, I changed from -1 to 0 in the following line
         base_theta_01_samples = (
-            torch.arccos(sampled_actions[..., -1] / (base_r_01_samples * self.delta))
+            torch.arccos(sampled_actions[..., 0] / (base_r_01_samples * self.delta))
             / PI_2
         ).clamp_(1e-6, 1 - 1e-6)
 
@@ -379,8 +385,8 @@ class DistributionWrapper(Distribution):
                 centers=states[self.idx_not_initial],  # Remove initial states.
                 exit_probability=exit_probability[self.idx_not_initial],
                 mixture_logits=mixture_logits[self.idx_not_initial, :n_components],
-                alpha=alpha_r[self.idx_not_initial, :n_components],  # TODO: verify.
-                beta=beta_r[self.idx_not_initial, :n_components],  # TODO: verify
+                alpha=alpha_theta[self.idx_not_initial, :n_components],  # TODO: verify.
+                beta=beta_theta[self.idx_not_initial, :n_components],  # TODO: verify
                 epsilon=self.env.epsilon,
             )  # no sample_shape req as it is stored in centers.
 
@@ -422,7 +428,7 @@ class DistributionWrapper(Distribution):
         return log_prob
 
 
-class BoxPFNeuralNet(NeuralNet):
+class BoxPFNeuralNet_old(NeuralNet):
     """A deep neural network for the forward policy.
 
     Attributes:
@@ -442,7 +448,7 @@ class BoxPFNeuralNet(NeuralNet):
         n_components: int,
         **kwargs,
     ):
-        """Insantiates the neural network for the forward policy.
+        """Instantiates the neural network for the forward policy.
 
         Args:
             hidden_dim: the size of each hidden layer.
@@ -514,6 +520,7 @@ class BoxPFNeuralNet(NeuralNet):
     ) -> TT["batch_shape", "1 + 5 * n_components"]:
         # First calculate network outputs (for all t > 0).
         out = super().forward(preprocessed_states)
+        # TODO: this only works with linear batches (i.e. batch_shape is an int), change it by using something else than B
         B, W = out.shape
 
         # Add all-zero components for stack-ability with self.PFs0.
@@ -546,6 +553,125 @@ class BoxPFNeuralNet(NeuralNet):
         )
 
         return out
+
+
+class BoxPFNeuralNet(NeuralNet):
+    """A deep neural network for the forward policy.
+
+    Attributes:
+        n_components_s0: the number of components for each s=0 distribution parameter.
+        n_components: the number of components for each s=t>0 distribution parameter.
+        PFs0: the parameters for the s=0 distribution.
+        components_mask: a binary mask used to remove unused components from either
+            self.PFs0 or super().forward(states), depending on which has the smaller
+            number of components.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        n_hidden_layers: int,
+        n_components_s0: int,
+        n_components: int,
+        **kwargs,
+    ):
+        """Instantiates the neural network for the forward policy.
+
+        Args:
+            hidden_dim: the size of each hidden layer.
+            n_hidden_layers: the number of hidden layers.
+            n_components_s0: the number of output components for each s=0 distribution
+                parameter.
+            n_components: the number of output components for each s=t>0 distribution
+                parameter.
+            **kwargs: passed to the NeuralNet class.
+
+        """
+        self._n_comp_max = max(n_components_s0, n_components)
+        self._n_comp_min = min(n_components_s0, n_components)
+        self._n_comp_diff = self._n_comp_max - self._n_comp_min
+        self.n_components_s0 = n_components_s0
+        self.n_components = n_components
+
+        input_dim = 2
+
+        # Note on module output size: We need the outputs of this neural network to
+        # stack with outputs at s_0. Therefore the output size will be
+        # 1 + 3 * self._n_comp_max values, but the user will notice that the full state
+        # size is 1 + 5 * self._n_comp_max. This is because the final two components are
+        # only used by s_0. Therefore, for s_t>0, 2 "dummy" constant all_zero
+        # self._n_comp_max components will be added to the neural network outputs.
+        output_dim = 1 + 3 * self.n_components
+
+        super().__init__(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            output_dim=output_dim,
+            activation_fn="elu",
+            **kwargs,
+        )
+        # Does not include the + 1 to handle the exit probability (which is
+        # impossible at t=0).
+        self.PFs0 = torch.nn.Parameter(torch.zeros(1, 5 * self.n_components_s0))
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", 2, float]
+    ) -> TT["batch_shape", "1 + 5 * n_components"]:
+        # TODO: this only works with linear batches (i.e. batch_shape is an int), change it by using something else than B
+        B, _ = preprocessed_states.shape
+        # The desired output shape is [B, 1 + 5 * n_components_max], let's create the tensor
+        desired_out = torch.zeros(B, 1 + 5 * self._n_comp_max)
+
+        # First calculate network outputs for all states
+        out = super().forward(
+            preprocessed_states
+        )  # This should be of shape [B, 1 + 3 * n_components]
+
+        # Now let's find which of the B indices correspond to s_0
+        idx_s0 = torch.all(preprocessed_states == 0.0, 1)
+
+        # Now we can fill the desired output tensor
+        # 1st, for the s_0 states, we use the PFs0 parameters
+        # Remember, PFs0 is of shape [1, 5 * n_components_s0]
+        indices_to_override = (
+            torch.arange(5 * self._n_comp_max).fmod(self._n_comp_max)
+            < self.n_components_s0
+        )
+        indices_to_override = torch.cat(
+            (torch.zeros(1).bool(), indices_to_override), dim=0
+        )
+        desired_out_slice = desired_out[idx_s0]
+        desired_out_slice[:, indices_to_override] = self.PFs0
+        desired_out[idx_s0] = desired_out_slice
+
+        # 2nd, for the states s, t>0, we use the network outputs
+        # Remember, out is of shape [B, 1 + 3 * n_components]
+        indices_to_override2 = (
+            torch.arange(3 * self._n_comp_max).fmod(self._n_comp_max)
+            < self.n_components
+        )
+        indices_to_override2 = torch.cat(
+            (
+                torch.ones(1).bool(),
+                indices_to_override2,
+                torch.zeros(2 * self._n_comp_max).bool(),
+            ),
+            dim=0,
+        )
+        desired_out_slice2 = desired_out[~idx_s0]
+        desired_out_slice2[:, indices_to_override2] = out[~idx_s0]
+        desired_out[~idx_s0] = desired_out_slice2
+
+        # Apply sigmoid to all except the dimensions between 1 and 1 + self._n_comp_max
+        # These are the components that represent the concentration parameters of the Betas, before normalizing, and should
+        # thus be between 0 and 1 (along with the exit probability)
+        desired_out[..., 0] = torch.sigmoid(desired_out[..., 0])
+        desired_out[..., 1 + self._n_comp_max :] = torch.sigmoid(
+            desired_out[..., 1 + self._n_comp_max :]
+        )
+
+        return desired_out
 
 
 class BoxPBNeuralNet(NeuralNet):
@@ -605,7 +731,7 @@ class BoxPBUniform(torch.nn.Module):
         # return (1, 1, 1) for all states, thus the "+ (3,)".
         return torch.ones(
             preprocessed_states.shape[:-1] + (3,), device=preprocessed_states.device
-        )
+        )  # TODO: something fishy here !! they get normali
 
 
 def split_PF_module_output(
@@ -628,10 +754,10 @@ def split_PF_module_output(
     (
         exit_probability,  # Unique to QuarterCircleWithExit.
         mixture_logits,  # Shared by QuarterDisk and QuarterCircleWithExit.
-        alpha_r,  # Shared by QuarterDisk and QuarterCircleWithExit.
-        beta_r,  # Shared by QuarterDisk and QuarterCircleWithExit.
-        alpha_theta,  # Unique to QuarterDisk.
-        beta_theta,  # Unique to QuarterDisk.
+        alpha_theta,  # Shared by QuarterDisk and QuarterCircleWithExit.
+        beta_theta,  # Shared by QuarterDisk and QuarterCircleWithExit.
+        alpha_r,  # Unique to QuarterDisk.
+        beta_r,  # Unique to QuarterDisk.
     ) = torch.split(
         output,
         [
@@ -645,7 +771,7 @@ def split_PF_module_output(
         dim=-1,
     )
 
-    return (exit_probability, mixture_logits, alpha_r, beta_r, alpha_theta, beta_theta)
+    return (exit_probability, mixture_logits, alpha_theta, beta_theta, alpha_r, beta_r)
 
 
 class BoxPFEstimator(ProbabilityEstimator):
@@ -701,10 +827,10 @@ class BoxPFEstimator(ProbabilityEstimator):
         (
             exit_probability,
             mixture_logits,
-            alpha_r,
-            beta_r,
             alpha_theta,
             beta_theta,
+            alpha_r,
+            beta_r,
         ) = split_PF_module_output(module_output, self._n_comp_max)
         mixture_logits = mixture_logits  # .contiguous().view(-1)
 
@@ -915,8 +1041,8 @@ if __name__ == "__main__":
 
     hidden_dim = 10
     n_hidden_layers = 2
-    n_components = 5
-    n_components_s0 = 6
+    n_components = 6
+    n_components_s0 = 5
 
     net_forward = BoxPFNeuralNet(
         hidden_dim=hidden_dim,
@@ -951,10 +1077,10 @@ if __name__ == "__main__":
     (
         exit_probability,
         mixture_logits,
-        alpha_r,
-        beta_r,
         alpha_theta,
         beta_theta,
+        alpha_r,
+        beta_r,
     ) = split_PF_module_output(
         out_mixed[0, :].unsqueeze(0), max(n_components_s0, n_components)
     )
@@ -984,10 +1110,10 @@ if __name__ == "__main__":
     (
         exit_probability,
         mixture_logits,
-        alpha_r,
-        beta_r,
         alpha_theta,
         beta_theta,
+        alpha_r,
+        beta_r,
     ) = split_PF_module_output(out_intermediate, max(n_components_s0, n_components))
 
     assert len(exit_probability > 0) == B  # All exit probabilities are non-zero.
