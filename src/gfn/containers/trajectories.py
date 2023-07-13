@@ -184,7 +184,7 @@ class Trajectories(Container):
                     ),
                     fill_value=-1,
                     dtype=torch.long,
-                ),
+                ).to(self.actions.device),
             ),
             dim=0,
         )
@@ -198,7 +198,7 @@ class Trajectories(Container):
                     ),
                     fill_value=0,
                     dtype=torch.float,
-                ),
+                ).to(self.log_probs.device),
             ),
             dim=0,
         )
