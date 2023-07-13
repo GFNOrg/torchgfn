@@ -351,25 +351,30 @@ if __name__ == "__main__":
     assert parametrization is not None, f"No parametrization for loss {args.loss}"
 
     # 3. Create the optimizer and scheduler
-    params = [
-        {
-            "params": [
-                val
-                for key, val in parametrization.parameters.items()
-                if "logZ" not in key
-            ],
-            "lr": args.lr,
-        }
-    ]
-    if "logZ.logZ" in parametrization.parameters:
-        params.append(
+
+    optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
+    if not args.uniform_pb:
+        optimizer.add_param_group(
             {
-                "params": [parametrization.parameters["logZ.logZ"]],
-                "lr": args.lr_Z,
+                "params": pb_module.last_layer.parameters()
+                if args.tied
+                else pb_module.parameters(),
+                "lr": args.lr,
             }
         )
-
-    optimizer = torch.optim.Adam(params)
+    if not args.make_mistake and args.loss in ("DB", "SubTB"):
+        assert module is not None
+        optimizer.add_param_group(
+            {
+                "params": module.last_layer.parameters()
+                if args.tied
+                else module.parameters(),
+                "lr": args.lr,
+            }
+        )
+    if "logZ.logZ" in parametrization.parameters:
+        assert logZ is not None
+        optimizer.add_param_group({"params": [logZ.tensor], "lr": args.lr_Z})
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         milestones=[
