@@ -362,7 +362,7 @@ if __name__ == "__main__":
                 "lr": args.lr,
             }
         )
-    if not args.make_mistake and args.loss in ("DB", "SubTB"):
+    if args.loss in ("DB", "SubTB"):
         assert module is not None
         optimizer.add_param_group(
             {
