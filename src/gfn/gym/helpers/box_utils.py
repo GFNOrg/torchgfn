@@ -8,7 +8,7 @@ from torch.distributions import Beta, Categorical, Distribution, MixtureSameFami
 from torchtyping import TensorType as TT
 
 from gfn.estimators import ProbabilityEstimator
-from gfn.gym import BoxEnv
+from gfn.gym import Box
 from gfn.states import States
 from gfn.utils import NeuralNet
 
@@ -766,7 +766,7 @@ class BoxPFEstimator(ProbabilityEstimator):
 
     def __init__(
         self,
-        env: BoxEnv,
+        env: Box,
         module: torch.nn.Module,
         n_components_s0: int,
         n_components: int,
@@ -852,7 +852,7 @@ class BoxPBEstimator(ProbabilityEstimator):
 
     def __init__(
         self,
-        env: BoxEnv,
+        env: Box,
         module: torch.nn.Module,
         n_components: int,
         min_concentration: float = 0.1,

@@ -39,7 +39,7 @@ class IsingModel(EnergyFunction):
         return -(states * tmp).sum(-1)
 
 
-class DiscreteEBMEnv(DiscreteEnv):
+class DiscreteEBM(DiscreteEnv):
     """Environment for discrete energy-based models, based on https://arxiv.org/pdf/2202.01361.pdf"""
 
     def __init__(

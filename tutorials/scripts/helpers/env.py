@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from gfn.env import Env
-from gfn.gym.discrete_ebm import DiscreteEBMEnv, HyperGrid
+from gfn.gym.discrete_ebm import DiscreteEBM, HyperGrid
 
 
 @dataclass
@@ -35,10 +35,10 @@ class HyperGridConfig:
 class DiscreteEBMConfig:
     ndim: int = 4
     alpha: float = 1.0
-    # You can define your own custom energy function, and pass it to the DiscreteEBMEnv constructor.
+    # You can define your own custom energy function, and pass it to the DiscreteEBM constructor.
 
     def parse(self, device_str: Literal["cpu", "cuda"]) -> Env:
-        return DiscreteEBMEnv(
+        return DiscreteEBM(
             ndim=self.ndim,
             alpha=self.alpha,
             device_str=device_str,

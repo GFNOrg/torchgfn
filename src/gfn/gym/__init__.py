@@ -1,3 +1,3 @@
-from gfn.gym.box import BoxEnv
-from gfn.gym.discrete_ebm import DiscreteEBMEnv
+from gfn.gym.box import Box
+from gfn.gym.discrete_ebm import DiscreteEBM
 from gfn.gym.hypergrid import HyperGrid

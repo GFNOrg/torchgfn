@@ -3,7 +3,7 @@
 # potentially ditching yamls too for clarity
 
 from gfn.env import Env
-from gfn.gym import DiscreteEBMEnv, HyperGrid
+from gfn.gym import DiscreteEBM, HyperGrid
 
 
 def make_env(config: dict) -> Env:
@@ -32,7 +32,7 @@ def make_env(config: dict) -> Env:
             preprocessor_name=processor_name,
         )
     elif name.lower() == "discrete-ebm".lower():
-        return DiscreteEBMEnv(
+        return DiscreteEBM(
             ndim=config["env"].get("ndim", 4),
             alpha=config["env"].get("alpha", 1.0),
             device_str=config["env"]["device"],

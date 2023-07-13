@@ -67,7 +67,7 @@ all = [
     "black",
     "myst-parser",
     "tqdm",
-    "wandb"
+    "wandb",
     "scikit-learn",
     "scipy"
 ]
