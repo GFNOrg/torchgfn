@@ -4,7 +4,7 @@ import pytest
 
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
-from gfn.gym import BoxEnv, DiscreteEBMEnv, HyperGrid
+from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
     BoxPBNeuralNet,
@@ -28,11 +28,11 @@ def test_trajectory_sampling(
     elif env_name == "DiscreteEBM":
         if preprocessor_name != "Identity" or delta != 0.1:
             pytest.skip("Useless tests")
-        env = DiscreteEBMEnv(ndim=8)
+        env = DiscreteEBM(ndim=8)
     elif env_name == "Box":
         if preprocessor_name != "Identity":
             pytest.skip("Useless tests")
-        env = BoxEnv(delta=delta)
+        env = Box(delta=delta)
     else:
         raise ValueError("Unknown environment name")
 
@@ -124,9 +124,9 @@ def test_replay_buffer(
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=2, height=4)
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBMEnv(ndim=8)
+        env = DiscreteEBM(ndim=8)
     elif env_name == "Box":
-        env = BoxEnv(delta=0.1)
+        env = Box(delta=0.1)
     else:
         raise ValueError("Unknown environment name")
     replay_buffer = ReplayBuffer(env, capacity=10, objects_type=objects)

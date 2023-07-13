@@ -3,7 +3,7 @@ import pytest
 import torch
 
 from gfn.env import NonValidActionsError
-from gfn.gym import BoxEnv, DiscreteEBMEnv, HyperGrid
+from gfn.gym import Box, DiscreteEBM, HyperGrid
 
 
 # Utilities.
@@ -143,7 +143,7 @@ def test_DiscreteEBM_fwd_step():
     NDIM = 2
     BATCH_SIZE = 4
 
-    env = DiscreteEBMEnv(ndim=NDIM)
+    env = DiscreteEBM(ndim=NDIM)
     states = env.reset(
         batch_shape=BATCH_SIZE, seed=1234
     )  # Instantiate a batch of initial states
@@ -179,7 +179,7 @@ def test_DiscreteEBM_bwd_step():
     SEED = 1234
 
     # Testing the backward method from a batch of random (seeded) state.
-    env = DiscreteEBMEnv(ndim=NDIM)
+    env = DiscreteEBM(ndim=NDIM)
     states = env.reset(batch_shape=BATCH_SIZE, random=True, seed=SEED)
 
     passing_actions_lists = [
@@ -201,7 +201,7 @@ def test_DiscreteEBM_bwd_step():
 
 @pytest.mark.parametrize("delta", [0.1, 0.5, 1.0])
 def test_box_fwd_step(delta: float):
-    env = BoxEnv(delta=delta)
+    env = Box(delta=delta)
     BATCH_SIZE = 3
 
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
@@ -269,9 +269,9 @@ def test_states_getitem(ndim: int, env_name: str):
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=ndim, height=8)
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBMEnv(ndim=ndim)
+        env = DiscreteEBM(ndim=ndim)
     elif env_name == "Box":
-        env = BoxEnv(delta=1.0 / ndim)
+        env = Box(delta=1.0 / ndim)
     else:
         raise ValueError(f"Unknown env_name {env_name}")
 

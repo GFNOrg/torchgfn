@@ -1,7 +1,7 @@
 from typing import ClassVar, Literal, Tuple, cast
 
 import torch
-from gymnasium.spaces import Box
+from gymnasium.spaces import Box as GBox
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
@@ -9,7 +9,7 @@ from gfn.env import Env
 from gfn.states import States
 
 
-class BoxEnv(Env):
+class Box(Env):
     """Box environment, corresponding to the one in Section 4.1 of https://arxiv.org/abs/2301.12594"""
 
     def __init__(
@@ -23,7 +23,7 @@ class BoxEnv(Env):
         assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
         s0 = torch.tensor([0.0, 0.0], device=torch.device(device_str))
-        action_space = Box(low=0.0, high=delta, shape=(2,))
+        action_space = GBox(low=0.0, high=delta, shape=(2,))
 
         self.R0 = R0
         self.R1 = R1

@@ -3,7 +3,7 @@ import torch
 from test_samplers_and_trajectories import test_trajectory_sampling
 
 from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
-from gfn.gym import BoxEnv, DiscreteEBMEnv, HyperGrid
+from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
     BoxPBNeuralNet,
@@ -35,7 +35,7 @@ def test_FM(env_name: int, ndim: int, module_name: str):
             ndim=ndim, preprocessor_name="Enum" if module_name == "Tabular" else "KHot"
         )
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBMEnv(
+        env = DiscreteEBM(
             ndim=ndim,
             preprocessor_name="Enum" if module_name == "Tabular" else "Identity",
         )
@@ -153,14 +153,14 @@ def test_PFBasedParametrization(
             preprocessor_name="Enum" if module_name == "Tabular" else "KHot",
         )
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBMEnv(
+        env = DiscreteEBM(
             ndim=ndim,
             preprocessor_name="Enum" if module_name == "Tabular" else "Identity",
         )
     elif env_name == "Box":
         if module_name == "Tabular":
             pytest.skip("Tabular module impossible for Box")
-        env = BoxEnv(delta=1.0 / ndim)
+        env = Box(delta=1.0 / ndim)
     else:
         raise ValueError("Unknown environment name")
 
