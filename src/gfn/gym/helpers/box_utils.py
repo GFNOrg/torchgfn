@@ -14,6 +14,7 @@ from gfn.utils import NeuralNet
 
 PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0
+CLAMP = 1e-6
 
 
 class QuarterCircle(Distribution):
@@ -149,9 +150,7 @@ class QuarterCircle(Distribution):
 
         base_01_samples = (sampled_angles - self.min_angles) / (
             self.max_angles - self.min_angles
-        )
-        if not self.northeastern:
-            base_01_samples.clamp_(min=1e-4, max=1 - 1e-4)
+        ).clamp_(min=CLAMP, max=1 - CLAMP)
 
         # Ugly hack: when some of the sampled actions are -infinity (exit action), the corresponding value is nan
         # And we don't really care about the log prob of the exit action
@@ -160,17 +159,17 @@ class QuarterCircle(Distribution):
             torch.isnan(base_01_samples),
             torch.ones_like(base_01_samples) * 0.5,
             base_01_samples,
-        ).clamp_(min=1e-6, max=1 - 1e-6)
+        ).clamp_(min=CLAMP, max=1 - CLAMP)
 
         # Another hack: when backward (northeastern=False), sometimes the sampled_actions are equal to the centers
         # In this case, the base_01_samples are close to 0 because of approximations errors. But they do not count
-        # when evaluating the logpros, so we just bump them to 1e-6 so that Beta.log_prob does not throw an error
+        # when evaluating the logpros, so we just bump them to CLAMP so that Beta.log_prob does not throw an error
         if not self.northeastern:
             base_01_samples = torch.where(
                 torch.norm(self.centers.tensor, dim=-1) <= self.delta,
-                torch.ones_like(base_01_samples) * 1e-6,
+                torch.ones_like(base_01_samples) * CLAMP,
                 base_01_samples,
-            ).clamp_(min=1e-6, max=1 - 1e-6)
+            ).clamp_(min=CLAMP, max=1 - CLAMP)
 
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
 
@@ -181,7 +180,7 @@ class QuarterCircle(Distribution):
             base_01_logprobs
             - np.log(self.delta)
             - np.log(np.pi / 2)
-            - torch.log((self.max_angles - self.min_angles).clamp_(min=1e-6))
+            - torch.log((self.max_angles - self.min_angles).clamp_(min=CLAMP))
             # The clamp doesn't really matter, because if we need to clamp, it means the actual action is exit action
         )
 
@@ -261,7 +260,7 @@ class QuarterDisk(Distribution):
         base_theta_01_samples = (
             torch.arccos(sampled_actions[..., 0] / (base_r_01_samples * self.delta))
             / PI_2
-        ).clamp_(1e-6, 1 - 1e-6)
+        ).clamp_(CLAMP, 1 - CLAMP)
 
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
@@ -434,9 +433,6 @@ class BoxPFNeuralNet_old(NeuralNet):
         n_components_s0: the number of components for each s=0 distribution parameter.
         n_components: the number of components for each s=t>0 distribution parameter.
         PFs0: the parameters for the s=0 distribution.
-        components_mask: a binary mask used to remove unused components from either
-            self.PFs0 or super().forward(states), depending on which has the smaller
-            number of components.
     """
 
     def __init__(
@@ -489,7 +485,7 @@ class BoxPFNeuralNet_old(NeuralNet):
 
         # # For the smaller component space (whether it be for s_0 or s_t>0), the unused
         # # components will be zeroed out by self.components_mask.
-        # self.components_mask = self._compute_all_components_mask()
+        self._components_mask = self._compute_all_components_mask()
 
     def _compute_all_components_mask(self):
         """Masks unused elements of the smaller state representation."""
@@ -502,17 +498,12 @@ class BoxPFNeuralNet_old(NeuralNet):
         ).repeat(
             1, 5  # [1, 5 * n_components_max]
         )
+        mask = torch.cat(
+            (torch.ones(1).bool(), mask), dim=-1
+        )  # [1, 1 + 5 * n_comps_max]
+        mask.requires_grad = False
 
-        # First element is always present. In s_0, this element will always be zero.
-        all_components_mask = torch.cat(
-            (torch.ones(1, 1), all_components_mask),
-            dim=-1,  # [1, 1 + 5 * n_components_max]
-        )
-
-        # This mask should never be updated during backprop.
-        all_components_mask.requires_grad = False
-
-        return all_components_mask.bool()
+        return mask
 
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
@@ -527,17 +518,17 @@ class BoxPFNeuralNet_old(NeuralNet):
 
         # Explicitly mask the unused components for t>0 state-representations.
         if self.n_components < self.n_components_s0:
-            out = out * self._compute_all_components_mask()
+            out = out * self._components_mask
 
         # Add the all_zero vector for exit probability.
         out_s0 = torch.repeat_interleave(
-            self.PFs0.clone(), B, dim=0
+            self.PFs0, B, dim=0
         )  # [B, 5 * n_components_max]
         out_s0 = torch.cat((torch.zeros(B, 1), out_s0), dim=-1)
 
         # Explicitly mask the unused components for t=0 state-representations.
         if self.n_components_s0 < self.n_components:
-            out_s0 = out_s0 * self.components_mask
+            out_s0 = out_s0 * self._components_mask
 
         # Overwrite the network outputs with PFs0 in the case that the state is 0.0.
         idx_s0 = torch.all(preprocessed_states == 0.0, 1)
@@ -547,8 +538,8 @@ class BoxPFNeuralNet_old(NeuralNet):
         # These are the components that represent the concentration parameters of the Betas, before normalizing, and should
         # thus be between 0 and 1
         out[..., 0] = torch.sigmoid(out[..., 0])
-        out[..., 1 + self.n_components :] = torch.sigmoid(
-            out[..., 1 + self.n_components :]
+        out[..., 1 + self._n_comp_max :] = torch.sigmoid(
+            out[..., 1 + self._n_comp_max :]
         )
 
         return out
