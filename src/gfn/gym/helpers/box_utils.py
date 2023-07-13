@@ -347,7 +347,7 @@ class DistributionWrapper(Distribution):
     def __init__(
         self,
         states: States,
-        env: BoxEnv,
+        env: Box,
         delta: float,
         mixture_logits,
         alpha_r,

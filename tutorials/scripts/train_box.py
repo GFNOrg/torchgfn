@@ -14,7 +14,7 @@ import numpy as np
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.envs import BoxEnv
+from gfn.envs import Box
 from gfn.estimators import LogStateFlowEstimator, LogZEstimator
 from gfn.losses import (
     DBParametrization,
@@ -38,7 +38,7 @@ from sklearn.neighbors import KernelDensity
 from scipy.special import logsumexp
 
 
-def sample_from_reward(env: BoxEnv, n_samples: int):
+def sample_from_reward(env: Box, n_samples: int):
     """Samples states from the true reward distribution
 
     Implement rejection sampling, with proposal being uniform distribution in [0, 1]^2
@@ -87,7 +87,7 @@ def estimate_jsd(kde1, kde2):
 
 # 0 - This is for debugging only
 
-# env = BoxEnv(delta=0.1)
+# env = Box(delta=0.1)
 # n_samples = 10000
 # samples = sample_from_reward(env, n_samples)
 # print(samples)
@@ -263,7 +263,7 @@ if __name__ == "__main__":
     n_iterations = args.n_trajectories // args.batch_size
 
     # 1. Create the environment
-    env = BoxEnv(delta=args.delta, epsilon=1e-10, device_str=device_str)
+    env = Box(delta=args.delta, epsilon=1e-10, device_str=device_str)
 
     # 2. Create the parameterization.
     #    For this we need modules and estimators.

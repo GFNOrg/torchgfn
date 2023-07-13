@@ -1,7 +1,7 @@
 import torch
 
-from gfn.envs import BoxEnv
-from gfn.examples.box_utils import (
+from gfn.gym import Box
+from gfn.gym.helpers.box_utils import (
     QuarterCircle,
     QuarterCircleWithExit,
     QuarterDisk,
@@ -22,7 +22,7 @@ def test_mixed_distributions():
     n_components = 5
     n_components_s0 = 6
 
-    environment = BoxEnv(
+    environment = Box(
         delta=delta,
         R0=0.1,
         R1=0.5,
@@ -119,6 +119,7 @@ def test_mixed_distributions():
 
     assert torch.sum(alpha_r == 0.5) == B * max(n_components_s0, n_components)
     assert torch.sum(beta_r == 0.5) == B * max(n_components_s0, n_components)
+
 
 if __name__ == "__main__":
     test_mixed_distributions()
