@@ -437,9 +437,6 @@ class BoxPFNeuralNet(NeuralNet):
         n_components_s0: the number of components for each s=0 distribution parameter.
         n_components: the number of components for each s=t>0 distribution parameter.
         PFs0: the parameters for the s=0 distribution.
-        components_mask: a binary mask used to remove unused components from either
-            self.PFs0 or super().forward(states), depending on which has the smaller
-            number of components.
     """
 
     def __init__(
@@ -606,7 +603,7 @@ class BoxPBUniform(torch.nn.Module):
         # return (1, 1, 1) for all states, thus the "+ (3,)".
         return torch.ones(
             preprocessed_states.shape[:-1] + (3,), device=preprocessed_states.device
-        )  # TODO: something fishy here !! they get normali
+        )
 
 
 def split_PF_module_output(
