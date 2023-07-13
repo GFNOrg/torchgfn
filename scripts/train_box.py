@@ -3,10 +3,8 @@ The goal of this script is to reproduce some of the published results on the Box
 environment. Run one of the following commands to reproduce some of the results in
 [A theory of continuous generative flow networks](https://arxiv.org/abs/2301.12594)
 
-For this, you need to install scikit-learn via `pip install scikit-learn`
 
-python train_hypergrid.py --ndim 4 --height 8 --R0 {0.1, 0.01, 0.001} --tied {--uniform} --loss {TB, DB}
-python train_hypergrid.py --ndim 2 --height 64 --R0 {0.1, 0.01, 0.001} --tied {--uniform} --loss {TB, DB}
+python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
 
 from argparse import ArgumentParser
