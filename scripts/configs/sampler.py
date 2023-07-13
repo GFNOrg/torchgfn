@@ -1,7 +1,7 @@
+import inspect
 from dataclasses import dataclass
 from typing import Tuple
 
-import inspect
 from gfn.envs import Env
 from gfn.losses import FMParametrization, Parametrization, PFBasedParametrization
 from gfn.samplers import DiscreteActionsSampler, TrajectoriesSampler
@@ -48,7 +48,7 @@ def make_sampler(
     if not name:
         sampler_class = SamplerConfig
     else:
-        raise ValueError("Invalid sampler name: {}".format(name))
+        raise ValueError(f"Invalid sampler name: {name}")
 
     args = inspect.getfullargspec(sampler_class.__init__).args
     sampler_config = {k: v for k, v in config["sampler"].items() if k in args}

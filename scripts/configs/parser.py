@@ -113,7 +113,7 @@ def create_dict_from_args(args: list, sep: str = "."):
 
 def parse_args_to_dict(parser: ArgumentParser) -> Tuple[dict, dict]:
     """
-    Parse default arguments in a dictionnary,
+    Parse default arguments in a dictionary,
     and arbitrary extra command line arguments to another dictionary.
 
         Returns:
@@ -169,7 +169,7 @@ def load_config(parser: ArgumentParser) -> dict:
         dict: GFlowNet run config
     """
     config, cli = parse_args_to_dict(parser)
-    namespaces = set(b.parent.name for b in Path(__file__).parent.glob("*/base.yaml"))
+    namespaces = {b.parent.name for b in Path(__file__).parent.glob("*/base.yaml")}
     for namespace in namespaces:
         value = config.get(namespace.replace(".yaml", ""))
         config[namespace] = load_named_config(namespace, value)
