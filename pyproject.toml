@@ -55,7 +55,7 @@ dev = [
     "sphinx_rtd_theme",
     "tox"
 ]
-scripts = ["tqdm", "wandb"]
+scripts = ["tqdm", "wandb", "scikit-learn", "scipy"]
 all = ["pre-commit", "pytest", "renku-sphinx-theme", "sphinx_rtd_theme", "sphinx-autoapi", "sphinx-math-dollar", "sphinx", "tox", "black", "myst-parser", "tqdm", "wandb"]
 
 [project.urls]

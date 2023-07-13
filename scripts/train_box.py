@@ -85,29 +85,6 @@ def estimate_jsd(kde1, kde2):
     return jsd / 2.0
 
 
-# 0 - This is for debugging only
-
-# env = BoxEnv(delta=0.1)
-# n_samples = 10000
-# samples = sample_from_reward(env, n_samples)
-# print(samples)
-# kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(samples)
-
-# import matplotlib.pyplot as plt
-
-# n = 100
-
-
-# test_states = get_test_states()
-
-# log_dens = kde.score_samples(test_states)
-# fig = plt.imshow(np.exp(log_dens).reshape(n, n), origin="lower", extent=[0, 1, 0, 1])
-# plt.colorbar()
-# plt.show()
-# estimate_jsd(kde, kde)
-# assert False
-
-
 if __name__ == "__main__":
     parser = ArgumentParser()
 
@@ -409,6 +386,8 @@ if __name__ == "__main__":
 
         loss.backward()
         for k, p in parametrization.parameters.items():
+            if "logZ" in k:
+                continue
             p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
