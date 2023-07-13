@@ -304,6 +304,7 @@ if __name__ == "__main__":
         max_concentration=args.max_concentration,
     )
     logZ = None
+    module = None
     if args.loss in ("DB", "SubTB"):
         # We need a LogStateFlowEstimator
 
@@ -400,14 +401,6 @@ if __name__ == "__main__":
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
         trajectories = parametrization.sample_trajectories(n_samples=args.batch_size)
-        # Debug:
-        # from tmp import (
-        #     sample_trajectories,
-        #     Box2,
-        #     CirclePF2,
-        #     CirclePB2,
-        #     evaluate_backward_logprobs,
-        # )
 
         training_samples = trajectories_to_training_samples(
             trajectories, parametrization
@@ -415,10 +408,9 @@ if __name__ == "__main__":
 
         optimizer.zero_grad()
         loss = parametrization.loss(training_samples)
+
         loss.backward()
         for k, p in parametrization.parameters.items():
-            if "logZ" in k:
-                continue
             p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
