@@ -409,55 +409,6 @@ if __name__ == "__main__":
         #     evaluate_backward_logprobs,
         # )
 
-        # fw_module = CirclePF2(
-        #     hidden_dim=args.hidden_dim,
-        #     n_hidden_layers=args.n_hidden,
-        #     n_components=args.n_components,
-        #     n_components_s0=args.n_components_s0,
-        #     beta_min=args.min_concentration,
-        #     beta_max=args.max_concentration - args.min_concentration,
-        # )
-        # fw_module.load_state_dict(pf_module.state_dict())
-        # bw_module = CirclePB2(
-        #     hidden_dim=args.hidden_dim,
-        #     n_hidden_layers=args.n_hidden,
-        #     n_components=args.n_components,
-        #     beta_min=args.min_concentration,
-        #     beta_max=args.max_concentration - args.min_concentration,
-        # )
-        # bw_module.load_state_dict(pb_module.state_dict())
-        # env2 = Box2(
-        #     delta=env.delta, R0=env.R0, R1=env.R1, R2=env.R2, epsilon=env.epsilon
-        # )
-        # trajectories2, actionss, logprobs, all_logprobs = sample_trajectories(
-        #     env2, fw_module, n_trajectories=args.batch_size
-        # )
-        # when_is_done = torch.all(trajectories2 == -float("inf"), -1).long().argmax(1)
-        # trajectories3 = trajectories.__class__(
-        #     env,
-        #     env.States(trajectories2.transpose(0, 1)),
-        #     env.Actions(actionss.transpose(0, 1)),
-        #     when_is_done,
-        #     log_probs=all_logprobs.transpose(0, 1),
-        # )
-
-        # # trajectories3[3].log_probs
-        # # pf_estimator(trajectories3[3].states[0]).log_prob(trajectories3[3].actions.tensor[0])
-        # # pf_estimator(trajectories3[3].states[0]).quarter_disk.base_r_dist.mixture_distribution.logits.softmax(0)
-        # # pf_estimator(trajectories3[3].states[0]).quarter_disk.base_r_dist.component_distribution.concentration0
-        # # pf_estimator(trajectories3[3].states[0]).quarter_disk.base_r_dist.component_distribution.concentration1
-        # # fw_module.to_dist(trajectories3[3].states[0].tensor)[0].component_distribution.concentration0
-        # # fw_module.to_dist(trajectories3[3].states[0].tensor)[0].component_distribution.concentration1
-        # bw_logprobs, _ = evaluate_backward_logprobs(env2, bw_module, trajectories2)
-        # loss2 = torch.mean(
-        #     (
-        #         parametrization.logZ.tensor
-        #         + logprobs
-        #         - bw_logprobs
-        #         - env.reward(trajectories3.last_states).log()
-        #     )
-        #     ** 2
-        # )
         training_samples = trajectories_to_training_samples(
             trajectories, parametrization
         )
