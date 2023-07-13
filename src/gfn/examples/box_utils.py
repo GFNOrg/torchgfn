@@ -174,6 +174,9 @@ class QuarterCircle(Distribution):
 
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
 
+        if not self.northeastern:
+            base_01_logprobs = base_01_logprobs.clamp_max(100)
+
         logprobs = (
             base_01_logprobs
             - np.log(self.delta)
@@ -320,9 +323,7 @@ class QuarterCircleWithExit(Distribution):
             )
         # When torch.norm(1 - states, dim=-1) <= env.delta or
         # torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1), we have to exit
-        exit_mask[
-            torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta
-        ] = True  # should be -1?
+        exit_mask[torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta] = True
         exit_mask[torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1)] = True
         actions[exit_mask] = self.exit_action
 
@@ -338,9 +339,7 @@ class QuarterCircleWithExit(Distribution):
         logprobs[exit] = torch.log(self.exit_probability[exit])
         # When torch.norm(1 - states, dim=-1) <= env.delta, logprobs should be 0
         # When torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1), logprobs should be 0
-        logprobs[
-            torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta
-        ] = 0.0  # should be -1?
+        logprobs[torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta] = 0.0
         logprobs[torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1)] = 0.0
         return logprobs
 
