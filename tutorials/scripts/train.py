@@ -3,11 +3,12 @@ from argparse import ArgumentParser
 
 import torch
 from tqdm import tqdm, trange
-from utils import load_config, make_env, make_loss, make_optim, make_sampler
 
 import wandb
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.utils.common import trajectories_to_training_samples, validate
+
+from .helpers import load_config, make_env, make_loss, make_optim, make_sampler
 
 if __name__ == "__main__":
     parser = ArgumentParser()

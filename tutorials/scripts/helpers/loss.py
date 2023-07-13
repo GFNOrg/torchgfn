@@ -5,7 +5,7 @@ from typing import Literal, Tuple
 
 import torch
 
-from gfn.envs import Env
+from gfn.env import Env
 from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
 from gfn.losses import (
     DBParametrization,

@@ -13,7 +13,7 @@ class UnsqueezedCategorical(Categorical):
 
     This helper class facilitates representing actions, for discrete environments, which
     when implemented with the `DiscreteActions` class (see
-    `gfn/envs/env.py::DiscreteEnv), use an `action_shape = (1,)`. Therefore, according
+    `gfn/env.py::DiscreteEnv), use an `action_shape = (1,)`. Therefore, according
     to `gfn/actions.py::Actions`, tensors representing actions in discrete environments
     should be of shape (batch_shape, 1).
     """

@@ -7,7 +7,7 @@ from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 
 if TYPE_CHECKING:
-    from gfn.envs import Env
+    from gfn.env import Env
     from gfn.states import States
 
 

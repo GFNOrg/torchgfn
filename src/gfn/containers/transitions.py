@@ -7,7 +7,7 @@ from torchtyping import TensorType as TT
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
-    from gfn.envs import Env
+    from gfn.env import Env
     from gfn.states import States
 
 from gfn.containers.base import Container

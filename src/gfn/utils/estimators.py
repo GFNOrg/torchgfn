@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.distributions import Distribution
 from torchtyping import TensorType as TT
 
-from gfn.envs import DiscreteEnv, Env
+from gfn.env import DiscreteEnv, Env
 from gfn.estimators import LogEdgeFlowEstimator, ProbabilityEstimator
 from gfn.states import DiscreteStates
 from gfn.utils.distributions import UnsqueezedCategorical

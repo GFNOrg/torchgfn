@@ -4,23 +4,15 @@ import pytest
 
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
-from gfn.samplers import ActionsSampler, TrajectoriesSampler
-from gfn.utils import (
-    DiscretePBEstimator,
-    DiscretePFEstimator,
-    NeuralNet,
-    add_root_to_path,
-)
-
-add_root_to_path()
-
-from examples.envs import BoxEnv, DiscreteEBMEnv, HyperGrid
-from examples.envs.helpers.box_utils import (
+from gfn.gym import BoxEnv, DiscreteEBMEnv, HyperGrid
+from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
     BoxPBNeuralNet,
     BoxPFEstimator,
     BoxPFNeuralNet,
 )
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
+from gfn.utils import DiscretePBEstimator, DiscretePFEstimator, NeuralNet
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])

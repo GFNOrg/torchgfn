@@ -5,7 +5,7 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories, Transitions
-from gfn.envs import Env
+from gfn.env import Env
 from gfn.losses import (
     DBParametrization,
     FMParametrization,

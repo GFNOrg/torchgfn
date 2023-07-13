@@ -8,12 +8,9 @@ from torch.distributions import Beta, Categorical, Distribution, MixtureSameFami
 from torchtyping import TensorType as TT
 
 from gfn.estimators import ProbabilityEstimator
+from gfn.gym import BoxEnv
 from gfn.states import States
-from gfn.utils import NeuralNet, add_root_to_path
-
-add_root_to_path()
-
-from examples.envs import BoxEnv
+from gfn.utils import NeuralNet
 
 PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0

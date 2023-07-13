@@ -5,7 +5,7 @@ from gymnasium.spaces import Box
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
-from gfn.envs.env import Env
+from gfn.env import Env
 from gfn.states import States
 
 

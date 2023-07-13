@@ -7,7 +7,7 @@ from gymnasium.spaces import Discrete, Space
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
-from gfn.envs.preprocessors import IdentityPreprocessor, Preprocessor
+from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 
 # Errors

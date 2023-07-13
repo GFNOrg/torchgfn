@@ -53,12 +53,10 @@ from tqdm import tqdm
 from gfn.estimators import LogZEstimator
 from gfn.losses import TBParametrization
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
-from gfn.utils import NeuralNet, DiscretePFEstimator, DiscretePBEstimator, add_root_to_path
+from gfn.utils import NeuralNet, DiscretePFEstimator, DiscretePBEstimator
 
-# just making sure the examples/ folder is available in the Python path
-add_root_to_path()
 
-from examples.envs import HyperGrid
+from gfn.gym import HyperGrid
 
 if __name__ == "__main__":
 
