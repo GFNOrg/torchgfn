@@ -348,6 +348,8 @@ if __name__ == "__main__":
     assert parametrization is not None, f"No parametrization for loss {args.loss}"
 
     # 3. Create the optimizer and scheduler
+    # TODO: We need to make sure that parameters never returns duplicates - bug in the
+    # paramaterization modules!
     params = [
         {
             "params": [
