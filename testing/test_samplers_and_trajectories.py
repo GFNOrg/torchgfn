@@ -25,8 +25,12 @@ def trajectory_sampling_with_return(
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=2, height=8, preprocessor_name=preprocessor_name)
     elif env_name == "DiscreteEBM":
+        if preprocessor_name != "Identity" or delta != 0.1:
+            pytest.skip("Useless tests")
         env = DiscreteEBM(ndim=8)
     elif env_name == "Box":
+        if preprocessor_name != "Identity":
+            pytest.skip("Useless tests")
         env = Box(delta=delta)
     else:
         raise ValueError("Unknown environment name")

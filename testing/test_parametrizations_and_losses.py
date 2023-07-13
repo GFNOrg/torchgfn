@@ -129,6 +129,8 @@ def PFBasedParametrization_with_return(
             preprocessor_name="Enum" if module_name == "Tabular" else "Identity",
         )
     elif env_name == "Box":
+        if module_name == "Tabular":
+            pytest.skip("Tabular module impossible for Box")
         env = Box(delta=1.0 / ndim)
     else:
         raise ValueError("Unknown environment name")
