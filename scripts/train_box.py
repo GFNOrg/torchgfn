@@ -3,10 +3,8 @@ The goal of this script is to reproduce some of the published results on the Box
 environment. Run one of the following commands to reproduce some of the results in
 [A theory of continuous generative flow networks](https://arxiv.org/abs/2301.12594)
 
-For this, you need to install scikit-learn via `pip install scikit-learn`
 
-python train_hypergrid.py --ndim 4 --height 8 --R0 {0.1, 0.01, 0.001} --tied {--uniform} --loss {TB, DB}
-python train_hypergrid.py --ndim 2 --height 64 --R0 {0.1, 0.01, 0.001} --tied {--uniform} --loss {TB, DB}
+python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
 
 from argparse import ArgumentParser
@@ -33,6 +31,8 @@ from gfn.examples.box_utils import (
     BoxPBEstimator,
     BoxPBUniform,
 )
+
+# BoxPFNeuralNet = BoxPFNeuralNet_old
 
 from sklearn.neighbors import KernelDensity
 from scipy.special import logsumexp
@@ -83,29 +83,6 @@ def estimate_jsd(kde1, kde2):
     jsd = np.sum(np.exp(log_dens1) * (log_dens1 - log_dens))
     jsd += np.sum(np.exp(log_dens2) * (log_dens2 - log_dens))
     return jsd / 2.0
-
-
-# 0 - This is for debugging only
-
-# env = BoxEnv(delta=0.1)
-# n_samples = 10000
-# samples = sample_from_reward(env, n_samples)
-# print(samples)
-# kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(samples)
-
-# import matplotlib.pyplot as plt
-
-# n = 100
-
-
-# test_states = get_test_states()
-
-# log_dens = kde.score_samples(test_states)
-# fig = plt.imshow(np.exp(log_dens).reshape(n, n), origin="lower", extent=[0, 1, 0, 1])
-# plt.colorbar()
-# plt.show()
-# estimate_jsd(kde, kde)
-# assert False
 
 
 if __name__ == "__main__":
@@ -275,6 +252,7 @@ if __name__ == "__main__":
         n_components=args.n_components,
         n_components_s0=args.n_components_s0,
     )
+    print("UNIFORM {}".format(args.uniform_pb))
     if args.uniform_pb:
         pb_module = BoxPBUniform()
     else:
@@ -300,7 +278,8 @@ if __name__ == "__main__":
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
-
+    logZ = None
+    module = None
     if args.loss in ("DB", "SubTB"):
         # We need a LogStateFlowEstimator
 
@@ -348,27 +327,30 @@ if __name__ == "__main__":
     assert parametrization is not None, f"No parametrization for loss {args.loss}"
 
     # 3. Create the optimizer and scheduler
-    # TODO: We need to make sure that parameters never returns duplicates - bug in the
-    # paramaterization modules!
-    params = [
-        {
-            "params": [
-                val
-                for key, val in parametrization.parameters.items()
-                if "logZ" not in key
-            ],
-            "lr": args.lr,
-        }
-    ]
-    if "logZ.logZ" in parametrization.parameters:
-        params.append(
+
+    optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
+    if not args.uniform_pb:
+        optimizer.add_param_group(
             {
-                "params": [parametrization.parameters["logZ.logZ"]],
-                "lr": args.lr_Z,
+                "params": pb_module.last_layer.parameters()
+                if args.tied
+                else pb_module.parameters(),
+                "lr": args.lr,
             }
         )
-
-    optimizer = torch.optim.Adam(params)
+    if args.loss in ("DB", "SubTB"):
+        assert module is not None
+        optimizer.add_param_group(
+            {
+                "params": module.last_layer.parameters()
+                if args.tied
+                else module.parameters(),
+                "lr": args.lr,
+            }
+        )
+    if "logZ.logZ" in parametrization.parameters:
+        assert logZ is not None
+        optimizer.add_param_group({"params": [logZ.tensor], "lr": args.lr_Z})
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         milestones=[
@@ -394,19 +376,23 @@ if __name__ == "__main__":
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
         trajectories = parametrization.sample_trajectories(n_samples=args.batch_size)
+
         training_samples = trajectories_to_training_samples(
             trajectories, parametrization
         )
 
         optimizer.zero_grad()
         loss = parametrization.loss(training_samples)
+
         loss.backward()
-        for p in parametrization.parameters.values():
+        for k, p in parametrization.parameters.items():
+            if "logZ" in k:
+                continue
             p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
 
-        visited_terminating_states.extend(trajectories.last_states)
+        # visited_terminating_states.extend(trajectories.last_states)
 
         states_visited += len(trajectories)
 
@@ -432,19 +418,6 @@ if __name__ == "__main__":
             )
             jsd = estimate_jsd(kde, true_kde)
 
-            def plot():
-                import matplotlib.pyplot as plt
-
-                n = 100
-                test_states = get_test_states(n)
-                log_dens = kde.score_samples(test_states)
-                fig = plt.imshow(
-                    np.exp(log_dens).reshape(n, n), origin="lower", extent=[0, 1, 0, 1]
-                )
-                plt.colorbar()
-                plt.show()
-
-            # plot()
             if use_wandb:
                 wandb.log({"JSD": jsd}, step=iteration)
 

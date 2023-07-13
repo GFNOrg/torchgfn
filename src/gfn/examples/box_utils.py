@@ -16,6 +16,7 @@ PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0
 CLAMP = 1e-6
 
+
 class QuarterCircle(Distribution):
     """Represents distributions on quarter circles (or parts thereof), either the northeastern
     ones or the southwestern ones, centered at a point in (0, 1)^2. The distributions
@@ -134,19 +135,25 @@ class QuarterCircle(Distribution):
                 0,
                 sampled_actions,
             )
-        if torch.any(
-            torch.abs(torch.norm(sampled_actions, dim=-1) - self.delta) > 1e-5
-        ):
-            raise ValueError("Sampled actions should be positive")
+            if torch.any(
+                torch.abs(torch.norm(sampled_actions, dim=-1) - self.delta) > 1e-5
+            ):
+                raise ValueError("Sampled actions should be of norm delta ish")
 
         return sampled_actions
 
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
+        sampled_actions.clamp_(
+            min=0.0, max=self.delta
+        )  # Should be the case already - just to avoid numerical issues
         sampled_angles = torch.arccos(sampled_actions[..., 0] / self.delta) / (PI_2)
 
         base_01_samples = (sampled_angles - self.min_angles) / (
             self.max_angles - self.min_angles
         ).clamp_(min=CLAMP, max=1 - CLAMP)
+
+        if not self.northeastern:
+            base_01_samples.clamp_(min=CLAMP / 100.0, max=1 - CLAMP / 100.0)
 
         # Ugly hack: when some of the sampled actions are -infinity (exit action), the corresponding value is nan
         # And we don't really care about the log prob of the exit action
@@ -168,6 +175,9 @@ class QuarterCircle(Distribution):
             ).clamp_(min=CLAMP, max=1 - CLAMP)
 
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
+
+        if not self.northeastern:
+            base_01_logprobs = base_01_logprobs.clamp_max(100)
 
         logprobs = (
             base_01_logprobs
@@ -247,7 +257,7 @@ class QuarterDisk(Distribution):
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
         base_r_01_samples = (
             torch.sqrt(torch.sum(sampled_actions**2, dim=-1))
-            / self.delta  # changes from 1 to -1.
+            / self.delta  # changes from 0 to 1.
         )
 
         # Calculating the angle between the initial state and all future positions.
@@ -316,9 +326,7 @@ class QuarterCircleWithExit(Distribution):
             )
         # When torch.norm(1 - states, dim=-1) <= env.delta or
         # torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1), we have to exit
-        exit_mask[
-            torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta
-        ] = True  # should be -1?
+        exit_mask[torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta] = True
         exit_mask[torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1)] = True
         actions[exit_mask] = self.exit_action
 
@@ -334,9 +342,7 @@ class QuarterCircleWithExit(Distribution):
         logprobs[exit] = torch.log(self.exit_probability[exit])
         # When torch.norm(1 - states, dim=-1) <= env.delta, logprobs should be 0
         # When torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1), logprobs should be 0
-        logprobs[
-            torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta
-        ] = 0.0  # should be -1?
+        logprobs[torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta] = 0.0
         logprobs[torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1)] = 0.0
         return logprobs
 
@@ -381,8 +387,8 @@ class DistributionWrapper(Distribution):
                 centers=states[self.idx_not_initial],  # Remove initial states.
                 exit_probability=exit_probability[self.idx_not_initial],
                 mixture_logits=mixture_logits[self.idx_not_initial, :n_components],
-                alpha=alpha_r[self.idx_not_initial, :n_components],  # TODO: verify.
-                beta=beta_r[self.idx_not_initial, :n_components],  # TODO: verify
+                alpha=alpha_theta[self.idx_not_initial, :n_components],  # TODO: verify.
+                beta=beta_theta[self.idx_not_initial, :n_components],  # TODO: verify
                 epsilon=self.env.epsilon,
             )  # no sample_shape req as it is stored in centers.
 
@@ -441,7 +447,7 @@ class BoxPFNeuralNet(NeuralNet):
         n_components: int,
         **kwargs,
     ):
-        """Insantiates the neural network for the forward policy.
+        """Instantiates the neural network for the forward policy.
 
         Args:
             hidden_dim: the size of each hidden layer.
@@ -467,7 +473,7 @@ class BoxPFNeuralNet(NeuralNet):
         # size is 1 + 5 * self._n_comp_max. This is because the final two components are
         # only used by s_0. Therefore, for s_t>0, 2 "dummy" constant all_zero
         # self._n_comp_max components will be added to the neural network outputs.
-        output_dim = 1 + 3 * self._n_comp_max
+        output_dim = 1 + 3 * self.n_components
 
         super().__init__(
             input_dim=input_dim,
@@ -479,59 +485,65 @@ class BoxPFNeuralNet(NeuralNet):
         )
         # Does not include the + 1 to handle the exit probability (which is
         # impossible at t=0).
-        self.PFs0 = torch.nn.Parameter(torch.zeros(1, 5 * self._n_comp_max))
-
-        # # For the smaller component space (whether it be for s_0 or s_t>0), the unused
-        # # components will be zeroed out by self.components_mask.
-        self._components_mask = self._compute_all_components_mask()
-
-    def _compute_all_components_mask(self):
-        """Masks unused elements of the smaller state representation."""
-        mask = (
-            torch.arange(5 * self._n_comp_max).fmod(self._n_comp_max) < self._n_comp_min
-        )
-        mask = torch.cat((torch.ones(1).bool(), mask), dim=-1)  # [1, 1 + 5 * n_comps_max]
-        mask.requires_grad = False
-
-        return mask
+        self.PFs0 = torch.nn.Parameter(torch.zeros(1, 5 * self.n_components_s0))
 
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
     ) -> TT["batch_shape", "1 + 5 * n_components"]:
-        # First calculate network outputs (for all t > 0).
-        out = super().forward(preprocessed_states)
-        B, W = out.shape
+        # TODO: this only works with linear batches (i.e. batch_shape is an int), change it by using something else than B
+        B, _ = preprocessed_states.shape
+        # The desired output shape is [B, 1 + 5 * n_components_max], let's create the tensor
+        desired_out = torch.zeros(B, 1 + 5 * self._n_comp_max)
 
-        # Add all-zero components for stack-ability with self.PFs0.
-        out = torch.cat((out, torch.zeros(B, 2 * self._n_comp_max)), dim=-1)
+        # First calculate network outputs for all states
+        out = super().forward(
+            preprocessed_states
+        )  # This should be of shape [B, 1 + 3 * n_components]
 
-        # Explicitly mask the unused components for t>0 state-representations.
-        if self.n_components < self.n_components_s0:
-            out = out * self._components_mask
-
-        # Add the all_zero vector for exit probability.
-        out_s0 = torch.repeat_interleave(
-            self.PFs0, B, dim=0
-        )  # [B, 5 * n_components_max]
-        out_s0 = torch.cat((torch.zeros(B, 1), out_s0), dim=-1)
-
-        # Explicitly mask the unused components for t=0 state-representations.
-        if self.n_components_s0 < self.n_components:
-            out_s0 = out_s0 * self._components_mask
-
-        # Overwrite the network outputs with PFs0 in the case that the state is 0.0.
+        # Now let's find which of the B indices correspond to s_0
         idx_s0 = torch.all(preprocessed_states == 0.0, 1)
-        out[idx_s0, :] = out_s0[idx_s0, :]  # TODO: scatter?
 
-        # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_comp_max
-        # These are the components that represent the concentration parameters of the
-        # Betas, before normalizing, and should therefore be between 0 and 1.
-        out[..., 0] = torch.sigmoid(out[..., 0])
-        out[..., 1 + self._n_comp_max :] = torch.sigmoid(
-            out[..., 1 + self._n_comp_max :]
+        # Now we can fill the desired output tensor
+        # 1st, for the s_0 states, we use the PFs0 parameters
+        # Remember, PFs0 is of shape [1, 5 * n_components_s0]
+        indices_to_override = (
+            torch.arange(5 * self._n_comp_max).fmod(self._n_comp_max)
+            < self.n_components_s0
+        )
+        indices_to_override = torch.cat(
+            (torch.zeros(1).bool(), indices_to_override), dim=0
+        )
+        desired_out_slice = desired_out[idx_s0]
+        desired_out_slice[:, indices_to_override] = self.PFs0
+        desired_out[idx_s0] = desired_out_slice
+
+        # 2nd, for the states s, t>0, we use the network outputs
+        # Remember, out is of shape [B, 1 + 3 * n_components]
+        indices_to_override2 = (
+            torch.arange(3 * self._n_comp_max).fmod(self._n_comp_max)
+            < self.n_components
+        )
+        indices_to_override2 = torch.cat(
+            (
+                torch.ones(1).bool(),
+                indices_to_override2,
+                torch.zeros(2 * self._n_comp_max).bool(),
+            ),
+            dim=0,
+        )
+        desired_out_slice2 = desired_out[~idx_s0]
+        desired_out_slice2[:, indices_to_override2] = out[~idx_s0]
+        desired_out[~idx_s0] = desired_out_slice2
+
+        # Apply sigmoid to all except the dimensions between 1 and 1 + self._n_comp_max
+        # These are the components that represent the concentration parameters of the Betas, before normalizing, and should
+        # thus be between 0 and 1 (along with the exit probability)
+        desired_out[..., 0] = torch.sigmoid(desired_out[..., 0])
+        desired_out[..., 1 + self._n_comp_max :] = torch.sigmoid(
+            desired_out[..., 1 + self._n_comp_max :]
         )
 
-        return out
+        return desired_out
 
 
 class BoxPBNeuralNet(NeuralNet):
