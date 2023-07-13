@@ -140,10 +140,9 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    args = parser.parse_args()
 
     seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
-    torch.manual_seed(args.seed)
+    torch.manual_seed(seed)
 
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 

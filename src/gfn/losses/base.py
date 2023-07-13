@@ -183,13 +183,16 @@ class TrajectoryDecomposableLoss(ABC):
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(trajectories)
 
         assert log_pf_trajectories is not None
-        log_pf_trajectories = log_pf_trajectories.sum(dim=0)
-        log_pb_trajectories = log_pb_trajectories.sum(dim=0)
+        total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)
+        total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
         log_rewards = trajectories.log_rewards.clamp_min(self.log_reward_clip_min)  # type: ignore
-
+        if torch.any(torch.isinf(total_log_pf_trajectories)) or torch.any(
+            torch.isinf(total_log_pb_trajectories)
+        ):
+            raise ValueError("Infinite logprobs found")
         return (
-            log_pf_trajectories,
-            log_pb_trajectories,
-            log_pf_trajectories - log_pb_trajectories - log_rewards,
+            total_log_pf_trajectories,
+            total_log_pb_trajectories,
+            total_log_pf_trajectories - total_log_pb_trajectories - log_rewards,
         )
