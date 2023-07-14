@@ -178,7 +178,7 @@ class SubTBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
             flattening_masks,
         )
 
-    # TODO: inespect whether there exists code which can be factored out in the below
+    # TODO: inspect whether there exists code which can be factored out in the below
     # if-else block statements, or whether it makes sense to move each method to it's
     # own private method of this class, or even an external function which is called.
     # TODO: This is a long function, can it be simplified?

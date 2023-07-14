@@ -1,6 +1,6 @@
 import pytest
 import torch
-from test_samplers_and_trajectories import test_trajectory_sampling
+from test_samplers_and_trajectories import trajectory_sampling_with_return
 
 from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
 from gfn.gym import Box, DiscreteEBM, HyperGrid
@@ -62,16 +62,13 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     assert loss >= 0
 
 
-test_FM("DiscreteEBM", 2, "NeuralNet")
-
-
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")
-    trajectories, _, pf_estimator, pb_estimator = test_trajectory_sampling(
-        env_name, preprocessor_name, delta=0.1
+    trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
+        env_name, preprocessor_name, delta=0.1, n_components=1, n_components_s0=1
     )
     logZ = LogZEstimator(torch.tensor(0.0))
     parametrization_on = TBParametrization(
@@ -81,11 +78,8 @@ def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
         pf_estimator, pb_estimator, on_policy=False, logZ=logZ
     )
 
-    try:
-        log_pfs_on, log_pbs_on = parametrization_on.get_pfs_and_pbs(trajectories)
-        log_pfs_off, log_pbs_off = parametrization_off.get_pfs_and_pbs(trajectories)
-    except Exception as e:
-        raise ValueError("Error in get_pfs_and_pbs") from e
+    log_pfs_on, log_pbs_on = parametrization_on.get_pfs_and_pbs(trajectories)
+    log_pfs_off, log_pbs_off = parametrization_off.get_pfs_and_pbs(trajectories)
 
 
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
@@ -93,8 +87,8 @@ def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
 def test_get_scores(env_name: str, preprocessor_name: str):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")
-    trajectories, _, pf_estimator, pb_estimator = test_trajectory_sampling(
-        env_name, preprocessor_name, delta=0.1
+    trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
+        env_name, preprocessor_name, delta=0.1, n_components=1, n_components_s0=1
     )
     logZ = LogZEstimator(torch.tensor(0.0))
     parametrization_on = TBParametrization(
@@ -113,30 +107,7 @@ def test_get_scores(env_name: str, preprocessor_name: str):
     )
 
 
-@pytest.mark.parametrize(
-    ("module_name", "tie_pb_to_pf"),
-    [("NeuralNet", False), ("NeuralNet", True), ("Uniform", False), ("Tabular", False)],
-)
-@pytest.mark.parametrize(
-    ("parametrization_name", "sub_tb_weighing"),
-    [
-        ("DB", None),
-        ("TB", None),
-        ("ZVar", None),
-        ("SubTB", "DB"),
-        ("SubTB", "TB"),
-        ("SubTB", "ModifiedDB"),
-        ("SubTB", "equal"),
-        ("SubTB", "equal_within"),
-        ("SubTB", "geometric"),
-        ("SubTB", "geometric_within"),
-    ],
-)
-@pytest.mark.parametrize("forward_looking", [True, False])
-@pytest.mark.parametrize("zero_logF", [True, False])
-@pytest.mark.parametrize("ndim", [2, 3])
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
-def test_PFBasedParametrization(
+def PFBasedParametrization_with_return(
     env_name: str,
     ndim: int,
     module_name: str,
@@ -187,7 +158,7 @@ def test_PFBasedParametrization(
             pb_module = BoxPBNeuralNet(
                 hidden_dim=32,
                 n_hidden_layers=2,
-                n_components=3,
+                n_components=ndim + 1,
                 torso=pf_module.torso if tie_pb_to_pf else None,
             )
         elif module_name == "NeuralNet" and env_name != "Box":
@@ -209,7 +180,7 @@ def test_PFBasedParametrization(
         pb = BoxPBEstimator(
             env,
             pb_module,
-            n_components=ndim + 1,
+            n_components=ndim + 1 if module_name != "Uniform" else 1,
         )
     else:
         pf = DiscretePFEstimator(env, pf_module)
@@ -238,10 +209,7 @@ def test_PFBasedParametrization(
         training_objects = trajectories.to_transitions()
     else:
         training_objects = trajectories
-    try:
-        loss = parametrization.loss(training_objects)
-    except Exception as e:
-        raise ValueError("Loss computation failed") from e
+    loss = parametrization.loss(training_objects)
 
     if parametrization_name == "TB":
         assert torch.all(
@@ -260,6 +228,54 @@ def test_PFBasedParametrization(
     [("NeuralNet", False), ("NeuralNet", True), ("Uniform", False), ("Tabular", False)],
 )
 @pytest.mark.parametrize(
+    ("parametrization_name", "sub_tb_weighing"),
+    [
+        ("DB", None),
+        ("TB", None),
+        ("ZVar", None),
+        ("SubTB", "DB"),
+        ("SubTB", "TB"),
+        ("SubTB", "ModifiedDB"),
+        ("SubTB", "equal"),
+        ("SubTB", "equal_within"),
+        ("SubTB", "geometric"),
+        ("SubTB", "geometric_within"),
+    ],
+)
+@pytest.mark.parametrize("forward_looking", [True, False])
+@pytest.mark.parametrize("zero_logF", [True, False])
+@pytest.mark.parametrize("ndim", [2, 3])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+def test_PFBasedParametrization(
+    env_name: str,
+    ndim: int,
+    module_name: str,
+    tie_pb_to_pf: bool,
+    parametrization_name: str,
+    sub_tb_weighing: str,
+    forward_looking: bool,
+    zero_logF: bool,
+):
+    if env_name == "Box" and module_name == "Tabular":
+        pytest.skip("Tabular module impossible for Box")
+
+    env, pf, pb, logF, logZ, parametrization = PFBasedParametrization_with_return(
+        env_name,
+        ndim,
+        module_name,
+        tie_pb_to_pf,
+        parametrization_name,
+        sub_tb_weighing,
+        forward_looking,
+        zero_logF,
+    )
+
+
+@pytest.mark.parametrize(
+    ("module_name", "tie_pb_to_pf"),
+    [("NeuralNet", False), ("NeuralNet", True), ("Uniform", False), ("Tabular", False)],
+)
+@pytest.mark.parametrize(
     "weighing", ["equal", "TB", "DB", "geometric", "equal_within", "geometric_within"]
 )
 @pytest.mark.parametrize("ndim", [2, 3])
@@ -271,7 +287,9 @@ def test_subTB_vs_TB(
     tie_pb_to_pf: bool,
     weighing: str,
 ):
-    env, pf, pb, logF, logZ, parametrization = test_PFBasedParametrization(
+    if env_name == "Box" and module_name == "Tabular":
+        pytest.skip("Tabular module impossible for Box")
+    env, pf, pb, logF, logZ, parametrization = PFBasedParametrization_with_return(
         env_name=env_name,
         ndim=ndim,
         module_name=module_name,
