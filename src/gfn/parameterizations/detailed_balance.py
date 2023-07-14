@@ -5,12 +5,12 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Transitions
-from gfn.estimators import LogStateFlowEstimator
-from gfn.losses.base import PFBasedParametrization
+from gfn.modules import ScalarEstimator
+from gfn.parameterizations.base import PFBasedGFlowNet
 
 
 @dataclass
-class DBParametrization(PFBasedParametrization):
+class DBParametrization(PFBasedGFlowNet):
     r"""The Detailed Balance Parameterization dataclass.
 
     Corresponds to $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2 \times
@@ -22,12 +22,13 @@ class DBParametrization(PFBasedParametrization):
     `self.logit_PB` is a fixed `DiscretePBEstimator`.
 
     Attributes:
-        logF: a LogStateFlowEstimator instance.
+        logF: a ScalarEstimator instance.
         on_policy: boolean indicating whether we need to reevaluate the log probs.
 
     """
-    logF: LogStateFlowEstimator
+    logF: ScalarEstimator
     on_policy: bool = False
+    forward_looking = False # TODO: do I need this here?
 
     def get_scores(
         self, transitions: Transitions
@@ -61,9 +62,12 @@ class DBParametrization(PFBasedParametrization):
             valid_log_pf_actions = self.pf(states).log_prob(actions.tensor)
 
         valid_log_F_s = self.logF(states).squeeze(-1)
+        if self.forward_looking:
+            # TODO: would be nice if I didn't need to reach inside logF to get env...
+            log_rewards = self.logF.env.log_reward(states).unsqueeze(-1)
+            valid_log_F_s = valid_log_F_s + log_rewards
 
         preds = valid_log_pf_actions + valid_log_F_s
-
         targets = torch.zeros_like(preds)
 
         # uncomment next line for debugging

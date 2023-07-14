@@ -5,12 +5,12 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
-from gfn.estimators import LogStateFlowEstimator
-from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
+from gfn.modules import ScalarEstimator
+from gfn.parameterizations.base import PFBasedGFlowNet, TrajectoryDecomposableLoss
 
 
 @dataclass
-class SubTBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
+class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
     r"""Parameterization for the Sub Trajectory Balance Loss.
 
     This method is described in [Learning GFlowNets from partial episodes
@@ -43,7 +43,7 @@ class SubTBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
         lamda: discount factor for longer trajectories.
         log_reward_clip_min: minimum value for log rewards.
     """
-    logF: LogStateFlowEstimator
+    logF: ScalarEstimator
     on_policy: bool = False
     weighing: Literal[
         "DB",
@@ -115,7 +115,13 @@ class SubTBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
         log_state_flows = torch.full_like(log_pf_trajectories, fill_value=-float("inf"))
         mask = ~states.is_sink_state
         valid_states = states[mask]
-        log_state_flows[mask[:-1]] = self.logF(valid_states).squeeze(-1)
+
+        # TODO: Comment what is going on here.
+        log_F = self.logF(valid_states).squeeze(-1)
+        if self.forward_looking:
+            log_rewards = self.logF.env.log_reward(states).unsqueeze(-1)
+            log_F = log_F + log_rewards
+        log_state_flows[mask[:-1]] = log_F
 
         sink_states_mask = log_state_flows == -float("inf")
         is_terminal_mask = trajectories.actions.is_exit

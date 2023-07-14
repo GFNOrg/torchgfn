@@ -1,93 +1,57 @@
-import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Tuple
 
-import torch
+from torch.distributions import Distribution
 from torchtyping import TensorType as TT
+import torch
 
 from gfn.containers import Trajectories
-from gfn.estimators import FunctionEstimator, LogZEstimator, ProbabilityEstimator
+from gfn.modules import (
+    GFNModule,
+    DiscretePolicyEstimator,
+    PolicyEstimator,
+)
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
 
-@dataclass
-class Parametrization(ABC):
-    """Abstract Base Class for Flow Parametrizations.
-
-    Flow paramaterizations are defined in Sec. 3 of [GFlowNets Foundations](link).
-
-    All attributes should be estimators, and should either have a GFNModule or attribute
-    called `module`, or torch.Tensor attribute called `tensor` with requires_grad=True.
-    """
+class GFlowNet(ABC, GFNModule):
+    def __init__(self):
+        GFNModule.__init__(self)
 
     @abstractmethod
     def sample_trajectories(self, n_samples: int) -> Trajectories:
-        """Sample a specific number of complete trajectories.
-
-        Args:
-            n_samples: number of trajectories to be sampled.
-
-        Returns:
-            Trajectories: sampled trajectories object.
-        """
         pass
 
     def sample_terminating_states(self, n_samples: int) -> States:
-        """Rolls out the parametrization's policy and returns the terminating states.
-
-        Args:
-            n_samples: number of terminating states to be sampled.
-
-        Returns:
-            States: sampled terminating states object.
-        """
         trajectories = self.sample_trajectories(n_samples)
         return trajectories.last_states
 
-    @property
-    def parameters(self) -> dict:
-        """
-        Return a dictionary of all parameters of the parametrization.
-        Note that there might be duplicate parameters (e.g. when two NNs share parameters),
-        in which case the optimizer should take as input set(self.parameters.values()).
-        """
-        # TODO: use parameters of the fields instead, loop through them here
-        parameters_dict = {}
-        for name, value in self.__dict__.items():
-            if isinstance(value, FunctionEstimator) or isinstance(value, LogZEstimator):
-                estimator = value
-            else:
-                continue
-
-            parameters_dict.update(
-                {
-                    f"{name}.{key}": value
-                    for key, value in estimator.named_parameters().items()
-                }
-            )
-        return parameters_dict
-
-    def save_state_dict(self, path: str):
-        for name, estimator in self.__dict__.items():
-            torch.save(estimator.named_parameters(), os.path.join(path, name + ".pt"))
-
-    def load_state_dict(self, path: str):
-        for name, estimator in self.__dict__.items():
-            estimator.load_state_dict(torch.load(os.path.join(path, name + ".pt")))
+    @abstractmethod
+    def to_probability_distribution(
+        self,
+        states: States,
+        module_output: TT["batch_shape", "output_dim", float],
+    ) -> Distribution:
+        """Transform the output of the module into a probability distribution."""
+        pass
 
 
-@dataclass
-class PFBasedParametrization(Parametrization, ABC):
+class PFBasedGFlowNet(GFlowNet):
     r"""Base class for parametrizations that explicitly uses $P_F$
 
     Attributes:
-        pf: ProbabilityEstimator
-        pb: ProbabilityEstimator
+        pf: PolicyEstimator or DiscretePolicyEstimator
+        pb: PolicyEstimator or DiscretePolicyEstimator
     """
-    pf: ProbabilityEstimator
-    pb: ProbabilityEstimator
+    def __init__(
+            self,
+            pf: PolicyEstimator | DiscretePolicyEstimator,
+            pb: PolicyEstimator | DiscretePolicyEstimator,
+        ):
+        super().__init__(self)
+        self.pf = pf
+        self.pb = pb
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
         actions_sampler = ActionsSampler(self.pf)
@@ -98,7 +62,7 @@ class PFBasedParametrization(Parametrization, ABC):
         return trajectories
 
 
-class TrajectoryDecomposableLoss(ABC):
+class TrajectoryDecomposableLoss(GFNModule):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
@@ -112,7 +76,7 @@ class TrajectoryDecomposableLoss(ABC):
         More specifically it evaluates $\log P_F (s' \mid s)$ and $\log P_B(s \mid s')$
         for each transition in each trajectory in the batch.
 
-        This is useful when the policy used to sample the trajectories is different from
+        Useful when the policy used to sample the trajectories is different from
         the one used to evaluate the loss. Otherwise we can use the logprobs directly
         from the trajectories.
 

@@ -1,4 +1,4 @@
-from .base import Parametrization, PFBasedParametrization, TrajectoryDecomposableLoss
+from .base import PFBasedParametrization, TrajectoryDecomposableLoss
 from .detailed_balance import DBParametrization
 from .flow_matching import FMParametrization
 from .sub_trajectory_balance import SubTBParametrization

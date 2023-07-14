@@ -3,17 +3,17 @@ Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.1325
 and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 from torchtyping import TensorType as TT
+import torch.nn as nn
 
 from gfn.containers import Trajectories
-from gfn.estimators import LogZEstimator
-from gfn.losses.base import PFBasedParametrization, TrajectoryDecomposableLoss
+from gfn.parameterizations.base import PFBasedGFlowNet, TrajectoryDecomposableLoss
 
 
-@dataclass
-class TBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
+class TBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
     r"""Dataclass which holds the logZ estimate for the Trajectory Balance loss.
 
     $\mathcal{O}_{PFZ} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where
@@ -28,9 +28,16 @@ class TBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
         log_reward_clip_min: minimal value to clamp the reward to.
 
     """
-    logZ: LogZEstimator
-    on_policy: bool = False
-    log_reward_clip_min: float = -12  # roughly log(1e-5)
+    def __init__(
+            self,
+            init_logZ : float = 0.,
+            log_reward_clip_min : float = -12,  # roughly log(1e-5)
+            **kwargs,
+        ):
+        PFBasedGFlowNet().__init__(**kwargs)
+
+        self.logZ = nn.Parameter(torch.tensor(init_logZ))
+        self.log_reward_clip_min = log_reward_clip_min
 
     def loss(self, trajectories: Trajectories) -> TT[0, float]:
         """Trajectory balance loss.
@@ -42,7 +49,7 @@ class TBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
             ValueError: if the loss is NaN.
         """
         _, _, scores = self.get_trajectories_scores(trajectories)
-        loss = (scores + self.logZ.tensor).pow(2).mean()
+        loss = (scores + self.logZ).pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("loss is nan")
 
@@ -50,9 +57,7 @@ class TBParametrization(PFBasedParametrization, TrajectoryDecomposableLoss):
 
 
 @dataclass
-class LogPartitionVarianceParametrization(
-    PFBasedParametrization, TrajectoryDecomposableLoss
-):
+class LogPartitionVarianceParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
     """Dataclass which holds the logZ estimate for the Log Partition Variance loss.
 
     Attributes:
@@ -62,7 +67,6 @@ class LogPartitionVarianceParametrization(
     Raises:
         ValueError: if the loss is NaN.
     """
-
     on_policy: bool = False
     log_reward_clip_min: float = -12  # roughly log(1e-5)
 

@@ -5,15 +5,13 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
-from gfn.estimators import LogEdgeFlowEstimator
-from gfn.losses.base import Parametrization
+from gfn.parameterizations.base import GFlowNet
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import DiscreteStates
-from gfn.utils.estimators import LogEdgeFlowProbabilityEstimator
+from gfn.modules import DiscretePolicyEstimator
 
 
-@dataclass
-class FMParametrization(Parametrization):
+class FMParametrization(GFlowNet):
     r"""Flow Matching Parameterization dataclass, with edge flow estimator.
 
     $\mathcal{O}_{edge}$ is the set of functions from the non-terminating edges
@@ -28,17 +26,15 @@ class FMParametrization(Parametrization):
         logF: LogEdgeFlowEstimator
         alpha: weight for the reward matching loss.
     """
-    logF: LogEdgeFlowEstimator
-    alpha: float = 1.0
-
-    def __post_init__(self) -> None:
+    def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
+        GFlowNet.__init__()
+        # TODO: THIS ONLY WORKS FOR DISCRETE ENVIRONMENTS.
+        self.logF = logF   # forward = True, greedy_eps = False
+        self.alpha = alpha
         self.env = self.logF.env
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
-        probability_estimator = (
-            LogEdgeFlowProbabilityEstimator.from_LogEdgeFlowEstimator(self.logF)
-        )
-        actions_sampler = ActionsSampler(probability_estimator)
+        actions_sampler = ActionsSampler(self.logF)
         trajectories_sampler = TrajectoriesSampler(actions_sampler)
         trajectories = trajectories_sampler.sample_trajectories(
             n_trajectories=n_samples
