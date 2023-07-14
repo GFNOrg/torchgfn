@@ -55,7 +55,7 @@ def make_env(config: dict) -> Env:
     elif name.lower() == "discrete-ebm".lower():
         env_class = DiscreteEBMConfig
     else:
-        raise ValueError("Invalid env name: {}".format(name))
+        raise ValueError(f"Invalid env name: {name}")
 
     args = inspect.getfullargspec(env_class.__init__).args
     env_config = {k: v for k, v in config["env"].items() if k in args}

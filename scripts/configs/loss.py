@@ -1,7 +1,7 @@
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Tuple, Literal
-import inspect
+from typing import Literal, Tuple
 
 import torch
 
@@ -200,7 +200,7 @@ def make_loss(config: dict, env: Env) -> Tuple[Parametrization, Loss]:
     elif name.lower() == "sub-tb".lower():
         loss_class = SubTBLossConfig
     else:
-        raise ValueError("Invalid loss name: {}".format(name))
+        raise ValueError(f"Invalid loss name: {name}")
 
     args = inspect.getfullargspec(loss_class.__init__).args
     loss_config = {k: v for k, v in config["loss"].items() if k in args}

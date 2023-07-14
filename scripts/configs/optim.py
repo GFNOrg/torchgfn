@@ -1,7 +1,8 @@
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
-import inspect
+
 import torch
 
 from gfn.losses import Parametrization
@@ -25,7 +26,7 @@ class BaseOptimConfig(ABC):
                 "lr": self.lr,
             }
         ]
-        if any(["logZ" in p for p in  parametrization.parameters.keys()]):
+        if any(["logZ" in p for p in parametrization.parameters.keys()]):
             params.append(
                 {
                     "params": [
@@ -79,7 +80,7 @@ def make_optim(config: dict, parametrization: Parametrization) -> torch.optim.Op
     elif name.lower() == "adam".lower():
         optim_class = AdamConfig
     else:
-        raise ValueError("Invalid optim name: {}".format(name))
+        raise ValueError(f"Invalid optim name: {name}")
 
     args = inspect.getfullargspec(optim_class.__init__).args
     optim_config = {k: v for k, v in config["optim"].items() if k in args}
