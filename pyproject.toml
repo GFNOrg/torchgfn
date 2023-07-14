@@ -77,9 +77,6 @@ all = [
 "Bug Tracker" = "https://github.com/saleml/gfn/issues"
 
 
-# TODO: Could use for examples? Or something else?
-# [project.scripts]
-# gfn_example = "gfn.examples:main"
 
 [tool.black]
 py36 = true
