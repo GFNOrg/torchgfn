@@ -3,7 +3,6 @@ from copy import deepcopy
 from typing import Optional, Tuple, Union
 
 import torch
-from gymnasium.spaces import Discrete, Space
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
@@ -20,23 +19,14 @@ class Env(ABC):
 
     def __init__(
         self,
-        action_space: Space,
         s0: TT["state_shape", torch.float],
         sf: Optional[TT["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
-        """**Important**: remember that while the action space can be as complex as a Dict or a Tuple, in order to be easily
-        understandable by humans, you should still be able to convert them to a unique tensor in order to create
-        an `Actions` object.
+        """Initializes an environment.
 
         Args:
-            action_space (Space): Representation of the action space. It could be a Discrete space, a Box space, a composite space
-                such as a Tuple or a Dict, or any other space defined in the gymnasium library. Objects of the action_space
-                could be thought of as raw actions, human readable.
-                In order to be processed by the library, unique actions need to be
-                converted to a unique tensor of arbitrary shape. Such a tensor is used to create an `Actions` object.
-                The `flatten` method in `gymnasium.spaces.utils` can be used for this purpose.
             s0: Representation of the initial state. All individual states would be of the same shape.
             sf (optional): Representation of the final state. Only used for a human readable representation of
                 the states or trajectories.
@@ -48,7 +38,6 @@ class Env(ABC):
         if sf is None:
             sf = torch.full(s0.shape, -float("inf"))
         self.sf = sf
-        self.action_space = action_space
         self.device = torch.device(device_str) if device_str is not None else s0.device
         self.States = self.make_States_class()
         self.Actions = self.make_Actions_class()
@@ -207,28 +196,70 @@ class Env(ABC):
         """Either this or reward needs to be implemented."""
         raise NotImplementedError("log_reward function not implemented")
 
-    # TODO: some, or all of the following methods should probably move to DiscreteEnv - Basically all DiscreteEnvs should have a Discrete action_space. Do we actually need `action_space` attribute ?
-
-    def get_states_indices(self, states: States) -> TT["batch_shape", torch.long]:
+    @property
+    def log_partition(self) -> float:
+        "Returns the logarithm of the partition function."
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
-    def get_terminating_states_indices(
-        self, states: States
+
+class DiscreteEnv(Env, ABC):
+    """
+    Base class for discrete environments, where actions are represented by a number in
+    {0, ..., n_actions - 1}, the last one being the exit action.
+    `DiscreteEnv` allow specifying the validity of actions (forward and backward), via mask tensors, that
+    are directly attached to `States` objects.
+    """
+
+    def __init__(
+        self,
+        n_actions: int,
+        s0: TT["state_shape", torch.float],
+        sf: Optional[TT["state_shape", torch.float]] = None,
+        device_str: Optional[str] = None,
+        preprocessor: Optional[Preprocessor] = None,
+    ):
+        """Initializes a discrete environment.
+
+        Args:
+            n_actions: The number of actions in the environment.
+
+        """
+        self.n_actions = n_actions
+        super().__init__(s0, sf, device_str, preprocessor)
+
+    def make_Actions_class(self) -> type[Actions]:
+        env = self
+        n_actions = self.n_actions
+
+        class DiscreteEnvActions(Actions):
+            action_shape = (1,)
+            dummy_action = torch.tensor([-1], device=env.device)  # Double check
+            exit_action = torch.tensor([n_actions - 1], device=env.device)
+
+        return DiscreteEnvActions
+
+    def is_action_valid(
+        self, states: States, actions: Actions, backward: bool = False
+    ) -> bool:
+        assert states.forward_masks is not None and states.backward_masks is not None
+        masks_tensor = states.backward_masks if backward else states.forward_masks
+        return torch.gather(masks_tensor, 1, actions.tensor).all()
+
+    def get_states_indices(
+        self, states: DiscreteStates
     ) -> TT["batch_shape", torch.long]:
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
-    @property
-    def n_actions(self) -> int:
-        if isinstance(self.action_space, Discrete):
-            return self.action_space.n
-        else:
-            raise NotImplementedError(
-                "Only discrete action spaces have a fixed number of actions."
-            )
+    def get_terminating_states_indices(
+        self, states: DiscreteStates
+    ) -> TT["batch_shape", torch.long]:
+        return NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
     @property
     def n_states(self) -> int:
@@ -250,15 +281,8 @@ class Env(ABC):
         )
 
     @property
-    def log_partition(self) -> float:
-        "Returns the logarithm of the partition function."
-        return NotImplementedError(
-            "The environment does not support enumeration of states"
-        )
-
-    @property
-    def all_states(self) -> States:
-        """Returns a batch of all states for environments with enumerable states.
+    def all_states(self) -> DiscreteStates:
+        """Returns a batch of all states.
         The batch_shape should be (n_states,).
         This should satisfy:
         self.get_states_indices(self.all_states) == torch.arange(self.n_states)
@@ -268,7 +292,7 @@ class Env(ABC):
         )
 
     @property
-    def terminating_states(self) -> States:
+    def terminating_states(self) -> DiscreteStates:
         """Returns a batch of all terminating states for environments with enumerable states.
         The batch_shape should be (n_terminating_states,).
         This should satisfy:
@@ -277,32 +301,3 @@ class Env(ABC):
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
-
-
-class DiscreteEnv(Env, ABC):
-    """
-    Base class for discrete environments, where actions are represented by a number in
-    {0, ..., n_actions - 1}, the last one being the exit action.
-    `DiscreteEnv` allow specifying the validity of actions (forward and backward), via mask tensors, that
-    are directly attached to `States` objects.
-    """
-
-    def make_Actions_class(self) -> type[Actions]:
-        env = self
-        action_space = self.action_space
-        assert isinstance(action_space, Discrete)
-        n_actions = self.n_actions
-
-        class DiscreteEnvActions(Actions):
-            action_shape = (1,)
-            dummy_action = torch.tensor([-1], device=env.device)  # Double check
-            exit_action = torch.tensor([n_actions - 1], device=env.device)
-
-        return DiscreteEnvActions
-
-    def is_action_valid(
-        self, states: States, actions: Actions, backward: bool = False
-    ) -> bool:
-        assert states.forward_masks is not None and states.backward_masks is not None
-        masks_tensor = states.backward_masks if backward else states.forward_masks
-        return torch.gather(masks_tensor, 1, actions.tensor).all()

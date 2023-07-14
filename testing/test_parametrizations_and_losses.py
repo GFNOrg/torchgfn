@@ -209,7 +209,8 @@ def PFBasedParametrization_with_return(
         training_objects = trajectories.to_transitions()
     else:
         training_objects = trajectories
-    loss = parametrization.loss(training_objects)
+
+    _ = parametrization.loss(training_objects)
 
     if parametrization_name == "TB":
         assert torch.all(

@@ -20,7 +20,6 @@ classifiers = [
 [tool.poetry.dependencies]
 # main deps
 einops = ">=0.6.1"
-gymnasium = ">=0.28.1"
 numpy = ">=1.21.2"
 python = "^3.10"
 torch = ">=1.9.0"

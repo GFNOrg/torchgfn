@@ -3,7 +3,6 @@ from typing import ClassVar, Literal, Tuple, cast
 
 import torch
 import torch.nn as nn
-from gymnasium.spaces import Discrete
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
@@ -70,9 +69,8 @@ class DiscreteEBM(DiscreteEnv):
         self.energy: EnergyFunction = energy
         self.alpha = alpha
 
-        action_space = Discrete(
-            2 * ndim + 1
-        )  # the last action is the exit action that is only available for complete states
+        n_actions = 2 * ndim + 1
+        # the last action is the exit action that is only available for complete states
         # Action i in [0, ndim - 1] corresponds to replacing s[i] with 0
         # Action i in [ndim, 2 * ndim - 1] corresponds to replacing s[i - ndim] with 1
 
@@ -86,7 +84,11 @@ class DiscreteEBM(DiscreteEnv):
             raise ValueError(f"Unknown preprocessor {preprocessor_name}")
 
         super().__init__(
-            action_space=action_space, s0=s0, sf=sf, preprocessor=preprocessor
+            n_actions=n_actions,
+            s0=s0,
+            sf=sf,
+            device_str=device_str,
+            preprocessor=preprocessor,
         )
 
     def make_States_class(self) -> type[DiscreteStates]:
