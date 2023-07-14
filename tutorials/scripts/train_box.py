@@ -14,7 +14,7 @@ import numpy as np
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.envs import Box
+from gfn.gym import Box
 from gfn.estimators import LogStateFlowEstimator, LogZEstimator
 from gfn.losses import (
     DBParametrization,
@@ -24,7 +24,7 @@ from gfn.losses import (
 )
 from gfn.utils.common import trajectories_to_training_samples
 from gfn.utils.modules import NeuralNet
-from gfn.examples.box_utils import (
+from gfn.gym.helpers.box_utils import (
     BoxPFNeuralNet,
     BoxPBNeuralNet,
     BoxPFEstimator,

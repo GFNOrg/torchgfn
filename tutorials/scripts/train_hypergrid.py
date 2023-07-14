@@ -17,7 +17,7 @@ import torch
 from tqdm import tqdm, trange
 
 import wandb
-from gfn.env import HyperGrid
+from gfn.gym import HyperGrid
 from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
 from gfn.losses import (
     DBParametrization,
