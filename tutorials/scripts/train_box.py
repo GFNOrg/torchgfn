@@ -32,8 +32,6 @@ from gfn.gym.helpers.box_utils import (
     BoxPBUniform,
 )
 
-# BoxPFNeuralNet = BoxPFNeuralNet_old
-
 from sklearn.neighbors import KernelDensity
 from scipy.special import logsumexp
 
@@ -389,8 +387,6 @@ if __name__ == "__main__":
         samples_from_reward
     )
 
-    visited_terminating_states = env.States.from_batch_shape((0,))
-
     states_visited = 0
 
     jsd = float("inf")
@@ -413,16 +409,14 @@ if __name__ == "__main__":
         optimizer.step()
         scheduler.step()
 
-        # visited_terminating_states.extend(trajectories.last_states)
-
         states_visited += len(trajectories)
 
         to_log = {"loss": loss.item(), "states_visited": states_visited}
         logZ_info = ""
         if isinstance(parametrization, TBParametrization):
-            logZ = parametrization.logZ.tensor
-            to_log.update({"logZdiff": env.log_partition - logZ.item()})
-            logZ_info = f"logZ: {logZ.item():.2f}, "
+            logZ_value = parametrization.logZ.tensor
+            to_log.update({"logZdiff": env.log_partition - logZ_value.item()})
+            logZ_info = f"logZ: {logZ_value.item():.2f}, "
         if use_wandb:
             wandb.log(to_log, step=iteration)
         if iteration % (args.validation_interval // 5) == 0:
