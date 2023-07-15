@@ -25,6 +25,7 @@ from gfn.losses import (
 from gfn.utils.common import trajectories_to_training_samples
 from gfn.utils.modules import NeuralNet
 from gfn.gym.helpers.box_utils import (
+    BoxStateFlowModule,
     BoxPFNeuralNet,
     BoxPBNeuralNet,
     BoxPFEstimator,
@@ -81,29 +82,6 @@ def estimate_jsd(kde1, kde2):
     jsd = np.sum(np.exp(log_dens1) * (log_dens1 - log_dens))
     jsd += np.sum(np.exp(log_dens2) * (log_dens2 - log_dens))
     return jsd / 2.0
-
-
-# 0 - This is for debugging only
-
-# env = Box(delta=0.1)
-# n_samples = 10000
-# samples = sample_from_reward(env, n_samples)
-# print(samples)
-# kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(samples)
-
-# import matplotlib.pyplot as plt
-
-# n = 100
-
-
-# test_states = get_test_states()
-
-# log_dens = kde.score_samples(test_states)
-# fig = plt.imshow(np.exp(log_dens).reshape(n, n), origin="lower", extent=[0, 1, 0, 1])
-# plt.colorbar()
-# plt.show()
-# estimate_jsd(kde, kde)
-# assert False
 
 
 if __name__ == "__main__":
@@ -299,17 +277,19 @@ if __name__ == "__main__":
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
-    logZ = None
     module = None
+    # We always need a LogZEstimator
+    logZ = LogZEstimator(tensor=torch.tensor(0.0, device=env.device))
     if args.loss in ("DB", "SubTB"):
         # We need a LogStateFlowEstimator
 
-        module = NeuralNet(
+        module = BoxStateFlowModule(
             input_dim=env.preprocessor.output_dim,
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
             torso=pf_module.torso if args.tied else None,
+            logZ_value=logZ.tensor,
         )
         logF_estimator = LogStateFlowEstimator(env=env, module=module)
 
@@ -330,8 +310,6 @@ if __name__ == "__main__":
                 lamda=args.subTB_lambda,
             )
     elif args.loss == "TB":
-        # We need a LogZEstimator
-        logZ = LogZEstimator(tensor=torch.tensor(0.0, device=env.device))
         parametrization = TBParametrization(
             pf=pf_estimator,
             pb=pb_estimator,
@@ -350,6 +328,7 @@ if __name__ == "__main__":
     # 3. Create the optimizer and scheduler
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
+    optimizer.add_param_group({"params": [logZ.tensor], "lr": args.lr_Z})
     if not args.uniform_pb:
         optimizer.add_param_group(
             {
@@ -369,9 +348,7 @@ if __name__ == "__main__":
                 "lr": args.lr,
             }
         )
-    if "logZ.logZ" in parametrization.parameters:
-        assert logZ is not None
-        optimizer.add_param_group({"params": [logZ.tensor], "lr": args.lr_Z})
+
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         milestones=[
@@ -413,10 +390,10 @@ if __name__ == "__main__":
 
         to_log = {"loss": loss.item(), "states_visited": states_visited}
         logZ_info = ""
-        if isinstance(parametrization, TBParametrization):
-            logZ_value = parametrization.logZ.tensor
-            to_log.update({"logZdiff": env.log_partition - logZ_value.item()})
-            logZ_info = f"logZ: {logZ_value.item():.2f}, "
+        logZ_value = logZ.tensor
+        to_log.update({"logZdiff": env.log_partition - logZ_value.item()})
+        logZ_info = f"logZ: {logZ_value.item():.2f}, "
+
         if use_wandb:
             wandb.log(to_log, step=iteration)
         if iteration % (args.validation_interval // 5) == 0:

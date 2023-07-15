@@ -592,6 +592,23 @@ class BoxPBNeuralNet(NeuralNet):
         return out
 
 
+class BoxStateFlowModule(NeuralNet):
+    """A deep neural network for the state flow function."""
+
+    def __init__(self, logZ_value: torch.Tensor, **kwargs):
+        self.logZ_value = logZ_value
+        super().__init__(**kwargs)
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", "input_dim", float]
+    ) -> TT["batch_shape", "output_dim", float]:
+        out = super().forward(preprocessed_states)
+        idx_s0 = torch.all(preprocessed_states == 0.0, 1)
+        out[idx_s0] = self.logZ_value
+
+        return out
+
+
 class BoxPBUniform(torch.nn.Module):
     """A module to be used to create a uniform PB distribution for the Box environment
 
