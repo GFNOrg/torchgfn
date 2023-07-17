@@ -34,6 +34,7 @@ class DBParametrization(PFBasedGFlowNet):
         self.logF = logF
         self.on_policy = on_policy
         self.forward_looking = forward_looking  # TODO: do I need this here?
+        self.env = self.logF.env  # We don't want to store env in here...
 
     def get_scores(
         self, transitions: Transitions
@@ -68,8 +69,7 @@ class DBParametrization(PFBasedGFlowNet):
 
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
-            # TODO: would be nice if I didn't need to reach inside logF to get env...
-            log_rewards = self.logF.env.log_reward(states).unsqueeze(-1)
+            log_rewards = self.env.log_reward(states).unsqueeze(-1)
             valid_log_F_s = valid_log_F_s + log_rewards
 
         preds = valid_log_pf_actions + valid_log_F_s
