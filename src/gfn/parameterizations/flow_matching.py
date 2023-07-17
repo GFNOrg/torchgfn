@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Tuple
 
 import torch
@@ -26,10 +25,10 @@ class FMParametrization(GFlowNet):
         logF: LogEdgeFlowEstimator
         alpha: weight for the reward matching loss.
     """
+
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
         super().__init__()
         # TODO: THIS ONLY WORKS FOR DISCRETE ENVIRONMENTS.
-
         assert logF.forward_looking
         assert not logF.greedy_eps
 
