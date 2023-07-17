@@ -16,7 +16,6 @@ from gfn.states import States
 
 
 class GFlowNet(GFNModule):
-
     @abstractmethod
     def sample_trajectories(self, n_samples: int) -> Trajectories:
         pass
@@ -42,11 +41,12 @@ class PFBasedGFlowNet(GFlowNet):
         pf: PolicyEstimator or DiscretePolicyEstimator
         pb: PolicyEstimator or DiscretePolicyEstimator
     """
+
     def __init__(
-            self,
-            pf: PolicyEstimator | DiscretePolicyEstimator,
-            pb: PolicyEstimator | DiscretePolicyEstimator,
-        ):
+        self,
+        pf: PolicyEstimator | DiscretePolicyEstimator,
+        pb: PolicyEstimator | DiscretePolicyEstimator,
+    ):
         super().__init__(self)
         self.pf = pf
         self.pb = pb
