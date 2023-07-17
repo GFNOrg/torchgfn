@@ -24,12 +24,13 @@ class DBParametrization(PFBasedGFlowNet):
         on_policy: boolean indicating whether we need to reevaluate the log probs.
         forward_looking: whether to implement the forward looking GFN loss.
     """
+
     def __init__(
-            self,
-            logF: ScalarEstimator,
-            on_policy: bool = False,
-            forward_looking: bool = False,
-        ):
+        self,
+        logF: ScalarEstimator,
+        on_policy: bool = False,
+        forward_looking: bool = False,
+    ):
         super().__init__()
         self.logF = logF
         self.on_policy = on_policy
