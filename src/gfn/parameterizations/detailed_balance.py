@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Tuple
 
 import torch
@@ -9,7 +8,6 @@ from gfn.modules import ScalarEstimator
 from gfn.parameterizations.base import PFBasedGFlowNet
 
 
-@dataclass
 class DBParametrization(PFBasedGFlowNet):
     r"""The Detailed Balance Parameterization dataclass.
 
@@ -24,11 +22,18 @@ class DBParametrization(PFBasedGFlowNet):
     Attributes:
         logF: a ScalarEstimator instance.
         on_policy: boolean indicating whether we need to reevaluate the log probs.
-
+        forward_looking: whether to implement the forward looking GFN loss.
     """
-    logF: ScalarEstimator
-    on_policy: bool = False
-    forward_looking = False # TODO: do I need this here?
+    def __init__(
+            self,
+            logF: ScalarEstimator,
+            on_policy: bool = False,
+            forward_looking: bool = False,
+        ):
+        super().__init__()
+        self.logF = logF
+        self.on_policy = on_policy
+        self.forward_looking = forward_looking  # TODO: do I need this here?
 
     def get_scores(
         self, transitions: Transitions
