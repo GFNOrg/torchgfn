@@ -35,7 +35,7 @@ class DBParametrization(PFBasedGFlowNet):
         self.logF = logF
         self.on_policy = on_policy
         self.forward_looking = forward_looking  # TODO: do I need this here?
-        self.env = self.logF.env  # We don't want to store env in here...
+        self.env = self.logF.env  # TODO We don't want to store env in here...
 
     def get_scores(
         self, transitions: Transitions
