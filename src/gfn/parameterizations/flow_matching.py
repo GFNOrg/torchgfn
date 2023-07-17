@@ -27,9 +27,13 @@ class FMParametrization(GFlowNet):
         alpha: weight for the reward matching loss.
     """
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
-        GFlowNet.__init__()
+        super().__init__()
         # TODO: THIS ONLY WORKS FOR DISCRETE ENVIRONMENTS.
-        self.logF = logF   # forward = True, greedy_eps = False
+
+        assert logF.forward_looking
+        assert not logF.greedy_eps
+
+        self.logF = logF
         self.alpha = alpha
         self.env = self.logF.env
 
