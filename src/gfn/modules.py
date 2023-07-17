@@ -43,6 +43,7 @@ class GFNModule(ABC, nn.Module):
             the states (after being preprocessed and transformed by the modules) have
             been verified.
     """
+
     def __init__(self, env: Env, module: nn.Module) -> None:
         """Initalize the FunctionEstimator with an environment and a module.
         Args:
@@ -77,7 +78,6 @@ class GFNModule(ABC, nn.Module):
 
 
 class ScalarEstimator(GFNModule):
-
     def check_output_dim(
         self, module_output: TT["batch_shape", "output_dim", float]
     ) -> None:
@@ -87,8 +87,8 @@ class ScalarEstimator(GFNModule):
                 f"ScalarEstimator output dimension should be 1, but is {module_output.shape[-1]}."
             )
 
-class PolicyEstimator(GFNModule):
 
+class PolicyEstimator(GFNModule):
     @abstractmethod
     def to_probability_distribution(
         self,
@@ -119,6 +119,7 @@ class DiscretePolicyEstimator(PolicyEstimator):
             temperature.
         epsilon: with probability epsilon, a random action is chosen.
     """
+
     def __init__(
         self,
         env: Env,
@@ -156,7 +157,9 @@ class DiscretePolicyEstimator(PolicyEstimator):
                 environment actions.
         """
         if not isinstance(self.env, DiscreteEnv):
-            raise ValueError("DiscretePolicyEstimator only supports discrete environments.")
+            raise ValueError(
+                "DiscretePolicyEstimator only supports discrete environments."
+            )
 
         if self._forward and module_output.shape[-1] != self.env.n_actions:
             raise ValueError(
