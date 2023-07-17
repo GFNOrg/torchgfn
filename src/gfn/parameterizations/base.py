@@ -15,9 +15,7 @@ from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
 
-class GFlowNet(ABC, GFNModule):
-    def __init__(self):
-        GFNModule.__init__(self)
+class GFlowNet(GFNModule):
 
     @abstractmethod
     def sample_trajectories(self, n_samples: int) -> Trajectories:
