@@ -14,7 +14,7 @@ from gfn.parameterizations.base import PFBasedGFlowNet, TrajectoryDecomposableLo
 
 
 class TBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
-    r"""Dataclass which holds the logZ estimate for the Trajectory Balance loss.
+    r"""Holds the logZ estimate for the Trajectory Balance loss.
 
     $\mathcal{O}_{PFZ} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where
     $\mathcal{O}_1 = \mathbb{R}$ represents the possible values for logZ,
@@ -28,12 +28,13 @@ class TBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
         log_reward_clip_min: minimal value to clamp the reward to.
 
     """
+
     def __init__(
-            self,
-            init_logZ : float = 0.,
-            log_reward_clip_min : float = -12,  # roughly log(1e-5)
-            **kwargs,
-        ):
+        self,
+        init_logZ: float = 0.0,
+        log_reward_clip_min: float = -12,  # roughly log(1e-5)
+        **kwargs,
+    ):
         PFBasedGFlowNet().__init__(**kwargs)
 
         self.logZ = nn.Parameter(torch.tensor(init_logZ))
@@ -67,6 +68,7 @@ class LogPartitionVarianceParametrization(PFBasedGFlowNet, TrajectoryDecomposabl
     Raises:
         ValueError: if the loss is NaN.
     """
+
     on_policy: bool = False
     log_reward_clip_min: float = -12  # roughly log(1e-5)
 
