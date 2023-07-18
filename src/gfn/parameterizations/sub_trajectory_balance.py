@@ -257,7 +257,6 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
             # sub-trajectory length.
             contributions = (L ** torch.arange(max_len).double()).float()
             contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
-
             contributions = contributions.repeat_interleave(
                 torch.arange(max_len, 0, -1),
                 dim=0,
