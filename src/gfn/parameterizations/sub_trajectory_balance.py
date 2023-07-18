@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import List, Literal, Tuple
 
 import torch
@@ -9,7 +8,6 @@ from gfn.modules import ScalarEstimator
 from gfn.parameterizations.base import PFBasedGFlowNet, TrajectoryDecomposableLoss
 
 
-@dataclass
 class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
     r"""Parameterization for the Sub Trajectory Balance Loss.
 
@@ -43,19 +41,29 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
         lamda: discount factor for longer trajectories.
         log_reward_clip_min: minimum value for log rewards.
     """
-    logF: ScalarEstimator
-    on_policy: bool = False
-    weighing: Literal[
-        "DB",
-        "ModifiedDB",
-        "TB",
-        "geometric",
-        "equal",
-        "geometric_within",
-        "equal_within",
-    ] = "geometric_within"
-    lamda: float = 0.9
-    log_reward_clip_min: float = -12  # roughly log(1e-5)
+
+    def __init__(
+        self,
+        logF: ScalarEstimator,
+        on_policy: bool = False,
+        weighting: Literal[
+            "DB",
+            "ModifiedDB",
+            "TB",
+            "geometric",
+            "equal",
+            "geometric_within",
+            "equal_within",
+        ] = "geometric_within",
+        lamda: float = 0.9,
+        log_reward_clip_min: float = -12,  # roughly log(1e-5)
+    ):
+        PFBasedGFlowNet.__init__()
+        self.logF = logF
+        self.on_policy = on_policy
+        self.weighing = weighting
+        self.lamda = lamda
+        self.log_reward_clip_min = log_reward_clip_min
 
     def cumulative_logprobs(
         self,
@@ -189,55 +197,55 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
     # own private method of this class, or even an external function which is called.
     # TODO: This is a long function, can it be simplified?
     def loss(self, trajectories: Trajectories) -> TT[0, float]:
-        (
-            scores,
-            flattening_masks,
-        ) = self.get_scores(trajectories)
-
+        # Get all scores and masks from the trajectories.
+        scores, flattening_masks = self.get_scores(trajectories)
         flattening_mask = torch.cat(flattening_masks)
         all_scores = torch.cat(scores, 0)
 
-        # all_scores is a tensor of shape (max_length * (max_length + 1) / 2, n_trajectories)
-        n_rows = int(trajectories.max_length * (1 + trajectories.max_length) / 2)
+        # Used only to keep the following calculations clean.
+        L = self.lamda
+        max_len = trajectories.max_length
+        is_done = trajectories.when_is_done
+
+        # all_scores is a tensor of shape (max_len * (max_leng + 1) / 2, n_trajectories)
+        n_rows = int(max_len * (1 + max_len) / 2)
 
         if self.weighing == "equal_within":
             # the following tensor represents the inverse of how many sub-trajectories there are in each trajectory
-            contributions = 2.0 / (
-                trajectories.when_is_done * (trajectories.when_is_done + 1)
-            )
-            contributions = contributions / len(trajectories)
-            # if we repeat the previous tensor, we get a tensor of shape (max_length * (max_length + 1) / 2, n_trajectories)
-            # that we can multiply with all_scores to get a loss where each sub-trajectory is weighted equally within each trajectory
+            contributions = 2.0 / (is_done * (is_done + 1)) / len(trajectories)
+
+            # if we repeat the previous tensor, we get a tensor of shape
+            # (max_len * (max_len + 1) / 2, n_trajectories) that we can multiply with
+            # all_scores to get a loss where each sub-trajectory is weighted equally
+            # within each trajectory.
             contributions = contributions.repeat(n_rows, 1)
+
         elif self.weighing == "equal":
-            n_sub_trajectories = int(
-                (trajectories.when_is_done * (trajectories.when_is_done + 1) / 2)
-                .sum()
-                .item()
-            )
+            n_sub_trajectories = int((is_done * (is_done + 1) / 2).sum().item())
             contributions = torch.ones(n_rows, len(trajectories)) / n_sub_trajectories
+
         elif self.weighing == "TB":
             # Each trajectory contributes one element to the loss, equally weighted
             contributions = torch.zeros_like(all_scores)
             indices = (
-                trajectories.max_length * (trajectories.when_is_done - 1)
-                - (trajectories.when_is_done - 1) * (trajectories.when_is_done - 2) / 2
+                max_len * (is_done - 1) - (is_done - 1) * (is_done - 2) / 2
             ).long()
             contributions.scatter_(0, indices.unsqueeze(0), 1)
             contributions = contributions / len(trajectories)
+
         elif self.weighing == "DB":
             # Longer trajectories contribute more to the loss
             return scores[0][~flattening_masks[0]].pow(2).mean()
+
         elif self.weighing == "ModifiedDB":
-            # The following tensor represents the inverse of how many transitions there are in each trajectory
-            contributions = 1.0 / trajectories.when_is_done
-            contributions = contributions / len(trajectories)
-            contributions = contributions.repeat(trajectories.max_length, 1)
+            # The following tensor represents the inverse of how many transitions
+            # there are in each trajectory.
+            contributions = (1.0 / is_done / len(trajectories)).repeat(max_len, 1)
             contributions = torch.cat(
                 (
                     contributions,
                     torch.zeros(
-                        (n_rows - trajectories.max_length, len(trajectories)),
+                        (n_rows - max_len, len(trajectories)),
                         device=contributions.device,
                     ),
                 ),
@@ -245,34 +253,27 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
             )
 
         elif self.weighing == "geometric_within":
-            # the following tensor represents the weights given to each possible sub-trajectory length
-            contributions = (
-                self.lamda ** torch.arange(trajectories.max_length).double()
-            ).float()
+            # The following tensor represents the weights given to each possible
+            # sub-trajectory length.
+            contributions = (L ** torch.arange(max_len).double()).float()
             contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
 
             contributions = contributions.repeat_interleave(
-                torch.arange(trajectories.max_length, 0, -1),
+                torch.arange(max_len, 0, -1),
                 dim=0,
-                output_size=int(
-                    trajectories.max_length * (trajectories.max_length + 1) / 2
-                ),
+                output_size=int(max_len * (max_len + 1) / 2),
             )
 
             # Now we need to divide each column by n + (n-1) lambda +...+ 1*lambda^{n-1}
             # where n is the length of the trajectory corresponding to that column
             # We can do it the ugly way, or using the cool identity:
             # https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
-            per_trajectory_denominator = (
+            per_trajectory_denom = (
                 1.0
-                / (1 - self.lamda) ** 2
-                * (
-                    self.lamda * (self.lamda ** trajectories.when_is_done.double() - 1)
-                    + (1 - self.lamda) * trajectories.when_is_done.double()
-                )
+                / (1 - L) ** 2
+                * (L * (L ** is_done.double() - 1) + (1 - L) * is_done.double())
             ).float()
-            contributions = contributions / per_trajectory_denominator
-            contributions = contributions / len(trajectories)
+            contributions = contributions / per_trajectory_denom / len(trajectories)
 
         elif self.weighing == "geometric":
             # The position i of the following 1D tensor represents the number of sub-trajectories of length i in the batch
@@ -288,16 +289,9 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
                     for scores, flattening_mask in zip(scores, flattening_masks)
                 ]
             )
-            ld = self.lamda
-            weights = (
-                (1 - ld)
-                / (1 - ld**trajectories.max_length)
-                * (
-                    ld
-                    ** torch.arange(
-                        trajectories.max_length, device=per_length_losses.device
-                    )
-                )
+            ratio = (1 - L) / (1 - L**max_len)
+            weights = ratio * (
+                L ** torch.arange(max_len, device=per_length_losses.device)
             )
             assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
