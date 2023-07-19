@@ -199,3 +199,5 @@ Currently, the implemented losses are:
 - Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](./src/gfn/losses/sub_trajectory_balance.py).
 - Log Partition Variance loss. Introduced [here](https://arxiv.org/abs/2302.05446)
 
+# Scripts
+Example scripts are provided [here](./tutorials/scripts/). They can be used to reproduce published results in the HyperGrid environment, and the Box environment.
