@@ -19,7 +19,7 @@
 
 <p align="center"> Please cite <a href="https://arxiv.org/abs/2305.14594">this paper</a> if you are using the library for your research </p>
 
-## Installing the packages
+## Installing the package
 
 The codebase requires python >= 3.10
 
@@ -130,7 +130,7 @@ open build/html/index.html
 
 ### Defining an environment
 
-See [examples](./examples/envs/)
+See [examples](./tutorials/ENV.md)
 
 ### States
 
