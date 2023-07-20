@@ -60,8 +60,8 @@ This example, which shows how to use the library for a simple discrete environme
 import torch
 from tqdm import tqdm
 
-from gfn.estimators import LogZEstimator
-from gfn.losses import TBParametrization
+from gfn.modules import DiscretePolicy
+from gfn.gflownets import TBGFlowNet
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.utils import NeuralNet, DiscretePFEstimator, DiscretePBEstimator
 
@@ -75,25 +75,16 @@ if __name__ == "__main__":
     module_PF = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
     module_PB = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1,     torso=module_PF.torso)
 
-    logit_PF = DiscretePFEstimator(env=env, module=module_PF)
-    logit_PB = DiscretePBEstimator(env=env, module=module_PB)
-    logZ = LogZEstimator(torch.tensor(0.0))
+    logit_PF = DiscretePolicy(env=env, module=module_PF, forward=True)
+    logit_PB = DiscretePolicy(env=env, module=module_PB, forward=False)
 
-    parametrization = TBParametrization(logit_PF, logit_PB, logZ, on_policy=True)
+    gflownet = TBGFlowNet(logit_PF, logit_PB, logZ_init=0.)
 
     actions_sampler = ActionsSampler(estimator=logit_PF)
     trajectories_sampler = TrajectoriesSampler(actions_sampler=actions_sampler)
 
-    params = [
-        {
-            "params": [
-                val for key, val in parametrization.parameters.items() if "logZ" not in key
-            ],
-            "lr": 0.001,
-        },
-        {"params": [val for key, val in parametrization.parameters.items() if "logZ" in key], "lr": 0.1},
-    ]
-    optimizer = torch.optim.Adam(params)
+    optimizer = torch.optim.Adam(gflownet.policy_parameters(), lr=1e-3)
+    optimizer.add_param_group({"params": [gflownet.logZ], "lr": 1e-1})
 
     for i in (pbar := tqdm(range(1000))):
         trajectories = trajectories_sampler.sample(n_trajectories=16)
