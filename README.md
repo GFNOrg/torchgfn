@@ -62,8 +62,8 @@ from tqdm import tqdm
 
 from gfn.modules import DiscretePolicy
 from gfn.gflownets import TBGFlowNet
-from gfn.samplers import ActionsSampler, TrajectoriesSampler
-from gfn.utils import NeuralNet, DiscretePFEstimator, DiscretePBEstimator
+from gfn.samplers import Sampler
+from gfn.utils import NeuralNet, DiscretePolicy
 
 
 from gfn.gym import HyperGrid
@@ -80,14 +80,13 @@ if __name__ == "__main__":
 
     gflownet = TBGFlowNet(logit_PF, logit_PB, logZ_init=0.)
 
-    actions_sampler = ActionsSampler(estimator=logit_PF)
-    trajectories_sampler = TrajectoriesSampler(actions_sampler=actions_sampler)
+    sampler = Sampler(policy=logit_PF)
 
     optimizer = torch.optim.Adam(gflownet.policy_parameters(), lr=1e-3)
     optimizer.add_param_group({"params": [gflownet.logZ], "lr": 1e-1})
 
     for i in (pbar := tqdm(range(1000))):
-        trajectories = trajectories_sampler.sample(n_trajectories=16)
+        trajectories = sampler.sample_trajectories(n_trajectories=16)
         optimizer.zero_grad()
         loss = parametrization.loss(trajectories)
         loss.backward()
