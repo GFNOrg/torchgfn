@@ -1,24 +1,23 @@
-from abc import ABC, abstractmethod
 from typing import Tuple
 
 import torch
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
-from gfn.estimators import ProbabilityEstimator
+from gfn.modules import PolicyEstimator
 from gfn.states import States
 
 
 # TODO: Environment should not live inside the estimator and here... needs refactor.
 class ActionsSampler:
-    """`ActionSampler`s are containers for `ProbabilityEstimator`s.
+    """`ActionSampler`s are containers for `PolicyEstimator`s.
 
     Attributes:
-        estimator: the submitted ProbabilityEstimator.
-        env: the Environment instance inside the ProbabilityEstimator.
+        estimator: the submitted PolicyEstimator.
+        env: the Environment instance inside the PolicyEstimator.
     """
 
-    def __init__(self, estimator: ProbabilityEstimator) -> None:
+    def __init__(self, estimator: PolicyEstimator) -> None:
         self.estimator = estimator
         self.env = estimator.env
 
