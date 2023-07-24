@@ -30,6 +30,7 @@ class SamplerConfig:
         actions_sampler = DiscreteActionsSampler(
             estimator=estimator,
             temperature=self.temperature,
+            sf_bias=self.sf_bias,
             epsilon=self.epsilon,
         )
 
