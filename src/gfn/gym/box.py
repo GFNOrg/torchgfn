@@ -1,4 +1,4 @@
-from typing import ClassVar, Literal, Tuple, cast
+from typing import ClassVar, Literal, Tuple
 
 from math import log
 import torch
