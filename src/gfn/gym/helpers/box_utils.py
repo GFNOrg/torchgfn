@@ -7,7 +7,7 @@ import torch
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
 from torchtyping import TensorType as TT
 
-from gfn.estimators import ProbabilityEstimator
+from gfn.modules import PolicyEstimator  # ProbabilityEstimator
 from gfn.gym import Box
 from gfn.states import States
 from gfn.utils import NeuralNet
@@ -761,7 +761,7 @@ def split_PF_module_output(
     return (exit_probability, mixture_logits, alpha_theta, beta_theta, alpha_r, beta_r)
 
 
-class BoxPFEstimator(ProbabilityEstimator):
+class BoxPFEstimator(PolicyEstimator):
     r"""Estimator for P_F for the Box environment. Uses the BoxForwardDist distribution."""
 
     def __init__(
@@ -847,7 +847,7 @@ class BoxPFEstimator(ProbabilityEstimator):
         )
 
 
-class BoxPBEstimator(ProbabilityEstimator):
+class BoxPBEstimator(PolicyEstimator):
     r"""Estimator for P_B for the Box environment. Uses the QuarterCircle(northeastern=False) distribution"""
 
     def __init__(
