@@ -5,7 +5,7 @@ from torchtyping import TensorType as TT
 import torch
 import torch.nn as nn
 
-from gfn.envs import DiscreteEnv, Env
+from gfn.env import DiscreteEnv, Env
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import UnsqueezedCategorical
 
@@ -125,7 +125,7 @@ class DiscretePolicyEstimator(PolicyEstimator):
         env: Env,
         module: nn.Module,
         forward: bool,
-        greedy_eps: bool,
+        greedy_eps: bool = 0.0,
         temperature: float = 1.0,
         sf_bias: float = 0.0,
         epsilon: float = 0.0,
