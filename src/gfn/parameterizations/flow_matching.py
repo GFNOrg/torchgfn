@@ -29,7 +29,6 @@ class FMParametrization(GFlowNet):
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
         super().__init__()
         # TODO: THIS ONLY WORKS FOR DISCRETE ENVIRONMENTS.
-        assert logF.forward_looking
         assert not logF.greedy_eps
 
         self.logF = logF
@@ -85,18 +84,27 @@ class FMParametrization(GFlowNet):
                 valid_backward_states, backward_actions
             )
 
+            # Forward looking loss.
             incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
                 valid_backward_states_parents
             )[:, action_idx]
+            log_rewards = self.env.log_reward(valid_backward_states_parents)[:, action_idx]
+            incoming_log_flows[valid_backward_mask, action_idx] = incoming_log_flows[valid_backward_mask, action_idx] + log_rewards
+
+            # Forward looking loss.
             outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
                 valid_forward_states
             )[:, action_idx]
+            log_rewards = self.env.log_reward(valid_forward_states)[:, action_idx]
+            outgoing_log_flows[valid_forward_mask, action_idx] = outgoing_log_flows[valid_forward_mask, action_idx] + log_rewards
 
         # Now the exit action
         valid_forward_mask = states.forward_masks[:, -1]
         outgoing_log_flows[valid_forward_mask, -1] = self.logF(
             states[valid_forward_mask]
         )[:, -1]
+        log_rewards = states[valid_forward_mask]
+        outgoing_log_flows[valid_forward_mask, -1] = outgoing_log_flows[valid_forward_mask, -1] + log_rewards
 
         log_incoming_flows = torch.logsumexp(incoming_log_flows, dim=-1)
         log_outgoing_flows = torch.logsumexp(outgoing_log_flows, dim=-1)
@@ -106,7 +114,12 @@ class FMParametrization(GFlowNet):
     def reward_matching_loss(self, terminating_states: DiscreteStates) -> TT[0, float]:
         """Calculates the reward matching loss from the terminating states."""
         assert terminating_states.log_rewards is not None
+
+        # Forward looking. We need to add the rewards to the log_edge_flows.
         log_edge_flows = self.logF(terminating_states)
+        log_rewards = self.env.log_reward(terminating_states)
+        log_edge_flows = log_edge_flows + log_rewards
+
         terminating_log_edge_flows = log_edge_flows[:, -1]
         log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
