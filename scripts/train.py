@@ -108,8 +108,9 @@ if __name__ == "__main__":
         trajectories = trajectories_sampler.sample(n_trajectories=config["batch_size"])
         training_samples = trajectories_to_training_samples(trajectories, loss_fn)
         if replay_buffer is not None:
-            replay_buffer.add(training_samples)
-            training_objects = replay_buffer.sample(n_trajectories=config["batch_size"])
+            with torch.no_grad():
+                replay_buffer.add(training_samples)
+                training_objects = replay_buffer.sample(n_trajectories=config["batch_size"])
         else:
             training_objects = training_samples
 
