@@ -284,7 +284,7 @@ if __name__ == "__main__":  # noqa: C901
 
     if args.loss in ("DB", "SubTB"):
         # We always need a LogZEstimator
-        logZ = torch.tensor(0.0, device=env.device)
+        logZ = torch.tensor(0.0, device=env.device, requires_grad=True)
         # We need a LogStateFlowEstimator
 
         module = BoxStateFlowModule(
@@ -394,8 +394,7 @@ if __name__ == "__main__":  # noqa: C901
 
         to_log = {"loss": loss.item(), "states_visited": states_visited}
         logZ_info = ""
-        if isinstance(gflownet, TBGFlowNet):
-            logZ = gflownet.logZ
+        if args.loss != "ZVar":
             to_log.update({"logZdiff": env.log_partition - logZ.item()})
             logZ_info = f"logZ: {logZ.item():.2f}, "
         if use_wandb:
