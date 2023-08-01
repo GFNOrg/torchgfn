@@ -15,7 +15,7 @@ import wandb
 from tqdm import tqdm, trange
 
 from gfn.gym import Box
-from gfn.modules import DiscretePolicyEstimator
+from gfn.modules import ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
     LogPartitionVarianceGFlowNet,
@@ -25,14 +25,13 @@ from gfn.gflownet import (
 from gfn.utils.common import trajectories_to_training_samples
 from gfn.utils.modules import NeuralNet
 from gfn.gym.helpers.box_utils import (
+    BoxStateFlowModule,
     BoxPFNeuralNet,
     BoxPBNeuralNet,
     BoxPFEstimator,
     BoxPBEstimator,
     BoxPBUniform,
 )
-
-# BoxPFNeuralNet = BoxPFNeuralNet_old
 
 from sklearn.neighbors import KernelDensity
 from scipy.special import logsumexp
@@ -83,29 +82,6 @@ def estimate_jsd(kde1, kde2):
     jsd = np.sum(np.exp(log_dens1) * (log_dens1 - log_dens))
     jsd += np.sum(np.exp(log_dens2) * (log_dens2 - log_dens))
     return jsd / 2.0
-
-
-# 0 - This is for debugging only
-
-# env = Box(delta=0.1)
-# n_samples = 10000
-# samples = sample_from_reward(env, n_samples)
-# print(samples)
-# kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(samples)
-
-# import matplotlib.pyplot as plt
-
-# n = 100
-
-
-# test_states = get_test_states()
-
-# log_dens = kde.score_samples(test_states)
-# fig = plt.imshow(np.exp(log_dens).reshape(n, n), origin="lower", extent=[0, 1, 0, 1])
-# plt.colorbar()
-# plt.show()
-# estimate_jsd(kde, kde)
-# assert False
 
 
 if __name__ == "__main__":
@@ -301,21 +277,22 @@ if __name__ == "__main__":
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
-    logZ = None
     module = None
+
     if args.loss in ("DB", "SubTB"):
+        # We always need a LogZEstimator
+        logZ = torch.tensor(0.0, device=env.device)
         # We need a LogStateFlowEstimator
 
-        module = NeuralNet(
+        module = BoxStateFlowModule(
             input_dim=env.preprocessor.output_dim,
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
             torso=pf_module.torso if args.tied else None,
+            logZ_value=logZ,
         )
-        logF_estimator = DiscretePolicyEstimator(
-            env=env, module=module, forward=True, off_policy=False
-        )
+        logF_estimator = ScalarEstimator(env=env, module=module)
 
         if args.loss == "DB":
             gflownet = DBGFlowNet(
@@ -372,7 +349,8 @@ if __name__ == "__main__":
         )
     if "logZ" in dict(gflownet.named_parameters()):
         logZ = dict(gflownet.named_parameters())["logZ"]
-        optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
+
+    optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
 
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
@@ -388,8 +366,6 @@ if __name__ == "__main__":
     true_kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(
         samples_from_reward
     )
-
-    visited_terminating_states = env.States.from_batch_shape((0,))
 
     states_visited = 0
 
@@ -410,8 +386,6 @@ if __name__ == "__main__":
             p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
-
-        # visited_terminating_states.extend(trajectories.last_states)
 
         states_visited += len(trajectories)
 
