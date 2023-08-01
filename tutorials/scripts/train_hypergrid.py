@@ -243,14 +243,14 @@ if __name__ == "__main__":  # noqa: C901
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
-                    on_policy=True,
+                    on_policy=True if args.replay_buffer_size == 0 else False,
                 )
             else:
                 gflownet = SubTBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
-                    on_policy=True,
+                    on_policy=True if args.replay_buffer_size == 0 else False,
                     weighting=args.subTB_weighting,
                     lamda=args.subTB_lambda,
                 )
@@ -258,13 +258,13 @@ if __name__ == "__main__":  # noqa: C901
             gflownet = TBGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                on_policy=True,
+                on_policy=True if args.replay_buffer_size == 0 else False,
             )
         elif args.loss == "ZVar":
             gflownet = LogPartitionVarianceGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                on_policy=True,
+                on_policy=True if args.replay_buffer_size == 0 else False,
             )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
