@@ -1,20 +1,17 @@
-from dataclasses import dataclass
 from typing import Tuple
 
 import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
-from gfn.estimators import LogEdgeFlowEstimator
-from gfn.losses.base import Parametrization
+from gfn.gflownet.base import GFlowNet
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import DiscreteStates
-from gfn.utils.estimators import LogEdgeFlowProbabilityEstimator
+from gfn.modules import DiscretePolicyEstimator
 
 
-@dataclass
-class FMParametrization(Parametrization):
-    r"""Flow Matching Parameterization dataclass, with edge flow estimator.
+class FMGFlowNet(GFlowNet):
+    r"""Flow Matching GFlowNet, with edge flow estimator.
 
     $\mathcal{O}_{edge}$ is the set of functions from the non-terminating edges
     to $\mathbb{R}^+$. Which is equivalent to the set of functions from the internal nodes
@@ -28,17 +25,18 @@ class FMParametrization(Parametrization):
         logF: LogEdgeFlowEstimator
         alpha: weight for the reward matching loss.
     """
-    logF: LogEdgeFlowEstimator
-    alpha: float = 1.0
 
-    def __post_init__(self) -> None:
+    def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
+        super().__init__()
+        # TODO: THIS ONLY WORKS FOR DISCRETE ENVIRONMENTS.
+        assert not logF.greedy_eps
+
+        self.logF = logF
+        self.alpha = alpha
         self.env = self.logF.env
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
-        probability_estimator = (
-            LogEdgeFlowProbabilityEstimator.from_LogEdgeFlowEstimator(self.logF)
-        )
-        actions_sampler = ActionsSampler(probability_estimator)
+        actions_sampler = ActionsSampler(self.logF)
         trajectories_sampler = TrajectoriesSampler(actions_sampler)
         trajectories = trajectories_sampler.sample_trajectories(
             n_trajectories=n_samples
@@ -89,6 +87,7 @@ class FMParametrization(Parametrization):
             incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
                 valid_backward_states_parents
             )[:, action_idx]
+
             outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
                 valid_forward_states
             )[:, action_idx]
@@ -108,6 +107,8 @@ class FMParametrization(Parametrization):
         """Calculates the reward matching loss from the terminating states."""
         assert terminating_states.log_rewards is not None
         log_edge_flows = self.logF(terminating_states)
+
+        # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
         terminating_log_edge_flows = log_edge_flows[:, -1]
         log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()

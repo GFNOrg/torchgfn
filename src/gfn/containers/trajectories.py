@@ -144,10 +144,13 @@ class Trajectories(Container):
         new_max_length = when_is_done.max().item() if len(when_is_done) > 0 else 0
         states = self.states[:, index]
         actions = self.actions[:, index]
-        log_probs = self.log_probs[:, index]
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
-        log_probs = log_probs[:new_max_length]
+        if self.log_probs.shape != (0, 0):
+            log_probs = self.log_probs[:, index]
+            log_probs = log_probs[:new_max_length]
+        else:
+            log_probs = self.log_probs
         log_rewards = (
             self._log_rewards[index] if self._log_rewards is not None else None
         )

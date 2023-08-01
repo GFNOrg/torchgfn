@@ -7,14 +7,15 @@ import torch
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
 from torchtyping import TensorType as TT
 
-from gfn.estimators import ProbabilityEstimator
+from gfn.modules import GFNModule
 from gfn.gym import Box
 from gfn.states import States
 from gfn.utils import NeuralNet
 
+
 PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0
-CLAMP = 1e-6
+CLAMP = torch.finfo(torch.float).eps
 
 
 class QuarterCircle(Distribution):
@@ -143,6 +144,9 @@ class QuarterCircle(Distribution):
         return sampled_actions
 
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
+        sampled_actions = sampled_actions.to(
+            torch.double
+        )  # Arccos is very brittle, so we use double precision
         sampled_actions.clamp_(
             min=0.0, max=self.delta
         )  # Should be the case already - just to avoid numerical issues
@@ -151,6 +155,11 @@ class QuarterCircle(Distribution):
         base_01_samples = (sampled_angles - self.min_angles) / (
             self.max_angles - self.min_angles
         ).clamp_(min=CLAMP, max=1 - CLAMP)
+
+        if not self.northeastern:
+            # Ideally, we shouldn't need this
+            # But it is used in the original implementation, so we keep it. It helps with numerical issues.
+            base_01_samples = base_01_samples.clamp(1e-4, 1 - 1e-4)
 
         # Ugly hack: when some of the sampled actions are -infinity (exit action), the corresponding value is nan
         # And we don't really care about the log prob of the exit action
@@ -170,7 +179,7 @@ class QuarterCircle(Distribution):
                 torch.ones_like(base_01_samples) * CLAMP,
                 base_01_samples,
             ).clamp_(min=CLAMP, max=1 - CLAMP)
-
+        base_01_samples = base_01_samples.to(torch.float)
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
 
         if not self.northeastern:
@@ -252,6 +261,9 @@ class QuarterDisk(Distribution):
         return sampled_actions
 
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
+        sampled_actions = sampled_actions.to(
+            torch.double
+        )  # Arccos is very brittle, so we use double precision
         base_r_01_samples = (
             torch.sqrt(torch.sum(sampled_actions**2, dim=-1))
             / self.delta  # changes from 0 to 1.
@@ -262,6 +274,8 @@ class QuarterDisk(Distribution):
             / PI_2
         ).clamp_(CLAMP, 1 - CLAMP)
 
+        base_r_01_samples = base_r_01_samples.to(torch.float)
+        base_theta_01_samples = base_theta_01_samples.to(torch.float)
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
             + self.base_theta_dist.log_prob(base_theta_01_samples)
@@ -426,125 +440,6 @@ class DistributionWrapper(Distribution):
         return log_prob
 
 
-class BoxPFNeuralNet_old(NeuralNet):
-    """A deep neural network for the forward policy.
-
-    Attributes:
-        n_components_s0: the number of components for each s=0 distribution parameter.
-        n_components: the number of components for each s=t>0 distribution parameter.
-        PFs0: the parameters for the s=0 distribution.
-    """
-
-    def __init__(
-        self,
-        hidden_dim: int,
-        n_hidden_layers: int,
-        n_components_s0: int,
-        n_components: int,
-        **kwargs,
-    ):
-        """Instantiates the neural network for the forward policy.
-
-        Args:
-            hidden_dim: the size of each hidden layer.
-            n_hidden_layers: the number of hidden layers.
-            n_components_s0: the number of output components for each s=0 distribution
-                parameter.
-            n_components: the number of output components for each s=t>0 distribution
-                parameter.
-            **kwargs: passed to the NeuralNet class.
-
-        """
-        self._n_comp_max = max(n_components_s0, n_components)
-        self._n_comp_min = min(n_components_s0, n_components)
-        self._n_comp_diff = self._n_comp_max - self._n_comp_min
-        self.n_components_s0 = n_components_s0
-        self.n_components = n_components
-
-        input_dim = 2
-
-        # Note on module output size: We need the outputs of this neural network to
-        # stack with outputs at s_0. Therefore the output size will be
-        # 1 + 3 * self._n_comp_max values, but the user will notice that the full state
-        # size is 1 + 5 * self._n_comp_max. This is because the final two components are
-        # only used by s_0. Therefore, for s_t>0, 2 "dummy" constant all_zero
-        # self._n_comp_max components will be added to the neural network outputs.
-        output_dim = 1 + 3 * self._n_comp_max
-
-        super().__init__(
-            input_dim=input_dim,
-            hidden_dim=hidden_dim,
-            n_hidden_layers=n_hidden_layers,
-            output_dim=output_dim,
-            activation_fn="elu",
-            **kwargs,
-        )
-        # Does not include the + 1 to handle the exit probability (which is
-        # impossible at t=0).
-        self.PFs0 = torch.nn.Parameter(torch.zeros(1, 5 * self._n_comp_max))
-
-        # # For the smaller component space (whether it be for s_0 or s_t>0), the unused
-        # # components will be zeroed out by self.components_mask.
-        self._components_mask = self._compute_all_components_mask()
-
-    def _compute_all_components_mask(self):
-        """Masks unused elements of the smaller state representation."""
-        all_components_mask = torch.cat(
-            (
-                torch.ones(1, self._n_comp_min),  # The used elements of the state.
-                torch.zeros(1, self._n_comp_diff),  # The unused elements of the state.
-            ),
-            dim=-1,
-        ).repeat(
-            1, 5  # [1, 5 * n_components_max]
-        )
-        mask = torch.cat(
-            (torch.ones(1).bool(), mask), dim=-1
-        )  # [1, 1 + 5 * n_comps_max]
-        mask.requires_grad = False
-
-        return mask
-
-    def forward(
-        self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", "1 + 5 * n_components"]:
-        # First calculate network outputs (for all t > 0).
-        out = super().forward(preprocessed_states)
-        # TODO: this only works with linear batches (i.e. batch_shape is an int), change it by using something else than B
-        B, W = out.shape
-
-        # Add all-zero components for stack-ability with self.PFs0.
-        out = torch.cat((out, torch.zeros(B, 2 * self._n_comp_max)), dim=-1)
-
-        # Explicitly mask the unused components for t>0 state-representations.
-        if self.n_components < self.n_components_s0:
-            out = out * self._components_mask
-
-        # Add the all_zero vector for exit probability.
-        out_s0 = torch.repeat_interleave(
-            self.PFs0, B, dim=0
-        )  # [B, 5 * n_components_max]
-        out_s0 = torch.cat((torch.zeros(B, 1), out_s0), dim=-1)
-
-        # Explicitly mask the unused components for t=0 state-representations.
-        if self.n_components_s0 < self.n_components:
-            out_s0 = out_s0 * self._components_mask
-
-        # Overwrite the network outputs with PFs0 in the case that the state is 0.0.
-        idx_s0 = torch.all(preprocessed_states == 0.0, 1)
-        out[idx_s0, :] = out_s0[idx_s0, :]  # TODO: scatter?
-
-        # Apply sigmoid to all except the dimensions between 1 and 1 + self.n_components
-        # These are the components that represent the concentration parameters of the Betas, before normalizing, and should
-        # thus be between 0 and 1
-        out[..., 0] = torch.sigmoid(out[..., 0])
-        out[..., 1 + self._n_comp_max :] = torch.sigmoid(
-            out[..., 1 + self._n_comp_max :]
-        )
-
-        return out
-
-
 class BoxPFNeuralNet(NeuralNet):
     """A deep neural network for the forward policy.
 
@@ -575,19 +470,11 @@ class BoxPFNeuralNet(NeuralNet):
 
         """
         self._n_comp_max = max(n_components_s0, n_components)
-        self._n_comp_min = min(n_components_s0, n_components)
-        self._n_comp_diff = self._n_comp_max - self._n_comp_min
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
 
         input_dim = 2
 
-        # Note on module output size: We need the outputs of this neural network to
-        # stack with outputs at s_0. Therefore the output size will be
-        # 1 + 3 * self._n_comp_max values, but the user will notice that the full state
-        # size is 1 + 5 * self._n_comp_max. This is because the final two components are
-        # only used by s_0. Therefore, for s_t>0, 2 "dummy" constant all_zero
-        # self._n_comp_max components will be added to the neural network outputs.
         output_dim = 1 + 3 * self.n_components
 
         super().__init__(
@@ -705,6 +592,23 @@ class BoxPBNeuralNet(NeuralNet):
         return out
 
 
+class BoxStateFlowModule(NeuralNet):
+    """A deep neural network for the state flow function."""
+
+    def __init__(self, logZ_value: torch.Tensor, **kwargs):
+        self.logZ_value = logZ_value
+        super().__init__(**kwargs)
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", "input_dim", float]
+    ) -> TT["batch_shape", "output_dim", float]:
+        out = super().forward(preprocessed_states)
+        idx_s0 = torch.all(preprocessed_states == 0.0, 1)
+        out[idx_s0] = self.logZ_value
+
+        return out
+
+
 class BoxPBUniform(torch.nn.Module):
     """A module to be used to create a uniform PB distribution for the Box environment
 
@@ -761,7 +665,7 @@ def split_PF_module_output(
     return (exit_probability, mixture_logits, alpha_theta, beta_theta, alpha_r, beta_r)
 
 
-class BoxPFEstimator(ProbabilityEstimator):
+class BoxPFEstimator(GFNModule):
     r"""Estimator for P_F for the Box environment. Uses the BoxForwardDist distribution."""
 
     def __init__(
@@ -775,8 +679,6 @@ class BoxPFEstimator(ProbabilityEstimator):
     ):
         super().__init__(env, module)
         self._n_comp_max = max(n_components_s0, n_components)
-        self._n_comp_min = min(n_components_s0, n_components)
-        self._n_comp_diff = self._n_comp_max - self._n_comp_min
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
 
@@ -847,7 +749,7 @@ class BoxPFEstimator(ProbabilityEstimator):
         )
 
 
-class BoxPBEstimator(ProbabilityEstimator):
+class BoxPBEstimator(GFNModule):
     r"""Estimator for P_B for the Box environment. Uses the QuarterCircle(northeastern=False) distribution"""
 
     def __init__(

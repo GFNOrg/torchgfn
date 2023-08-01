@@ -15,9 +15,9 @@ trajectory_balance:
   log_reward_clip_min: -12
 
 sub_tb:
-  # weighing choices:
+  # weighting choices:
   #     "equal", "equal_within", "geometric", "TB", "DB", "ModifiedDB", "geometric_within"
   #     default="geometric_within"
-  weighing: geometric_within
+  weighting: geometric_within
   forward_looking: False
   lamda: 0.9
