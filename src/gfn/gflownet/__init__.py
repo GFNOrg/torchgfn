@@ -1,5 +1,5 @@
-from .base import PFBasedGFlowNet, TrajectoryDecomposableLoss
-from .detailed_balance import DBParametrization
-from .flow_matching import FMParametrization
-from .sub_trajectory_balance import SubTBParametrization
-from .trajectory_balance import LogPartitionVarianceParametrization, TBParametrization
+from .base import GFlowNet, PFBasedGFlowNet, TrajectoryBasedGFlowNet
+from .detailed_balance import DBGFlowNet
+from .flow_matching import FMGFlowNet
+from .sub_trajectory_balance import SubTBGFlowNet
+from .trajectory_balance import LogPartitionVarianceGFlowNet, TBGFlowNet
