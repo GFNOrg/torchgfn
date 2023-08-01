@@ -69,12 +69,21 @@ class GFNModule(ABC, nn.Module):
     def __repr__(self):
         return f"{self.__class__.__name__}({self.env})"
 
+    @property
     @abstractmethod
+    def expected_output_dim(self) -> int:
+        """Expected output dimension of the module."""
+        pass
+
     def check_output_dim(
         self, module_output: TT["batch_shape", "output_dim", float]
     ) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
-        pass
+        if module_output.shape[-1] != self.expected_output_dim():
+            raise ValueError(
+                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim()}"
+                + f" but is {module_output.shape[-1]}."
+            )
 
     def to_probability_distribution(
         self,
@@ -92,14 +101,8 @@ class GFNModule(ABC, nn.Module):
 
 
 class ScalarEstimator(GFNModule):
-    def check_output_dim(
-        self, module_output: TT["batch_shape", "output_dim", float]
-    ) -> None:
-        """Check that the output of the module has the correct shape. Raises an error if not."""
-        if module_output.shape[-1] != 1:
-            raise ValueError(
-                f"ScalarEstimator output dimension should be 1, but is {module_output.shape[-1]}."
-            )
+    def expected_output_dim(self) -> int:
+        return 1
 
 
 class DiscretePolicyEstimator(GFNModule):
@@ -157,26 +160,11 @@ class DiscretePolicyEstimator(GFNModule):
     def greedy_eps(self):
         return self._greedy_eps
 
-    def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
-        """Ensures the output dimensions are correct.
-        Raises:
-            ValueError: If this Estimator is initalized with a continuous environment.
-            ValueError: If this Estimator output shape does not match the number of
-                environment actions.
-        """
-        if not isinstance(self.env, DiscreteEnv):
-            raise ValueError(
-                "DiscretePolicyEstimator only supports discrete environments."
-            )
-
-        if self._forward and module_output.shape[-1] != self.env.n_actions:
-            raise ValueError(
-                f"DiscretePolicyEstimator Forward output dimension should be {self.env.n_actions}, but is {module_output.shape[-1]}."
-            )
-        elif not self._forward and module_output.shape[-1] != self.env.n_actions - 1:
-            raise ValueError(
-                f"DiscretePolicyEstimator Backward output dimension should be {self.env.n_actions - 1}, but is {module_output.shape[-1]}."
-            )
+    def expected_output_dim(self) -> int:
+        if self._forward:
+            return self.env.n_actions
+        else:
+            return self.env.n_actions - 1
 
     def to_probability_distribution(
         self,

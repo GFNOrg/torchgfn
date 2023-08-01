@@ -685,11 +685,8 @@ class BoxPFEstimator(GFNModule):
         self.max_concentration = max_concentration
         self.env = env
 
-    def check_output_dim(
-        self, module_output: TT["batch_shape", "output_dim", float]
-    ) -> None:
-        # TODO: add this check.
-        pass
+    def expected_output_dim(self) -> int:
+        return 1 + 5 * self._n_comp_max
 
     def to_probability_distribution(
         self, states: States, module_output: TT["batch_shape", "output_dim", float]
@@ -766,11 +763,8 @@ class BoxPBEstimator(GFNModule):
         self.min_concentration = min_concentration
         self.max_concentration = max_concentration
 
-    def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
-        if module_output.shape[-1] != 3 * self.n_components:
-            raise ValueError(
-                f"module_output.shape[-1] should be {3 * self.n_components}, but is {module_output.shape[-1]}"
-            )
+    def expected_output_dim(self) -> int:
+        return 3 * self.n_components
 
     def to_probability_distribution(
         self, states: States, module_output: TT["batch_shape", "output_dim", float]
