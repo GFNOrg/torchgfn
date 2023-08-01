@@ -76,6 +76,20 @@ class GFNModule(ABC, nn.Module):
         """Check that the output of the module has the correct shape. Raises an error if not."""
         pass
 
+    def to_probability_distribution(
+        self,
+        states: States,
+        module_output: TT["batch_shape", "output_dim", float],
+    ) -> Distribution:
+        """Transform the output of the module into a probability distribution.
+
+        Not all modules must implement this method, but it is required to define a
+        policy from a module's outputs. See `DiscretePolicyEstimator` for an example
+        using a categorical distribution, but note this can be done for all continuous
+        distributions as well.
+        """
+        raise NotImplementedError
+
 
 class ScalarEstimator(GFNModule):
     def check_output_dim(
@@ -88,18 +102,7 @@ class ScalarEstimator(GFNModule):
             )
 
 
-class PolicyEstimator(GFNModule):
-    @abstractmethod
-    def to_probability_distribution(
-        self,
-        states: States,
-        module_output: TT["batch_shape", "output_dim", float],
-    ) -> Distribution:
-        """Transform the output of the module into a probability distribution."""
-        pass
-
-
-class DiscretePolicyEstimator(PolicyEstimator):
+class DiscretePolicyEstimator(GFNModule):
     r"""Container for forward and backward policy estimators.
 
     $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$.
@@ -125,7 +128,7 @@ class DiscretePolicyEstimator(PolicyEstimator):
         env: Env,
         module: nn.Module,
         forward: bool,
-        greedy_eps: bool = 0.0,
+        greedy_eps: float = 0.0,
         temperature: float = 1.0,
         sf_bias: float = 0.0,
         epsilon: float = 0.0,
@@ -134,20 +137,25 @@ class DiscretePolicyEstimator(PolicyEstimator):
 
         Args:
             forward: if True, then this is a forward policy, else backward policy.
-            greedy_eps: if True, then we go off policy using greedy epsilon exploration.
+            greedy_eps: if > 0 , then we go off policy using greedy epsilon exploration.
             temperature: scalar to divide the logits by before softmax. Does nothing
-                if greedy_eps is False.
+                if greedy_eps is 0.
             sf_bias: scalar to subtract from the exit action logit before dividing by
-                temperature. Does nothing if greedy_eps is False.
+                temperature. Does nothing if greedy_eps is 0.
             epsilon: with probability epsilon, a random action is chosen. Does nothing
-                if greedy_eps is False.
+                if greedy_eps is 0.
         """
         super().__init__(env, module)
+        assert greedy_eps >= 0
         self._forward = forward
         self._greedy_eps = greedy_eps
         self.temperature = temperature
         self.sf_bias = sf_bias
         self.epsilon = epsilon
+
+    @property
+    def greedy_eps(self):
+        return self._greedy_eps
 
     def check_output_dim(self, module_output: TT["batch_shape", "output_dim", float]):
         """Ensures the output dimensions are correct.
