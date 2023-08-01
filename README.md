@@ -15,80 +15,90 @@
   <a href="https://gfn.readthedocs.io/en/latest/">Documentation</a> ~ <a href="https://github.com/saleml/gfn">Code</a>
 </p>
 
-# gfn: a Python package for GFlowNets
+# torchgfn: a Python package for GFlowNets
 
-## Installing the packages
+<p align="center"> Please cite <a href="https://arxiv.org/abs/2305.14594">this paper</a> if you are using the library for your research </p>
 
-The codebase requires `python >= 3.10`.
+## Installing the package
+
+The codebase requires python >= 3.10
+
+To install the latest stable version:
 
 ```bash
-git clone https://github.com/saleml/gfn.git
-conda create -n gfn python=3.10
-conda activate gfn
-cd gfn
-pip install .
+pip install torchgfn
 ```
 
-To install a version of the codebase that supports [wandb](https://wandb.ai) logging,
+Optionally, to run scripts:
 
 ```bash
-pip install .[scripts]
+pip install torchgfn[scripts]
+```
+
+To install the cutting edge version (from the `main` branch):
+
+```bash
+git clone https://github.com/saleml/torchgfn.git
+conda create -n gfn python=3.10
+conda activate gfn
+cd torchgfn
+pip install .
 ```
 
 ## About this repo
 
-This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization used for the GFN loss.
+This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization of the function approximators used to calculate the GFN loss.
 
-Example script are provided [here](./examples/scripts/).
+Example scripts and notebooks are provided [here](./tutorials/).
 
 
 ### Standalone example
 
-This example, which shows how to use the library for a simple discrete environment, requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]`.
+This example, which shows how to use the library for a simple discrete environment, requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]` or `pip install torchgfn[scripts]`.
 
 ```python
 import torch
 from tqdm import tqdm
 
-from gfn.estimators import LogZEstimator
-from gfn.losses import TBParametrization
-from gfn.samplers import ActionsSampler, TrajectoriesSampler
-from gfn.utils import NeuralNet, DiscretePFEstimator, DiscretePBEstimator
-
-
+from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
+from gfn.modules import DiscretePolicyEstimator
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
+from gfn.utils import NeuralNet
 
 if __name__ == "__main__":
 
     env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
-    module_PF = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
-    module_PB = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1,     torso=module_PF.torso)
+    module_PF = NeuralNet(
+        input_dim=env.preprocessor.output_dim,
+        output_dim=env.n_actions
+    )
+    module_PB = NeuralNet(
+        input_dim=env.preprocessor.output_dim,
+        output_dim=env.n_actions - 1,
+        torso=module_PF.torso
+    )
 
-    logit_PF = DiscretePFEstimator(env=env, module=module_PF)
-    logit_PB = DiscretePBEstimator(env=env, module=module_PB)
-    logZ = LogZEstimator(torch.tensor(0.0))
+    pf_estimator = DiscretePolicyEstimator(env, module_PF, forward=True)
+    pb_estimator = DiscretePolicyEstimator(env, module_PB, forward=False)
 
-    parametrization = TBParametrization(logit_PF, logit_PB, logZ)
+    gfn = TBGFlowNet(init_logZ=0., pf=pf_estimator, pb=pb_estimator)
 
-    actions_sampler = ActionsSampler(estimator=logit_PF)
-    trajectories_sampler = TrajectoriesSampler(actions_sampler=actions_sampler)
+    sampler = TrajectoriesSampler(ActionsSampler(estimator=pf_estimator))
 
-    params = [
-        {
-            "params": [
-                val for key, val in parametrization.parameters.items() if "logZ" not in key
-            ],
-            "lr": 0.001,
-        },
-        {"params": [val for key, val in parametrization.parameters.items() if "logZ" in key], "lr": 0.1},
-    ]
-    optimizer = torch.optim.Adam(params)
+    # Policy parameters have their own LR.
+    non_logz_params = [v for k, v in dict(gfn.named_parameters()).items() if k != "logZ"]
+    optimizer = torch.optim.Adam(non_logz_params, lr=1e-3)
+
+    # Log Z gets dedicated learning rate (typically higher).
+    logz_params = [dict(gfn.named_parameters())["logZ"]]
+    optimizer.add_param_group({"params": logz_params, "lr": 1e-2})
 
     for i in (pbar := tqdm(range(1000))):
-        trajectories = trajectories_sampler.sample(n_trajectories=16)
+        trajectories = sampler.sample_trajectories(n_trajectories=16)
         optimizer.zero_grad()
-        loss = parametrization.loss(trajectories)
+        loss = gfn.loss(trajectories)
         loss.backward()
         optimizer.step()
         if i % 25 == 0:
@@ -120,62 +130,73 @@ open build/html/index.html
 
 ### Defining an environment
 
-See [examples](./examples/envs/)
+See [examples](./tutorials/ENV.md)
 
 ### States
 
-**TODO**
+States are the primitive building blocks for GFlowNet objects such as transitions and trajectories, on which losses operate.
 
-### Other containers
+An abstract `States` class is provided. But for each environment, a `States` subclass is needed. A `States` object
+is a collection of multiple states (nodes of the DAG). A tensor representation of the states is required for batching. If a state is represented with a tensor of shape `(*state_shape)`, a batch of states is represented with a `States` object, with the attribute `tensor` of shape `(*batch_shape, *state_shape)`. Other
+representations are possible (e.g. a state as a string, a `numpy` array, a graph, etc...), but these representations cannot be batched, unless the user specifies a function that transforms these raw states to tensors.
 
-Besides the `States` class, other containers of states are available:
+The `batch_shape` attribute is required to keep track of the batch dimension. A trajectory can be represented by a States object with `batch_shape = (n_states,)`. Multiple trajectories can be represented by a States object with `batch_shape = (n_states, n_trajectories)`.
 
-- [Transitions](https://github.com/saleml/gfn/blob/master/src/gfn/containers/transitions.py), representing a batch of transitions $s \rightarrow s'$.
-- [Trajectories](https://github.com/saleml/gfn/blob/master/src/gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
+Because multiple trajectories can have different lengths, batching requires appending a dummy tensor to trajectories that are shorter than the longest trajectory. The dummy state is the $s_f$ attribute of the environment (e.g. `[-1, ..., -1]`, or `[-inf, ..., -inf]`, etc...). Which is never processed, and is used to pad the batch of states only.
 
-These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of [ReplayBuffer](https://github.com/saleml/gfn/blob/master/src/gfn/containers/replay_buffer.py)s.
+For discrete environments, the action set is represented with the set $\{0, \dots, n_{actions} - 1\}$, where the $(n_{actions})$-th action always corresponds to the exit or terminate action, i.e. that results in a transition of the type $s \rightarrow s_f$, but not all actions are possible at all states. Each `States` object is endowed with two extra attributes: `forward_masks` and `backward_masks`, representing which actions are allowed at each state and which actions could have led to each state, respectively. Such states are instances of the `DiscreteStates` abstract subclass of `States`. The `forward_masks` tensor is of shape `(*batch_shape, n_{actions})`, and `backward_masks` is of shape `(*batch_shape, n_{actions} - 1)`. Each subclass of `DiscreteStates` needs to implement the `update_masks` function, that uses the environment's logic to define the two tensors.
 
-They inherit from the base `Container` [class](https://github.com/saleml/gfn/blob/master/src/gfn/containers/base.py), indicating some helpful methods.
+### Actions
+Actions should be though of as internal actions of an agent building a compositional object. They correspond to transitions $s \rightarrow s'$. An abstract `Actions` class is provided. It is automatically subclassed for discrete environments, but needs to be manually subclassed otherwise.
 
-In most cases, one needs to sample complete trajectories. From a batch of trajectories, a batch of states and batch of transitions can be defined using `Trajectories.to_transitions()` and `Trajectories.to_states()`. These exclude meaningless transitions and states that were added to the batch of trajectories to allow for efficient batching.
+Similar to `States` objects, each action is a tensor of shape `(*batch_shape, *action_shape)`. For discrete environments for instances, `action_shape = (1,)`, representing an integer between $0$ and $n_{actions} - 1$.
 
-### Estimators and Modules
+Additionally, each subclass needs to define two more class variable tensors:
+- `dummy_action`: A tensor that is padded to sequences of actions in the shorter trajectories of a batch of trajectories. It is `[-1]` for discrete environments.
+- `exit_action`: A tensor that corresponds to the termination action. It is `[n_{actions} - 1]` fo discrete environments.
 
-Training GFlowNets requires one or multiple estimators. As of now, only discrete environments are handled. All estimators are subclasses of [FunctionEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py), implementing a `__call__` function that takes as input a batch of [States](https://github.com/saleml/gfn/blob/master/src/gfn/containers/states.py).
+### Containers
 
-- [LogEdgeFlowEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $\log F(s \rightarrow s')$, including when $s' = s_f$.
-- [LogStateFlowEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, 1)` tensor representing $\log F(s)$. When used with `forward_looking=True`, $\log F(s)$ is parametrized as the sum of a function approximator and $\log R(s)$ - which is only possible for environments where all states are terminating.
-- [DiscretePFEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions)` tensor representing $logit(s' \mid s)$, such that $P_F(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$, including when $s' = s_f$.
-- [DiscretePBEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py). It outputs a `(*batch_shape, n_actions - 1)` tensor representing $logit(s' \mid s)$, such that $P_B(s' \mid s) = softmax_{s'}\ logit(s' \mid s)$.
+Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Two containers are available:
 
-Defining an estimator requires the environment, and a [module](https://github.com/saleml/gfn/blob/master/src/gfn/modules.py) instance. Modules inherit from the [GFNModule](https://github.com/saleml/gfn/blob/master/src/gfn/modules.py) class, which can be seen as an extension of `torch.nn.Module`. Alternatively, a module is created by providing which module type to use (e.g. "NeuralNet" or "Uniform" or "Zero"). A Basic MLP is provided as the [NeuralNet](https://github.com/saleml/gfn/blob/master/src/gfn/modules.py) class, but any function approximator should be possible.
+- [Transitions](./src/gfn/containers/transitions.py), representing a batch of transitions $s \rightarrow s'$.
+- [Trajectories](./src/gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
 
-Said differently, a `States` object is first transformed via the environment's preprocessor to a `(*batch_shape, *output_shape)` float tensor. The preprocessor's output shape should match the module input shape (if any). The preprocessed states are then passed as inputs to the module, returning the desired output (either flows or probabilities over children in the DAG).
+These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of the[ReplayBuffer](./src/gfn/containers/replay_buffer.py) class.
 
-Each module has a `named_parameters` functions that returns a dictionary of the learnable parameters. This attribute is transferred to the corresponding estimator.
+They inherit from the base `Container` [class](./src/gfn/containers/base.py), indicating some helpful methods.
 
-Additionally, a [LogZEstimator](https://github.com/saleml/gfn/blob/master/src/gfn/estimators.py) is provided, which is a container for a scalar tensor representing $\log Z$, the log-partition function, useful for the Trajectory Balance loss for example. This estimator also has a `named_parameters` function.
+In most cases, one needs to sample complete trajectories. From a batch of trajectories, a batch of states and batch of transitions can be defined using `Trajectories.to_transitions()` and `Trajectories.to_states()`. These exclude meaningless transitions and dummy states that were added to the batch of trajectories to allow for efficient batching.
+
+### Modules
+
+Training GFlowNets requires one or multiple estimators, called `GFNModule`s, which is an abstract subclass of `torch.nn.Module`. In addition to the usual `forward` function, `GFNModule`s need to implement a `required_output_dim` attribute, to ensure that the outputs have the required dimension for the task at hand; and some (but not all) need to implement a `to_probability_distribution` function. They take the environment `env` as an input at initialization.
+- `DiscretePolicyEstimator` is a `GFNModule` that defines the policies $P_F(. \mid s)$ and $P_B(. \mid s)$ for discrete environments. When `backward=False`, the required output dimension is `n = env.n_actions`, and when `backward=True`, it is `n = env.n_actions - 1`. These `n` numbers represent the logits of a Categorical distribution. Additionally, they include exploration parameters, in order to define a tempered version of $P_F$, or a mixture of $P_F$ with a uniform distribution. Naturally, before defining the Categorical distributions, forbidden actions (that are encoded in the `DiscreteStates`' masks attributes), are given 0 probability by setting the corresponding logit to $-\infty$.
+- `ScalarModule` is a simple module with required output dimension 1. It is useful to define log-state flows $\log F(s)$.
+
+For non-discrete environments, the user needs to specify their own policies $P_F$ and $P_B$. The module, taking as input a batch of states (as a `States`) object, should return the batched parameters of a `torch.Distribution`. The distribution depends on the environment. The `to_probability_distribution` function handles the conversion of the parameter outputs to an actual batched `Distribution` object, that implements at least the `sample` and `log_prob` functions. An example is provided [here](./src/gfn/gym/helpers/box_utils.py), for a square environment in which the forward policy has support either on a quarter disk, or on an arc-circle, such that the angle, and the radius (for the quarter disk part) are scaled samples from a mixture of Beta distributions. The provided example shows an intricate scenario, and it is not expected that user defined environment need this much level of details.
+
+In all `GFNModule`s, note that the input of the `forward` function is a `States` object. Meaning that they first need to be transformed to tensors. However, `states.tensor` does not necessarily include the structure that a neural network can used to generalize. It is common in these scenarios to have a function that transforms these raw tensor states to ones where the structure is clearer, via a `Preprocessor` object, that is part of the environment. More on this [here](./tutorials/ENV.md). The default preprocessor of an environment is the identity preprocessor. The `forward` pass thus first calls the `preprocessor` attribute of the environment on `States`, before performing any transformation.
+
+For discrete environments, tabular modules are provided, where a lookup table is used instead of a neural network. Additionally, a `UniformPB` module is provided, implementing a uniform backward policy.
 
 ### Samplers
 
-An [ActionsSampler](https://github.com/saleml/gfn/blob/master/src/gfn/samplers/actions_samplers.py) object defines how actions are sampled at each state of the DAG. As of now, only [ActionsSampler](https://github.com/saleml/gfn/blob/master/src/gfn/samplers/actions_samplers.py)s are implemented. The require an estimator (of $P_F$, $P_B$, or edge flows) defining the action probabilities. These estimators can contain any type of modules (including random action sampling for example). A [ActionsSampler](https://github.com/saleml/gfn/blob/master/src/gfn/samplers/actions_samplers.py) class is provided to sample parents of a state, which is helpful to sample trajectories starting from their last states.
+An [ActionsSampler](./src/gfn/samplers/actions_samplers.py) object defines how actions are sampled at each state. They require a `GFNModule` that implements the `to_probability_distribution` function.
 
-They are at the core of [TrajectoriesSampler](https://github.com/saleml/gfn/blob/master/src/gfn/samplers/trajectories_sampler.py)s, which implements the `sample_trajectories` method, that sample a batch of trajectories starting from a given set of initial states or starting from $s_0$.
+[ActionsSampler]s are at the core of [TrajectoriesSampler](./src/gfn/samplers/trajectories_sampler.py)s, which implements the `sample_trajectories` method, that sample a batch of trajectories starting from a given set of initial states or starting from $s_0$.
 
 ### Losses
 
-GFlowNets can be trained with different losses, each of which requires a different parametrization. A parametrization is a dataclass, which can be seen as a container of different estimators. Each parametrization defines a distribution over trajectories, via the `parametrization.Pi` method, and a distribution over terminating states, via the `parametrization.P_T` method. Both distributions should be instances of the classes defined [here](https://github.com/saleml/gfn/blob/master/src/gfn/distributions.py).
-
-The base classes for losses and parametrizations are provided [here](https://github.com/saleml/gfn/blob/master/src/gfn/losses/base.py).
+GFlowNets can be trained with different losses, each of which requires a different parametrization, which we call in this library a `GFlowNet`. A `GFlowNet` is a `GFNModule` that includes one or multiple `GFNModules`, at least one of which implements a `to_probability_distribution` function. They also need to implement a `loss` function, that takes as input either states, transitions, or trajectories, depending on the loss.
 
 Currently, the implemented losses are:
 
 - Flow Matching
-- Detailed Balance
+- Detailed Balance (and it's modified variant).
 - Trajectory Balance
-- Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](https://github.com/saleml/gfn/blob/master/src/gfn/losses/sub_trajectory_balance.py).
+- Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](./src/gfn/losses/sub_trajectory_balance.py).
 - Log Partition Variance loss. Introduced [here](https://arxiv.org/abs/2302.05446)
 
-### Solving for the flows using Dynamic Programming
-
-A simple script that propagates trajectories rewards through the DAG to define edge flows in a deterministic way (by visiting each edge once only) is provided [here](https://github.com/saleml/gfn/blob/master/scripts/dynamic_programming.py). Do not use the script on large environments !
+# Scripts
+Example scripts are provided [here](./tutorials/scripts/). They can be used to reproduce published results in the HyperGrid environment, and the Box environment.
