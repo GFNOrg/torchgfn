@@ -1,8 +1,7 @@
-from typing import ClassVar, Literal, Tuple
-
 from math import log
+from typing import ClassVar, Literal, Tuple, cast
+
 import torch
-from gymnasium.spaces import Box as GBox
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
@@ -26,13 +25,12 @@ class Box(Env):
         self.delta = delta
         self.epsilon = epsilon
         s0 = torch.tensor([0.0, 0.0], device=torch.device(device_str))
-        action_space = GBox(low=0.0, high=delta, shape=(2,))
 
         self.R0 = R0
         self.R1 = R1
         self.R2 = R2
 
-        super().__init__(action_space=action_space, s0=s0)
+        super().__init__(s0=s0)
 
     def make_States_class(self) -> type[States]:
         env = self

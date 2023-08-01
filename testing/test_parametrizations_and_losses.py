@@ -196,7 +196,10 @@ def PFBasedGFlowNet_with_return(
         gflownet = LogPartitionVarianceGFlowNet(pf=pf, pb=pb)
     elif gflownet_name == "SubTB":
         gflownet = SubTBGFlowNet(
-            logF=logF, weighting=sub_tb_weighting, pf=pf, pb=pb,
+            logF=logF,
+            weighting=sub_tb_weighting,
+            pf=pf,
+            pb=pb,
         )
     else:
         raise ValueError(f"Unknown gflownet {gflownet_name}")
@@ -206,7 +209,8 @@ def PFBasedGFlowNet_with_return(
         training_objects = trajectories.to_transitions()
     else:
         training_objects = trajectories
-    loss = gflownet.loss(training_objects)
+
+    _ = gflownet.loss(training_objects)
 
     if gflownet_name == "TB":
         assert torch.all(

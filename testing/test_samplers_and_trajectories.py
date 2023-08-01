@@ -167,7 +167,7 @@ def test_sub_sampling(env_name: str):
         n_components_s0=1,
     )
     try:
-        sampled_trajectories = trajectories.sample(n_samples=2)
+        _ = trajectories.sample(n_samples=2)
     except Exception as e:
         raise ValueError(f"Error while testing {env_name}") from e
 

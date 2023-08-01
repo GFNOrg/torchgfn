@@ -9,13 +9,23 @@ python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 
 from argparse import ArgumentParser
 
-import torch
 import numpy as np
+import torch
 import wandb
+from scipy.special import logsumexp
+from sklearn.neighbors import KernelDensity
 from tqdm import tqdm, trange
 
-from gfn.gym import Box
 from gfn.modules import ScalarEstimator
+from gfn.gym import Box
+from gfn.gym.helpers.box_utils import (
+    BoxPBEstimator,
+    BoxPBNeuralNet,
+    BoxPBUniform,
+    BoxPFEstimator,
+    BoxPFNeuralNet,
+    BoxStateFlowModule,
+)
 from gfn.gflownet import (
     DBGFlowNet,
     LogPartitionVarianceGFlowNet,
@@ -24,14 +34,7 @@ from gfn.gflownet import (
 )
 from gfn.utils.common import trajectories_to_training_samples
 from gfn.utils.modules import NeuralNet
-from gfn.gym.helpers.box_utils import (
-    BoxStateFlowModule,
-    BoxPFNeuralNet,
-    BoxPBNeuralNet,
-    BoxPFEstimator,
-    BoxPBEstimator,
-    BoxPBUniform,
-)
+
 
 from sklearn.neighbors import KernelDensity
 from scipy.special import logsumexp
@@ -84,7 +87,7 @@ def estimate_jsd(kde1, kde2):
     return jsd / 2.0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # noqa: C901
     parser = ArgumentParser()
 
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
