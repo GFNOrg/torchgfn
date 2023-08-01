@@ -5,7 +5,6 @@ from typing import ClassVar, Literal, Tuple, cast
 
 import torch
 from einops import rearrange
-from gymnasium.spaces import Discrete
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
@@ -55,7 +54,7 @@ class HyperGrid(DiscreteEnv):
             (ndim,), fill_value=-1, dtype=torch.long, device=torch.device(device_str)
         )
 
-        action_space = Discrete(ndim + 1)
+        n_actions = ndim + 1
 
         if preprocessor_name == "Identity":
             preprocessor = IdentityPreprocessor(output_dim=ndim)
@@ -76,7 +75,7 @@ class HyperGrid(DiscreteEnv):
             raise ValueError(f"Unknown preprocessor {preprocessor_name}")
 
         super().__init__(
-            action_space=action_space,
+            n_actions=n_actions,
             s0=s0,
             sf=sf,
             device_str=device_str,
@@ -91,7 +90,7 @@ class HyperGrid(DiscreteEnv):
             state_shape: ClassVar[tuple[int, ...]] = (env.ndim,)
             s0 = env.s0
             sf = env.sf
-            n_actions = env.action_space.n
+            n_actions = env.n_actions
             device = env.device
 
             @classmethod

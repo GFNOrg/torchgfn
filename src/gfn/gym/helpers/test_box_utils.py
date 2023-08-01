@@ -2,13 +2,13 @@ import torch
 
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
+    BoxPBEstimator,
+    BoxPBNeuralNet,
+    BoxPFEstimator,
+    BoxPFNeuralNet,
     QuarterCircle,
     QuarterCircleWithExit,
     QuarterDisk,
-    BoxPFNeuralNet,
-    BoxPBNeuralNet,
-    BoxPBEstimator,
-    BoxPFEstimator,
     split_PF_module_output,
 )
 
@@ -32,7 +32,6 @@ def test_mixed_distributions():
     States = environment.make_States_class()
 
     # Three cases: when all states are s0, some are s0, and none are s0.
-    centers_start = States(torch.FloatTensor([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]))
     centers_mixed = States(torch.FloatTensor([[0.03, 0.06], [0.0, 0.0], [0.0, 0.0]]))
     centers_intermediate = States(
         torch.FloatTensor([[0.03, 0.06], [0.2, 0.3], [0.95, 0.7]])
@@ -44,23 +43,6 @@ def test_mixed_distributions():
         n_components=n_components,
         n_components_s0=n_components_s0,
     )
-    net_backward = BoxPBNeuralNet(
-        hidden_dim=hidden_dim,
-        n_hidden_layers=n_hidden_layers,
-        n_components=n_components,
-    )
-
-    estimator_forward = BoxPFEstimator(
-        env=environment,
-        module=net_forward,
-        n_components_s0=n_components_s0,
-        n_components=n_components,
-    )
-    estimator_backward = BoxPBEstimator(
-        env=environment, module=net_forward, n_components=n_components
-    )
-
-    out_start = net_forward(centers_start.tensor)
     out_mixed = net_forward(centers_mixed.tensor)
     out_intermediate = net_forward(centers_intermediate.tensor)
 

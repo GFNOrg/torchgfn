@@ -14,11 +14,11 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 from argparse import ArgumentParser
 
 import torch
+import wandb
 from tqdm import tqdm, trange
 
-import wandb
-from gfn.gym import HyperGrid
 from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
+from gfn.gym import HyperGrid
 from gfn.losses import (
     DBParametrization,
     FMParametrization,
@@ -30,7 +30,7 @@ from gfn.utils.common import trajectories_to_training_samples, validate
 from gfn.utils.estimators import DiscretePBEstimator, DiscretePFEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # noqa: C901
     parser = ArgumentParser()
 
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")

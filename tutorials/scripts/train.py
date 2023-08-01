@@ -2,9 +2,9 @@ import json
 from argparse import ArgumentParser
 
 import torch
+import wandb
 from tqdm import tqdm, trange
 
-import wandb
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.utils.common import trajectories_to_training_samples, validate
 
