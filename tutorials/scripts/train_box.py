@@ -15,12 +15,12 @@ import wandb
 from tqdm import tqdm, trange
 
 from gfn.gym import Box
-from gfn.estimators import LogStateFlowEstimator, LogZEstimator
-from gfn.losses import (
-    DBParametrization,
-    LogPartitionVarianceParametrization,
-    SubTBParametrization,
-    TBParametrization,
+from gfn.modules import DiscretePolicyEstimator
+from gfn.gflownet import (
+    DBGFlowNet,
+    LogPartitionVarianceGFlowNet,
+    SubTBGFlowNet,
+    TBGFlowNet,
 )
 from gfn.utils.common import trajectories_to_training_samples
 from gfn.utils.modules import NeuralNet
@@ -141,10 +141,10 @@ if __name__ == "__main__":
         help="Loss function to use",
     )
     parser.add_argument(
-        "--subTB_weighing",
+        "--subTB_weighting",
         type=str,
         default="geometric_within",
-        help="Weighing scheme for SubTB",
+        help="weighting scheme for SubTB",
     )
     parser.add_argument(
         "--subTB_lambda", type=float, default=0.9, help="Lambda parameter for SubTB"
@@ -232,7 +232,7 @@ if __name__ == "__main__":
         "--validation_interval",
         type=int,
         default=500,
-        help="How often (in training steps) to validate the parameterization",
+        help="How often (in training steps) to validate the gflownet",
     )
     parser.add_argument(
         "--validation_samples",
@@ -265,10 +265,10 @@ if __name__ == "__main__":
     # 1. Create the environment
     env = Box(delta=args.delta, epsilon=1e-10, device_str=device_str)
 
-    # 2. Create the parameterization.
+    # 2. Create the gflownet.
     #    For this we need modules and estimators.
     #    Depending on the loss, we may need several estimators:
-    parametrization = None
+    gflownet = None
     pf_module = BoxPFNeuralNet(
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
@@ -313,41 +313,40 @@ if __name__ == "__main__":
             n_hidden_layers=args.n_hidden,
             torso=pf_module.torso if args.tied else None,
         )
-        logF_estimator = LogStateFlowEstimator(env=env, module=module)
+        logF_estimator = DiscretePolicyEstimator(
+            env=env, module=module, forward=True, off_policy=False
+        )
 
         if args.loss == "DB":
-            parametrization = DBParametrization(
+            gflownet = DBGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
                 logF=logF_estimator,
                 on_policy=True,
             )
         else:
-            parametrization = SubTBParametrization(
+            gflownet = SubTBGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
                 logF=logF_estimator,
                 on_policy=True,
-                weighing=args.subTB_weighing,
+                weighting=args.subTB_weighting,
                 lamda=args.subTB_lambda,
             )
     elif args.loss == "TB":
-        # We need a LogZEstimator
-        logZ = LogZEstimator(tensor=torch.tensor(0.0, device=env.device))
-        parametrization = TBParametrization(
+        gflownet = TBGFlowNet(
             pf=pf_estimator,
             pb=pb_estimator,
-            logZ=logZ,
             on_policy=True,
         )
     elif args.loss == "ZVar":
-        parametrization = LogPartitionVarianceParametrization(
+        gflownet = LogPartitionVarianceGFlowNet(
             pf=pf_estimator,
             pb=pb_estimator,
             on_policy=True,
         )
 
-    assert parametrization is not None, f"No parametrization for loss {args.loss}"
+    assert gflownet is not None, f"No gflownet for loss {args.loss}"
 
     # 3. Create the optimizer and scheduler
 
@@ -371,9 +370,10 @@ if __name__ == "__main__":
                 "lr": args.lr,
             }
         )
-    if "logZ.logZ" in parametrization.parameters:
-        assert logZ is not None
-        optimizer.add_param_group({"params": [logZ.tensor], "lr": args.lr_Z})
+    if "logZ" in dict(gflownet.named_parameters()):
+        logZ = dict(gflownet.named_parameters())["logZ"]
+        optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
+
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         milestones=[
@@ -398,17 +398,15 @@ if __name__ == "__main__":
         if iteration % 1000 == 0:
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
-        trajectories = parametrization.sample_trajectories(n_samples=args.batch_size)
+        trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
 
-        training_samples = trajectories_to_training_samples(
-            trajectories, parametrization
-        )
+        training_samples = trajectories_to_training_samples(trajectories, gflownet)
 
         optimizer.zero_grad()
-        loss = parametrization.loss(training_samples)
+        loss = gflownet.loss(training_samples)
 
         loss.backward()
-        for k, p in parametrization.parameters.items():
+        for p in gflownet.parameters():
             p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
@@ -419,8 +417,8 @@ if __name__ == "__main__":
 
         to_log = {"loss": loss.item(), "states_visited": states_visited}
         logZ_info = ""
-        if isinstance(parametrization, TBParametrization):
-            logZ = parametrization.logZ.tensor
+        if isinstance(gflownet, TBGFlowNet):
+            logZ = gflownet.logZ
             to_log.update({"logZdiff": env.log_partition - logZ.item()})
             logZ_info = f"logZ: {logZ.item():.2f}, "
         if use_wandb:
@@ -431,7 +429,7 @@ if __name__ == "__main__":
             )
 
         if iteration % args.validation_interval == 0:
-            validation_samples = parametrization.sample_terminating_states(
+            validation_samples = gflownet.sample_terminating_states(
                 args.validation_samples
             )
             kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(
