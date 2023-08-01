@@ -6,7 +6,7 @@ from torchtyping import TensorType as TT
 from gfn.containers import Trajectories
 from gfn.gflownet.base import GFlowNet
 from gfn.modules import DiscretePolicyEstimator
-from gfn.samplers import ActionsSampler, TrajectoriesSampler
+from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
 
 
@@ -36,11 +36,8 @@ class FMGFlowNet(GFlowNet):
         self.env = self.logF.env
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
-        actions_sampler = ActionsSampler(self.logF)
-        trajectories_sampler = TrajectoriesSampler(actions_sampler)
-        trajectories = trajectories_sampler.sample_trajectories(
-            n_trajectories=n_samples
-        )
+        sampler = Sampler(estimator=self.logF)
+        trajectories = sampler.sample_trajectories(n_trajectories=n_samples)
         return trajectories
 
     def flow_matching_loss(

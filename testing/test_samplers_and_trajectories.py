@@ -12,7 +12,7 @@ from gfn.gym.helpers.box_utils import (
     BoxPFNeuralNet,
 )
 from gfn.modules import DiscretePolicyEstimator
-from gfn.samplers import ActionsSampler, TrajectoriesSampler
+from gfn.samplers import Sampler
 from gfn.utils import NeuralNet
 
 
@@ -68,19 +68,13 @@ def trajectory_sampling_with_return(
         pf_estimator = DiscretePolicyEstimator(env=env, module=pf_module, forward=True)
         pb_estimator = DiscretePolicyEstimator(env=env, module=pb_module, forward=False)
 
-    actions_sampler = ActionsSampler(estimator=pf_estimator)
-
-    trajectories_sampler = TrajectoriesSampler(actions_sampler)
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=5)
-
-    trajectories = trajectories_sampler.sample_trajectories(n_trajectories=10)
-
-    bw_actions_sampler = ActionsSampler(estimator=pb_estimator)
-
-    bw_trajectories_sampler = TrajectoriesSampler(bw_actions_sampler, is_backward=True)
+    sampler = Sampler(estimator=pf_estimator)
+    trajectories = sampler.sample_trajectories(n_trajectories=5)
+    trajectories = sampler.sample_trajectories(n_trajectories=10)
 
     states = env.reset(batch_shape=5, random=True)
-    bw_trajectories = bw_trajectories_sampler.sample_trajectories(states)
+    bw_sampler = Sampler(estimator=pb_estimator, is_backward=True)
+    bw_trajectories = bw_sampler.sample_trajectories(states)
 
     return trajectories, bw_trajectories, pf_estimator, pb_estimator
 
