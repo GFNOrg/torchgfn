@@ -53,9 +53,7 @@ class BaseOptimConfig(ABC):
         return (params, (scheduler_gamma, scheduler_milestones))
 
     @abstractmethod
-    def parse(
-        self, parametrization: GFlowNet
-    ) -> Tuple[torch.optim.Optimizer, Any]:
+    def parse(self, parametrization: GFlowNet) -> Tuple[torch.optim.Optimizer, Any]:
         pass
 
 
@@ -63,9 +61,7 @@ class BaseOptimConfig(ABC):
 class AdamConfig(BaseOptimConfig):
     betas: Tuple[float, float] = (0.9, 0.999)
 
-    def parse(
-        self, parametrization: GFlowNet
-    ) -> Tuple[torch.optim.Optimizer, Any]:
+    def parse(self, parametrization: GFlowNet) -> Tuple[torch.optim.Optimizer, Any]:
         (params, (scheduler_gamma, scheduler_milestones)) = super().get_params(
             parametrization
         )
@@ -80,9 +76,7 @@ class AdamConfig(BaseOptimConfig):
 class SGDConfig(BaseOptimConfig):
     momentum: float = 0.0
 
-    def parse(
-        self, parametrization: GFlowNet
-    ) -> Tuple[torch.optim.Optimizer, Any]:
+    def parse(self, parametrization: GFlowNet) -> Tuple[torch.optim.Optimizer, Any]:
         (params, (scheduler_gamma, scheduler_milestones)) = super().get_params(
             parametrization
         )

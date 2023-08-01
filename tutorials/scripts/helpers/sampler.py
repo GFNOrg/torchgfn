@@ -13,9 +13,7 @@ class SamplerConfig:
     sf_bias: float = 0.0
     epsilon: float = 0.0
 
-    def parse(
-        self, env: Env, gflownet: GFlowNet
-    ) -> Tuple[TrajectoriesSampler, bool]:
+    def parse(self, env: Env, gflownet: GFlowNet) -> Tuple[TrajectoriesSampler, bool]:
         on_policy = (
             self.temperature == 1.0 and self.sf_bias == 0.0 and self.epsilon == 0.0
         )
@@ -24,9 +22,7 @@ class SamplerConfig:
         elif isinstance(gflownet, PFBasedGFlowNet):
             estimator = gflownet.logit_PF
         else:
-            raise ValueError(
-                f"Cannot parse sampler for gflownet {gflownet}"
-            )
+            raise ValueError(f"Cannot parse sampler for gflownet {gflownet}")
         actions_sampler = ActionsSampler(
             estimator=estimator,
             temperature=self.temperature,

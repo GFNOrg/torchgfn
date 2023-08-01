@@ -4,8 +4,8 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
-from gfn.modules import ScalarEstimator
 from gfn.gflownet.base import PFBasedGFlowNet, TrajectoryBasedGFlowNet
+from gfn.modules import ScalarEstimator
 
 
 class SubTBGFlowNet(TrajectoryBasedGFlowNet):

@@ -5,9 +5,9 @@ from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.gflownet.base import GFlowNet
+from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import DiscreteStates
-from gfn.modules import DiscretePolicyEstimator
 
 
 class FMGFlowNet(GFlowNet):

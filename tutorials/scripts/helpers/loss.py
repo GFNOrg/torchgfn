@@ -11,9 +11,9 @@ from gfn.losses import (
     DetailedBalance,
     FlowMatching,
     FMGFlowNet,
+    GFlowNet,
     LogPartitionVarianceLoss,
     Loss,
-    GFlowNet,
     PFBasedGFlowNet,
     SubTBGFlowNet,
     SubTrajectoryBalance,
@@ -174,7 +174,7 @@ class TBLossConfig(PFBasedLossConfig):
         env: Env,
     ) -> Tuple[GFlowNet, Loss]:
         logit_PF, logit_PB = self.get_estimators(env)
-        parametrization = TBGFlowNet(logit_PF, logit_PB, logZ=logZ_init)
+        parametrization = TBGFlowNet(logit_PF, logit_PB)
         loss = TrajectoryBalance(parametrization, self.log_reward_clip_min)
         return (parametrization, loss)
 

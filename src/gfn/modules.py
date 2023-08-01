@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 
-from torch.distributions import Categorical, Distribution
-from torchtyping import TensorType as TT
 import torch
 import torch.nn as nn
+from torch.distributions import Categorical, Distribution
+from torchtyping import TensorType as TT
 
 from gfn.env import DiscreteEnv, Env
 from gfn.states import DiscreteStates, States

@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import Tuple
 
+import torch
 import torch.nn as nn
 from torchtyping import TensorType as TT
-import torch
 
 from gfn.containers import Trajectories
 from gfn.modules import GFNModule

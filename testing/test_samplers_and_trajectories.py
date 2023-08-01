@@ -11,8 +11,8 @@ from gfn.gym.helpers.box_utils import (
     BoxPFEstimator,
     BoxPFNeuralNet,
 )
-from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.modules import DiscretePolicyEstimator
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.utils import NeuralNet
 
 

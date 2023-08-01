@@ -27,7 +27,7 @@ class TrajectoriesSampler:
         actions_sampler: ActionsSampler,
         is_backward: bool = False,
     ):
-        """Initalizes a TrajectoriesSampler.
+        """Initializes a TrajectoriesSampler.
         Args:
             env: Environment to sample trajectories from.
             actions_sampler: Sampler of actions.

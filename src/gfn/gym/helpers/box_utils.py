@@ -7,11 +7,10 @@ import torch
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
 from torchtyping import TensorType as TT
 
-from gfn.modules import GFNModule
 from gfn.gym import Box
+from gfn.modules import GFNModule
 from gfn.states import States
 from gfn.utils import NeuralNet
-
 
 PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0
