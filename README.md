@@ -39,7 +39,7 @@ To install the cutting edge version (from the `main` branch):
 
 ```bash
 git clone https://github.com/saleml/torchgfn.git
-conda create -n gfn python=3.11
+conda create -n gfn python=3.10
 conda activate gfn
 cd torchgfn
 pip install .
@@ -47,7 +47,7 @@ pip install .
 
 ## About this repo
 
-This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization used for the GFN loss.
+This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) related algorithms. It decouples the environment definition, the sampling process, and the parametrization of the function approximators used to calculate the GFN loss.
 
 Example scripts and notebooks are provided [here](./tutorials/).
 
@@ -60,30 +60,40 @@ This example, which shows how to use the library for a simple discrete environme
 import torch
 from tqdm import tqdm
 
-from gfn.modules import DiscretePolicy
 from gfn.gflownets import TBGFlowNet
-from gfn.samplers import Sampler
-from gfn.utils import NeuralNet, DiscretePolicy
-
-
 from gfn.gym import HyperGrid
+from gfn.modules import DiscretePolicyEstimator
+from gfn.samplers import Sampler
+from gfn.utils import NeuralNet
 
 if __name__ == "__main__":
 
     env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
-    module_PF = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
-    module_PB = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1,     torso=module_PF.torso)
+    module_PF = NeuralNet(
+        input_dim=env.preprocessor.output_dim,
+        output_dim=env.n_actions
+    )
+    module_PB = NeuralNet(
+        input_dim=env.preprocessor.output_dim,
+        output_dim=env.n_actions - 1,
+        torso=module_PF.torso
+    )
 
-    logit_PF = DiscretePolicy(env=env, module=module_PF, forward=True)
-    logit_PB = DiscretePolicy(env=env, module=module_PB, forward=False)
+    pf_estimator = DiscretePolicyEstimator(env, module_PF, forward=True)
+    pb_estimator = DiscretePolicyEstimator(env, module_PB, forward=False)
 
-    gflownet = TBGFlowNet(logit_PF, logit_PB, logZ_init=0.)
+    gfn = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ_init=0.)
 
-    sampler = Sampler(policy=logit_PF)
+    sampler = Sampler(policy=pf_estimator)
 
-    optimizer = torch.optim.Adam(gflownet.policy_parameters(), lr=1e-3)
-    optimizer.add_param_group({"params": [gflownet.logZ], "lr": 1e-1})
+    # Policy parameters have their own LR.
+    non_logz_params = [v for k, v in dict(gfn.named_parameters()).items() if k != "logZ"]
+    optimizer = torch.optim.Adam(non_logz_params, lr=1e-3)
+
+    # Log Z gets dedicated learning rate (typically higher).
+    logz_params = [dict(gfn.named_parameters())["logZ"]]
+    optimizer.add_param_group({"params": logz_params, "lr": 1e-2})
 
     for i in (pbar := tqdm(range(1000))):
         trajectories = sampler.sample_trajectories(n_trajectories=16)
@@ -160,9 +170,8 @@ In most cases, one needs to sample complete trajectories. From a batch of trajec
 
 ### Modules
 
-Training GFlowNets requires one or multiple estimators, called `GFNModule`s, which is an abstract subclass of `torch.nn.Module`. In addition to the usual `forward` function, `GFNModule`s need to implement a `required_output_dim` attribute, to ensure that the outputs have the required dimension for the task at hand; and some of them need to implement a `to_probability_distribution` function. They take the environment `env` as an input at initialization.
-- `DiscretePolicy` is a `GFNModule` that defines the policies $P_F(. \mid s)$ and $P_B(. \mid s)$ for discrete environments. When `backward=False`, the required output dimension is `n = env.n_actions`, and when `backward=True`, it is `n = env.n_actions - 1`. These `n` numbers represent the logits of a Categorical distribution. Additionally, they include exploration parameters, in order to define a tempered version of $P_F$, or a mixture of $P_F$ with a uniform distribution. Naturally, before defining the Categorical distributions, forbidden actions (that are encoded in the `DiscreteStates`' masks attributes), are given 0 probability by setting the corresponding logit to $-\infty$.
-- `DiscreteLogEdgeFlow` represents $\log F(s \rightarrow s')$, with `required_output_dim=env.n_actions`. A forward policy can be defined from such an estimator, when using the flow matching loss for example, in which case the log-edge flows are interpreted as logits of a Categorical distribution, leading to the desired $P_F(s' \mid s) = \frac{F(s \rightarrow s')}{\sum_{s'' \in Child(s)} F(s \rightarrow s'')}$.
+Training GFlowNets requires one or multiple estimators, called `GFNModule`s, which is an abstract subclass of `torch.nn.Module`. In addition to the usual `forward` function, `GFNModule`s need to implement a `required_output_dim` attribute, to ensure that the outputs have the required dimension for the task at hand; and some (but not all) need to implement a `to_probability_distribution` function. They take the environment `env` as an input at initialization.
+- `DiscretePolicyEstimator` is a `GFNModule` that defines the policies $P_F(. \mid s)$ and $P_B(. \mid s)$ for discrete environments. When `backward=False`, the required output dimension is `n = env.n_actions`, and when `backward=True`, it is `n = env.n_actions - 1`. These `n` numbers represent the logits of a Categorical distribution. Additionally, they include exploration parameters, in order to define a tempered version of $P_F$, or a mixture of $P_F$ with a uniform distribution. Naturally, before defining the Categorical distributions, forbidden actions (that are encoded in the `DiscreteStates`' masks attributes), are given 0 probability by setting the corresponding logit to $-\infty$.
 - `ScalarModule` is a simple module with required output dimension 1. It is useful to define log-state flows $\log F(s)$.
 
 For non-discrete environments, the user needs to specify their own policies $P_F$ and $P_B$. The module, taking as input a batch of states (as a `States`) object, should return the batched parameters of a `torch.Distribution`. The distribution depends on the environment. The `to_probability_distribution` function handles the conversion of the parameter outputs to an actual batched `Distribution` object, that implements at least the `sample` and `log_prob` functions. An example is provided [here](./src/gfn/gym/helpers/box_utils.py), for a square environment in which the forward policy has support either on a quarter disk, or on an arc-circle, such that the angle, and the radius (for the quarter disk part) are scaled samples from a mixture of Beta distributions. The provided example shows an intricate scenario, and it is not expected that user defined environment need this much level of details.
@@ -179,12 +188,12 @@ An [ActionsSampler](./src/gfn/samplers/actions_samplers.py) object defines how a
 
 ### Losses
 
-GFlowNets can be trained with different losses, each of which requires a different parametrization, which we call in this library a `GFlowNet`. A `GFlowNet` is a `GFNModule` that includes one or multiple `GFNModules`, at least one of which implements a `to_probability_distribution` function. They need to implement a `loss` function, that takes as input either states, transitions, or trajectories, depending on the loss.
+GFlowNets can be trained with different losses, each of which requires a different parametrization, which we call in this library a `GFlowNet`. A `GFlowNet` is a `GFNModule` that includes one or multiple `GFNModules`, at least one of which implements a `to_probability_distribution` function. They also need to implement a `loss` function, that takes as input either states, transitions, or trajectories, depending on the loss.
 
 Currently, the implemented losses are:
 
 - Flow Matching
-- Detailed Balance
+- Detailed Balance (and it's modified variant).
 - Trajectory Balance
 - Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](./src/gfn/losses/sub_trajectory_balance.py).
 - Log Partition Variance loss. Introduced [here](https://arxiv.org/abs/2302.05446)
