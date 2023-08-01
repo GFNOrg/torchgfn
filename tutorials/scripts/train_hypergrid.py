@@ -26,7 +26,7 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
-from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.modules import DiscretePolicyEstimator
 from gfn.utils.common import trajectories_to_training_samples, validate
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
@@ -174,7 +174,7 @@ if __name__ == "__main__":  # noqa: C901
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
             )
-        estimator = ScalarEstimator(env=env, module=module)
+        estimator = DiscretePolicyEstimator(env=env, module=module, forward=True)
         gflownet = FMGFlowNet(estimator)
     else:
         pb_module = None
