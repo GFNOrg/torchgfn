@@ -12,11 +12,30 @@ from gfn.states import States
 
 
 class GFlowNet(nn.Module):
+    """Abstract Base Class for GFlowNets.
+
+    A formal definition of GFlowNets is given in Sec. 3 of [GFlowNet Foundations](https://arxiv.org/pdf/2111.09266).
+    """
+
     @abstractmethod
     def sample_trajectories(self, n_samples: int) -> Trajectories:
+        """Sample a specific number of complete trajectories.
+
+        Args:
+            n_samples: number of trajectories to be sampled.
+        Returns:
+            Trajectories: sampled trajectories object.
+        """
         pass
 
     def sample_terminating_states(self, n_samples: int) -> States:
+        """Rolls out the parametrization's policy and returns the terminating states.
+
+        Args:
+            n_samples: number of terminating states to be sampled.
+        Returns:
+            States: sampled terminating states object.
+        """
         trajectories = self.sample_trajectories(n_samples)
         return trajectories.last_states
 
@@ -46,7 +65,6 @@ class PFBasedGFlowNet(GFlowNet):
 
 # TODO: Add "EdgeBasedGFlowNet" and "StateBasedGFlowNet".
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
-
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
@@ -94,11 +112,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         else:
             module_output = self.pf(valid_states)
             valid_log_pf_actions = self.pf.to_probability_distribution(
-                valid_states,
-                module_output
-            ).log_prob(
-                valid_actions.tensor
-            )
+                valid_states, module_output
+            ).log_prob(valid_actions.tensor)
             log_pf_trajectories = torch.full_like(
                 trajectories.actions.tensor[..., 0],
                 fill_value=fill_value,
@@ -111,11 +126,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
 
         module_output = self.pb(non_initial_valid_states)
         valid_log_pb_actions = self.pb.to_probability_distribution(
-            non_initial_valid_states,
-            module_output
-        ).log_prob(
-            non_exit_valid_actions.tensor
-        )
+            non_initial_valid_states, module_output
+        ).log_prob(non_exit_valid_actions.tensor)
 
         log_pb_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],
