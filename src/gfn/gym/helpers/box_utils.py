@@ -12,9 +12,10 @@ from gfn.gym import Box
 from gfn.states import States
 from gfn.utils import NeuralNet
 
+
 PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0
-CLAMP = 1e-6
+CLAMP = torch.finfo(torch.float).eps
 
 
 class QuarterCircle(Distribution):
@@ -143,6 +144,9 @@ class QuarterCircle(Distribution):
         return sampled_actions
 
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
+        sampled_actions = sampled_actions.to(
+            torch.double
+        )  # Arccos is very brittle, so we use double precision
         sampled_actions.clamp_(
             min=0.0, max=self.delta
         )  # Should be the case already - just to avoid numerical issues
@@ -151,6 +155,11 @@ class QuarterCircle(Distribution):
         base_01_samples = (sampled_angles - self.min_angles) / (
             self.max_angles - self.min_angles
         ).clamp_(min=CLAMP, max=1 - CLAMP)
+
+        if not self.northeastern:
+            # Ideally, we shouldn't need this
+            # But it is used in the original implementation, so we keep it. It helps with numerical issues.
+            base_01_samples = base_01_samples.clamp(1e-4, 1 - 1e-4)
 
         # Ugly hack: when some of the sampled actions are -infinity (exit action), the corresponding value is nan
         # And we don't really care about the log prob of the exit action
@@ -170,7 +179,7 @@ class QuarterCircle(Distribution):
                 torch.ones_like(base_01_samples) * CLAMP,
                 base_01_samples,
             ).clamp_(min=CLAMP, max=1 - CLAMP)
-
+        base_01_samples = base_01_samples.to(torch.float)
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
 
         if not self.northeastern:
@@ -252,6 +261,9 @@ class QuarterDisk(Distribution):
         return sampled_actions
 
     def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
+        sampled_actions = sampled_actions.to(
+            torch.double
+        )  # Arccos is very brittle, so we use double precision
         base_r_01_samples = (
             torch.sqrt(torch.sum(sampled_actions**2, dim=-1))
             / self.delta  # changes from 0 to 1.
@@ -262,6 +274,8 @@ class QuarterDisk(Distribution):
             / PI_2
         ).clamp_(CLAMP, 1 - CLAMP)
 
+        base_r_01_samples = base_r_01_samples.to(torch.float)
+        base_theta_01_samples = base_theta_01_samples.to(torch.float)
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
             + self.base_theta_dist.log_prob(base_theta_01_samples)
@@ -456,19 +470,11 @@ class BoxPFNeuralNet(NeuralNet):
 
         """
         self._n_comp_max = max(n_components_s0, n_components)
-        self._n_comp_min = min(n_components_s0, n_components)
-        self._n_comp_diff = self._n_comp_max - self._n_comp_min
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
 
         input_dim = 2
 
-        # Note on module output size: We need the outputs of this neural network to
-        # stack with outputs at s_0. Therefore the output size will be
-        # 1 + 3 * self._n_comp_max values, but the user will notice that the full state
-        # size is 1 + 5 * self._n_comp_max. This is because the final two components are
-        # only used by s_0. Therefore, for s_t>0, 2 "dummy" constant all_zero
-        # self._n_comp_max components will be added to the neural network outputs.
         output_dim = 1 + 3 * self.n_components
 
         super().__init__(
@@ -586,6 +592,23 @@ class BoxPBNeuralNet(NeuralNet):
         return out
 
 
+class BoxStateFlowModule(NeuralNet):
+    """A deep neural network for the state flow function."""
+
+    def __init__(self, logZ_value: torch.Tensor, **kwargs):
+        self.logZ_value = logZ_value
+        super().__init__(**kwargs)
+
+    def forward(
+        self, preprocessed_states: TT["batch_shape", "input_dim", float]
+    ) -> TT["batch_shape", "output_dim", float]:
+        out = super().forward(preprocessed_states)
+        idx_s0 = torch.all(preprocessed_states == 0.0, 1)
+        out[idx_s0] = self.logZ_value
+
+        return out
+
+
 class BoxPBUniform(torch.nn.Module):
     """A module to be used to create a uniform PB distribution for the Box environment
 
@@ -656,8 +679,6 @@ class BoxPFEstimator(ProbabilityEstimator):
     ):
         super().__init__(env, module)
         self._n_comp_max = max(n_components_s0, n_components)
-        self._n_comp_min = min(n_components_s0, n_components)
-        self._n_comp_diff = self._n_comp_max - self._n_comp_min
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
 
