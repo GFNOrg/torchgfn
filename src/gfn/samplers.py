@@ -1,43 +1,59 @@
-from typing import List, Optional
+from typing import Tuple, List, Optional
 
 import torch
 from torchtyping import TensorType as TT
 
+from gfn.actions import Actions
 from gfn.containers import Trajectories
-from gfn.samplers import ActionsSampler
+from gfn.modules import GFNModule
 from gfn.states import States
 
 
-# TODO: Consider making this whole class a method of `ActionsSampler`.
-# TODO: Remove the need for this sampler to contain the environment.
-class TrajectoriesSampler:
-    """Sample complete trajectories using actions_sampler.
+# TODO: Environment should not live inside the estimator and here... needs refactor.
+class Sampler:
+    """`Sampler is a container for a PolicyEstimator.
 
-    Can be used to either sample trajectories from $s_0$, or complete a batch
-    of partially-completed trajectories from a given batch states.
+    Can be used to either sample individual actions, sample trajectories from $s_0$,
+    or complete a batch of partially-completed trajectories from a given batch states.
 
     Attributes:
-        env: the Evironment instance from the ActionsSampler.
-        actions_sampler: the ActionsSampler instance.
-        is_backward: if True, samples actions backward (a distribution over parents).
+        estimator: the submitted PolicyEstimator.
+        env: the Environment instance inside the PolicyEstimator.
+        is_backward: if True, samples trajectories of actions backward (a distribution
+            over parents). If True, the estimator must be a ProbabilityDistribution
+            over parents.
     """
 
-    def __init__(
-        self,
-        actions_sampler: ActionsSampler,
-        is_backward: bool = False,
-    ):
-        """Initializes a TrajectoriesSampler.
+    def __init__(self, estimator: GFNModule, is_backward: bool = False) -> None:
+        self.estimator = estimator
+        self.env = estimator.env
+        self.is_backward = is_backward  # TODO: take directly from estimator.
+
+    def sample_actions(
+        self, states: States
+    ) -> Tuple[Actions, TT["batch_shape", torch.float]]:
+        """Samples actions from the given states.
+
         Args:
-            env: Environment to sample trajectories from.
-            actions_sampler: Sampler of actions.
-            is_backward: Whether to sample trajectories backward. If True, the
-                corresponding ActionsSampler's estimator needs to be a
-                ProbabilityDistribution over parents.
+            states (States): A batch of states.
+
+        Returns:
+            A tuple of tensors containing:
+             - An Actions object containing the sampled actions.
+             - A tensor of shape (*batch_shape,) containing the log probabilities of
+                the sampled actions under the probability distribution of the given
+                states.
         """
-        self.env = actions_sampler.env
-        self.actions_sampler = actions_sampler
-        self.is_backward = is_backward
+        module_output = self.estimator(states)
+        dist = self.estimator.to_probability_distribution(states, module_output)
+
+        with torch.no_grad():
+            actions = dist.sample()
+        log_probs = dist.log_prob(actions)
+        if torch.any(torch.isinf(log_probs)):
+            raise RuntimeError("Log probabilities are inf. This should not happen.")
+
+        return self.env.Actions(actions), log_probs
 
     def sample_trajectories(
         self,
@@ -92,9 +108,7 @@ class TrajectoriesSampler:
             log_probs = torch.full(
                 (n_trajectories,), fill_value=0, dtype=torch.float, device=device
             )
-            valid_actions, actions_log_probs = self.actions_sampler.sample(
-                states[~dones]
-            )
+            valid_actions, actions_log_probs = self.sample_actions(states[~dones])
             actions[~dones] = valid_actions
             log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
@@ -143,6 +157,3 @@ class TrajectoriesSampler:
         )
 
         return trajectories
-
-    def sample(self, n_trajectories: int) -> Trajectories:
-        return self.sample_trajectories(n_trajectories=n_trajectories)

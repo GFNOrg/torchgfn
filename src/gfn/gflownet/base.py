@@ -7,7 +7,7 @@ from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.modules import GFNModule
-from gfn.samplers import ActionsSampler, TrajectoriesSampler
+from gfn.samplers import Sampler
 from gfn.states import States
 
 
@@ -60,11 +60,8 @@ class PFBasedGFlowNet(GFlowNet):
         self.on_policy = on_policy
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
-        actions_sampler = ActionsSampler(self.pf)
-        trajectories_sampler = TrajectoriesSampler(actions_sampler)
-        trajectories = trajectories_sampler.sample_trajectories(
-            n_trajectories=n_samples
-        )
+        sampler = Sampler(estimator=self.pf)
+        trajectories = sampler.sample_trajectories(n_trajectories=n_samples)
         return trajectories
 
 

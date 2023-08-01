@@ -4,12 +4,12 @@ from torchtyping import TensorType as TT
 
 
 class UnsqueezedCategorical(Categorical):
-    """Sampler for a categorical distribution with an unsqueezed final dimension.
+    """Samples froma categorical distribution with an unsqueezed final dimension.
 
     Samples are unsqueezed to be of shape (batch_size, 1) instead of (batch_size,).
 
     This is used in `DiscretePFEstimator` and `DiscretePBEstimator`, which in turn are
-    used in `ActionsSampler`.
+    used in `Sampler`.
 
     This helper class facilitates representing actions, for discrete environments, which
     when implemented with the `DiscreteActions` class (see

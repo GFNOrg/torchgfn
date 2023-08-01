@@ -63,7 +63,7 @@ from tqdm import tqdm
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator
-from gfn.samplers import ActionsSampler, TrajectoriesSampler
+from gfn.samplers import Sampler
 from gfn.utils import NeuralNet
 
 if __name__ == "__main__":
@@ -85,7 +85,7 @@ if __name__ == "__main__":
 
     gfn = TBGFlowNet(init_logZ=0., pf=pf_estimator, pb=pb_estimator)
 
-    sampler = TrajectoriesSampler(ActionsSampler(estimator=pf_estimator))
+    sampler = Sampler(estimator=pf_estimator))
 
     # Policy parameters have their own LR.
     non_logz_params = [v for k, v in dict(gfn.named_parameters()).items() if k != "logZ"]
@@ -182,9 +182,8 @@ For discrete environments, tabular modules are provided, where a lookup table is
 
 ### Samplers
 
-An [ActionsSampler](./src/gfn/samplers/actions_samplers.py) object defines how actions are sampled at each state. They require a `GFNModule` that implements the `to_probability_distribution` function.
+A [Sampler](./src/gfn/samplers.py) object defines how actions are sampled (`sample_actions()`) at each state, and trajectories  (`sample_trajectories()`), which can sample a batch of trajectories starting from a given set of initial states or starting from $s_0$. It requires a `GFNModule` that implements the `to_probability_distribution` function.
 
-[ActionsSampler]s are at the core of [TrajectoriesSampler](./src/gfn/samplers/trajectories_sampler.py)s, which implements the `sample_trajectories` method, that sample a batch of trajectories starting from a given set of initial states or starting from $s_0$.
 
 ### Losses
 
