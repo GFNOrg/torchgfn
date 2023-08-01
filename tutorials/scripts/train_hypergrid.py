@@ -25,8 +25,8 @@ from gfn.gflownet import (
     TBGFlowNet,
 )
 from gfn.gym import HyperGrid
-from gfn.modules import DiscretePolicyEstimator
-from gfn.utils.common import trajectories_to_training_samples, validate
+from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.utils.common import validate
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
 if __name__ == "__main__":  # noqa: C901
@@ -139,6 +139,7 @@ if __name__ == "__main__":  # noqa: C901
     )
 
     args = parser.parse_args()
+    args.loss = "DB"
 
     seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
     torch.manual_seed(seed)
@@ -212,7 +213,6 @@ if __name__ == "__main__":  # noqa: C901
 
         if args.loss in ("DB", "SubTB"):
             # We need a LogStateFlowEstimator
-
             assert (
                 pf_estimator is not None
             ), f"pf_estimator is None. Command-line arguments: {args}"
@@ -230,12 +230,8 @@ if __name__ == "__main__":  # noqa: C901
                     n_hidden_layers=args.n_hidden,
                     torso=pf_module.torso if args.tied else None,
                 )
-            logF_estimator = DiscretePolicyEstimator(
-                env=env,
-                module=pf_module,
-                forward=True,
-            )
 
+            logF_estimator = ScalarEstimator(env=env, module=module)
             if args.loss == "DB":
                 gflownet = DBGFlowNet(
                     pf=pf_estimator,
@@ -296,7 +292,7 @@ if __name__ == "__main__":  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
-        training_samples = trajectories_to_training_samples(trajectories, gflownet)
+        training_samples = gflownet.to_training_samples(trajectories)
 
         optimizer.zero_grad()
         loss = gflownet.loss(training_samples)

@@ -122,3 +122,9 @@ class FMGFlowNet(GFlowNet):
         fm_loss = self.flow_matching_loss(intermediary_states)
         rm_loss = self.reward_matching_loss(terminating_states)
         return fm_loss + self.alpha * rm_loss
+
+    def to_training_samples(
+        self, trajectories: Trajectories
+    ) -> tuple[DiscreteStates, DiscreteStates]:
+        """Converts a batch of trajectories into a batch of training samples."""
+        return trajectories.to_non_initial_intermediary_and_terminating_states()

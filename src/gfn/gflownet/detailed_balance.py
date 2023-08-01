@@ -3,7 +3,7 @@ from typing import Tuple
 import torch
 from torchtyping import TensorType as TT
 
-from gfn.containers import Transitions
+from gfn.containers import Trajectories, Transitions
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.modules import ScalarEstimator
 
@@ -124,6 +124,9 @@ class DBGFlowNet(PFBasedGFlowNet):
 
         return loss
 
+    def to_training_samples(self, trajectories: Trajectories) -> Transitions:
+        return trajectories.to_transitions()
+
 
 class ModifiedDBGFlowNet(PFBasedGFlowNet):
     r"""The Modified Detailed Balance GFlowNet.
@@ -180,3 +183,6 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet):
         """Calculates the modified detailed balance loss."""
         scores = self.get_scores(transitions)
         return torch.mean(scores**2)
+
+    def to_training_samples(self, trajectories: Trajectories) -> Transitions:
+        return trajectories.to_transitions()

@@ -39,6 +39,11 @@ class GFlowNet(nn.Module):
         trajectories = self.sample_trajectories(n_samples)
         return trajectories.last_states
 
+    @abstractmethod
+    def to_training_samples(self, trajectories: Trajectories):
+        """Converts trajectories to training samples. The type depends on the GFlowNet."""
+        pass
+
 
 class PFBasedGFlowNet(GFlowNet):
     r"""Base class for gflownets that explicitly uses $P_F$.
@@ -163,3 +168,6 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
             total_log_pb_trajectories,
             total_log_pf_trajectories - total_log_pb_trajectories - log_rewards,
         )
+
+    def to_training_samples(self, trajectories: Trajectories) -> Trajectories:
+        return trajectories

@@ -16,32 +16,6 @@ from gfn.gflownet import (
 from gfn.states import States
 
 
-def trajectories_to_training_samples(
-    trajectories: Trajectories, gflownet: GFlowNet
-) -> States | Transitions | Trajectories:
-    """Converts Trajectories into States, Transitions or Trajectories.
-
-    This converts a Trajectories container into a States, Transitions, or Trajectories
-    container, depending on the gflownet.
-
-    Args:
-        trajectories: a Trajectories container.
-        gflownet: GFlowNet instance.
-
-    Raises:
-        ValueError: if the submitted Loss is not currently suppored by the function.
-    """
-    if isinstance(gflownet, FMGFlowNet):
-        # return trajectories.to_states()
-        return trajectories.to_non_initial_intermediary_and_terminating_states()
-    elif isinstance(gflownet, TrajectoryBasedGFlowNet):
-        return trajectories
-    elif isinstance(gflownet, DBGFlowNet):
-        return trajectories.to_transitions()
-    else:
-        raise ValueError(f"GFlowNet {gflownet} not supported.")
-
-
 def get_terminating_state_dist_pmf(env: Env, states: States) -> TT["n_states", float]:
     states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
     counter = Counter(states_indices)
