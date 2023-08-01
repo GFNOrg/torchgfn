@@ -5,11 +5,11 @@ from torchtyping import TensorType as TT
 
 from gfn.containers import Transitions
 from gfn.modules import ScalarEstimator
-from gfn.parameterizations.base import PFBasedGFlowNet
+from gfn.gflownet.base import PFBasedGFlowNet
 
 
-class DBParametrization(PFBasedGFlowNet):
-    r"""The Detailed Balance Parameterization dataclass.
+class DBGFlowNet(PFBasedGFlowNet):
+    r"""The Detailed Balance GFlowNet.
 
     Corresponds to $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2 \times
     \mathcal{O}_3$, where $\mathcal{O}_1$ is the set of functions from the internal
@@ -28,12 +28,11 @@ class DBParametrization(PFBasedGFlowNet):
     def __init__(
         self,
         logF: ScalarEstimator,
-        on_policy: bool = False,
         forward_looking: bool = False,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self.logF = logF
-        self.on_policy = on_policy
         self.forward_looking = forward_looking  # TODO: do I need this here?
         self.env = self.logF.env  # TODO We don't want to store env in here...
 
@@ -66,11 +65,18 @@ class DBParametrization(PFBasedGFlowNet):
         if self.on_policy:
             valid_log_pf_actions = transitions.log_probs
         else:
-            valid_log_pf_actions = self.pf(states).log_prob(actions.tensor)
+            module_output = self.pf(states)
+            valid_log_pf_actions = self.pf.to_probability_distribution(
+                states,
+                module_output
+            ).log_prob(
+                actions.tensor
+            )
 
+        # TODO: what is the analogous RL operation for FL-GFN?
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
-            log_rewards = self.env.log_reward(states).unsqueeze(-1)
+            log_rewards = self.env.log_reward(states)  # RM unsqueeze(-1)
             valid_log_F_s = valid_log_F_s + log_rewards
 
         preds = valid_log_pf_actions + valid_log_F_s
@@ -83,7 +89,11 @@ class DBParametrization(PFBasedGFlowNet):
         valid_next_states = transitions.next_states[~transitions.is_done]
         non_exit_actions = actions[~actions.is_exit]
 
-        valid_log_pb_actions = self.pb(valid_next_states).log_prob(
+        module_output = self.pb(valid_next_states)
+        valid_log_pb_actions = self.pb.to_probability_distribution(
+            valid_next_states,
+            module_output
+        ).log_prob(
             non_exit_actions.tensor
         )
 
@@ -120,8 +130,15 @@ class DBParametrization(PFBasedGFlowNet):
 
         return loss
 
-    # TODO: adapt this !
-    def get_modified_scores(
+
+class ModifiedDBGFlowNet(PFBasedGFlowNet):
+    r"""The Modified Detailed Balance GFlowNet.
+
+    See Bayesian Structure Learning with Generative Flow Networks
+    https://arxiv.org/abs/2202.13903 for more details.
+    """
+
+    def get_scores(
         self, transitions: Transitions
     ) -> TT["n_trajectories", torch.float]:
         """DAG-GFN-style detailed balance, when all states are connected to the sink.
@@ -167,6 +184,7 @@ class DBParametrization(PFBasedGFlowNet):
 
         return scores
 
-    def modifieddb_loss(self, transitions: Transitions) -> TT[0, float]:
-        # TODO
-        pass
+    def loss(self, transitions: Transitions) -> TT[0, float]:
+        """Calculates the modified detailed balance loss."""
+        scores = self.get_scores(transitions)
+        return torch.mean(scores ** 2)
