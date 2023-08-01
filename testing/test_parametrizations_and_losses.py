@@ -307,10 +307,3 @@ def test_subTB_vs_TB(
     if weighting == "TB":
         tb_loss = TBGFlowNet(pf=pf, pb=pb).loss(trajectories)  # LogZ is default 0.0.
         assert (tb_loss - subtb_loss).abs() < 1e-4
-
-
-# if __name__ == "__main__":
-#     test_PFBasedGFlowNet(
-#         env_name = 'HyperGrid', ndim = 2, module_name = 'NeuralNet', tie_pb_to_pf = False, gflownet_name = 'DB',
-#         sub_tb_weighting = None, forward_looking = True, zero_logF = True
-#     )
