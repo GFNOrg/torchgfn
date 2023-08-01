@@ -1,21 +1,17 @@
 from abc import ABC, abstractmethod
 from typing import Tuple
 
-from torch.distributions import Distribution
+import torch.nn as nn
 from torchtyping import TensorType as TT
 import torch
 
 from gfn.containers import Trajectories
-from gfn.modules import (
-    GFNModule,
-    DiscretePolicyEstimator,
-    PolicyEstimator,
-)
+from gfn.modules import GFNModule
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
 
-class GFlowNet(GFNModule):
+class GFlowNet(nn.Module):
     @abstractmethod
     def sample_trajectories(self, n_samples: int) -> Trajectories:
         pass
@@ -24,32 +20,20 @@ class GFlowNet(GFNModule):
         trajectories = self.sample_trajectories(n_samples)
         return trajectories.last_states
 
-    @abstractmethod
-    def to_probability_distribution(
-        self,
-        states: States,
-        module_output: TT["batch_shape", "output_dim", float],
-    ) -> Distribution:
-        """Transform the output of the module into a probability distribution."""
-        pass
-
 
 class PFBasedGFlowNet(GFlowNet):
-    r"""Base class for parametrizations that explicitly uses $P_F$
+    r"""Base class for gflownets that explicitly uses $P_F$.
 
     Attributes:
-        pf: PolicyEstimator or DiscretePolicyEstimator
-        pb: PolicyEstimator or DiscretePolicyEstimator
+        pf: GFNModule
+        pb: GFNModule
     """
 
-    def __init__(
-        self,
-        pf: PolicyEstimator | DiscretePolicyEstimator,
-        pb: PolicyEstimator | DiscretePolicyEstimator,
-    ):
-        super().__init__(self)
+    def __init__(self, pf: GFNModule, pb: GFNModule, on_policy: bool = False):
+        super().__init__()
         self.pf = pf
         self.pb = pb
+        self.on_policy = on_policy
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
         actions_sampler = ActionsSampler(self.pf)
@@ -60,7 +44,9 @@ class PFBasedGFlowNet(GFlowNet):
         return trajectories
 
 
-class TrajectoryDecomposableLoss(GFNModule):
+# TODO: Add "EdgeBasedGFlowNet" and "StateBasedGFlowNet".
+class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
+
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
@@ -106,7 +92,13 @@ class TrajectoryDecomposableLoss(GFNModule):
         if self.on_policy:
             log_pf_trajectories = trajectories.log_probs
         else:
-            valid_log_pf_actions = self.pf(valid_states).log_prob(valid_actions.tensor)
+            module_output = self.pf(valid_states)
+            valid_log_pf_actions = self.pf.to_probability_distribution(
+                valid_states,
+                module_output
+            ).log_prob(
+                valid_actions.tensor
+            )
             log_pf_trajectories = torch.full_like(
                 trajectories.actions.tensor[..., 0],
                 fill_value=fill_value,
@@ -117,7 +109,11 @@ class TrajectoryDecomposableLoss(GFNModule):
         non_initial_valid_states = valid_states[~valid_states.is_initial_state]
         non_exit_valid_actions = valid_actions[~valid_actions.is_exit]
 
-        valid_log_pb_actions = self.pb(non_initial_valid_states).log_prob(
+        module_output = self.pb(non_initial_valid_states)
+        valid_log_pb_actions = self.pb.to_probability_distribution(
+            non_initial_valid_states,
+            module_output
+        ).log_prob(
             non_exit_valid_actions.tensor
         )
 
