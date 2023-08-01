@@ -32,8 +32,6 @@ from gfn.gym.helpers.box_utils import (
     BoxStateFlowModule,
 )
 from gfn.modules import ScalarEstimator
-from gfn.utils.common import trajectories_to_training_samples
-from gfn.utils.modules import NeuralNet
 
 
 def sample_from_reward(env: Box, n_samples: int):
@@ -376,7 +374,7 @@ if __name__ == "__main__":  # noqa: C901
 
         trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
 
-        training_samples = trajectories_to_training_samples(trajectories, gflownet)
+        training_samples = gflownet.to_training_samples(trajectories)
 
         optimizer.zero_grad()
         loss = gflownet.loss(training_samples)

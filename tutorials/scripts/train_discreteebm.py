@@ -20,7 +20,7 @@ from tqdm import tqdm, trange
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.modules import DiscretePolicyEstimator
-from gfn.utils.common import trajectories_to_training_samples, validate
+from gfn.utils.common import validate
 from gfn.utils.modules import NeuralNet, Tabular
 
 if __name__ == "__main__":
@@ -142,7 +142,7 @@ if __name__ == "__main__":
     n_iterations = args.n_trajectories // args.batch_size
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
-        training_samples = trajectories_to_training_samples(trajectories, gflownet)
+        training_samples = gflownet.to_training_samples(trajectories)
 
         optimizer.zero_grad()
         loss = gflownet.loss(training_samples)
