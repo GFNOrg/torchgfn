@@ -4,7 +4,7 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
-from gfn.modules import PolicyEstimator
+from gfn.modules import GFNModule
 from gfn.states import States
 
 
@@ -17,7 +17,7 @@ class ActionsSampler:
         env: the Environment instance inside the PolicyEstimator.
     """
 
-    def __init__(self, estimator: PolicyEstimator) -> None:
+    def __init__(self, estimator: GFNModule) -> None:
         self.estimator = estimator
         self.env = estimator.env
 
@@ -34,7 +34,9 @@ class ActionsSampler:
                 the sampled actions under the probability distribution of the given
                 states.
         """
-        dist = self.estimator(states)
+        module_output = self.estimator(states)
+        dist = self.estimator.to_probability_distribution(states, module_output)
+
         with torch.no_grad():
             actions = dist.sample()
         log_probs = dist.log_prob(actions)
