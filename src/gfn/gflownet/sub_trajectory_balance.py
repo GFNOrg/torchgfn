@@ -5,19 +5,18 @@ from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.modules import ScalarEstimator
-from gfn.parameterizations.base import PFBasedGFlowNet, TrajectoryDecomposableLoss
+from gfn.gflownet.base import PFBasedGFlowNet, TrajectoryBasedGFlowNet
 
 
-class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
-    r"""Parameterization for the Sub Trajectory Balance Loss.
+class SubTBGFlowNet(TrajectoryBasedGFlowNet):
+    r"""GFlowNet for the Sub Trajectory Balance Loss.
 
     This method is described in [Learning GFlowNets from partial episodes
     for improved convergence and stability](https://arxiv.org/abs/2209.12782).
 
     Attributes:
         logF: a LogStateFlowEstimator instance.
-        on_policy: boolean indicating whether we need to reevaluate the log probs.
-        weighing: sub-trajectories weighting scheme.
+        weighting: sub-trajectories weighting scheme.
             - "DB": Considers all one-step transitions of each trajectory in the
                 batch and weighs them equally (regardless of the length of
                 trajectory). Should be equivalent to DetailedBalance loss.
@@ -45,7 +44,6 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
     def __init__(
         self,
         logF: ScalarEstimator,
-        on_policy: bool = False,
         weighting: Literal[
             "DB",
             "ModifiedDB",
@@ -57,13 +55,15 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
         ] = "geometric_within",
         lamda: float = 0.9,
         log_reward_clip_min: float = -12,  # roughly log(1e-5)
+        forward_looking: bool = False,
+        **kwargs,
     ):
-        PFBasedGFlowNet.__init__()
+        super().__init__(**kwargs)
         self.logF = logF
-        self.on_policy = on_policy
-        self.weighing = weighting
+        self.weighting = weighting
         self.lamda = lamda
         self.log_reward_clip_min = log_reward_clip_min
+        self.forward_looking = forward_looking
 
     def cumulative_logprobs(
         self,
@@ -124,7 +124,7 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
         mask = ~states.is_sink_state
         valid_states = states[mask]
 
-        # TODO: Comment what is going on here.
+        # TODO: what is the analogous RL operation for FL-GFN?
         log_F = self.logF(valid_states).squeeze(-1)
         if self.forward_looking:
             log_rewards = self.logF.env.log_reward(states).unsqueeze(-1)
@@ -196,6 +196,7 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
     # if-else block statements, or whether it makes sense to move each method to it's
     # own private method of this class, or even an external function which is called.
     # TODO: This is a long function, can it be simplified?
+    # TODO: Ensure all weighting function are tested.
     def loss(self, trajectories: Trajectories) -> TT[0, float]:
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(trajectories)
@@ -210,7 +211,7 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
         # all_scores is a tensor of shape (max_len * (max_leng + 1) / 2, n_trajectories)
         n_rows = int(max_len * (1 + max_len) / 2)
 
-        if self.weighing == "equal_within":
+        if self.weighting == "equal_within":
             # the following tensor represents the inverse of how many sub-trajectories there are in each trajectory
             contributions = 2.0 / (is_done * (is_done + 1)) / len(trajectories)
 
@@ -220,11 +221,11 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
             # within each trajectory.
             contributions = contributions.repeat(n_rows, 1)
 
-        elif self.weighing == "equal":
+        elif self.weighting == "equal":
             n_sub_trajectories = int((is_done * (is_done + 1) / 2).sum().item())
             contributions = torch.ones(n_rows, len(trajectories)) / n_sub_trajectories
 
-        elif self.weighing == "TB":
+        elif self.weighting == "TB":
             # Each trajectory contributes one element to the loss, equally weighted
             contributions = torch.zeros_like(all_scores)
             indices = (
@@ -233,11 +234,11 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
             contributions.scatter_(0, indices.unsqueeze(0), 1)
             contributions = contributions / len(trajectories)
 
-        elif self.weighing == "DB":
+        elif self.weighting == "DB":
             # Longer trajectories contribute more to the loss
             return scores[0][~flattening_masks[0]].pow(2).mean()
 
-        elif self.weighing == "ModifiedDB":
+        elif self.weighting == "ModifiedDB":
             # The following tensor represents the inverse of how many transitions
             # there are in each trajectory.
             contributions = (1.0 / is_done / len(trajectories)).repeat(max_len, 1)
@@ -252,7 +253,7 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
                 0,
             )
 
-        elif self.weighing == "geometric_within":
+        elif self.weighting == "geometric_within":
             # The following tensor represents the weights given to each possible
             # sub-trajectory length.
             contributions = (L ** torch.arange(max_len).double()).float()
@@ -274,14 +275,16 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
             ).float()
             contributions = contributions / per_trajectory_denom / len(trajectories)
 
-        elif self.weighing == "geometric":
-            # The position i of the following 1D tensor represents the number of sub-trajectories of length i in the batch
+        elif self.weighting == "geometric":
+            # The position i of the following 1D tensor represents the number of sub-
+            # trajectories of length i in the batch.
             # n_sub_trajectories = torch.maximum(
             #     trajectories.when_is_done - torch.arange(3).unsqueeze(-1),
             #     torch.tensor(0),
             # ).sum(1)
 
-            # The following tensor's k-th entry represents the mean of all losses of sub-trajectories of length k
+            # The following tensor's k-th entry represents the mean of all losses of
+            # sub-trajectories of length k.
             per_length_losses = torch.stack(
                 [
                     scores[~flattening_mask].pow(2).mean()
@@ -295,7 +298,7 @@ class SubTBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
             assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
         else:
-            raise ValueError(f"Unknown weighing method {self.weighing}")
+            raise ValueError(f"Unknown weighting method {self.weighting}")
 
         flat_contributions = contributions[~flattening_mask]
         assert (
