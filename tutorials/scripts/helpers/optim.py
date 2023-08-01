@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-from gfn.losses import Parametrization
+from gfn.losses import GFlowNet
 
 
 @dataclass
@@ -17,7 +17,7 @@ class BaseOptimConfig(ABC):
     scheduler_milestones: Optional[List[int]] = None
 
     def get_params(
-        self, parametrization: Parametrization
+        self, parametrization: GFlowNet
     ) -> Tuple[List[Dict[str, List[torch.Tensor]]], Tuple[float, List[int]]]:
         params = [
             {
@@ -54,7 +54,7 @@ class BaseOptimConfig(ABC):
 
     @abstractmethod
     def parse(
-        self, parametrization: Parametrization
+        self, parametrization: GFlowNet
     ) -> Tuple[torch.optim.Optimizer, Any]:
         pass
 
@@ -64,7 +64,7 @@ class AdamConfig(BaseOptimConfig):
     betas: Tuple[float, float] = (0.9, 0.999)
 
     def parse(
-        self, parametrization: Parametrization
+        self, parametrization: GFlowNet
     ) -> Tuple[torch.optim.Optimizer, Any]:
         (params, (scheduler_gamma, scheduler_milestones)) = super().get_params(
             parametrization
@@ -81,7 +81,7 @@ class SGDConfig(BaseOptimConfig):
     momentum: float = 0.0
 
     def parse(
-        self, parametrization: Parametrization
+        self, parametrization: GFlowNet
     ) -> Tuple[torch.optim.Optimizer, Any]:
         (params, (scheduler_gamma, scheduler_milestones)) = super().get_params(
             parametrization
@@ -93,7 +93,7 @@ class SGDConfig(BaseOptimConfig):
         return (optimizer, scheduler)
 
 
-def make_optim(config: dict, parametrization: Parametrization) -> torch.optim.Optimizer:
+def make_optim(config: dict, parametrization: GFlowNet) -> torch.optim.Optimizer:
     name = config["optim"]["name"]
     if name.lower() == "sgd".lower():
         optim_class = SGDConfig
