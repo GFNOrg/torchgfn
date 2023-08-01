@@ -60,10 +60,10 @@ This example, which shows how to use the library for a simple discrete environme
 import torch
 from tqdm import tqdm
 
-from gfn.gflownets import TBGFlowNet
+from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator
-from gfn.samplers import Sampler
+from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.utils import NeuralNet
 
 if __name__ == "__main__":
@@ -83,9 +83,9 @@ if __name__ == "__main__":
     pf_estimator = DiscretePolicyEstimator(env, module_PF, forward=True)
     pb_estimator = DiscretePolicyEstimator(env, module_PB, forward=False)
 
-    gfn = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ_init=0.)
+    gfn = TBGFlowNet(init_logZ=0., pf=pf_estimator, pb=pb_estimator)
 
-    sampler = Sampler(policy=pf_estimator)
+    sampler = TrajectoriesSampler(ActionsSampler(estimator=pf_estimator))
 
     # Policy parameters have their own LR.
     non_logz_params = [v for k, v in dict(gfn.named_parameters()).items() if k != "logZ"]
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     for i in (pbar := tqdm(range(1000))):
         trajectories = sampler.sample_trajectories(n_trajectories=16)
         optimizer.zero_grad()
-        loss = parametrization.loss(trajectories)
+        loss = gfn.loss(trajectories)
         loss.backward()
         optimizer.step()
         if i % 25 == 0:
