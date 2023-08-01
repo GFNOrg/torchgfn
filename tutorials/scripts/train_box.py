@@ -352,8 +352,8 @@ if __name__ == "__main__":  # noqa: C901
         )
     if "logZ" in dict(gflownet.named_parameters()):
         logZ = dict(gflownet.named_parameters())["logZ"]
-
-    optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
+    if args.loss != "ZVar":
+        optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
 
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
