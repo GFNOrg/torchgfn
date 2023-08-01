@@ -2,18 +2,16 @@
 Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.13259)
 and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
-from dataclasses import dataclass
-from typing import Optional
 
 import torch
 from torchtyping import TensorType as TT
 import torch.nn as nn
 
 from gfn.containers import Trajectories
-from gfn.parameterizations.base import PFBasedGFlowNet, TrajectoryDecomposableLoss
+from gfn.gflownet.base import TrajectoryBasedGFlowNet
 
 
-class TBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
+class TBGFlowNet(TrajectoryBasedGFlowNet):
     r"""Holds the logZ estimate for the Trajectory Balance loss.
 
     $\mathcal{O}_{PFZ} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where
@@ -24,7 +22,6 @@ class TBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
 
     Attributes:
         logZ: a LogZEstimator instance.
-        on_policy: boolean indicating whether we need to reevaluate the log probs.
         log_reward_clip_min: minimal value to clamp the reward to.
 
     """
@@ -35,7 +32,7 @@ class TBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
         log_reward_clip_min: float = -12,  # roughly log(1e-5)
         **kwargs,
     ):
-        PFBasedGFlowNet().__init__(**kwargs)
+        super().__init__(**kwargs)
 
         self.logZ = nn.Parameter(torch.tensor(init_logZ))
         self.log_reward_clip_min = log_reward_clip_min
@@ -57,20 +54,19 @@ class TBParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
         return loss
 
 
-@dataclass
-class LogPartitionVarianceParametrization(PFBasedGFlowNet, TrajectoryDecomposableLoss):
+class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
     """Dataclass which holds the logZ estimate for the Log Partition Variance loss.
 
     Attributes:
-        on_policy: boolean indicating whether we need to reevaluate the log probs.
         log_reward_clip_min: minimal value to clamp the reward to.
 
     Raises:
         ValueError: if the loss is NaN.
     """
+    def __init__(self, log_reward_clip_min: float = -12, **kwargs):
+        super().__init__(**kwargs)
 
-    on_policy: bool = False
-    log_reward_clip_min: float = -12  # roughly log(1e-5)
+        self.log_reward_clip_min = log_reward_clip_min  # -12 is roughly log(1e-5)
 
     def loss(self, trajectories: Trajectories) -> TT[0, float]:
         """Log Partition Variance loss.
