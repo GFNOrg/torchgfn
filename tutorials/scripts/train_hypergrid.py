@@ -139,7 +139,6 @@ if __name__ == "__main__":  # noqa: C901
     )
 
     args = parser.parse_args()
-    args.loss = "DB"
 
     seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
     torch.manual_seed(seed)
