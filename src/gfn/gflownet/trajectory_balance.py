@@ -4,8 +4,8 @@ and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
 import torch
-from torchtyping import TensorType as TT
 import torch.nn as nn
+from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.gflownet.base import TrajectoryBasedGFlowNet
@@ -63,6 +63,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
     Raises:
         ValueError: if the loss is NaN.
     """
+
     def __init__(self, log_reward_clip_min: float = -12, **kwargs):
         super().__init__(**kwargs)
 

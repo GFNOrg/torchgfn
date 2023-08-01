@@ -2,10 +2,12 @@ import pytest
 import torch
 from test_samplers_and_trajectories import trajectory_sampling_with_return
 
-from gfn.modules import (
-    GFNModule,
-    ScalarEstimator,
-    DiscretePolicyEstimator,
+from gfn.gflownet import (
+    DBGFlowNet,
+    FMGFlowNet,
+    LogPartitionVarianceGFlowNet,
+    SubTBGFlowNet,
+    TBGFlowNet,
 )
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import (
@@ -15,13 +17,7 @@ from gfn.gym.helpers.box_utils import (
     BoxPFEstimator,
     BoxPFNeuralNet,
 )
-from gfn.gflownet import (
-    DBGFlowNet,
-    FMGFlowNet,
-    LogPartitionVarianceGFlowNet,
-    SubTBGFlowNet,
-    TBGFlowNet,
-)
+from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
 

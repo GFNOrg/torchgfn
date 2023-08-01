@@ -17,8 +17,6 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
-import wandb
-from gfn.gym import HyperGrid
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -26,6 +24,7 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
+from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator
 from gfn.utils.common import trajectories_to_training_samples, validate
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular

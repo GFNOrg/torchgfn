@@ -16,7 +16,12 @@ from scipy.special import logsumexp
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm, trange
 
-from gfn.modules import ScalarEstimator
+from gfn.gflownet import (
+    DBGFlowNet,
+    LogPartitionVarianceGFlowNet,
+    SubTBGFlowNet,
+    TBGFlowNet,
+)
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
@@ -26,18 +31,9 @@ from gfn.gym.helpers.box_utils import (
     BoxPFNeuralNet,
     BoxStateFlowModule,
 )
-from gfn.gflownet import (
-    DBGFlowNet,
-    LogPartitionVarianceGFlowNet,
-    SubTBGFlowNet,
-    TBGFlowNet,
-)
+from gfn.modules import ScalarEstimator
 from gfn.utils.common import trajectories_to_training_samples
 from gfn.utils.modules import NeuralNet
-
-
-from sklearn.neighbors import KernelDensity
-from scipy.special import logsumexp
 
 
 def sample_from_reward(env: Box, n_samples: int):
@@ -281,7 +277,7 @@ if __name__ == "__main__":  # noqa: C901
         max_concentration=args.max_concentration,
     )
     module = None
-
+    logZ = None
     if args.loss in ("DB", "SubTB"):
         # We always need a LogZEstimator
         logZ = torch.tensor(0.0, device=env.device, requires_grad=True)
@@ -353,6 +349,7 @@ if __name__ == "__main__":  # noqa: C901
     if "logZ" in dict(gflownet.named_parameters()):
         logZ = dict(gflownet.named_parameters())["logZ"]
     if args.loss != "ZVar":
+        assert logZ is not None
         optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
 
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -395,6 +392,7 @@ if __name__ == "__main__":  # noqa: C901
         to_log = {"loss": loss.item(), "states_visited": states_visited}
         logZ_info = ""
         if args.loss != "ZVar":
+            assert logZ is not None
             to_log.update({"logZdiff": env.log_partition - logZ.item()})
             logZ_info = f"logZ: {logZ.item():.2f}, "
         if use_wandb:

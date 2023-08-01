@@ -4,8 +4,8 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Transitions
-from gfn.modules import ScalarEstimator
 from gfn.gflownet.base import PFBasedGFlowNet
+from gfn.modules import ScalarEstimator
 
 
 class DBGFlowNet(PFBasedGFlowNet):
@@ -67,11 +67,8 @@ class DBGFlowNet(PFBasedGFlowNet):
         else:
             module_output = self.pf(states)
             valid_log_pf_actions = self.pf.to_probability_distribution(
-                states,
-                module_output
-            ).log_prob(
-                actions.tensor
-            )
+                states, module_output
+            ).log_prob(actions.tensor)
 
         # TODO: what is the analogous RL operation for FL-GFN?
         valid_log_F_s = self.logF(states).squeeze(-1)
@@ -91,11 +88,8 @@ class DBGFlowNet(PFBasedGFlowNet):
 
         module_output = self.pb(valid_next_states)
         valid_log_pb_actions = self.pb.to_probability_distribution(
-            valid_next_states,
-            module_output
-        ).log_prob(
-            non_exit_actions.tensor
-        )
+            valid_next_states, module_output
+        ).log_prob(non_exit_actions.tensor)
 
         valid_transitions_is_done = transitions.is_done[
             ~transitions.states.is_sink_state
@@ -138,9 +132,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet):
     https://arxiv.org/abs/2202.13903 for more details.
     """
 
-    def get_scores(
-        self, transitions: Transitions
-    ) -> TT["n_trajectories", torch.float]:
+    def get_scores(self, transitions: Transitions) -> TT["n_trajectories", torch.float]:
         """DAG-GFN-style detailed balance, when all states are connected to the sink.
 
         Raises:
@@ -187,4 +179,4 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet):
     def loss(self, transitions: Transitions) -> TT[0, float]:
         """Calculates the modified detailed balance loss."""
         scores = self.get_scores(transitions)
-        return torch.mean(scores ** 2)
+        return torch.mean(scores**2)
