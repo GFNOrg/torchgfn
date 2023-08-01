@@ -1,25 +1,20 @@
-import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Tuple
 
-import torch
+import torch.nn as nn
 from torchtyping import TensorType as TT
+import torch
 
 from gfn.containers import Trajectories
-from gfn.estimators import FunctionEstimator, LogZEstimator, ProbabilityEstimator
+from gfn.modules import GFNModule
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 from gfn.states import States
 
 
-@dataclass
-class Parametrization(ABC):
-    """Abstract Base Class for Flow Parametrizations.
+class GFlowNet(nn.Module):
+    """Abstract Base Class for GFlowNets.
 
-    Flow paramaterizations are defined in Sec. 3 of [GFlowNets Foundations](link).
-
-    All attributes should be estimators, and should either have a GFNModule or attribute
-    called `module`, or torch.Tensor attribute called `tensor` with requires_grad=True.
+    A formal definition of GFlowNets is given in Sec. 3 of [GFlowNet Foundations](https://arxiv.org/pdf/2111.09266).
     """
 
     @abstractmethod
@@ -28,7 +23,6 @@ class Parametrization(ABC):
 
         Args:
             n_samples: number of trajectories to be sampled.
-
         Returns:
             Trajectories: sampled trajectories object.
         """
@@ -39,55 +33,26 @@ class Parametrization(ABC):
 
         Args:
             n_samples: number of terminating states to be sampled.
-
         Returns:
             States: sampled terminating states object.
         """
         trajectories = self.sample_trajectories(n_samples)
         return trajectories.last_states
 
-    @property
-    def parameters(self) -> dict:
-        """
-        Return a dictionary of all parameters of the parametrization.
-        Note that there might be duplicate parameters (e.g. when two NNs share parameters),
-        in which case the optimizer should take as input set(self.parameters.values()).
-        """
-        # TODO: use parameters of the fields instead, loop through them here
-        parameters_dict = {}
-        for name, value in self.__dict__.items():
-            if isinstance(value, FunctionEstimator) or isinstance(value, LogZEstimator):
-                estimator = value
-            else:
-                continue
 
-            parameters_dict.update(
-                {
-                    f"{name}.{key}": value
-                    for key, value in estimator.named_parameters().items()
-                }
-            )
-        return parameters_dict
-
-    def save_state_dict(self, path: str):
-        for name, estimator in self.__dict__.items():
-            torch.save(estimator.named_parameters(), os.path.join(path, name + ".pt"))
-
-    def load_state_dict(self, path: str):
-        for name, estimator in self.__dict__.items():
-            estimator.load_state_dict(torch.load(os.path.join(path, name + ".pt")))
-
-
-@dataclass
-class PFBasedParametrization(Parametrization, ABC):
-    r"""Base class for parametrizations that explicitly uses $P_F$
+class PFBasedGFlowNet(GFlowNet):
+    r"""Base class for gflownets that explicitly uses $P_F$.
 
     Attributes:
-        pf: ProbabilityEstimator
-        pb: ProbabilityEstimator
+        pf: GFNModule
+        pb: GFNModule
     """
-    pf: ProbabilityEstimator
-    pb: ProbabilityEstimator
+
+    def __init__(self, pf: GFNModule, pb: GFNModule, on_policy: bool = False):
+        super().__init__()
+        self.pf = pf
+        self.pb = pb
+        self.on_policy = on_policy
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
         actions_sampler = ActionsSampler(self.pf)
@@ -98,7 +63,8 @@ class PFBasedParametrization(Parametrization, ABC):
         return trajectories
 
 
-class TrajectoryDecomposableLoss(ABC):
+# TODO: Add "EdgeBasedGFlowNet" and "StateBasedGFlowNet".
+class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
@@ -112,7 +78,7 @@ class TrajectoryDecomposableLoss(ABC):
         More specifically it evaluates $\log P_F (s' \mid s)$ and $\log P_B(s \mid s')$
         for each transition in each trajectory in the batch.
 
-        This is useful when the policy used to sample the trajectories is different from
+        Useful when the policy used to sample the trajectories is different from
         the one used to evaluate the loss. Otherwise we can use the logprobs directly
         from the trajectories.
 
@@ -144,7 +110,10 @@ class TrajectoryDecomposableLoss(ABC):
         if self.on_policy:
             log_pf_trajectories = trajectories.log_probs
         else:
-            valid_log_pf_actions = self.pf(valid_states).log_prob(valid_actions.tensor)
+            module_output = self.pf(valid_states)
+            valid_log_pf_actions = self.pf.to_probability_distribution(
+                valid_states, module_output
+            ).log_prob(valid_actions.tensor)
             log_pf_trajectories = torch.full_like(
                 trajectories.actions.tensor[..., 0],
                 fill_value=fill_value,
@@ -155,9 +124,10 @@ class TrajectoryDecomposableLoss(ABC):
         non_initial_valid_states = valid_states[~valid_states.is_initial_state]
         non_exit_valid_actions = valid_actions[~valid_actions.is_exit]
 
-        valid_log_pb_actions = self.pb(non_initial_valid_states).log_prob(
-            non_exit_valid_actions.tensor
-        )
+        module_output = self.pb(non_initial_valid_states)
+        valid_log_pb_actions = self.pb.to_probability_distribution(
+            non_initial_valid_states, module_output
+        ).log_prob(non_exit_valid_actions.tensor)
 
         log_pb_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],

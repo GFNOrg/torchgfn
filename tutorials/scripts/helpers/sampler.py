@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 from gfn.env import Env
-from gfn.losses import FMParametrization, Parametrization, PFBasedParametrization
+from gfn.gflownet import FMGFlowNet, GFlowNet, PFBasedGFlowNet
 from gfn.samplers import ActionsSampler, TrajectoriesSampler
 
 
@@ -14,18 +14,18 @@ class SamplerConfig:
     epsilon: float = 0.0
 
     def parse(
-        self, env: Env, parametrization: Parametrization
+        self, env: Env, gflownet: GFlowNet
     ) -> Tuple[TrajectoriesSampler, bool]:
         on_policy = (
             self.temperature == 1.0 and self.sf_bias == 0.0 and self.epsilon == 0.0
         )
-        if isinstance(parametrization, FMParametrization):
-            estimator = parametrization.logF
-        elif isinstance(parametrization, PFBasedParametrization):
-            estimator = parametrization.logit_PF
+        if isinstance(gflownet, FMGFlowNet):
+            estimator = gflownet.logF
+        elif isinstance(gflownet, PFBasedGFlowNet):
+            estimator = gflownet.logit_PF
         else:
             raise ValueError(
-                f"Cannot parse sampler for parametrization {parametrization}"
+                f"Cannot parse sampler for gflownet {gflownet}"
             )
         actions_sampler = ActionsSampler(
             estimator=estimator,
@@ -42,7 +42,7 @@ class SamplerConfig:
 
 
 def make_sampler(
-    config: dict, env: Env, parametrization: Parametrization
+    config: dict, env: Env, gflownet: GFlowNet
 ) -> Tuple[TrajectoriesSampler, bool]:
     name = config["sampler"]["name"]
     if not name:
@@ -52,4 +52,4 @@ def make_sampler(
 
     args = inspect.getfullargspec(sampler_class.__init__).args
     sampler_config = {k: v for k, v in config["sampler"].items() if k in args}
-    return sampler_class(**sampler_config).parse(env, parametrization)
+    return sampler_class(**sampler_config).parse(env, gflownet)

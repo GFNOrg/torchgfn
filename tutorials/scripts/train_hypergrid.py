@@ -17,17 +17,17 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
+import wandb
 from gfn.gym import HyperGrid
-from gfn.losses import (
-    DBParametrization,
-    FMParametrization,
-    LogPartitionVarianceParametrization,
-    SubTBParametrization,
-    TBParametrization,
+from gfn.gflownet import (
+    DBGFlowNet,
+    FMGFlowNet,
+    LogPartitionVarianceGFlowNet,
+    SubTBGFlowNet,
+    TBGFlowNet,
 )
+from gfn.modules import DiscretePolicyEstimator
 from gfn.utils.common import trajectories_to_training_samples, validate
-from gfn.utils.estimators import DiscretePBEstimator, DiscretePFEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
 if __name__ == "__main__":  # noqa: C901
@@ -66,10 +66,10 @@ if __name__ == "__main__":  # noqa: C901
         help="Loss function to use",
     )
     parser.add_argument(
-        "--subTB_weighing",
+        "--subTB_weighting",
         type=str,
         default="geometric_within",
-        help="Weighing scheme for SubTB",
+        help="weighting scheme for SubTB",
     )
     parser.add_argument(
         "--subTB_lambda", type=float, default=0.9, help="Lambda parameter for SubTB"
@@ -123,7 +123,7 @@ if __name__ == "__main__":  # noqa: C901
         "--validation_interval",
         type=int,
         default=100,
-        help="How often (in training steps) to validate the parameterization",
+        help="How often (in training steps) to validate the gflownet",
     )
     parser.add_argument(
         "--validation_samples",
@@ -156,13 +156,13 @@ if __name__ == "__main__":  # noqa: C901
         args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
     )
 
-    # 2. Create the parameterization.
+    # 2. Create the gflownets.
     #    For this we need modules and estimators.
     #    Depending on the loss, we may need several estimators:
     #       one (forward only) for FM loss,
     #       two (forward and backward) or other losses
     #       three (same, + logZ) estimators for TB.
-    parametrization = None
+    gflownet = None
     if args.loss == "FM":
         # We need a LogEdgeFlowEstimator
         if args.tabular:
@@ -174,8 +174,8 @@ if __name__ == "__main__":  # noqa: C901
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
             )
-        estimator = LogEdgeFlowEstimator(env=env, module=module)
-        parametrization = FMParametrization(estimator)
+        estimator = DiscretePolicyEstimator(env=env, module=module, forward=True)
+        gflownet = FMGFlowNet(estimator)
     else:
         pb_module = None
         # We need a DiscretePFEstimator and a DiscretePBEstimator
@@ -208,8 +208,8 @@ if __name__ == "__main__":  # noqa: C901
             pb_module is not None
         ), f"pb_module is None. Command-line arguments: {args}"
 
-        pf_estimator = DiscretePFEstimator(env=env, module=pf_module)
-        pb_estimator = DiscretePBEstimator(env=env, module=pb_module)
+        pf_estimator = DiscretePolicyEstimator(env=env, module=pf_module, forward=True)
+        pb_estimator = DiscretePolicyEstimator(env=env, module=pb_module, forward=False)
 
         if args.loss in ("DB", "SubTB"):
             # We need a LogStateFlowEstimator
@@ -231,57 +231,60 @@ if __name__ == "__main__":  # noqa: C901
                     n_hidden_layers=args.n_hidden,
                     torso=pf_module.torso if args.tied else None,
                 )
-            logF_estimator = LogStateFlowEstimator(env=env, module=module)
+            logF_estimator = DiscretePolicyEstimator(
+                env=env,
+                module=pf_module,
+                forward=True,
+            )
 
             if args.loss == "DB":
-                parametrization = DBParametrization(
+                gflownet = DBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
                     on_policy=True,
                 )
             else:
-                parametrization = SubTBParametrization(
+                gflownet = SubTBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
                     on_policy=True,
-                    weighing=args.subTB_weighing,
+                    weighting=args.subTB_weighting,
                     lamda=args.subTB_lambda,
                 )
         elif args.loss == "TB":
-            # We need a LogZEstimator
-            logZ = LogZEstimator(tensor=torch.tensor(0.0, device=env.device))
-            parametrization = TBParametrization(
+            gflownet = TBGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                logZ=logZ,
                 on_policy=True,
             )
         elif args.loss == "ZVar":
-            parametrization = LogPartitionVarianceParametrization(
+            gflownet = LogPartitionVarianceGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
                 on_policy=True,
             )
 
-    assert parametrization is not None, f"No parametrization for loss {args.loss}"
+    assert gflownet is not None, f"No gflownet for loss {args.loss}"
 
     # 3. Create the optimizer
+
+    # Policy parameters have their own LR.
     params = [
         {
             "params": [
-                val
-                for key, val in parametrization.parameters.items()
-                if "logZ" not in key
+                v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
             ],
             "lr": args.lr,
         }
     ]
-    if "logZ.logZ" in parametrization.parameters:
+
+    # Log Z gets dedicated learning rate (typically higher).
+    if "logZ" in dict(gflownet.named_parameters()):
         params.append(
             {
-                "params": [parametrization.parameters["logZ.logZ"]],
+                "params": [dict(gflownet.named_parameters())["logZ"]],
                 "lr": args.lr_Z,
             }
         )
@@ -293,13 +296,11 @@ if __name__ == "__main__":  # noqa: C901
     states_visited = 0
     n_iterations = args.n_trajectories // args.batch_size
     for iteration in trange(n_iterations):
-        trajectories = parametrization.sample_trajectories(n_samples=args.batch_size)
-        training_samples = trajectories_to_training_samples(
-            trajectories, parametrization
-        )
+        trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
+        training_samples = trajectories_to_training_samples(trajectories, gflownet)
 
         optimizer.zero_grad()
-        loss = parametrization.loss(training_samples)
+        loss = gflownet.loss(training_samples)
         loss.backward()
         optimizer.step()
 
@@ -313,7 +314,7 @@ if __name__ == "__main__":  # noqa: C901
         if iteration % args.validation_interval == 0:
             validation_info = validate(
                 env,
-                parametrization,
+                gflownet,
                 args.validation_samples,
                 visited_terminating_states,
             )

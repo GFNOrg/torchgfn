@@ -6,22 +6,21 @@ from typing import Literal, Tuple
 import torch
 
 from gfn.env import Env
-from gfn.estimators import LogEdgeFlowEstimator, LogStateFlowEstimator, LogZEstimator
 from gfn.losses import (
-    DBParametrization,
+    DBGFlowNet,
     DetailedBalance,
     FlowMatching,
-    FMParametrization,
+    FMGFlowNet,
     LogPartitionVarianceLoss,
     Loss,
-    Parametrization,
-    PFBasedParametrization,
-    SubTBParametrization,
+    GFlowNet,
+    PFBasedGFlowNet,
+    SubTBGFlowNet,
     SubTrajectoryBalance,
-    TBParametrization,
+    TBGFlowNet,
     TrajectoryBalance,
 )
-from gfn.utils import DiscretePBEstimator, DiscretePFEstimator
+from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 
 
 @dataclass
@@ -38,7 +37,7 @@ class GFNModuleConfig:
 @dataclass
 class BaseLossConfig(ABC):
     @abstractmethod
-    def parse(self, env: Env, **kwargs) -> Tuple[Parametrization, Loss]:
+    def parse(self, env: Env, **kwargs) -> Tuple[GFlowNet, Loss]:
         pass
 
 
@@ -50,12 +49,12 @@ class FMLossConfig(BaseLossConfig):
     def parse(
         self,
         env: Env,
-    ) -> Tuple[Parametrization, Loss]:
-        logF_edge = LogEdgeFlowEstimator(
+    ) -> Tuple[GFlowNet, Loss]:
+        logF_edge = ScalarEstimator(
             env=env,
             **self.logF_edge.nn_kwargs,
         )
-        parametrization = FMParametrization(logF_edge)
+        parametrization = FMGFlowNet(logF_edge)
 
         loss = FlowMatching(parametrization, alpha=self.alpha)
 
@@ -71,8 +70,12 @@ class PFBasedLossConfig(BaseLossConfig, ABC):
     def get_estimators(
         self,
         env: Env,
-    ) -> Tuple[DiscretePFEstimator, DiscretePBEstimator]:
-        logit_PF = DiscretePFEstimator(env=env, **self.logit_PF.nn_kwargs)
+    ) -> DiscretePolicyEstimator:
+        logit_PF = DiscretePolicyEstimator(
+            env=env,
+            forward=True,
+            **self.logit_PF.nn_kwargs,
+        )
         logit_PB_kwargs = self.logit_PB.nn_kwargs
         if (
             self.tied
@@ -83,7 +86,7 @@ class PFBasedLossConfig(BaseLossConfig, ABC):
         else:
             torso = None
         logit_PB_kwargs["torso"] = torso
-        logit_PB = DiscretePBEstimator(env=env, **logit_PB_kwargs)
+        logit_PB = DiscretePolicyEstimator(env=env, forward=False, **logit_PB_kwargs)
 
         return (logit_PF, logit_PB)
 
@@ -96,7 +99,7 @@ class StateFlowBasedLossConfig(PFBasedLossConfig, ABC):
         self,
         env: Env,
         forward_looking: bool = False,
-    ) -> Tuple[DiscretePFEstimator, DiscretePBEstimator, LogStateFlowEstimator]:
+    ) -> DiscretePolicyEstimator:
         logit_PF, logit_PB = super().get_estimators(env)
         logF_state_kwargs = self.logF_state.nn_kwargs
         if (
@@ -108,8 +111,12 @@ class StateFlowBasedLossConfig(PFBasedLossConfig, ABC):
         else:
             torso = None
         logF_state_kwargs["torso"] = torso
-        logF_state = LogStateFlowEstimator(
-            env=env, forward_looking=forward_looking, **self.logF_state.nn_kwargs
+        # TODO: I need to verify this.
+        logF_state = DiscretePolicyEstimator(
+            env=env,
+            forward=True,
+            forward_looking=forward_looking,
+            **self.logF_state.nn_kwargs,
         )
 
         return (logit_PF, logit_PB, logF_state)
@@ -122,17 +129,17 @@ class DBLossConfig(StateFlowBasedLossConfig):
     def parse(
         self,
         env: Env,
-    ) -> Tuple[Parametrization, Loss]:
+    ) -> Tuple[GFlowNet, Loss]:
         logit_PF, logit_PB, logF_state = self.get_estimators(env, self.forward_looking)
 
-        parametrization = DBParametrization(logit_PF, logit_PB, logF_state)
+        parametrization = DBGFlowNet(logit_PF, logit_PB, logF_state)
         loss = DetailedBalance(parametrization)
         return (parametrization, loss)
 
 
 @dataclass
 class SubTBLossConfig(StateFlowBasedLossConfig):
-    weighing: Literal[
+    weighting: Literal[
         "equal",
         "equal_within",
         "geometric",
@@ -147,12 +154,12 @@ class SubTBLossConfig(StateFlowBasedLossConfig):
     def parse(
         self,
         env: Env,
-    ) -> Tuple[Parametrization, Loss]:
+    ) -> Tuple[GFlowNet, Loss]:
         logit_PF, logit_PB, logF_state = self.get_estimators(env, self.forward_looking)
 
-        parametrization = SubTBParametrization(logit_PF, logit_PB, logF_state)
+        parametrization = SubTBGFlowNet(logit_PF, logit_PB, logF_state)
         loss = SubTrajectoryBalance(
-            parametrization, weighing=self.weighing, lamda=self.lamda
+            parametrization, weighting=self.weighting, lamda=self.lamda
         )
         return (parametrization, loss)
 
@@ -165,25 +172,23 @@ class TBLossConfig(PFBasedLossConfig):
     def parse(
         self,
         env: Env,
-    ) -> Tuple[Parametrization, Loss]:
+    ) -> Tuple[GFlowNet, Loss]:
         logit_PF, logit_PB = self.get_estimators(env)
-        logZ_tensor = torch.tensor(self.logZ_init, dtype=torch.float)
-        logZ = LogZEstimator(tensor=logZ_tensor)
-        parametrization = TBParametrization(logit_PF, logit_PB, logZ)
+        parametrization = TBGFlowNet(logit_PF, logit_PB, logZ=logZ_init)
         loss = TrajectoryBalance(parametrization, self.log_reward_clip_min)
         return (parametrization, loss)
 
 
 @dataclass
 class LogPartitionVarianceLossConfig(PFBasedLossConfig):
-    def parse(self, env: Env) -> Tuple[Parametrization, Loss]:
+    def parse(self, env: Env) -> Tuple[GFlowNet, Loss]:
         logit_PF, logit_PB = self.get_estimators(env)
-        parametrization = PFBasedParametrization(logit_PF, logit_PB)
+        parametrization = PFBasedGFlowNet(logit_PF, logit_PB)
         loss = LogPartitionVarianceLoss(parametrization)
         return (parametrization, loss)
 
 
-def make_loss(config: dict, env: Env) -> Tuple[Parametrization, Loss]:
+def make_loss(config: dict, env: Env) -> Tuple[GFlowNet, Loss]:
     name = config["loss"]["name"]
     if name.lower() == "flowmatching".lower():
         loss_class = FMLossConfig
