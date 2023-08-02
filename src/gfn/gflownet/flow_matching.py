@@ -28,12 +28,15 @@ class FMGFlowNet(GFlowNet):
 
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
         super().__init__()
-        # TODO: THIS ONLY WORKS FOR DISCRETE ENVIRONMENTS.
         assert not logF.greedy_eps
 
         self.logF = logF
         self.alpha = alpha
         self.env = self.logF.env
+        if not self.env.is_discrete:
+            raise NotImplementedError(
+                "Flow Matching GFlowNet only supports discrete environments for now."
+            )
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
         sampler = Sampler(estimator=self.logF)
