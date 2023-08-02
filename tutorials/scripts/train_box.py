@@ -152,7 +152,9 @@ if __name__ == "__main__":  # noqa: C901
 
     parser.add_argument("--uniform_pb", action="store_true", help="Use a uniform PB")
     parser.add_argument(
-        "--tied", action="store_true", help="Tie the parameters of PF, PB, and F"
+        "--tied",
+        action="store_true",
+        help="Tie the parameters of PF, PB. F is never tied.",
     )
     parser.add_argument(
         "--hidden_dim",
@@ -178,7 +180,13 @@ if __name__ == "__main__":  # noqa: C901
         "--lr_Z",
         type=float,
         default=1e-3,
-        help="Specific learning rate for Z (only used for TB loss)",
+        help="Specific learning rate for logZ",
+    )
+    parser.add_argument(
+        "--lr_F",
+        type=float,
+        default=1e-2,
+        help="Specific learning rate for the state flow function (only used for DB and SubTB losses)",
     )
     parser.add_argument(
         "--gamma_scheduler",
@@ -248,7 +256,6 @@ if __name__ == "__main__":  # noqa: C901
         n_components=args.n_components,
         n_components_s0=args.n_components_s0,
     )
-    print("UNIFORM {}".format(args.uniform_pb))
     if args.uniform_pb:
         pb_module = BoxPBUniform()
     else:
@@ -286,7 +293,7 @@ if __name__ == "__main__":  # noqa: C901
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
-            torso=pf_module.torso if args.tied else None,
+            torso=None,  # We do not tie the parameters of the flow function to PF
             logZ_value=logZ,
         )
         logF_estimator = ScalarEstimator(env=env, module=module)
@@ -338,10 +345,8 @@ if __name__ == "__main__":  # noqa: C901
         assert module is not None
         optimizer.add_param_group(
             {
-                "params": module.last_layer.parameters()
-                if args.tied
-                else module.parameters(),
-                "lr": args.lr,
+                "params": module.parameters(),
+                "lr": args.lr_F,
             }
         )
     if "logZ" in dict(gflownet.named_parameters()):
