@@ -371,12 +371,8 @@ class DistributionWrapper(Distribution):
         n_components_s0,
     ):
         self.env = env
-        self.idx_is_initial = torch.where(torch.all(states.tensor == 0, 1))[
-            0
-        ]  # TODO: states.is_initial
-        self.idx_not_initial = torch.where(torch.any(states.tensor != 0, 1))[
-            0
-        ]  # TODO: ~states.is_initial
+        self.idx_is_initial = torch.where(torch.all(states.tensor == 0, 1))[0]
+        self.idx_not_initial = torch.where(torch.any(states.tensor != 0, 1))[0]
         self._output_shape = states.tensor.shape
         self.quarter_disk = None
         if len(self.idx_is_initial) > 0:
