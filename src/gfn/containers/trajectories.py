@@ -220,7 +220,6 @@ class Trajectories(Container):
 
     def to_transitions(self) -> Transitions:
         """Returns a `Transitions` object from the trajectories."""
-        # TODO: we need tests for this method
         states = self.states[:-1][~self.actions.is_dummy]
         next_states = self.states[1:][~self.actions.is_dummy]
         actions = self.actions[~self.actions.is_dummy]
