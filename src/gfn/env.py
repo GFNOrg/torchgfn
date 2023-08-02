@@ -34,11 +34,13 @@ class Env(ABC):
             preprocessor (Optional[Preprocessor], optional): a Preprocessor object that converts raw states to a tensor that can be fed
                 into a neural network. Defaults to None, in which case the IdentityPreprocessor is used.
         """
-        self.s0 = s0
-        if sf is None:
-            sf = torch.full(s0.shape, -float("inf"))
-        self.sf = sf
         self.device = torch.device(device_str) if device_str is not None else s0.device
+
+        self.s0 = s0.to(self.device)
+        if sf is None:
+            sf = torch.full(s0.shape, -float("inf")).to(self.device)
+        self.sf = sf
+
         self.States = self.make_States_class()
         self.Actions = self.make_Actions_class()
 
