@@ -166,7 +166,6 @@ class States(ABC):
             self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
 
-        # TODO: Generalize to n-dimensional batch_shapes > 1.
         elif len(other_batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
             self.extend_with_sf(
@@ -196,8 +195,6 @@ class States(ABC):
         Args:
             required_first_dim: The size of the first batch dimension post-expansion.
         """
-        # TODO: handle when required_first_dim < self.batch_shape[0].
-        # TODO: generalize to n-dimensional batches.
         if len(self.batch_shape) == 2:
             if self.batch_shape[0] >= required_first_dim:
                 return
