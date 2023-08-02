@@ -131,7 +131,6 @@ class States(ABC):
 
     def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> States:
         """Access particular states of the batch."""
-        # TODO: add more tests for this method
         return self.__class__(self.tensor[index])
 
     def __setitem__(
