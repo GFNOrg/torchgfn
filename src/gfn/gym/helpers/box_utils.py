@@ -490,7 +490,10 @@ class BoxPFNeuralNet(NeuralNet):
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
     ) -> TT["batch_shape", "1 + 5 * n_components"]:
-        # TODO: this only works with linear batches (i.e. batch_shape is an int), change it by using something else than B
+        if preprocessed_states.ndim != 2:
+            raise ValueError(
+                f"preprocessed_states should be of shape [B, 2], got {preprocessed_states.shape}"
+            )
         B, _ = preprocessed_states.shape
         # The desired output shape is [B, 1 + 5 * n_components_max], let's create the tensor
         desired_out = torch.zeros(B, 1 + 5 * self._n_comp_max).to(
