@@ -317,8 +317,9 @@ class QuarterCircleWithExit(Distribution):
             beta=beta,
         )
         self.exit_probability = exit_probability
-        self.exit_action = torch.FloatTensor(
-            [-float("inf"), -float("inf")]).to(centers.device)
+        self.exit_action = torch.FloatTensor([-float("inf"), -float("inf")]).to(
+            centers.device
+        )
 
     def sample(self, sample_shape=()):
         actions = self.dist_without_exit.sample(sample_shape)
