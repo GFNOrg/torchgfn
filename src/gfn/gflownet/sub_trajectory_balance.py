@@ -88,7 +88,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             dim=0,
         )
 
-    # TODO: This is a long function, worth trying to simplify.
     def get_scores(
         self, trajectories: Trajectories
     ) -> Tuple[List[TT[0, float]], List[TT[0, float]]]:
@@ -122,7 +121,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         mask = ~states.is_sink_state
         valid_states = states[mask]
 
-        # TODO: what is the analogous RL operation for FL-GFN?
         log_F = self.logF(valid_states).squeeze(-1)
         if self.forward_looking:
             log_rewards = self.logF.env.log_reward(states).unsqueeze(-1)
