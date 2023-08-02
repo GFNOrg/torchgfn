@@ -269,12 +269,12 @@ class Trajectories(Container):
         states = self.states.flatten()
         return states[~states.is_sink_state]
 
-    # TODO: this is a very weird method. I wonder why we need it? Would be helpful
-    # to have an example.
     def to_non_initial_intermediary_and_terminating_states(
         self,
     ) -> tuple[States, States]:
-        """Returns all intermediate and terminiating `States` from the trajectories.
+        """Returns all intermediate and terminating `States` from the trajectories.
+
+        This is useful for the flow matching loss, that requires its inputs to be distinguished.
 
         Returns: a tuple containing all the intermediary states in the trajectories
             that are not s0, and all the terminating states in the trajectories that
