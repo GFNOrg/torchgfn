@@ -157,9 +157,6 @@ class Env(ABC):
 
         new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
 
-        if isinstance(new_states, DiscreteStates):  # TODO: move this to DiscreteEnv ?
-            new_states.update_masks()  # TODO: probably use `not_done_actions` (and `not_done_states` `~new_sink_states` ?) as input to update_masks
-            # TODO: or `locals()`
         return new_states
 
     def backward_step(
@@ -248,6 +245,15 @@ class DiscreteEnv(Env, ABC):
         assert states.forward_masks is not None and states.backward_masks is not None
         masks_tensor = states.backward_masks if backward else states.forward_masks
         return torch.gather(masks_tensor, 1, actions.tensor).all()
+
+    def step(
+        self,
+        states: DiscreteStates,
+        actions: Actions,
+    ) -> States:
+        new_states = super().step(states, actions)
+        new_states.update_masks()
+        return new_states
 
     def get_states_indices(
         self, states: DiscreteStates
