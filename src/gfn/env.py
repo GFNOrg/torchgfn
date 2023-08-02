@@ -52,6 +52,7 @@ class Env(ABC):
             preprocessor = IdentityPreprocessor(output_dim=output_dim)
 
         self.preprocessor = preprocessor
+        self.is_discrete = False
 
     @abstractmethod
     def make_States_class(self) -> type[States]:
@@ -227,6 +228,7 @@ class DiscreteEnv(Env, ABC):
         """
         self.n_actions = n_actions
         super().__init__(s0, sf, device_str, preprocessor)
+        self.is_discrete = True
 
     def make_Actions_class(self) -> type[Actions]:
         env = self
