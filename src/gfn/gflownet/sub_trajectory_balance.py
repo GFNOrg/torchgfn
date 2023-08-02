@@ -91,9 +91,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     # TODO: This is a long function, worth trying to simplify.
     def get_scores(
         self, trajectories: Trajectories
-    ) -> Tuple[
-        List[TT[-1, float]], List[TT[-1, float]]
-    ]:  # TODO: why -1 here? Is it equivilant to 0?
+    ) -> Tuple[List[TT[0, float]], List[TT[0, float]]]:
         """Scores all submitted trajectories.
 
         Returns:
