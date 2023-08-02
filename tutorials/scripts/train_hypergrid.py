@@ -22,6 +22,7 @@ from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
     LogPartitionVarianceGFlowNet,
+    ModifiedDBGFlowNet,
     SubTBGFlowNet,
     TBGFlowNet,
 )
@@ -39,7 +40,7 @@ if __name__ == "__main__":  # noqa: C901
         "--ndim", type=int, default=2, help="Number of dimensions in the environment"
     )
     parser.add_argument(
-        "--height", type=int, default=64, help="Height of the environment"
+        "--height", type=int, default=8, help="Height of the environment"
     )
     parser.add_argument("--R0", type=float, default=0.1, help="Environment's R0")
     parser.add_argument("--R1", type=float, default=0.5, help="Environment's R1")
@@ -67,7 +68,7 @@ if __name__ == "__main__":  # noqa: C901
     parser.add_argument(
         "--loss",
         type=str,
-        choices=["FM", "TB", "DB", "SubTB", "ZVar"],
+        choices=["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"],
         default="TB",
         help="Loss function to use",
     )
@@ -217,6 +218,13 @@ if __name__ == "__main__":  # noqa: C901
         pf_estimator = DiscretePolicyEstimator(env=env, module=pf_module, forward=True)
         pb_estimator = DiscretePolicyEstimator(env=env, module=pb_module, forward=False)
 
+        if args.loss == "ModifiedDB":
+            gflownet = ModifiedDBGFlowNet(
+                pf_estimator,
+                pb_estimator,
+                True if args.replay_buffer_size == 0 else False,
+            )
+
         if args.loss in ("DB", "SubTB"):
             # We need a LogStateFlowEstimator
             assert (
@@ -275,7 +283,7 @@ if __name__ == "__main__":  # noqa: C901
     if args.replay_buffer_size > 0:
         if args.loss in ("TB", "SubTB", "ZVar"):
             objects_type = "trajectories"
-        elif args.loss == "DB":
+        elif args.loss in ("DB", "ModifiedDB"):
             objects_type = "transitions"
         elif args.loss == "FM":
             objects_type = "states"

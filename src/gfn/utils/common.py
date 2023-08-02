@@ -6,13 +6,7 @@ from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
-from gfn.gflownet import (
-    DBGFlowNet,
-    FMGFlowNet,
-    GFlowNet,
-    TBGFlowNet,
-    TrajectoryBasedGFlowNet,
-)
+from gfn.gflownet import GFlowNet, TBGFlowNet
 from gfn.states import States
 
 
