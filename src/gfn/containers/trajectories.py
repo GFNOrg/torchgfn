@@ -165,6 +165,30 @@ class Trajectories(Container):
             log_probs=log_probs,
         )
 
+    @staticmethod
+    def extend_log_probs(
+        log_probs: TT["max_length", "n_trajectories", torch.float], new_max_length: int
+    ) -> TT["max_max_length", "n_trajectories", torch.float]:
+        """Extend the log_probs matrix by adding 0 until the required length is reached."""
+        if log_probs.shape[0] >= new_max_length:
+            return log_probs
+        else:
+            return torch.cat(
+                (
+                    log_probs,
+                    torch.full(
+                        size=(
+                            new_max_length - log_probs.shape[0],
+                            log_probs.shape[1],
+                        ),
+                        fill_value=0,
+                        dtype=torch.float,
+                        device=log_probs.device,
+                    ),
+                ),
+                dim=0,
+            )
+
     def extend(self, other: Trajectories) -> None:
         """Extend the trajectories with another set of trajectories.
 
@@ -181,40 +205,9 @@ class Trajectories(Container):
 
         # For log_probs, we first need to make the first dimensions of self.log_probs and other.log_probs equal
         # (i.e. the number of steps in the trajectories), and then concatenate them
-
-        # TODO: the following if/elif can be factorized in a function
-        if self.log_probs.shape[0] < other.log_probs.shape[0]:
-            self.log_probs = torch.cat(
-                (
-                    self.log_probs,
-                    torch.full(
-                        size=(
-                            other.log_probs.shape[0] - self.log_probs.shape[0],
-                            self.log_probs.shape[1],
-                        ),
-                        fill_value=0,
-                        dtype=torch.float,
-                        device=self.log_probs.device,
-                    ),
-                ),
-                dim=0,
-            )
-        elif self.log_probs.shape[0] > other.log_probs.shape[0]:
-            other.log_probs = torch.cat(
-                (
-                    other.log_probs,
-                    torch.full(
-                        size=(
-                            self.log_probs.shape[0] - other.log_probs.shape[0],
-                            other.log_probs.shape[1],
-                        ),
-                        fill_value=0,
-                        dtype=torch.float,
-                        device=other.log_probs.device,
-                    ),
-                ),
-                dim=0,
-            )
+        new_max_length = max(self.log_probs.shape[0], other.log_probs.shape[0])
+        self.log_probs = self.extend_log_probs(self.log_probs, new_max_length)
+        other.log_probs = self.extend_log_probs(other.log_probs, new_max_length)
 
         self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
 
