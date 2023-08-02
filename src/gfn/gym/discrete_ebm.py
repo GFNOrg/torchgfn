@@ -158,7 +158,7 @@ class DiscreteEBM(DiscreteEnv):
         self, states: States, actions: Actions
     ) -> TT["batch_shape", "state_shape", torch.float]:
         # First, we select that actions that replace a -1 with a 0.
-        # Remove singleton dimension for broadcasting. TODO: is this correct?
+        # Remove singleton dimension for broadcasting.
         mask_0 = (actions.tensor < self.ndim).squeeze(-1)
         states.tensor[mask_0] = states.tensor[mask_0].scatter(
             -1, actions.tensor[mask_0], 0  # Set indices to 0.
