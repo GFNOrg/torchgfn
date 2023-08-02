@@ -6,6 +6,7 @@ from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
     LogPartitionVarianceGFlowNet,
+    ModifiedDBGFlowNet,
     SubTBGFlowNet,
     TBGFlowNet,
 )
@@ -186,6 +187,8 @@ def PFBasedGFlowNet_with_return(
             pf=pf,
             pb=pb,
         )
+    elif gflownet_name == "ModifiedDB":
+        gflownet = ModifiedDBGFlowNet(pf=pf, pb=pb)
     elif gflownet_name == "TB":
         gflownet = TBGFlowNet(pf=pf, pb=pb)
     elif gflownet_name == "ZVar":
@@ -201,10 +204,7 @@ def PFBasedGFlowNet_with_return(
         raise ValueError(f"Unknown gflownet {gflownet_name}")
 
     trajectories = gflownet.sample_trajectories(10)
-    if gflownet_name == "DB":
-        training_objects = trajectories.to_transitions()
-    else:
-        training_objects = trajectories
+    training_objects = gflownet.to_training_samples(trajectories)
 
     _ = gflownet.loss(training_objects)
 
@@ -228,6 +228,7 @@ def PFBasedGFlowNet_with_return(
     ("gflownet_name", "sub_tb_weighting"),
     [
         ("DB", None),
+        ("ModifiedDB", None),
         ("TB", None),
         ("ZVar", None),
         ("SubTB", "DB"),
@@ -255,6 +256,8 @@ def test_PFBasedGFlowNet(
 ):
     if env_name == "Box" and module_name == "Tabular":
         pytest.skip("Tabular module impossible for Box")
+    if env_name != "HyperGrid" and gflownet_name == "ModifiedDB":
+        pytest.skip("ModifiedDB not implemented for DiscreteEBM or Box")
 
     env, pf, pb, logF, gflownet = PFBasedGFlowNet_with_return(
         env_name,

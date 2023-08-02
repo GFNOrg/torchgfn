@@ -1,4 +1,4 @@
-from typing import Tuple, List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 from torchtyping import TensorType as TT
