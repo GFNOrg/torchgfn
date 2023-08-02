@@ -129,7 +129,8 @@ class DBGFlowNet(PFBasedGFlowNet):
 
 
 class ModifiedDBGFlowNet(PFBasedGFlowNet):
-    r"""The Modified Detailed Balance GFlowNet.
+    r"""The Modified Detailed Balance GFlowNet. Only applicable to environments where
+    all states are terminating.
 
     See Bayesian Structure Learning with Generative Flow Networks
     https://arxiv.org/abs/2202.13903 for more details.
@@ -144,31 +145,35 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet):
         """
         if transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
+
         mask = ~transitions.next_states.is_sink_state
         states = transitions.states[mask]
         valid_next_states = transitions.next_states[mask]
         actions = transitions.actions[mask]
         all_log_rewards = transitions.all_log_rewards[mask]
-
-        valid_pf_logits = self.actions_sampler.get_logits(states)
-        valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
-        valid_log_pf_actions = torch.gather(
-            valid_log_pf_all, dim=-1, index=actions.unsqueeze(-1)
-        ).squeeze(-1)
-        valid_log_pf_s_exit = valid_log_pf_all[:, -1]
+        module_output = self.pf(states)
+        if self.on_policy:
+            valid_log_pf_actions = transitions[mask].log_probs
+        else:
+            valid_log_pf_actions = self.pf.to_probability_distribution(
+                states, module_output
+            ).log_prob(actions.tensor)
+        valid_log_pf_s_exit = self.pf.to_probability_distribution(
+            states, module_output
+        ).log_prob(torch.full_like(actions.tensor, actions.__class__.exit_action[0]))
 
         # The following two lines are slightly inefficient, given that most
         # next_states are also states, for which we already did a forward pass.
-        valid_log_pf_s_prime_all = self.actions_sampler.get_logits(
-            valid_next_states
-        ).log_softmax(dim=-1)
-        valid_log_pf_s_prime_exit = valid_log_pf_s_prime_all[:, -1]
+        module_output = self.pf(valid_next_states)
+        valid_log_pf_s_prime_exit = self.pf.to_probability_distribution(
+            valid_next_states, module_output
+        ).log_prob(torch.full_like(actions.tensor, actions.__class__.exit_action[0]))
 
-        valid_pb_logits = self.backward_actions_sampler.get_logits(valid_next_states)
-        valid_log_pb_all = valid_pb_logits.log_softmax(dim=-1)
-        valid_log_pb_actions = torch.gather(
-            valid_log_pb_all, dim=-1, index=actions.unsqueeze(-1)
-        ).squeeze(-1)
+        non_exit_actions = actions[~actions.is_exit]
+        module_output = self.pb(valid_next_states)
+        valid_log_pb_actions = self.pb.to_probability_distribution(
+            valid_next_states, module_output
+        ).log_prob(non_exit_actions.tensor)
 
         preds = all_log_rewards[:, 0] + valid_log_pf_actions + valid_log_pf_s_prime_exit
         targets = all_log_rewards[:, 1] + valid_log_pb_actions + valid_log_pf_s_exit
