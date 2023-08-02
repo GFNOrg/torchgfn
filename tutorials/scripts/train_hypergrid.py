@@ -3,8 +3,8 @@ The goal of this script is to reproduce some of the published results on the Hyp
 environment. Run one of the following commands to reproduce some of the results in
 [Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259)
 
-python train_hypergrid.py --ndim 4 --height 8 --R0 {0.1, 0.01, 0.001} --tied {--uniform} --loss {TB, DB}
-python train_hypergrid.py --ndim 2 --height 64 --R0 {0.1, 0.01, 0.001} --tied {--uniform} --loss {TB, DB}
+python train_hypergrid.py --ndim 4 --height 8 --R0 {0.1, 0.01, 0.001} --tied {--uniform_pb} --loss {TB, DB}
+python train_hypergrid.py --ndim 2 --height 64 --R0 {0.1, 0.01, 0.001} --tied {--uniform_pb} --loss {TB, DB}
 
 And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
