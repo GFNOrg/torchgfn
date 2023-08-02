@@ -70,7 +70,6 @@ class DBGFlowNet(PFBasedGFlowNet):
                 states, module_output
             ).log_prob(actions.tensor)
 
-        # TODO: what is the analogous RL operation for FL-GFN?
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
             log_rewards = self.env.log_reward(states)  # RM unsqueeze(-1)
