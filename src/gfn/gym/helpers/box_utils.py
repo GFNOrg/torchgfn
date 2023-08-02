@@ -318,8 +318,7 @@ class QuarterCircleWithExit(Distribution):
         )
         self.exit_probability = exit_probability
         self.exit_action = torch.FloatTensor(
-            [-float("inf"), -float("inf")], device=centers.device
-        )
+            [-float("inf"), -float("inf")]).to(centers.device)
 
     def sample(self, sample_shape=()):
         actions = self.dist_without_exit.sample(sample_shape)
@@ -402,7 +401,9 @@ class DistributionWrapper(Distribution):
             )  # no sample_shape req as it is stored in centers.
 
     def sample(self, sample_shape=()):
-        output = torch.zeros(sample_shape + self._output_shape)
+        output = torch.zeros(sample_shape + self._output_shape).to(
+            self.idx_is_initial.device
+        )
 
         n_disk_samples = len(self.idx_is_initial)
         if n_disk_samples > 0:
@@ -422,7 +423,9 @@ class DistributionWrapper(Distribution):
         return output
 
     def log_prob(self, sampled_actions):
-        log_prob = torch.zeros(sampled_actions.shape[:-1])
+        log_prob = torch.zeros(sampled_actions.shape[:-1]).to(
+            self.idx_is_initial.device
+        )
         n_disk_samples = len(self.idx_is_initial)
         if n_disk_samples > 0:
             assert self.quarter_disk is not None
@@ -494,7 +497,9 @@ class BoxPFNeuralNet(NeuralNet):
         # TODO: this only works with linear batches (i.e. batch_shape is an int), change it by using something else than B
         B, _ = preprocessed_states.shape
         # The desired output shape is [B, 1 + 5 * n_components_max], let's create the tensor
-        desired_out = torch.zeros(B, 1 + 5 * self._n_comp_max)
+        desired_out = torch.zeros(B, 1 + 5 * self._n_comp_max).to(
+            preprocessed_states.device
+        )
 
         # First calculate network outputs for all states
         out = super().forward(
