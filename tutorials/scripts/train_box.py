@@ -45,7 +45,8 @@ def sample_from_reward(env: Box, n_samples: int):
     while len(samples) < n_samples:
         sample = env.reset(batch_shape=(n_samples,), random=True)
         rewards = env.reward(sample)
-        mask = torch.rand(n_samples) * (env.R0 + max(env.R1, env.R2)) < rewards
+        rand_n = torch.rand(n_samples).to(env.device)
+        mask = rand_n * (env.R0 + max(env.R1, env.R2)) < rewards
         true_samples = sample[mask]
         samples.extend(true_samples[-(n_samples - len(samples)) :].tensor.cpu().numpy())
     return np.array(samples)
