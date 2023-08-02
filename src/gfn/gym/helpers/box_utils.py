@@ -391,8 +391,8 @@ class DistributionWrapper(Distribution):
                 centers=states[self.idx_not_initial],  # Remove initial states.
                 exit_probability=exit_probability[self.idx_not_initial],
                 mixture_logits=mixture_logits[self.idx_not_initial, :n_components],
-                alpha=alpha_theta[self.idx_not_initial, :n_components],  # TODO: verify.
-                beta=beta_theta[self.idx_not_initial, :n_components],  # TODO: verify
+                alpha=alpha_theta[self.idx_not_initial, :n_components],
+                beta=beta_theta[self.idx_not_initial, :n_components],
                 epsilon=self.env.epsilon,
             )  # no sample_shape req as it is stored in centers.
 
