@@ -68,8 +68,6 @@ class FMGFlowNet(GFlowNet):
         )
 
         for action_idx in range(self.env.n_actions - 1):
-            # TODO: can this be done in a vectorized way? Maybe by "repeating" the
-            # states and creating a big actions tensor?
             valid_backward_mask = states.backward_masks[:, action_idx]
             valid_forward_mask = states.forward_masks[:, action_idx]
             valid_backward_states = states[valid_backward_mask]
