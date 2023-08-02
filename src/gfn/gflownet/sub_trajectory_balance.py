@@ -190,7 +190,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             flattening_masks,
         )
 
-    # TODO: Ensure all weighting function are tested.
     def loss(self, trajectories: Trajectories) -> TT[0, float]:
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(trajectories)
