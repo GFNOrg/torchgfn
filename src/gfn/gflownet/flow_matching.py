@@ -111,7 +111,6 @@ class FMGFlowNet(GFlowNet):
         log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
-    # TODO: should intermediary_states and terminating_states be two input args?
     def loss(self, states_tuple: Tuple[DiscreteStates, DiscreteStates]) -> TT[0, float]:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
