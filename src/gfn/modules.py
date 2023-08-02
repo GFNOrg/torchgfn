@@ -39,7 +39,7 @@ class GFNModule(ABC, nn.Module):
             `gfn.utils.modules`), then the environment preprocessor needs to be an
             `EnumPreprocessor`.
         preprocessor: Preprocessor from the environment.
-        output_dim_is_checked: Flag for tracking whether the output dimenions of
+        _output_dim_is_checked: Flag for tracking whether the output dimenions of
             the states (after being preprocessed and transformed by the modules) have
             been verified.
     """
@@ -56,13 +56,13 @@ class GFNModule(ABC, nn.Module):
         self.env = env
         self.module = module
         self.preprocessor = env.preprocessor  # TODO: passed explicitly?
-        self.output_dim_is_checked = False  # TODO: private?
+        self._output_dim_is_checked = False
 
     def forward(self, states: States) -> TT["batch_shape", "output_dim", float]:
         out = self.module(self.preprocessor(states))
-        if not self.output_dim_is_checked:
+        if not self._output_dim_is_checked:
             self.check_output_dim(out)
-            self.output_dim_is_checked = True
+            self._output_dim_is_checked = True
 
         return out
 
