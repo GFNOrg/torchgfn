@@ -29,7 +29,6 @@ from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 @pytest.mark.parametrize("ndim", [2, 3])
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 def test_FM(env_name: int, ndim: int, module_name: str):
-    # TODO: once the flow matching loss implemented, add a test for it here, as done for the other gflownets
     if env_name == "HyperGrid":
         env = HyperGrid(
             ndim=ndim, preprocessor_name="Enum" if module_name == "Tabular" else "KHot"

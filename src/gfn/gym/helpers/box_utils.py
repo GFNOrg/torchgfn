@@ -1,5 +1,4 @@
 """This file contains utilitary functions for the Box environment."""
-# TODO: add type annotations everywhere
 from typing import Literal, Optional, Tuple
 
 import numpy as np
