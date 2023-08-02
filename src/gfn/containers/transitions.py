@@ -3,46 +3,65 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 import torch
-from torchtyping import TensorType
+from torchtyping import TensorType as TT
 
 if TYPE_CHECKING:
-    from gfn.envs import Env
-    from gfn.containers.states import States
+    from gfn.actions import Actions
+    from gfn.env import Env
+    from gfn.states import States
 
 from gfn.containers.base import Container
 
-# Typing  -- n_transitions is either int or Tuple[int]
-LongTensor = TensorType["n_transitions", torch.long]
-BoolTensor = TensorType["n_transitions", torch.bool]
-FloatTensor = TensorType["n_transitions", torch.float]
-PairFloatTensor = TensorType["n_transitions", 2, torch.float]
-
 
 class Transitions(Container):
+    """Container for the transitions.
+
+    Attributes:
+        env: environment.
+        is_backward: Whether the transitions are backward transitions (i.e.
+            `next_states` is the parent of states).
+        states: States object with uni-dimensional `batch_shape`, representing the
+            parents of the transitions.
+        actions: Actions chosen at the parents of each transitions.
+        is_done: Whether the action is the exit action.
+        next_states: States object with uni-dimensional `batch_shape`, representing
+            the children of the transitions.
+        log_probs: The log-probabilities of the actions.
+    """
+
     def __init__(
         self,
         env: Env,
         states: States | None = None,
-        actions: LongTensor | None = None,
-        is_done: BoolTensor | None = None,
+        actions: Actions | None = None,
+        is_done: TT["n_transitions", torch.bool] | None = None,
         next_states: States | None = None,
         is_backward: bool = False,
-        log_rewards: FloatTensor | None = None,
-        log_probs: FloatTensor | None = None,
+        log_rewards: TT["n_transitions", torch.float] | None = None,
+        log_probs: TT["n_transitions", torch.float] | None = None,
     ):
-        """Container for transitions.
+        """Instantiates a container for transitions.
+
+        When states and next_states are not None, the Transitions is an empty container
+        that can be populated on the go.
 
         Args:
-            env (Env): Environment
-            states (States, optional): States object with uni-dimensional batch_shape, representing the parents of the transitions. Defaults to None.
-            actions (LongTensor, optional): Actions chosen at the parents of each transitions. Defaults to None.
-            is_done (BoolTensor, optional): Whether the action is the exit action. Defaults to None.
-            next_states (States, optional): States object with uni-dimensional batch_shape, representing the children of the transitions. Defaults to None.
-            is_backward (bool, optional): Whether the transitions are backward transitions (i.e. next_states is the parent of states). Defaults to False.
-            log_rewards (FloatTensor1D, optional): The log-rewards of the transitions (using a default value like -1 for non-terminating transitions). Defaults to None.
-            log_probs (FloatTensor1D, optional): The log-probabilities of the actions. Defaults to None.
+            env: Environment
+            states: States object with uni-dimensional `batch_shape`, representing the
+                parents of the transitions.
+            actions: Actions chosen at the parents of each transitions.
+            is_done: Whether the action is the exit action.
+            next_states: States object with uni-dimensional `batch_shape`, representing
+                the children of the transitions.
+            is_backward: Whether the transitions are backward transitions (i.e.
+                `next_states` is the parent of states).
+            log_rewards: The log-rewards of the transitions (using a default value like
+                `-float('inf')` for non-terminating transitions).
+            log_probs: The log-probabilities of the actions.
 
-        When states and next_states are not None, the Transitions is an empty container that can be populated on the go.
+        Raises:
+            AssertionError: If states and next_states do not have matching
+                `batch_shapes`.
         """
         self.env = env
         self.is_backward = is_backward
@@ -52,10 +71,11 @@ class Transitions(Container):
             else env.States.from_batch_shape(batch_shape=(0,))
         )
         assert len(self.states.batch_shape) == 1
+
         self.actions = (
             actions
             if actions is not None
-            else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
+            else env.Actions.make_dummy_actions(batch_shape=(0,))
         )
         self.is_done = (
             is_done
@@ -71,9 +91,7 @@ class Transitions(Container):
             len(self.next_states.batch_shape) == 1
             and self.states.batch_shape == self.next_states.batch_shape
         )
-
         self._log_rewards = log_rewards
-
         self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
 
     @property
@@ -84,8 +102,8 @@ class Transitions(Container):
         return self.n_transitions
 
     def __repr__(self):
-        states_tensor = self.states.states_tensor
-        next_states_tensor = self.next_states.states_tensor
+        states_tensor = self.states.tensor
+        next_states_tensor = self.next_states.tensor
 
         states_repr = ",\t".join(
             [
@@ -105,7 +123,7 @@ class Transitions(Container):
         return self.states[self.is_done]
 
     @property
-    def log_rewards(self) -> FloatTensor | None:
+    def log_rewards(self) -> TT["n_transitions", torch.float] | None:
         if self._log_rewards is not None:
             return self._log_rewards
         if self.is_backward:
@@ -113,7 +131,7 @@ class Transitions(Container):
         else:
             log_rewards = torch.full(
                 (self.n_transitions,),
-                fill_value=-1.0,
+                fill_value=-float("inf"),
                 dtype=torch.float,
                 device=self.states.device,
             )
@@ -123,17 +141,25 @@ class Transitions(Container):
                 log_rewards[self.is_done] = torch.log(self.env.reward(self.last_states))
             return log_rewards
 
+    # TODO: seems to be only useful for Modified Detailed Balance loss - might be useful
+    # to consider this in a future refactor.
     @property
-    def all_log_rewards(self) -> PairFloatTensor:
-        """This is applicable to environments where all states are terminating.
-        This function evaluates the rewards for all transitions that do not end in the sink state.
-        This is useful for the Modified Detailed Balance loss."""
+    def all_log_rewards(self) -> TT["n_transitions", 2, torch.float]:
+        """Calculate all log rewards for the transitions.
+
+        This is applicable to environments where all states are terminating. This
+        function evaluates the rewards for all transitions that do not end in the sink
+        state. This is useful for the Modified Detailed Balance loss.
+
+        Raises:
+            NotImplementedError: when used for backward transitions.
+        """
         if self.is_backward:
             raise NotImplementedError("Not implemented for backward transitions")
         is_sink_state = self.next_states.is_sink_state
         log_rewards = torch.full(
             (self.n_transitions, 2),
-            fill_value=-1.0,
+            fill_value=-float("inf"),
             dtype=torch.float,
             device=self.states.device,
         )
@@ -154,7 +180,7 @@ class Transitions(Container):
         return log_rewards
 
     def __getitem__(self, index: int | Sequence[int]) -> Transitions:
-        "Access particular transitions of the batch."
+        """Access particular transitions of the batch."""
         if isinstance(index, int):
             index = [index]
         states = self.states[index]
@@ -177,9 +203,9 @@ class Transitions(Container):
         )
 
     def extend(self, other: Transitions) -> None:
-        "Extend the Transitions object with another Transitions object."
+        """Extend the Transitions object with another Transitions object."""
         self.states.extend(other.states)
-        self.actions = torch.cat((self.actions, other.actions), dim=0)
+        self.actions.extend(other.actions)
         self.is_done = torch.cat((self.is_done, other.is_done), dim=0)
         self.next_states.extend(other.next_states)
         if self._log_rewards is not None and other._log_rewards is not None:
