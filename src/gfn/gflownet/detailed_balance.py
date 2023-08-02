@@ -152,15 +152,14 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet):
         actions = transitions.actions[mask]
         all_log_rewards = transitions.all_log_rewards[mask]
         module_output = self.pf(states)
+        pf_dist = self.pf.to_probability_distribution(states, module_output)
         if self.on_policy:
             valid_log_pf_actions = transitions[mask].log_probs
         else:
-            valid_log_pf_actions = self.pf.to_probability_distribution(
-                states, module_output
-            ).log_prob(actions.tensor)
-        valid_log_pf_s_exit = self.pf.to_probability_distribution(
-            states, module_output
-        ).log_prob(torch.full_like(actions.tensor, actions.__class__.exit_action[0]))
+            valid_log_pf_actions = pf_dist.log_prob(actions.tensor)
+        valid_log_pf_s_exit = pf_dist.log_prob(
+            torch.full_like(actions.tensor, actions.__class__.exit_action[0])
+        )
 
         # The following two lines are slightly inefficient, given that most
         # next_states are also states, for which we already did a forward pass.

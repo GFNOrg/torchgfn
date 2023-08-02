@@ -283,7 +283,7 @@ if __name__ == "__main__":  # noqa: C901
     if args.replay_buffer_size > 0:
         if args.loss in ("TB", "SubTB", "ZVar"):
             objects_type = "trajectories"
-        elif args.loss == "DB":
+        elif args.loss in ("DB", "ModifiedDB"):
             objects_type = "transitions"
         elif args.loss == "FM":
             objects_type = "states"
