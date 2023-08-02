@@ -247,7 +247,7 @@ class States(ABC):
         """Return a tensor that is True for states that are $s_f$ of the DAG."""
         sink_states = self.__class__.sf.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.state_shape))
-        )
+        ).to(self.tensor.device)
         return self.compare(sink_states)
 
     @property
