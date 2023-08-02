@@ -33,7 +33,7 @@ class DBGFlowNet(PFBasedGFlowNet):
     ):
         super().__init__(**kwargs)
         self.logF = logF
-        self.forward_looking = forward_looking  # TODO: do I need this here?
+        self.forward_looking = forward_looking
         self.env = self.logF.env  # TODO We don't want to store env in here...
 
     def get_scores(

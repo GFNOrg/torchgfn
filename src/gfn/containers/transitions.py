@@ -141,8 +141,6 @@ class Transitions(Container):
                 log_rewards[self.is_done] = torch.log(self.env.reward(self.last_states))
             return log_rewards
 
-    # TODO: seems to be only useful for Modified Detailed Balance loss - might be useful
-    # to consider this in a future refactor.
     @property
     def all_log_rewards(self) -> TT["n_transitions", 2, torch.float]:
         """Calculate all log rewards for the transitions.
