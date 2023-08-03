@@ -52,6 +52,7 @@ class Env(ABC):
             preprocessor = IdentityPreprocessor(output_dim=output_dim)
 
         self.preprocessor = preprocessor
+        self.is_discrete = False
 
     @abstractmethod
     def make_States_class(self) -> type[States]:
@@ -157,9 +158,6 @@ class Env(ABC):
 
         new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
 
-        if isinstance(new_states, DiscreteStates):  # TODO: move this to DiscreteEnv ?
-            new_states.update_masks()  # TODO: probably use `not_done_actions` (and `not_done_states` `~new_sink_states` ?) as input to update_masks
-            # TODO: or `locals()`
         return new_states
 
     def backward_step(
@@ -230,6 +228,7 @@ class DiscreteEnv(Env, ABC):
         """
         self.n_actions = n_actions
         super().__init__(s0, sf, device_str, preprocessor)
+        self.is_discrete = True
 
     def make_Actions_class(self) -> type[Actions]:
         env = self
@@ -248,6 +247,15 @@ class DiscreteEnv(Env, ABC):
         assert states.forward_masks is not None and states.backward_masks is not None
         masks_tensor = states.backward_masks if backward else states.forward_masks
         return torch.gather(masks_tensor, 1, actions.tensor).all()
+
+    def step(
+        self,
+        states: DiscreteStates,
+        actions: Actions,
+    ) -> States:
+        new_states = super().step(states, actions)
+        new_states.update_masks()
+        return new_states
 
     def get_states_indices(
         self, states: DiscreteStates

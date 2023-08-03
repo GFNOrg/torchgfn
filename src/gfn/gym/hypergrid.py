@@ -135,7 +135,11 @@ class HyperGrid(DiscreteEnv):
     def true_reward(
         self, final_states: DiscreteStates
     ) -> TT["batch_shape", torch.float]:
-        """TODO: Equation governing reward should be placed here."""
+        r"""In the normal setting, the reward is:
+        R(s) = R_0 + 0.5 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1}
+          - 0.5 \right\rvert \in (0.25, 0.5] \right)
+          + 2 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1} - 0.5 \right\rvert \in (0.3, 0.4) \right)
+        """
         final_states_raw = final_states.tensor
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states_raw / (self.height - 1) - 0.5)

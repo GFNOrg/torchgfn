@@ -92,7 +92,6 @@ class Actions(ABC):
         return cls(actions_tensor)
 
     def extend(self, other: Actions) -> None:
-        # TODO: generalize?
         """Collates to another Actions object of the same batch shape."""
         if len(self.batch_shape) == len(other.batch_shape) == 1:
             self.batch_shape = (self.batch_shape[0] + other.batch_shape[0],)

@@ -28,12 +28,15 @@ class FMGFlowNet(GFlowNet):
 
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
         super().__init__()
-        # TODO: THIS ONLY WORKS FOR DISCRETE ENVIRONMENTS.
         assert not logF.greedy_eps
 
         self.logF = logF
         self.alpha = alpha
         self.env = self.logF.env
+        if not self.env.is_discrete:
+            raise NotImplementedError(
+                "Flow Matching GFlowNet only supports discrete environments for now."
+            )
 
     def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
         sampler = Sampler(estimator=self.logF)
@@ -65,8 +68,6 @@ class FMGFlowNet(GFlowNet):
         )
 
         for action_idx in range(self.env.n_actions - 1):
-            # TODO: can this be done in a vectorized way? Maybe by "repeating" the
-            # states and creating a big actions tensor?
             valid_backward_mask = states.backward_masks[:, action_idx]
             valid_forward_mask = states.forward_masks[:, action_idx]
             valid_backward_states = states[valid_backward_mask]
@@ -110,7 +111,6 @@ class FMGFlowNet(GFlowNet):
         log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
-    # TODO: should intermediary_states and terminating_states be two input args?
     def loss(self, states_tuple: Tuple[DiscreteStates, DiscreteStates]) -> TT[0, float]:
         """Given a batch of non-terminal and terminal states, compute a loss.
 

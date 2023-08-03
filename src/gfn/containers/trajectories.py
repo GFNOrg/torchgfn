@@ -165,6 +165,30 @@ class Trajectories(Container):
             log_probs=log_probs,
         )
 
+    @staticmethod
+    def extend_log_probs(
+        log_probs: TT["max_length", "n_trajectories", torch.float], new_max_length: int
+    ) -> TT["max_max_length", "n_trajectories", torch.float]:
+        """Extend the log_probs matrix by adding 0 until the required length is reached."""
+        if log_probs.shape[0] >= new_max_length:
+            return log_probs
+        else:
+            return torch.cat(
+                (
+                    log_probs,
+                    torch.full(
+                        size=(
+                            new_max_length - log_probs.shape[0],
+                            log_probs.shape[1],
+                        ),
+                        fill_value=0,
+                        dtype=torch.float,
+                        device=log_probs.device,
+                    ),
+                ),
+                dim=0,
+            )
+
     def extend(self, other: Trajectories) -> None:
         """Extend the trajectories with another set of trajectories.
 
@@ -181,40 +205,9 @@ class Trajectories(Container):
 
         # For log_probs, we first need to make the first dimensions of self.log_probs and other.log_probs equal
         # (i.e. the number of steps in the trajectories), and then concatenate them
-
-        # TODO: the following if/elif can be factorized in a function
-        if self.log_probs.shape[0] < other.log_probs.shape[0]:
-            self.log_probs = torch.cat(
-                (
-                    self.log_probs,
-                    torch.full(
-                        size=(
-                            other.log_probs.shape[0] - self.log_probs.shape[0],
-                            self.log_probs.shape[1],
-                        ),
-                        fill_value=0,
-                        dtype=torch.float,
-                        device=self.log_probs.device,
-                    ),
-                ),
-                dim=0,
-            )
-        elif self.log_probs.shape[0] > other.log_probs.shape[0]:
-            other.log_probs = torch.cat(
-                (
-                    other.log_probs,
-                    torch.full(
-                        size=(
-                            self.log_probs.shape[0] - other.log_probs.shape[0],
-                            other.log_probs.shape[1],
-                        ),
-                        fill_value=0,
-                        dtype=torch.float,
-                        device=other.log_probs.device,
-                    ),
-                ),
-                dim=0,
-            )
+        new_max_length = max(self.log_probs.shape[0], other.log_probs.shape[0])
+        self.log_probs = self.extend_log_probs(self.log_probs, new_max_length)
+        other.log_probs = self.extend_log_probs(other.log_probs, new_max_length)
 
         self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
 
@@ -225,60 +218,8 @@ class Trajectories(Container):
         else:
             self._log_rewards = None
 
-    @staticmethod
-    def revert_backward_trajectories(trajectories: Trajectories) -> Trajectories:
-        """Reverses a trajectory, but not compatible with continuous GFN. Remove."""
-        # TODO: this isn't used anywhere - it doesn't work as it assumes that the
-        # actions are ints. Do we need it?
-        assert trajectories.is_backward
-        new_actions = torch.full_like(trajectories.actions, -1)
-        new_actions = torch.cat(
-            [new_actions, torch.full((1, len(trajectories)), -1)], dim=0
-        )
-
-        # env.sf should never be None unless something went wrong during class
-        # instantiation.
-        if trajectories.env.sf is None:
-            raise AttributeError(
-                "Something went wrong during the instantiation of environment {}".format(
-                    trajectories.env
-                )
-            )
-
-        new_states = trajectories.env.sf.repeat(
-            trajectories.when_is_done.max() + 1, len(trajectories), 1
-        )
-        new_when_is_done = trajectories.when_is_done + 1
-
-        for i in range(len(trajectories)):
-            new_actions[trajectories.when_is_done[i], i] = (
-                trajectories.env.n_actions - 1
-            )
-
-            new_actions[: trajectories.when_is_done[i], i] = trajectories.actions[
-                : trajectories.when_is_done[i], i
-            ].flip(0)
-
-            new_states[
-                : trajectories.when_is_done[i] + 1, i
-            ] = trajectories.states.tensor[: trajectories.when_is_done[i] + 1, i].flip(
-                0
-            )
-
-        new_states = trajectories.env.States(new_states)
-
-        return Trajectories(
-            env=trajectories.env,
-            states=new_states,
-            actions=new_actions,
-            log_probs=trajectories.log_probs,
-            when_is_done=new_when_is_done,
-            is_backward=False,
-        )
-
     def to_transitions(self) -> Transitions:
         """Returns a `Transitions` object from the trajectories."""
-        # TODO: we need tests for this method
         states = self.states[:-1][~self.actions.is_dummy]
         next_states = self.states[1:][~self.actions.is_dummy]
         actions = self.actions[~self.actions.is_dummy]
@@ -320,12 +261,12 @@ class Trajectories(Container):
         states = self.states.flatten()
         return states[~states.is_sink_state]
 
-    # TODO: this is a very weird method. I wonder why we need it? Would be helpful
-    # to have an example.
     def to_non_initial_intermediary_and_terminating_states(
         self,
     ) -> tuple[States, States]:
-        """Returns all intermediate and terminiating `States` from the trajectories.
+        """Returns all intermediate and terminating `States` from the trajectories.
+
+        This is useful for the flow matching loss, that requires its inputs to be distinguished.
 
         Returns: a tuple containing all the intermediary states in the trajectories
             that are not s0, and all the terminating states in the trajectories that

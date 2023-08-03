@@ -26,7 +26,7 @@ class ReplayBuffer:
     def __init__(
         self,
         env: Env,
-        objects_type: Literal["transitions", "trajectories", "states"] | None = None,
+        objects_type: Literal["transitions", "trajectories", "states"],
         capacity: int = 1000,
     ):
         """Instantiates a replay buffer.

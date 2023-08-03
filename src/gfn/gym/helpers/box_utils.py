@@ -1,5 +1,4 @@
 """This file contains utilitary functions for the Box environment."""
-# TODO: add type annotations everywhere
 from typing import Literal, Optional, Tuple
 
 import numpy as np
@@ -372,12 +371,8 @@ class DistributionWrapper(Distribution):
         n_components_s0,
     ):
         self.env = env
-        self.idx_is_initial = torch.where(torch.all(states.tensor == 0, 1))[
-            0
-        ]  # TODO: states.is_initial
-        self.idx_not_initial = torch.where(torch.any(states.tensor != 0, 1))[
-            0
-        ]  # TODO: ~states.is_initial
+        self.idx_is_initial = torch.where(torch.all(states.tensor == 0, 1))[0]
+        self.idx_not_initial = torch.where(torch.any(states.tensor != 0, 1))[0]
         self._output_shape = states.tensor.shape
         self.quarter_disk = None
         if len(self.idx_is_initial) > 0:
@@ -396,8 +391,8 @@ class DistributionWrapper(Distribution):
                 centers=states[self.idx_not_initial],  # Remove initial states.
                 exit_probability=exit_probability[self.idx_not_initial],
                 mixture_logits=mixture_logits[self.idx_not_initial, :n_components],
-                alpha=alpha_theta[self.idx_not_initial, :n_components],  # TODO: verify.
-                beta=beta_theta[self.idx_not_initial, :n_components],  # TODO: verify
+                alpha=alpha_theta[self.idx_not_initial, :n_components],
+                beta=beta_theta[self.idx_not_initial, :n_components],
                 epsilon=self.env.epsilon,
             )  # no sample_shape req as it is stored in centers.
 
@@ -495,7 +490,10 @@ class BoxPFNeuralNet(NeuralNet):
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
     ) -> TT["batch_shape", "1 + 5 * n_components"]:
-        # TODO: this only works with linear batches (i.e. batch_shape is an int), change it by using something else than B
+        if preprocessed_states.ndim != 2:
+            raise ValueError(
+                f"preprocessed_states should be of shape [B, 2], got {preprocessed_states.shape}"
+            )
         B, _ = preprocessed_states.shape
         # The desired output shape is [B, 1 + 5 * n_components_max], let's create the tensor
         desired_out = torch.zeros(B, 1 + 5 * self._n_comp_max).to(

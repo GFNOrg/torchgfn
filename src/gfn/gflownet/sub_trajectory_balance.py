@@ -88,12 +88,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             dim=0,
         )
 
-    # TODO: This is a long function, worth trying to simplify.
     def get_scores(
         self, trajectories: Trajectories
-    ) -> Tuple[
-        List[TT[-1, float]], List[TT[-1, float]]
-    ]:  # TODO: why -1 here? Is it equivilant to 0?
+    ) -> Tuple[List[TT[0, float]], List[TT[0, float]]]:
         """Scores all submitted trajectories.
 
         Returns:
@@ -124,7 +121,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         mask = ~states.is_sink_state
         valid_states = states[mask]
 
-        # TODO: what is the analogous RL operation for FL-GFN?
         log_F = self.logF(valid_states).squeeze(-1)
         if self.forward_looking:
             log_rewards = self.logF.env.log_reward(states).unsqueeze(-1)
@@ -192,11 +188,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             flattening_masks,
         )
 
-    # TODO: inspect whether there exists code which can be factored out in the below
-    # if-else block statements, or whether it makes sense to move each method to it's
-    # own private method of this class, or even an external function which is called.
-    # TODO: This is a long function, can it be simplified?
-    # TODO: Ensure all weighting function are tested.
     def loss(self, trajectories: Trajectories) -> TT[0, float]:
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(trajectories)

@@ -131,7 +131,6 @@ class States(ABC):
 
     def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> States:
         """Access particular states of the batch."""
-        # TODO: add more tests for this method
         return self.__class__(self.tensor[index])
 
     def __setitem__(
@@ -167,7 +166,6 @@ class States(ABC):
             self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
 
-        # TODO: Generalize to n-dimensional batch_shapes > 1.
         elif len(other_batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
             self.extend_with_sf(
@@ -197,8 +195,6 @@ class States(ABC):
         Args:
             required_first_dim: The size of the first batch dimension post-expansion.
         """
-        # TODO: handle when required_first_dim < self.batch_shape[0].
-        # TODO: generalize to n-dimensional batches.
         if len(self.batch_shape) == 2:
             if self.batch_shape[0] >= required_first_dim:
                 return
@@ -308,8 +304,7 @@ class DiscreteStates(States, ABC):
             self.backward_masks = cast(torch.Tensor, backward_masks)
 
     @abstractmethod
-    def update_masks(self) -> None:  # TODO: why doesn't it take `states` as input ?
-        # TODO: use the previous mask + action in order to get the new mask (for DAG-GFN environment)
+    def update_masks(self) -> None:
         """Updates the masks, called after each action is taken."""
         pass
 
@@ -349,7 +344,6 @@ class DiscreteStates(States, ABC):
             (self.backward_masks, other.backward_masks), dim=len(self.batch_shape) - 1
         )
 
-    # TODO: rename to extend_masks_with_sf?
     def extend_with_sf(self, required_first_dim: int) -> None:
         """Extends forward and backward masks along the first batch dimension.
 

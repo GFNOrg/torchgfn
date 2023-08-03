@@ -65,7 +65,6 @@ class PFBasedGFlowNet(GFlowNet):
         return trajectories
 
 
-# TODO: Add "EdgeBasedGFlowNet" and "StateBasedGFlowNet".
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
     def get_pfs_and_pbs(
         self,

@@ -33,7 +33,7 @@ class DBGFlowNet(PFBasedGFlowNet):
     ):
         super().__init__(**kwargs)
         self.logF = logF
-        self.forward_looking = forward_looking  # TODO: do I need this here?
+        self.forward_looking = forward_looking
         self.env = self.logF.env  # TODO We don't want to store env in here...
 
     def get_scores(
@@ -70,7 +70,6 @@ class DBGFlowNet(PFBasedGFlowNet):
                 states, module_output
             ).log_prob(actions.tensor)
 
-        # TODO: what is the analogous RL operation for FL-GFN?
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
             log_rewards = self.env.log_reward(states)  # RM unsqueeze(-1)
