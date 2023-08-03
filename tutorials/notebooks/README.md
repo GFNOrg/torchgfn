@@ -1,1 +1,3 @@
-# Learning how to use `gfn` with notebooks
+# Learning how to use `torchgfn` with notebooks
+
+Coming soon
