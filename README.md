@@ -199,4 +199,4 @@ Currently, the implemented losses are:
 - Log Partition Variance loss. Introduced [here](https://arxiv.org/abs/2302.05446)
 
 # Scripts
-Example scripts are provided [here](https://github.com/saleml/torchgfn/tree/master/tutorials/scripts/). They can be used to reproduce published results in the HyperGrid environment, and the Box environment.
+Example scripts are provided [here](https://github.com/saleml/torchgfn/tree/master/tutorials/examples/). They can be used to reproduce published results in the HyperGrid environment, and the Box environment.
