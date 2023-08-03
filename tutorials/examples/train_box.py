@@ -1,4 +1,4 @@
-"""
+r"""
 The goal of this script is to reproduce some of the published results on the Box
 environment. Run one of the following commands to reproduce some of the results in
 [A theory of continuous generative flow networks](https://arxiv.org/abs/2301.12594)
