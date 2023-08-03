@@ -1,4 +1,0 @@
-module_name: NeuralNet # choice("NeuralNet", "Tabular", "Uniform", "Zero", default="NeuralNet")
-n_hidden_layers: 2
-hidden_dim: 256
-activation_fn: relu
