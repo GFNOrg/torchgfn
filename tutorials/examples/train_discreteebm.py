@@ -1,4 +1,4 @@
-"""
+r"""
 The goal of this script is to reproduce some of the published results on the HyperGrid
 environment. Run one of the following commands to reproduce some of the results in
 [Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259)
