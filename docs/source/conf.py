@@ -9,8 +9,8 @@ import os
 import sys
 
 project = "torchgfn"
-copyright = "2022, Salem Lahlou"
-author = "Salem Lahlou"
+copyright = "2022-2023, Salem Lahlou, Joseph Viviano, & Victor Schmidt"
+author = "Salem Lahlou, Joseph Viviano, & Victor Schmidt"
 
 
 sys.path.insert(0, os.path.abspath("../.."))
@@ -27,8 +27,15 @@ extensions = [
     "autoapi.extension",
     "sphinx.ext.napoleon",
 ]
+
+source_suffix = {
+    ".rst": "restructuredtext",
+    ".txt": "restructuredtext",
+    ".md": "markdown",
+}
+
 autoapi_type = "python"
-autoapi_dirs = ["../../src/gfn"]
+autoapi_dirs = ["../../src/gfn", "../../tutorials"]
 autoapi_member_order = "alphabetical"
 
 autodoc_typehints = "description"
