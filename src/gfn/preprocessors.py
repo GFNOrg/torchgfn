@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Tuple
+from typing import Callable
 
 from torchtyping import TensorType as TT
 

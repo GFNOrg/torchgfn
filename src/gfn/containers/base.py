@@ -16,17 +16,14 @@ class Container(ABC):
     @abstractmethod
     def __len__(self) -> int:
         """Returns the number of elements in the container."""
-        pass
 
     @abstractmethod
     def __getitem__(self, index: int | Sequence[int]) -> Container:
         """Subsets the container."""
-        pass
 
     @abstractmethod
     def extend(self, other: Container) -> None:
         "Extends the current container"
-        pass
 
     def sample(self, n_samples: int) -> Container:
         """Samples a subset of the container."""

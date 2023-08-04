@@ -57,12 +57,10 @@ class Env(ABC):
     @abstractmethod
     def make_States_class(self) -> type[States]:
         """Returns a class that inherits from States and implements the environment-specific methods."""
-        pass
 
     @abstractmethod
     def make_Actions_class(self) -> type[Actions]:
         """Returns a class that inherits from Actions and implements the environment-specific methods."""
-        pass
 
     def reset(
         self,
@@ -96,7 +94,6 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
-        pass
 
     @abstractmethod
     def maskless_backward_step(
@@ -105,7 +102,6 @@ class Env(ABC):
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
-        pass
 
     @abstractmethod
     def is_action_valid(
@@ -115,7 +111,6 @@ class Env(ABC):
         backward: bool = False,
     ) -> bool:
         """Returns True if the actions are valid in the given states."""
-        pass
 
     def validate_actions(
         self, states: States, actions: Actions, backward: bool = False

@@ -73,7 +73,6 @@ class GFNModule(ABC, nn.Module):
     @abstractmethod
     def expected_output_dim(self) -> int:
         """Expected output dimension of the module."""
-        pass
 
     def check_output_dim(
         self, module_output: TT["batch_shape", "output_dim", float]

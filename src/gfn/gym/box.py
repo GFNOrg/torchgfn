@@ -1,5 +1,5 @@
 from math import log
-from typing import ClassVar, Literal, Tuple, cast
+from typing import ClassVar, Literal, Tuple
 
 import torch
 from torchtyping import TensorType as TT
