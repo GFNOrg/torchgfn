@@ -6,6 +6,7 @@ import torch.nn as nn
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
+from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
@@ -18,29 +19,35 @@ class GFlowNet(nn.Module):
     """
 
     @abstractmethod
-    def sample_trajectories(self, n_samples: int) -> Trajectories:
+    def sample_trajectories(self, env: Env, n_samples: int) -> Trajectories:
         """Sample a specific number of complete trajectories.
 
         Args:
+            env: the environment to sample trajectories from.
             n_samples: number of trajectories to be sampled.
         Returns:
             Trajectories: sampled trajectories object.
         """
 
-    def sample_terminating_states(self, n_samples: int) -> States:
+    def sample_terminating_states(self, env: Env, n_samples: int) -> States:
         """Rolls out the parametrization's policy and returns the terminating states.
 
         Args:
+            env: the environment to sample terminating states from.
             n_samples: number of terminating states to be sampled.
         Returns:
             States: sampled terminating states object.
         """
-        trajectories = self.sample_trajectories(n_samples)
+        trajectories = self.sample_trajectories(env, n_samples)
         return trajectories.last_states
 
     @abstractmethod
     def to_training_samples(self, trajectories: Trajectories):
         """Converts trajectories to training samples. The type depends on the GFlowNet."""
+
+    @abstractmethod
+    def loss(self, env: Env, training_objects):
+        """Computes the loss given the training objects."""
 
 
 class PFBasedGFlowNet(GFlowNet):
@@ -57,9 +64,9 @@ class PFBasedGFlowNet(GFlowNet):
         self.pb = pb
         self.on_policy = on_policy
 
-    def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
+    def sample_trajectories(self, env: Env, n_samples: int) -> Trajectories:
         sampler = Sampler(estimator=self.pf)
-        trajectories = sampler.sample_trajectories(n_trajectories=n_samples)
+        trajectories = sampler.sample_trajectories(env, n_trajectories=n_samples)
         return trajectories
 
 

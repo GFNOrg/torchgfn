@@ -4,8 +4,9 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
-from gfn.gflownet.base import PFBasedGFlowNet, TrajectoryBasedGFlowNet
-from gfn.modules import ScalarEstimator
+from gfn.env import Env
+from gfn.gflownet.base import TrajectoryBasedGFlowNet
+from gfn.modules import GFNModule, ScalarEstimator
 
 
 class SubTBGFlowNet(TrajectoryBasedGFlowNet):
@@ -43,7 +44,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def __init__(
         self,
+        pf: GFNModule,
+        pb: GFNModule,
         logF: ScalarEstimator,
+        on_policy: bool = False,
         weighting: Literal[
             "DB",
             "ModifiedDB",
@@ -56,9 +60,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         lamda: float = 0.9,
         log_reward_clip_min: float = -12,  # roughly log(1e-5)
         forward_looking: bool = False,
-        **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(pf, pb, on_policy=on_policy)
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda
@@ -89,7 +92,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         )
 
     def get_scores(
-        self, trajectories: Trajectories
+        self, env: Env, trajectories: Trajectories
     ) -> Tuple[List[TT[0, float]], List[TT[0, float]]]:
         """Scores all submitted trajectories.
 
@@ -123,7 +126,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         log_F = self.logF(valid_states).squeeze(-1)
         if self.forward_looking:
-            log_rewards = self.logF.env.log_reward(states).unsqueeze(-1)
+            log_rewards = env.log_reward(states).unsqueeze(-1)
             log_F = log_F + log_rewards
         log_state_flows[mask[:-1]] = log_F
 
@@ -188,9 +191,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             flattening_masks,
         )
 
-    def loss(self, trajectories: Trajectories) -> TT[0, float]:
+    def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
         # Get all scores and masks from the trajectories.
-        scores, flattening_masks = self.get_scores(trajectories)
+        scores, flattening_masks = self.get_scores(env, trajectories)
         flattening_mask = torch.cat(flattening_masks)
         all_scores = torch.cat(scores, 0)
 
