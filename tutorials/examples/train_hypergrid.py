@@ -32,7 +32,7 @@ from gfn.utils.common import validate
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
 
-def main(args):
+def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
     torch.manual_seed(seed)
 
@@ -258,7 +258,7 @@ def main(args):
     return validation_info["l1_dist"]
 
 
-if __name__ == "__main__":  # noqa: C901
+if __name__ == "__main__":
     parser = ArgumentParser()
 
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")

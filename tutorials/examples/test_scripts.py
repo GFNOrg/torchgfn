@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 import pytest
 
 from .train_box import main as train_box_main

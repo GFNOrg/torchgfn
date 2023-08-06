@@ -82,7 +82,7 @@ def estimate_jsd(kde1, kde2):
     return jsd / 2.0
 
 
-def main(args):
+def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
     torch.manual_seed(seed)
 
@@ -275,7 +275,7 @@ def main(args):
     return jsd
 
 
-if __name__ == "__main__":  # noqa: C901
+if __name__ == "__main__":
     parser = ArgumentParser()
 
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")

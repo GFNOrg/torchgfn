@@ -1,5 +1,5 @@
-import torch
 import pytest
+import torch
 
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (

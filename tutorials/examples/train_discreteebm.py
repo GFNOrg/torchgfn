@@ -24,7 +24,7 @@ from gfn.utils.common import validate
 from gfn.utils.modules import NeuralNet, Tabular
 
 
-def main(args):
+def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
     torch.manual_seed(seed)
 
@@ -36,7 +36,7 @@ def main(args):
         wandb.config.update(args)
 
     # 1. Create the environment
-    env = DiscreteEBM(ndim=args.ndim, alpha=args.alpha)
+    env = DiscreteEBM(ndim=args.ndim, alpha=args.alpha, device_str=device_str)
 
     # 2. Create the gflownet.
     # We need a LogEdgeFlowEstimator
