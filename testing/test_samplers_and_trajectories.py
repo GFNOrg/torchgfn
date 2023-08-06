@@ -65,16 +65,26 @@ def trajectory_sampling_with_return(
         pb_module = NeuralNet(
             input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
         )
-        pf_estimator = DiscretePolicyEstimator(env=env, module=pf_module, forward=True)
-        pb_estimator = DiscretePolicyEstimator(env=env, module=pb_module, forward=False)
+        pf_estimator = DiscretePolicyEstimator(
+            module=pf_module,
+            n_actions=env.n_actions,
+            is_backward=False,
+            preprocessor=env.preprocessor,
+        )
+        pb_estimator = DiscretePolicyEstimator(
+            module=pb_module,
+            n_actions=env.n_actions,
+            is_backward=True,
+            preprocessor=env.preprocessor,
+        )
 
     sampler = Sampler(estimator=pf_estimator)
-    trajectories = sampler.sample_trajectories(n_trajectories=5)
-    trajectories = sampler.sample_trajectories(n_trajectories=10)
+    trajectories = sampler.sample_trajectories(env, n_trajectories=5)
+    trajectories = sampler.sample_trajectories(env, n_trajectories=10)
 
     states = env.reset(batch_shape=5, random=True)
-    bw_sampler = Sampler(estimator=pb_estimator, is_backward=True)
-    bw_trajectories = bw_sampler.sample_trajectories(states)
+    bw_sampler = Sampler(estimator=pb_estimator)
+    bw_trajectories = bw_sampler.sample_trajectories(env, states)
 
     return trajectories, bw_trajectories, pf_estimator, pb_estimator
 
