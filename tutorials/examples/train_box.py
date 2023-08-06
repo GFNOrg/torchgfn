@@ -409,7 +409,7 @@ if __name__ == "__main__":  # noqa: C901
 
         if iteration % args.validation_interval == 0:
             validation_samples = gflownet.sample_terminating_states(
-                args.validation_samples
+                env, args.validation_samples
             )
             kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(
                 validation_samples.tensor.detach().cpu().numpy()
