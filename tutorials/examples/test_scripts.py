@@ -92,6 +92,7 @@ def test_discreteebm(ndim: int, alpha: float):
 def test_box(delta: float, loss: str):
     n_trajectories = 128128
     validation_interval = 500
+    validation_samples = 10000
     args = BoxArgs(
         delta=delta,
         loss=loss,
@@ -99,8 +100,11 @@ def test_box(delta: float, loss: str):
         hidden_dim=128,
         n_hidden=4,
         batch_size=128,
+        lr_Z=1e-3,
         validation_interval=validation_interval,
+        validation_samples=validation_samples,
     )
+    print(args)
     final_jsd = train_box_main(args)
     if loss == "TB" and delta == 0.1:
         assert final_jsd < 7e-2
