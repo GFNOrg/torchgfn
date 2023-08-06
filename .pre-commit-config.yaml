@@ -45,8 +45,6 @@ repos:
         name: pytest-check
         entry: pytest
         language: python
-        # The next line excludes the file test_scripts.py
-        exclude: ^test_scripts.py$
-        pass_filenames: false
+        files: testing/
         types: [python]
         always_run: true

@@ -116,7 +116,7 @@ pre-commit install
 pre-commit run --all-files
 ```
 
-Run `pre-commit` after staging, and before committing. Make sure all the tests pass (By running `pytest`).
+Run `pre-commit` after staging, and before committing. Make sure all the tests pass (By running `pytest`). Note that the `pytest` hook of `pre-commit` only runs the tests in the `testing/` folder. To run all the tests, which take longer, run `pytest` manually.
 The codebase uses `black` formatter.
 
 To make the docs locally:
