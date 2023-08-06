@@ -297,7 +297,7 @@ if __name__ == "__main__":  # noqa: C901
             torso=None,  # We do not tie the parameters of the flow function to PF
             logZ_value=logZ,
         )
-        logF_estimator = ScalarEstimator(env=env, module=module)
+        logF_estimator = ScalarEstimator(module=module, preprocessor=env.preprocessor)
 
         if args.loss == "DB":
             gflownet = DBGFlowNet(
@@ -378,16 +378,17 @@ if __name__ == "__main__":  # noqa: C901
         if iteration % 1000 == 0:
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
-        trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
+        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size)
 
         training_samples = gflownet.to_training_samples(trajectories)
 
         optimizer.zero_grad()
-        loss = gflownet.loss(training_samples)
+        loss = gflownet.loss(env, training_samples)
 
         loss.backward()
         for p in gflownet.parameters():
-            p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
+            if p.grad is not None:
+                p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
 

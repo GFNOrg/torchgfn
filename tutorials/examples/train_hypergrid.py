@@ -181,7 +181,11 @@ if __name__ == "__main__":  # noqa: C901
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
             )
-        estimator = DiscretePolicyEstimator(env=env, module=module, forward=True)
+        estimator = DiscretePolicyEstimator(
+            module=module,
+            n_actions=env.n_actions,
+            preprocessor=env.preprocessor,
+        )
         gflownet = FMGFlowNet(estimator)
     else:
         pb_module = None
@@ -215,8 +219,17 @@ if __name__ == "__main__":  # noqa: C901
             pb_module is not None
         ), f"pb_module is None. Command-line arguments: {args}"
 
-        pf_estimator = DiscretePolicyEstimator(env=env, module=pf_module, forward=True)
-        pb_estimator = DiscretePolicyEstimator(env=env, module=pb_module, forward=False)
+        pf_estimator = DiscretePolicyEstimator(
+            module=pf_module,
+            n_actions=env.n_actions,
+            preprocessor=env.preprocessor,
+        )
+        pb_estimator = DiscretePolicyEstimator(
+            module=pb_module,
+            n_actions=env.n_actions,
+            is_backward=True,
+            preprocessor=env.preprocessor,
+        )
 
         if args.loss == "ModifiedDB":
             gflownet = ModifiedDBGFlowNet(
@@ -245,7 +258,9 @@ if __name__ == "__main__":  # noqa: C901
                     torso=pf_module.torso if args.tied else None,
                 )
 
-            logF_estimator = ScalarEstimator(env=env, module=module)
+            logF_estimator = ScalarEstimator(
+                module=module, preprocessor=env.preprocessor
+            )
             if args.loss == "DB":
                 gflownet = DBGFlowNet(
                     pf=pf_estimator,
@@ -321,7 +336,7 @@ if __name__ == "__main__":  # noqa: C901
     states_visited = 0
     n_iterations = args.n_trajectories // args.batch_size
     for iteration in trange(n_iterations):
-        trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
+        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size)
         training_samples = gflownet.to_training_samples(trajectories)
         if replay_buffer is not None:
             with torch.no_grad():
@@ -331,7 +346,7 @@ if __name__ == "__main__":  # noqa: C901
             training_objects = training_samples
 
         optimizer.zero_grad()
-        loss = gflownet.loss(training_objects)
+        loss = gflownet.loss(env, training_objects)
         loss.backward()
         optimizer.step()
 

@@ -128,7 +128,11 @@ if __name__ == "__main__":
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
         )
-    estimator = DiscretePolicyEstimator(env=env, module=module, forward=True)
+    estimator = DiscretePolicyEstimator(
+        module=module,
+        n_actions=env.n_actions,
+        preprocessor=env.preprocessor,
+    )
     gflownet = FMGFlowNet(estimator)
 
     # 3. Create the optimizer
@@ -141,11 +145,11 @@ if __name__ == "__main__":
     states_visited = 0
     n_iterations = args.n_trajectories // args.batch_size
     for iteration in trange(n_iterations):
-        trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
+        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size)
         training_samples = gflownet.to_training_samples(trajectories)
 
         optimizer.zero_grad()
-        loss = gflownet.loss(training_samples)
+        loss = gflownet.loss(env, training_samples)
         loss.backward()
         optimizer.step()
 
