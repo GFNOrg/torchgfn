@@ -82,156 +82,7 @@ def estimate_jsd(kde1, kde2):
     return jsd / 2.0
 
 
-if __name__ == "__main__":  # noqa: C901
-    parser = ArgumentParser()
-
-    parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
-
-    parser.add_argument(
-        "--delta",
-        type=float,
-        default=0.25,
-        help="maximum distance between two successive states",
-    )
-
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="Random seed, if 0 then a random seed is used",
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=128,
-        help="Batch size, i.e. number of trajectories to sample per training iteration",
-    )
-
-    parser.add_argument(
-        "--loss",
-        type=str,
-        choices=["TB", "DB", "SubTB", "ZVar"],
-        default="TB",
-        help="Loss function to use",
-    )
-    parser.add_argument(
-        "--subTB_weighting",
-        type=str,
-        default="geometric_within",
-        help="weighting scheme for SubTB",
-    )
-    parser.add_argument(
-        "--subTB_lambda", type=float, default=0.9, help="Lambda parameter for SubTB"
-    )
-
-    parser.add_argument(
-        "--min_concentration",
-        type=float,
-        default=0.1,
-        help="minimal value for the Beta concentration parameters",
-    )
-
-    parser.add_argument(
-        "--max_concentration",
-        type=float,
-        default=5.1,
-        help="maximal value for the Beta concentration parameters",
-    )
-
-    parser.add_argument(
-        "--n_components",
-        type=int,
-        default=2,
-        help="Number of Beta distributions for P_F(s'|s)",
-    )
-    parser.add_argument(
-        "--n_components_s0",
-        type=int,
-        default=4,
-        help="Number of Beta distributions for P_F(s'|s_0)",
-    )
-
-    parser.add_argument("--uniform_pb", action="store_true", help="Use a uniform PB")
-    parser.add_argument(
-        "--tied",
-        action="store_true",
-        help="Tie the parameters of PF, PB. F is never tied.",
-    )
-    parser.add_argument(
-        "--hidden_dim",
-        type=int,
-        default=128,
-        help="Hidden dimension of the estimators' neural network modules.",
-    )
-    parser.add_argument(
-        "--n_hidden",
-        type=int,
-        default=4,
-        help="Number of hidden layers (of size `hidden_dim`) in the estimators'"
-        + " neural network modules",
-    )
-
-    parser.add_argument(
-        "--lr",
-        type=float,
-        default=1e-3,
-        help="Learning rate for the estimators' modules",
-    )
-    parser.add_argument(
-        "--lr_Z",
-        type=float,
-        default=1e-3,
-        help="Specific learning rate for logZ",
-    )
-    parser.add_argument(
-        "--lr_F",
-        type=float,
-        default=1e-2,
-        help="Specific learning rate for the state flow function (only used for DB and SubTB losses)",
-    )
-    parser.add_argument(
-        "--gamma_scheduler",
-        type=float,
-        default=0.5,
-        help="Every scheduler_milestone steps, multiply the learning rate by gamma_scheduler",
-    )
-    parser.add_argument(
-        "--scheduler_milestone",
-        type=int,
-        default=2500,
-        help="Every scheduler_milestone steps, multiply the learning rate by gamma_scheduler",
-    )
-
-    parser.add_argument(
-        "--n_trajectories",
-        type=int,
-        default=int(3e6),
-        help="Total budget of trajectories to train on. "
-        + "Training iterations = n_trajectories // batch_size",
-    )
-
-    parser.add_argument(
-        "--validation_interval",
-        type=int,
-        default=500,
-        help="How often (in training steps) to validate the gflownet",
-    )
-    parser.add_argument(
-        "--validation_samples",
-        type=int,
-        default=10000,
-        help="Number of validation samples to use to evaluate the probability mass function.",
-    )
-
-    parser.add_argument(
-        "--wandb_project",
-        type=str,
-        default="",
-        help="Name of the wandb project. If empty, don't use wandb",
-    )
-
-    args = parser.parse_args()
-
+def main(args):
     seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
     torch.manual_seed(seed)
 
@@ -420,3 +271,158 @@ if __name__ == "__main__":  # noqa: C901
                 wandb.log({"JSD": jsd}, step=iteration)
 
             to_log.update({"JSD": jsd})
+
+    return jsd
+
+
+if __name__ == "__main__":  # noqa: C901
+    parser = ArgumentParser()
+
+    parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
+
+    parser.add_argument(
+        "--delta",
+        type=float,
+        default=0.25,
+        help="maximum distance between two successive states",
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed, if 0 then a random seed is used",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=128,
+        help="Batch size, i.e. number of trajectories to sample per training iteration",
+    )
+
+    parser.add_argument(
+        "--loss",
+        type=str,
+        choices=["TB", "DB", "SubTB", "ZVar"],
+        default="TB",
+        help="Loss function to use",
+    )
+    parser.add_argument(
+        "--subTB_weighting",
+        type=str,
+        default="geometric_within",
+        help="weighting scheme for SubTB",
+    )
+    parser.add_argument(
+        "--subTB_lambda", type=float, default=0.9, help="Lambda parameter for SubTB"
+    )
+
+    parser.add_argument(
+        "--min_concentration",
+        type=float,
+        default=0.1,
+        help="minimal value for the Beta concentration parameters",
+    )
+
+    parser.add_argument(
+        "--max_concentration",
+        type=float,
+        default=5.1,
+        help="maximal value for the Beta concentration parameters",
+    )
+
+    parser.add_argument(
+        "--n_components",
+        type=int,
+        default=2,
+        help="Number of Beta distributions for P_F(s'|s)",
+    )
+    parser.add_argument(
+        "--n_components_s0",
+        type=int,
+        default=4,
+        help="Number of Beta distributions for P_F(s'|s_0)",
+    )
+
+    parser.add_argument("--uniform_pb", action="store_true", help="Use a uniform PB")
+    parser.add_argument(
+        "--tied",
+        action="store_true",
+        help="Tie the parameters of PF, PB. F is never tied.",
+    )
+    parser.add_argument(
+        "--hidden_dim",
+        type=int,
+        default=128,
+        help="Hidden dimension of the estimators' neural network modules.",
+    )
+    parser.add_argument(
+        "--n_hidden",
+        type=int,
+        default=4,
+        help="Number of hidden layers (of size `hidden_dim`) in the estimators'"
+        + " neural network modules",
+    )
+
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-3,
+        help="Learning rate for the estimators' modules",
+    )
+    parser.add_argument(
+        "--lr_Z",
+        type=float,
+        default=1e-3,
+        help="Specific learning rate for logZ",
+    )
+    parser.add_argument(
+        "--lr_F",
+        type=float,
+        default=1e-2,
+        help="Specific learning rate for the state flow function (only used for DB and SubTB losses)",
+    )
+    parser.add_argument(
+        "--gamma_scheduler",
+        type=float,
+        default=0.5,
+        help="Every scheduler_milestone steps, multiply the learning rate by gamma_scheduler",
+    )
+    parser.add_argument(
+        "--scheduler_milestone",
+        type=int,
+        default=2500,
+        help="Every scheduler_milestone steps, multiply the learning rate by gamma_scheduler",
+    )
+
+    parser.add_argument(
+        "--n_trajectories",
+        type=int,
+        default=int(3e6),
+        help="Total budget of trajectories to train on. "
+        + "Training iterations = n_trajectories // batch_size",
+    )
+
+    parser.add_argument(
+        "--validation_interval",
+        type=int,
+        default=500,
+        help="How often (in training steps) to validate the gflownet",
+    )
+    parser.add_argument(
+        "--validation_samples",
+        type=int,
+        default=10000,
+        help="Number of validation samples to use to evaluate the probability mass function.",
+    )
+
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="",
+        help="Name of the wandb project. If empty, don't use wandb",
+    )
+
+    args = parser.parse_args()
+
+    print(main(args))

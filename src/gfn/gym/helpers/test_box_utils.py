@@ -1,4 +1,5 @@
 import torch
+import pytest
 
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
@@ -13,14 +14,14 @@ from gfn.gym.helpers.box_utils import (
 )
 
 
-def test_mixed_distributions():
+@pytest.mark.parametrize("n_components", [5, 6])
+@pytest.mark.parametrize("n_components_s0", [5, 6])
+def test_mixed_distributions(n_components: int, n_components_s0: int):
     """Ensure DistributionWrapper functions correctly."""
 
     delta = 0.1
     hidden_dim = 10
     n_hidden_layers = 2
-    n_components = 5
-    n_components_s0 = 6
 
     environment = Box(
         delta=delta,
