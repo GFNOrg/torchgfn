@@ -81,12 +81,12 @@ if __name__ == "__main__":
         torso=module_PF.torso
     )
 
-    pf_estimator = DiscretePolicyEstimator(env, module_PF, forward=True)
-    pb_estimator = DiscretePolicyEstimator(env, module_PB, forward=False)
+    pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor)
+    pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor)
 
     gfn = TBGFlowNet(init_logZ=0., pf=pf_estimator, pb=pb_estimator)
 
-    sampler = Sampler(estimator=pf_estimator))
+    sampler = Sampler(estimator=pf_estimator)
 
     # Policy parameters have their own LR.
     non_logz_params = [v for k, v in dict(gfn.named_parameters()).items() if k != "logZ"]
@@ -97,9 +97,9 @@ if __name__ == "__main__":
     optimizer.add_param_group({"params": logz_params, "lr": 1e-2})
 
     for i in (pbar := tqdm(range(1000))):
-        trajectories = sampler.sample_trajectories(n_trajectories=16)
+        trajectories = sampler.sample_trajectories(env=env, n_trajectories=16)
         optimizer.zero_grad()
-        loss = gfn.loss(trajectories)
+        loss = gfn.loss(env, trajectories)
         loss.backward()
         optimizer.step()
         if i % 25 == 0:
@@ -171,8 +171,8 @@ In most cases, one needs to sample complete trajectories. From a batch of trajec
 
 ### Modules
 
-Training GFlowNets requires one or multiple estimators, called `GFNModule`s, which is an abstract subclass of `torch.nn.Module`. In addition to the usual `forward` function, `GFNModule`s need to implement a `required_output_dim` attribute, to ensure that the outputs have the required dimension for the task at hand; and some (but not all) need to implement a `to_probability_distribution` function. They take the environment `env` as an input at initialization.
-- `DiscretePolicyEstimator` is a `GFNModule` that defines the policies $P_F(. \mid s)$ and $P_B(. \mid s)$ for discrete environments. When `backward=False`, the required output dimension is `n = env.n_actions`, and when `backward=True`, it is `n = env.n_actions - 1`. These `n` numbers represent the logits of a Categorical distribution. Additionally, they include exploration parameters, in order to define a tempered version of $P_F$, or a mixture of $P_F$ with a uniform distribution. Naturally, before defining the Categorical distributions, forbidden actions (that are encoded in the `DiscreteStates`' masks attributes), are given 0 probability by setting the corresponding logit to $-\infty$.
+Training GFlowNets requires one or multiple estimators, called `GFNModule`s, which is an abstract subclass of `torch.nn.Module`. In addition to the usual `forward` function, `GFNModule`s need to implement a `required_output_dim` attribute, to ensure that the outputs have the required dimension for the task at hand; and some (but not all) need to implement a `to_probability_distribution` function.
+- `DiscretePolicyEstimator` is a `GFNModule` that defines the policies $P_F(. \mid s)$ and $P_B(. \mid s)$ for discrete environments. When `is_backward=False`, the required output dimension is `n = env.n_actions`, and when `is_backward=True`, it is `n = env.n_actions - 1`. These `n` numbers represent the logits of a Categorical distribution. Additionally, they include exploration parameters, in order to define a tempered version of $P_F$, or a mixture of $P_F$ with a uniform distribution. Naturally, before defining the Categorical distributions, forbidden actions (that are encoded in the `DiscreteStates`' masks attributes), are given 0 probability by setting the corresponding logit to $-\infty$.
 - `ScalarModule` is a simple module with required output dimension 1. It is useful to define log-state flows $\log F(s)$.
 
 For non-discrete environments, the user needs to specify their own policies $P_F$ and $P_B$. The module, taking as input a batch of states (as a `States`) object, should return the batched parameters of a `torch.Distribution`. The distribution depends on the environment. The `to_probability_distribution` function handles the conversion of the parameter outputs to an actual batched `Distribution` object, that implements at least the `sample` and `log_prob` functions. An example is provided [here](https://github.com/saleml/torchgfn/tree/master/src/gfn/gym/helpers/box_utils.py), for a square environment in which the forward policy has support either on a quarter disk, or on an arc-circle, such that the angle, and the radius (for the quarter disk part) are scaled samples from a mixture of Beta distributions. The provided example shows an intricate scenario, and it is not expected that user defined environment need this much level of details.
