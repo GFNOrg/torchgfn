@@ -1,3 +1,8 @@
+# This file includes tests for the three examples in the tutorials folder.
+# The tests ensure that after a certain number of iterations, the final L1 distance
+# or JSD between the learned distribution and the target distribution is below a
+# certain threshold.
+
 from dataclasses import dataclass
 
 import pytest
