@@ -238,7 +238,7 @@ def main(args):  # noqa: C901
 
         loss.backward()
         for p in gflownet.parameters():
-            if p.grad is not None:
+            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad
                 p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
