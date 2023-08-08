@@ -1,6 +1,6 @@
 """This file contains some examples of modules that can be used with GFN."""
 
-from typing import Iterator, Literal, Optional, Tuple
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
