@@ -139,6 +139,3 @@ class DiscreteUniform(nn.Module):
             preprocessed_states.device
         )
         return out
-
-    def named_parameters(self) -> Iterator[Tuple[str, Parameter]]:
-        return iter([])
