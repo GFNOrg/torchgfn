@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Tuple
 
 import torch
@@ -26,7 +26,6 @@ class GFlowNet(nn.Module):
         Returns:
             Trajectories: sampled trajectories object.
         """
-        pass
 
     def sample_terminating_states(self, n_samples: int) -> States:
         """Rolls out the parametrization's policy and returns the terminating states.
@@ -42,7 +41,6 @@ class GFlowNet(nn.Module):
     @abstractmethod
     def to_training_samples(self, trajectories: Trajectories):
         """Converts trajectories to training samples. The type depends on the GFlowNet."""
-        pass
 
 
 class PFBasedGFlowNet(GFlowNet):

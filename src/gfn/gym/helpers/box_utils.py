@@ -1,5 +1,5 @@
 """This file contains utilitary functions for the Box environment."""
-from typing import Literal, Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import torch
