@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.distributions import Categorical, Distribution
 from torchtyping import TensorType as TT
 
-from gfn.env import DiscreteEnv, Env
+from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import UnsqueezedCategorical
 
@@ -29,12 +29,14 @@ class GFNModule(ABC, nn.Module):
     Otherwise, one can overwrite and use the to_probability_distribution() method to
     directly output a probability distribution.
 
-    The preprocessor is also encapsulated in the estimator via the environment.
+    The preprocessor is also encapsulated in the estimator.
     These function estimators implement the `__call__` method, which takes `States`
     objects as inputs and calls the module on the preprocessed states.
 
     Attributes:
-        env: the environment.
+        preprocessor: Preprocessor object that transforms raw States objects to tensors
+            that can be used as input to the module. Optional, defaults to
+            `IdentityPreprocessor`.
         module: The module to use. If the module is a Tabular module (from
             `gfn.utils.modules`), then the environment preprocessor needs to be an
             `EnumPreprocessor`.
@@ -44,19 +46,31 @@ class GFNModule(ABC, nn.Module):
             been verified.
     """
 
-    def __init__(self, env: Env, module: nn.Module) -> None:
+    def __init__(
+        self,
+        module: nn.Module,
+        preprocessor: Preprocessor | None = None,
+        is_backward: bool = False,
+    ) -> None:
         """Initalize the FunctionEstimator with an environment and a module.
         Args:
-            env: the environment.
             module: The module to use. If the module is a Tabular module (from
                 `gfn.utils.modules`), then the environment preprocessor needs to be an
                 `EnumPreprocessor`.
+            preprocessor: Preprocessor object.
+            is_backward: Flags estimators of probability distributions over parents.
         """
         nn.Module.__init__(self)
-        self.env = env
         self.module = module
-        self.preprocessor = env.preprocessor  # TODO: passed explicitly?
+        if preprocessor is None:
+            assert hasattr(module, "input_dim"), (
+                "Module needs to have an attribute `input_dim` specifying the input "
+                + "dimension, in order to use the default IdentityPreprocessor."
+            )
+            preprocessor = IdentityPreprocessor(module.input_dim)
+        self.preprocessor = preprocessor
         self._output_dim_is_checked = False
+        self.is_backward = is_backward
 
     def forward(self, states: States) -> TT["batch_shape", "output_dim", float]:
         out = self.module(self.preprocessor(states))
@@ -88,8 +102,11 @@ class GFNModule(ABC, nn.Module):
         self,
         states: States,
         module_output: TT["batch_shape", "output_dim", float],
+        *args,
     ) -> Distribution:
         """Transform the output of the module into a probability distribution.
+
+        The kwargs modify a base distribution, for example to encourage exploration.
 
         Not all modules must implement this method, but it is required to define a
         policy from a module's outputs. See `DiscretePolicyEstimator` for an example
@@ -105,18 +122,13 @@ class ScalarEstimator(GFNModule):
 
 
 class DiscretePolicyEstimator(GFNModule):
-    r"""Container for forward and backward policy estimators.
+    r"""Container for forward and backward policy estimators for discrete environments.
 
     $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$.
 
     or
 
     $s \mapsto (P_B(s' \mid s))_{s' \in Parents(s)}$.
-
-    Note that while this class resembles LogEdgeFlowProbabilityEstimator, they have
-    different semantic meaning. With LogEdgeFlowEstimator, the module output is the log
-    of the flow from the parent to the child, while with DiscretePFEstimator, the
-    module output is arbitrary.
 
     Attributes:
         temperature: scalar to divide the logits by before softmax.
@@ -127,60 +139,54 @@ class DiscretePolicyEstimator(GFNModule):
 
     def __init__(
         self,
-        env: Env,
         module: nn.Module,
-        forward: bool,
-        greedy_eps: float = 0.0,
-        temperature: float = 1.0,
-        sf_bias: float = 0.0,
-        epsilon: float = 0.0,
+        n_actions: int,
+        preprocessor: Preprocessor | None,
+        is_backward: bool = False,
     ):
         """Initializes a estimator for P_F for discrete environments.
 
         Args:
-            forward: if True, then this is a forward policy, else backward policy.
-            greedy_eps: if > 0 , then we go off policy using greedy epsilon exploration.
-            temperature: scalar to divide the logits by before softmax. Does nothing
-                if greedy_eps is 0.
-            sf_bias: scalar to subtract from the exit action logit before dividing by
-                temperature. Does nothing if greedy_eps is 0.
-            epsilon: with probability epsilon, a random action is chosen. Does nothing
-                if greedy_eps is 0.
+            n_actions: Total number of actions in the Discrete Environment.
+            is_backward: if False, then this is a forward policy, else backward policy.
         """
-        super().__init__(env, module)
-        assert greedy_eps >= 0
-        self._forward = forward
-        self._greedy_eps = greedy_eps
-        self.temperature = temperature
-        self.sf_bias = sf_bias
-        self.epsilon = epsilon
-
-    @property
-    def greedy_eps(self):
-        return self._greedy_eps
+        super().__init__(module, preprocessor, is_backward=is_backward)
+        self.n_actions = n_actions
 
     def expected_output_dim(self) -> int:
-        if self._forward:
-            return self.env.n_actions
+        if self.is_backward:
+            return self.n_actions - 1
         else:
-            return self.env.n_actions - 1
+            return self.n_actions
 
     def to_probability_distribution(
         self,
         states: DiscreteStates,
         module_output: TT["batch_shape", "output_dim", float],
+        temperature: float = 1.0,
+        sf_bias: float = 0.0,
+        epsilon: float = 0.0,
     ) -> Categorical:
-        """Returns a probability distribution given a batch of states and module output."""
-        masks = states.forward_masks if self._forward else states.backward_masks
+        """Returns a probability distribution given a batch of states and module output.
+
+        Args:
+            temperature: scalar to divide the logits by before softmax. Does nothing
+                if set to 1.0 (default), in which case it's on policy.
+            sf_bias: scalar to subtract from the exit action logit before dividing by
+                temperature. Does nothing if set to 0.0 (default), in which case it's
+                on policy.
+            epsilon: with probability epsilon, a random action is chosen. Does nothing
+                if set to 0.0 (default), in which case it's on policy."""
+        masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
         logits[~masks] = -float("inf")
 
         # Forward policy supports exploration in many implementations.
-        if self._greedy_eps:
-            logits[:, -1] -= self.sf_bias
-            probs = torch.softmax(logits / self.temperature, dim=-1)
+        if temperature != 1.0 or sf_bias != 0.0 or epsilon != 0.0:
+            logits[:, -1] -= sf_bias
+            probs = torch.softmax(logits / temperature, dim=-1)
             uniform_dist_probs = masks.float() / masks.sum(dim=-1, keepdim=True)
-            probs = (1 - self.epsilon) * probs + self.epsilon * uniform_dist_probs
+            probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
 
             return UnsqueezedCategorical(probs=probs)
 

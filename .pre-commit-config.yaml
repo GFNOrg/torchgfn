@@ -45,6 +45,6 @@ repos:
         name: pytest-check
         entry: pytest
         language: python
-        pass_filenames: false
+        files: testing/
         types: [python]
         always_run: true
