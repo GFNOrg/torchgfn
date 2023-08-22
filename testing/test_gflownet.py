@@ -62,3 +62,36 @@ def test_flow_matching_gflownet_generic():
     assert isinstance(
         states_tuple[1], States
     ), f"Expected type States for second element, but got {type(states_tuple[1])}"
+
+
+def test_pytorch_inheritance():
+    pf_module = BoxPFNeuralNet(
+        hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
+    )
+    pb_module = BoxPBNeuralNet(
+        hidden_dim=32, n_hidden_layers=2, n_components=1, torso=pf_module.torso
+    )
+
+    env = Box()
+
+    pf_estimator = BoxPFEstimator(
+        env=env, module=pf_module, n_components=1, n_components_s0=1
+    )
+    pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
+
+    tbgflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
+    assert hasattr(
+        tbgflownet.parameters(), "__iter__"
+    ), "Expected gflownet to have iterable parameters() method inherited from nn.Module"
+    assert hasattr(
+        tbgflownet.state_dict(), "__dict__"
+    ), "Expected gflownet to have indexable state_dict() method inherited from nn.Module"
+
+    estimator = DiscretePolicyEstimator(env, pf_module, True)
+    fmgflownet = FMGFlowNet(estimator)
+    assert hasattr(
+        fmgflownet.parameters(), "__iter__"
+    ), "Expected gflownet to have iterable parameters() method inherited from nn.Module"
+    assert hasattr(
+        fmgflownet.state_dict(), "__dict__"
+    ), "Expected gflownet to have indexable state_dict() method inherited from nn.Module"
