@@ -1,4 +1,4 @@
-# Creating `torchgfn` GFlowNets
+# Creating `GFlowNets`
 
 To define a new subclass of `GFlowNet`, the user needs to define a class which subclasses `GFlowNet` and implements the following methods:
 
