@@ -8,7 +8,7 @@ from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.modules import ScalarEstimator
 
 
-class DBGFlowNet(PFBasedGFlowNet):
+class DBGFlowNet(PFBasedGFlowNet[Transitions]):
     r"""The Detailed Balance GFlowNet.
 
     Corresponds to $\mathcal{O}_{PF} = \mathcal{O}_1 \times \mathcal{O}_2 \times
@@ -127,7 +127,7 @@ class DBGFlowNet(PFBasedGFlowNet):
         return trajectories.to_transitions()
 
 
-class ModifiedDBGFlowNet(PFBasedGFlowNet):
+class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     r"""The Modified Detailed Balance GFlowNet. Only applicable to environments where
     all states are terminating.
 
