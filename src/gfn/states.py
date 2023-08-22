@@ -306,7 +306,6 @@ class DiscreteStates(States, ABC):
     @abstractmethod
     def update_masks(self) -> None:
         """Updates the masks, called after each action is taken."""
-        pass
 
     def _check_both_forward_backward_masks_exist(self):
         assert self.forward_masks is not None and self.backward_masks is not None

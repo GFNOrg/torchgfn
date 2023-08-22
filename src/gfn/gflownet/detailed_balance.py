@@ -4,8 +4,9 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories, Transitions
+from gfn.env import Env
 from gfn.gflownet.base import PFBasedGFlowNet
-from gfn.modules import ScalarEstimator
+from gfn.modules import GFNModule, ScalarEstimator
 
 
 class DBGFlowNet(PFBasedGFlowNet[Transitions]):
@@ -27,17 +28,18 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
     def __init__(
         self,
+        pf: GFNModule,
+        pb: GFNModule,
         logF: ScalarEstimator,
+        on_policy: bool = False,
         forward_looking: bool = False,
-        **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(pf, pb, on_policy=on_policy)
         self.logF = logF
         self.forward_looking = forward_looking
-        self.env = self.logF.env  # TODO We don't want to store env in here...
 
     def get_scores(
-        self, transitions: Transitions
+        self, env: Env, transitions: Transitions
     ) -> Tuple[
         TT["n_transitions", float],
         TT["n_transitions", float],
@@ -72,7 +74,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
-            log_rewards = self.env.log_reward(states)  # RM unsqueeze(-1)
+            log_rewards = env.log_reward(states)  # RM unsqueeze(-1)
             valid_log_F_s = valid_log_F_s + log_rewards
 
         preds = valid_log_pf_actions + valid_log_F_s
@@ -110,12 +112,12 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         return (valid_log_pf_actions, log_pb_actions, scores)
 
-    def loss(self, transitions: Transitions) -> TT[0, float]:
+    def loss(self, env: Env, transitions: Transitions) -> TT[0, float]:
         """Detailed balance loss.
 
         The detailed balance loss is described in section
         3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266)."""
-        _, _, scores = self.get_scores(transitions)
+        _, _, scores = self.get_scores(env, transitions)
         loss = torch.mean(scores**2)
 
         if torch.isnan(loss):
@@ -182,7 +184,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         return scores
 
-    def loss(self, transitions: Transitions) -> TT[0, float]:
+    def loss(self, env: Env, transitions: Transitions) -> TT[0, float]:
         """Calculates the modified detailed balance loss."""
         scores = self.get_scores(transitions)
         return torch.mean(scores**2)

@@ -82,7 +82,200 @@ def estimate_jsd(kde1, kde2):
     return jsd / 2.0
 
 
-if __name__ == "__main__":  # noqa: C901
+def main(args):  # noqa: C901
+    seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
+    torch.manual_seed(seed)
+
+    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+
+    use_wandb = len(args.wandb_project) > 0
+    if use_wandb:
+        wandb.init(project=args.wandb_project)
+        wandb.config.update(args)
+
+    n_iterations = args.n_trajectories // args.batch_size
+
+    # 1. Create the environment
+    env = Box(delta=args.delta, epsilon=1e-10, device_str=device_str)
+
+    # 2. Create the gflownet.
+    #    For this we need modules and estimators.
+    #    Depending on the loss, we may need several estimators:
+    gflownet = None
+    pf_module = BoxPFNeuralNet(
+        hidden_dim=args.hidden_dim,
+        n_hidden_layers=args.n_hidden,
+        n_components=args.n_components,
+        n_components_s0=args.n_components_s0,
+    )
+    if args.uniform_pb:
+        pb_module = BoxPBUniform()
+    else:
+        pb_module = BoxPBNeuralNet(
+            hidden_dim=args.hidden_dim,
+            n_hidden_layers=args.n_hidden,
+            n_components=args.n_components,
+            torso=pf_module.torso if args.tied else None,
+        )
+
+    pf_estimator = BoxPFEstimator(
+        env,
+        pf_module,
+        n_components_s0=args.n_components_s0,
+        n_components=args.n_components,
+        min_concentration=args.min_concentration,
+        max_concentration=args.max_concentration,
+    )
+    pb_estimator = BoxPBEstimator(
+        env,
+        pb_module,
+        n_components=args.n_components if not args.uniform_pb else 1,
+        min_concentration=args.min_concentration,
+        max_concentration=args.max_concentration,
+    )
+    module = None
+    logZ = None
+    if args.loss in ("DB", "SubTB"):
+        # We always need a LogZEstimator
+        logZ = torch.tensor(0.0, device=env.device, requires_grad=True)
+        # We need a LogStateFlowEstimator
+
+        module = BoxStateFlowModule(
+            input_dim=env.preprocessor.output_dim,
+            output_dim=1,
+            hidden_dim=args.hidden_dim,
+            n_hidden_layers=args.n_hidden,
+            torso=None,  # We do not tie the parameters of the flow function to PF
+            logZ_value=logZ,
+        )
+        logF_estimator = ScalarEstimator(module=module, preprocessor=env.preprocessor)
+
+        if args.loss == "DB":
+            gflownet = DBGFlowNet(
+                pf=pf_estimator,
+                pb=pb_estimator,
+                logF=logF_estimator,
+                on_policy=True,
+            )
+        else:
+            gflownet = SubTBGFlowNet(
+                pf=pf_estimator,
+                pb=pb_estimator,
+                logF=logF_estimator,
+                on_policy=True,
+                weighting=args.subTB_weighting,
+                lamda=args.subTB_lambda,
+            )
+    elif args.loss == "TB":
+        gflownet = TBGFlowNet(
+            pf=pf_estimator,
+            pb=pb_estimator,
+            on_policy=True,
+        )
+    elif args.loss == "ZVar":
+        gflownet = LogPartitionVarianceGFlowNet(
+            pf=pf_estimator,
+            pb=pb_estimator,
+            on_policy=True,
+        )
+
+    assert gflownet is not None, f"No gflownet for loss {args.loss}"
+
+    # 3. Create the optimizer and scheduler
+
+    optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
+    if not args.uniform_pb:
+        optimizer.add_param_group(
+            {
+                "params": pb_module.last_layer.parameters()
+                if args.tied
+                else pb_module.parameters(),
+                "lr": args.lr,
+            }
+        )
+    if args.loss in ("DB", "SubTB"):
+        assert module is not None
+        optimizer.add_param_group(
+            {
+                "params": module.parameters(),
+                "lr": args.lr_F,
+            }
+        )
+    if "logZ" in dict(gflownet.named_parameters()):
+        logZ = dict(gflownet.named_parameters())["logZ"]
+    if args.loss != "ZVar":
+        assert logZ is not None
+        optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
+
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        milestones=[
+            i * args.scheduler_milestone
+            for i in range(1, 1 + int(n_iterations / args.scheduler_milestone))
+        ],
+        gamma=args.gamma_scheduler,
+    )
+
+    # 4. Sample from the true reward distribution, and fit a KDE to the samples
+    samples_from_reward = sample_from_reward(env, n_samples=args.validation_samples)
+    true_kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(
+        samples_from_reward
+    )
+
+    states_visited = 0
+
+    jsd = float("inf")
+    for iteration in trange(n_iterations):
+        if iteration % 1000 == 0:
+            print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
+
+        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size)
+
+        training_samples = gflownet.to_training_samples(trajectories)
+
+        optimizer.zero_grad()
+        loss = gflownet.loss(env, training_samples)
+
+        loss.backward()
+        for p in gflownet.parameters():
+            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad
+                p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
+        optimizer.step()
+        scheduler.step()
+
+        states_visited += len(trajectories)
+
+        to_log = {"loss": loss.item(), "states_visited": states_visited}
+        logZ_info = ""
+        if args.loss != "ZVar":
+            assert logZ is not None
+            to_log.update({"logZdiff": env.log_partition - logZ.item()})
+            logZ_info = f"logZ: {logZ.item():.2f}, "
+        if use_wandb:
+            wandb.log(to_log, step=iteration)
+        if iteration % (args.validation_interval // 5) == 0:
+            tqdm.write(
+                f"States: {states_visited}, Loss: {loss.item():.3f}, {logZ_info}true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
+            )
+
+        if iteration % args.validation_interval == 0:
+            validation_samples = gflownet.sample_terminating_states(
+                env, args.validation_samples
+            )
+            kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(
+                validation_samples.tensor.detach().cpu().numpy()
+            )
+            jsd = estimate_jsd(kde, true_kde)
+
+            if use_wandb:
+                wandb.log({"JSD": jsd}, step=iteration)
+
+            to_log.update({"JSD": jsd})
+
+    return jsd
+
+
+if __name__ == "__main__":
     parser = ArgumentParser()
 
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
@@ -232,190 +425,4 @@ if __name__ == "__main__":  # noqa: C901
 
     args = parser.parse_args()
 
-    seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
-    torch.manual_seed(seed)
-
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
-
-    use_wandb = len(args.wandb_project) > 0
-    if use_wandb:
-        wandb.init(project=args.wandb_project)
-        wandb.config.update(args)
-
-    n_iterations = args.n_trajectories // args.batch_size
-
-    # 1. Create the environment
-    env = Box(delta=args.delta, epsilon=1e-10, device_str=device_str)
-
-    # 2. Create the gflownet.
-    #    For this we need modules and estimators.
-    #    Depending on the loss, we may need several estimators:
-    gflownet = None
-    pf_module = BoxPFNeuralNet(
-        hidden_dim=args.hidden_dim,
-        n_hidden_layers=args.n_hidden,
-        n_components=args.n_components,
-        n_components_s0=args.n_components_s0,
-    )
-    if args.uniform_pb:
-        pb_module = BoxPBUniform()
-    else:
-        pb_module = BoxPBNeuralNet(
-            hidden_dim=args.hidden_dim,
-            n_hidden_layers=args.n_hidden,
-            n_components=args.n_components,
-            torso=pf_module.torso if args.tied else None,
-        )
-
-    pf_estimator = BoxPFEstimator(
-        env,
-        pf_module,
-        n_components_s0=args.n_components_s0,
-        n_components=args.n_components,
-        min_concentration=args.min_concentration,
-        max_concentration=args.max_concentration,
-    )
-    pb_estimator = BoxPBEstimator(
-        env,
-        pb_module,
-        n_components=args.n_components if not args.uniform_pb else 1,
-        min_concentration=args.min_concentration,
-        max_concentration=args.max_concentration,
-    )
-    module = None
-    logZ = None
-    if args.loss in ("DB", "SubTB"):
-        # We always need a LogZEstimator
-        logZ = torch.tensor(0.0, device=env.device, requires_grad=True)
-        # We need a LogStateFlowEstimator
-
-        module = BoxStateFlowModule(
-            input_dim=env.preprocessor.output_dim,
-            output_dim=1,
-            hidden_dim=args.hidden_dim,
-            n_hidden_layers=args.n_hidden,
-            torso=None,  # We do not tie the parameters of the flow function to PF
-            logZ_value=logZ,
-        )
-        logF_estimator = ScalarEstimator(env=env, module=module)
-
-        if args.loss == "DB":
-            gflownet = DBGFlowNet(
-                pf=pf_estimator,
-                pb=pb_estimator,
-                logF=logF_estimator,
-                on_policy=True,
-            )
-        else:
-            gflownet = SubTBGFlowNet(
-                pf=pf_estimator,
-                pb=pb_estimator,
-                logF=logF_estimator,
-                on_policy=True,
-                weighting=args.subTB_weighting,
-                lamda=args.subTB_lambda,
-            )
-    elif args.loss == "TB":
-        gflownet = TBGFlowNet(
-            pf=pf_estimator,
-            pb=pb_estimator,
-            on_policy=True,
-        )
-    elif args.loss == "ZVar":
-        gflownet = LogPartitionVarianceGFlowNet(
-            pf=pf_estimator,
-            pb=pb_estimator,
-            on_policy=True,
-        )
-
-    assert gflownet is not None, f"No gflownet for loss {args.loss}"
-
-    # 3. Create the optimizer and scheduler
-
-    optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
-    if not args.uniform_pb:
-        optimizer.add_param_group(
-            {
-                "params": pb_module.last_layer.parameters()
-                if args.tied
-                else pb_module.parameters(),
-                "lr": args.lr,
-            }
-        )
-    if args.loss in ("DB", "SubTB"):
-        assert module is not None
-        optimizer.add_param_group(
-            {
-                "params": module.parameters(),
-                "lr": args.lr_F,
-            }
-        )
-    if "logZ" in dict(gflownet.named_parameters()):
-        logZ = dict(gflownet.named_parameters())["logZ"]
-    if args.loss != "ZVar":
-        assert logZ is not None
-        optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
-
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer,
-        milestones=[
-            i * args.scheduler_milestone
-            for i in range(1, 1 + int(n_iterations / args.scheduler_milestone))
-        ],
-        gamma=args.gamma_scheduler,
-    )
-
-    # 4. Sample from the true reward distribution, and fit a KDE to the samples
-    samples_from_reward = sample_from_reward(env, n_samples=args.validation_samples)
-    true_kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(
-        samples_from_reward
-    )
-
-    states_visited = 0
-
-    jsd = float("inf")
-    for iteration in trange(n_iterations):
-        if iteration % 1000 == 0:
-            print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
-
-        trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
-
-        training_samples = gflownet.to_training_samples(trajectories)
-
-        optimizer.zero_grad()
-        loss = gflownet.loss(training_samples)
-
-        loss.backward()
-        for p in gflownet.parameters():
-            p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
-        optimizer.step()
-        scheduler.step()
-
-        states_visited += len(trajectories)
-
-        to_log = {"loss": loss.item(), "states_visited": states_visited}
-        logZ_info = ""
-        if args.loss != "ZVar":
-            assert logZ is not None
-            to_log.update({"logZdiff": env.log_partition - logZ.item()})
-            logZ_info = f"logZ: {logZ.item():.2f}, "
-        if use_wandb:
-            wandb.log(to_log, step=iteration)
-        if iteration % (args.validation_interval // 5) == 0:
-            tqdm.write(
-                f"States: {states_visited}, Loss: {loss.item():.3f}, {logZ_info}true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
-            )
-
-        if iteration % args.validation_interval == 0:
-            validation_samples = gflownet.sample_terminating_states(
-                args.validation_samples
-            )
-            kde = KernelDensity(kernel="exponential", bandwidth=0.1).fit(
-                validation_samples.tensor.detach().cpu().numpy()
-            )
-            jsd = estimate_jsd(kde, true_kde)
-
-            if use_wandb:
-                wandb.log({"JSD": jsd}, step=iteration)
-
-            to_log.update({"JSD": jsd})
+    print(main(args))

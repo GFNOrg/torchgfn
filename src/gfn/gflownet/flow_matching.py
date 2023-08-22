@@ -4,6 +4,7 @@ import torch
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
+from gfn.env import Env
 from gfn.gflownet.base import GFlowNet
 from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import Sampler
@@ -28,23 +29,21 @@ class FMGFlowNet(GFlowNet[tuple[DiscreteStates, DiscreteStates]]):
 
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
         super().__init__()
-        assert not logF.greedy_eps
 
         self.logF = logF
         self.alpha = alpha
-        self.env = self.logF.env
-        if not self.env.is_discrete:
+
+    def sample_trajectories(self, env: Env, n_samples: int = 1000) -> Trajectories:
+        if not env.is_discrete:
             raise NotImplementedError(
                 "Flow Matching GFlowNet only supports discrete environments for now."
             )
-
-    def sample_trajectories(self, n_samples: int = 1000) -> Trajectories:
         sampler = Sampler(estimator=self.logF)
-        trajectories = sampler.sample_trajectories(n_trajectories=n_samples)
+        trajectories = sampler.sample_trajectories(env, n_trajectories=n_samples)
         return trajectories
 
     def flow_matching_loss(
-        self, states: DiscreteStates
+        self, env: Env, states: DiscreteStates
     ) -> TT["n_trajectories", torch.float]:
         """Computes the FM for the provided states.
 
@@ -67,7 +66,7 @@ class FMGFlowNet(GFlowNet[tuple[DiscreteStates, DiscreteStates]]):
             states.forward_masks, -float("inf"), dtype=torch.float
         )
 
-        for action_idx in range(self.env.n_actions - 1):
+        for action_idx in range(env.n_actions - 1):
             valid_backward_mask = states.backward_masks[:, action_idx]
             valid_forward_mask = states.forward_masks[:, action_idx]
             valid_backward_states = states[valid_backward_mask]
@@ -76,9 +75,9 @@ class FMGFlowNet(GFlowNet[tuple[DiscreteStates, DiscreteStates]]):
             backward_actions = torch.full_like(
                 valid_backward_states.backward_masks[:, 0], action_idx, dtype=torch.long
             ).unsqueeze(-1)
-            backward_actions = self.env.Actions(backward_actions)
+            backward_actions = env.Actions(backward_actions)
 
-            valid_backward_states_parents = self.env.backward_step(
+            valid_backward_states_parents = env.backward_step(
                 valid_backward_states, backward_actions
             )
 
@@ -101,8 +100,11 @@ class FMGFlowNet(GFlowNet[tuple[DiscreteStates, DiscreteStates]]):
 
         return (log_incoming_flows - log_outgoing_flows).pow(2).mean()
 
-    def reward_matching_loss(self, terminating_states: DiscreteStates) -> TT[0, float]:
+    def reward_matching_loss(
+        self, env: Env, terminating_states: DiscreteStates
+    ) -> TT[0, float]:
         """Calculates the reward matching loss from the terminating states."""
+        del env  # Unused
         assert terminating_states.log_rewards is not None
         log_edge_flows = self.logF(terminating_states)
 
@@ -111,7 +113,9 @@ class FMGFlowNet(GFlowNet[tuple[DiscreteStates, DiscreteStates]]):
         log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
-    def loss(self, states_tuple: Tuple[DiscreteStates, DiscreteStates]) -> TT[0, float]:
+    def loss(
+        self, env: Env, states_tuple: Tuple[DiscreteStates, DiscreteStates]
+    ) -> TT[0, float]:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
         Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
@@ -119,8 +123,8 @@ class FMGFlowNet(GFlowNet[tuple[DiscreteStates, DiscreteStates]]):
         (i.e. non-terminal states), and the second one being the terminal states of the
         trajectories."""
         intermediary_states, terminating_states = states_tuple
-        fm_loss = self.flow_matching_loss(intermediary_states)
-        rm_loss = self.reward_matching_loss(terminating_states)
+        fm_loss = self.flow_matching_loss(env, intermediary_states)
+        rm_loss = self.reward_matching_loss(env, terminating_states)
         return fm_loss + self.alpha * rm_loss
 
     def to_training_samples(

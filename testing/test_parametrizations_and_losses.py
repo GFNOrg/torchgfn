@@ -18,7 +18,7 @@ from gfn.gym.helpers.box_utils import (
     BoxPFEstimator,
     BoxPFNeuralNet,
 )
-from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
+from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
 
@@ -51,15 +51,15 @@ def test_FM(env_name: int, ndim: int, module_name: str):
         raise ValueError("Unknown module name")
 
     log_F_edge = DiscretePolicyEstimator(
-        env=env,
         module=module,
-        forward=True,
+        n_actions=env.n_actions,
+        preprocessor=env.preprocessor,
     )
 
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
-    trajectories = gflownet.sample_trajectories(n_samples=10)
+    trajectories = gflownet.sample_trajectories(env, n_samples=10)
     states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
-    loss = gflownet.loss(states_tuple)
+    loss = gflownet.loss(env, states_tuple)
     assert loss >= 0
 
 
@@ -174,10 +174,14 @@ def PFBasedGFlowNet_with_return(
             n_components=ndim + 1 if module_name != "Uniform" else 1,
         )
     else:
-        pf = DiscretePolicyEstimator(env, pf_module, forward=True)
-        pb = DiscretePolicyEstimator(env, pb_module, forward=False)
+        pf = DiscretePolicyEstimator(
+            pf_module, env.n_actions, preprocessor=env.preprocessor
+        )
+        pb = DiscretePolicyEstimator(
+            pb_module, env.n_actions, preprocessor=env.preprocessor, is_backward=True
+        )
 
-    logF = ScalarEstimator(env, module=logF_module)
+    logF = ScalarEstimator(module=logF_module, preprocessor=env.preprocessor)
 
     if gflownet_name == "DB":
         gflownet = DBGFlowNet(
@@ -202,10 +206,10 @@ def PFBasedGFlowNet_with_return(
     else:
         raise ValueError(f"Unknown gflownet {gflownet_name}")
 
-    trajectories = gflownet.sample_trajectories(10)
+    trajectories = gflownet.sample_trajectories(env, 10)
     training_objects = gflownet.to_training_samples(trajectories)
 
-    _ = gflownet.loss(training_objects)
+    _ = gflownet.loss(env, training_objects)
 
     if gflownet_name == "TB":
         assert torch.all(
@@ -299,9 +303,11 @@ def test_subTB_vs_TB(
         zero_logF=True,
     )
 
-    trajectories = gflownet.sample_trajectories(10)
-    subtb_loss = gflownet.loss(trajectories)
+    trajectories = gflownet.sample_trajectories(env, 10)
+    subtb_loss = gflownet.loss(env, trajectories)
 
     if weighting == "TB":
-        tb_loss = TBGFlowNet(pf=pf, pb=pb).loss(trajectories)  # LogZ is default 0.0.
+        tb_loss = TBGFlowNet(pf=pf, pb=pb).loss(
+            env, trajectories
+        )  # LogZ is default 0.0.
         assert (tb_loss - subtb_loss).abs() < 1e-4

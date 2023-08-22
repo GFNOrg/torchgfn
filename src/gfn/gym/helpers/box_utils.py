@@ -1,5 +1,5 @@
 """This file contains utilitary functions for the Box environment."""
-from typing import Literal, Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -359,8 +359,8 @@ class DistributionWrapper(Distribution):
     def __init__(
         self,
         states: States,
-        env: Box,
         delta: float,
+        epsilon: float,
         mixture_logits,
         alpha_r,
         beta_r,
@@ -370,7 +370,6 @@ class DistributionWrapper(Distribution):
         n_components,
         n_components_s0,
     ):
-        self.env = env
         self.idx_is_initial = torch.where(torch.all(states.tensor == 0, 1))[0]
         self.idx_not_initial = torch.where(torch.any(states.tensor != 0, 1))[0]
         self._output_shape = states.tensor.shape
@@ -387,13 +386,13 @@ class DistributionWrapper(Distribution):
         self.quarter_circ = None
         if len(self.idx_not_initial) > 0:
             self.quarter_circ = QuarterCircleWithExit(
-                delta=self.env.delta,
+                delta=delta,
                 centers=states[self.idx_not_initial],  # Remove initial states.
                 exit_probability=exit_probability[self.idx_not_initial],
                 mixture_logits=mixture_logits[self.idx_not_initial, :n_components],
                 alpha=alpha_theta[self.idx_not_initial, :n_components],
                 beta=beta_theta[self.idx_not_initial, :n_components],
-                epsilon=self.env.epsilon,
+                epsilon=epsilon,
             )  # no sample_shape req as it is stored in centers.
 
     def sample(self, sample_shape=()):
@@ -472,6 +471,7 @@ class BoxPFNeuralNet(NeuralNet):
         self.n_components = n_components
 
         input_dim = 2
+        self.input_dim = input_dim
 
         output_dim = 1 + 3 * self.n_components
 
@@ -571,6 +571,7 @@ class BoxPBNeuralNet(NeuralNet):
             **kwargs: passed to the NeuralNet class.
         """
         input_dim = 2
+        self.input_dim = input_dim
         output_dim = 3 * n_components
 
         super().__init__(
@@ -618,6 +619,8 @@ class BoxPBUniform(torch.nn.Module):
     A module that returns (1, 1, 1) for all states. Used with QuarterCircle, it leads to a
     uniform distribution over parents in the south-western part of circle.
     """
+
+    input_dim = 2
 
     def forward(
         self, preprocessed_states: TT["batch_shape", 2, float]
@@ -680,14 +683,15 @@ class BoxPFEstimator(GFNModule):
         min_concentration: float = 0.1,
         max_concentration: float = 2.0,
     ):
-        super().__init__(env, module)
+        super().__init__(module)
         self._n_comp_max = max(n_components_s0, n_components)
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
 
         self.min_concentration = min_concentration
         self.max_concentration = max_concentration
-        self.env = env
+        self.delta = env.delta
+        self.epsilon = env.epsilon
 
     def expected_output_dim(self) -> int:
         return 1 + 5 * self._n_comp_max
@@ -736,8 +740,8 @@ class BoxPFEstimator(GFNModule):
 
         return DistributionWrapper(
             states,
-            self.env,
-            self.env.delta,
+            self.delta,
+            self.epsilon,
             mixture_logits,
             alpha_r,
             beta_r,
@@ -760,12 +764,14 @@ class BoxPBEstimator(GFNModule):
         min_concentration: float = 0.1,
         max_concentration: float = 2.0,
     ):
-        super().__init__(env, module)
+        super().__init__(module, is_backward=True)
         self.module = module
         self.n_components = n_components
 
         self.min_concentration = min_concentration
         self.max_concentration = max_concentration
+
+        self.delta = env.delta
 
     def expected_output_dim(self) -> int:
         return 3 * self.n_components
@@ -789,7 +795,7 @@ class BoxPBEstimator(GFNModule):
             alpha = _normalize(alpha)
             beta = _normalize(beta)
         return QuarterCircle(
-            delta=self.env.delta,
+            delta=self.delta,
             northeastern=False,
             centers=states,
             mixture_logits=mixture_logits,

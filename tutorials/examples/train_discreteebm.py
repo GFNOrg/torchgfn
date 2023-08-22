@@ -23,6 +23,80 @@ from gfn.modules import DiscretePolicyEstimator
 from gfn.utils.common import validate
 from gfn.utils.modules import NeuralNet, Tabular
 
+
+def main(args):  # noqa: C901
+    seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
+    torch.manual_seed(seed)
+
+    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+
+    use_wandb = len(args.wandb_project) > 0
+    if use_wandb:
+        wandb.init(project=args.wandb_project)
+        wandb.config.update(args)
+
+    # 1. Create the environment
+    env = DiscreteEBM(ndim=args.ndim, alpha=args.alpha, device_str=device_str)
+
+    # 2. Create the gflownet.
+    # We need a LogEdgeFlowEstimator
+    if args.tabular:
+        module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
+    else:
+        module = NeuralNet(
+            input_dim=env.preprocessor.output_dim,
+            output_dim=env.n_actions,
+            hidden_dim=args.hidden_dim,
+            n_hidden_layers=args.n_hidden,
+        )
+    estimator = DiscretePolicyEstimator(
+        module=module,
+        n_actions=env.n_actions,
+        preprocessor=env.preprocessor,
+    )
+    gflownet = FMGFlowNet(estimator)
+
+    # 3. Create the optimizer
+    optimizer = torch.optim.Adam(module.parameters(), lr=args.lr)
+
+    # 4. Train the gflownet
+
+    visited_terminating_states = env.States.from_batch_shape((0,))
+
+    states_visited = 0
+    n_iterations = args.n_trajectories // args.batch_size
+    validation_info = {"l1_dist": float("inf")}
+    for iteration in trange(n_iterations):
+        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size)
+        training_samples = gflownet.to_training_samples(trajectories)
+
+        optimizer.zero_grad()
+        loss = gflownet.loss(env, training_samples)
+        loss.backward()
+        optimizer.step()
+
+        visited_terminating_states.extend(trajectories.last_states)
+
+        states_visited += len(trajectories)
+
+        to_log = {"loss": loss.item(), "states_visited": states_visited}
+        if use_wandb:
+            wandb.log(to_log, step=iteration)
+        if iteration % args.validation_interval == 0:
+            validation_info = validate(
+                env,
+                gflownet,
+                args.validation_samples,
+                visited_terminating_states,
+            )
+            if use_wandb:
+                wandb.log(validation_info, step=iteration)
+            to_log.update(validation_info)
+            tqdm.write(f"{iteration}: {to_log}")
+
+    return validation_info["l1_dist"]
+
+
 if __name__ == "__main__":
     parser = ArgumentParser()
 
@@ -104,66 +178,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
-    torch.manual_seed(seed)
-
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
-
-    use_wandb = len(args.wandb_project) > 0
-    if use_wandb:
-        wandb.init(project=args.wandb_project)
-        wandb.config.update(args)
-
-    # 1. Create the environment
-    env = DiscreteEBM(ndim=args.ndim, alpha=args.alpha)
-
-    # 2. Create the gflownet.
-    # We need a LogEdgeFlowEstimator
-    if args.tabular:
-        module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
-    else:
-        module = NeuralNet(
-            input_dim=env.preprocessor.output_dim,
-            output_dim=env.n_actions,
-            hidden_dim=args.hidden_dim,
-            n_hidden_layers=args.n_hidden,
-        )
-    estimator = DiscretePolicyEstimator(env=env, module=module, forward=True)
-    gflownet = FMGFlowNet(estimator)
-
-    # 3. Create the optimizer
-    optimizer = torch.optim.Adam(module.parameters(), lr=args.lr)
-
-    # 4. Train the gflownet
-
-    visited_terminating_states = env.States.from_batch_shape((0,))
-
-    states_visited = 0
-    n_iterations = args.n_trajectories // args.batch_size
-    for iteration in trange(n_iterations):
-        trajectories = gflownet.sample_trajectories(n_samples=args.batch_size)
-        training_samples = gflownet.to_training_samples(trajectories)
-
-        optimizer.zero_grad()
-        loss = gflownet.loss(training_samples)
-        loss.backward()
-        optimizer.step()
-
-        visited_terminating_states.extend(trajectories.last_states)
-
-        states_visited += len(trajectories)
-
-        to_log = {"loss": loss.item(), "states_visited": states_visited}
-        if use_wandb:
-            wandb.log(to_log, step=iteration)
-        if iteration % args.validation_interval == 0:
-            validation_info = validate(
-                env,
-                gflownet,
-                args.validation_samples,
-                visited_terminating_states,
-            )
-            if use_wandb:
-                wandb.log(validation_info, step=iteration)
-            to_log.update(validation_info)
-            tqdm.write(f"{iteration}: {to_log}")
+    print(main(args))

@@ -5,11 +5,11 @@ from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.containers import Trajectories
+from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.states import States
 
 
-# TODO: Environment should not live inside the estimator and here... needs refactor.
 class Sampler:
     """`Sampler is a container for a PolicyEstimator.
 
@@ -18,23 +18,26 @@ class Sampler:
 
     Attributes:
         estimator: the submitted PolicyEstimator.
-        env: the Environment instance inside the PolicyEstimator.
-        is_backward: if True, samples trajectories of actions backward (a distribution
-            over parents). If True, the estimator must be a ProbabilityDistribution
-            over parents.
+        probability_distribution_kwargs: keyword arguments to be passed to the `to_probability_distribution`
+             method of the estimator. For example, for DiscretePolicyEstimators, the kwargs can contain
+             the `temperature` parameter, `epsilon`, and `sf_bias`.
     """
 
-    def __init__(self, estimator: GFNModule, is_backward: bool = False) -> None:
+    def __init__(
+        self,
+        estimator: GFNModule,
+        **probability_distribution_kwargs: Optional[dict],
+    ) -> None:
         self.estimator = estimator
-        self.env = estimator.env
-        self.is_backward = is_backward  # TODO: take directly from estimator.
+        self.probability_distribution_kwargs = probability_distribution_kwargs
 
     def sample_actions(
-        self, states: States
+        self, env: Env, states: States
     ) -> Tuple[Actions, TT["batch_shape", torch.float]]:
         """Samples actions from the given states.
 
         Args:
+            env: The environment to sample actions from.
             states (States): A batch of states.
 
         Returns:
@@ -45,7 +48,9 @@ class Sampler:
                 states.
         """
         module_output = self.estimator(states)
-        dist = self.estimator.to_probability_distribution(states, module_output)
+        dist = self.estimator.to_probability_distribution(
+            states, module_output, **self.probability_distribution_kwargs
+        )
 
         with torch.no_grad():
             actions = dist.sample()
@@ -53,16 +58,18 @@ class Sampler:
         if torch.any(torch.isinf(log_probs)):
             raise RuntimeError("Log probabilities are inf. This should not happen.")
 
-        return self.env.Actions(actions), log_probs
+        return env.Actions(actions), log_probs
 
     def sample_trajectories(
         self,
+        env: Env,
         states: Optional[States] = None,
         n_trajectories: Optional[int] = None,
     ) -> Trajectories:
         """Sample trajectories sequentially.
 
         Args:
+            env: The environment to sample trajectories from.
             states: If given, trajectories would start from such states. Otherwise,
                 trajectories are sampled from $s_o$ and n_trajectories must be provided.
             n_trajectories: If given, a batch of n_trajectories will be sampled all
@@ -78,7 +85,7 @@ class Sampler:
             assert (
                 n_trajectories is not None
             ), "Either states or n_trajectories should be specified"
-            states = self.env.reset(batch_shape=(n_trajectories,))
+            states = env.reset(batch_shape=(n_trajectories,))
         else:
             assert (
                 len(states.batch_shape) == 1
@@ -87,7 +94,11 @@ class Sampler:
 
         device = states.tensor.device
 
-        dones = states.is_initial_state if self.is_backward else states.is_sink_state
+        dones = (
+            states.is_initial_state
+            if self.estimator.is_backward
+            else states.is_sink_state
+        )
 
         trajectories_states: List[TT["n_trajectories", "state_shape", torch.float]] = [
             states.tensor
@@ -104,37 +115,37 @@ class Sampler:
         step = 0
 
         while not all(dones):
-            actions = self.env.Actions.make_dummy_actions(batch_shape=(n_trajectories,))
+            actions = env.Actions.make_dummy_actions(batch_shape=(n_trajectories,))
             log_probs = torch.full(
                 (n_trajectories,), fill_value=0, dtype=torch.float, device=device
             )
-            valid_actions, actions_log_probs = self.sample_actions(states[~dones])
+            valid_actions, actions_log_probs = self.sample_actions(env, states[~dones])
             actions[~dones] = valid_actions
             log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
             trajectories_logprobs += [log_probs]
 
-            if self.is_backward:
-                new_states = self.env.backward_step(states, actions)
+            if self.estimator.is_backward:
+                new_states = env.backward_step(states, actions)
             else:
-                new_states = self.env.step(states, actions)
+                new_states = env.step(states, actions)
             sink_states_mask = new_states.is_sink_state
 
             step += 1
 
             new_dones = (
-                new_states.is_initial_state if self.is_backward else sink_states_mask
+                new_states.is_initial_state
+                if self.estimator.is_backward
+                else sink_states_mask
             ) & ~dones
             trajectories_dones[new_dones & ~dones] = step
             try:
-                trajectories_log_rewards[new_dones & ~dones] = self.env.log_reward(
+                trajectories_log_rewards[new_dones & ~dones] = env.log_reward(
                     states[new_dones & ~dones]
                 )
             except NotImplementedError:
-                # print(states[new_dones & ~dones])
-                # print(torch.log(self.env.reward(states[new_dones & ~dones])))
                 trajectories_log_rewards[new_dones & ~dones] = torch.log(
-                    self.env.reward(states[new_dones & ~dones])
+                    env.reward(states[new_dones & ~dones])
                 )
             states = new_states
             dones = dones | new_dones
@@ -142,16 +153,16 @@ class Sampler:
             trajectories_states += [states.tensor]
 
         trajectories_states = torch.stack(trajectories_states, dim=0)
-        trajectories_states = self.env.States(tensor=trajectories_states)
-        trajectories_actions = self.env.Actions.stack(trajectories_actions)
+        trajectories_states = env.States(tensor=trajectories_states)
+        trajectories_actions = env.Actions.stack(trajectories_actions)
         trajectories_logprobs = torch.stack(trajectories_logprobs, dim=0)
 
         trajectories = Trajectories(
-            env=self.env,
+            env=env,
             states=trajectories_states,
             actions=trajectories_actions,
             when_is_done=trajectories_dones,
-            is_backward=self.is_backward,
+            is_backward=self.estimator.is_backward,
             log_rewards=trajectories_log_rewards,
             log_probs=trajectories_logprobs,
         )

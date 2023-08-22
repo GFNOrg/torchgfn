@@ -8,7 +8,9 @@ import torch.nn as nn
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
+from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet
+from gfn.modules import GFNModule
 
 
 class TBGFlowNet(TrajectoryBasedGFlowNet):
@@ -28,16 +30,18 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
 
     def __init__(
         self,
+        pf: GFNModule,
+        pb: GFNModule,
+        on_policy: bool = False,
         init_logZ: float = 0.0,
         log_reward_clip_min: float = -12,  # roughly log(1e-5)
-        **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(pf, pb, on_policy=on_policy)
 
         self.logZ = nn.Parameter(torch.tensor(init_logZ))
         self.log_reward_clip_min = log_reward_clip_min
 
-    def loss(self, trajectories: Trajectories) -> TT[0, float]:
+    def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
         """Trajectory balance loss.
 
         The trajectory balance loss is described in 2.3 of
@@ -46,6 +50,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         Raises:
             ValueError: if the loss is NaN.
         """
+        del env  # unused
         _, _, scores = self.get_trajectories_scores(trajectories)
         loss = (scores + self.logZ).pow(2).mean()
         if torch.isnan(loss):
@@ -64,17 +69,24 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         ValueError: if the loss is NaN.
     """
 
-    def __init__(self, log_reward_clip_min: float = -12, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        pf: GFNModule,
+        pb: GFNModule,
+        on_policy: bool = False,
+        log_reward_clip_min: float = -12,
+    ):
+        super().__init__(pf, pb, on_policy=on_policy)
 
         self.log_reward_clip_min = log_reward_clip_min  # -12 is roughly log(1e-5)
 
-    def loss(self, trajectories: Trajectories) -> TT[0, float]:
+    def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
         """Log Partition Variance loss.
 
         This method is described in section 3.2 of
         [ROBUST SCHEDULING WITH GFLOWNETS](https://arxiv.org/abs/2302.05446))
         """
+        del env  # unused
         _, _, scores = self.get_trajectories_scores(trajectories)
         loss = (scores - scores.mean()).pow(2).mean()
         if torch.isnan(loss):
