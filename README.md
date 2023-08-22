@@ -150,6 +150,10 @@ open build/html/index.html
 
 See [here](https://github.com/saleml/torchgfn/tree/master/tutorials/ENV.md)
 
+### Defining a GFlowNet
+
+See [here](https://github.com/saleml/torchgfn/tree/master/tutorials/GFLOWNET.md)
+
 ### States
 
 States are the primitive building blocks for GFlowNet objects such as transitions and trajectories, on which losses operate.
