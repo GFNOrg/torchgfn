@@ -150,10 +150,6 @@ open build/html/index.html
 
 See [here](https://github.com/saleml/torchgfn/tree/master/tutorials/ENV.md)
 
-### Defining a GFlowNet
-
-See [here](https://github.com/saleml/torchgfn/tree/master/tutorials/GFLOWNET.md)
-
 ### States
 
 States are the primitive building blocks for GFlowNet objects such as transitions and trajectories, on which losses operate.
@@ -219,3 +215,78 @@ Currently, the implemented losses are:
 - Trajectory Balance
 - Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](https://github.com/saleml/torchgfn/tree/master/src/gfn/losses/sub_trajectory_balance.py).
 - Log Partition Variance loss. Introduced [here](https://arxiv.org/abs/2302.05446)
+
+### Extending GFlowNets
+
+To define a new `GFlowNet`, the user needs to define a class which subclasses `GFlowNet` and implements the following methods:
+
+- `sample_trajectories`: Sample a specific number of complete trajectories.
+- `loss`: Compute the loss given the training objects.
+- `to_training_samples`: Convert trajectories to training samples.
+
+Based on the type of training samples returned by `to_training_samples`, the user should define the generic type `TrainingSampleType` when subclassing `GFlowNet`. For example, if the training sample is an instance of `Trajectories`, the `GFlowNet` class should be subclassed as `GFlowNet[Trajectories]`. Thus, the class definition should look like this:
+
+```python
+class MyGFlowNet(GFlowNet[Trajectories]):
+    ...
+```
+
+**Example: Flow Matching GFlowNet**
+
+Let's consider the example of the `FMGFlowNet` class, which is a subclass of `GFlowNet` that implements the Flow Matching GFlowNet. The training samples are tuples of discrete states, so the class references the type `Tuple[DiscreteStates, DiscreteStates]` when subclassing `GFlowNet`:
+
+```python
+class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
+    ...
+
+    def to_training_samples(
+        self, trajectories: Trajectories
+    ) -> tuple[DiscreteStates, DiscreteStates]:
+        """Converts a batch of trajectories into a batch of training samples."""
+        return trajectories.to_non_initial_intermediary_and_terminating_states()
+
+```
+
+**Adding New Training Sample Types**
+
+If your GFlowNet returns a unique type of training samples, you'll need to expand the `TrainingSampleType` bound. This ensures type-safety and better code clarity.
+
+In the earlier example, the `FMGFlowNet` used:
+
+```python
+GFlowNet[Tuple[DiscreteStates, DiscreteStates]]
+```
+
+This means the method `to_training_samples` should return a tuple of `DiscreteStates`.
+
+If the `to_training_sample` method of your new GFlowNet, for example, returns an `int`, you should expand the `TrainingSampleType` in `src/gfn/gflownet/base.py` to include this type in the `bound` of the `TypeVar`:
+
+Before:
+
+```python
+TrainingSampleType = TypeVar(
+    "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
+)
+```
+
+After:
+
+```python
+TrainingSampleType = TypeVar(
+    "TrainingSampleType", bound=Union[Container, tuple[States, ...], int]
+)
+```
+
+**Implementing Class Methods**
+
+As mentioned earlier, your new GFlowNet must implement the following methods:
+
+- `sample_trajectories`: Sample a specific number of complete trajectories.
+- `loss`: Compute the loss given the training objects.
+- `to_training_samples`: Convert trajectories to training samples.
+
+These methods are defined in `src/gfn/gflownet/base.py` and are abstract methods, so they must be implemented in your new GFlowNet. If your GFlowNet has unique functionality which should be represented as additional class methods, implement them as required. Remember to document new methods to ensure other developers understand their purposes and use-cases!
+
+**Testing**
+
+Remember to create unit tests for your new GFlowNet to ensure it works as intended and integrates seamlessly with other parts of the codebase. This ensures maintainability and reliability of the code!
