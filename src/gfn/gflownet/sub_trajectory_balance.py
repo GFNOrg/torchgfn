@@ -313,14 +313,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def get_modified_db_contributions(self, trajectories: Trajectories) -> TT:
         """
         Calculates contributions for the 'ModifiedDB' weighting method.
-
-        Args:
-            is_done: Tensor representing when each trajectory is done.
-            n_rows: Number of rows in the all_scores tensor.
-            n_trajectories: Number of trajectories.
-
-        Returns:
-            contributions: Tensor of calculated contributions.
         """
         is_done = trajectories.when_is_done
         max_len = trajectories.max_length
@@ -344,15 +336,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def get_geometric_within_contributions(self, trajectories: Trajectories) -> TT:
         """
         Calculates contributions for the 'geometric_within' weighting method.
-
-        Args:
-            is_done: Tensor representing when each trajectory is done.
-            n_rows: Number of rows in the all_scores tensor.
-            n_trajectories: Number of trajectories.
-            lamda: Lambda factor for geometric series.
-
-        Returns:
-            contributions: Tensor of calculated contributions.
         """
         L = self.lamda
         max_len = trajectories.max_length
