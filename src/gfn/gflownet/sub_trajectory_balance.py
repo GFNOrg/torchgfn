@@ -8,6 +8,8 @@ from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet
 from gfn.modules import GFNModule, ScalarEstimator
 
+ContributionsTensor = TT["max_len * (1 + max_len) / 2", "n_trajectories"]
+
 
 class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     r"""GFlowNet for the Sub Trajectory Balance Loss.
@@ -72,7 +74,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         trajectories: Trajectories,
         log_p_trajectories: TT["max_length", "n_trajectories", torch.float],
-    ) -> TT["max_length", "n_trajectories", torch.float]:
+    ) -> TT["max_length + 1", "n_trajectories"]:
         """Calculates the cumulative log probabilities for all trajectories.
 
         Args:
@@ -96,7 +98,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_pf_trajectories_cum: TT,
         log_state_flows: TT,
         i: int,
-    ) -> TT:
+    ) -> TT["max_length + 1 - i", "n_trajectories"]:
         """
         Calculate the predictions tensor for the current sub-trajectory length.
         """
@@ -122,7 +124,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         sink_states_mask: TT,
         full_mask: TT,
         i: int,
-    ) -> TT:
+    ) -> TT["max_length + 1 - i", "n_trajectories"]:
         """
         Calculate the targets tensor for the current sub-trajectory length.
         """
@@ -153,7 +155,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         env: Env,
         trajectories: Trajectories,
         log_pf_trajectories: TT,
-    ) -> TT:
+    ) -> TT["max_length", "n_trajectories"]:
         """
         Calculate log state flows and masks for sink and terminal states.
 
@@ -180,7 +182,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def calculate_masks(
         self, log_state_flows: TT, trajectories: Trajectories
-    ) -> Tuple[TT, TT, TT]:
+    ) -> Tuple[
+        TT["max_length", "n_trajectories"],
+        TT["max_length", "n_trajectories"],
+        TT["max_length", "n_trajectories"],
+    ]:
         """
         Calculate masks for sink and terminal states.
         """
@@ -263,7 +269,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             flattening_masks,
         )
 
-    def get_equal_within_contributions(self, trajectories: Trajectories) -> TT:
+    def get_equal_within_contributions(
+        self, trajectories: Trajectories
+    ) -> ContributionsTensor:
         """
         Calculates contributions for the 'equal_within' weighting method.
         """
@@ -282,7 +290,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         return contributions
 
-    def get_equal_contributions(self, trajectories: Trajectories) -> TT:
+    def get_equal_contributions(
+        self, trajectories: Trajectories
+    ) -> ContributionsTensor:
         """
         Calculates contributions for the 'equal' weighting method.
         """
@@ -295,7 +305,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def get_tb_contributions(
         self, trajectories: Trajectories, all_scores: TT
-    ) -> torch.Tensor:
+    ) -> ContributionsTensor:
         """
         Calculates contributions for the 'TB' weighting method.
         """
@@ -310,7 +320,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         return contributions
 
-    def get_modified_db_contributions(self, trajectories: Trajectories) -> TT:
+    def get_modified_db_contributions(
+        self, trajectories: Trajectories
+    ) -> ContributionsTensor:
         """
         Calculates contributions for the 'ModifiedDB' weighting method.
         """
@@ -333,7 +345,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         )
         return contributions
 
-    def get_geometric_within_contributions(self, trajectories: Trajectories) -> TT:
+    def get_geometric_within_contributions(
+        self, trajectories: Trajectories
+    ) -> ContributionsTensor:
         """
         Calculates contributions for the 'geometric_within' weighting method.
         """
