@@ -181,7 +181,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         return log_state_flows
 
     def calculate_masks(
-        self, log_state_flows: TT, trajectories: Trajectories
+        self,
+        log_state_flows: TT["max_length", "n_trajectories"],
+        trajectories: Trajectories,
     ) -> Tuple[
         TT["max_length", "n_trajectories"],
         TT["max_length", "n_trajectories"],
