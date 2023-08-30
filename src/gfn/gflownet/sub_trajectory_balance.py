@@ -9,6 +9,12 @@ from gfn.gflownet.base import TrajectoryBasedGFlowNet
 from gfn.modules import GFNModule, ScalarEstimator
 
 ContributionsTensor = TT["max_len * (1 + max_len) / 2", "n_trajectories"]
+CumulativeLogProbsTensor = TT["max_length + 1", "n_trajectories"]
+LogStateFlowsTensor = TT["max_length", "n_trajectories"]
+LogTrajectoriesTensor = TT["max_length", "n_trajectories", torch.float]
+MaskTensor = TT["max_length", "n_trajectories"]
+PredictionsTensor = TT["max_length + 1 - i", "n_trajectories"]
+TargetsTensor = TT["max_length + 1 - i", "n_trajectories"]
 
 
 class SubTBGFlowNet(TrajectoryBasedGFlowNet):
@@ -73,8 +79,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def cumulative_logprobs(
         self,
         trajectories: Trajectories,
-        log_p_trajectories: TT["max_length", "n_trajectories", torch.float],
-    ) -> TT["max_length + 1", "n_trajectories"]:
+        log_p_trajectories: LogTrajectoriesTensor,
+    ) -> CumulativeLogProbsTensor:
         """Calculates the cumulative log probabilities for all trajectories.
 
         Args:
@@ -95,10 +101,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def calculate_preds(
         self,
-        log_pf_trajectories_cum: TT,
-        log_state_flows: TT,
+        log_pf_trajectories_cum: CumulativeLogProbsTensor,
+        log_state_flows: LogStateFlowsTensor,
         i: int,
-    ) -> TT["max_length + 1 - i", "n_trajectories"]:
+    ) -> PredictionsTensor:
         """
         Calculate the predictions tensor for the current sub-trajectory length.
         """
@@ -117,14 +123,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def calculate_targets(
         self,
         trajectories: Trajectories,
-        preds: TT,
-        log_pb_trajectories_cum: TT,
-        log_state_flows: TT,
-        is_terminal_mask: TT,
-        sink_states_mask: TT,
-        full_mask: TT,
+        preds: PredictionsTensor,
+        log_pb_trajectories_cum: CumulativeLogProbsTensor,
+        log_state_flows: LogStateFlowsTensor,
+        is_terminal_mask: MaskTensor,
+        sink_states_mask: MaskTensor,
+        full_mask: MaskTensor,
         i: int,
-    ) -> TT["max_length + 1 - i", "n_trajectories"]:
+    ) -> TargetsTensor:
         """
         Calculate the targets tensor for the current sub-trajectory length.
         """
@@ -154,8 +160,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        log_pf_trajectories: TT,
-    ) -> TT["max_length", "n_trajectories"]:
+        log_pf_trajectories: LogTrajectoriesTensor,
+    ) -> LogStateFlowsTensor:
         """
         Calculate log state flows and masks for sink and terminal states.
 
@@ -182,13 +188,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def calculate_masks(
         self,
-        log_state_flows: TT["max_length", "n_trajectories"],
+        log_state_flows: LogStateFlowsTensor,
         trajectories: Trajectories,
-    ) -> Tuple[
-        TT["max_length", "n_trajectories"],
-        TT["max_length", "n_trajectories"],
-        TT["max_length", "n_trajectories"],
-    ]:
+    ) -> Tuple[MaskTensor, MaskTensor, MaskTensor]:
         """
         Calculate masks for sink and terminal states.
         """
