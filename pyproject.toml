@@ -6,7 +6,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "torchgfn"
 packages = [{include = "gfn", from = "src"}]
-version = "1.1"
+version = "1.1.1"
 description = "A torch implementation of GFlowNets"
 authors = ["Salem Lahou <salemlahlou9@gmail.com>", "Joseph Viviano <joseph@viviano.ca>", "Victor Schmidt <vsch@pm.me>"]
 license = "MIT"
