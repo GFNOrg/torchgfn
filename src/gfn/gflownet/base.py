@@ -75,7 +75,9 @@ class PFBasedGFlowNet(GFlowNet, Generic[TrainingSampleType]):
         return trajectories
 
 
-class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], Generic[TrainingSampleType]):
+class TrajectoryBasedGFlowNet(
+    PFBasedGFlowNet[Trajectories], Generic[TrainingSampleType]
+):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
