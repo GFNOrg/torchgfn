@@ -55,7 +55,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         """Computes the loss given the training objects."""
 
 
-class PFBasedGFlowNet(GFlowNet, Generic[TrainingSampleType]):
+class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
     r"""Base class for gflownets that explicitly uses $P_F$.
 
     Attributes:
@@ -75,9 +75,7 @@ class PFBasedGFlowNet(GFlowNet, Generic[TrainingSampleType]):
         return trajectories
 
 
-class TrajectoryBasedGFlowNet(
-    PFBasedGFlowNet[Trajectories], Generic[TrainingSampleType]
-):
+class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
