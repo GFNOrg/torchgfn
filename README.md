@@ -21,9 +21,7 @@
 
 ## Installing the package
 
-The codebase requires python >= 3.10
-
-To install the latest stable version:
+The codebase requires python >= 3.10. To install the latest stable version:
 
 ```bash
 pip install torchgfn
