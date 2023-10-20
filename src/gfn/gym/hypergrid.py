@@ -25,7 +25,7 @@ class HyperGrid(DiscreteEnv):
         reward_cos: bool = False,
         device_str: Literal["cpu", "cuda"] = "cpu",
         preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"] = "KHot",
-        log_reward_clip: float = -20.,
+        log_reward_clip: float = -100.,
     ):
         """HyperGrid environment from the GFlowNets paper.
         The states are represented as 1-d tensors of length `ndim` with values in

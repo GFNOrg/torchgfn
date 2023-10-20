@@ -48,7 +48,7 @@ class DiscreteEBM(DiscreteEnv):
         alpha: float = 1.0,
         device_str: Literal["cpu", "cuda"] = "cpu",
         preprocessor_name: Literal["Identity", "Enum"] = "Identity",
-        log_reward_clip: float = -20.,
+        log_reward_clip: float = -100.,
     ):
         """Discrete EBM environment.
 
