@@ -405,7 +405,7 @@ class DiscreteStates(States, ABC):
             exit_idx = torch.ones(self.batch_shape + (1,))
         self.forward_masks[torch.cat([cond, exit_idx], dim=-1).bool()] = False
 
-    def enforce_exit_masks(self, batch_idx):
+    def set_exit_masks(self, batch_idx):
         """Sets forward masks such that the only allowable next action is to exit.
 
         A convienience function for common mask operations.
