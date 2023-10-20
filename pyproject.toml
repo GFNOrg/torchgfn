@@ -27,15 +27,16 @@ torchtyping = ">=0.1.4"
 
 # dev dependencies.
 black = { version = "22.3.0", optional = true }
+flake8 = { version = "*", optional = true }
 gitmopy = { version = "*", optional = true }
 myst-parser = { version = "*", optional = true }
 pre-commit = { version = "*", optional = true }
 pytest = { version = "*", optional = true }
 renku-sphinx-theme = { version = "*", optional = true }
 sphinx = { version = "*", optional = true }
+sphinx_rtd_theme = { version = "*", optional = true }
 sphinx-autoapi = { version = "*", optional = true }
 sphinx-math-dollar = { version = "*", optional = true }
-sphinx_rtd_theme = { version = "*", optional = true }
 tox = { version = "*", optional = true }
 
 # scripts dependencies.
@@ -52,30 +53,32 @@ dev = [
     "pre-commit",
     "pytest",
     "renku-sphinx-theme",
-    "sphinx",
-    "sphinx-autoapi",
-    "sphinx-math-dollar",
-    "sphinx_rtd_theme",
-    "tox"
-]
-
-scripts = ["tqdm", "wandb", "scikit-learn", "scipy"]
-
-all = [
-    "pre-commit",
-    "pytest",
-    "renku-sphinx-theme",
     "sphinx_rtd_theme",
     "sphinx-autoapi",
     "sphinx-math-dollar",
     "sphinx",
     "tox",
+    flake8,
+]
+
+scripts = ["tqdm", "wandb", "scikit-learn", "scipy"]
+
+all = [
     "black",
+    "flake8",
     "myst-parser",
+    "pre-commit",
+    "pytest",
+    "renku-sphinx-theme",
+    "scikit-learn",
+    "scipy",
+    "sphinx_rtd_theme",
+    "sphinx-autoapi",
+    "sphinx-math-dollar",
+    "sphinx",
+    "tox",
     "tqdm",
     "wandb",
-    "scikit-learn",
-    "scipy"
 ]
 
 [project.urls]
