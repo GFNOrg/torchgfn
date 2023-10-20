@@ -58,7 +58,7 @@ dev = [
     "sphinx-math-dollar",
     "sphinx",
     "tox",
-    flake8,
+    "flake8",
 ]
 
 scripts = ["tqdm", "wandb", "scikit-learn", "scipy"]
