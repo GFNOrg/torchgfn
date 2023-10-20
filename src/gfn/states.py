@@ -386,7 +386,7 @@ class DiscreteStates(States, ABC):
         self.backward_masks = _extend(self.backward_masks, required_first_dim)
 
     # The helper methods are convienience functions for common mask operations.
-    def set_nonexit_masks(self, cond, allow_exit : bool = False):
+    def set_nonexit_masks(self, cond, allow_exit: bool = False):
         """Sets the allowable actions according to cond, appending the exit mask.
 
         A convienience function for common mask operations.
@@ -416,12 +416,13 @@ class DiscreteStates(States, ABC):
         """
         self.forward_masks[batch_idx, :] = torch.cat(
             [
-                torch.zeros((torch.sum(batch_idx), ) + self.s0.shape),
-                torch.ones((torch.sum(batch_idx), ) + (1,))
-            ], dim=-1
+                torch.zeros((torch.sum(batch_idx),) + self.s0.shape),
+                torch.ones((torch.sum(batch_idx),) + (1,)),
+            ],
+            dim=-1,
         ).bool()
 
-    def init_forward_masks(self, set_ones : bool = True):
+    def init_forward_masks(self, set_ones: bool = True):
         """Initalizes forward masks.
 
         A convienience function for common mask operations.

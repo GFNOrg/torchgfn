@@ -23,7 +23,7 @@ class Env(ABC):
         sf: Optional[TT["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
-        log_reward_clip: Optional[float] = -20.,
+        log_reward_clip: Optional[float] = -20.0,
     ):
         """Initializes an environment.
 
@@ -213,6 +213,7 @@ class DiscreteEnv(Env, ABC):
     `DiscreteEnv` allows for  specifying the validity of actions (forward and backward),
     via mask tensors, that are directly attached to `States` objects.
     """
+
     def __init__(
         self,
         n_actions: int,
@@ -220,7 +221,7 @@ class DiscreteEnv(Env, ABC):
         sf: Optional[TT["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
-        log_reward_clip: Optional[float] = -20.,
+        log_reward_clip: Optional[float] = -20.0,
     ):
         """Initializes a discrete environment.
 
