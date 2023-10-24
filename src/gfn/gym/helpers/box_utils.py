@@ -1,10 +1,11 @@
 """This file contains utilitary functions for the Box environment."""
 from typing import Tuple
 
-import numpy as np
-import torch
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
 from torchtyping import TensorType as TT
+import numpy as np
+import torch
+import torch.nn as nn
 
 from gfn.gym import Box
 from gfn.modules import GFNModule
@@ -600,8 +601,8 @@ class BoxStateFlowModule(NeuralNet):
     """A deep neural network for the state flow function."""
 
     def __init__(self, logZ_value: torch.Tensor, **kwargs):
-        self.logZ_value = logZ_value
         super().__init__(**kwargs)
+        self.logZ_value = nn.Parameter(logZ_value)
 
     def forward(
         self, preprocessed_states: TT["batch_shape", "input_dim", float]
