@@ -13,7 +13,7 @@ jobs:
     - name: Set up Python 3.10
       uses: actions/setup-python@v3
       with:
-        python-version: 3.10
+        python-version: '3.10'
     - name: Add conda to system path
       run: |
         # $CONDA is an environment variable pointing to the root of the miniconda directory
@@ -31,4 +31,5 @@ jobs:
     - name: Test with pytest
       run: |
         conda install pytest
+        conda install wandb
         pytest
