@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import ClassVar, Literal, Tuple, cast
+from typing import ClassVar, Literal, Tuple
 
 import torch
 import torch.nn as nn
@@ -48,7 +48,7 @@ class DiscreteEBM(DiscreteEnv):
         alpha: float = 1.0,
         device_str: Literal["cpu", "cuda"] = "cpu",
         preprocessor_name: Literal["Identity", "Enum"] = "Identity",
-        log_reward_clip: float = -100.,
+        log_reward_clip: float = -100.0,
     ):
         """Discrete EBM environment.
 
