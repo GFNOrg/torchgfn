@@ -18,27 +18,27 @@ class Sampler:
 
     Attributes:
         estimator: the submitted PolicyEstimator.
-        probability_distribution_kwargs: keyword arguments to be passed to the `to_probability_distribution`
-             method of the estimator. For example, for DiscretePolicyEstimators, the kwargs can contain
-             the `temperature` parameter, `epsilon`, and `sf_bias`.
     """
-
     def __init__(
         self,
         estimator: GFNModule,
-        **probability_distribution_kwargs: Optional[dict],
     ) -> None:
         self.estimator = estimator
-        self.probability_distribution_kwargs = probability_distribution_kwargs
 
     def sample_actions(
-        self, env: Env, states: States
+        self, env: Env, states: States, **policy_kwargs: Optional[dict],
     ) -> Tuple[Actions, TT["batch_shape", torch.float]]:
         """Samples actions from the given states.
 
         Args:
             env: The environment to sample actions from.
             states (States): A batch of states.
+            policy_kwargs: keyword arguments to be passed to the
+                `to_probability_distribution` method of the estimator. For example, for
+                DiscretePolicyEstimators, the kwargs can contain the `temperature`
+                parameter, `epsilon`, and `sf_bias`. In the continuous case these
+                kwargs will be user defined. This can be used to, for example, sample
+                off-policy.
 
         Returns:
             A tuple of tensors containing:
@@ -49,7 +49,7 @@ class Sampler:
         """
         module_output = self.estimator(states)
         dist = self.estimator.to_probability_distribution(
-            states, module_output, **self.probability_distribution_kwargs
+            states, module_output, **policy_kwargs
         )
 
         with torch.no_grad():
@@ -58,13 +58,14 @@ class Sampler:
         if torch.any(torch.isinf(log_probs)):
             raise RuntimeError("Log probabilities are inf. This should not happen.")
 
-        return env.Actions(actions), log_probs
+        return env.Actions(actions), log_probs  # TODO: return module_output here.
 
     def sample_trajectories(
         self,
         env: Env,
         states: Optional[States] = None,
         n_trajectories: Optional[int] = None,
+        **policy_kwargs: Optional[dict],
     ) -> Trajectories:
         """Sample trajectories sequentially.
 
@@ -74,6 +75,12 @@ class Sampler:
                 trajectories are sampled from $s_o$ and n_trajectories must be provided.
             n_trajectories: If given, a batch of n_trajectories will be sampled all
                 starting from the environment's s_0.
+            policy_kwargs: keyword arguments to be passed to the
+                `to_probability_distribution` method of the estimator. For example, for
+                DiscretePolicyEstimators, the kwargs can contain the `temperature`
+                parameter, `epsilon`, and `sf_bias`. In the continuous case these
+                kwargs will be user defined. This can be used to, for example, sample
+                off-policy.
 
         Returns: A Trajectories object representing the batch of sampled trajectories.
 
@@ -81,6 +88,8 @@ class Sampler:
             AssertionError: When both states and n_trajectories are specified.
             AssertionError: When states are not linear.
         """
+        # TODO: Optionally accept module outputs (this will skip inference using the
+        # estimator).
         if states is None:
             assert (
                 n_trajectories is not None
@@ -119,8 +128,11 @@ class Sampler:
             log_probs = torch.full(
                 (n_trajectories,), fill_value=0, dtype=torch.float, device=device
             )
-            valid_actions, actions_log_probs = self.sample_actions(env, states[~dones])
+            # TODO: Retrieve module outputs here, and stack them along the trajectory
+            # length.
+            # TODO: Optionally submit module outputs to skip re-estimation.
             actions[~dones] = valid_actions
+            valid_actions, actions_log_probs = self.sample_actions(env, states[~dones], **policy_kwargs)
             log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
             trajectories_logprobs += [log_probs]
@@ -164,7 +176,7 @@ class Sampler:
             when_is_done=trajectories_dones,
             is_backward=self.estimator.is_backward,
             log_rewards=trajectories_log_rewards,
-            log_probs=trajectories_logprobs,
+            log_probs=trajectories_logprobs,  # TODO: Optionally skip computation of logprobs.
         )
 
         return trajectories
