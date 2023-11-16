@@ -71,12 +71,10 @@ from gfn.utils import NeuralNet  # NeuralNet is a simple multi-layer perceptron 
 
 if __name__ == "__main__":
 
-    # 1 - We define the environment
+    # 1 - We define the environment.
+     env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
-    env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
-
-    # 2 - We define the needed modules (neural networks)
-
+    # 2 - We define the needed modules (neural networks).
     # The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
     module_PF = NeuralNet(
         input_dim=env.preprocessor.output_dim,
@@ -88,17 +86,14 @@ if __name__ == "__main__":
         torso=module_PF.torso  # We share all the parameters of P_F and P_B, except for the last layer
     )
 
-    # 3 - We define the estimators
-
+    # 3 - We define the estimators.
     pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor)
     pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor)
 
-    # 4 - We define the GFlowNet
-
+    # 4 - We define the GFlowNet.
     gfn = TBGFlowNet(init_logZ=0., pf=pf_estimator, pb=pb_estimator)  # We initialize logZ to 0
 
-    # 5 - We define the sampler and the optimizer
-
+    # 5 - We define the sampler and the optimizer.
     sampler = Sampler(estimator=pf_estimator)  # We use an on-policy sampler, based on the forward policy
 
     # Policy parameters have their own LR.
@@ -110,7 +105,6 @@ if __name__ == "__main__":
     optimizer.add_param_group({"params": logz_params, "lr": 1e-1})
 
     # 6 - We train the GFlowNet for 1000 iterations, with 16 trajectories per iteration
-
     for i in (pbar := tqdm(range(1000))):
         trajectories = sampler.sample_trajectories(env=env, n_trajectories=16)
         optimizer.zero_grad()
@@ -192,6 +186,8 @@ Training GFlowNets requires one or multiple estimators, called `GFNModule`s, whi
 - `ScalarModule` is a simple module with required output dimension 1. It is useful to define log-state flows $\log F(s)$.
 
 For non-discrete environments, the user needs to specify their own policies $P_F$ and $P_B$. The module, taking as input a batch of states (as a `States`) object, should return the batched parameters of a `torch.Distribution`. The distribution depends on the environment. The `to_probability_distribution` function handles the conversion of the parameter outputs to an actual batched `Distribution` object, that implements at least the `sample` and `log_prob` functions. An example is provided [here](https://github.com/saleml/torchgfn/tree/master/src/gfn/gym/helpers/box_utils.py), for a square environment in which the forward policy has support either on a quarter disk, or on an arc-circle, such that the angle, and the radius (for the quarter disk part) are scaled samples from a mixture of Beta distributions. The provided example shows an intricate scenario, and it is not expected that user defined environment need this much level of details.
+
+In general, (and perhaps obviously) the `to_probability_distribution` method is used to calculate a probability distribution from a policy. Therefore, in order to go off-policy, one needs to modify the computations in this method during sampling. One accomplishes this using `policy_kwargs`, a `dict` of kwarg-value pairs which are used by the `Estimator` when calculating the new policy. In the discrete case, where common settings apply, one can see their use in `DiscretePolicyEstimator`'s `to_probability_distribution` method by passing a softmax `temperature`, `sf_bias` (a scalar to subtract from the exit action logit) or `epsilon` which allows for e-greedy style exploration. In the continuous case, it is not possible to forsee the methods used for off-policy exploration (as it depends on the details of the `to_probability_distribution` method, which is not generic for continuous GFNs), so this must be handled by the user, using custom `policy_kwargs`.
 
 In all `GFNModule`s, note that the input of the `forward` function is a `States` object. Meaning that they first need to be transformed to tensors. However, `states.tensor` does not necessarily include the structure that a neural network can used to generalize. It is common in these scenarios to have a function that transforms these raw tensor states to ones where the structure is clearer, via a `Preprocessor` object, that is part of the environment. More on this [here](https://github.com/saleml/torchgfn/tree/master/tutorials/ENV.md). The default preprocessor of an environment is the identity preprocessor. The `forward` pass thus first calls the `preprocessor` attribute of the environment on `States`, before performing any transformation. The `preprocessor` is thus an attribute of the module. If it is not explicitly defined, it is set to the identity preprocessor.
 
