@@ -65,7 +65,7 @@ class Sampler:
         env: Env,
         states: Optional[States] = None,
         n_trajectories: Optional[int] = None,
-        **policy_kwargs: Optional[dict],
+        **policy_kwargs,
     ) -> Trajectories:
         """Sample trajectories sequentially.
 
@@ -131,8 +131,9 @@ class Sampler:
             # TODO: Retrieve module outputs here, and stack them along the trajectory
             # length.
             # TODO: Optionally submit module outputs to skip re-estimation.
-            actions[~dones] = valid_actions
             valid_actions, actions_log_probs = self.sample_actions(env, states[~dones], **policy_kwargs)
+            actions[~dones] = valid_actions
+
             log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
             trajectories_logprobs += [log_probs]
