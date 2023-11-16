@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Tuple
+from typing import Tuple, Optional
 
 import torch
 import torch.nn as nn
@@ -13,7 +13,7 @@ from gfn.states import States
 
 
 class GFlowNet(nn.Module):
-    """Abstract Base Class for GFlowNets.
+    """Abstract Base Class for GFlowNets. This is always On Policy.
 
     A formal definition of GFlowNets is given in Sec. 3 of [GFlowNet Foundations](https://arxiv.org/pdf/2111.09266).
     """
@@ -57,16 +57,16 @@ class PFBasedGFlowNet(GFlowNet):
         pf: GFNModule
         pb: GFNModule
     """
-
     def __init__(self, pf: GFNModule, pb: GFNModule, on_policy: bool = False):
         super().__init__()
         self.pf = pf
         self.pb = pb
         self.on_policy = on_policy
 
-    def sample_trajectories(self, env: Env, n_samples: int) -> Trajectories:
+    def sample_trajectories(self, env: Env, n_samples: int, policy_kwargs: Optional[dict]) -> Trajectories:
+        """Samples trajectories, optionally with specified policy kwargs."""
         sampler = Sampler(estimator=self.pf)
-        trajectories = sampler.sample_trajectories(env, n_trajectories=n_samples)
+        trajectories = sampler.sample_trajectories(env, n_trajectories=n_samples, **policy_kwargs)
         return trajectories
 
 
@@ -87,6 +87,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         Useful when the policy used to sample the trajectories is different from
         the one used to evaluate the loss. Otherwise we can use the logprobs directly
         from the trajectories.
+
+        Note - for off policy exploration, the trajectories submitted to this method
+        will be sampled off policy.
 
         Args:
             trajectories: Trajectories to evaluate.
@@ -116,10 +119,18 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         if self.on_policy:
             log_pf_trajectories = trajectories.log_probs
         else:
+            # TODO: Two forward passes for off policy? This is inefficient.
+            # We should re-use the values calculated in .sample_trajectories().
+            # Also, we don't need the log-probs of the off-policy trajectories.
+            # 1) Make logprob calculation of trajectory optional.
+            # 2) Also we should be able to store the outputs of the NN forward pass
+            #    to calculate both the on and off policy distributions at once.
             module_output = self.pf(valid_states)
+
+            # Calculates the log PF of the actions sampled off policy.
             valid_log_pf_actions = self.pf.to_probability_distribution(
                 valid_states, module_output
-            ).log_prob(valid_actions.tensor)
+            ).log_prob(valid_actions.tensor)  # Using the actions sampled off-policy.
             log_pf_trajectories = torch.full_like(
                 trajectories.actions.tensor[..., 0],
                 fill_value=fill_value,
