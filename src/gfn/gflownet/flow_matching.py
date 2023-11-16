@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Optional
 
 import torch
 from torchtyping import TensorType as TT
@@ -33,13 +33,14 @@ class FMGFlowNet(GFlowNet):
         self.logF = logF
         self.alpha = alpha
 
-    def sample_trajectories(self, env: Env, n_samples: int = 1000) -> Trajectories:
+    def sample_trajectories(self, env: Env, n_samples: int = 1000, **policy_kwargs: Optional[dict]) -> Trajectories:
+        """Sample trajectory with optional kwargs controling the policy."""
         if not env.is_discrete:
             raise NotImplementedError(
                 "Flow Matching GFlowNet only supports discrete environments for now."
             )
         sampler = Sampler(estimator=self.logF)
-        trajectories = sampler.sample_trajectories(env, n_trajectories=n_samples)
+        trajectories = sampler.sample_trajectories(env, n_trajectories=n_samples, **policy_kwargs)
         return trajectories
 
     def flow_matching_loss(
