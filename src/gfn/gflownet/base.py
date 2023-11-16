@@ -63,7 +63,7 @@ class PFBasedGFlowNet(GFlowNet):
         self.pb = pb
         self.on_policy = on_policy
 
-    def sample_trajectories(self, env: Env, n_samples: int, policy_kwargs: Optional[dict]) -> Trajectories:
+    def sample_trajectories(self, env: Env, n_samples: int, **policy_kwargs) -> Trajectories:
         """Samples trajectories, optionally with specified policy kwargs."""
         sampler = Sampler(estimator=self.pf)
         trajectories = sampler.sample_trajectories(env, n_trajectories=n_samples, **policy_kwargs)
