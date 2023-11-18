@@ -75,7 +75,7 @@ class DBGFlowNet(PFBasedGFlowNet):
 
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
-            log_rewards = env.log_reward(states)  # RM unsqueeze(-1)
+            log_rewards = env.log_reward(states)  # TODO: RM unsqueeze(-1) ?
             valid_log_F_s = valid_log_F_s + log_rewards
 
         preds = valid_log_pf_actions + valid_log_F_s

@@ -157,6 +157,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         log_pb_trajectories_slice[~valid_actions.is_exit] = valid_log_pb_actions
         log_pb_trajectories[~trajectories.actions.is_dummy] = log_pb_trajectories_slice
 
+        # TODO: Optionally zero out S1->S0.
+
         return log_pf_trajectories, log_pb_trajectories
 
     def get_trajectories_scores(
@@ -173,7 +175,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)
         total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
-        log_rewards = trajectories.log_rewards.clamp_min(self.log_reward_clip_min)  # type: ignore
+        log_rewards = trajectories.log_rewards  # .clamp_min(self.log_reward_clip_min)  # type: ignore
         if torch.any(torch.isinf(total_log_pf_trajectories)) or torch.any(
             torch.isinf(total_log_pb_trajectories)
         ):

@@ -58,7 +58,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             "equal_within",
         ] = "geometric_within",
         lamda: float = 0.9,
-        log_reward_clip_min: float = -12,  # roughly log(1e-5)
+        log_reward_clip_min: float = -100,  # roughly log(5e-44)
         forward_looking: bool = False,
     ):
         super().__init__(pf, pb, on_policy=on_policy)
@@ -151,7 +151,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             assert trajectories.log_rewards is not None
             log_rewards = trajectories.log_rewards[
                 trajectories.when_is_done >= i
-            ].clamp_min(self.log_reward_clip_min)
+            ] # .clamp_min(self.log_reward_clip_min)
             targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
 
             # For now, the targets contain the log-rewards of the ending sub trajectories

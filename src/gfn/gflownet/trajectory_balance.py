@@ -34,7 +34,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         pb: GFNModule,
         on_policy: bool = False,
         init_logZ: float = 0.0,
-        log_reward_clip_min: float = -12,  # roughly log(1e-5)
+        log_reward_clip_min: float = -100,  # roughly log(5e-44)
     ):
         super().__init__(pf, pb, on_policy=on_policy)
 
@@ -74,11 +74,11 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         pf: GFNModule,
         pb: GFNModule,
         on_policy: bool = False,
-        log_reward_clip_min: float = -12,
+        log_reward_clip_min: float = -100,  # Roughly roughly log(5e-44)
     ):
         super().__init__(pf, pb, on_policy=on_policy)
 
-        self.log_reward_clip_min = log_reward_clip_min  # -12 is roughly log(1e-5)
+        self.log_reward_clip_min = log_reward_clip_min
 
     def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
         """Log Partition Variance loss.
