@@ -83,7 +83,7 @@ class Env(ABC):
         assert not (random and sink)
 
         if random and seed is not None:
-            torch.manual_seed(seed)
+            torch.manual_seed(seed)  # TODO: Improve seeding here?
 
         if batch_shape is None:
             batch_shape = (1,)
