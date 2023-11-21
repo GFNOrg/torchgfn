@@ -152,6 +152,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
             if not isinstance(estimator_outputs, type(None)):
                 idx = torch.ones(trajectories.actions.batch_shape).bool()
                 estimator_outputs = estimator_outputs[idx]
+            else:
+                estimator_outputs = self.pf(valid_states)
 
             # TODO: Remove This is left here to compare the recomputed values with the
             #       carried forward values -- which strangely don't always seem to
