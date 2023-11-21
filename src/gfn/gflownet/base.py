@@ -38,8 +38,20 @@ class GFlowNet(nn.Module):
         Returns:
             States: sampled terminating states object.
         """
-        trajectories = self.sample_trajectories(env, n_samples)
+        trajectories = self.sample_trajectories(env, n_samples, sample_off_policy=False)
         return trajectories.last_states
+
+    def pf_pb_named_parameters(self):
+        return {k : v for k, v in self.named_parameters() if "pb" in k or "pf" in k}
+
+    def pf_pb_parameters(self):
+        return [v for k, v in self.named_parameters() if "pb" in k or "pf" in k]
+
+    def logz_named_parameters(self):
+        return {"logZ": dict(self.named_parameters())["logZ"]}
+
+    def logz_parameters(self):
+        return [dict(self.named_parameters())["logZ"]]
 
     @abstractmethod
     def to_training_samples(self, trajectories: Trajectories):
@@ -63,17 +75,27 @@ class PFBasedGFlowNet(GFlowNet):
         self.pb = pb
         self.on_policy = on_policy
 
-    def sample_trajectories(self, env: Env, n_samples: int, **policy_kwargs) -> Trajectories:
+    def sample_trajectories(self, env: Env, n_samples: int, sample_off_policy: bool, **policy_kwargs) -> Trajectories:
         """Samples trajectories, optionally with specified policy kwargs."""
         sampler = Sampler(estimator=self.pf)
-        trajectories = sampler.sample_trajectories(env, n_trajectories=n_samples, **policy_kwargs)
-        return trajectories
+        trajectories, estimator_outputs = sampler.sample_trajectories(
+            env,
+            n_trajectories=n_samples,
+            off_policy=sample_off_policy,
+            **policy_kwargs,
+        )
+
+        if sample_off_policy:
+            return trajectories, estimator_outputs
+        else:
+            return trajectories
 
 
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
+        estimator_outputs: torch.Tensor = None,
         fill_value: float = 0.0,
     ) -> Tuple[
         TT["max_length", "n_trajectories", torch.float],
@@ -93,6 +115,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
 
         Args:
             trajectories: Trajectories to evaluate.
+            estimator_outputs: Optional stored estimator outputs from previous forward
+                sampling (encountered, for example, when sampling off policy).
             fill_value: Value to use for invalid states (i.e. $s_f$ that is added to
                 shorter trajectories).
 
@@ -125,11 +149,24 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
             # 1) Make logprob calculation of trajectory optional.
             # 2) Also we should be able to store the outputs of the NN forward pass
             #    to calculate both the on and off policy distributions at once.
-            module_output = self.pf(valid_states)
+            if not isinstance(estimator_outputs, type(None)):
+                idx = torch.ones(trajectories.actions.batch_shape).bool()
+                estimator_outputs = estimator_outputs[idx]
+
+            # TODO: Remove This is left here to compare the recomputed values with the
+            #       carried forward values -- which strangely don't always seem to
+            #       match...
+            #import IPython; IPython.embed()
+            # new_estimator_outputs = self.pf(valid_states)
+            # print("recomputed matches / recomputed outputs:\n{}/{}".format(
+            #    (new_estimator_outputs == estimator_outputs).sum(),
+            #    new_estimator_outputs.nelement(),
+            #    )
+            # )
 
             # Calculates the log PF of the actions sampled off policy.
             valid_log_pf_actions = self.pf.to_probability_distribution(
-                valid_states, module_output
+                valid_states, estimator_outputs
             ).log_prob(valid_actions.tensor)  # Using the actions sampled off-policy.
             log_pf_trajectories = torch.full_like(
                 trajectories.actions.tensor[..., 0],
@@ -141,9 +178,11 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         non_initial_valid_states = valid_states[~valid_states.is_initial_state]
         non_exit_valid_actions = valid_actions[~valid_actions.is_exit]
 
-        module_output = self.pb(non_initial_valid_states)
+        # Using all non-initial states, calculate the backward policy, and the logprobs
+        # of those actions.  # TODO: Optionally autoremove zero out S1->S0?
+        estimator_outputs = self.pb(non_initial_valid_states)
         valid_log_pb_actions = self.pb.to_probability_distribution(
-            non_initial_valid_states, module_output
+            non_initial_valid_states, estimator_outputs
         ).log_prob(non_exit_valid_actions.tensor)
 
         log_pb_trajectories = torch.full_like(
@@ -157,19 +196,20 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         log_pb_trajectories_slice[~valid_actions.is_exit] = valid_log_pb_actions
         log_pb_trajectories[~trajectories.actions.is_dummy] = log_pb_trajectories_slice
 
-        # TODO: Optionally zero out S1->S0.
-
         return log_pf_trajectories, log_pb_trajectories
 
     def get_trajectories_scores(
-        self, trajectories: Trajectories
+        self, trajectories: Trajectories, estimator_outputs: torch.Tensor = None
     ) -> Tuple[
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
     ]:
         """Given a batch of trajectories, calculate forward & backward policy scores."""
-        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(trajectories)
+        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
+            trajectories,
+            estimator_outputs,
+        )
 
         assert log_pf_trajectories is not None
         total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)
