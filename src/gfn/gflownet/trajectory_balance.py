@@ -23,8 +23,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
     the DAG, or a singleton thereof, if self.logit_PB is a fixed DiscretePBEstimator.
 
     Attributes:
+        on_policy: Whether the GFlowNet samples trajectories on or off policy.
         logZ: a LogZEstimator instance.
-        log_reward_clip_min: minimal value to clamp the reward to.
 
     """
 
@@ -34,12 +34,10 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         pb: GFNModule,
         on_policy: bool = False,
         init_logZ: float = 0.0,
-        log_reward_clip_min: float = -100,  # roughly log(5e-44)
     ):
         super().__init__(pf, pb, on_policy=on_policy)
 
         self.logZ = nn.Parameter(torch.tensor(init_logZ))
-        self.log_reward_clip_min = log_reward_clip_min
 
     def loss(
         self,
@@ -68,7 +66,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
     """Dataclass which holds the logZ estimate for the Log Partition Variance loss.
 
     Attributes:
-        log_reward_clip_min: minimal value to clamp the reward to.
+        on_policy: Whether the GFlowNet samples trajectories on or off policy.
 
     Raises:
         ValueError: if the loss is NaN.
@@ -79,11 +77,8 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         pf: GFNModule,
         pb: GFNModule,
         on_policy: bool = False,
-        log_reward_clip_min: float = -100,  # Roughly roughly log(5e-44)
     ):
         super().__init__(pf, pb, on_policy=on_policy)
-
-        self.log_reward_clip_min = log_reward_clip_min
 
     def loss(
         self,
