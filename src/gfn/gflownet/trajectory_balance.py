@@ -42,10 +42,10 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         self.log_reward_clip_min = log_reward_clip_min
 
     def loss(
-            self,
-            env: Env,
-            trajectories: Trajectories,
-            estimator_outputs: torch.Tensor = None,
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        estimator_outputs: torch.Tensor = None,
     ) -> TT[0, float]:
         """Trajectory balance loss.
 
@@ -86,11 +86,11 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         self.log_reward_clip_min = log_reward_clip_min
 
     def loss(
-            self,
-            env: Env,
-            trajectories: Trajectories,
-            estimator_outputs: torch.Tensor = None,
-        ) -> TT[0, float]:
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        estimator_outputs: torch.Tensor = None,
+    ) -> TT[0, float]:
         """Log Partition Variance loss.
 
         This method is described in section 3.2 of
