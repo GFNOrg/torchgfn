@@ -1,4 +1,5 @@
 from typing import List, Literal, Tuple
+import math
 
 import torch
 from torchtyping import TensorType as TT
@@ -39,7 +40,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 proportionally to (lamda ** len(sub_trajectory)), within the set of
                 all sub-trajectories.
         lamda: discount factor for longer trajectories.
-        log_reward_clip_min: minimum value for log rewards.
+        log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
     def __init__(
@@ -58,7 +59,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             "equal_within",
         ] = "geometric_within",
         lamda: float = 0.9,
-        log_reward_clip_min: float = -100,  # roughly log(5e-44)
+        log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
     ):
         super().__init__(pf, pb, on_policy=on_policy)
@@ -151,7 +152,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             assert trajectories.log_rewards is not None
             log_rewards = trajectories.log_rewards[
                 trajectories.when_is_done >= i
-            ] # .clamp_min(self.log_reward_clip_min)
+            ]
+
+            if math.isfinite(self.log_reward_clip_min):
+                log_rewards.clamp_min(self.log_reward_clip_min)
+
             targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
 
             # For now, the targets contain the log-rewards of the ending sub trajectories
