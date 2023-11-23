@@ -154,9 +154,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
             # 2) Also we should be able to store the outputs of the NN forward pass
             #    to calculate both the on and off policy distributions at once.
             # if not isinstance(estimator_outputs, type(None)):
+            # import IPython; IPython.embed()
             try:
-                idx = torch.ones(trajectories.actions.batch_shape).bool()
-                estimator_outputs = estimator_outputs[idx]
+                estimator_outputs = estimator_outputs[~trajectories.actions.is_dummy]
             except:
                 raise Exception(
                     "GFlowNet is off policy but no estimator_outputs found."
@@ -169,14 +169,19 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
             #       match... to be removed asap.
 
             # import IPython; IPython.embed()
-            # new_estimator_outputs = self.pf(valid_states)
+            new_estimator_outputs = self.pf(valid_states)
             # print("recomputed-original matches / total:\n{}/{}".format(
             #    (new_estimator_outputs == estimator_outputs).sum(),
             #    new_estimator_outputs.nelement(),
             #     )
             # )
-            # idx = ~(new_estimator_outputs == estimator_outputs)
-            # # print("Mismatches Elements={}".format(valid_states.tensor[idx]))
+            print("Mismatches Indices={}".format(
+                (new_estimator_outputs != estimator_outputs).nonzero(as_tuple=True)[0]
+                )
+            )
+            idx = ~(new_estimator_outputs == estimator_outputs)
+            print("Mismatches Elements={}".format(valid_states.tensor[idx]))
+
             # print("Mismatches Diffs   ={}".format(
             #     torch.abs(new_estimator_outputs[idx] - estimator_outputs[idx]).detach().numpy()
             # ))

@@ -178,9 +178,6 @@ class Sampler:
             trajectories_actions += [actions]
             trajectories_logprobs += [log_probs]
 
-            import IPython
-
-            IPython.embed()
             if self.estimator.is_backward:
                 new_states = env.backward_step(states, actions)
             else:
