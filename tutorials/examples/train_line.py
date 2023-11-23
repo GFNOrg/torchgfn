@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.distributions import Distribution, Normal  # TODO: extend to Beta
+from torch.distributions.independent import Independent
 from torchtyping import TensorType as TT
 from tqdm import trange
 
@@ -181,7 +182,7 @@ class ScaledGaussianWithOptionalExit(Distribution):
         # Used to keep track of the "exit" indices for forward/backward trajectories.
         self.idx_at_final_forward_step = states[..., 1].tensor == n_steps
         self.idx_at_final_backward_step = states[..., 1].tensor == 1
-        self.dist = Normal(mus, scales)
+        self.dist = Independent(Normal(mus, scales), len(states.batch_shape))
         self.exit_action = torch.FloatTensor([-float("inf")]).to(states.device)
         self.backward = backward
 
@@ -212,7 +213,7 @@ class ScaledGaussianWithOptionalExit(Distribution):
 
         actions_to_eval[~exit_idx] = sampled_actions[~exit_idx]
         if sum(~exit_idx) > 0:
-            logprobs[~exit_idx] = self.dist.log_prob(actions_to_eval)[~exit_idx]
+            logprobs[~exit_idx] = self.dist.log_prob(actions_to_eval)[~exit_idx].unsqueeze(-1)
 
         return logprobs.squeeze(-1)
 
@@ -342,12 +343,12 @@ def train(
         loss = gflownet.loss(env, training_samples, estimator_outputs=estimator_outputs)
         loss.backward()
 
-        # Gradient Clipping.
-        for p in gflownet.parameters():
-            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
-                p.grad.data.clamp_(
-                    -gradient_clip_value, gradient_clip_value
-                ).nan_to_num_(0.0)
+        # # Gradient Clipping.
+        # for p in gflownet.parameters():
+        #     if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
+        #         p.grad.data.clamp_(
+        #             -gradient_clip_value, gradient_clip_value
+        #         ).nan_to_num_(0.0)
 
         optimizer.step()
         states_visited += len(trajectories)
