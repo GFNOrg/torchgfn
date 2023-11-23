@@ -131,7 +131,9 @@ class Sampler:
         device = states.tensor.device
 
         dones = (
-            states.is_initial_state if self.estimator.is_backward else states.is_sink_state
+            states.is_initial_state
+            if self.estimator.is_backward
+            else states.is_sink_state
         )
 
         trajectories_states: List[TT["n_trajectories", "state_shape", torch.float]] = [
@@ -176,7 +178,9 @@ class Sampler:
             trajectories_actions += [actions]
             trajectories_logprobs += [log_probs]
 
-            import IPython; IPython.embed()
+            import IPython
+
+            IPython.embed()
             if self.estimator.is_backward:
                 new_states = env.backward_step(states, actions)
             else:

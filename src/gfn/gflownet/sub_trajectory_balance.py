@@ -1,5 +1,5 @@
-from typing import List, Literal, Tuple
 import math
+from typing import List, Literal, Tuple
 
 import torch
 from torchtyping import TensorType as TT
@@ -150,9 +150,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
             targets = torch.full_like(preds, fill_value=-float("inf"))
             assert trajectories.log_rewards is not None
-            log_rewards = trajectories.log_rewards[
-                trajectories.when_is_done >= i
-            ]
+            log_rewards = trajectories.log_rewards[trajectories.when_is_done >= i]
 
             if math.isfinite(self.log_reward_clip_min):
                 log_rewards.clamp_min(self.log_reward_clip_min)

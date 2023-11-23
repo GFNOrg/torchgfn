@@ -1,6 +1,6 @@
+import math
 from abc import abstractmethod
 from typing import Tuple
-import math
 
 import torch
 import torch.nn as nn
@@ -158,7 +158,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
                 idx = torch.ones(trajectories.actions.batch_shape).bool()
                 estimator_outputs = estimator_outputs[idx]
             except:
-                raise Exception("GFlowNet is off policy but no estimator_outputs found.")
+                raise Exception(
+                    "GFlowNet is off policy but no estimator_outputs found."
+                )
             # else:
             #     estimator_outputs = self.pf(valid_states)
 
