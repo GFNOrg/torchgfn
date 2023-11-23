@@ -386,16 +386,16 @@ class DiscreteStates(States, ABC):
         self.backward_masks = _extend(self.backward_masks, required_first_dim)
 
     # The helper methods are convenience functions for common mask operations.
-    def set_nonexit_masks(self, cond, allow_exit: bool = False):
-        """Sets the allowable actions according to cond, appending the exit mask.
+    def set_nonexit_action_masks(self, cond, allow_exit: bool):
+        """Masks denoting disallowed actions according to cond, appending the exit mask.
 
         A convenience function for common mask operations.
 
         Args:
             cond: a boolean of shape (batch_shape,) + (n_actions - 1,), which
-                denotes which actions are not allowed. For example, if a state element
+                denotes which actions are *not* allowed. For example, if a state element
                 represents action count, and no action can be repeated more than 5
-                times, cond might be state.tensor >= 5.
+                times, cond might be state.tensor > 5 (assuming count starts at 0).
             allow_exit: sets whether exiting can happen at any point in the
                 trajectory - if so, it should be set to True.
         """
