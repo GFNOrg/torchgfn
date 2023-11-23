@@ -1,4 +1,5 @@
 from typing import Tuple
+import math
 
 import torch
 from torchtyping import TensorType as TT
@@ -24,6 +25,7 @@ class DBGFlowNet(PFBasedGFlowNet):
         logF: a ScalarEstimator instance.
         on_policy: boolean indicating whether we need to reevaluate the log probs.
         forward_looking: whether to implement the forward looking GFN loss.
+        log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
     def __init__(
@@ -33,10 +35,12 @@ class DBGFlowNet(PFBasedGFlowNet):
         logF: ScalarEstimator,
         on_policy: bool = False,
         forward_looking: bool = False,
+        log_reward_clamp_min: float = -float("inf"),
     ):
         super().__init__(pf, pb, on_policy=on_policy)
         self.logF = logF
         self.forward_looking = forward_looking
+        self.log_reward_clamp_min = log_reward_clamp_min
 
     def get_scores(
         self, env: Env, transitions: Transitions
@@ -71,11 +75,15 @@ class DBGFlowNet(PFBasedGFlowNet):
             module_output = self.pf(states)  # TODO: Inefficient duplication.
             valid_log_pf_actions = self.pf.to_probability_distribution(
                 states, module_output
-            ).log_prob(actions.tensor)  # Actions sampled off policy.
+            ).log_prob(
+                actions.tensor
+            )  # Actions sampled off policy.
 
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
             log_rewards = env.log_reward(states)  # TODO: RM unsqueeze(-1) ?
+            if math.isfinite(self.log_reward_clamp_min):
+                log_rewards = log_rewards.clamp_min(self.log_reward_clamp_min)
             valid_log_F_s = valid_log_F_s + log_rewards
 
         preds = valid_log_pf_actions + valid_log_F_s
@@ -158,7 +166,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet):
         if self.on_policy:
             valid_log_pf_actions = transitions[mask].log_probs
         else:
-           # Evaluate the log PF of the actions sampled off policy.
+            # Evaluate the log PF of the actions sampled off policy.
             valid_log_pf_actions = pf_dist.log_prob(actions.tensor)
         valid_log_pf_s_exit = pf_dist.log_prob(
             torch.full_like(actions.tensor, actions.__class__.exit_action[0])
