@@ -147,14 +147,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         if self.on_policy:
             log_pf_trajectories = trajectories.log_probs
         else:
-            # TODO: Two forward passes for off policy? This is inefficient.
-            # We should re-use the values calculated in .sample_trajectories().
-            # Also, we don't need the log-probs of the off-policy trajectories.
-            # 1) Make logprob calculation of trajectory optional.
-            # 2) Also we should be able to store the outputs of the NN forward pass
-            #    to calculate both the on and off policy distributions at once.
-            # if not isinstance(estimator_outputs, type(None)):
-            # import IPython; IPython.embed()
+            # We re-use the values calculated in .sample_trajectories().
             try:
                 estimator_outputs = estimator_outputs[~trajectories.actions.is_dummy]
             except:
@@ -169,18 +162,18 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
             #       match... to be removed asap.
 
             # import IPython; IPython.embed()
-            new_estimator_outputs = self.pf(valid_states)
+            # new_estimator_outputs = self.pf(valid_states)
             # print("recomputed-original matches / total:\n{}/{}".format(
             #    (new_estimator_outputs == estimator_outputs).sum(),
             #    new_estimator_outputs.nelement(),
             #     )
             # )
-            print("Mismatches Indices={}".format(
-                (new_estimator_outputs != estimator_outputs).nonzero(as_tuple=True)[0]
-                )
-            )
-            idx = ~(new_estimator_outputs == estimator_outputs)
-            print("Mismatches Elements={}".format(valid_states.tensor[idx]))
+            # print("Mismatches Indices={}".format(
+            #     (new_estimator_outputs != estimator_outputs).nonzero(as_tuple=True)[0]
+            #     )
+            # )
+            # idx = ~(new_estimator_outputs == estimator_outputs)
+            # print("Mismatches Elements={}".format(valid_states.tensor[idx]))
 
             # print("Mismatches Diffs   ={}".format(
             #     torch.abs(new_estimator_outputs[idx] - estimator_outputs[idx]).detach().numpy()
@@ -242,7 +235,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
         log_rewards = trajectories.log_rewards
-        if math.isfinite(self.log_reward_clip_min):
+        if math.isfinite(self.log_reward_clip_min) and not isinstance(log_rewards, type(None)):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
         if torch.any(torch.isinf(total_log_pf_trajectories)) or torch.any(
