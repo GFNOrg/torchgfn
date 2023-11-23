@@ -48,7 +48,6 @@ class DiscreteEBM(DiscreteEnv):
         alpha: float = 1.0,
         device_str: Literal["cpu", "cuda"] = "cpu",
         preprocessor_name: Literal["Identity", "Enum"] = "Identity",
-        log_reward_clip: float = -100.0,
     ):
         """Discrete EBM environment.
 
@@ -60,7 +59,6 @@ class DiscreteEBM(DiscreteEnv):
             device_str: "cpu" or "cuda". Defaults to "cpu".
             preprocessor_name: "KHot" or "OneHot" or "Identity".
                 Defaults to "KHot".
-            log_reward_clip: Minimum log reward allowable (namely, for log(0)).
         """
         self.ndim = ndim
 
@@ -94,7 +92,6 @@ class DiscreteEBM(DiscreteEnv):
             sf=sf,
             device_str=device_str,
             preprocessor=preprocessor,
-            log_reward_clip=log_reward_clip,
         )
 
     def make_States_class(self) -> type[DiscreteStates]:
@@ -195,7 +192,7 @@ class DiscreteEBM(DiscreteEnv):
         canonical = 2 * raw_states - 1
         log_reward = -self.alpha * self.energy(canonical)
 
-        return log_reward.clip(self.log_reward_clip)
+        return log_reward
 
     def get_states_indices(self, states: DiscreteStates) -> TT["batch_shape"]:
         """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3"""
