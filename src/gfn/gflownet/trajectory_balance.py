@@ -25,6 +25,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
     Attributes:
         on_policy: Whether the GFlowNet samples trajectories on or off policy.
         logZ: a LogZEstimator instance.
+        log_reward_clip_min: If finite, clips log rewards to this value.
 
     """
 
@@ -34,10 +35,12 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         pb: GFNModule,
         on_policy: bool = False,
         init_logZ: float = 0.0,
+        log_reward_clip_min: float = -float("inf")
     ):
         super().__init__(pf, pb, on_policy=on_policy)
 
-        self.logZ = nn.Parameter(torch.tensor(init_logZ))
+        self.logZ = nn.Parameter(torch.tensor(init_logZ))  # TODO: Optionally, this should be a nn.Module to support conditional GFNs.
+        self.log_reward_clip_min = log_reward_clip_min
 
     def loss(
         self,
@@ -67,6 +70,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
 
     Attributes:
         on_policy: Whether the GFlowNet samples trajectories on or off policy.
+        log_reward_clip_min: If finite, clips log rewards to this value.
 
     Raises:
         ValueError: if the loss is NaN.
@@ -77,14 +81,17 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         pf: GFNModule,
         pb: GFNModule,
         on_policy: bool = False,
+        log_reward_clip_min: float = -float("inf")
     ):
         super().__init__(pf, pb, on_policy=on_policy)
+        self.log_reward_clip_min = log_reward_clip_min
 
     def loss(
         self,
         env: Env,
         trajectories: Trajectories,
         estimator_outputs: torch.Tensor = None,
+
     ) -> TT[0, float]:
         """Log Partition Variance loss.
 
