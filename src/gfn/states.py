@@ -389,10 +389,10 @@ class DiscreteStates(States, ABC):
     def set_nonexit_masks(self, cond, allow_exit: bool = False):
         """Sets the allowable actions according to cond, appending the exit mask.
 
-        A convienience function for common mask operations.
+        A convenience function for common mask operations.
 
         Args:
-            cond: a boolean of shape (batch_shape,) + (state_shape,), which
+            cond: a boolean of shape (batch_shape,) + (n_actions - 1,), which
                 denotes which actions are not allowed. For example, if a state element
                 represents action count, and no action can be repeated more than 5
                 times, cond might be state.tensor >= 5.
@@ -408,7 +408,7 @@ class DiscreteStates(States, ABC):
     def set_exit_masks(self, batch_idx):
         """Sets forward masks such that the only allowable next action is to exit.
 
-        A convienience function for common mask operations.
+        A convenience function for common mask operations.
 
         Args:
             batch_idx: A Boolean index along the batch dimension, along which to

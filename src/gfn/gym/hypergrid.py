@@ -109,7 +109,7 @@ class HyperGrid(DiscreteEnv):
             def update_masks(self) -> None:
                 "Update the masks based on the current states."
                 self.set_default_typing()
-                self.forward_masks[..., :-1] = self.tensor != env.height - 1
+                self.set_nonexit_masks(self.tensor != env.height - 1)
                 self.backward_masks = self.tensor != 0
 
         return HyperGridStates
