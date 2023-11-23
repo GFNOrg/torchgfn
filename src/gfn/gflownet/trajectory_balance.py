@@ -26,7 +26,6 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         on_policy: Whether the GFlowNet samples trajectories on or off policy.
         logZ: a LogZEstimator instance.
         log_reward_clip_min: If finite, clips log rewards to this value.
-
     """
 
     def __init__(
