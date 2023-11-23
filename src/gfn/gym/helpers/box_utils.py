@@ -1,11 +1,11 @@
 """This file contains utilitary functions for the Box environment."""
 from typing import Tuple
 
-from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
-from torchtyping import TensorType as TT
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
+from torchtyping import TensorType as TT
 
 from gfn.gym import Box
 from gfn.modules import GFNModule
