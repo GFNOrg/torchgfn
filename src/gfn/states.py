@@ -385,7 +385,7 @@ class DiscreteStates(States, ABC):
         self.forward_masks = _extend(self.forward_masks, required_first_dim)
         self.backward_masks = _extend(self.backward_masks, required_first_dim)
 
-    # The helper methods are convienience functions for common mask operations.
+    # The helper methods are convenience functions for common mask operations.
     def set_nonexit_masks(self, cond, allow_exit: bool = False):
         """Sets the allowable actions according to cond, appending the exit mask.
 
