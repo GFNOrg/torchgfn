@@ -127,7 +127,7 @@ def render(env, validation_samples=None):
     )
     d = torch.exp(env.log_reward(r))  # Plots the reward, not the log reward.
 
-    fig, ax1 = plt.subplots()
+    _, ax1 = plt.subplots()
 
     if not isinstance(validation_samples, type(None)):
         ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis.
@@ -178,8 +178,9 @@ class ScaledGaussianWithOptionalExit(Distribution):
         backward: bool,
         n_steps: int = 5,
     ):
-        self.states = states
-        self.n_steps = n_steps
+        # Used to keep track of the "exit" indices for forward/backward trajectories.
+        self.idx_at_final_forward_step = states[..., 1].tensor == n_steps
+        self.idx_at_final_backward_step = states[..., 1].tensor == 1
         self.dist = Normal(mus, scales)
         self.exit_action = torch.FloatTensor([-float("inf")]).to(states.device)
         self.backward = backward
@@ -189,8 +190,7 @@ class ScaledGaussianWithOptionalExit(Distribution):
 
         # For any state which is at the terminal step, assign the exit action.
         if not self.backward:
-            idx_at_final_step = self.states[..., 1].tensor == self.n_steps
-            exit_mask = torch.where(idx_at_final_step, 1, 0).bool()
+            exit_mask = torch.where(self.idx_at_final_forward_step, 1, 0).bool()
             actions[exit_mask] = self.exit_action
 
         return actions
@@ -206,7 +206,7 @@ class ScaledGaussianWithOptionalExit(Distribution):
 
         # TODO: Continous Timestamp Environmemt Subclass.
         if self.backward:  # Backward: handle the s1->s0 action (always p=1).
-            exit_idx = self.states[..., 1].tensor == 1
+            exit_idx = self.idx_at_final_backward_step
         else:  # Forward: handle exit actions: sn->sf.
             exit_idx = torch.all(sampled_actions == -float("inf"), 1)
 
@@ -330,6 +330,7 @@ def train(
 
     for iteration in tbar:
 
+        optimizer.zero_grad()
         # Off Policy Sampling.
         trajectories, estimator_outputs = gflownet.sample_trajectories(
             env,
@@ -338,7 +339,6 @@ def train(
             scale_factor=scale_schedule[iteration],  # Off policy kwargs.
         )
         training_samples = gflownet.to_training_samples(trajectories)
-        optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples, estimator_outputs=estimator_outputs)
         loss.backward()
 
