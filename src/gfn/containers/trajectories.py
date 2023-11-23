@@ -65,7 +65,7 @@ class Trajectories(Container):
         self.env = env
         self.is_backward = is_backward
         self.states = (
-            states
+            states.clone()  # TODO: Do we need this clone?
             if states is not None
             else env.States.from_batch_shape(batch_shape=(0, 0))
         )
