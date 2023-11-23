@@ -19,6 +19,7 @@ class Sampler:
     Attributes:
         estimator: the submitted PolicyEstimator.
     """
+
     def __init__(
         self,
         estimator: GFNModule,
@@ -29,13 +30,14 @@ class Sampler:
         self,
         env: Env,
         states: States,
-        save_estimator_outputs : bool = False,
-        calculate_logprobs : bool = True,
+        save_estimator_outputs: bool = False,
+        calculate_logprobs: bool = True,
         **policy_kwargs: Optional[dict],
     ) -> Tuple[Actions, TT["batch_shape", torch.float]]:
         """Samples actions from the given states.
 
         Args:
+            estimator: A GFNModule to pass to the probability distribution calculator.
             env: The environment to sample actions from.
             states: A batch of states.
             save_estimator_outputs: If True, the estimator outputs will be returned.
@@ -83,7 +85,6 @@ class Sampler:
 
         return actions, log_probs, estimator_output
 
-
     def sample_trajectories(
         self,
         env: Env,
@@ -95,6 +96,7 @@ class Sampler:
         """Sample trajectories sequentially.
 
         Args:
+            estimator: A GFNModule to pass to the probability distribution calculator.
             env: The environment to sample trajectories from.
             states: If given, trajectories would start from such states. Otherwise,
                 trajectories are sampled from $s_o$ and n_trajectories must be provided.
@@ -129,9 +131,7 @@ class Sampler:
         device = states.tensor.device
 
         dones = (
-            states.is_initial_state
-            if self.estimator.is_backward
-            else states.is_sink_state
+            states.is_initial_state if self.estimator.is_backward else states.is_sink_state
         )
 
         trajectories_states: List[TT["n_trajectories", "state_shape", torch.float]] = [
@@ -150,7 +150,9 @@ class Sampler:
         all_estimator_outputs = []
 
         while not all(dones):
-            actions = env.Actions.make_dummy_actions(batch_shape=(n_trajectories,))
+            actions = env.Actions.make_dummy_actions(
+                batch_shape=(n_trajectories,)
+            )  # TODO: Why do we need this?
             log_probs = torch.full(
                 (n_trajectories,), fill_value=0, dtype=torch.float, device=device
             )
@@ -163,7 +165,7 @@ class Sampler:
                 states[~dones],
                 save_estimator_outputs=True if off_policy else False,
                 calculate_logprobs=False if off_policy else True,
-                **policy_kwargs
+                **policy_kwargs,
             )
             if not isinstance(estimator_outputs, type(None)):
                 all_estimator_outputs.append(estimator_outputs)
@@ -174,19 +176,21 @@ class Sampler:
             trajectories_actions += [actions]
             trajectories_logprobs += [log_probs]
 
+            import IPython; IPython.embed()
             if self.estimator.is_backward:
                 new_states = env.backward_step(states, actions)
             else:
                 new_states = env.step(states, actions)
             sink_states_mask = new_states.is_sink_state
 
+            # Increment the step, determine which trajectories are finisihed, and eval
+            # rewards.
             step += 1
-
             new_dones = (
                 new_states.is_initial_state
                 if self.estimator.is_backward
                 else sink_states_mask
-            ) & ~dones
+            ) & ~dones  # TODO: why is ~dones used here and again later on? Is this intentional?
             trajectories_dones[new_dones & ~dones] = step
             try:
                 trajectories_log_rewards[new_dones & ~dones] = env.log_reward(
