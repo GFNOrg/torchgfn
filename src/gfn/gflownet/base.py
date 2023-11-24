@@ -154,32 +154,6 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
                 raise Exception(
                     "GFlowNet is off policy but no estimator_outputs found."
                 )
-            # else:
-            #     estimator_outputs = self.pf(valid_states)
-
-            # TODO: Remove This is left here to compare the recomputed values with the
-            #       carried forward values -- which strangely don't always seem to
-            #       match... to be removed asap.
-
-            # import IPython; IPython.embed()
-            # new_estimator_outputs = self.pf(valid_states)
-            # print("recomputed-original matches / total:\n{}/{}".format(
-            #    (new_estimator_outputs == estimator_outputs).sum(),
-            #    new_estimator_outputs.nelement(),
-            #     )
-            # )
-            # print("Mismatches Indices={}".format(
-            #     (new_estimator_outputs != estimator_outputs).nonzero(as_tuple=True)[0]
-            #     )
-            # )
-            # idx = ~(new_estimator_outputs == estimator_outputs)
-            # print("Mismatches Elements={}".format(valid_states.tensor[idx]))
-
-            # print("Mismatches Diffs   ={}".format(
-            #     torch.abs(new_estimator_outputs[idx] - estimator_outputs[idx]).detach().numpy()
-            # ))
-
-            # import IPython; IPython.embed()
 
             # Calculates the log PF of the actions sampled off policy.
             valid_log_pf_actions = self.pf.to_probability_distribution(
