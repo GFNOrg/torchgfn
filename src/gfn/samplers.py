@@ -206,12 +206,13 @@ class Sampler:
 
             trajectories_states += [states.tensor]
 
-        if off_policy:
-            all_estimator_outputs = torch.stack(all_estimator_outputs, dim=0)
         trajectories_states = torch.stack(trajectories_states, dim=0)
         trajectories_states = env.States(tensor=trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)
         trajectories_logprobs = torch.stack(trajectories_logprobs, dim=0)
+
+        if off_policy:
+            all_estimator_outputs = torch.stack(all_estimator_outputs, dim=0)
 
         trajectories = Trajectories(
             env=env,
@@ -220,7 +221,8 @@ class Sampler:
             when_is_done=trajectories_dones,
             is_backward=self.estimator.is_backward,
             log_rewards=trajectories_log_rewards,
-            log_probs=trajectories_logprobs,  # TODO: Optionally skip computation of logprobs.
+            log_probs=trajectories_logprobs,
+            estimator_outputs=all_estimator_outputs if off_policy else None,
         )
 
-        return trajectories, all_estimator_outputs
+        return trajectories

@@ -43,12 +43,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         )  # TODO: Optionally, this should be a nn.Module to support conditional GFNs.
         self.log_reward_clip_min = log_reward_clip_min
 
-    def loss(
-        self,
-        env: Env,
-        trajectories: Trajectories,
-        estimator_outputs: torch.Tensor = None,
-    ) -> TT[0, float]:
+    def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
         """Trajectory balance loss.
 
         The trajectory balance loss is described in 2.3 of
@@ -58,7 +53,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             ValueError: if the loss is NaN.
         """
         del env  # unused
-        _, _, scores = self.get_trajectories_scores(trajectories, estimator_outputs)
+        _, _, scores = self.get_trajectories_scores(trajectories)
         loss = (scores + self.logZ).pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("loss is nan")
@@ -91,7 +86,6 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        estimator_outputs: torch.Tensor = None,
     ) -> TT[0, float]:
         """Log Partition Variance loss.
 
@@ -99,7 +93,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         [ROBUST SCHEDULING WITH GFLOWNETS](https://arxiv.org/abs/2302.05446))
         """
         del env  # unused
-        _, _, scores = self.get_trajectories_scores(trajectories, estimator_outputs)
+        _, _, scores = self.get_trajectories_scores(trajectories)
         loss = (scores - scores.mean()).pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("loss is NaN.")

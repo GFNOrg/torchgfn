@@ -4,6 +4,7 @@ from typing import Tuple
 
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
@@ -82,24 +83,20 @@ class PFBasedGFlowNet(GFlowNet):
     ) -> Trajectories:
         """Samples trajectories, optionally with specified policy kwargs."""
         sampler = Sampler(estimator=self.pf)
-        trajectories, estimator_outputs = sampler.sample_trajectories(
+        trajectories = sampler.sample_trajectories(
             env,
             n_trajectories=n_samples,
             off_policy=sample_off_policy,
             **policy_kwargs,
         )
 
-        if sample_off_policy:
-            return trajectories, estimator_outputs
-        else:
-            return trajectories
+        return trajectories
 
 
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
-        estimator_outputs: torch.Tensor = None,
         fill_value: float = 0.0,
     ) -> Tuple[
         TT["max_length", "n_trajectories", torch.float],
@@ -148,11 +145,13 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
             log_pf_trajectories = trajectories.log_probs
         else:
             # We re-use the values calculated in .sample_trajectories().
-            try:
-                estimator_outputs = estimator_outputs[~trajectories.actions.is_dummy]
-            except:
+            if not isinstance(trajectories.estimator_outputs, type(None)):
+                estimator_outputs = trajectories.estimator_outputs[
+                    ~trajectories.actions.is_dummy
+                ]
+            else:
                 raise Exception(
-                    "GFlowNet is off policy but no estimator_outputs found."
+                    "GFlowNet is off policy, but no estimator_outputs found in Trajectories!"
                 )
 
             # Calculates the log PF of the actions sampled off policy.
@@ -191,18 +190,13 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
 
         return log_pf_trajectories, log_pb_trajectories
 
-    def get_trajectories_scores(
-        self, trajectories: Trajectories, estimator_outputs: torch.Tensor = None
-    ) -> Tuple[
+    def get_trajectories_scores(self, trajectories: Trajectories) -> Tuple[
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
     ]:
         """Given a batch of trajectories, calculate forward & backward policy scores."""
-        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-            trajectories,
-            estimator_outputs,
-        )
+        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(trajectories)
 
         assert log_pf_trajectories is not None
         total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)

@@ -48,7 +48,9 @@ class FMGFlowNet(GFlowNet):
         return trajectories
 
     def flow_matching_loss(
-        self, env: Env, states: DiscreteStates
+        self,
+        env: Env,
+        states: DiscreteStates,
     ) -> TT["n_trajectories", torch.float]:
         """Computes the FM for the provided states.
 
