@@ -333,22 +333,22 @@ def train(
 
         optimizer.zero_grad()
         # Off Policy Sampling.
-        trajectories, estimator_outputs = gflownet.sample_trajectories(
+        trajectories = gflownet.sample_trajectories(
             env,
             n_samples=batch_size,
             sample_off_policy=True,
             scale_factor=scale_schedule[iteration],  # Off policy kwargs.
         )
         training_samples = gflownet.to_training_samples(trajectories)
-        loss = gflownet.loss(env, training_samples, estimator_outputs=estimator_outputs)
+        loss = gflownet.loss(env, training_samples)
         loss.backward()
 
-        # # Gradient Clipping.
-        # for p in gflownet.parameters():
-        #     if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
-        #         p.grad.data.clamp_(
-        #             -gradient_clip_value, gradient_clip_value
-        #         ).nan_to_num_(0.0)
+        # Gradient Clipping.
+        for p in gflownet.parameters():
+            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
+                p.grad.data.clamp_(
+                    -gradient_clip_value, gradient_clip_value
+                ).nan_to_num_(0.0)
 
         optimizer.step()
         states_visited += len(trajectories)
