@@ -187,8 +187,11 @@ class Env(ABC):
         return new_states
 
     def reward(self, final_states: States) -> TT["batch_shape", torch.float]:
-        """This (and potentially log_reward) needs to be implemented."""
-        raise NotImplementedError("reward function not implemented")
+        """The environment's reward given a state.
+
+        This or log_reward must be implemented.
+        """
+        raise NotImplementedError("Reward function is not implemented.")
 
     def log_reward(self, final_states: States) -> TT["batch_shape", torch.float]:
         """Calculates the log reward."""

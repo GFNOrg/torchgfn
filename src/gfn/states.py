@@ -401,17 +401,17 @@ class DiscreteStates(States, ABC):
         self.forward_masks = _extend(self.forward_masks, required_first_dim)
         self.backward_masks = _extend(self.backward_masks, required_first_dim)
 
-    # The helper methods are convienience functions for common mask operations.
-    def set_nonexit_masks(self, cond, allow_exit: bool = False):
-        """Sets the allowable actions according to cond, appending the exit mask.
+    # The helper methods are convenience functions for common mask operations.
+    def set_nonexit_action_masks(self, cond, allow_exit: bool):
+        """Masks denoting disallowed actions according to cond, appending the exit mask.
 
-        A convienience function for common mask operations.
+        A convenience function for common mask operations.
 
         Args:
-            cond: a boolean of shape (batch_shape,) + (state_shape,), which
-                denotes which actions are not allowed. For example, if a state element
+            cond: a boolean of shape (batch_shape,) + (n_actions - 1,), which
+                denotes which actions are *not* allowed. For example, if a state element
                 represents action count, and no action can be repeated more than 5
-                times, cond might be state.tensor >= 5.
+                times, cond might be state.tensor > 5 (assuming count starts at 0).
             allow_exit: sets whether exiting can happen at any point in the
                 trajectory - if so, it should be set to True.
         """
@@ -424,7 +424,7 @@ class DiscreteStates(States, ABC):
     def set_exit_masks(self, batch_idx):
         """Sets forward masks such that the only allowable next action is to exit.
 
-        A convienience function for common mask operations.
+        A convenience function for common mask operations.
 
         Args:
             batch_idx: A Boolean index along the batch dimension, along which to

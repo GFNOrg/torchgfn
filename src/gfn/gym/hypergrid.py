@@ -106,7 +106,12 @@ class HyperGrid(DiscreteEnv):
             def update_masks(self) -> None:
                 "Update the masks based on the current states."
                 self.set_default_typing()
-                self.forward_masks[..., :-1] = self.tensor != env.height - 1
+                # Not allowed to take any action beyond the environment height, but
+                # allow early termination.
+                self.set_nonexit_action_masks(
+                    self.tensor == env.height - 1,
+                    allow_exit=True,
+                )
                 self.backward_masks = self.tensor != 0
 
         return HyperGridStates
