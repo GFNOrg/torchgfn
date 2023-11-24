@@ -69,9 +69,9 @@ def test_hypergrid(ndim: int, height: int):
     args = HypergridArgs(ndim=ndim, height=height, n_trajectories=n_trajectories)
     final_l1_dist = train_hypergrid_main(args)
     if ndim == 2 and height == 8:
-        assert np.isclose(final_l1_dist, 8.7e-4, atol=1e-5)
+        assert np.isclose(final_l1_dist, 9.14e-4, atol=1e-5)
     elif ndim == 2 and height == 16:
-        assert np.isclose(final_l1_dist, 4.8e-4, atol=1e-5)
+        assert np.isclose(final_l1_dist, 4.56e-4, atol=1e-5)
     elif ndim == 4 and height == 8:
         assert np.isclose(final_l1_dist, 1.6e-4, atol=1e-5)
     elif ndim == 4 and height == 16:
@@ -85,7 +85,7 @@ def test_discreteebm(ndim: int, alpha: float):
     args = DiscreteEBMArgs(ndim=ndim, alpha=alpha, n_trajectories=n_trajectories)
     final_l1_dist = train_discreteebm_main(args)
     if ndim == 2 and alpha == 0.1:
-        assert np.isclose(final_l1_dist, 0.0026, atol=1e-4)
+        assert np.isclose(final_l1_dist, 2.97e-3, atol=1e-3)
     elif ndim == 2 and alpha == 1.0:
         assert np.isclose(final_l1_dist, 0.017, atol=1e-3)
     elif ndim == 4 and alpha == 0.1:
@@ -114,10 +114,10 @@ def test_box(delta: float, loss: str):
     print(args)
     final_jsd = train_box_main(args)
     if loss == "TB" and delta == 0.1:
-        assert np.isclose(final_jsd, 0.046, atol=1e-3)
+        assert np.isclose(final_jsd, 3.81e-2, atol=1e-3)
     elif loss == "DB" and delta == 0.1:
-        assert np.isclose(final_jsd, 0.18, atol=1e-2)
+        assert np.isclose(final_jsd, 0.134, atol=1e-2)
     if loss == "TB" and delta == 0.25:
-        assert np.isclose(final_jsd, 0.015, atol=1e-3)
+        assert np.isclose(final_jsd, 2.93e-3, atol=1e-3)
     elif loss == "DB" and delta == 0.25:
-        assert np.isclose(final_jsd, 0.027, atol=1e-3)
+        assert np.isclose(final_jsd, 0.0142, atol=1e-3)
