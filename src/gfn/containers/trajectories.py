@@ -47,16 +47,21 @@ class Trajectories(Container):
         is_backward: bool = False,
         log_rewards: TT["n_trajectories", torch.float] | None = None,
         log_probs: TT["max_length", "n_trajectories", torch.float] | None = None,
+        estimator_outputs: torch.Tensor | None = None,
     ) -> None:
         """
         Args:
             env: The environment in which the trajectories are defined.
-            states: The states of the trajectories. Defaults to None.
-            actions: The actions of the trajectories. Defaults to None.
-            when_is_done: The time step at which each trajectory ends. Defaults to None.
-            is_backward: Whether the trajectories are backward or forward. Defaults to False.
-            log_rewards: The log_rewards of the trajectories. Defaults to None.
-            log_probs: The log probabilities of the trajectories' actions. Defaults to None.
+            states: The states of the trajectories.
+            actions: The actions of the trajectories.
+            when_is_done: The time step at which each trajectory ends.
+            is_backward: Whether the trajectories are backward or forward.
+            log_rewards: The log_rewards of the trajectories.
+            log_probs: The log probabilities of the trajectories' actions.
+            estimator_outputs: When forward sampling off-policy for an n-step
+                trajectory, n forward passes will be made on some function approximator,
+                which may need to be re-used (for example, for evaluating PF). To avoid
+                duplicated effort, the outputs of the forward passes can be stored here.
 
         If states is None, then the states are initialized to an empty States object,
         that can be populated on the fly. If log_rewards is None, then `env.log_reward`
@@ -87,6 +92,7 @@ class Trajectories(Container):
             if log_probs is not None
             else torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
         )
+        self.estimator_outputs = estimator_outputs
 
     def __repr__(self) -> str:
         states = self.states.tensor.transpose(0, 1)
