@@ -20,6 +20,7 @@ class Box(Env):
         R2: float = 2.0,
         epsilon: float = 1e-4,
         device_str: Literal["cpu", "cuda"] = "cpu",
+        log_reward_clip: float = -100.0,
     ):
         assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
@@ -30,7 +31,7 @@ class Box(Env):
         self.R1 = R1
         self.R2 = R2
 
-        super().__init__(s0=s0)
+        super().__init__(s0=s0, log_reward_clip=log_reward_clip)
 
     def make_States_class(self) -> type[States]:
         env = self
@@ -116,14 +117,15 @@ class Box(Env):
 
         return True
 
-    def log_reward(self, final_states: States) -> TT["batch_shape", torch.float]:
+    def reward(self, final_states: States) -> TT["batch_shape", torch.float]:
+        """Reward is distance from the goal point."""
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states.tensor - 0.5)
         reward = (
             R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
         )
 
-        return reward.log()
+        return reward
 
     @property
     def log_partition(self) -> float:

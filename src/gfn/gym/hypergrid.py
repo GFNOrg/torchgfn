@@ -1,7 +1,7 @@
 """
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
-from typing import ClassVar, Literal, Tuple, cast
+from typing import ClassVar, Literal, Tuple
 
 import torch
 from einops import rearrange
@@ -25,6 +25,7 @@ class HyperGrid(DiscreteEnv):
         reward_cos: bool = False,
         device_str: Literal["cpu", "cuda"] = "cpu",
         preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"] = "KHot",
+        log_reward_clip: float = -100.0,
     ):
         """HyperGrid environment from the GFlowNets paper.
         The states are represented as 1-d tensors of length `ndim` with values in
@@ -41,6 +42,7 @@ class HyperGrid(DiscreteEnv):
             reward_cos (bool, optional): Which version of the reward to use. Defaults to False.
             device_str (str, optional): "cpu" or "cuda". Defaults to "cpu".
             preprocessor_name (str, optional): "KHot" or "OneHot" or "Identity". Defaults to "KHot".
+            log_reward_clip: Minimum log reward allowable (namely, for log(0)).
         """
         self.ndim = ndim
         self.height = height
@@ -80,6 +82,7 @@ class HyperGrid(DiscreteEnv):
             sf=sf,
             device_str=device_str,
             preprocessor=preprocessor,
+            log_reward_clip=log_reward_clip,
         )
 
     def make_States_class(self) -> type[DiscreteStates]:
@@ -105,17 +108,13 @@ class HyperGrid(DiscreteEnv):
 
             def update_masks(self) -> None:
                 "Update the masks based on the current states."
-                # The following two lines are for typing only.
-                self.forward_masks = cast(
-                    TT["batch_shape", "n_actions", torch.bool],
-                    self.forward_masks,
+                self.set_default_typing()
+                # Not allowed to take any action beyond the environment height, but
+                # allow early termination.
+                self.set_nonexit_action_masks(
+                    self.tensor == env.height - 1,
+                    allow_exit=True,
                 )
-                self.backward_masks = cast(
-                    TT["batch_shape", "n_actions - 1", torch.bool],
-                    self.backward_masks,
-                )
-
-                self.forward_masks[..., :-1] = self.tensor != env.height - 1
                 self.backward_masks = self.tensor != 0
 
         return HyperGridStates
@@ -132,9 +131,7 @@ class HyperGrid(DiscreteEnv):
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
         return new_states_tensor
 
-    def true_reward(
-        self, final_states: DiscreteStates
-    ) -> TT["batch_shape", torch.float]:
+    def reward(self, final_states: DiscreteStates) -> TT["batch_shape", torch.float]:
         r"""In the normal setting, the reward is:
         R(s) = R_0 + 0.5 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1}
           - 0.5 \right\rvert \in (0.25, 0.5] \right)
@@ -152,11 +149,6 @@ class HyperGrid(DiscreteEnv):
             pdf = 1.0 / (2 * torch.pi) ** 0.5 * torch.exp(-(pdf_input**2) / 2)
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
         return reward
-
-    def log_reward(
-        self, final_states: DiscreteStates
-    ) -> TT["batch_shape", torch.float]:
-        return torch.log(self.true_reward(final_states))
 
     def get_states_indices(
         self, states: DiscreteStates

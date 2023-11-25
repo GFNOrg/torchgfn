@@ -23,16 +23,21 @@ class Env(ABC):
         sf: Optional[TT["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
+        log_reward_clip: Optional[float] = -100.0,
     ):
         """Initializes an environment.
 
         Args:
-            s0: Representation of the initial state. All individual states would be of the same shape.
-            sf (optional): Representation of the final state. Only used for a human readable representation of
-                the states or trajectories.
-            device_str (Optional[str], optional): 'cpu' or 'cuda'. Defaults to None, in which case the device is inferred from s0.
-            preprocessor (Optional[Preprocessor], optional): a Preprocessor object that converts raw states to a tensor that can be fed
-                into a neural network. Defaults to None, in which case the IdentityPreprocessor is used.
+            s0: Representation of the initial state. All individual states would be of
+                the same shape.
+            sf: Representation of the final state. Only used for a human
+                readable representation of the states or trajectories.
+            device_str: 'cpu' or 'cuda'. Defaults to None, in which case the device is
+                inferred from s0.
+            preprocessor: a Preprocessor object that converts raw states to a tensor
+                that can be fed into a neural network. Defaults to None, in which case
+                the IdentityPreprocessor is used.
+            log_reward_clip: Used to clip small rewards (in particular, log(0) rewards).
         """
         self.device = torch.device(device_str) if device_str is not None else s0.device
 
@@ -53,6 +58,7 @@ class Env(ABC):
 
         self.preprocessor = preprocessor
         self.is_discrete = False
+        self.log_reward_clip = log_reward_clip
 
     @abstractmethod
     def make_States_class(self) -> type[States]:
@@ -184,12 +190,15 @@ class Env(ABC):
         return new_states
 
     def reward(self, final_states: States) -> TT["batch_shape", torch.float]:
-        """Either this or log_reward needs to be implemented."""
-        return torch.exp(self.log_reward(final_states))
+        """The environment's reward given a state.
+
+        This or log_reward must be implemented.
+        """
+        raise NotImplementedError("Reward function is not implemented.")
 
     def log_reward(self, final_states: States) -> TT["batch_shape", torch.float]:
-        """Either this or reward needs to be implemented."""
-        raise NotImplementedError("log_reward function not implemented")
+        """Calculates the log reward (clipping small rewards)."""
+        return torch.log(self.reward(final_states)).clip(self.log_reward_clip)
 
     @property
     def log_partition(self) -> float:
@@ -203,8 +212,9 @@ class DiscreteEnv(Env, ABC):
     """
     Base class for discrete environments, where actions are represented by a number in
     {0, ..., n_actions - 1}, the last one being the exit action.
-    `DiscreteEnv` allow specifying the validity of actions (forward and backward), via mask tensors, that
-    are directly attached to `States` objects.
+
+    `DiscreteEnv` allows for  specifying the validity of actions (forward and backward),
+    via mask tensors, that are directly attached to `States` objects.
     """
 
     def __init__(
@@ -214,16 +224,22 @@ class DiscreteEnv(Env, ABC):
         sf: Optional[TT["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
+        log_reward_clip: Optional[float] = -100.0,
     ):
         """Initializes a discrete environment.
 
         Args:
             n_actions: The number of actions in the environment.
-
+            s0: The initial state tensor (shared among all trajectories).
+            sf: The final state tensor (shared among all trajectories).
+            device_str: String representation of a torch.device.
+            preprocessor: An optional preprocessor for intermediate states.
+            log_reward_clip: Used to clip small rewards (in particular, log(0) rewards).
         """
         self.n_actions = n_actions
-        super().__init__(s0, sf, device_str, preprocessor)
+        super().__init__(s0, sf, device_str, preprocessor, log_reward_clip)
         self.is_discrete = True
+        self.log_reward_clip = log_reward_clip
 
     def make_Actions_class(self) -> type[Actions]:
         env = self

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import ClassVar, Literal, Tuple, cast
+from typing import ClassVar, Literal, Tuple
 
 import torch
 import torch.nn as nn
@@ -48,14 +48,19 @@ class DiscreteEBM(DiscreteEnv):
         alpha: float = 1.0,
         device_str: Literal["cpu", "cuda"] = "cpu",
         preprocessor_name: Literal["Identity", "Enum"] = "Identity",
+        log_reward_clip: float = -100.0,
     ):
         """Discrete EBM environment.
 
         Args:
-            ndim (int, optional): dimension D of the sampling space {0, 1}^D.
-            energy (EnergyFunction): energy function of the EBM. Defaults to None. If None, the Ising model with Identity matrix is used.
-            alpha (float, optional): interaction strength the EBM. Defaults to 1.0.
-            device_str (str, optional): "cpu" or "cuda". Defaults to "cpu".
+            ndim: dimension D of the sampling space {0, 1}^D.
+            energy: energy function of the EBM. Defaults to None. If
+                None, the Ising model with Identity matrix is used.
+            alpha: interaction strength the EBM. Defaults to 1.0.
+            device_str: "cpu" or "cuda". Defaults to "cpu".
+            preprocessor_name: "KHot" or "OneHot" or "Identity".
+                Defaults to "KHot".
+            log_reward_clip: Minimum log reward allowable (namely, for log(0)).
         """
         self.ndim = ndim
 
@@ -89,6 +94,7 @@ class DiscreteEBM(DiscreteEnv):
             sf=sf,
             device_str=device_str,
             preprocessor=preprocessor,
+            log_reward_clip=log_reward_clip,
         )
 
     def make_States_class(self) -> type[DiscreteStates]:
@@ -133,16 +139,7 @@ class DiscreteEBM(DiscreteEnv):
                 return forward_masks, backward_masks
 
             def update_masks(self) -> None:
-                # The following two lines are for typing only.
-                self.forward_masks = cast(
-                    TT["batch_shape", "n_actions", torch.bool],
-                    self.forward_masks,
-                )
-                self.backward_masks = cast(
-                    TT["batch_shape", "n_actions - 1", torch.bool],
-                    self.backward_masks,
-                )
-
+                self.set_default_typing()
                 self.forward_masks[..., : env.ndim] = self.tensor == -1
                 self.forward_masks[..., env.ndim : 2 * env.ndim] = self.tensor == -1
                 self.forward_masks[..., -1] = torch.all(self.tensor != -1, dim=-1)
@@ -183,16 +180,22 @@ class DiscreteEBM(DiscreteEnv):
         # action i in [ndim, 2*ndim-1] corresponds to replacing s[i - ndim] with 1.
         # A backward action asks "what index should be set back to -1", hence the fmod
         # to enable wrapping of indices.
-        return states.tensor.scatter(
-            -1,
-            actions.tensor.fmod(self.ndim),
-            -1,
-        )
+        return states.tensor.scatter(-1, actions.tensor.fmod(self.ndim), -1)
+
+    def reward(self, final_states: DiscreteStates) -> TT["batch_shape"]:
+        """Not used during training but provided for completeness.
+
+        Note the effect of clipping will be seen in these values.
+        """
+        return torch.exp(self.log_reward(final_states))
 
     def log_reward(self, final_states: DiscreteStates) -> TT["batch_shape"]:
+        """The energy weighted by alpha is our log reward."""
         raw_states = final_states.tensor
         canonical = 2 * raw_states - 1
-        return -self.alpha * self.energy(canonical)
+        log_reward = -self.alpha * self.energy(canonical)
+
+        return log_reward.clip(self.log_reward_clip)
 
     def get_states_indices(self, states: DiscreteStates) -> TT["batch_shape"]:
         """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3"""

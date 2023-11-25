@@ -81,7 +81,7 @@ class GFNModule(ABC, nn.Module):
         return out
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.env})"
+        return f"{self.__class__.__name__} module"
 
     @property
     @abstractmethod

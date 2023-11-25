@@ -303,6 +303,19 @@ class DiscreteStates(States, ABC):
             self.forward_masks = cast(torch.Tensor, forward_masks)
             self.backward_masks = cast(torch.Tensor, backward_masks)
 
+        self.set_default_typing()
+
+    def set_default_typing(self) -> None:
+        """A convienience function for default typing of the masks."""
+        self.forward_masks = cast(
+            TT["batch_shape", "n_actions", torch.bool],
+            self.forward_masks,
+        )
+        self.backward_masks = cast(
+            TT["batch_shape", "n_actions - 1", torch.bool],
+            self.backward_masks,
+        )
+
     @abstractmethod
     def update_masks(self) -> None:
         """Updates the masks, called after each action is taken."""
@@ -371,3 +384,55 @@ class DiscreteStates(States, ABC):
 
         self.forward_masks = _extend(self.forward_masks, required_first_dim)
         self.backward_masks = _extend(self.backward_masks, required_first_dim)
+
+    # The helper methods are convenience functions for common mask operations.
+    def set_nonexit_action_masks(self, cond, allow_exit: bool):
+        """Masks denoting disallowed actions according to cond, appending the exit mask.
+
+        A convenience function for common mask operations.
+
+        Args:
+            cond: a boolean of shape (batch_shape,) + (n_actions - 1,), which
+                denotes which actions are *not* allowed. For example, if a state element
+                represents action count, and no action can be repeated more than 5
+                times, cond might be state.tensor > 5 (assuming count starts at 0).
+            allow_exit: sets whether exiting can happen at any point in the
+                trajectory - if so, it should be set to True.
+        """
+        if allow_exit:
+            exit_idx = torch.zeros(self.batch_shape + (1,))
+        else:
+            exit_idx = torch.ones(self.batch_shape + (1,))
+        self.forward_masks[torch.cat([cond, exit_idx], dim=-1).bool()] = False
+
+    def set_exit_masks(self, batch_idx):
+        """Sets forward masks such that the only allowable next action is to exit.
+
+        A convenience function for common mask operations.
+
+        Args:
+            batch_idx: A Boolean index along the batch dimension, along which to
+                enforce exits.
+        """
+        self.forward_masks[batch_idx, :] = torch.cat(
+            [
+                torch.zeros((torch.sum(batch_idx),) + self.s0.shape),
+                torch.ones((torch.sum(batch_idx),) + (1,)),
+            ],
+            dim=-1,
+        ).bool()
+
+    def init_forward_masks(self, set_ones: bool = True):
+        """Initalizes forward masks.
+
+        A convienience function for common mask operations.
+
+        Args:
+            set_ones: if True, forward masks are initalized to all ones. Otherwise,
+                they are initalized to all zeros.
+        """
+        shape = self.batch_shape + (self.n_actions,)
+        if set_ones:
+            self.forward_masks = torch.ones(shape).bool()
+        else:
+            self.forward_masks = torch.zeros(shape).bool()

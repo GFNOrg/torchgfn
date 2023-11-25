@@ -23,9 +23,11 @@ from gfn.modules import DiscretePolicyEstimator
 from gfn.utils.common import validate
 from gfn.utils.modules import NeuralNet, Tabular
 
+DEFAULT_SEED = 4444
+
 
 def main(args):  # noqa: C901
-    seed = args.seed if args.seed != 0 else torch.randint(int(10e10), (1,))[0].item()
+    seed = args.seed if args.seed != 0 else DEFAULT_SEED
     torch.manual_seed(seed)
 
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
