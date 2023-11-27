@@ -47,7 +47,10 @@ class FMGFlowNet(GFlowNet):
             )
         sampler = Sampler(estimator=self.logF)
         trajectories = sampler.sample_trajectories(
-            env, n_trajectories=n_samples, off_policy=off_policy, **policy_kwargs,
+            env,
+            n_trajectories=n_samples,
+            off_policy=off_policy,
+            **policy_kwargs,
         )
         return trajectories
 

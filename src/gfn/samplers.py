@@ -186,7 +186,9 @@ class Sampler:
                 all_estimator_outputs.append(estimator_outputs_padded)
 
             actions[~dones] = valid_actions
-            if not skip_logprob_calculaion:  # When off_policy, actions_log_probs are None.
+            if (
+                not skip_logprob_calculaion
+            ):  # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
             trajectories_logprobs += [log_probs]

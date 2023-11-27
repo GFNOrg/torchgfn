@@ -191,7 +191,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
 
         return log_pf_trajectories, log_pb_trajectories
 
-    def get_trajectories_scores(self, trajectories: Trajectories) -> Tuple[
+    def get_trajectories_scores(
+        self, trajectories: Trajectories
+    ) -> Tuple[
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
@@ -204,7 +206,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
         log_rewards = trajectories.log_rewards
-        if math.isfinite(self.log_reward_clip_min) and not isinstance(log_rewards, type(None)):
+        if math.isfinite(self.log_reward_clip_min) and not isinstance(
+            log_rewards, type(None)
+        ):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
         if torch.any(torch.isinf(total_log_pf_trajectories)) or torch.any(

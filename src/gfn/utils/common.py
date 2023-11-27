@@ -1,6 +1,8 @@
+import random
 from collections import Counter
 from typing import Dict, Optional
 
+import numpy as np
 import torch
 from torchtyping import TensorType as TT
 
@@ -68,3 +70,13 @@ def validate(
     if logZ is not None:
         validation_info["logZ_diff"] = abs(logZ - true_logZ)
     return validation_info
+
+
+def set_seed(seed: int) -> None:
+    """Used to control randomness."""
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False

@@ -7,10 +7,10 @@ if TYPE_CHECKING:
     from gfn.env import Env
     from gfn.states import States
 
+import numpy as np
 import torch
 from torch import Tensor
 from torchtyping import TensorType as TT
-import numpy as np
 
 from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
@@ -233,7 +233,8 @@ class Trajectories(Container):
 
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat(
-                (self._log_rewards, other._log_rewards), dim=0,
+                (self._log_rewards, other._log_rewards),
+                dim=0,
             )
         else:
             self._log_rewards = None
@@ -250,7 +251,8 @@ class Trajectories(Container):
             if n_bs == 1:
                 # Concatenate along the only batch dimension.
                 self.estimator_outputs = torch.cat(
-                    (self.estimator_outputs, other.estimator_outputs), dim=0,
+                    (self.estimator_outputs, other.estimator_outputs),
+                    dim=0,
                 )
             elif n_bs == 2:
                 if self.estimator_outputs.shape[0] != other.estimator_outputs.shape[0]:
@@ -263,36 +265,40 @@ class Trajectories(Container):
                     # The size of self needs to grow to match other along dim=0.
                     if self_shape[0] < other_shape[0]:
                         pad_dim = required_first_dim - self_shape[0]
-                        pad_dim_full = (pad_dim,) +  tuple(self_shape[1:])
+                        pad_dim_full = (pad_dim,) + tuple(self_shape[1:])
                         output_padding = torch.full(
                             pad_dim_full,
-                            fill_value = -float("inf"),
-                            dtype=self.estimator_outputs.dtype, # TODO: This isn't working! Hence the cast below...
+                            fill_value=-float("inf"),
+                            dtype=self.estimator_outputs.dtype,  # TODO: This isn't working! Hence the cast below...
                             device=self.estimator_outputs.device,
                         )
                         self.estimator_outputs = torch.cat(
-                            (self.estimator_outputs, output_padding), dim=0,
+                            (self.estimator_outputs, output_padding),
+                            dim=0,
                         )
 
                     # The size of other needs to grow to match self along dim=0.
                     if other_shape[0] < self_shape[0]:
                         pad_dim = required_first_dim - other_shape[0]
-                        pad_dim_full = (pad_dim,) +  tuple(other_shape[1:])
+                        pad_dim_full = (pad_dim,) + tuple(other_shape[1:])
                         output_padding = torch.full(
                             pad_dim_full,
-                            fill_value = -float("inf"),
+                            fill_value=-float("inf"),
                             dtype=other.estimator_outputs.dtype,  # TODO: This isn't working! Hence the cast below...
                             device=other.estimator_outputs.device,
                         )
                         other.estimator_outputs = torch.cat(
-                            (other.estimator_outputs, output_padding), dim=0,
+                            (other.estimator_outputs, output_padding),
+                            dim=0,
                         )
 
                 # Concatenate the tensors along the second dimension.
                 self.estimator_outputs = torch.cat(
                     (self.estimator_outputs, other.estimator_outputs),
                     dim=1,
-                ).to(dtype=output_dtype)  # Cast to prevent single precision becoming double precision... weird.
+                ).to(
+                    dtype=output_dtype
+                )  # Cast to prevent single precision becoming double precision... weird.
 
             # Sanity check. TODO: Remove?
             assert self.estimator_outputs.shape[:n_bs] == batch_shape
