@@ -23,12 +23,14 @@ from gfn.modules import DiscretePolicyEstimator
 from gfn.utils.common import validate
 from gfn.utils.modules import NeuralNet, Tabular
 
+from gfn.utils.common import set_seed
+
 DEFAULT_SEED = 4444
 
 
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    torch.manual_seed(seed)
+    set_seed(seed)
 
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
@@ -69,7 +71,11 @@ def main(args):  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
-        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size)
+        trajectories = gflownet.sample_trajectories(
+            env,
+            off_policy=False,
+            n_samples=args.batch_size
+        )
         training_samples = gflownet.to_training_samples(trajectories)
 
         optimizer.zero_grad()

@@ -32,6 +32,7 @@ from gfn.gym.helpers.box_utils import (
     BoxStateFlowModule,
 )
 from gfn.modules import ScalarEstimator
+from gfn.utils.common import set_seed
 
 DEFAULT_SEED = 4444
 
@@ -86,7 +87,7 @@ def estimate_jsd(kde1, kde2):
 
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    torch.manual_seed(seed)
+    set_seed(seed)
 
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
@@ -157,14 +158,14 @@ def main(args):  # noqa: C901
                 pf=pf_estimator,
                 pb=pb_estimator,
                 logF=logF_estimator,
-                on_policy=True,
+                off_policy=False,
             )
         else:
             gflownet = SubTBGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
                 logF=logF_estimator,
-                on_policy=True,
+                off_policy=False,
                 weighting=args.subTB_weighting,
                 lamda=args.subTB_lambda,
             )
@@ -172,13 +173,13 @@ def main(args):  # noqa: C901
         gflownet = TBGFlowNet(
             pf=pf_estimator,
             pb=pb_estimator,
-            on_policy=True,
+            off_policy=False,
         )
     elif args.loss == "ZVar":
         gflownet = LogPartitionVarianceGFlowNet(
             pf=pf_estimator,
             pb=pb_estimator,
-            on_policy=True,
+            off_policy=False,
         )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
@@ -231,7 +232,11 @@ def main(args):  # noqa: C901
         if iteration % 1000 == 0:
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
-        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size)
+        trajectories = gflownet.sample_trajectories(
+            env,
+            sample_off_policy=False,
+            n_samples=args.batch_size
+        )
 
         training_samples = gflownet.to_training_samples(trajectories)
 

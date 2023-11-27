@@ -16,6 +16,8 @@ from gfn.modules import GFNModule
 from gfn.states import States
 from gfn.utils import NeuralNet
 
+from gfn.utils.common import set_seed
+
 
 class Line(Env):
     """Mixture of Gaussians Line environment."""
@@ -287,16 +289,6 @@ class StepEstimator(GFNModule):
             n_steps=self.n_steps_per_trajectory,
         )
 
-
-def fix_seed(seed):
-    """Reproducibility."""
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-    torch.manual_seed(seed)
-
-
 def train(
     gflownet,
     env,
@@ -308,7 +300,7 @@ def train(
     exploration_var_starting_val=2,
 ):
     """Trains a GFlowNet on the Line Environment."""
-    fix_seed(seed)
+    set_seed(seed)
     n_iterations = int(n_trajectories // batch_size)
 
     # TODO: Add in the uniform pb demo?
@@ -400,7 +392,7 @@ if __name__ == "__main__":
         policy_std_max=policy_std_max,
     )
     pb = StepEstimator(environment, pb_module, backward=True)
-    gflownet = TBGFlowNet(pf=pf, pb=pb, on_policy=False, init_logZ=0.0)
+    gflownet = TBGFlowNet(pf=pf, pb=pb, off_policy=False, init_logZ=0.0)
 
     gflownet = train(
         gflownet,

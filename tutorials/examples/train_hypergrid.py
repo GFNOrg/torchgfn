@@ -31,13 +31,15 @@ from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.utils.common import validate
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
+from gfn.utils.common import set_seed
+
 DEFAULT_SEED = 4444
 
 
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    torch.manual_seed(seed)
-
+    set_seed(seed)
+    off_policy_sampling = False if args.replay_buffer_size == 0 else True
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
     use_wandb = len(args.wandb_project) > 0
@@ -122,7 +124,7 @@ def main(args):  # noqa: C901
             gflownet = ModifiedDBGFlowNet(
                 pf_estimator,
                 pb_estimator,
-                True if args.replay_buffer_size == 0 else False,
+                off_policy_sampling,
             )
 
         if args.loss in ("DB", "SubTB"):
@@ -153,14 +155,14 @@ def main(args):  # noqa: C901
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
-                    on_policy=True if args.replay_buffer_size == 0 else False,
+                    off_policy=off_policy_sampling,
                 )
             else:
                 gflownet = SubTBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
-                    on_policy=True if args.replay_buffer_size == 0 else False,
+                    off_policy=off_policy_sampling,
                     weighting=args.subTB_weighting,
                     lamda=args.subTB_lambda,
                 )
@@ -168,19 +170,18 @@ def main(args):  # noqa: C901
             gflownet = TBGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                on_policy=True if args.replay_buffer_size == 0 else False,
+                off_policy=off_policy_sampling,
             )
         elif args.loss == "ZVar":
             gflownet = LogPartitionVarianceGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                on_policy=True if args.replay_buffer_size == 0 else False,
+                off_policy=off_policy_sampling,
             )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
 
     # Initialize the replay buffer ?
-
     replay_buffer = None
     if args.replay_buffer_size > 0:
         if args.loss in ("TB", "SubTB", "ZVar"):
@@ -224,7 +225,7 @@ def main(args):  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
-        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size)
+        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size, sample_off_policy=off_policy_sampling)
         training_samples = gflownet.to_training_samples(trajectories)
         if replay_buffer is not None:
             with torch.no_grad():
@@ -290,7 +291,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=0,
+        default=100,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
     )
 
