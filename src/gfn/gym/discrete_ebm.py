@@ -116,6 +116,7 @@ class DiscreteEBM(DiscreteEnv):
                     device=env.device,
                 )
 
+            # TODO: Look into make masks - I don't think this is being called.
             def make_masks(
                 self,
             ) -> Tuple[
