@@ -72,11 +72,11 @@ class PFBasedGFlowNet(GFlowNet):
         pb: GFNModule
     """
 
-    def __init__(self, pf: GFNModule, pb: GFNModule, on_policy: bool = False):
+    def __init__(self, pf: GFNModule, pb: GFNModule, off_policy: bool):
         super().__init__()
         self.pf = pf
         self.pb = pb
-        self.on_policy = on_policy
+        self.off_policy = off_policy
 
     def sample_trajectories(
         self, env: Env, n_samples: int, sample_off_policy: bool, **policy_kwargs
@@ -141,9 +141,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
         if valid_states.batch_shape != tuple(valid_actions.batch_shape):
             raise AssertionError("Something wrong happening with log_pf evaluations")
 
-        if self.on_policy:
-            log_pf_trajectories = trajectories.log_probs
-        else:
+        if self.off_policy:
             # We re-use the values calculated in .sample_trajectories().
             if not isinstance(trajectories.estimator_outputs, type(None)):
                 estimator_outputs = trajectories.estimator_outputs[
@@ -166,6 +164,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
                 dtype=torch.float,
             )
             log_pf_trajectories[~trajectories.actions.is_dummy] = valid_log_pf_actions
+
+        else:
+            log_pf_trajectories = trajectories.log_probs
 
         non_initial_valid_states = valid_states[~valid_states.is_initial_state]
         non_exit_valid_actions = valid_actions[~valid_actions.is_exit]
