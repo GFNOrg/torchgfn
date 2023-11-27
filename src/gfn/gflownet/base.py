@@ -1,6 +1,6 @@
+from abc import ABC, abstractmethod
+from typing import Generic, Tuple, TypeVar, Union
 import math
-from abc import abstractmethod
-from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -8,14 +8,19 @@ from torch import Tensor
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
+from gfn.containers.base import Container
 from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
 
+TrainingSampleType = TypeVar(
+    "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
+)
 
-class GFlowNet(nn.Module):
-    """Abstract Base Class for GFlowNets. This is always On Policy.
+
+class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
+    """Abstract Base Class for GFlowNets.
 
     A formal definition of GFlowNets is given in Sec. 3 of [GFlowNet Foundations](https://arxiv.org/pdf/2111.09266).
     """
@@ -56,7 +61,7 @@ class GFlowNet(nn.Module):
         return [dict(self.named_parameters())["logZ"]]
 
     @abstractmethod
-    def to_training_samples(self, trajectories: Trajectories):
+    def to_training_samples(self, trajectories: Trajectories) -> TrainingSampleType:
         """Converts trajectories to training samples. The type depends on the GFlowNet."""
 
     @abstractmethod
@@ -64,7 +69,7 @@ class GFlowNet(nn.Module):
         """Computes the loss given the training objects."""
 
 
-class PFBasedGFlowNet(GFlowNet):
+class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
     r"""Base class for gflownets that explicitly uses $P_F$.
 
     Attributes:
@@ -93,7 +98,7 @@ class PFBasedGFlowNet(GFlowNet):
         return trajectories
 
 
-class TrajectoryBasedGFlowNet(PFBasedGFlowNet):
+class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,

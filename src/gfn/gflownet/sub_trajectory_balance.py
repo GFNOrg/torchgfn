@@ -9,6 +9,14 @@ from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet
 from gfn.modules import GFNModule, ScalarEstimator
 
+ContributionsTensor = TT["max_len * (1 + max_len) / 2", "n_trajectories"]
+CumulativeLogProbsTensor = TT["max_length + 1", "n_trajectories"]
+LogStateFlowsTensor = TT["max_length", "n_trajectories"]
+LogTrajectoriesTensor = TT["max_length", "n_trajectories", torch.float]
+MaskTensor = TT["max_length", "n_trajectories"]
+PredictionsTensor = TT["max_length + 1 - i", "n_trajectories"]
+TargetsTensor = TT["max_length + 1 - i", "n_trajectories"]
+
 
 class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     r"""GFlowNet for the Sub Trajectory Balance Loss.
@@ -72,8 +80,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def cumulative_logprobs(
         self,
         trajectories: Trajectories,
-        log_p_trajectories: TT["max_length", "n_trajectories", torch.float],
-    ) -> TT["max_length", "n_trajectories", torch.float]:
+        log_p_trajectories: LogTrajectoriesTensor,
+    ) -> CumulativeLogProbsTensor:
         """Calculates the cumulative log probabilities for all trajectories.
 
         Args:
@@ -91,6 +99,109 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             ),
             dim=0,
         )
+
+    def calculate_preds(
+        self,
+        log_pf_trajectories_cum: CumulativeLogProbsTensor,
+        log_state_flows: LogStateFlowsTensor,
+        i: int,
+    ) -> PredictionsTensor:
+        """
+        Calculate the predictions tensor for the current sub-trajectory length.
+        """
+        current_log_state_flows = (
+            log_state_flows if i == 1 else log_state_flows[: -(i - 1)]
+        )
+
+        preds = (
+            log_pf_trajectories_cum[i:]
+            - log_pf_trajectories_cum[:-i]
+            + current_log_state_flows
+        )
+
+        return preds
+
+    def calculate_targets(
+        self,
+        trajectories: Trajectories,
+        preds: PredictionsTensor,
+        log_pb_trajectories_cum: CumulativeLogProbsTensor,
+        log_state_flows: LogStateFlowsTensor,
+        is_terminal_mask: MaskTensor,
+        sink_states_mask: MaskTensor,
+        full_mask: MaskTensor,
+        i: int,
+    ) -> TargetsTensor:
+        """
+        Calculate the targets tensor for the current sub-trajectory length.
+        """
+        targets = torch.full_like(preds, fill_value=-float("inf"))
+        assert trajectories.log_rewards is not None
+        log_rewards = trajectories.log_rewards[trajectories.when_is_done >= i]
+
+        if math.isfinite(self.log_reward_clip_min):
+            log_rewards.clamp_min(self.log_reward_clip_min)
+
+        targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
+
+        # For now, the targets contain the log-rewards of the ending sub trajectories
+        # We need to add to that the log-probabilities of the backward actions up-to
+        # the sub-trajectory's terminating state
+        if i > 1:
+            targets[is_terminal_mask[i - 1 :]] += (
+                log_pb_trajectories_cum[i - 1 :] - log_pb_trajectories_cum[: -i + 1]
+            )[:-1][is_terminal_mask[i - 1 :]]
+
+        # The following creates the targets for the non-finishing sub-trajectories
+        targets[~full_mask[i - 1 :]] = (
+            log_pb_trajectories_cum[i:] - log_pb_trajectories_cum[:-i]
+        )[:-1][~full_mask[i - 1 : -1]] + log_state_flows[i:][~sink_states_mask[i:]]
+
+        return targets
+
+    def calculate_log_state_flows(
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        log_pf_trajectories: LogTrajectoriesTensor,
+    ) -> LogStateFlowsTensor:
+        """
+        Calculate log state flows and masks for sink and terminal states.
+
+        Args:
+            trajectories: The trajectories data.
+            env: The environment object.
+
+        Returns:
+            log_state_flows: Log state flows.
+            full_mask: A boolean tensor representing full states.
+        """
+        states = trajectories.states
+        log_state_flows = torch.full_like(log_pf_trajectories, fill_value=-float("inf"))
+        mask = ~states.is_sink_state
+        valid_states = states[mask]
+
+        log_F = self.logF(valid_states).squeeze(-1)
+        if self.forward_looking:
+            log_rewards = env.log_reward(states).unsqueeze(-1)
+            log_F = log_F + log_rewards
+
+        log_state_flows[mask[:-1]] = log_F
+        return log_state_flows
+
+    def calculate_masks(
+        self,
+        log_state_flows: LogStateFlowsTensor,
+        trajectories: Trajectories,
+    ) -> Tuple[MaskTensor, MaskTensor, MaskTensor]:
+        """
+        Calculate masks for sink and terminal states.
+        """
+        sink_states_mask = log_state_flows == -float("inf")
+        is_terminal_mask = trajectories.actions.is_exit
+        full_mask = sink_states_mask | is_terminal_mask
+
+        return full_mask, sink_states_mask, is_terminal_mask
 
     def get_scores(
         self, env: Env, trajectories: Trajectories
@@ -120,55 +231,52 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories, log_pb_trajectories
         )
 
-        states = trajectories.states
-        log_state_flows = torch.full_like(log_pf_trajectories, fill_value=-float("inf"))
-        mask = ~states.is_sink_state
-        valid_states = states[mask]
-
-        log_F = self.logF(valid_states).squeeze(-1)
-        if self.forward_looking:
-            log_rewards = env.log_reward(states).unsqueeze(-1)
-            log_F = log_F + log_rewards
-        log_state_flows[mask[:-1]] = log_F
-
-        sink_states_mask = log_state_flows == -float("inf")
-        is_terminal_mask = trajectories.actions.is_exit
-        full_mask = sink_states_mask | is_terminal_mask
+        log_state_flows = self.calculate_log_state_flows(
+            env, trajectories, log_pf_trajectories
+        )
+        full_mask, sink_states_mask, is_terminal_mask = self.calculate_masks(
+            log_state_flows, trajectories
+        )
 
         flattening_masks = []
         scores = []
         for i in range(1, 1 + trajectories.max_length):
-            current_log_state_flows = (
-                log_state_flows if i == 1 else log_state_flows[: -(i - 1)]
+            preds = self.calculate_preds(log_pf_trajectories_cum, log_state_flows, i)
+            targets = self.calculate_targets(
+                trajectories,
+                preds,
+                log_pb_trajectories_cum,
+                log_state_flows,
+                is_terminal_mask,
+                sink_states_mask,
+                full_mask,
+                i,
             )
 
-            preds = (
-                log_pf_trajectories_cum[i:]
-                - log_pf_trajectories_cum[:-i]
-                + current_log_state_flows
-            )
+            # preds = (
+            #     log_pf_trajectories_cum[i:]
+            #     - log_pf_trajectories_cum[:-i]
+            #     + current_log_state_flows
+            # )
 
-            targets = torch.full_like(preds, fill_value=-float("inf"))
-            assert trajectories.log_rewards is not None
-            log_rewards = trajectories.log_rewards[trajectories.when_is_done >= i]
+            # targets = torch.full_like(preds, fill_value=-float("inf"))
+            # assert trajectories.log_rewards is not None
+            # log_rewards = trajectories.log_rewards[trajectories.when_is_done >= i]
 
-            if math.isfinite(self.log_reward_clip_min):
-                log_rewards.clamp_min(self.log_reward_clip_min)
+            # targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
 
-            targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
+            # # For now, the targets contain the log-rewards of the ending sub trajectories
+            # # We need to add to that the log-probabilities of the backward actions up-to
+            # # the sub-trajectory's terminating state
+            # if i > 1:
+            #     targets[is_terminal_mask[i - 1 :]] += (
+            #         log_pb_trajectories_cum[i - 1 :] - log_pb_trajectories_cum[: -i + 1]
+            #     )[:-1][is_terminal_mask[i - 1 :]]
 
-            # For now, the targets contain the log-rewards of the ending sub trajectories
-            # We need to add to that the log-probabilities of the backward actions up-to
-            # the sub-trajectory's terminating state
-            if i > 1:
-                targets[is_terminal_mask[i - 1 :]] += (
-                    log_pb_trajectories_cum[i - 1 :] - log_pb_trajectories_cum[: -i + 1]
-                )[:-1][is_terminal_mask[i - 1 :]]
-
-            # The following creates the targets for the non-finishing sub-trajectories
-            targets[~full_mask[i - 1 :]] = (
-                log_pb_trajectories_cum[i:] - log_pb_trajectories_cum[:-i]
-            )[:-1][~full_mask[i - 1 : -1]] + log_state_flows[i:][~sink_states_mask[i:]]
+            # # The following creates the targets for the non-finishing sub-trajectories
+            # targets[~full_mask[i - 1 :]] = (
+            #     log_pb_trajectories_cum[i:] - log_pb_trajectories_cum[:-i]
+            # )[:-1][~full_mask[i - 1 : -1]] + log_state_flows[i:][~sink_states_mask[i:]]
 
             flattening_mask = trajectories.when_is_done.lt(
                 torch.arange(
@@ -177,22 +285,128 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                     device=trajectories.when_is_done.device,
                 ).unsqueeze(-1)
             )
-            flat_preds = preds[~flattening_mask]
-            flat_targets = targets[~flattening_mask]
 
+            flat_preds = preds[~flattening_mask]
             if torch.any(torch.isnan(flat_preds)):
                 raise ValueError("NaN in preds")
 
+            flat_targets = targets[~flattening_mask]
             if torch.any(torch.isnan(flat_targets)):
                 raise ValueError("NaN in targets")
 
             flattening_masks.append(flattening_mask)
             scores.append(preds - targets)
 
-        return (
-            scores,
-            flattening_masks,
+        return (scores, flattening_masks)
+
+    def get_equal_within_contributions(
+        self, trajectories: Trajectories
+    ) -> ContributionsTensor:
+        """
+        Calculates contributions for the 'equal_within' weighting method.
+        """
+        is_done = trajectories.when_is_done
+        max_len = trajectories.max_length
+        n_rows = int(max_len * (1 + max_len) / 2)
+
+        # the following tensor represents the inverse of how many sub-trajectories there are in each trajectory
+        contributions = 2.0 / (is_done * (is_done + 1)) / len(trajectories)
+
+        # if we repeat the previous tensor, we get a tensor of shape
+        # (max_len * (max_len + 1) / 2, n_trajectories) that we can multiply with
+        # all_scores to get a loss where each sub-trajectory is weighted equally
+        # within each trajectory.
+        contributions = contributions.repeat(n_rows, 1)
+
+        return contributions
+
+    def get_equal_contributions(
+        self, trajectories: Trajectories
+    ) -> ContributionsTensor:
+        """
+        Calculates contributions for the 'equal' weighting method.
+        """
+        is_done = trajectories.when_is_done
+        max_len = trajectories.max_length
+        n_rows = int(max_len * (1 + max_len) / 2)
+        n_sub_trajectories = int((is_done * (is_done + 1) / 2).sum().item())
+        contributions = torch.ones(n_rows, len(trajectories)) / n_sub_trajectories
+        return contributions
+
+    def get_tb_contributions(
+        self, trajectories: Trajectories, all_scores: TT
+    ) -> ContributionsTensor:
+        """
+        Calculates contributions for the 'TB' weighting method.
+        """
+        max_len = trajectories.max_length
+        is_done = trajectories.when_is_done
+
+        # Each trajectory contributes one element to the loss, equally weighted
+        contributions = torch.zeros_like(all_scores)
+        indices = (max_len * (is_done - 1) - (is_done - 1) * (is_done - 2) / 2).long()
+        contributions.scatter_(0, indices.unsqueeze(0), 1)
+        contributions = contributions / len(trajectories)
+
+        return contributions
+
+    def get_modified_db_contributions(
+        self, trajectories: Trajectories
+    ) -> ContributionsTensor:
+        """
+        Calculates contributions for the 'ModifiedDB' weighting method.
+        """
+        is_done = trajectories.when_is_done
+        max_len = trajectories.max_length
+        n_rows = int(max_len * (1 + max_len) / 2)
+
+        # The following tensor represents the inverse of how many transitions
+        # there are in each trajectory.
+        contributions = (1.0 / is_done / len(trajectories)).repeat(max_len, 1)
+        contributions = torch.cat(
+            (
+                contributions,
+                torch.zeros(
+                    (n_rows - max_len, len(trajectories)),
+                    device=contributions.device,
+                ),
+            ),
+            0,
         )
+        return contributions
+
+    def get_geometric_within_contributions(
+        self, trajectories: Trajectories
+    ) -> ContributionsTensor:
+        """
+        Calculates contributions for the 'geometric_within' weighting method.
+        """
+        L = self.lamda
+        max_len = trajectories.max_length
+        is_done = trajectories.when_is_done
+
+        # The following tensor represents the weights given to each possible
+        # sub-trajectory length.
+        contributions = (L ** torch.arange(max_len).double()).float()
+        contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
+        contributions = contributions.repeat_interleave(
+            torch.arange(max_len, 0, -1),
+            dim=0,
+            output_size=int(max_len * (max_len + 1) / 2),
+        )
+
+        # Now we need to divide each column by n + (n-1) lambda +...+ 1*lambda^{n-1}
+        # where n is the length of the trajectory corresponding to that column
+        # We can do it the ugly way, or using the cool identity:
+        # https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
+        per_trajectory_denom = (
+            1.0
+            / (1 - L) ** 2
+            * (L * (L ** is_done.double() - 1) + (1 - L) * is_done.double())
+        ).float()
+        contributions = contributions / per_trajectory_denom / len(trajectories)
+
+        return contributions
 
     def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
         # Get all scores and masks from the trajectories.
@@ -200,77 +414,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         flattening_mask = torch.cat(flattening_masks)
         all_scores = torch.cat(scores, 0)
 
-        # Used only to keep the following calculations clean.
-        L = self.lamda
-        max_len = trajectories.max_length
-        is_done = trajectories.when_is_done
-
-        # all_scores is a tensor of shape (max_len * (max_leng + 1) / 2, n_trajectories)
-        n_rows = int(max_len * (1 + max_len) / 2)
-
-        if self.weighting == "equal_within":
-            # the following tensor represents the inverse of how many sub-trajectories there are in each trajectory
-            contributions = 2.0 / (is_done * (is_done + 1)) / len(trajectories)
-
-            # if we repeat the previous tensor, we get a tensor of shape
-            # (max_len * (max_len + 1) / 2, n_trajectories) that we can multiply with
-            # all_scores to get a loss where each sub-trajectory is weighted equally
-            # within each trajectory.
-            contributions = contributions.repeat(n_rows, 1)
-
-        elif self.weighting == "equal":
-            n_sub_trajectories = int((is_done * (is_done + 1) / 2).sum().item())
-            contributions = torch.ones(n_rows, len(trajectories)) / n_sub_trajectories
-
-        elif self.weighting == "TB":
-            # Each trajectory contributes one element to the loss, equally weighted
-            contributions = torch.zeros_like(all_scores)
-            indices = (
-                max_len * (is_done - 1) - (is_done - 1) * (is_done - 2) / 2
-            ).long()
-            contributions.scatter_(0, indices.unsqueeze(0), 1)
-            contributions = contributions / len(trajectories)
-
-        elif self.weighting == "DB":
+        if self.weighting == "DB":
             # Longer trajectories contribute more to the loss
             return scores[0][~flattening_masks[0]].pow(2).mean()
-
-        elif self.weighting == "ModifiedDB":
-            # The following tensor represents the inverse of how many transitions
-            # there are in each trajectory.
-            contributions = (1.0 / is_done / len(trajectories)).repeat(max_len, 1)
-            contributions = torch.cat(
-                (
-                    contributions,
-                    torch.zeros(
-                        (n_rows - max_len, len(trajectories)),
-                        device=contributions.device,
-                    ),
-                ),
-                0,
-            )
-
-        elif self.weighting == "geometric_within":
-            # The following tensor represents the weights given to each possible
-            # sub-trajectory length.
-            contributions = (L ** torch.arange(max_len).double()).float()
-            contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
-            contributions = contributions.repeat_interleave(
-                torch.arange(max_len, 0, -1),
-                dim=0,
-                output_size=int(max_len * (max_len + 1) / 2),
-            )
-
-            # Now we need to divide each column by n + (n-1) lambda +...+ 1*lambda^{n-1}
-            # where n is the length of the trajectory corresponding to that column
-            # We can do it the ugly way, or using the cool identity:
-            # https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
-            per_trajectory_denom = (
-                1.0
-                / (1 - L) ** 2
-                * (L * (L ** is_done.double() - 1) + (1 - L) * is_done.double())
-            ).float()
-            contributions = contributions / per_trajectory_denom / len(trajectories)
 
         elif self.weighting == "geometric":
             # The position i of the following 1D tensor represents the number of sub-
@@ -288,12 +434,30 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                     for scores, flattening_mask in zip(scores, flattening_masks)
                 ]
             )
+            max_len = trajectories.max_length
+            L = self.lamda
             ratio = (1 - L) / (1 - L**max_len)
             weights = ratio * (
                 L ** torch.arange(max_len, device=per_length_losses.device)
             )
             assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
+
+        elif self.weighting == "equal_within":
+            contributions = self.get_equal_within_contributions(trajectories)
+
+        elif self.weighting == "equal":
+            contributions = self.get_equal_contributions(trajectories)
+
+        elif self.weighting == "TB":
+            contributions = self.get_tb_contributions(trajectories, all_scores)
+
+        elif self.weighting == "ModifiedDB":
+            contributions = self.get_modified_db_contributions(trajectories)
+
+        elif self.weighting == "geometric_within":
+            contributions = self.get_geometric_within_contributions(trajectories)
+
         else:
             raise ValueError(f"Unknown weighting method {self.weighting}")
 
