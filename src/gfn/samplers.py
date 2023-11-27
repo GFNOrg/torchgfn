@@ -88,28 +88,29 @@ class Sampler:
     def sample_trajectories(
         self,
         env: Env,
+        off_policy: bool,
         states: Optional[States] = None,
         n_trajectories: Optional[int] = None,
-        off_policy: bool = False,
+        test_mode: bool = False,
         **policy_kwargs,
     ) -> Trajectories:
         """Sample trajectories sequentially.
 
         Args:
-            estimator: A GFNModule to pass to the probability distribution calculator.
             env: The environment to sample trajectories from.
+            off_policy: If True, samples actions such that we skip log probability
+                calculation, and we save the estimator outputs for later use.
             states: If given, trajectories would start from such states. Otherwise,
                 trajectories are sampled from $s_o$ and n_trajectories must be provided.
             n_trajectories: If given, a batch of n_trajectories will be sampled all
                 starting from the environment's s_0.
-            off_policy: If True, samples actions such that we skip log probability
-                calculation, and we save the estimator outputs for later use.
             policy_kwargs: keyword arguments to be passed to the
                 `to_probability_distribution` method of the estimator. For example, for
                 DiscretePolicyEstimators, the kwargs can contain the `temperature`
                 parameter, `epsilon`, and `sf_bias`. In the continuous case these
                 kwargs will be user defined. This can be used to, for example, sample
                 off-policy.
+            test_mode: if True, everything gets calculated.
 
         Returns: A Trajectories object representing the batch of sampled trajectories.
 
@@ -117,6 +118,9 @@ class Sampler:
             AssertionError: When both states and n_trajectories are specified.
             AssertionError: When states are not linear.
         """
+        save_estimator_outputs = off_policy or test_mode
+        skip_logprob_calculaion = off_policy and not test_mode
+
         if states is None:
             assert (
                 n_trajectories is not None
@@ -165,15 +169,24 @@ class Sampler:
             valid_actions, actions_log_probs, estimator_outputs = self.sample_actions(
                 env,
                 states[~dones],
-                save_estimator_outputs=True if off_policy else False,
-                calculate_logprobs=False if off_policy else True,
+                save_estimator_outputs=True if save_estimator_outputs else False,
+                calculate_logprobs=False if skip_logprob_calculaion else True,
                 **policy_kwargs,
             )
             if not isinstance(estimator_outputs, type(None)):
-                all_estimator_outputs.append(estimator_outputs)
+                # Place estimator outputs into a stackable tensor. Note that this
+                # will be replaced with torch.nested.nested_tensor in the future.
+                estimator_outputs_padded = torch.full(
+                    (n_trajectories,) + estimator_outputs.shape[1:],
+                    fill_value=-float("inf"),
+                    dtype=torch.float,
+                    device=device,
+                )
+                estimator_outputs_padded[~dones] = estimator_outputs
+                all_estimator_outputs.append(estimator_outputs_padded)
 
             actions[~dones] = valid_actions
-            if not off_policy:  # When off_policy, actions_log_probs are None.
+            if not skip_logprob_calculaion:  # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
             trajectories_logprobs += [log_probs]
@@ -211,7 +224,8 @@ class Sampler:
         trajectories_actions = env.Actions.stack(trajectories_actions)
         trajectories_logprobs = torch.stack(trajectories_logprobs, dim=0)
 
-        if off_policy:
+        # TODO: use torch.nested.nested_tensor(dtype, device, requires_grad).
+        if save_estimator_outputs:
             all_estimator_outputs = torch.stack(all_estimator_outputs, dim=0)
 
         trajectories = Trajectories(
@@ -222,7 +236,7 @@ class Sampler:
             is_backward=self.estimator.is_backward,
             log_rewards=trajectories_log_rewards,
             log_probs=trajectories_logprobs,
-            estimator_outputs=all_estimator_outputs if off_policy else None,
+            estimator_outputs=all_estimator_outputs if save_estimator_outputs else None,
         )
 
         return trajectories
