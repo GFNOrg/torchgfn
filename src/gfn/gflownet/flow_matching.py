@@ -34,7 +34,11 @@ class FMGFlowNet(GFlowNet):
         self.alpha = alpha
 
     def sample_trajectories(
-        self, env: Env, n_samples: int = 1000, **policy_kwargs: Optional[dict]
+        self,
+        env: Env,
+        off_policy: bool,
+        n_samples: int = 1000,
+        **policy_kwargs: Optional[dict],
     ) -> Trajectories:
         """Sample trajectory with optional kwargs controling the policy."""
         if not env.is_discrete:
@@ -43,7 +47,7 @@ class FMGFlowNet(GFlowNet):
             )
         sampler = Sampler(estimator=self.logF)
         trajectories = sampler.sample_trajectories(
-            env, n_trajectories=n_samples, **policy_kwargs
+            env, n_trajectories=n_samples, off_policy=off_policy, **policy_kwargs,
         )
         return trajectories
 
