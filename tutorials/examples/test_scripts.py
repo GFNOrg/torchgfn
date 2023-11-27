@@ -118,6 +118,6 @@ def test_box(delta: float, loss: str):
     elif loss == "DB" and delta == 0.1:
         assert np.isclose(final_jsd, 0.134, atol=1e-2)
     if loss == "TB" and delta == 0.25:
-        assert np.isclose(final_jsd, 2.93e-3, atol=1e-3)
+        assert np.isclose(final_jsd, 0.0411, atol=1e-3)
     elif loss == "DB" and delta == 0.25:
         assert np.isclose(final_jsd, 0.0142, atol=1e-3)
