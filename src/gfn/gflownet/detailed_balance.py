@@ -23,7 +23,7 @@ class DBGFlowNet(PFBasedGFlowNet):
 
     Attributes:
         logF: a ScalarEstimator instance.
-        on_policy: boolean indicating whether we need to reevaluate the log probs.
+        off_policy: If true, we need to reevaluate the log probs.
         forward_looking: whether to implement the forward looking GFN loss.
         log_reward_clip_min: If finite, clips log rewards to this value.
     """
@@ -33,11 +33,11 @@ class DBGFlowNet(PFBasedGFlowNet):
         pf: GFNModule,
         pb: GFNModule,
         logF: ScalarEstimator,
-        on_policy: bool = False,
+        off_policy: bool,
         forward_looking: bool = False,
         log_reward_clamp_min: float = -float("inf"),
     ):
-        super().__init__(pf, pb, on_policy=on_policy)
+        super().__init__(pf, pb, off_policy=off_policy)
         self.logF = logF
         self.forward_looking = forward_looking
         self.log_reward_clamp_min = log_reward_clamp_min
@@ -68,7 +68,7 @@ class DBGFlowNet(PFBasedGFlowNet):
 
         if states.batch_shape != tuple(actions.batch_shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
-        if self.on_policy:
+        if self.off_policy:
             valid_log_pf_actions = transitions.log_probs
         else:
             # Evaluate the log PF of the actions sampled off policy.
@@ -163,7 +163,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet):
         all_log_rewards = transitions.all_log_rewards[mask]
         module_output = self.pf(states)
         pf_dist = self.pf.to_probability_distribution(states, module_output)
-        if self.on_policy:
+        if self.off_policy:
             valid_log_pf_actions = transitions[mask].log_probs
         else:
             # Evaluate the log PF of the actions sampled off policy.
