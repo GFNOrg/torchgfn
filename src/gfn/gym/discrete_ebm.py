@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Literal, Tuple
 
 import torch
-from torch import Tensor
 import torch.nn as nn
+from torch import Tensor
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
@@ -89,7 +89,7 @@ class DiscreteEBM(DiscreteEnv):
 
         super().__init__(
             s0=s0,
-            state_shape=(self.ndim, ),
+            state_shape=(self.ndim,),
             # dummy_action=,
             # exit_action=,
             n_actions=n_actions,

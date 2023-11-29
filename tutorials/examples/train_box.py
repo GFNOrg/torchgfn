@@ -233,9 +233,7 @@ def main(args):  # noqa: C901
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
         trajectories = gflownet.sample_trajectories(
-            env,
-            sample_off_policy=False,
-            n_samples=args.batch_size
+            env, sample_off_policy=False, n_samples=args.batch_size
         )
 
         training_samples = gflownet.to_training_samples(trajectories)

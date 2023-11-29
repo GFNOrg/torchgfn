@@ -28,10 +28,8 @@ from gfn.gflownet import (
 )
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
-from gfn.utils.common import validate
+from gfn.utils.common import set_seed, validate
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
-
-from gfn.utils.common import set_seed
 
 DEFAULT_SEED = 4444
 
@@ -225,7 +223,9 @@ def main(args):  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
-        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size, sample_off_policy=off_policy_sampling)
+        trajectories = gflownet.sample_trajectories(
+            env, n_samples=args.batch_size, sample_off_policy=off_policy_sampling
+        )
         training_samples = gflownet.to_training_samples(trajectories)
         if replay_buffer is not None:
             with torch.no_grad():

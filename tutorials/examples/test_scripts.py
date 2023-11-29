@@ -5,8 +5,8 @@
 
 from dataclasses import dataclass
 
-import pytest
 import numpy as np
+import pytest
 
 from .train_box import main as train_box_main
 from .train_discreteebm import main as train_discreteebm_main

@@ -20,10 +20,8 @@ from tqdm import tqdm, trange
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.modules import DiscretePolicyEstimator
-from gfn.utils.common import validate
+from gfn.utils.common import set_seed, validate
 from gfn.utils.modules import NeuralNet, Tabular
-
-from gfn.utils.common import set_seed
 
 DEFAULT_SEED = 4444
 
@@ -72,9 +70,7 @@ def main(args):  # noqa: C901
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
-            env,
-            off_policy=False,
-            n_samples=args.batch_size
+            env, off_policy=False, n_samples=args.batch_size
         )
         training_samples = gflownet.to_training_samples(trajectories)
 

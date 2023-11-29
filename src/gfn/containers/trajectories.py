@@ -78,9 +78,7 @@ class Trajectories(Container):
         )
         assert len(self.states.batch_shape) == 2
         self.actions = (
-            actions
-            if actions is not None
-            else env.actions_from_batch_shape((0, 0))
+            actions if actions is not None else env.actions_from_batch_shape((0, 0))
         )
         assert len(self.actions.batch_shape) == 2
         self.when_is_done = (
@@ -236,9 +234,13 @@ class Trajectories(Container):
 
         # Either set, or append, estimator outputs if they exist in the submitted
         # trajectory.
-        if self.estimator_outputs is None and isinstance(other.estimator_outputs, Tensor):
+        if self.estimator_outputs is None and isinstance(
+            other.estimator_outputs, Tensor
+        ):
             self.estimator_outputs = other.estimator_outputs
-        elif isinstance(self.estimator_outputs, Tensor) and isinstance(other.estimator_outputs, Tensor):
+        elif isinstance(self.estimator_outputs, Tensor) and isinstance(
+            other.estimator_outputs, Tensor
+        ):
             batch_shape = self.actions.batch_shape
             n_bs = len(batch_shape)
             output_dtype = self.estimator_outputs.dtype

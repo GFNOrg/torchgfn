@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Union
 
 import torch
-from torchtyping import TensorType as TT
 from torch import Tensor
+from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
@@ -11,6 +11,7 @@ from gfn.states import DiscreteStates, States
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
+
 
 def get_device(device_str, default_device):
     return torch.device(device_str) if device_str is not None else default_device
@@ -130,6 +131,7 @@ class Env(ABC):
 
         class DefaultEnvState(States):
             """Defines a States class for this environment."""
+
             state_shape = env.state_shape
             s0 = env.s0
             sf = env.sf
@@ -215,9 +217,7 @@ class Env(ABC):
         not_done_states = new_states[~new_sink_states_idx]
         not_done_actions = actions[~new_sink_states_idx]
 
-        new_not_done_states_tensor = self.step(
-            not_done_states, not_done_actions
-        )
+        new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
         # TODO: Why is this here? Should it be removed?
         # if isinstance(new_states, DiscreteStates):
         #     new_not_done_states.masks = self.update_masks(not_done_states, not_done_actions)
@@ -247,9 +247,7 @@ class Env(ABC):
             )
 
         # Calculate the backward step, and update only the states which are not Done.
-        new_not_done_states_tensor = self.backward_step(
-            valid_states, valid_actions
-        )
+        new_not_done_states_tensor = self.backward_step(valid_states, valid_actions)
         new_states.tensor[valid_states_idx] = new_not_done_states_tensor
 
         if isinstance(new_states, DiscreteStates):
@@ -316,7 +314,7 @@ class DiscreteEnv(Env, ABC):
         if isinstance(dummy_action, type(None)):
             dummy_action = torch.tensor([-1], device=device)
 
-       # The default exit action index is the final element of the action space.
+        # The default exit action index is the final element of the action space.
         if isinstance(exit_action, type(None)):
             exit_action = torch.tensor([n_actions - 1], device=device)
 
@@ -382,7 +380,6 @@ class DiscreteEnv(Env, ABC):
         env = self
 
         class DiscreteEnvStates(DiscreteStates):
-
             state_shape = env.state_shape
             s0 = env.s0
             sf = env.sf
@@ -413,7 +410,9 @@ class DiscreteEnv(Env, ABC):
     def _step(self, states: DiscreteStates, actions: Actions) -> States:
         """Calls the core self._step method of the parent class, and updates masks."""
         new_states = super()._step(states, actions)
-        self.update_masks(new_states)  # TODO: update_masks is owned by the env, not the states!!
+        self.update_masks(
+            new_states
+        )  # TODO: update_masks is owned by the env, not the states!!
         return new_states
 
     def get_states_indices(
@@ -470,4 +469,3 @@ class DiscreteEnv(Env, ABC):
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
-

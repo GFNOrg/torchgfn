@@ -25,8 +25,12 @@ class Box(Env):
         self.delta = delta
         self.epsilon = epsilon
         s0 = torch.tensor([0.0, 0.0], device=torch.device(device_str))
-        exit_action = torch.tensor([-float("inf"), -float("inf")], device=torch.device(device_str))
-        dummy_action = torch.tensor([float("inf"), float("inf")], device=torch.device(device_str))
+        exit_action = torch.tensor(
+            [-float("inf"), -float("inf")], device=torch.device(device_str)
+        )
+        dummy_action = torch.tensor(
+            [float("inf"), float("inf")], device=torch.device(device_str)
+        )
 
         self.R0 = R0
         self.R1 = R1
@@ -41,8 +45,8 @@ class Box(Env):
         )
 
     def make_random_states_tensor(
-            self, batch_shape: Tuple[int, ...]
-        ) -> TT["batch_shape", 2, torch.float]:
+        self, batch_shape: Tuple[int, ...]
+    ) -> TT["batch_shape", 2, torch.float]:
         return torch.rand(batch_shape + (2,), device=self.device)
 
     def step(

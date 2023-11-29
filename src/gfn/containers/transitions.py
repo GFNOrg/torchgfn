@@ -73,9 +73,7 @@ class Transitions(Container):
         assert len(self.states.batch_shape) == 1
 
         self.actions = (
-            actions
-            if actions is not None
-            else env.actions_from_batch_shape((0,))
+            actions if actions is not None else env.actions_from_batch_shape((0,))
         )
         self.is_done = (
             is_done

@@ -1,6 +1,6 @@
+import math
 from abc import ABC, abstractmethod
 from typing import Generic, Tuple, TypeVar, Union
-import math
 
 import torch
 import torch.nn as nn

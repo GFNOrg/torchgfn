@@ -2,7 +2,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 
 from abc import ABC, abstractmethod
 from math import prod
-from typing import ClassVar, Optional, Sequence, cast, Callable
+from typing import Callable, ClassVar, Optional, Sequence, cast
 
 import torch
 from torchtyping import TensorType as TT
@@ -49,7 +49,11 @@ class States(ABC):
     sf: ClassVar[
         TT["state_shape", torch.float]
     ]  # Dummy state, used to pad a batch of states
-    make_random_states_tensor: Callable = lambda x: (_ for _ in ()).throw(NotImplementedError("The environment does not support initialization of random states."))
+    make_random_states_tensor: Callable = lambda x: (_ for _ in ()).throw(
+        NotImplementedError(
+            "The environment does not support initialization of random states."
+        )
+    )
 
     def __init__(self, tensor: TT["batch_shape", "state_shape"]):
         """Initalize the State container with a batch of states.
@@ -267,6 +271,7 @@ class DiscreteStates(States, ABC):
         forward_masks: A boolean tensor of allowable forward policy actions.
         backward_masks:  A boolean tensor of allowable backward policy actions.
     """
+
     n_actions: ClassVar[int]
     device: ClassVar[torch.device]
 
@@ -276,7 +281,6 @@ class DiscreteStates(States, ABC):
         forward_masks: Optional[TT["batch_shape", "n_actions", torch.bool]] = None,
         backward_masks: Optional[TT["batch_shape", "n_actions - 1", torch.bool]] = None,
     ) -> None:
-
         """Initalize a DiscreteStates container with a batch of states and masks.
         Args:
             tensor: A batch of states.
