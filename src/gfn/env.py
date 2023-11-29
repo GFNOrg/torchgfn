@@ -3,6 +3,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 from torchtyping import TensorType as TT
+from torch import Tensor
 
 from gfn.actions import Actions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
@@ -10,6 +11,9 @@ from gfn.states import DiscreteStates, States
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
+
+def get_device(device_str, default_device):
+    return torch.device(device_str) if device_str is not None else default_device
 
 
 class Env(ABC):
@@ -19,6 +23,10 @@ class Env(ABC):
     def __init__(
         self,
         s0: TT["state_shape", torch.float],
+        state_shape: Tuple,
+        action_shape: Tuple,
+        dummy_action: Tensor,
+        exit_action: Tensor,
         sf: Optional[TT["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
@@ -28,6 +36,10 @@ class Env(ABC):
         Args:
             s0: Representation of the initial state. All individual states would be of
                 the same shape.
+            state_shape:
+            action_shape:
+            dummy_action:
+            exit_action:
             sf: Representation of the final state. Only used for a human
                 readable representation of the states or trajectories.
             device_str: 'cpu' or 'cuda'. Defaults to None, in which case the device is
@@ -36,12 +48,16 @@ class Env(ABC):
                 that can be fed into a neural network. Defaults to None, in which case
                 the IdentityPreprocessor is used.
         """
-        self.device = torch.device(device_str) if device_str is not None else s0.device
+        self.device = get_device(device_str, default_device=s0.device)
 
         self.s0 = s0.to(self.device)
         if sf is None:
             sf = torch.full(s0.shape, -float("inf")).to(self.device)
         self.sf = sf
+        self.state_shape = state_shape
+        self.action_shape = action_shape
+        self.dummy_action = dummy_action
+        self.exit_action = exit_action
 
         self.States = self.make_States_class()
         self.Actions = self.make_Actions_class()
@@ -56,14 +72,92 @@ class Env(ABC):
         self.preprocessor = preprocessor
         self.is_discrete = False
 
+    def states_from_tensor(self, tensor: Tensor):
+        """Wraps the supplied Tensor in a States instance."""
+        return self.States(tensor)
+
+    def states_from_batch_shape(self, batch_shape: Tuple):
+        """Returns a batch of s0 states with a given batch_shape."""
+        return self.States.from_batch_shape(batch_shape)
+
+    def actions_from_tensor(self, tensor: Tensor):
+        """Wraps the supplied Tensor an an Actions instance."""
+        return self.Actions(tensor)
+
+    def actions_from_batch_shape(self, batch_shape: Tuple):
+        """Returns a batch of dummy actions with the supplied batch_shape."""
+        return self.Actions.make_dummy_actions(batch_shape)
+
+    # To be implemented by the User.
     @abstractmethod
+    def step(
+        self, states: States, actions: Actions
+    ) -> TT["batch_shape", "state_shape", torch.float]:
+        """Function that takes a batch of states and actions and returns a batch of next
+        states. Does not need to check whether the actions are valid or the states are sink states.
+        """
+
+    @abstractmethod
+    def backward_step(  # TODO: rename to backward_step, other method becomes _backward_step.
+        self, states: States, actions: Actions
+    ) -> TT["batch_shape", "state_shape", torch.float]:
+        """Function that takes a batch of states and actions and returns a batch of previous
+        states. Does not need to check whether the actions are valid or the states are sink states.
+        """
+
+    @abstractmethod
+    def is_action_valid(
+        self,
+        states: States,
+        actions: Actions,
+        backward: bool = False,
+    ) -> bool:
+        """Returns True if the actions are valid in the given states."""
+
+    def make_random_states_tensor(self, batch_shape: Tuple) -> Tensor:
+        """Optional method inherited by all States instances to emit a random tensor."""
+        raise NotImplementedError
+
+    # Optionally implemented by the user when advanced functionality is required.
     def make_States_class(self) -> type[States]:
-        """Returns a class that inherits from States and implements the environment-specific methods."""
+        """The default States class factory for all Environments.
 
-    @abstractmethod
+        Returns a class that inherits from States and implements assumed methods.
+        The make_States_class method should be overwritten to achieve more
+        environment-specific States functionality.
+        """
+        env = self
+
+        class DefaultEnvState(States):
+            """Defines a States class for this environment."""
+            state_shape = env.state_shape
+            s0 = env.s0
+            sf = env.sf
+            make_random_states_tensor = env.make_random_states_tensor
+
+            # @classmethod
+            # def make_random_states_tensor(cls, batch_shape: Tuple) -> Tensor:
+            #     return env.make_random_states_tensor(batch_shape)
+
+        return DefaultEnvState
+
     def make_Actions_class(self) -> type[Actions]:
-        """Returns a class that inherits from Actions and implements the environment-specific methods."""
+        """The default Actions class factory for all Environments.
 
+        Returns a class that inherits from Actions and implements assumed methods.
+        The make_Actions_class method should be overwritten to achieve more
+        environment-specific Actions functionality.
+        """
+        env = self
+
+        class DefaultEnvAction(Actions):
+            action_shape = env.action_shape
+            dummy_action = env.dummy_action
+            exit_action = env.exit_action
+
+        return DefaultEnvAction
+
+    # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
         batch_shape: Optional[Union[int, Tuple[int]]] = None,
@@ -89,31 +183,6 @@ class Env(ABC):
             batch_shape=batch_shape, random=random, sink=sink
         )
 
-    @abstractmethod
-    def maskless_step(  # TODO: rename to step, other method becomes _step.
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
-        """Function that takes a batch of states and actions and returns a batch of next
-        states. Does not need to check whether the actions are valid or the states are sink states.
-        """
-
-    @abstractmethod
-    def maskless_backward_step(  # TODO: rename to backward_step, other method becomes _backward_step.
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
-        """Function that takes a batch of states and actions and returns a batch of previous
-        states. Does not need to check whether the actions are valid or the states are sink states.
-        """
-
-    @abstractmethod
-    def is_action_valid(
-        self,
-        states: States,
-        actions: Actions,
-        backward: bool = False,
-    ) -> bool:
-        """Returns True if the actions are valid in the given states."""
-
     def validate_actions(
         self, states: States, actions: Actions, backward: bool = False
     ) -> bool:
@@ -123,13 +192,16 @@ class Env(ABC):
         assert states.batch_shape == actions.batch_shape
         return self.is_action_valid(states, actions, backward)
 
-    def step(
+    def _step(
         self,
         states: States,
         actions: Actions,
     ) -> States:
-        """Function that takes a batch of states and actions and returns a batch of next
-        states and a boolean tensor indicating sink states in the new batch."""
+        """Core step function. Calls the user-defined self.step() function.
+
+        Function that takes a batch of states and actions and returns a batch of next
+        states and a boolean tensor indicating sink states in the new batch.
+        """
         new_states = states.clone()  # TODO: Ensure this is efficient!
         valid_states_idx: TT["batch_shape", torch.bool] = ~states.is_sink_state
         valid_actions = actions[valid_states_idx]
@@ -147,7 +219,7 @@ class Env(ABC):
         not_done_states = new_states[~new_sink_states_idx]
         not_done_actions = actions[~new_sink_states_idx]
 
-        new_not_done_states_tensor = self.maskless_step(
+        new_not_done_states_tensor = self.step(
             not_done_states, not_done_actions
         )
         # TODO: Why is this here? Should it be removed?
@@ -158,13 +230,16 @@ class Env(ABC):
 
         return new_states
 
-    def backward_step(
+    def _backward_step(
         self,
         states: States,
         actions: Actions,
     ) -> States:
-        """Function that takes a batch of states and actions and returns a batch of next
-        states and a boolean tensor indicating initial states in the new batch."""
+        """Core backward_step function. Calls the user-defined self.backward_step fn.
+
+        This function takes a batch of states and actions and returns a batch of next
+        states and a boolean tensor indicating initial states in the new batch.
+        """
         new_states = states.clone()  # TODO: Ensure this is efficient!
         valid_states_idx: TT["batch_shape", torch.bool] = ~new_states.is_initial_state
         valid_actions = actions[valid_states_idx]
@@ -176,13 +251,13 @@ class Env(ABC):
             )
 
         # Calculate the backward step, and update only the states which are not Done.
-        new_not_done_states_tensor = self.maskless_backward_step(
+        new_not_done_states_tensor = self.backward_step(
             valid_states, valid_actions
         )
         new_states.tensor[valid_states_idx] = new_not_done_states_tensor
 
         if isinstance(new_states, DiscreteStates):
-            new_states.update_masks()
+            self.update_masks(new_states)
 
         return new_states
 
@@ -218,6 +293,10 @@ class DiscreteEnv(Env, ABC):
         self,
         n_actions: int,
         s0: TT["state_shape", torch.float],
+        state_shape: Tuple,
+        # action_shape: Tuple,  # TODO: Remove? I feel like we might need this.
+        dummy_action: Optional[TT["action_shape", torch.long]] = None,
+        exit_action: Optional[TT["action_shape", torch.long]] = None,
         sf: Optional[TT["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
@@ -227,22 +306,104 @@ class DiscreteEnv(Env, ABC):
         Args:
             n_actions: The number of actions in the environment.
             s0: The initial state tensor (shared among all trajectories).
+            state_shape:
+            action_shape: ?
+            dummy_action: The value of the dummy (padding) action.
+            exit_action: The value of the exit action.
             sf: The final state tensor (shared among all trajectories).
             device_str: String representation of a torch.device.
             preprocessor: An optional preprocessor for intermediate states.
         """
-        self.n_actions = n_actions
-        super().__init__(s0, sf, device_str, preprocessor)
-        self.is_discrete = True
+        device = get_device(device_str, default_device=s0.device)
+
+        # The default dummy action is -1.
+        if isinstance(dummy_action, type(None)):
+            dummy_action = torch.tensor([-1], device=device)
+
+       # The default exit action index is the final element of the action space.
+        if isinstance(exit_action, type(None)):
+            exit_action = torch.tensor([n_actions - 1], device=device)
+
+        self.n_actions = n_actions  # Before init, for compatibility with States.
+
+        super().__init__(
+            s0,
+            state_shape,
+            (1,),  # The action_shape is always 1. TODO: is it?
+            dummy_action,
+            exit_action,
+            sf,
+            device_str,
+            preprocessor,
+        )
+
+        self.is_discrete = True  # After init, else it will be overwritten.
+
+    def states_from_tensor(self, tensor: Tensor):
+        """Wraps the supplied Tensor in a States instance & updates masks."""
+        states_instance = self.make_States_class()(tensor)
+        self.update_masks(states_instance)
+        return states_instance
+
+    # In some cases overwritten by the user to support specific use-cases.
+    def reset(
+        self,
+        batch_shape: Optional[Union[int, Tuple[int]]] = None,
+        random: bool = False,
+        sink: bool = False,
+        seed: int = None,
+    ) -> States:
+        """Instantiates a batch of initial states.
+
+        `random` and `sink` cannot be both True. When `random` is `True` and `seed` is
+            not `None`, environment randomization is fixed by the submitted seed for
+            reproducibility.
+        """
+        assert not (random and sink)
+
+        if random and seed is not None:
+            torch.manual_seed(seed)  # TODO: Improve seeding here?
+
+        if batch_shape is None:
+            batch_shape = (1,)
+        if isinstance(batch_shape, int):
+            batch_shape = (batch_shape,)
+        states = self.States.from_batch_shape(
+            batch_shape=batch_shape, random=random, sink=sink
+        )
+        self.update_masks(states)
+
+        return states
+
+    @abstractmethod
+    def update_masks(self, states: type[States]) -> None:
+        """Updates the masks in States.
+
+        Called automatically after each step for discrete environments.
+        """
+
+    def make_States_class(self) -> type[States]:
+        env = self
+
+        class DiscreteEnvStates(DiscreteStates):
+
+            state_shape = env.state_shape
+            s0 = env.s0
+            sf = env.sf
+            make_random_states_tensor = env.make_random_states_tensor
+            n_actions = env.n_actions
+            device = env.device
+
+        return DiscreteEnvStates
 
     def make_Actions_class(self) -> type[Actions]:
         env = self
         n_actions = self.n_actions
 
         class DiscreteEnvActions(Actions):
-            action_shape = (1,)
-            dummy_action = torch.tensor([-1], device=env.device)  # Double check
-            exit_action = torch.tensor([n_actions - 1], device=env.device)
+            action_shape = env.action_shape
+            dummy_action = env.dummy_action.to(device=env.device)
+            exit_action = env.exit_action.to(device=env.device)
 
         return DiscreteEnvActions
 
@@ -253,13 +414,10 @@ class DiscreteEnv(Env, ABC):
         masks_tensor = states.backward_masks if backward else states.forward_masks
         return torch.gather(masks_tensor, 1, actions.tensor).all()
 
-    def step(
-        self,
-        states: DiscreteStates,
-        actions: Actions,
-    ) -> States:
-        new_states = super().step(states, actions)
-        new_states.update_masks()
+    def _step(self, states: DiscreteStates, actions: Actions) -> States:
+        """Calls the core self._step method of the parent class, and updates masks."""
+        new_states = super()._step(states, actions)
+        self.update_masks(new_states)  # TODO: update_masks is owned by the env, not the states!!
         return new_states
 
     def get_states_indices(
@@ -316,3 +474,4 @@ class DiscreteEnv(Env, ABC):
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
+
