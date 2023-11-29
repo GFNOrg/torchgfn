@@ -89,9 +89,9 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
             backward_actions = torch.full_like(
                 valid_backward_states.backward_masks[:, 0], action_idx, dtype=torch.long
             ).unsqueeze(-1)
-            backward_actions = env.Actions(backward_actions)
+            backward_actions = env.actions_from_tensor(backward_actions)
 
-            valid_backward_states_parents = env.backward_step(
+            valid_backward_states_parents = env._backward_step(
                 valid_backward_states, backward_actions
             )
 
