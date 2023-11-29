@@ -1,6 +1,3 @@
-import random
-from typing import ClassVar, Literal, Tuple
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -9,111 +6,12 @@ from torch.distributions.independent import Independent
 from torchtyping import TensorType as TT
 from tqdm import trange
 
-from gfn.actions import Actions
-from gfn.env import Env
 from gfn.gflownet import TBGFlowNet  # TODO: Extend to SubTBGFlowNet
 from gfn.modules import GFNModule
 from gfn.states import States
 from gfn.utils import NeuralNet
-
+from gfn.gym.line import Line
 from gfn.utils.common import set_seed
-
-
-class Line(Env):
-    """Mixture of Gaussians Line environment."""
-
-    def __init__(
-        self,
-        mus: list,
-        sigmas: list,
-        init_value: float,
-        n_sd: float = 4.5,
-        n_steps_per_trajectory: int = 5,
-        device_str: Literal["cpu", "cuda"] = "cpu",
-    ):
-        assert len(mus) == len(sigmas)
-        self.mus = torch.tensor(mus)
-        self.sigmas = torch.tensor(sigmas)
-        self.n_sd = n_sd
-        self.n_steps_per_trajectory = n_steps_per_trajectory
-        self.mixture = [Normal(m, s) for m, s in zip(self.mus, self.sigmas)]
-
-        self.init_value = init_value  # Used in s0.
-        self.lb = min(self.mus) - self.n_sd * max(self.sigmas)  # Convienience only.
-        self.ub = max(self.mus) + self.n_sd * max(self.sigmas)  # Convienience only.
-        assert self.lb < self.init_value < self.ub
-
-        s0 = torch.tensor([self.init_value, 0.0], device=torch.device(device_str))
-        super().__init__(s0=s0)  # sf is -inf.
-
-    def make_States_class(self) -> type[States]:
-        env = self
-
-        class LineStates(States):
-            state_shape: ClassVar[Tuple[int, ...]] = (2,)
-            s0 = env.s0  # should be [init x value, 0].
-            sf = env.sf  # should be [-inf, -inf].
-
-        return LineStates
-
-    def make_Actions_class(self) -> type[Actions]:
-        env = self
-
-        class LineActions(Actions):
-            action_shape: ClassVar[Tuple[int, ...]] = (1,)  # Does not include counter!
-            dummy_action: ClassVar[TT[2]] = torch.tensor(
-                [float("inf")], device=env.device
-            )
-            exit_action: ClassVar[TT[2]] = torch.tensor(
-                [-float("inf")], device=env.device
-            )
-
-        return LineActions
-
-    def maskless_step(
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", 2, torch.float]:
-        states.tensor[..., 0] = states.tensor[..., 0] + actions.tensor.squeeze(
-            -1
-        )  # x position.
-        states.tensor[..., 1] = states.tensor[..., 1] + 1  # Step counter.
-        return states.tensor
-
-    def maskless_backward_step(
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", 2, torch.float]:
-        states.tensor[..., 0] = states.tensor[..., 0] - actions.tensor.squeeze(
-            -1
-        )  # x position.
-        states.tensor[..., 1] = states.tensor[..., 1] - 1  # Step counter.
-        return states.tensor
-
-    def is_action_valid(
-        self, states: States, actions: Actions, backward: bool = False
-    ) -> bool:
-        # Can't take a backward step at the beginning of a trajectory.
-        if torch.any(states[~actions.is_exit].is_initial_state) and backward:
-            return False
-
-        return True
-
-    def log_reward(self, final_states: States) -> TT["batch_shape", torch.float]:
-        s = final_states.tensor[..., 0]
-        # return torch.logsumexp(torch.stack([m.log_prob(s) for m in self.mixture], 0), 0)
-
-        # if s.nelement() == 0:
-        #     return torch.zeros(final_states.batch_shape)
-
-        log_rewards = torch.empty((len(self.mixture),) + final_states.batch_shape)
-        for i, m in enumerate(self.mixture):
-            log_rewards[i] = m.log_prob(s)
-
-        return torch.logsumexp(log_rewards, 0)
-
-    @property
-    def log_partition(self) -> float:
-        """Log Partition log of the number of gaussians."""
-        return torch.tensor(len(self.mus)).log()
 
 
 def render(env, validation_samples=None):
@@ -125,7 +23,7 @@ def render(env, validation_samples=None):
     )
 
     # Get the rewards from our environment.
-    r = env.States(
+    r = env.states_from_tensor(
         torch.tensor(np.stack((x, torch.ones(len(x))), 1))  # Add dummy state counter.
     )
     d = torch.exp(env.log_reward(r))  # Plots the reward, not the log reward.
@@ -336,11 +234,11 @@ def train(
         loss.backward()
 
         # Gradient Clipping.
-        for p in gflownet.parameters():
-            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
-                p.grad.data.clamp_(
-                    -gradient_clip_value, gradient_clip_value
-                ).nan_to_num_(0.0)
+        # for p in gflownet.parameters():
+        #     if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
+        #         p.grad.data.clamp_(
+        #             -gradient_clip_value, gradient_clip_value
+        #         ).nan_to_num_(0.0)
 
         optimizer.step()
         states_visited += len(trajectories)
@@ -392,7 +290,7 @@ if __name__ == "__main__":
         policy_std_max=policy_std_max,
     )
     pb = StepEstimator(environment, pb_module, backward=True)
-    gflownet = TBGFlowNet(pf=pf, pb=pb, off_policy=False, init_logZ=0.0)
+    gflownet = TBGFlowNet(pf=pf, pb=pb, off_policy=True, init_logZ=0.0)
 
     gflownet = train(
         gflownet,
