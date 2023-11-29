@@ -135,10 +135,6 @@ class Env(ABC):
             sf = env.sf
             make_random_states_tensor = env.make_random_states_tensor
 
-            # @classmethod
-            # def make_random_states_tensor(cls, batch_shape: Tuple) -> Tensor:
-            #     return env.make_random_states_tensor(batch_shape)
-
         return DefaultEnvState
 
     def make_Actions_class(self) -> type[Actions]:
