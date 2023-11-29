@@ -2,7 +2,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 
 from abc import ABC, abstractmethod
 from math import prod
-from typing import ClassVar, Optional, Sequence, cast
+from typing import ClassVar, Optional, Sequence, cast, Callable
 
 import torch
 from torchtyping import TensorType as TT
@@ -49,6 +49,7 @@ class States(ABC):
     sf: ClassVar[
         TT["state_shape", torch.float]
     ]  # Dummy state, used to pad a batch of states
+    make_random_states_tensor: Callable = lambda x: (_ for _ in ()).throw(NotImplementedError("The environment does not support initialization of random states."))
 
     def __init__(self, tensor: TT["batch_shape", "state_shape"]):
         """Initalize the State container with a batch of states.
@@ -102,15 +103,6 @@ class States(ABC):
         return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
 
     @classmethod
-    def make_random_states_tensor(
-        cls, batch_shape: tuple[int]
-    ) -> TT["batch_shape", "state_shape", torch.float]:
-        """Makes a tensor with a `batch_shape` of random states, placeholder."""
-        raise NotImplementedError(
-            "The environment does not support initialization of random states."
-        )
-
-    @classmethod
     def make_sink_states_tensor(
         cls, batch_shape: tuple[int]
     ) -> TT["batch_shape", "state_shape", torch.float]:
@@ -133,7 +125,7 @@ class States(ABC):
         """Access particular states of the batch."""
         return self.__class__(
             self.tensor[index]
-        )  # TODO: Inefficient - this make a copy of the tensor!
+        )  # TODO: Inefficient - this makes a copy of the tensor!
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: States
@@ -275,7 +267,6 @@ class DiscreteStates(States, ABC):
         forward_masks: A boolean tensor of allowable forward policy actions.
         backward_masks:  A boolean tensor of allowable backward policy actions.
     """
-
     n_actions: ClassVar[int]
     device: ClassVar[torch.device]
 
@@ -285,32 +276,35 @@ class DiscreteStates(States, ABC):
         forward_masks: Optional[TT["batch_shape", "n_actions", torch.bool]] = None,
         backward_masks: Optional[TT["batch_shape", "n_actions - 1", torch.bool]] = None,
     ) -> None:
+
         """Initalize a DiscreteStates container with a batch of states and masks.
         Args:
             tensor: A batch of states.
-            forward_masks (optional): Initializes a boolean tensor of allowable forward
-                policy actions.
-            backward_masks (optional): Initializes a boolean tensor of allowable backward
-                policy actions.
+            forward_masks: Initializes a boolean tensor of allowable forward policy
+                actions.
+            backward_masks: Initializes a boolean tensor of allowable backward policy
+                actions.
         """
         super().__init__(tensor)
 
-        if forward_masks is None and backward_masks is None:
-            self.forward_masks = torch.ones(
+        # In the usual case, no masks are provided and we produce these defaults.
+        # Note: this **must** be updated externally by the env.
+        if isinstance(forward_masks, type(None)):
+            forward_masks = torch.ones(
                 (*self.batch_shape, self.__class__.n_actions),
                 dtype=torch.bool,
                 device=self.__class__.device,
             )
-            self.backward_masks = torch.ones(
+        if isinstance(backward_masks, type(None)):
+            backward_masks = torch.ones(
                 (*self.batch_shape, self.__class__.n_actions - 1),
                 dtype=torch.bool,
                 device=self.__class__.device,
             )
-            self.update_masks()
-        else:
-            self.forward_masks = cast(torch.Tensor, forward_masks)
-            self.backward_masks = cast(torch.Tensor, backward_masks)
 
+        # Ensures typecasting is consistent no matter what is submitted to init.
+        self.forward_masks = cast(torch.Tensor, forward_masks)  # TODO: Required?
+        self.backward_masks = cast(torch.Tensor, backward_masks)  # TODO: Required?
         self.set_default_typing()
 
     def clone(self) -> States:
@@ -331,10 +325,6 @@ class DiscreteStates(States, ABC):
             TT["batch_shape", "n_actions - 1", torch.bool],
             self.backward_masks,
         )
-
-    @abstractmethod
-    def update_masks(self) -> None:
-        """Updates the masks, called after each action is taken."""
 
     def _check_both_forward_backward_masks_exist(self):
         assert self.forward_masks is not None and self.backward_masks is not None
