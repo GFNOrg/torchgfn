@@ -30,7 +30,7 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
         R2=2.0,
         device_str="cpu",
     )
-    States = environment.make_States_class()
+    States = environment.make_states_class()
 
     # Three cases: when all states are s0, some are s0, and none are s0.
     centers_mixed = States(torch.FloatTensor([[0.03, 0.06], [0.0, 0.0], [0.0, 0.0]]))
