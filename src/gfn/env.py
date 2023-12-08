@@ -60,8 +60,8 @@ class Env(ABC):
         self.dummy_action = dummy_action
         self.exit_action = exit_action
 
-        self.States = self.make_States_class()
-        self.Actions = self.make_Actions_class()
+        self.States = self.make_states_class()
+        self.Actions = self.make_actions_class()
 
         if preprocessor is None:
             assert (
@@ -120,11 +120,11 @@ class Env(ABC):
         raise NotImplementedError
 
     # Optionally implemented by the user when advanced functionality is required.
-    def make_States_class(self) -> type[States]:
+    def make_states_class(self) -> type[States]:
         """The default States class factory for all Environments.
 
         Returns a class that inherits from States and implements assumed methods.
-        The make_States_class method should be overwritten to achieve more
+        The make_states_class method should be overwritten to achieve more
         environment-specific States functionality.
         """
         env = self
@@ -139,11 +139,11 @@ class Env(ABC):
 
         return DefaultEnvState
 
-    def make_Actions_class(self) -> type[Actions]:
+    def make_actions_class(self) -> type[Actions]:
         """The default Actions class factory for all Environments.
 
         Returns a class that inherits from Actions and implements assumed methods.
-        The make_Actions_class method should be overwritten to achieve more
+        The make_actions_class method should be overwritten to achieve more
         environment-specific Actions functionality.
         """
         env = self
@@ -288,7 +288,7 @@ class DiscreteEnv(Env, ABC):
         n_actions: int,
         s0: TT["state_shape", torch.float],
         state_shape: Tuple,
-        # action_shape: Tuple,  # TODO: Remove? I feel like we might need this.
+        action_shape: Tuple = (1,),
         dummy_action: Optional[TT["action_shape", torch.long]] = None,
         exit_action: Optional[TT["action_shape", torch.long]] = None,
         sf: Optional[TT["state_shape", torch.float]] = None,
@@ -323,7 +323,7 @@ class DiscreteEnv(Env, ABC):
         super().__init__(
             s0,
             state_shape,
-            (1,),  # The action_shape is always 1. TODO: is it?
+            action_shape,
             dummy_action,
             exit_action,
             sf,
@@ -335,7 +335,7 @@ class DiscreteEnv(Env, ABC):
 
     def states_from_tensor(self, tensor: Tensor):
         """Wraps the supplied Tensor in a States instance & updates masks."""
-        states_instance = self.make_States_class()(tensor)
+        states_instance = self.make_states_class()(tensor)
         self.update_masks(states_instance)
         return states_instance
 
@@ -376,7 +376,7 @@ class DiscreteEnv(Env, ABC):
         Called automatically after each step for discrete environments.
         """
 
-    def make_States_class(self) -> type[States]:
+    def make_states_class(self) -> type[States]:
         env = self
 
         class DiscreteEnvStates(DiscreteStates):
@@ -389,7 +389,7 @@ class DiscreteEnv(Env, ABC):
 
         return DiscreteEnvStates
 
-    def make_Actions_class(self) -> type[Actions]:
+    def make_actions_class(self) -> type[Actions]:
         env = self
         n_actions = self.n_actions
 
