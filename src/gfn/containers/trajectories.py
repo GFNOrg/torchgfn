@@ -77,7 +77,7 @@ class Trajectories(Container):
         self.env = env
         self.is_backward = is_backward
         self.states = (
-            states.clone()  # TODO: Do we need this clone?
+            states
             if states is not None
             else env.States.from_batch_shape(batch_shape=(0, 0))
         )
@@ -169,8 +169,7 @@ class Trajectories(Container):
         )
 
         if is_tensor(self.estimator_outputs):
-            estimator_outputs = self.estimator_outputs[:, index]
-            estimator_outputs = estimator_outputs[:new_max_length]
+            estimator_outputs = self.estimator_outputs[..., index][:new_max_length]
         else:
             estimator_outputs = None
 
@@ -261,7 +260,7 @@ class Trajectories(Container):
                     other_shape = np.array(other.estimator_outputs.shape)
                     required_first_dim = max(self_shape[0], other_shape[0])
 
-                    # TODO: This should be a single reused function.
+                    # TODO: This should be a single reused function (#154)
                     # The size of self needs to grow to match other along dim=0.
                     if self_shape[0] < other_shape[0]:
                         pad_dim = required_first_dim - self_shape[0]

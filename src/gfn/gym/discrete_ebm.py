@@ -116,26 +116,6 @@ class DiscreteEBM(DiscreteEnv):
                     device=env.device,
                 )
 
-            # TODO: Look into make masks - I don't think this is being called.
-            def make_masks(
-                self,
-            ) -> Tuple[
-                TT["batch_shape", "n_actions", torch.bool],
-                TT["batch_shape", "n_actions - 1", torch.bool],
-            ]:
-                forward_masks = torch.zeros(
-                    self.batch_shape + (env.n_actions,),
-                    device=env.device,
-                    dtype=torch.bool,
-                )
-                backward_masks = torch.zeros(
-                    self.batch_shape + (env.n_actions - 1,),
-                    device=env.device,
-                    dtype=torch.bool,
-                )
-
-                return forward_masks, backward_masks
-
             def update_masks(self) -> None:
                 self.set_default_typing()
                 self.forward_masks[..., : env.ndim] = self.tensor == -1

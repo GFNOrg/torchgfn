@@ -80,7 +80,7 @@ def trajectory_sampling_with_return(
 
     sampler = Sampler(estimator=pf_estimator)
     # Test mode collects log_probs and estimator_ouputs, not encountered in the wild.
-    trajectories = sampler.sample_trajectories(env, off_policy=False, n_trajectories=5, test_mode=True)
+    trajectories = sampler.sample_trajectories(env, off_policy=False, n_trajectories=5, debug_mode=True)
     #  trajectories = sampler.sample_trajectories(env, n_trajectories=10)  # TODO - why is this duplicated?
 
     states = env.reset(batch_shape=5, random=True)

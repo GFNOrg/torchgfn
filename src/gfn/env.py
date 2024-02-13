@@ -7,6 +7,7 @@ from torchtyping import TensorType as TT
 from gfn.actions import Actions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
+from gfn.utils.common import set_seed
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
@@ -79,7 +80,7 @@ class Env(ABC):
         assert not (random and sink)
 
         if random and seed is not None:
-            torch.manual_seed(seed)  # TODO: Improve seeding here?
+            set_seed(seed, performance_mode=True)
 
         if batch_shape is None:
             batch_shape = (1,)
@@ -150,9 +151,6 @@ class Env(ABC):
         new_not_done_states_tensor = self.maskless_step(
             not_done_states, not_done_actions
         )
-        # TODO: Why is this here? Should it be removed?
-        # if isinstance(new_states, DiscreteStates):
-        #     new_not_done_states.masks = self.update_masks(not_done_states, not_done_actions)
 
         new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
 
