@@ -168,8 +168,40 @@ class Trajectories(Container):
             self._log_rewards[index] if self._log_rewards is not None else None
         )
 
+
+        # def _repeat_to_match(a: torch.Tensor, b: torch.Tensor):
+        #     """
+        #     Repeats a along as many dimensions as required to match the
+        #     dimensionality of b, skipping the first dimension of b.
+        #     """
+        #     if a.shape == b.shape[1:]:  # We don't consider the trajectory len.
+        #         return a
+        #     else:
+        #         # Repeats each end dimension, skipping the first one, if
+        #         # required.
+        #         n = len(a.shape)
+        #         for i, dim in enumerate(b.shape[1:]):
+        #             if i + 1 > n:
+        #                 a = a.unsqueeze(-1).repeat((1,) * i + (dim,))
+        #             else:
+        #                 assert a.shape[i] == b.shape[i + 1]
+
+        #         assert a.shape == b.shape[1:]
+
+        #     return a
+
         if is_tensor(self.estimator_outputs):
-            estimator_outputs = self.estimator_outputs[..., index][:new_max_length]
+            # TODO: Is there a safer way to index self.estimator_outputs?
+            #
+            # First we index along the first dimension of the estimator outputs.
+            # This can be thought of as the instance dimension, and is
+            # compatible with all supported indexing approaches (dim=1).
+            # All dims > 1 are not explicitly indexed unless the dimensionality
+            # of `index` matches all dimensions of `estimator_outputs` aside
+            # from the first (trajectory) dimension.
+            estimator_outputs = self.estimator_outputs[:, index]
+            # Next we index along the trajectory length (dim=0)
+            estimator_outputs = estimator_outputs[:new_max_length]
         else:
             estimator_outputs = None
 
@@ -217,6 +249,9 @@ class Trajectories(Container):
         Args:
             other: an external set of Trajectories.
         """
+        if len(other) == 0:
+            return
+
         # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
         self.states.extend(other.states)
