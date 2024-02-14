@@ -4,8 +4,6 @@ import numpy as np
 import torch
 
 
-
-
 def set_seed(seed: int, performance_mode: bool = False) -> None:
     """Used to control randomness."""
     torch.manual_seed(seed)
