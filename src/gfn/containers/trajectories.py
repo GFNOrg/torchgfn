@@ -167,31 +167,9 @@ class Trajectories(Container):
         log_rewards = (
             self._log_rewards[index] if self._log_rewards is not None else None
         )
-
-
-        # def _repeat_to_match(a: torch.Tensor, b: torch.Tensor):
-        #     """
-        #     Repeats a along as many dimensions as required to match the
-        #     dimensionality of b, skipping the first dimension of b.
-        #     """
-        #     if a.shape == b.shape[1:]:  # We don't consider the trajectory len.
-        #         return a
-        #     else:
-        #         # Repeats each end dimension, skipping the first one, if
-        #         # required.
-        #         n = len(a.shape)
-        #         for i, dim in enumerate(b.shape[1:]):
-        #             if i + 1 > n:
-        #                 a = a.unsqueeze(-1).repeat((1,) * i + (dim,))
-        #             else:
-        #                 assert a.shape[i] == b.shape[i + 1]
-
-        #         assert a.shape == b.shape[1:]
-
-        #     return a
-
         if is_tensor(self.estimator_outputs):
-            # TODO: Is there a safer way to index self.estimator_outputs?
+            # TODO: Is there a safer way to index self.estimator_outputs for
+            #       for n-dimensional estimator outputs?
             #
             # First we index along the first dimension of the estimator outputs.
             # This can be thought of as the instance dimension, and is
