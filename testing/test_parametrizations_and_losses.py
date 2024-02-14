@@ -208,7 +208,9 @@ def PFBasedGFlowNet_with_return(
     else:
         raise ValueError(f"Unknown gflownet {gflownet_name}")
 
-    trajectories = gflownet.sample_trajectories(env, sample_off_policy=False, n_samples=10)
+    trajectories = gflownet.sample_trajectories(
+        env, sample_off_policy=False, n_samples=10
+    )
     training_objects = gflownet.to_training_samples(trajectories)
 
     _ = gflownet.loss(env, training_objects)
@@ -305,7 +307,9 @@ def test_subTB_vs_TB(
         zero_logF=True,
     )
 
-    trajectories = gflownet.sample_trajectories(env, sample_off_policy=False, n_samples=10)
+    trajectories = gflownet.sample_trajectories(
+        env, sample_off_policy=False, n_samples=10
+    )
     subtb_loss = gflownet.loss(env, trajectories)
 
     if weighting == "TB":
