@@ -1,4 +1,3 @@
-import random
 from typing import ClassVar, Literal, Tuple
 
 import matplotlib.pyplot as plt
@@ -15,7 +14,6 @@ from gfn.gflownet import TBGFlowNet  # TODO: Extend to SubTBGFlowNet
 from gfn.modules import GFNModule
 from gfn.states import States
 from gfn.utils import NeuralNet
-
 from gfn.utils.common import set_seed
 
 
@@ -215,7 +213,9 @@ class ScaledGaussianWithOptionalExit(Distribution):
 
         actions_to_eval[~exit_idx] = sampled_actions[~exit_idx]
         if sum(~exit_idx) > 0:
-            logprobs[~exit_idx] = self.dist.log_prob(actions_to_eval)[~exit_idx].unsqueeze(-1)
+            logprobs[~exit_idx] = self.dist.log_prob(actions_to_eval)[
+                ~exit_idx
+            ].unsqueeze(-1)
 
         return logprobs.squeeze(-1)
 
@@ -289,6 +289,7 @@ class StepEstimator(GFNModule):
             n_steps=self.n_steps_per_trajectory,
         )
 
+
 def train(
     gflownet,
     env,
@@ -322,7 +323,6 @@ def train(
     scale_schedule = np.linspace(exploration_var_starting_val, 0, n_iterations)
 
     for iteration in tbar:
-
         optimizer.zero_grad()
         # Off Policy Sampling.
         trajectories = gflownet.sample_trajectories(
@@ -361,7 +361,6 @@ def train(
 
 
 if __name__ == "__main__":
-
     environment = Line(
         mus=[2, 5],
         sigmas=[0.5, 0.5],

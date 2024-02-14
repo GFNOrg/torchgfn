@@ -10,7 +10,6 @@ And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 """
-
 from argparse import ArgumentParser
 
 import torch
@@ -28,10 +27,9 @@ from gfn.gflownet import (
 )
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
-from gfn.utils.common import validate
-from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
-
 from gfn.utils.common import set_seed
+from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
+from gfn.utils.training import validate
 
 DEFAULT_SEED = 4444
 
@@ -225,7 +223,9 @@ def main(args):  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
-        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size, sample_off_policy=off_policy_sampling)
+        trajectories = gflownet.sample_trajectories(
+            env, n_samples=args.batch_size, sample_off_policy=off_policy_sampling
+        )
         training_samples = gflownet.to_training_samples(trajectories)
         if replay_buffer is not None:
             with torch.no_grad():

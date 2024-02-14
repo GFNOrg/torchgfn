@@ -6,7 +6,6 @@ environment. Run one of the following commands to reproduce some of the results 
 
 python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
-
 from argparse import ArgumentParser
 
 import numpy as np
@@ -233,9 +232,7 @@ def main(args):  # noqa: C901
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
         trajectories = gflownet.sample_trajectories(
-            env,
-            sample_off_policy=False,
-            n_samples=args.batch_size
+            env, sample_off_policy=False, n_samples=args.batch_size
         )
 
         training_samples = gflownet.to_training_samples(trajectories)
