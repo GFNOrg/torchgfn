@@ -16,6 +16,11 @@ from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
 
 
+def is_tensor(t) -> bool:
+    """Checks whether t is a torch.Tensor instance."""
+    return isinstance(t, Tensor)
+
+
 # TODO: remove env from this class?
 class Trajectories(Container):
     """Container for complete trajectories (starting in $s_0$ and ending in $s_f$).

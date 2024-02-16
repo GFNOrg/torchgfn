@@ -218,9 +218,7 @@ class Env(ABC):
         not_done_states = new_states[~new_sink_states_idx]
         not_done_actions = actions[~new_sink_states_idx]
 
-        new_not_done_states_tensor = self.maskless_step(
-            not_done_states, not_done_actions
-        )
+        new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
 
         new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
 
