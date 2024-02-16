@@ -27,14 +27,9 @@ from gfn.gflownet import (
 )
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
-<<<<<<< HEAD
-from gfn.utils.common import set_seed, validate
-from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
-=======
 from gfn.utils.common import set_seed
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 from gfn.utils.training import validate
->>>>>>> eedc7e8735f6dc4aafc748f149cbae24b47d9062
 
 DEFAULT_SEED = 4444
 

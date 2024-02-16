@@ -19,14 +19,9 @@ from tqdm import tqdm, trange
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.modules import DiscretePolicyEstimator
-<<<<<<< HEAD
-from gfn.utils.common import set_seed, validate
-from gfn.utils.modules import NeuralNet, Tabular
-=======
 from gfn.utils.common import set_seed
 from gfn.utils.modules import NeuralNet, Tabular
 from gfn.utils.training import validate
->>>>>>> eedc7e8735f6dc4aafc748f149cbae24b47d9062
 
 DEFAULT_SEED = 4444
 
