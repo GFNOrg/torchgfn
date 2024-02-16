@@ -7,11 +7,18 @@ if TYPE_CHECKING:
     from gfn.env import Env
     from gfn.states import States
 
+import numpy as np
 import torch
+from torch import Tensor
 from torchtyping import TensorType as TT
 
 from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
+
+
+def is_tensor(t) -> bool:
+    """Checks whether t is a torch.Tensor instance."""
+    return isinstance(t, Tensor)
 
 
 # TODO: remove env from this class?
@@ -47,16 +54,21 @@ class Trajectories(Container):
         is_backward: bool = False,
         log_rewards: TT["n_trajectories", torch.float] | None = None,
         log_probs: TT["max_length", "n_trajectories", torch.float] | None = None,
+        estimator_outputs: torch.Tensor | None = None,
     ) -> None:
         """
         Args:
             env: The environment in which the trajectories are defined.
-            states: The states of the trajectories. Defaults to None.
-            actions: The actions of the trajectories. Defaults to None.
-            when_is_done: The time step at which each trajectory ends. Defaults to None.
-            is_backward: Whether the trajectories are backward or forward. Defaults to False.
-            log_rewards: The log_rewards of the trajectories. Defaults to None.
-            log_probs: The log probabilities of the trajectories' actions. Defaults to None.
+            states: The states of the trajectories.
+            actions: The actions of the trajectories.
+            when_is_done: The time step at which each trajectory ends.
+            is_backward: Whether the trajectories are backward or forward.
+            log_rewards: The log_rewards of the trajectories.
+            log_probs: The log probabilities of the trajectories' actions.
+            estimator_outputs: When forward sampling off-policy for an n-step
+                trajectory, n forward passes will be made on some function approximator,
+                which may need to be re-used (for example, for evaluating PF). To avoid
+                duplicated effort, the outputs of the forward passes can be stored here.
 
         If states is None, then the states are initialized to an empty States object,
         that can be populated on the fly. If log_rewards is None, then `env.log_reward`
@@ -87,6 +99,7 @@ class Trajectories(Container):
             if log_probs is not None
             else torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
         )
+        self.estimator_outputs = estimator_outputs
 
     def __repr__(self) -> str:
         states = self.states.tensor.transpose(0, 1)
@@ -154,6 +167,21 @@ class Trajectories(Container):
         log_rewards = (
             self._log_rewards[index] if self._log_rewards is not None else None
         )
+        if is_tensor(self.estimator_outputs):
+            # TODO: Is there a safer way to index self.estimator_outputs for
+            #       for n-dimensional estimator outputs?
+            #
+            # First we index along the first dimension of the estimator outputs.
+            # This can be thought of as the instance dimension, and is
+            # compatible with all supported indexing approaches (dim=1).
+            # All dims > 1 are not explicitly indexed unless the dimensionality
+            # of `index` matches all dimensions of `estimator_outputs` aside
+            # from the first (trajectory) dimension.
+            estimator_outputs = self.estimator_outputs[:, index]
+            # Next we index along the trajectory length (dim=0)
+            estimator_outputs = estimator_outputs[:new_max_length]
+        else:
+            estimator_outputs = None
 
         return Trajectories(
             env=self.env,
@@ -163,6 +191,7 @@ class Trajectories(Container):
             is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
+            estimator_outputs=estimator_outputs,
         )
 
     @staticmethod
@@ -198,7 +227,10 @@ class Trajectories(Container):
         Args:
             other: an external set of Trajectories.
         """
+        if len(other) == 0:
+            return
 
+        # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
         self.states.extend(other.states)
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
@@ -213,10 +245,75 @@ class Trajectories(Container):
 
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat(
-                (self._log_rewards, other._log_rewards), dim=0
+                (self._log_rewards, other._log_rewards),
+                dim=0,
             )
         else:
             self._log_rewards = None
+
+        # Either set, or append, estimator outputs if they exist in the submitted
+        # trajectory.
+        if self.estimator_outputs is None and is_tensor(other.estimator_outputs):
+            self.estimator_outputs = other.estimator_outputs
+        elif is_tensor(self.estimator_outputs) and is_tensor(other.estimator_outputs):
+            batch_shape = self.actions.batch_shape
+            n_bs = len(batch_shape)
+            output_dtype = self.estimator_outputs.dtype
+
+            if n_bs == 1:
+                # Concatenate along the only batch dimension.
+                self.estimator_outputs = torch.cat(
+                    (self.estimator_outputs, other.estimator_outputs),
+                    dim=0,
+                )
+            elif n_bs == 2:
+                if self.estimator_outputs.shape[0] != other.estimator_outputs.shape[0]:
+                    # First we need to pad the first dimension on either self or other.
+                    self_shape = np.array(self.estimator_outputs.shape)
+                    other_shape = np.array(other.estimator_outputs.shape)
+                    required_first_dim = max(self_shape[0], other_shape[0])
+
+                    # TODO: This should be a single reused function (#154)
+                    # The size of self needs to grow to match other along dim=0.
+                    if self_shape[0] < other_shape[0]:
+                        pad_dim = required_first_dim - self_shape[0]
+                        pad_dim_full = (pad_dim,) + tuple(self_shape[1:])
+                        output_padding = torch.full(
+                            pad_dim_full,
+                            fill_value=-float("inf"),
+                            dtype=self.estimator_outputs.dtype,  # TODO: This isn't working! Hence the cast below...
+                            device=self.estimator_outputs.device,
+                        )
+                        self.estimator_outputs = torch.cat(
+                            (self.estimator_outputs, output_padding),
+                            dim=0,
+                        )
+
+                    # The size of other needs to grow to match self along dim=0.
+                    if other_shape[0] < self_shape[0]:
+                        pad_dim = required_first_dim - other_shape[0]
+                        pad_dim_full = (pad_dim,) + tuple(other_shape[1:])
+                        output_padding = torch.full(
+                            pad_dim_full,
+                            fill_value=-float("inf"),
+                            dtype=other.estimator_outputs.dtype,  # TODO: This isn't working! Hence the cast below...
+                            device=other.estimator_outputs.device,
+                        )
+                        other.estimator_outputs = torch.cat(
+                            (other.estimator_outputs, output_padding),
+                            dim=0,
+                        )
+
+                # Concatenate the tensors along the second dimension.
+                self.estimator_outputs = torch.cat(
+                    (self.estimator_outputs, other.estimator_outputs),
+                    dim=1,
+                ).to(
+                    dtype=output_dtype
+                )  # Cast to prevent single precision becoming double precision... weird.
+
+            # Sanity check. TODO: Remove?
+            assert self.estimator_outputs.shape[:n_bs] == batch_shape
 
     def to_transitions(self) -> Transitions:
         """Returns a `Transitions` object from the trajectories."""

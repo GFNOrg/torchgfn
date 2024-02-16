@@ -23,22 +23,24 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
     the DAG, or a singleton thereof, if self.logit_PB is a fixed DiscretePBEstimator.
 
     Attributes:
+        off_policy: Whether the GFlowNet samples trajectories on or off policy.
         logZ: a LogZEstimator instance.
-        log_reward_clip_min: minimal value to clamp the reward to.
-
+        log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
     def __init__(
         self,
         pf: GFNModule,
         pb: GFNModule,
-        on_policy: bool = False,
+        off_policy: bool,
         init_logZ: float = 0.0,
-        log_reward_clip_min: float = -12,  # roughly log(1e-5)
+        log_reward_clip_min: float = -float("inf"),
     ):
-        super().__init__(pf, pb, on_policy=on_policy)
+        super().__init__(pf, pb, off_policy=off_policy)
 
-        self.logZ = nn.Parameter(torch.tensor(init_logZ))
+        self.logZ = nn.Parameter(
+            torch.tensor(init_logZ)
+        )  # TODO: Optionally, this should be a nn.Module to support conditional GFNs.
         self.log_reward_clip_min = log_reward_clip_min
 
     def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
@@ -63,7 +65,8 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
     """Dataclass which holds the logZ estimate for the Log Partition Variance loss.
 
     Attributes:
-        log_reward_clip_min: minimal value to clamp the reward to.
+        off_policy: Whether the GFlowNet samples trajectories on or off policy.
+        log_reward_clip_min: If finite, clips log rewards to this value.
 
     Raises:
         ValueError: if the loss is NaN.
@@ -73,14 +76,17 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         self,
         pf: GFNModule,
         pb: GFNModule,
-        on_policy: bool = False,
-        log_reward_clip_min: float = -12,
+        off_policy: bool,
+        log_reward_clip_min: float = -float("inf"),
     ):
-        super().__init__(pf, pb, on_policy=on_policy)
+        super().__init__(pf, pb, off_policy=off_policy)
+        self.log_reward_clip_min = log_reward_clip_min
 
-        self.log_reward_clip_min = log_reward_clip_min  # -12 is roughly log(1e-5)
-
-    def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
+    def loss(
+        self,
+        env: Env,
+        trajectories: Trajectories,
+    ) -> TT[0, float]:
         """Log Partition Variance loss.
 
         This method is described in section 3.2 of

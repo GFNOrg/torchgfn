@@ -1,6 +1,7 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from math import prod
 from typing import ClassVar, Optional, Sequence, cast
 
@@ -131,13 +132,19 @@ class States(ABC):
 
     def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> States:
         """Access particular states of the batch."""
-        return self.__class__(self.tensor[index])
+        return self.__class__(
+            self.tensor[index]
+        )  # TODO: Inefficient - this might make a copy of the tensor!
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: States
     ) -> None:
         """Set particular states of the batch."""
         self.tensor[index] = states.tensor
+
+    def clone(self) -> States:
+        """Returns a *detached* clone of the current instance using deepcopy."""
+        return deepcopy(self)
 
     def flatten(self) -> States:
         """Flatten the batch dimension of the states.
@@ -241,6 +248,7 @@ class States(ABC):
     @property
     def is_sink_state(self) -> TT["batch_shape", torch.bool]:
         """Return a tensor that is True for states that are $s_f$ of the DAG."""
+        # TODO: self.__class__.sf == self.tensor -- or something similar?
         sink_states = self.__class__.sf.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.state_shape))
         ).to(self.tensor.device)
@@ -287,23 +295,31 @@ class DiscreteStates(States, ABC):
         """
         super().__init__(tensor)
 
-        self.forward_masks = torch.ones(
-            (*self.batch_shape, self.__class__.n_actions),
-            dtype=torch.bool,
-            device=self.__class__.device,
-        )
-        self.backward_masks = torch.ones(
-            (*self.batch_shape, self.__class__.n_actions - 1),
-            dtype=torch.bool,
-            device=self.__class__.device,
-        )
         if forward_masks is None and backward_masks is None:
+            self.forward_masks = torch.ones(
+                (*self.batch_shape, self.__class__.n_actions),
+                dtype=torch.bool,
+                device=self.__class__.device,
+            )
+            self.backward_masks = torch.ones(
+                (*self.batch_shape, self.__class__.n_actions - 1),
+                dtype=torch.bool,
+                device=self.__class__.device,
+            )
             self.update_masks()
         else:
             self.forward_masks = cast(torch.Tensor, forward_masks)
             self.backward_masks = cast(torch.Tensor, backward_masks)
 
         self.set_default_typing()
+
+    def clone(self) -> States:
+        """Returns a clone of the current instance."""
+        return self.__class__(
+            self.tensor.detach().clone(),
+            self.forward_masks,
+            self.backward_masks,
+        )
 
     def set_default_typing(self) -> None:
         """A convienience function for default typing of the masks."""

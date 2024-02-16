@@ -1,3 +1,4 @@
+import math
 from typing import List, Literal, Tuple
 
 import torch
@@ -47,7 +48,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 proportionally to (lamda ** len(sub_trajectory)), within the set of
                 all sub-trajectories.
         lamda: discount factor for longer trajectories.
-        log_reward_clip_min: minimum value for log rewards.
+        log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
     def __init__(
@@ -55,7 +56,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         pf: GFNModule,
         pb: GFNModule,
         logF: ScalarEstimator,
-        on_policy: bool = False,
+        off_policy: bool,
         weighting: Literal[
             "DB",
             "ModifiedDB",
@@ -66,10 +67,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             "equal_within",
         ] = "geometric_within",
         lamda: float = 0.9,
-        log_reward_clip_min: float = -12,  # roughly log(1e-5)
+        log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
     ):
-        super().__init__(pf, pb, on_policy=on_policy)
+        super().__init__(pf, pb, off_policy=off_policy)
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda
@@ -136,9 +137,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         """
         targets = torch.full_like(preds, fill_value=-float("inf"))
         assert trajectories.log_rewards is not None
-        log_rewards = trajectories.log_rewards[
-            trajectories.when_is_done >= i
-        ].clamp_min(self.log_reward_clip_min)
+        log_rewards = trajectories.log_rewards[trajectories.when_is_done >= i]
+
+        if math.isfinite(self.log_reward_clip_min):
+            log_rewards.clamp_min(self.log_reward_clip_min)
+
         targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
 
         # For now, the targets contain the log-rewards of the ending sub trajectories
@@ -249,6 +252,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 full_mask,
                 i,
             )
+
             flattening_mask = trajectories.when_is_done.lt(
                 torch.arange(
                     i,
@@ -268,10 +272,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             flattening_masks.append(flattening_mask)
             scores.append(preds - targets)
 
-        return (
-            scores,
-            flattening_masks,
-        )
+        return (scores, flattening_masks)
 
     def get_equal_within_contributions(
         self, trajectories: Trajectories

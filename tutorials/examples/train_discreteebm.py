@@ -10,7 +10,6 @@ And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 """
-
 from argparse import ArgumentParser
 
 import torch
@@ -20,15 +19,16 @@ from tqdm import tqdm, trange
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.modules import DiscretePolicyEstimator
-from gfn.utils.common import validate
+from gfn.utils.common import set_seed
 from gfn.utils.modules import NeuralNet, Tabular
+from gfn.utils.training import validate
 
 DEFAULT_SEED = 4444
 
 
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    torch.manual_seed(seed)
+    set_seed(seed)
 
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
@@ -69,7 +69,9 @@ def main(args):  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
-        trajectories = gflownet.sample_trajectories(env, n_samples=args.batch_size)
+        trajectories = gflownet.sample_trajectories(
+            env, off_policy=False, n_samples=args.batch_size
+        )
         training_samples = gflownet.to_training_samples(trajectories)
 
         optimizer.zero_grad()

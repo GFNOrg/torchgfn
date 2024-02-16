@@ -45,11 +45,11 @@ class NeuralNet(nn.Module):
                 activation = nn.ReLU
             elif activation_fn == "tanh":
                 activation = nn.Tanh
-            self.torso = [nn.Linear(input_dim, hidden_dim), activation()]
+            arch = [nn.Linear(input_dim, hidden_dim), activation()]
             for _ in range(n_hidden_layers - 1):
-                self.torso.append(nn.Linear(hidden_dim, hidden_dim))
-                self.torso.append(activation())
-            self.torso = nn.Sequential(*self.torso)
+                arch.append(nn.Linear(hidden_dim, hidden_dim))
+                arch.append(activation())
+            self.torso = nn.Sequential(*arch)
             self.torso.hidden_dim = hidden_dim
         else:
             self.torso = torso
@@ -68,7 +68,9 @@ class NeuralNet(nn.Module):
         """
         if self.device is None:
             self.device = preprocessed_states.device
-            self.to(self.device)
+            self.to(
+                self.device
+            )  # TODO: This is maybe fine but could result in weird errors if the model keeps bouncing between devices.
         out = self.torso(preprocessed_states)
         out = self.last_layer(out)
         return out

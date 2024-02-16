@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -102,7 +103,7 @@ class GFNModule(ABC, nn.Module):
         self,
         states: States,
         module_output: TT["batch_shape", "output_dim", float],
-        *args,
+        **policy_kwargs: Optional[dict],
     ) -> Distribution:
         """Transform the output of the module into a probability distribution.
 
@@ -168,6 +169,8 @@ class DiscretePolicyEstimator(GFNModule):
         epsilon: float = 0.0,
     ) -> Categorical:
         """Returns a probability distribution given a batch of states and module output.
+
+        We handle off-policyness using these kwargs.
 
         Args:
             temperature: scalar to divide the logits by before softmax. Does nothing

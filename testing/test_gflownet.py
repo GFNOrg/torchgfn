@@ -27,7 +27,7 @@ def test_trajectory_based_gflownet_generic():
     )
     pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
 
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
+    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, off_policy=False)
     mock_trajectories = Trajectories(env)
 
     result = gflownet.to_training_samples(mock_trajectories)
@@ -79,7 +79,7 @@ def test_pytorch_inheritance():
     )
     pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
 
-    tbgflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
+    tbgflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, off_policy=False)
     assert hasattr(
         tbgflownet.parameters(), "__iter__"
     ), "Expected gflownet to have iterable parameters() method inherited from nn.Module"

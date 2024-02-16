@@ -25,7 +25,6 @@ class HyperGrid(DiscreteEnv):
         reward_cos: bool = False,
         device_str: Literal["cpu", "cuda"] = "cpu",
         preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"] = "KHot",
-        log_reward_clip: float = -100.0,
     ):
         """HyperGrid environment from the GFlowNets paper.
         The states are represented as 1-d tensors of length `ndim` with values in
@@ -42,7 +41,6 @@ class HyperGrid(DiscreteEnv):
             reward_cos (bool, optional): Which version of the reward to use. Defaults to False.
             device_str (str, optional): "cpu" or "cuda". Defaults to "cpu".
             preprocessor_name (str, optional): "KHot" or "OneHot" or "Identity". Defaults to "KHot".
-            log_reward_clip: Minimum log reward allowable (namely, for log(0)).
         """
         self.ndim = ndim
         self.height = height
@@ -82,7 +80,6 @@ class HyperGrid(DiscreteEnv):
             sf=sf,
             device_str=device_str,
             preprocessor=preprocessor,
-            log_reward_clip=log_reward_clip,
         )
 
     def make_States_class(self) -> type[DiscreteStates]:

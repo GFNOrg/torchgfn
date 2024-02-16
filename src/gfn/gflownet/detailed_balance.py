@@ -1,3 +1,4 @@
+import math
 from typing import Tuple
 
 import torch
@@ -22,8 +23,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
     Attributes:
         logF: a ScalarEstimator instance.
-        on_policy: boolean indicating whether we need to reevaluate the log probs.
+        off_policy: If true, we need to reevaluate the log probs.
         forward_looking: whether to implement the forward looking GFN loss.
+        log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
     def __init__(
@@ -31,12 +33,14 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         pf: GFNModule,
         pb: GFNModule,
         logF: ScalarEstimator,
-        on_policy: bool = False,
+        off_policy: bool,
         forward_looking: bool = False,
+        log_reward_clip_min: float = -float("inf"),
     ):
-        super().__init__(pf, pb, on_policy=on_policy)
+        super().__init__(pf, pb, off_policy=off_policy)
         self.logF = logF
         self.forward_looking = forward_looking
+        self.log_reward_clip_min = log_reward_clip_min
 
     def get_scores(
         self, env: Env, transitions: Transitions
@@ -64,17 +68,25 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         if states.batch_shape != tuple(actions.batch_shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
-        if self.on_policy:
+        if not self.off_policy:
             valid_log_pf_actions = transitions.log_probs
         else:
-            module_output = self.pf(states)
+            # Evaluate the log PF of the actions sampled off policy.
+            # I suppose the Transitions container should then have some
+            # estimator_outputs attribute as well, to avoid duplication here ?
+            # See (#156).
+            module_output = self.pf(states)  # TODO: Inefficient duplication.
             valid_log_pf_actions = self.pf.to_probability_distribution(
                 states, module_output
-            ).log_prob(actions.tensor)
+            ).log_prob(
+                actions.tensor
+            )  # Actions sampled off policy.
 
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
-            log_rewards = env.log_reward(states)  # RM unsqueeze(-1)
+            log_rewards = env.log_reward(states)  # TODO: RM unsqueeze(-1) ?
+            if math.isfinite(self.log_reward_clip_min):
+                log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
             valid_log_F_s = valid_log_F_s + log_rewards
 
         preds = valid_log_pf_actions + valid_log_F_s
@@ -154,9 +166,10 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         all_log_rewards = transitions.all_log_rewards[mask]
         module_output = self.pf(states)
         pf_dist = self.pf.to_probability_distribution(states, module_output)
-        if self.on_policy:
+        if not self.off_policy:
             valid_log_pf_actions = transitions[mask].log_probs
         else:
+            # Evaluate the log PF of the actions sampled off policy.
             valid_log_pf_actions = pf_dist.log_prob(actions.tensor)
         valid_log_pf_s_exit = pf_dist.log_prob(
             torch.full_like(actions.tensor, actions.__class__.exit_action[0])

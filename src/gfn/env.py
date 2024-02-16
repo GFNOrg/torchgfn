@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from copy import deepcopy
 from typing import Optional, Tuple, Union
 
 import torch
@@ -8,6 +7,7 @@ from torchtyping import TensorType as TT
 from gfn.actions import Actions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
+from gfn.utils.common import set_seed
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
@@ -23,7 +23,6 @@ class Env(ABC):
         sf: Optional[TT["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
-        log_reward_clip: Optional[float] = -100.0,
     ):
         """Initializes an environment.
 
@@ -37,7 +36,6 @@ class Env(ABC):
             preprocessor: a Preprocessor object that converts raw states to a tensor
                 that can be fed into a neural network. Defaults to None, in which case
                 the IdentityPreprocessor is used.
-            log_reward_clip: Used to clip small rewards (in particular, log(0) rewards).
         """
         self.device = torch.device(device_str) if device_str is not None else s0.device
 
@@ -58,7 +56,6 @@ class Env(ABC):
 
         self.preprocessor = preprocessor
         self.is_discrete = False
-        self.log_reward_clip = log_reward_clip
 
     @abstractmethod
     def make_States_class(self) -> type[States]:
@@ -83,7 +80,7 @@ class Env(ABC):
         assert not (random and sink)
 
         if random and seed is not None:
-            torch.manual_seed(seed)
+            set_seed(seed, performance_mode=True)
 
         if batch_shape is None:
             batch_shape = (1,)
@@ -94,7 +91,7 @@ class Env(ABC):
         )
 
     @abstractmethod
-    def maskless_step(
+    def maskless_step(  # TODO: rename to step, other method becomes _step.
         self, states: States, actions: Actions
     ) -> TT["batch_shape", "state_shape", torch.float]:
         """Function that takes a batch of states and actions and returns a batch of next
@@ -102,7 +99,7 @@ class Env(ABC):
         """
 
     @abstractmethod
-    def maskless_backward_step(
+    def maskless_backward_step(  # TODO: rename to backward_step, other method becomes _backward_step.
         self, states: States, actions: Actions
     ) -> TT["batch_shape", "state_shape", torch.float]:
         """Function that takes a batch of states and actions and returns a batch of previous
@@ -134,7 +131,7 @@ class Env(ABC):
     ) -> States:
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating sink states in the new batch."""
-        new_states = deepcopy(states)
+        new_states = states.clone()  # TODO: Ensure this is efficient!
         valid_states_idx: TT["batch_shape", torch.bool] = ~states.is_sink_state
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
@@ -154,8 +151,6 @@ class Env(ABC):
         new_not_done_states_tensor = self.maskless_step(
             not_done_states, not_done_actions
         )
-        # if isinstance(new_states, DiscreteStates):
-        #     new_not_done_states.masks = self.update_masks(not_done_states, not_done_actions)
 
         new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
 
@@ -168,7 +163,7 @@ class Env(ABC):
     ) -> States:
         """Function that takes a batch of states and actions and returns a batch of next
         states and a boolean tensor indicating initial states in the new batch."""
-        new_states = deepcopy(states)
+        new_states = states.clone()  # TODO: Ensure this is efficient!
         valid_states_idx: TT["batch_shape", torch.bool] = ~new_states.is_initial_state
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
@@ -197,8 +192,8 @@ class Env(ABC):
         raise NotImplementedError("Reward function is not implemented.")
 
     def log_reward(self, final_states: States) -> TT["batch_shape", torch.float]:
-        """Calculates the log reward (clipping small rewards)."""
-        return torch.log(self.reward(final_states)).clip(self.log_reward_clip)
+        """Calculates the log reward."""
+        return torch.log(self.reward(final_states))
 
     @property
     def log_partition(self) -> float:
@@ -224,7 +219,6 @@ class DiscreteEnv(Env, ABC):
         sf: Optional[TT["state_shape", torch.float]] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
-        log_reward_clip: Optional[float] = -100.0,
     ):
         """Initializes a discrete environment.
 
@@ -234,12 +228,10 @@ class DiscreteEnv(Env, ABC):
             sf: The final state tensor (shared among all trajectories).
             device_str: String representation of a torch.device.
             preprocessor: An optional preprocessor for intermediate states.
-            log_reward_clip: Used to clip small rewards (in particular, log(0) rewards).
         """
         self.n_actions = n_actions
-        super().__init__(s0, sf, device_str, preprocessor, log_reward_clip)
+        super().__init__(s0, sf, device_str, preprocessor)
         self.is_discrete = True
-        self.log_reward_clip = log_reward_clip
 
     def make_Actions_class(self) -> type[Actions]:
         env = self
