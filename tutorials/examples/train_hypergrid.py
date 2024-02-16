@@ -10,7 +10,6 @@ And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 """
-
 from argparse import ArgumentParser
 
 import torch
@@ -28,8 +27,14 @@ from gfn.gflownet import (
 )
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+<<<<<<< HEAD
 from gfn.utils.common import set_seed, validate
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
+=======
+from gfn.utils.common import set_seed
+from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
+from gfn.utils.training import validate
+>>>>>>> eedc7e8735f6dc4aafc748f149cbae24b47d9062
 
 DEFAULT_SEED = 4444
 

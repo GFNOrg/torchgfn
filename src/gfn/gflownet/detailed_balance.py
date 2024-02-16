@@ -35,12 +35,12 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         logF: ScalarEstimator,
         off_policy: bool,
         forward_looking: bool = False,
-        log_reward_clamp_min: float = -float("inf"),
+        log_reward_clip_min: float = -float("inf"),
     ):
         super().__init__(pf, pb, off_policy=off_policy)
         self.logF = logF
         self.forward_looking = forward_looking
-        self.log_reward_clamp_min = log_reward_clamp_min
+        self.log_reward_clip_min = log_reward_clip_min
 
     def get_scores(
         self, env: Env, transitions: Transitions
@@ -68,10 +68,13 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         if states.batch_shape != tuple(actions.batch_shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
-        if self.off_policy:
+        if not self.off_policy:
             valid_log_pf_actions = transitions.log_probs
         else:
             # Evaluate the log PF of the actions sampled off policy.
+            # I suppose the Transitions container should then have some
+            # estimator_outputs attribute as well, to avoid duplication here ?
+            # See (#156).
             module_output = self.pf(states)  # TODO: Inefficient duplication.
             valid_log_pf_actions = self.pf.to_probability_distribution(
                 states, module_output
@@ -82,8 +85,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
             log_rewards = env.log_reward(states)  # TODO: RM unsqueeze(-1) ?
-            if math.isfinite(self.log_reward_clamp_min):
-                log_rewards = log_rewards.clamp_min(self.log_reward_clamp_min)
+            if math.isfinite(self.log_reward_clip_min):
+                log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
             valid_log_F_s = valid_log_F_s + log_rewards
 
         preds = valid_log_pf_actions + valid_log_F_s
@@ -163,7 +166,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         all_log_rewards = transitions.all_log_rewards[mask]
         module_output = self.pf(states)
         pf_dist = self.pf.to_probability_distribution(states, module_output)
-        if self.off_policy:
+        if not self.off_policy:
             valid_log_pf_actions = transitions[mask].log_probs
         else:
             # Evaluate the log PF of the actions sampled off policy.

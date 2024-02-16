@@ -91,7 +91,7 @@ class Sampler:
         off_policy: bool,
         states: Optional[States] = None,
         n_trajectories: Optional[int] = None,
-        test_mode: bool = False,
+        debug_mode: bool = False,
         **policy_kwargs,
     ) -> Trajectories:
         """Sample trajectories sequentially.
@@ -110,7 +110,7 @@ class Sampler:
                 parameter, `epsilon`, and `sf_bias`. In the continuous case these
                 kwargs will be user defined. This can be used to, for example, sample
                 off-policy.
-            test_mode: if True, everything gets calculated.
+            debug_mode: if True, everything gets calculated.
 
         Returns: A Trajectories object representing the batch of sampled trajectories.
 
@@ -118,8 +118,8 @@ class Sampler:
             AssertionError: When both states and n_trajectories are specified.
             AssertionError: When states are not linear.
         """
-        save_estimator_outputs = off_policy or test_mode
-        skip_logprob_calculaion = off_policy and not test_mode
+        save_estimator_outputs = off_policy or debug_mode
+        skip_logprob_calculaion = off_policy and not debug_mode
 
         if states is None:
             assert (
@@ -171,7 +171,7 @@ class Sampler:
                 calculate_logprobs=False if skip_logprob_calculaion else True,
                 **policy_kwargs,
             )
-            if not isinstance(estimator_outputs, type(None)):
+            if estimator_outputs is not None:
                 # Place estimator outputs into a stackable tensor. Note that this
                 # will be replaced with torch.nested.nested_tensor in the future.
                 estimator_outputs_padded = torch.full(
@@ -199,11 +199,14 @@ class Sampler:
             # Increment the step, determine which trajectories are finisihed, and eval
             # rewards.
             step += 1
+            # new_dones means those trajectories that just finished. Because we
+            # pad the sink state to every short trajectory, we need to make sure
+            # to filter out the already done ones.
             new_dones = (
                 new_states.is_initial_state
                 if self.estimator.is_backward
                 else sink_states_mask
-            ) & ~dones  # TODO: why is ~dones used here and again later on? Is this intentional?
+            ) & ~dones
             trajectories_dones[new_dones & ~dones] = step
             try:
                 trajectories_log_rewards[new_dones & ~dones] = env.log_reward(

@@ -26,12 +26,15 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
     """
 
     @abstractmethod
-    def sample_trajectories(self, env: Env, n_samples: int) -> Trajectories:
+    def sample_trajectories(
+        self, env: Env, n_samples: int, sample_off_policy: bool
+    ) -> Trajectories:
         """Sample a specific number of complete trajectories.
 
         Args:
             env: the environment to sample trajectories from.
             n_samples: number of trajectories to be sampled.
+            sample_off_policy: whether to sample trajectories on / off policy.
         Returns:
             Trajectories: sampled trajectories object.
         """
@@ -47,12 +50,6 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         """
         trajectories = self.sample_trajectories(env, n_samples, sample_off_policy=False)
         return trajectories.last_states
-
-    def pf_pb_named_parameters(self):
-        return {k: v for k, v in self.named_parameters() if "pb" in k or "pf" in k}
-
-    def pf_pb_parameters(self):
-        return [v for k, v in self.named_parameters() if "pb" in k or "pf" in k]
 
     def logz_named_parameters(self):
         return {"logZ": dict(self.named_parameters())["logZ"]}
@@ -96,6 +93,12 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
         )
 
         return trajectories
+
+    def pf_pb_named_parameters(self):
+        return {k: v for k, v in self.named_parameters() if "pb" in k or "pf" in k}
+
+    def pf_pb_parameters(self):
+        return [v for k, v in self.named_parameters() if "pb" in k or "pf" in k]
 
 
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
@@ -148,7 +151,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
 
         if self.off_policy:
             # We re-use the values calculated in .sample_trajectories().
-            if not isinstance(trajectories.estimator_outputs, type(None)):
+            if trajectories.estimator_outputs is not None:
                 estimator_outputs = trajectories.estimator_outputs[
                     ~trajectories.actions.is_dummy
                 ]
@@ -211,9 +214,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
         log_rewards = trajectories.log_rewards
-        if math.isfinite(self.log_reward_clip_min) and not isinstance(
-            log_rewards, type(None)
-        ):
+        # TODO: log_reward_clip_min isn't defined in base (#155).
+        if math.isfinite(self.log_reward_clip_min) and log_rewards is not None:
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
         if torch.any(torch.isinf(total_log_pf_trajectories)) or torch.any(

@@ -50,7 +50,7 @@ class NeuralNet(nn.Module):
                 arch.append(nn.Linear(hidden_dim, hidden_dim))
                 arch.append(activation())
             self.torso = nn.Sequential(*arch)
-            self.torso.hidden_dim = hidden_dim  # TODO: what is this?
+            self.torso.hidden_dim = hidden_dim
         else:
             self.torso = torso
         self.last_layer = nn.Linear(self.torso.hidden_dim, output_dim)

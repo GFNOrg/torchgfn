@@ -72,7 +72,7 @@ class Trajectories(Container):
         self.env = env
         self.is_backward = is_backward
         self.states = (
-            states.clone()  # TODO: Do we need this clone?
+            states
             if states is not None
             else env.states_from_batch_shape((0, 0))
         )
@@ -160,9 +160,18 @@ class Trajectories(Container):
         log_rewards = (
             self._log_rewards[index] if self._log_rewards is not None else None
         )
-
-        if isinstance(self.estimator_outputs, Tensor):
+        if is_tensor(self.estimator_outputs):
+            # TODO: Is there a safer way to index self.estimator_outputs for
+            #       for n-dimensional estimator outputs?
+            #
+            # First we index along the first dimension of the estimator outputs.
+            # This can be thought of as the instance dimension, and is
+            # compatible with all supported indexing approaches (dim=1).
+            # All dims > 1 are not explicitly indexed unless the dimensionality
+            # of `index` matches all dimensions of `estimator_outputs` aside
+            # from the first (trajectory) dimension.
             estimator_outputs = self.estimator_outputs[:, index]
+            # Next we index along the trajectory length (dim=0)
             estimator_outputs = estimator_outputs[:new_max_length]
         else:
             estimator_outputs = None
@@ -211,6 +220,9 @@ class Trajectories(Container):
         Args:
             other: an external set of Trajectories.
         """
+        if len(other) == 0:
+            return
+
         # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
         self.states.extend(other.states)
@@ -258,7 +270,7 @@ class Trajectories(Container):
                     other_shape = np.array(other.estimator_outputs.shape)
                     required_first_dim = max(self_shape[0], other_shape[0])
 
-                    # TODO: This should be a single reused function.
+                    # TODO: This should be a single reused function (#154)
                     # The size of self needs to grow to match other along dim=0.
                     if self_shape[0] < other_shape[0]:
                         pad_dim = required_first_dim - self_shape[0]

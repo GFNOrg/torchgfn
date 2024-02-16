@@ -1,6 +1,7 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from math import prod
 from typing import Callable, ClassVar, Optional, Sequence, cast
 
@@ -129,7 +130,7 @@ class States(ABC):
         """Access particular states of the batch."""
         return self.__class__(
             self.tensor[index]
-        )  # TODO: Inefficient - this makes a copy of the tensor!
+        )  # TODO: Inefficient - this might make a copy of the tensor!
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: States
@@ -138,9 +139,8 @@ class States(ABC):
         self.tensor[index] = states.tensor
 
     def clone(self) -> States:
-        """Returns a clone of the current instance."""
-        # TODO: Do we need to copy _log_rewards?
-        return self.__class__(self.tensor.detach().clone())
+        """Returns a *detached* clone of the current instance using deepcopy."""
+        return deepcopy(self)
 
     def flatten(self) -> States:
         """Flatten the batch dimension of the states.

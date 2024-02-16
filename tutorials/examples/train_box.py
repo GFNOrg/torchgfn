@@ -6,7 +6,6 @@ environment. Run one of the following commands to reproduce some of the results 
 
 python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
-
 from argparse import ArgumentParser
 
 import numpy as np
