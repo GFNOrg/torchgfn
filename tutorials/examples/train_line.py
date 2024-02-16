@@ -1,8 +1,3 @@
-<<<<<<< HEAD
-=======
-from typing import ClassVar, Literal, Tuple
-
->>>>>>> eedc7e8735f6dc4aafc748f149cbae24b47d9062
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
