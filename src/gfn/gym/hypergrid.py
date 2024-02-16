@@ -1,7 +1,7 @@
 """
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
-from typing import ClassVar, Literal, Tuple
+from typing import Literal, Tuple
 
 import torch
 from einops import rearrange
@@ -53,7 +53,6 @@ class HyperGrid(DiscreteEnv):
         sf = torch.full(
             (ndim,), fill_value=-1, dtype=torch.long, device=torch.device(device_str)
         )
-
         n_actions = ndim + 1
 
         if preprocessor_name == "Identity":
@@ -74,55 +73,43 @@ class HyperGrid(DiscreteEnv):
         else:
             raise ValueError(f"Unknown preprocessor {preprocessor_name}")
 
+        state_shape = (self.ndim,)
+
         super().__init__(
             n_actions=n_actions,
             s0=s0,
+            state_shape=state_shape,
             sf=sf,
             device_str=device_str,
             preprocessor=preprocessor,
         )
 
-    def make_States_class(self) -> type[DiscreteStates]:
-        "Creates a States class for this environment"
-        env = self
+    def update_masks(self, states: type[DiscreteStates]) -> None:
+        """Update the masks based on the current states."""
+        states.set_default_typing()
+        # Not allowed to take any action beyond the environment height, but
+        # allow early termination.
+        states.set_nonexit_action_masks(
+            states.tensor == self.height - 1,
+            allow_exit=True,
+        )
+        states.backward_masks = states.tensor != 0
 
-        class HyperGridStates(DiscreteStates):
-            state_shape: ClassVar[tuple[int, ...]] = (env.ndim,)
-            s0 = env.s0
-            sf = env.sf
-            n_actions = env.n_actions
-            device = env.device
+    def make_random_states_tensor(
+        self, batch_shape: Tuple[int, ...]
+    ) -> TT["batch_shape", "state_shape", torch.float]:
+        """Creates a batch of random states."""
+        return torch.randint(
+            0, self.height, batch_shape + self.s0.shape, device=self.device
+        )
 
-            @classmethod
-            def make_random_states_tensor(
-                cls, batch_shape: Tuple[int, ...]
-            ) -> TT["batch_shape", "state_shape", torch.float]:
-                "Creates a batch of random states."
-                states_tensor = torch.randint(
-                    0, env.height, batch_shape + env.s0.shape, device=env.device
-                )
-                return states_tensor
-
-            def update_masks(self) -> None:
-                "Update the masks based on the current states."
-                self.set_default_typing()
-                # Not allowed to take any action beyond the environment height, but
-                # allow early termination.
-                self.set_nonexit_action_masks(
-                    self.tensor == env.height - 1,
-                    allow_exit=True,
-                )
-                self.backward_masks = self.tensor != 0
-
-        return HyperGridStates
-
-    def maskless_step(
+    def step(
         self, states: DiscreteStates, actions: Actions
     ) -> TT["batch_shape", "state_shape", torch.float]:
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
         return new_states_tensor
 
-    def maskless_backward_step(
+    def backward_step(
         self, states: DiscreteStates, actions: Actions
     ) -> TT["batch_shape", "state_shape", torch.float]:
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")

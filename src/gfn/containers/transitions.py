@@ -68,14 +68,12 @@ class Transitions(Container):
         self.states = (
             states
             if states is not None
-            else env.States.from_batch_shape(batch_shape=(0,))
+            else env.states_from_batch_shape(batch_shape=(0,))
         )
         assert len(self.states.batch_shape) == 1
 
         self.actions = (
-            actions
-            if actions is not None
-            else env.Actions.make_dummy_actions(batch_shape=(0,))
+            actions if actions is not None else env.actions_from_batch_shape((0,))
         )
         self.is_done = (
             is_done
@@ -85,7 +83,7 @@ class Transitions(Container):
         self.next_states = (
             next_states
             if next_states is not None
-            else env.States.from_batch_shape(batch_shape=(0,))
+            else env.states_from_batch_shape(batch_shape=(0,))
         )
         assert (
             len(self.next_states.batch_shape) == 1

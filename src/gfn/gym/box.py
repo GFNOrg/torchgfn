@@ -1,5 +1,5 @@
 from math import log
-from typing import ClassVar, Literal, Tuple
+from typing import Literal, Tuple
 
 import torch
 from torchtyping import TensorType as TT
@@ -25,49 +25,36 @@ class Box(Env):
         self.delta = delta
         self.epsilon = epsilon
         s0 = torch.tensor([0.0, 0.0], device=torch.device(device_str))
+        exit_action = torch.tensor(
+            [-float("inf"), -float("inf")], device=torch.device(device_str)
+        )
+        dummy_action = torch.tensor(
+            [float("inf"), float("inf")], device=torch.device(device_str)
+        )
 
         self.R0 = R0
         self.R1 = R1
         self.R2 = R2
 
-        super().__init__(s0=s0)
+        super().__init__(
+            s0=s0,
+            state_shape=(2,),  # ()
+            action_shape=(2,),
+            dummy_action=dummy_action,
+            exit_action=exit_action,
+        )
 
-    def make_States_class(self) -> type[States]:
-        env = self
+    def make_random_states_tensor(
+        self, batch_shape: Tuple[int, ...]
+    ) -> TT["batch_shape", 2, torch.float]:
+        return torch.rand(batch_shape + (2,), device=self.device)
 
-        class BoxStates(States):
-            state_shape: ClassVar[Tuple[int, ...]] = (2,)
-            s0 = env.s0
-            sf = env.sf  # should be (-inf, -inf)
-
-            @classmethod
-            def make_random_states_tensor(
-                cls, batch_shape: Tuple[int, ...]
-            ) -> TT["batch_shape", 2, torch.float]:
-                return torch.rand(batch_shape + (2,), device=env.device)
-
-        return BoxStates
-
-    def make_Actions_class(self) -> type[Actions]:
-        env = self
-
-        class BoxActions(Actions):
-            action_shape: ClassVar[Tuple[int, ...]] = (2,)
-            dummy_action: ClassVar[TT[2]] = torch.tensor(
-                [float("inf"), float("inf")], device=env.device
-            )
-            exit_action: ClassVar[TT[2]] = torch.tensor(
-                [-float("inf"), -float("inf")], device=env.device
-            )
-
-        return BoxActions
-
-    def maskless_step(
+    def step(
         self, states: States, actions: Actions
     ) -> TT["batch_shape", 2, torch.float]:
         return states.tensor + actions.tensor
 
-    def maskless_backward_step(
+    def backward_step(
         self, states: States, actions: Actions
     ) -> TT["batch_shape", 2, torch.float]:
         return states.tensor - actions.tensor

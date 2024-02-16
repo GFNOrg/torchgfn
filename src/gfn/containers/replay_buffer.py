@@ -46,8 +46,8 @@ class ReplayBuffer:
             self.training_objects = Transitions(env)
             self.objects_type = "transitions"
         elif objects_type == "states":
-            self.training_objects = env.States.from_batch_shape((0,))
-            self.terminating_states = env.States.from_batch_shape((0,))
+            self.training_objects = env.states_from_batch_shape((0,))
+            self.terminating_states = env.states_from_batch_shape((0,))
             self.objects_type = "states"
         else:
             raise ValueError(f"Unknown objects_type: {objects_type}")

@@ -78,7 +78,7 @@ class Sampler:
         else:
             log_probs = None
 
-        actions = env.Actions(actions)
+        actions = env.actions_from_tensor(actions)
 
         if not save_estimator_outputs:
             estimator_output = None
@@ -156,9 +156,7 @@ class Sampler:
         all_estimator_outputs = []
 
         while not all(dones):
-            actions = env.Actions.make_dummy_actions(
-                batch_shape=(n_trajectories,)
-            )  # TODO: Why do we need this?
+            actions = env.actions_from_batch_shape((n_trajectories,))  # Dummy actions.
             log_probs = torch.full(
                 (n_trajectories,), fill_value=0, dtype=torch.float, device=device
             )
@@ -186,17 +184,16 @@ class Sampler:
                 all_estimator_outputs.append(estimator_outputs_padded)
 
             actions[~dones] = valid_actions
-            if (
-                not skip_logprob_calculaion
-            ):  # When off_policy, actions_log_probs are None.
+            if not skip_logprob_calculaion:
+                # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
             trajectories_logprobs += [log_probs]
 
             if self.estimator.is_backward:
-                new_states = env.backward_step(states, actions)
+                new_states = env._backward_step(states, actions)
             else:
-                new_states = env.step(states, actions)
+                new_states = env._step(states, actions)
             sink_states_mask = new_states.is_sink_state
 
             # Increment the step, determine which trajectories are finisihed, and eval
@@ -225,7 +222,7 @@ class Sampler:
             trajectories_states += [states.tensor]
 
         trajectories_states = torch.stack(trajectories_states, dim=0)
-        trajectories_states = env.States(tensor=trajectories_states)
+        trajectories_states = env.states_from_tensor(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)
         trajectories_logprobs = torch.stack(trajectories_logprobs, dim=0)
 

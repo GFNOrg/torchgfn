@@ -217,7 +217,7 @@ def main(args):  # noqa: C901
 
     optimizer = torch.optim.Adam(params)
 
-    visited_terminating_states = env.States.from_batch_shape((0,))
+    visited_terminating_states = env.states_from_batch_shape((0,))
 
     states_visited = 0
     n_iterations = args.n_trajectories // args.batch_size

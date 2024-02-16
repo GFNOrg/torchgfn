@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import ClassVar, Literal, Tuple
+from typing import Literal, Tuple
 
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
@@ -87,49 +88,37 @@ class DiscreteEBM(DiscreteEnv):
             raise ValueError(f"Unknown preprocessor {preprocessor_name}")
 
         super().__init__(
-            n_actions=n_actions,
             s0=s0,
+            state_shape=(self.ndim,),
+            # dummy_action=,
+            # exit_action=,
+            n_actions=n_actions,
             sf=sf,
             device_str=device_str,
             preprocessor=preprocessor,
         )
 
-    def make_States_class(self) -> type[DiscreteStates]:
-        env = self
+    def update_masks(self, states: type[States]) -> None:
+        states.set_default_typing()
+        states.forward_masks[..., : self.ndim] = states.tensor == -1
+        states.forward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == -1
+        states.forward_masks[..., -1] = torch.all(states.tensor != -1, dim=-1)
+        states.backward_masks[..., : self.ndim] = states.tensor == 0
+        states.backward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == 1
 
-        class DiscreteEBMStates(DiscreteStates):
-            state_shape: ClassVar[tuple[int, ...]] = (env.ndim,)
-            s0 = env.s0
-            sf = env.sf
-            n_actions = env.n_actions
-            device = env.device
-
-            @classmethod
-            def make_random_states_tensor(
-                cls, batch_shape: Tuple[int, ...]
-            ) -> TT["batch_shape", "state_shape", torch.float]:
-                return torch.randint(
-                    -1,
-                    2,
-                    batch_shape + (env.ndim,),
-                    dtype=torch.long,
-                    device=env.device,
-                )
-
-            def update_masks(self) -> None:
-                self.set_default_typing()
-                self.forward_masks[..., : env.ndim] = self.tensor == -1
-                self.forward_masks[..., env.ndim : 2 * env.ndim] = self.tensor == -1
-                self.forward_masks[..., -1] = torch.all(self.tensor != -1, dim=-1)
-                self.backward_masks[..., : env.ndim] = self.tensor == 0
-                self.backward_masks[..., env.ndim : 2 * env.ndim] = self.tensor == 1
-
-        return DiscreteEBMStates
+    def make_random_states_tensor(self, batch_shape: Tuple) -> Tensor:
+        return torch.randint(
+            -1,
+            2,
+            batch_shape + (self.ndim,),
+            dtype=torch.long,
+            device=self.device,
+        )
 
     def is_exit_actions(self, actions: TT["batch_shape"]) -> TT["batch_shape"]:
         return actions == self.n_actions - 1
 
-    def maskless_step(
+    def step(
         self, states: States, actions: Actions
     ) -> TT["batch_shape", "state_shape", torch.float]:
         # First, we select that actions that replace a -1 with a 0.
@@ -149,15 +138,18 @@ class DiscreteEBM(DiscreteEnv):
         )
         return states.tensor
 
-    def maskless_backward_step(
+    def backward_step(
         self, states: States, actions: Actions
     ) -> TT["batch_shape", "state_shape", torch.float]:
-        # In this env, states are n-dim vectors. s0 is empty (represented as -1),
-        # so s0=[-1, -1, ..., -1], each action is replacing a -1 with either a
-        # 0 or 1. Action i in [0, ndim-1] os replacing s[i] with 0, whereas
-        # action i in [ndim, 2*ndim-1] corresponds to replacing s[i - ndim] with 1.
-        # A backward action asks "what index should be set back to -1", hence the fmod
-        # to enable wrapping of indices.
+        """Performs a backward step.
+
+        In this env, states are n-dim vectors. s0 is empty (represented as -1),
+            so s0=[-1, -1, ..., -1], each action is replacing a -1 with either a
+            0 or 1. Action i in [0, ndim-1] os replacing s[i] with 0, whereas
+            action i in [ndim, 2*ndim-1] corresponds to replacing s[i - ndim] with 1.
+            A backward action asks "what index should be set back to -1", hence the fmod
+            to enable wrapping of indices.
+        """
         return states.tensor.scatter(-1, actions.tensor.fmod(self.ndim), -1)
 
     def reward(self, final_states: DiscreteStates) -> TT["batch_shape"]:

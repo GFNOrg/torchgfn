@@ -7,11 +7,6 @@ from gfn.gym import Box, DiscreteEBM, HyperGrid
 
 
 # Utilities.
-def format_actions(a, env):
-    """Returns a Actions instance from a [batch_size, *action_shape] tensor of actions."""
-    return env.Actions(a)
-
-
 def format_tensor(list_, discrete=True):
     """
     If discrete, returns a long tensor with a singleton batch dimension from list
@@ -89,13 +84,13 @@ def test_HyperGrid_fwd_step_with_preprocessors(
     failing_actions_list = [2, 0, 1]
 
     for actions_list in passing_actions_lists:
-        actions = format_actions(format_tensor(actions_list), env)
-        states = env.step(states, actions)
+        actions = env.actions_from_tensor(format_tensor(actions_list))
+        states = env._step(states, actions)
 
     # Step 4 fails due an invalid input action.
-    actions = format_actions(format_tensor(failing_actions_list), env)
+    actions = env.actions_from_tensor(format_tensor(failing_actions_list))
     with pytest.raises(NonValidActionsError):
-        states = env.step(states, actions)
+        states = env._step(states, actions)
 
     expected_rewards = torch.tensor([0.6, 0.1, 0.6])
     assert (torch.round(env.reward(states), decimals=7) == expected_rewards).all()
@@ -129,14 +124,14 @@ def test_HyperGrid_bwd_step_with_preprocessors(
 
     # All passing actions complete sucessfully.
     for passing_actions_list in passing_actions_lists:
-        actions = format_actions(format_tensor(passing_actions_list), env)
-        states = env.backward_step(states, actions)
+        actions = env.actions_from_tensor(format_tensor(passing_actions_list))
+        states = env._backward_step(states, actions)
 
     # Fails due to an invalid input action.
     states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED)
-    failing_actions = format_actions(format_tensor(failing_actions_list), env)
+    failing_actions = env.actions_from_tensor(format_tensor(failing_actions_list))
     with pytest.raises(NonValidActionsError):
-        states = env.backward_step(states, failing_actions)
+        states = env._backward_step(states, failing_actions)
 
 
 def test_DiscreteEBM_fwd_step():
@@ -156,18 +151,18 @@ def test_DiscreteEBM_fwd_step():
     ]  # Only next possible move is [4, 4, 4, 4],
 
     for actions_list in passing_actions_lists:
-        actions = format_actions(format_tensor(actions_list), env)
-        states = env.step(states, actions)
+        actions = env.actions_from_tensor(format_tensor(actions_list))
+        states = env._step(states, actions)
 
     # Step 4 fails due an invalid input action (15 is not possible).
-    actions = format_actions(format_tensor([4, 15, 4, 4]), env)
+    actions = env.actions_from_tensor(format_tensor([4, 15, 4, 4]))
     with pytest.raises(RuntimeError):
-        states = env.step(states, actions)
+        states = env._step(states, actions)
 
     # Step 5 fails due an invalid input action (1 is possible but not in this state).
-    actions = format_actions(format_tensor([1, 4, 4, 4]), env)
+    actions = env.actions_from_tensor(format_tensor([1, 4, 4, 4]))
     with pytest.raises(NonValidActionsError):
-        states = env.step(states, actions)
+        states = env._step(states, actions)
 
     expected_rewards = torch.tensor([1, 1, 54.5982, 1])
     assert (torch.round(env.reward(states), decimals=4) == expected_rewards).all()
@@ -188,15 +183,15 @@ def test_DiscreteEBM_bwd_step():
     ]
     # All passing actions complete sucessfully.
     for passing_actions_list in passing_actions_lists:
-        actions = format_actions(format_tensor(passing_actions_list), env)
-        states = env.backward_step(states, actions)
+        actions = env.actions_from_tensor(format_tensor(passing_actions_list))
+        states = env._backward_step(states, actions)
 
     # Fails due to an invalid input action.
     failing_actions_list = [0, 0, 0]
     states = env.reset(batch_shape=BATCH_SIZE, random=True, seed=SEED)
-    failing_actions = format_actions(format_tensor(failing_actions_list), env)
+    failing_actions = env.actions_from_tensor(format_tensor(failing_actions_list))
     with pytest.raises(NonValidActionsError):
-        states = env.backward_step(states, failing_actions)
+        states = env._backward_step(states, failing_actions)
 
 
 @pytest.mark.parametrize("delta", [0.1, 0.5, 1.0])
@@ -214,11 +209,9 @@ def test_box_fwd_step(delta: float):
     ]
 
     for failing_actions_list in failing_actions_lists_at_s0:
-        actions = format_actions(
-            format_tensor(failing_actions_list, discrete=False), env
-        )
+        actions = env.actions_from_tensor(format_tensor(failing_actions_list, discrete=False))
         with pytest.raises(NonValidActionsError):
-            states = env.step(states, actions)
+            states = env._step(states, actions)
 
     # Trying the step function starting from 3 instances of s_0
     A, B = None, None
@@ -244,8 +237,8 @@ def test_box_fwd_step(delta: float):
             actions_tensor[B - A < 0] = torch.tensor([-float("inf"), -float("inf")])
             actions_list = actions_tensor.tolist()
 
-        actions = format_actions(format_tensor(actions_list, discrete=False), env)
-        states = env.step(states, actions)
+        actions = env.actions_from_tensor(format_tensor(actions_list, discrete=False))
+        states = env._step(states, actions)
         states_tensor = states.tensor
 
         # The following evaluate the maximum angles of the possible actions
