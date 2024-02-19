@@ -54,7 +54,6 @@ class NeuralNet(nn.Module):
         else:
             self.torso = torso
         self.last_layer = nn.Linear(self.torso.hidden_dim, output_dim)
-        self.device = None
 
     def forward(
         self, preprocessed_states: TT["batch_shape", "input_dim", float]
@@ -66,11 +65,6 @@ class NeuralNet(nn.Module):
                 ingestion by the MLP.
         Returns: out, a set of continuous variables.
         """
-        if self.device is None:
-            self.device = preprocessed_states.device
-            self.to(
-                self.device
-            )  # TODO: This is maybe fine but could result in weird errors if the model keeps bouncing between devices.
         out = self.torso(preprocessed_states)
         out = self.last_layer(out)
         return out
