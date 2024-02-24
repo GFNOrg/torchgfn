@@ -42,9 +42,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
 
-    def get_scores(
-        self, env: Env, transitions: Transitions
-    ) -> Tuple[
+    def get_scores(self, env: Env, transitions: Transitions) -> Tuple[
         TT["n_transitions", float],
         TT["n_transitions", float],
         TT["n_transitions", float],

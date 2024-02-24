@@ -201,9 +201,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
 
         return log_pf_trajectories, log_pb_trajectories
 
-    def get_trajectories_scores(
-        self, trajectories: Trajectories
-    ) -> Tuple[
+    def get_trajectories_scores(self, trajectories: Trajectories) -> Tuple[
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
