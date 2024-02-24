@@ -24,6 +24,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
     A formal definition of GFlowNets is given in Sec. 3 of [GFlowNet Foundations](https://arxiv.org/pdf/2111.09266).
     """
+
     log_reward_clip_min = float("-inf")  # Default off.
 
     @abstractmethod
