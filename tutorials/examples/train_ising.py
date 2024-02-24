@@ -113,7 +113,7 @@ if __name__ == "__main__":
         "-L",
         type=int,
         default=6,
-        help="Lentgh of the grid",
+        help="Length of the grid",
     )
 
     parser.add_argument(
