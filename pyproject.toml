@@ -86,7 +86,7 @@ all = [
 "Bug Tracker" = "https://github.com/saleml/gfn/issues"
 
 [tool.black]
-py36 = true
+target_version = ["py310"]
 include = '\.pyi?$'
 exclude = '''/(\.git|\.hg|\.mypy_cache|\.tox|\.venv|build)/g'''
 
