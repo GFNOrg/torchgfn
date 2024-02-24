@@ -209,7 +209,9 @@ def test_box_fwd_step(delta: float):
     ]
 
     for failing_actions_list in failing_actions_lists_at_s0:
-        actions = env.actions_from_tensor(format_tensor(failing_actions_list, discrete=False))
+        actions = env.actions_from_tensor(
+            format_tensor(failing_actions_list, discrete=False)
+        )
         with pytest.raises(NonValidActionsError):
             states = env._step(states, actions)
 
