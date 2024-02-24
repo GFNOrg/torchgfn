@@ -1,4 +1,5 @@
 from typing import List, Optional, Tuple
+from copy import deepcopy
 
 import torch
 from torchtyping import TensorType as TT
@@ -140,11 +141,7 @@ class Sampler:
             else states.is_sink_state
         )
 
-        trajectories_states_b: List[States] = [states]
-
-        trajectories_states: List[TT["n_trajectories", "state_shape", torch.float]] = [
-            states.tensor
-        ]
+        trajectories_states: List[States] = [deepcopy(states)]
         trajectories_actions: List[TT["n_trajectories", torch.long]] = []
         trajectories_logprobs: List[TT["n_trajectories", torch.float]] = []
         trajectories_dones = torch.zeros(
@@ -221,19 +218,9 @@ class Sampler:
             states = new_states
             dones = dones | new_dones
 
-            trajectories_states += [states.tensor]
-            trajectories_states_b += [states]
+            trajectories_states += [deepcopy(states)]
 
-        # New Method
-        trajectories_states_b = stack_states(trajectories_states_b)
-
-        # Old Method
-        trajectories_states = env.states_from_tensor(
-            torch.stack(trajectories_states, dim=0))
-
-        assert (trajectories_states_b.tensor == trajectories_states.tensor).sum() == trajectories_states.tensor.numel()
-        assert (trajectories_states_b.forward_masks == trajectories_states.forward_masks).sum() == trajectories_states.forward_masks.numel()
-
+        trajectories_states = stack_states(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)
         trajectories_logprobs = torch.stack(trajectories_logprobs, dim=0)
 
