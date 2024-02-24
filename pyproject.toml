@@ -88,7 +88,7 @@ all = [
 [tool.black]
 target_version = ["py310"]
 include = '\.pyi?$'
-exclude = '''/(\.git|\.hg|\.mypy_cache|\.tox|\.venv|build)/g'''
+extend-exclude = '''/(\.git|\.hg|\.mypy_cache|\.ipynb|\.tox|\.venv|build)/g'''
 
 [tool.tox]
 legacy_tox_ini = '''
