@@ -6,6 +6,7 @@ environment. Run one of the following commands to reproduce some of the results 
 
 python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
+
 from argparse import ArgumentParser
 
 import numpy as np
@@ -189,9 +190,11 @@ def main(args):  # noqa: C901
     if not args.uniform_pb:
         optimizer.add_param_group(
             {
-                "params": pb_module.last_layer.parameters()
-                if args.tied
-                else pb_module.parameters(),
+                "params": (
+                    pb_module.last_layer.parameters()
+                    if args.tied
+                    else pb_module.parameters()
+                ),
                 "lr": args.lr,
             }
         )
