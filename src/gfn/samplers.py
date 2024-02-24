@@ -1,5 +1,5 @@
-from typing import List, Optional, Tuple
 from copy import deepcopy
+from typing import List, Optional, Tuple
 
 import torch
 from torchtyping import TensorType as TT

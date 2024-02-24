@@ -3,7 +3,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, Optional, Sequence, List, cast
+from typing import Callable, ClassVar, List, Optional, Sequence, cast
 
 import torch
 from torchtyping import TensorType as TT
