@@ -3,7 +3,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, Optional, Sequence, cast
+from typing import Callable, ClassVar, List, Optional, Sequence, cast
 
 import torch
 from torchtyping import TensorType as TT
@@ -409,6 +409,8 @@ class DiscreteStates(States, ABC):
             allow_exit: sets whether exiting can happen at any point in the
                 trajectory - if so, it should be set to True.
         """
+        # Resets masks in place to prevent side-effects across steps.
+        self.forward_masks[:] = True
         if allow_exit:
             exit_idx = torch.zeros(self.batch_shape + (1,)).to(cond.device)
         else:
@@ -446,3 +448,31 @@ class DiscreteStates(States, ABC):
             self.forward_masks = torch.ones(shape).bool()
         else:
             self.forward_masks = torch.zeros(shape).bool()
+
+
+def stack_states(states: List[States]):
+    """Given a list of states, stacks them along a new dimension (0)."""
+    state_example = states[0]  # We assume all elems of `states` are the same.
+
+    stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
+    stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
+    if state_example._log_rewards:
+        stacked_states._log_rewards = torch.stack(
+            [s._log_rewards for s in states], dim=0
+        )
+
+    # We are dealing with a list of DiscretrStates instances.
+    if hasattr(state_example, "forward_masks"):
+        stacked_states.forward_masks = torch.stack(
+            [s.forward_masks for s in states], dim=0
+        )
+        stacked_states.backward_masks = torch.stack(
+            [s.backward_masks for s in states], dim=0
+        )
+
+    # Adds the trajectory dimension.
+    stacked_states.batch_shape = (
+        stacked_states.tensor.shape[0],
+    ) + state_example.batch_shape
+
+    return stacked_states
