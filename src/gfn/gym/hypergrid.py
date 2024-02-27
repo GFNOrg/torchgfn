@@ -1,6 +1,7 @@
 """
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
+
 from typing import Literal, Tuple
 
 import torch

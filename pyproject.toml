@@ -26,7 +26,7 @@ torch = ">=1.9.0"
 torchtyping = ">=0.1.4"
 
 # dev dependencies.
-black = { version = "*", optional = true }
+black = { version = "24.2", optional = true }
 flake8 = { version = "*", optional = true }
 gitmopy = { version = "*", optional = true }
 myst-parser = { version = "*", optional = true }
@@ -86,9 +86,9 @@ all = [
 "Bug Tracker" = "https://github.com/saleml/gfn/issues"
 
 [tool.black]
-py36 = true
+target_version = ["py310"]
 include = '\.pyi?$'
-exclude = '''/(\.git|\.hg|\.mypy_cache|\.tox|\.venv|build)/g'''
+extend-exclude = '''/(\.git|\.hg|\.mypy_cache|\.ipynb|\.tox|\.venv|build)/g'''
 
 [tool.tox]
 legacy_tox_ini = '''

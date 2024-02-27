@@ -24,6 +24,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
     A formal definition of GFlowNets is given in Sec. 3 of [GFlowNet Foundations](https://arxiv.org/pdf/2111.09266).
     """
+
     log_reward_clip_min = float("-inf")  # Default off.
 
     @abstractmethod
@@ -200,9 +201,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
 
         return log_pf_trajectories, log_pb_trajectories
 
-    def get_trajectories_scores(
-        self, trajectories: Trajectories
-    ) -> Tuple[
+    def get_trajectories_scores(self, trajectories: Trajectories) -> Tuple[
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
