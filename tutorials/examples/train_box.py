@@ -6,6 +6,7 @@ environment. Run one of the following commands to reproduce some of the results 
 
 python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
+
 from argparse import ArgumentParser
 
 import numpy as np
@@ -157,14 +158,12 @@ def main(args):  # noqa: C901
                 pf=pf_estimator,
                 pb=pb_estimator,
                 logF=logF_estimator,
-                off_policy=False,
             )
         else:
             gflownet = SubTBGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
                 logF=logF_estimator,
-                off_policy=False,
                 weighting=args.subTB_weighting,
                 lamda=args.subTB_lambda,
             )
@@ -172,13 +171,11 @@ def main(args):  # noqa: C901
         gflownet = TBGFlowNet(
             pf=pf_estimator,
             pb=pb_estimator,
-            off_policy=False,
         )
     elif args.loss == "ZVar":
         gflownet = LogPartitionVarianceGFlowNet(
             pf=pf_estimator,
             pb=pb_estimator,
-            off_policy=False,
         )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
@@ -189,9 +186,11 @@ def main(args):  # noqa: C901
     if not args.uniform_pb:
         optimizer.add_param_group(
             {
-                "params": pb_module.last_layer.parameters()
-                if args.tied
-                else pb_module.parameters(),
+                "params": (
+                    pb_module.last_layer.parameters()
+                    if args.tied
+                    else pb_module.parameters()
+                ),
                 "lr": args.lr,
             }
         )
@@ -232,7 +231,7 @@ def main(args):  # noqa: C901
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
         trajectories = gflownet.sample_trajectories(
-            env, sample_off_policy=False, n_samples=args.batch_size
+            env, save_logprobs=True, n_samples=args.batch_size
         )
 
         training_samples = gflownet.to_training_samples(trajectories)

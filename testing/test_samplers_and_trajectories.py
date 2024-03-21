@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Tuple
 
 import pytest
 
@@ -11,18 +11,18 @@ from gfn.gym.helpers.box_utils import (
     BoxPFEstimator,
     BoxPFNeuralNet,
 )
-from gfn.modules import DiscretePolicyEstimator
+from gfn.modules import DiscretePolicyEstimator, GFNModule
 from gfn.samplers import Sampler
 from gfn.utils import NeuralNet
 
 
 def trajectory_sampling_with_return(
     env_name: str,
-    preprocessor_name: str,
+    preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"],
     delta: float,
     n_components_s0: int,
     n_components: int,
-) -> Trajectories:
+) -> Tuple[Trajectories, Trajectories, GFNModule, GFNModule]:
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=2, height=8, preprocessor_name=preprocessor_name)
     elif env_name == "DiscreteEBM":
@@ -33,10 +33,6 @@ def trajectory_sampling_with_return(
         if preprocessor_name != "Identity":
             pytest.skip("Useless tests")
         env = Box(delta=delta)
-    else:
-        raise ValueError("Unknown environment name")
-
-    if env_name == "Box":
         pf_module = BoxPFNeuralNet(
             hidden_dim=32,
             n_hidden_layers=2,
@@ -59,6 +55,10 @@ def trajectory_sampling_with_return(
             env=env, module=pb_module, n_components=n_components
         )
     else:
+        raise ValueError("Unknown environment name")
+
+    if env_name != "Box":
+        assert not isinstance(env, Box)
         pf_module = NeuralNet(
             input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
         )
@@ -81,14 +81,17 @@ def trajectory_sampling_with_return(
     sampler = Sampler(estimator=pf_estimator)
     # Test mode collects log_probs and estimator_ouputs, not encountered in the wild.
     trajectories = sampler.sample_trajectories(
-        env, off_policy=False, n_trajectories=5, debug_mode=True
+        env,
+        save_logprobs=True,
+        n_trajectories=5,
+        save_estimator_outputs=True,
     )
     #  trajectories = sampler.sample_trajectories(env, n_trajectories=10)  # TODO - why is this duplicated?
 
     states = env.reset(batch_shape=5, random=True)
     bw_sampler = Sampler(estimator=pb_estimator)
     bw_trajectories = bw_sampler.sample_trajectories(
-        env, off_policy=False, states=states
+        env, save_logprobs=True, states=states
     )
 
     return trajectories, bw_trajectories, pf_estimator, pb_estimator
@@ -101,11 +104,11 @@ def trajectory_sampling_with_return(
 @pytest.mark.parametrize("n_components", [1, 2, 5])
 def test_trajectory_sampling(
     env_name: str,
-    preprocessor_name: str,
+    preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"],
     delta: float,
     n_components_s0: int,
     n_components: int,
-) -> Trajectories:
+):
     if env_name == "HyperGrid":
         if delta != 0.1 or n_components_s0 != 1 or n_components != 1:
             pytest.skip("Useless tests")

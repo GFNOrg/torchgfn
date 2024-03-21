@@ -35,7 +35,7 @@ pf_estimator = DiscretePolicyEstimator(
 pb_estimator = DiscretePolicyEstimator(
     module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor
 )
-gflownet = TBGFlowNet(init_logZ=0.0, pf=pf_estimator, pb=pb_estimator, off_policy=True)
+gflownet = TBGFlowNet(init_logZ=0.0, pf=pf_estimator, pb=pb_estimator)
 
 # Feed pf to the sampler.
 sampler = Sampler(estimator=pf_estimator)
@@ -56,7 +56,8 @@ for i in (pbar := tqdm(range(n_iterations))):
     trajectories = sampler.sample_trajectories(
         env,
         n_trajectories=batch_size,
-        off_policy=True,
+        save_logprobs=False,
+        save_estimator_outputs=True,
         epsilon=exploration_rate,
     )
     optimizer.zero_grad()

@@ -10,6 +10,7 @@ And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 """
+
 from argparse import ArgumentParser
 
 import torch
@@ -70,7 +71,7 @@ def main(args):  # noqa: C901
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
-            env, off_policy=False, n_samples=args.batch_size
+            env, save_logprobs=True, n_samples=args.batch_size
         )
         training_samples = gflownet.to_training_samples(trajectories)
 

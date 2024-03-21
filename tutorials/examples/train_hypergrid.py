@@ -10,6 +10,7 @@ And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 """
+
 from argparse import ArgumentParser
 
 import torch
@@ -37,7 +38,6 @@ DEFAULT_SEED = 4444
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
-    off_policy_sampling = False if args.replay_buffer_size == 0 else True
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
     use_wandb = len(args.wandb_project) > 0
@@ -122,7 +122,6 @@ def main(args):  # noqa: C901
             gflownet = ModifiedDBGFlowNet(
                 pf_estimator,
                 pb_estimator,
-                off_policy_sampling,
             )
 
         if args.loss in ("DB", "SubTB"):
@@ -153,14 +152,12 @@ def main(args):  # noqa: C901
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
-                    off_policy=off_policy_sampling,
                 )
             else:
                 gflownet = SubTBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
-                    off_policy=off_policy_sampling,
                     weighting=args.subTB_weighting,
                     lamda=args.subTB_lambda,
                 )
@@ -168,13 +165,11 @@ def main(args):  # noqa: C901
             gflownet = TBGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                off_policy=off_policy_sampling,
             )
         elif args.loss == "ZVar":
             gflownet = LogPartitionVarianceGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                off_policy=off_policy_sampling,
             )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
@@ -224,7 +219,10 @@ def main(args):  # noqa: C901
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
-            env, n_samples=args.batch_size, sample_off_policy=off_policy_sampling
+            env,
+            n_samples=args.batch_size,
+            save_logprobs=args.replay_buffer_size == 0,
+            save_estimator_outputs=False,
         )
         training_samples = gflownet.to_training_samples(trajectories)
         if replay_buffer is not None:
@@ -299,7 +297,7 @@ if __name__ == "__main__":
         "--loss",
         type=str,
         choices=["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"],
-        default="TB",
+        default="FM",
         help="Loss function to use",
     )
     parser.add_argument(
