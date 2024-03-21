@@ -54,7 +54,7 @@ class Trajectories(Container):
         is_backward: bool = False,
         log_rewards: TT["n_trajectories", torch.float] | None = None,
         log_probs: TT["max_length", "n_trajectories", torch.float] | None = None,
-        estimator_outputs: torch.Tensor | None = None,
+        estimator_outputs: TT["batch_shape", "output_dim", torch.float] | None = None,
     ) -> None:
         """
         Args:
@@ -325,7 +325,11 @@ class Trajectories(Container):
                 ],
                 dim=0,
             )
-        log_probs = self.log_probs[~self.actions.is_dummy]
+        log_probs = (
+            self.log_probs[~self.actions.is_dummy]
+            if self.log_probs is not None and self.log_probs.nelement() > 0
+            else None
+        )
         return Transitions(
             env=self.env,
             states=states,

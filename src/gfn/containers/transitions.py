@@ -186,7 +186,11 @@ class Transitions(Container):
         log_rewards = (
             self._log_rewards[index] if self._log_rewards is not None else None
         )
-        log_probs = self.log_probs[index]
+        log_probs = (
+            self.log_probs[index]
+            if self.log_probs is not None and self.log_probs.nelement() > 0
+            else None
+        )
         return Transitions(
             env=self.env,
             states=states,

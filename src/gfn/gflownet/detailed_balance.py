@@ -23,7 +23,6 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
     Attributes:
         logF: a ScalarEstimator instance.
-        off_policy: If true, we need to reevaluate the log probs.
         forward_looking: whether to implement the forward looking GFN loss.
         log_reward_clip_min: If finite, clips log rewards to this value.
     """
@@ -33,17 +32,16 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         pf: GFNModule,
         pb: GFNModule,
         logF: ScalarEstimator,
-        off_policy: bool,
         forward_looking: bool = False,
         log_reward_clip_min: float = -float("inf"),
     ):
-        super().__init__(pf, pb, off_policy=off_policy)
+        super().__init__(pf, pb)
         self.logF = logF
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
 
     def get_scores(
-        self, env: Env, transitions: Transitions
+        self, env: Env, transitions: Transitions, recalculate_all: bool = False
     ) -> Tuple[
         TT["n_transitions", float],
         TT["n_transitions", float],
@@ -53,6 +51,12 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         Args:
             transitions: a batch of transitions.
+
+        Unless recalculate_all=True, in which case we re-evaluate the logprobs of the transitions with
+        the current self.pf. The following applies:
+            - If transitions have log_probs attribute, use them - this is usually for on-policy learning
+            - Else, re-evaluate the log_probs using the current self.pf - this is usually for
+              off-policy learning with replay buffer
 
         Raises:
             ValueError: when supplied with backward transitions.
@@ -68,19 +72,20 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         if states.batch_shape != tuple(actions.batch_shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
-        if not self.off_policy:
+        if (
+            transitions.log_probs is not None
+            and transitions.log_probs.nelement() > 0
+            and not recalculate_all
+        ):
             valid_log_pf_actions = transitions.log_probs
         else:
-            # Evaluate the log PF of the actions sampled off policy.
-            # I suppose the Transitions container should then have some
-            # estimator_outputs attribute as well, to avoid duplication here ?
-            # See (#156).
-            module_output = self.pf(states)  # TODO: Inefficient duplication.
+            # Evaluate the log PF of the actions
+            module_output = self.pf(
+                states
+            )  # TODO: Inefficient duplication in case of tempered policy
             valid_log_pf_actions = self.pf.to_probability_distribution(
                 states, module_output
-            ).log_prob(
-                actions.tensor
-            )  # Actions sampled off policy.
+            ).log_prob(actions.tensor)
 
         valid_log_F_s = self.logF(states).squeeze(-1)
         if self.forward_looking:
@@ -149,8 +154,16 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     https://arxiv.org/abs/2202.13903 for more details.
     """
 
-    def get_scores(self, transitions: Transitions) -> TT["n_trajectories", torch.float]:
+    def get_scores(
+        self, transitions: Transitions, recalculate_all: bool = False
+    ) -> TT["n_trajectories", torch.float]:
         """DAG-GFN-style detailed balance, when all states are connected to the sink.
+
+        Unless recalculate_all=True, in which case we re-evaluate the logprobs of the transitions with
+        the current self.pf. The following applies:
+            - If transitions have log_probs attribute, use them - this is usually for on-policy learning
+            - Else, re-evaluate the log_probs using the current self.pf - this is usually for
+              off-policy learning with replay buffer
 
         Raises:
             ValueError: when backward transitions are supplied (not supported).
@@ -166,7 +179,11 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         all_log_rewards = transitions.all_log_rewards[mask]
         module_output = self.pf(states)
         pf_dist = self.pf.to_probability_distribution(states, module_output)
-        if not self.off_policy:
+        if (
+            transitions.log_probs is not None
+            and transitions.log_probs.nelement() > 0
+            and not recalculate_all
+        ):
             valid_log_pf_actions = transitions[mask].log_probs
         else:
             # Evaluate the log PF of the actions sampled off policy.
