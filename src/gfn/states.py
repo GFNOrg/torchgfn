@@ -1,6 +1,6 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from copy import deepcopy
 from math import prod
 from typing import Callable, ClassVar, Optional, Sequence, cast

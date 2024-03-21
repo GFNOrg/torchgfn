@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
-import torch
 from typing import TYPE_CHECKING, Literal
+
+import torch
 
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
