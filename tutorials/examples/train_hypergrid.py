@@ -297,7 +297,7 @@ if __name__ == "__main__":
         "--loss",
         type=str,
         choices=["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"],
-        default="FM",
+        default="TB",
         help="Loss function to use",
     )
     parser.add_argument(
