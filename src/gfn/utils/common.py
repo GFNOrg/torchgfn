@@ -19,7 +19,7 @@ def set_seed(seed: int, performance_mode: bool = False) -> None:
 
 def has_log_probs(obj):
     """Returns True if the submitted object has the log_probs attribute populated."""
-    if not isinstance(obj, "log_probs"):
+    if not hasattr(obj, "log_probs"):
         return False
 
     return obj.log_probs is not None and obj.log_probs.nelement() > 0
