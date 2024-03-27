@@ -96,7 +96,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
         n_samples: int,
         save_logprobs: bool = True,
         save_estimator_outputs: bool = False,
-        **policy_kwargs
+        **policy_kwargs,
     ) -> Trajectories:
         """Samples trajectories, optionally with specified policy kwargs."""
         sampler = Sampler(estimator=self.pf)

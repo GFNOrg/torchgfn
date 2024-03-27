@@ -329,9 +329,7 @@ class Trajectories(Container):
 
         # Only return logprobs if they exist.
         log_probs = (
-            self.log_probs[~self.actions.is_dummy]
-            if has_log_probs(self)
-            else None
+            self.log_probs[~self.actions.is_dummy] if has_log_probs(self) else None
         )
 
         return Transitions(
