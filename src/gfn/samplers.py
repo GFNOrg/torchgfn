@@ -32,9 +32,13 @@ class Sampler:
         env: Env,
         states: States,
         save_estimator_outputs: bool = False,
-        calculate_logprobs: bool = True,
+        save_logprobs: bool = True,
         **policy_kwargs: Optional[dict],
-    ) -> Tuple[Actions, TT["batch_shape", torch.float]]:
+    ) -> Tuple[
+        Actions,
+        TT["batch_shape", torch.float] | None,
+        TT["batch_shape", torch.float] | None,
+    ]:
         """Samples actions from the given states.
 
         Args:
@@ -42,7 +46,7 @@ class Sampler:
             env: The environment to sample actions from.
             states: A batch of states.
             save_estimator_outputs: If True, the estimator outputs will be returned.
-            calculate_logprobs: If True, calculates the log probabilities of sampled
+            save_logprobs: If True, calculates and saves the log probabilities of sampled
                 actions.
             policy_kwargs: keyword arguments to be passed to the
                 `to_probability_distribution` method of the estimator. For example, for
@@ -72,7 +76,7 @@ class Sampler:
         with torch.no_grad():
             actions = dist.sample()
 
-        if calculate_logprobs:
+        if save_logprobs:
             log_probs = dist.log_prob(actions)
             if torch.any(torch.isinf(log_probs)):
                 raise RuntimeError("Log probabilities are inf. This should not happen.")
@@ -89,29 +93,30 @@ class Sampler:
     def sample_trajectories(
         self,
         env: Env,
-        off_policy: bool,
         states: Optional[States] = None,
         n_trajectories: Optional[int] = None,
-        debug_mode: bool = False,
+        save_estimator_outputs: bool = False,
+        save_logprobs: bool = True,
         **policy_kwargs,
     ) -> Trajectories:
         """Sample trajectories sequentially.
 
         Args:
             env: The environment to sample trajectories from.
-            off_policy: If True, samples actions such that we skip log probability
-                calculation, and we save the estimator outputs for later use.
             states: If given, trajectories would start from such states. Otherwise,
                 trajectories are sampled from $s_o$ and n_trajectories must be provided.
             n_trajectories: If given, a batch of n_trajectories will be sampled all
                 starting from the environment's s_0.
+            save_estimator_outputs: If True, the estimator outputs will be returned. This
+                is useful for off-policy training with tempered policy.
+            save_logprobs: If True, calculates and saves the log probabilities of sampled
+                actions. This is useful for on-policy training.
             policy_kwargs: keyword arguments to be passed to the
                 `to_probability_distribution` method of the estimator. For example, for
                 DiscretePolicyEstimators, the kwargs can contain the `temperature`
                 parameter, `epsilon`, and `sf_bias`. In the continuous case these
                 kwargs will be user defined. This can be used to, for example, sample
                 off-policy.
-            debug_mode: if True, everything gets calculated.
 
         Returns: A Trajectories object representing the batch of sampled trajectories.
 
@@ -119,8 +124,6 @@ class Sampler:
             AssertionError: When both states and n_trajectories are specified.
             AssertionError: When states are not linear.
         """
-        save_estimator_outputs = off_policy or debug_mode
-        skip_logprob_calculaion = off_policy and not debug_mode
 
         if states is None:
             assert (
@@ -167,7 +170,7 @@ class Sampler:
                 env,
                 states[~dones],
                 save_estimator_outputs=True if save_estimator_outputs else False,
-                calculate_logprobs=False if skip_logprob_calculaion else True,
+                save_logprobs=save_logprobs,
                 **policy_kwargs,
             )
             if estimator_outputs is not None:
@@ -183,7 +186,7 @@ class Sampler:
                 all_estimator_outputs.append(estimator_outputs_padded)
 
             actions[~dones] = valid_actions
-            if not skip_logprob_calculaion:
+            if save_logprobs:
                 # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
@@ -222,7 +225,9 @@ class Sampler:
 
         trajectories_states = stack_states(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)
-        trajectories_logprobs = torch.stack(trajectories_logprobs, dim=0)
+        trajectories_logprobs = (
+            torch.stack(trajectories_logprobs, dim=0) if save_logprobs else None
+        )
 
         # TODO: use torch.nested.nested_tensor(dtype, device, requires_grad).
         if save_estimator_outputs:

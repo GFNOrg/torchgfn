@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Literal
 
+import torch
+
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 
@@ -48,6 +50,7 @@ class ReplayBuffer:
         elif objects_type == "states":
             self.training_objects = env.states_from_batch_shape((0,))
             self.terminating_states = env.states_from_batch_shape((0,))
+            self.terminating_states.log_rewards = torch.zeros((0,), device=env.device)
             self.objects_type = "states"
         else:
             raise ValueError(f"Unknown objects_type: {objects_type}")

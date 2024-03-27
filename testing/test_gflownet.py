@@ -27,7 +27,7 @@ def test_trajectory_based_gflownet_generic():
     )
     pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
 
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, off_policy=False)
+    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     mock_trajectories = Trajectories(env)
 
     result = gflownet.to_training_samples(mock_trajectories)
@@ -46,7 +46,9 @@ def test_flow_matching_gflownet_generic():
     module = BoxPFNeuralNet(
         hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
     )
-    estimator = DiscretePolicyEstimator(env, module, True)
+    estimator = DiscretePolicyEstimator(
+        module, n_actions=2, preprocessor=env.preprocessor
+    )
     gflownet = FMGFlowNet(estimator)
     mock_trajectories = Trajectories(env)
     states_tuple = gflownet.to_training_samples(mock_trajectories)
@@ -79,7 +81,7 @@ def test_pytorch_inheritance():
     )
     pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
 
-    tbgflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, off_policy=False)
+    tbgflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     assert hasattr(
         tbgflownet.parameters(), "__iter__"
     ), "Expected gflownet to have iterable parameters() method inherited from nn.Module"
@@ -87,7 +89,9 @@ def test_pytorch_inheritance():
         tbgflownet.state_dict(), "__dict__"
     ), "Expected gflownet to have indexable state_dict() method inherited from nn.Module"
 
-    estimator = DiscretePolicyEstimator(env, pf_module, True)
+    estimator = DiscretePolicyEstimator(
+        pf_module, n_actions=2, preprocessor=env.preprocessor
+    )
     fmgflownet = FMGFlowNet(estimator)
     assert hasattr(
         fmgflownet.parameters(), "__iter__"

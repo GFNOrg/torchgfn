@@ -56,7 +56,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         pf: GFNModule,
         pb: GFNModule,
         logF: ScalarEstimator,
-        off_policy: bool,
         weighting: Literal[
             "DB",
             "ModifiedDB",
@@ -70,7 +69,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
     ):
-        super().__init__(pf, pb, off_policy=off_policy)
+        super().__init__(pf, pb)
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda

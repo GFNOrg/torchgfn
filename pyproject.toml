@@ -26,7 +26,7 @@ torch = ">=1.9.0"
 torchtyping = ">=0.1.4"
 
 # dev dependencies.
-black = { version = "24.2", optional = true }
+black = { version = "24.3", optional = true }
 flake8 = { version = "*", optional = true }
 gitmopy = { version = "*", optional = true }
 myst-parser = { version = "*", optional = true }
