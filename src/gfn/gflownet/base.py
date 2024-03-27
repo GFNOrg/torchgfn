@@ -13,6 +13,7 @@ from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
+from gfn.utils.common import has_log_probs
 
 TrainingSampleType = TypeVar(
     "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
@@ -164,11 +165,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         if valid_states.batch_shape != tuple(valid_actions.batch_shape):
             raise AssertionError("Something wrong happening with log_pf evaluations")
 
-        if (
-            trajectories.log_probs is not None
-            and trajectories.log_probs.nelement() > 0
-            and not recalculate_all
-        ):
+        if has_log_probs(trajectories) and not recalculate_all:
             log_pf_trajectories = trajectories.log_probs
         else:
             if trajectories.estimator_outputs is not None and not recalculate_all:

@@ -14,6 +14,7 @@ from torchtyping import TensorType as TT
 
 from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
+from gfn.utils.common import has_log_probs
 
 
 def is_tensor(t) -> bool:
@@ -325,11 +326,14 @@ class Trajectories(Container):
                 ],
                 dim=0,
             )
+
+        # Only return logprobs if they exist.
         log_probs = (
             self.log_probs[~self.actions.is_dummy]
-            if self.log_probs is not None and self.log_probs.nelement() > 0
+            if has_log_probs(self)
             else None
         )
+
         return Transitions(
             env=self.env,
             states=states,

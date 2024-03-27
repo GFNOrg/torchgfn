@@ -8,6 +8,7 @@ from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.modules import GFNModule, ScalarEstimator
+from gfn.utils.common import has_log_probs
 
 
 class DBGFlowNet(PFBasedGFlowNet[Transitions]):
@@ -72,11 +73,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         if states.batch_shape != tuple(actions.batch_shape):
             raise ValueError("Something wrong happening with log_pf evaluations")
-        if (
-            transitions.log_probs is not None
-            and transitions.log_probs.nelement() > 0
-            and not recalculate_all
-        ):
+
+        if has_log_probs(transitions) and not recalculate_all:
             valid_log_pf_actions = transitions.log_probs
         else:
             # Evaluate the log PF of the actions
@@ -179,11 +177,8 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         all_log_rewards = transitions.all_log_rewards[mask]
         module_output = self.pf(states)
         pf_dist = self.pf.to_probability_distribution(states, module_output)
-        if (
-            transitions.log_probs is not None
-            and transitions.log_probs.nelement() > 0
-            and not recalculate_all
-        ):
+
+        if has_log_probs(transitions) and not recalculate_all:
             valid_log_pf_actions = transitions[mask].log_probs
         else:
             # Evaluate the log PF of the actions sampled off policy.

@@ -393,7 +393,7 @@ class DiscreteEnv(Env, ABC):
 
     def make_actions_class(self) -> type[Actions]:
         env = self
-        self.n_actions
+        n_actions = self.n_actions
 
         class DiscreteEnvActions(Actions):
             action_shape = env.action_shape
