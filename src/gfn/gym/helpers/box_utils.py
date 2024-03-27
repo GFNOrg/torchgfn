@@ -1,4 +1,5 @@
 """This file contains utilitary functions for the Box environment."""
+
 from typing import Tuple
 
 import numpy as np

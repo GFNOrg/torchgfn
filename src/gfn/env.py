@@ -219,6 +219,10 @@ class Env(ABC):
         not_done_actions = actions[~new_sink_states_idx]
 
         new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
+        if not isinstance(new_not_done_states_tensor, torch.Tensor):
+            raise Exception(
+                "User implemented env.step function *must* return a torch.Tensor!"
+            )
 
         new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
 

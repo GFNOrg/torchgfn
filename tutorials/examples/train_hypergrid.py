@@ -289,7 +289,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=100,
+        default=0,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
     )
 

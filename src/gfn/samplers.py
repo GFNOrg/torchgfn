@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import List, Optional, Tuple
 
 import torch
@@ -7,7 +8,7 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
-from gfn.states import States
+from gfn.states import States, stack_states
 
 
 class Sampler:
@@ -143,9 +144,7 @@ class Sampler:
             else states.is_sink_state
         )
 
-        trajectories_states: List[TT["n_trajectories", "state_shape", torch.float]] = [
-            states.tensor
-        ]
+        trajectories_states: List[States] = [deepcopy(states)]
         trajectories_actions: List[TT["n_trajectories", torch.long]] = []
         trajectories_logprobs: List[TT["n_trajectories", torch.float]] = []
         trajectories_dones = torch.zeros(
@@ -222,10 +221,9 @@ class Sampler:
             states = new_states
             dones = dones | new_dones
 
-            trajectories_states += [states.tensor]
+            trajectories_states += [deepcopy(states)]
 
-        trajectories_states = torch.stack(trajectories_states, dim=0)
-        trajectories_states = env.states_from_tensor(trajectories_states)
+        trajectories_states = stack_states(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)
         trajectories_logprobs = (
             torch.stack(trajectories_logprobs, dim=0) if save_logprobs else None
