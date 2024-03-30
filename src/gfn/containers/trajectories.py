@@ -232,21 +232,33 @@ class Trajectories(Container):
         self.states.extend(other.states)
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
 
-        # For log_probs, we first need to make the first dimensions of self.log_probs and other.log_probs equal
-        # (i.e. the number of steps in the trajectories), and then concatenate them
+        # For log_probs, we first need to make the first dimensions of self.log_probs
+        # and other.log_probs equal (i.e. the number of steps in the trajectories), and
+        # then concatenate them.
         new_max_length = max(self.log_probs.shape[0], other.log_probs.shape[0])
         self.log_probs = self.extend_log_probs(self.log_probs, new_max_length)
         other.log_probs = self.extend_log_probs(other.log_probs, new_max_length)
-
         self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
 
+        # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat(
                 (self._log_rewards, other._log_rewards),
                 dim=0,
             )
+        # If the trajectories object does not yet have `log_rewards` assigned but the
+        # external trajectory has log_rewards, simply assign them over.
+        elif self._log_rewards is None and other._log_rewards is not None:
+            self._log_rewards = other._log_rewards
         else:
             self._log_rewards = None
+
+        # Ensure log_probs/rewards are the correct dimensions. TODO: Remove?
+        if self.log_probs.numel() > 0:
+            assert len(self.log_probs) == self.states.batch_shape[-1]
+
+        if self.log_rewards is not None:
+            assert len(self.log_rewards) == self.states.batch_shape[-1]
 
         # Either set, or append, estimator outputs if they exist in the submitted
         # trajectory.
