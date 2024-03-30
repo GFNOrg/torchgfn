@@ -17,7 +17,7 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.containers import ReplayBuffer
+from gfn.containers import ReplayBuffer, PrioritizedReplayBuffer
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -185,12 +185,17 @@ def main(args):  # noqa: C901
             objects_type = "states"
         else:
             raise NotImplementedError(f"Unknown loss: {args.loss}")
-        replay_buffer = ReplayBuffer(
-            env, objects_type=objects_type, capacity=args.replay_buffer_size
-        )
+
+        if args.replay_buffer_prioritized:
+            replay_buffer = PrioritizedReplayBuffer(
+                env, objects_type=objects_type, capacity=args.replay_buffer_size
+            )
+        else:
+            replay_buffer = ReplayBuffer(
+                env, objects_type=objects_type, capacity=args.replay_buffer_size
+            )
 
     # 3. Create the optimizer
-
     # Policy parameters have their own LR.
     params = [
         {
@@ -291,6 +296,11 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
+    )
+    parser.add_argument(
+        "--replay_buffer_prioritized",
+        action="store_true",
+        help="If set and replay_buffer_size > 0, use a prioritized replay buffer.",
     )
 
     parser.add_argument(
