@@ -297,7 +297,7 @@ if __name__ == "__main__":
         gflownet,
         environment,
         lr_base=1e-3,
-        n_trajectories=1.28e6,
+        n_trajectories=5e6,
         batch_size=256,
         exploration_var_starting_val=exploration_var_starting_val,
     )
