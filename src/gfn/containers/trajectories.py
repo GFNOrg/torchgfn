@@ -255,10 +255,10 @@ class Trajectories(Container):
 
         # Ensure log_probs/rewards are the correct dimensions. TODO: Remove?
         if self.log_probs.numel() > 0:
-            assert len(self.log_probs) == self.states.batch_shape[-1]
+            assert self.log_probs.shape == self.actions.batch_shape
 
         if self.log_rewards is not None:
-            assert len(self.log_rewards) == self.states.batch_shape[-1]
+            assert len(self.log_rewards) == self.actions.batch_shape[-1]
 
         # Either set, or append, estimator outputs if they exist in the submitted
         # trajectory.
