@@ -57,7 +57,7 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     )
 
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
-    trajectories = gflownet.sample_trajectories(env, off_policy=False, n_samples=10)
+    trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
     states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
     loss = gflownet.loss(env, states_tuple)
     assert loss >= 0
@@ -71,11 +71,13 @@ def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
         env_name, preprocessor_name, delta=0.1, n_components=1, n_components_s0=1
     )
-    gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, off_policy=False)
-    gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, off_policy=True)
+    gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
+    gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
 
     log_pfs_on, log_pbs_on = gflownet_on.get_pfs_and_pbs(trajectories)
-    log_pfs_off, log_pbs_off = gflownet_off.get_pfs_and_pbs(trajectories)
+    log_pfs_off, log_pbs_off = gflownet_off.get_pfs_and_pbs(
+        trajectories, recalculate_all_logprobs=True
+    )
 
 
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
@@ -86,10 +88,12 @@ def test_get_scores(env_name: str, preprocessor_name: str):
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
         env_name, preprocessor_name, delta=0.1, n_components=1, n_components_s0=1
     )
-    gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, off_policy=False)
-    gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, off_policy=True)
+    gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
+    gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     scores_on = gflownet_on.get_trajectories_scores(trajectories)
-    scores_off = gflownet_off.get_trajectories_scores(trajectories)
+    scores_off = gflownet_off.get_trajectories_scores(
+        trajectories, recalculate_all_logprobs=True
+    )
     assert all(
         [
             torch.all(torch.abs(scores_on[i] - scores_off[i]) < 1e-4)
@@ -189,28 +193,24 @@ def PFBasedGFlowNet_with_return(
             forward_looking=forward_looking,
             pf=pf,
             pb=pb,
-            off_policy=False,
         )
     elif gflownet_name == "ModifiedDB":
-        gflownet = ModifiedDBGFlowNet(pf=pf, pb=pb, off_policy=False)
+        gflownet = ModifiedDBGFlowNet(pf=pf, pb=pb)
     elif gflownet_name == "TB":
-        gflownet = TBGFlowNet(pf=pf, pb=pb, off_policy=False)
+        gflownet = TBGFlowNet(pf=pf, pb=pb)
     elif gflownet_name == "ZVar":
-        gflownet = LogPartitionVarianceGFlowNet(pf=pf, pb=pb, off_policy=False)
+        gflownet = LogPartitionVarianceGFlowNet(pf=pf, pb=pb)
     elif gflownet_name == "SubTB":
         gflownet = SubTBGFlowNet(
             logF=logF,
             weighting=sub_tb_weighting,
             pf=pf,
             pb=pb,
-            off_policy=False,
         )
     else:
         raise ValueError(f"Unknown gflownet {gflownet_name}")
 
-    trajectories = gflownet.sample_trajectories(
-        env, sample_off_policy=False, n_samples=10
-    )
+    trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
     training_objects = gflownet.to_training_samples(trajectories)
 
     _ = gflownet.loss(env, training_objects)
@@ -307,13 +307,11 @@ def test_subTB_vs_TB(
         zero_logF=True,
     )
 
-    trajectories = gflownet.sample_trajectories(
-        env, sample_off_policy=False, n_samples=10
-    )
+    trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
     subtb_loss = gflownet.loss(env, trajectories)
 
     if weighting == "TB":
-        tb_loss = TBGFlowNet(pf=pf, pb=pb, off_policy=False).loss(
+        tb_loss = TBGFlowNet(pf=pf, pb=pb).loss(
             env, trajectories
         )  # LogZ is default 0.0.
         assert (tb_loss - subtb_loss).abs() < 1e-4

@@ -14,6 +14,7 @@ from torchtyping import TensorType as TT
 
 from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
+from gfn.utils.common import has_log_probs
 
 
 def is_tensor(t) -> bool:
@@ -54,7 +55,7 @@ class Trajectories(Container):
         is_backward: bool = False,
         log_rewards: TT["n_trajectories", torch.float] | None = None,
         log_probs: TT["max_length", "n_trajectories", torch.float] | None = None,
-        estimator_outputs: torch.Tensor | None = None,
+        estimator_outputs: TT["batch_shape", "output_dim", torch.float] | None = None,
     ) -> None:
         """
         Args:
@@ -325,7 +326,12 @@ class Trajectories(Container):
                 ],
                 dim=0,
             )
-        log_probs = self.log_probs[~self.actions.is_dummy]
+
+        # Only return logprobs if they exist.
+        log_probs = (
+            self.log_probs[~self.actions.is_dummy] if has_log_probs(self) else None
+        )
+
         return Transitions(
             env=self.env,
             states=states,
