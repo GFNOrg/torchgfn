@@ -229,6 +229,7 @@ def train(
             env,
             n_samples=batch_size,
             save_estimator_outputs=True,
+            save_logprobs=False,
             scale_factor=scale_schedule[iteration],  # Off policy kwargs.
         )
         training_samples = gflownet.to_training_samples(trajectories)
