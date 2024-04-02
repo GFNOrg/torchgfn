@@ -168,7 +168,10 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         if has_log_probs(trajectories) and not recalculate_all_logprobs:
             log_pf_trajectories = trajectories.log_probs
         else:
-            if trajectories.estimator_outputs is not None and not recalculate_all_logprobs:
+            if (
+                trajectories.estimator_outputs is not None
+                and not recalculate_all_logprobs
+            ):
                 estimator_outputs = trajectories.estimator_outputs[
                     ~trajectories.actions.is_dummy
                 ]
