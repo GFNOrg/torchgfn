@@ -90,7 +90,11 @@ class Trajectories(Container):
             if when_is_done is not None
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
         )
-        self._log_rewards = log_rewards
+        self._log_rewards = (
+            log_rewards
+            if log_rewards is not None
+            else torch.full(size=(0,), fill_value=0, dtype=torch.float)
+        )
         self.log_probs = (
             log_probs
             if log_probs is not None
@@ -246,10 +250,7 @@ class Trajectories(Container):
                 (self._log_rewards, other._log_rewards),
                 dim=0,
             )
-        # If the trajectories object does not yet have `log_rewards` assigned but the
-        # external trajectory has log_rewards, simply assign them over.
-        elif self._log_rewards is None and other._log_rewards is not None:
-            self._log_rewards = other._log_rewards
+        # Will not be None if object is initialized as empty.
         else:
             self._log_rewards = None
 

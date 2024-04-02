@@ -90,7 +90,7 @@ class Transitions(Container):
             len(self.next_states.batch_shape) == 1
             and self.states.batch_shape == self.next_states.batch_shape
         )
-        self._log_rewards = log_rewards
+        self._log_rewards = log_rewards if log_rewards is not None else torch.zeros(0)
         self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
 
     @property
@@ -208,6 +208,8 @@ class Transitions(Container):
         self.actions.extend(other.actions)
         self.is_done = torch.cat((self.is_done, other.is_done), dim=0)
         self.next_states.extend(other.next_states)
+
+        # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat(
                 (self._log_rewards, other._log_rewards), dim=0
