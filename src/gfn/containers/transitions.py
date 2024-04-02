@@ -214,6 +214,7 @@ class Transitions(Container):
             self._log_rewards = torch.cat(
                 (self._log_rewards, other._log_rewards), dim=0
             )
+        # Will not be None if object is initialized as empty.
         else:
             self._log_rewards = None
         self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=0)
