@@ -55,13 +55,12 @@ class ReplayBuffer:
             raise ValueError(f"Unknown objects_type: {objects_type}")
 
         self._is_full = False
-        self._index = 0
 
     def __repr__(self):
         return f"ReplayBuffer(capacity={self.capacity}, containing {len(self)} {self.objects_type})"
 
     def __len__(self):
-        return self.capacity if self._is_full else self._index
+        return len(self.training_objects)
 
     def add(self, training_objects: Transitions | Trajectories | tuple[States]):
         """Adds a training object to the buffer."""
@@ -72,8 +71,7 @@ class ReplayBuffer:
 
         to_add = len(training_objects)
 
-        self._is_full |= self._index + to_add >= self.capacity
-        self._index = (self._index + to_add) % self.capacity
+        self._is_full |= len(self) + to_add >= self.capacity
 
         self.training_objects.extend(training_objects)
         self.training_objects = self.training_objects[-self.capacity :]
@@ -101,7 +99,6 @@ class ReplayBuffer:
     def load(self, directory: str):
         """Loads the buffer from disk."""
         self.training_objects.load(os.path.join(directory, "training_objects"))
-        self._index = len(self.training_objects)
         if self.terminating_states is not None:
             self.terminating_states.load(os.path.join(directory, "terminating_states"))
 
@@ -171,8 +168,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         to_add = len(training_objects)
 
-        self._is_full |= self._index + to_add >= self.capacity
-        self._index = (self._index + to_add) % self.capacity
+        self._is_full |= len(self) + to_add >= self.capacity
 
         # The buffer isn't full yet.
         if len(self.training_objects) < self.capacity:
