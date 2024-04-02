@@ -81,6 +81,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             module_output = self.pf(
                 states
             )  # TODO: Inefficient duplication in case of tempered policy
+            # The Transitions container should then have some
+            # estimator_outputs attribute as well, to avoid duplication here ?
+            # See (#156).
             valid_log_pf_actions = self.pf.to_probability_distribution(
                 states, module_output
             ).log_prob(actions.tensor)
