@@ -76,7 +76,7 @@ def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
 
     log_pfs_on, log_pbs_on = gflownet_on.get_pfs_and_pbs(trajectories)
     log_pfs_off, log_pbs_off = gflownet_off.get_pfs_and_pbs(
-        trajectories, recalculate_all=True
+        trajectories, recalculate_all_logprobs=True
     )
 
 
@@ -92,7 +92,7 @@ def test_get_scores(env_name: str, preprocessor_name: str):
     gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     scores_on = gflownet_on.get_trajectories_scores(trajectories)
     scores_off = gflownet_off.get_trajectories_scores(
-        trajectories, recalculate_all=True
+        trajectories, recalculate_all_logprobs=True
     )
     assert all(
         [

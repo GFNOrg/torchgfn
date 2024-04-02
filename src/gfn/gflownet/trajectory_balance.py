@@ -42,7 +42,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         self.log_reward_clip_min = log_reward_clip_min
 
     def loss(
-        self, env: Env, trajectories: Trajectories, recalculate_all: bool = False
+        self, env: Env, trajectories: Trajectories, recalculate_all_logprobs: bool = False
     ) -> TT[0, float]:
         """Trajectory balance loss.
 
@@ -54,7 +54,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         """
         del env  # unused
         _, _, scores = self.get_trajectories_scores(
-            trajectories, recalculate_all=recalculate_all
+            trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
         loss = (scores + self.logZ).pow(2).mean()
         if torch.isnan(loss):
@@ -83,7 +83,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         self.log_reward_clip_min = log_reward_clip_min
 
     def loss(
-        self, env: Env, trajectories: Trajectories, recalculate_all: bool = False
+        self, env: Env, trajectories: Trajectories, recalculate_all_logprobs: bool = False
     ) -> TT[0, float]:
         """Log Partition Variance loss.
 
@@ -92,7 +92,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         """
         del env  # unused
         _, _, scores = self.get_trajectories_scores(
-            trajectories, recalculate_all=recalculate_all
+            trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
         loss = (scores - scores.mean()).pow(2).mean()
         if torch.isnan(loss):

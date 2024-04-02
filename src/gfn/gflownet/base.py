@@ -122,7 +122,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         self,
         trajectories: Trajectories,
         fill_value: float = 0.0,
-        recalculate_all: bool = False,
+        recalculate_all_logprobs: bool = False,
     ) -> Tuple[
         TT["max_length", "n_trajectories", torch.float],
         TT["max_length", "n_trajectories", torch.float],
@@ -132,7 +132,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         More specifically it evaluates $\log P_F (s' \mid s)$ and $\log P_B(s \mid s')$
         for each transition in each trajectory in the batch.
 
-        Unless recalculate_all=True, in which case we re-evaluate the logprobs of the trajectories with
+        Unless recalculate_all_logprobs=True, in which case we re-evaluate the logprobs of the trajectories with
         the current self.pf. The following applies:
             - If trajectories have log_probs attribute, use them - this is usually for on-policy learning
             - Else, if trajectories have estimator_outputs attribute, transform them
@@ -165,10 +165,10 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         if valid_states.batch_shape != tuple(valid_actions.batch_shape):
             raise AssertionError("Something wrong happening with log_pf evaluations")
 
-        if has_log_probs(trajectories) and not recalculate_all:
+        if has_log_probs(trajectories) and not recalculate_all_logprobs:
             log_pf_trajectories = trajectories.log_probs
         else:
-            if trajectories.estimator_outputs is not None and not recalculate_all:
+            if trajectories.estimator_outputs is not None and not recalculate_all_logprobs:
                 estimator_outputs = trajectories.estimator_outputs[
                     ~trajectories.actions.is_dummy
                 ]
@@ -214,7 +214,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
     def get_trajectories_scores(
         self,
         trajectories: Trajectories,
-        recalculate_all: bool = False,
+        recalculate_all_logprobs: bool = False,
     ) -> Tuple[
         TT["n_trajectories", torch.float],
         TT["n_trajectories", torch.float],
@@ -222,7 +222,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
     ]:
         """Given a batch of trajectories, calculate forward & backward policy scores."""
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-            trajectories, recalculate_all=recalculate_all
+            trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
 
         assert log_pf_trajectories is not None
