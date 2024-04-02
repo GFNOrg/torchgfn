@@ -188,7 +188,11 @@ def main(args):  # noqa: C901
 
         if args.replay_buffer_prioritized:
             replay_buffer = PrioritizedReplayBuffer(
-                env, objects_type=objects_type, capacity=args.replay_buffer_size
+                env,
+                objects_type=objects_type,
+                capacity=args.replay_buffer_size,
+                p_norm_distance=1,  # Use L1-norm for diversity estimation.
+                cutoff_distance=0,  # -1 turns off diversity-based filtering.
             )
         else:
             replay_buffer = ReplayBuffer(
