@@ -1,6 +1,6 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from copy import deepcopy
 from math import prod
 from typing import Callable, ClassVar, List, Optional, Sequence, cast
@@ -128,9 +128,12 @@ class States(ABC):
 
     def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> States:
         """Access particular states of the batch."""
-        return self.__class__(
+        out = self.__class__(
             self.tensor[index]
         )  # TODO: Inefficient - this might make a copy of the tensor!
+        if self._log_rewards is not None:
+            out.log_rewards = self._log_rewards[index]
+        return out
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: States
@@ -168,6 +171,11 @@ class States(ABC):
             # This corresponds to adding a state to a trajectory
             self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
+            if self._log_rewards is not None:
+                assert other._log_rewards is not None
+                self._log_rewards = torch.cat(
+                    (self._log_rewards, other._log_rewards), dim=0
+                )
 
         elif len(other_batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
@@ -258,6 +266,10 @@ class States(ABC):
     def log_rewards(self, log_rewards: TT["batch_shape", torch.float]) -> None:
         self._log_rewards = log_rewards
 
+    def sample(self, n_samples: int) -> States:
+        """Samples a subset of the States object."""
+        return self[torch.randperm(len(self))[:n_samples]]
+
 
 class DiscreteStates(States, ABC):
     """Base class for states of discrete environments.
@@ -340,7 +352,11 @@ class DiscreteStates(States, ABC):
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks[index]
         backward_masks = self.backward_masks[index]
-        return self.__class__(states, forward_masks, backward_masks)
+        out = self.__class__(states, forward_masks, backward_masks)
+        if self.log_rewards is not None:
+            log_probs = self._log_rewards[index]
+            out.log_rewards = log_probs
+        return out
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: DiscreteStates

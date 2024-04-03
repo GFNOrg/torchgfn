@@ -17,7 +17,7 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.containers import ReplayBuffer
+from gfn.containers import ReplayBuffer, PrioritizedReplayBuffer
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -38,7 +38,6 @@ DEFAULT_SEED = 4444
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
-    off_policy_sampling = False if args.replay_buffer_size == 0 else True
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
     use_wandb = len(args.wandb_project) > 0
@@ -123,7 +122,6 @@ def main(args):  # noqa: C901
             gflownet = ModifiedDBGFlowNet(
                 pf_estimator,
                 pb_estimator,
-                off_policy_sampling,
             )
 
         if args.loss in ("DB", "SubTB"):
@@ -154,14 +152,12 @@ def main(args):  # noqa: C901
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
-                    off_policy=off_policy_sampling,
                 )
             else:
                 gflownet = SubTBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
-                    off_policy=off_policy_sampling,
                     weighting=args.subTB_weighting,
                     lamda=args.subTB_lambda,
                 )
@@ -169,13 +165,11 @@ def main(args):  # noqa: C901
             gflownet = TBGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                off_policy=off_policy_sampling,
             )
         elif args.loss == "ZVar":
             gflownet = LogPartitionVarianceGFlowNet(
                 pf=pf_estimator,
                 pb=pb_estimator,
-                off_policy=off_policy_sampling,
             )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
@@ -191,12 +185,21 @@ def main(args):  # noqa: C901
             objects_type = "states"
         else:
             raise NotImplementedError(f"Unknown loss: {args.loss}")
-        replay_buffer = ReplayBuffer(
-            env, objects_type=objects_type, capacity=args.replay_buffer_size
-        )
+
+        if args.replay_buffer_prioritized:
+            replay_buffer = PrioritizedReplayBuffer(
+                env,
+                objects_type=objects_type,
+                capacity=args.replay_buffer_size,
+                p_norm_distance=1,  # Use L1-norm for diversity estimation.
+                cutoff_distance=0,  # -1 turns off diversity-based filtering.
+            )
+        else:
+            replay_buffer = ReplayBuffer(
+                env, objects_type=objects_type, capacity=args.replay_buffer_size
+            )
 
     # 3. Create the optimizer
-
     # Policy parameters have their own LR.
     params = [
         {
@@ -225,7 +228,10 @@ def main(args):  # noqa: C901
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
-            env, n_samples=args.batch_size, sample_off_policy=off_policy_sampling
+            env,
+            n_samples=args.batch_size,
+            save_logprobs=args.replay_buffer_size == 0,
+            save_estimator_outputs=False,
         )
         training_samples = gflownet.to_training_samples(trajectories)
         if replay_buffer is not None:
@@ -294,6 +300,11 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
+    )
+    parser.add_argument(
+        "--replay_buffer_prioritized",
+        action="store_true",
+        help="If set and replay_buffer_size > 0, use a prioritized replay buffer.",
     )
 
     parser.add_argument(

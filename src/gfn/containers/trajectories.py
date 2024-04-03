@@ -14,6 +14,7 @@ from torchtyping import TensorType as TT
 
 from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
+from gfn.utils.common import has_log_probs
 
 
 def is_tensor(t) -> bool:
@@ -54,7 +55,7 @@ class Trajectories(Container):
         is_backward: bool = False,
         log_rewards: TT["n_trajectories", torch.float] | None = None,
         log_probs: TT["max_length", "n_trajectories", torch.float] | None = None,
-        estimator_outputs: torch.Tensor | None = None,
+        estimator_outputs: TT["batch_shape", "output_dim", torch.float] | None = None,
     ) -> None:
         """
         Args:
@@ -89,7 +90,11 @@ class Trajectories(Container):
             if when_is_done is not None
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
         )
-        self._log_rewards = log_rewards
+        self._log_rewards = (
+            log_rewards
+            if log_rewards is not None
+            else torch.full(size=(0,), fill_value=0, dtype=torch.float)
+        )
         self.log_probs = (
             log_probs
             if log_probs is not None
@@ -231,21 +236,30 @@ class Trajectories(Container):
         self.states.extend(other.states)
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
 
-        # For log_probs, we first need to make the first dimensions of self.log_probs and other.log_probs equal
-        # (i.e. the number of steps in the trajectories), and then concatenate them
+        # For log_probs, we first need to make the first dimensions of self.log_probs
+        # and other.log_probs equal (i.e. the number of steps in the trajectories), and
+        # then concatenate them.
         new_max_length = max(self.log_probs.shape[0], other.log_probs.shape[0])
         self.log_probs = self.extend_log_probs(self.log_probs, new_max_length)
         other.log_probs = self.extend_log_probs(other.log_probs, new_max_length)
-
         self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
 
+        # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat(
                 (self._log_rewards, other._log_rewards),
                 dim=0,
             )
+        # Will not be None if object is initialized as empty.
         else:
             self._log_rewards = None
+
+        # Ensure log_probs/rewards are the correct dimensions. TODO: Remove?
+        if self.log_probs.numel() > 0:
+            assert self.log_probs.shape == self.actions.batch_shape
+
+        if self.log_rewards is not None:
+            assert len(self.log_rewards) == self.actions.batch_shape[-1]
 
         # Either set, or append, estimator outputs if they exist in the submitted
         # trajectory.
@@ -325,7 +339,12 @@ class Trajectories(Container):
                 ],
                 dim=0,
             )
-        log_probs = self.log_probs[~self.actions.is_dummy]
+
+        # Only return logprobs if they exist.
+        log_probs = (
+            self.log_probs[~self.actions.is_dummy] if has_log_probs(self) else None
+        )
+
         return Transitions(
             env=self.env,
             states=states,

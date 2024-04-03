@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from gfn.states import States
 
 from gfn.containers.base import Container
+from gfn.utils.common import has_log_probs
 
 
 class Transitions(Container):
@@ -89,7 +90,7 @@ class Transitions(Container):
             len(self.next_states.batch_shape) == 1
             and self.states.batch_shape == self.next_states.batch_shape
         )
-        self._log_rewards = log_rewards
+        self._log_rewards = log_rewards if log_rewards is not None else torch.zeros(0)
         self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
 
     @property
@@ -186,7 +187,10 @@ class Transitions(Container):
         log_rewards = (
             self._log_rewards[index] if self._log_rewards is not None else None
         )
-        log_probs = self.log_probs[index]
+
+        # Only return logprobs if they exist.
+        log_probs = self.log_probs[index] if has_log_probs(self) else None
+
         return Transitions(
             env=self.env,
             states=states,
@@ -204,10 +208,13 @@ class Transitions(Container):
         self.actions.extend(other.actions)
         self.is_done = torch.cat((self.is_done, other.is_done), dim=0)
         self.next_states.extend(other.next_states)
+
+        # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat(
                 (self._log_rewards, other._log_rewards), dim=0
             )
+        # Will not be None if object is initialized as empty.
         else:
             self._log_rewards = None
         self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=0)

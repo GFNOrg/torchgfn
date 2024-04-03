@@ -36,7 +36,8 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
     def sample_trajectories(
         self,
         env: Env,
-        off_policy: bool,
+        save_logprobs: bool,
+        save_estimator_outputs: bool = False,
         n_samples: int = 1000,
         **policy_kwargs: Optional[dict],
     ) -> Trajectories:
@@ -49,7 +50,8 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         trajectories = sampler.sample_trajectories(
             env,
             n_trajectories=n_samples,
-            off_policy=off_policy,
+            save_estimator_outputs=save_estimator_outputs,
+            save_logprobs=save_logprobs,
             **policy_kwargs,
         )
         return trajectories
