@@ -13,6 +13,10 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 
 from argparse import ArgumentParser
 
+# didnt help.
+#import torch.multiprocessing
+#torch.multiprocessing.set_sharing_strategy('file_system')
+
 import torch
 import time
 import wandb
@@ -38,41 +42,46 @@ from gfn.utils.training import validate
 DEFAULT_SEED = 4444
 
 
-def dist_init():
+def dist_init(dist_backend : str = "ccl"):
     import os
-
     global my_rank
     global my_size
-    dist_backend = "mpi"
+    print("PMI_SIZE={}".format(int(os.environ.get("PMI_SIZE", "0"))))
+
     if int(os.environ.get("PMI_SIZE", "0")) > 1:
         if dist_backend == "ccl":
+            print("+ CCL backend requested...")
             try:
                 import oneccl_bindings_for_pytorch
-            except:
-                print(
-                    "CCL backend requested but import oneccl_bindings_for_pytorch failed"
+            except ImportError as e:
+                raise Exception(
+                    "import oneccl_bindings_for_pytorch failed, {}".format(e)
                 )
-                raise
+
         elif dist_backend == "mpi":
-            if not torch.distributed.is_mpi_available():
-                try:
-                    import torch_mpi
-                except:
-                    print(
-                        "MPI backend requested but not available try installing torch_mpi module"
-                    )
-                    raise
+            print("+ MPI backend requested...")
+            assert torch.distributed.is_mpi_available()
+            try:
+                import torch_mpi
+            except ImportError as e:
+                raise Exception ("import torch_mpi failed, {}".format(e))
         else:
-            print(f"requested backend: {dist_backend}")
-            raise
+            raise Exception(f"invalid backend requested: {dist_backend}")
+
 
         os.environ["RANK"] = os.environ.get("PMI_RANK", "0")
         os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
-        print ("OMP_NUM_THREADS = ", os.getenv('OMP_NUM_THREADS'))
-        dist.init_process_group(backend=dist_backend)
+        print("+ OMP_NUM_THREADS = ", os.getenv('OMP_NUM_THREADS'))
+        dist.init_process_group(
+            backend=dist_backend,
+            init_method="env://",
+            world_size=int(os.environ.get("WORLD_SIZE")),
+            rank=int(os.environ.get("RANK")),
+        )
+
         my_rank = dist.get_rank()
         my_size = dist.get_world_size()
-        print(f"My rank: {my_rank} size: {my_size}")
+        print(f"+ My rank: {my_rank} size: {my_size}")
 
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
