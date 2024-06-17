@@ -14,7 +14,6 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 from argparse import ArgumentParser
 
 import torch
-import wandb
 from tqdm import tqdm, trange
 
 from gfn.containers import ReplayBuffer
@@ -43,6 +42,7 @@ def main(args):  # noqa: C901
 
     use_wandb = len(args.wandb_project) > 0
     if use_wandb:
+        import wandb
         wandb.init(project=args.wandb_project)
         wandb.config.update(args)
 
@@ -247,7 +247,7 @@ def main(args):  # noqa: C901
         to_log = {"loss": loss.item(), "states_visited": states_visited}
         if use_wandb:
             wandb.log(to_log, step=iteration)
-        if iteration % args.validation_interval == 0:
+        if (iteration % args.validation_interval == 0) or (iteration == n_iterations - 1):
             validation_info = validate(
                 env,
                 gflownet,

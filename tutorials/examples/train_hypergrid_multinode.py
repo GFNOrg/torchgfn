@@ -15,7 +15,6 @@ from argparse import ArgumentParser
 
 import torch
 import time
-import wandb
 from tqdm import tqdm, trange
 from math import ceil
 import torch.distributed as dist
@@ -83,6 +82,7 @@ def main(args):  # noqa: C901
 
     use_wandb = len(args.wandb_project) > 0
     if use_wandb:
+        import wandb
         wandb.init(project=args.wandb_project)
         wandb.config.update(args)
 
@@ -317,20 +317,21 @@ def main(args):  # noqa: C901
 
         states_visited += len(trajectories)
 
-        to_log = {"loss": loss.item(), "states_visited": states_visited}
-        if use_wandb:
-            wandb.log(to_log, step=iteration)
-        if iteration % args.validation_interval == 0:
-            validation_info = validate(
-                env,
-                gflownet,
-                args.validation_samples,
-                visited_terminating_states,
-            )
+        if my_rank == 0:
+            to_log = {"loss": loss.item(), "states_visited": states_visited}
             if use_wandb:
-                wandb.log(validation_info, step=iteration)
-            to_log.update(validation_info)
-            tqdm.write(f"{iteration}: {to_log}")
+                wandb.log(to_log, step=iteration)
+            if (iteration % args.validation_interval == 0) or (iteration == n_iterations - 1):
+                validation_info = validate(
+                    env,
+                    gflownet,
+                    args.validation_samples,
+                    visited_terminating_states,
+                )
+                if use_wandb:
+                    wandb.log(validation_info, step=iteration)
+                to_log.update(validation_info)
+                tqdm.write(f"{iteration}: {to_log}")
 
     time_end = time.time()
     total_time = time_end - time_start
@@ -339,6 +340,7 @@ def main(args):  # noqa: C901
     if (my_rank == 0):
         print ("total_time, sample_time, to_train_samples_time, loss_time, loss_backward_time, opt_time, rest_time")
         print (total_time, sample_time, to_train_samples_time, loss_time, loss_backward_time, opt_time, rest_time)
+
     return validation_info["l1_dist"]
 
 
