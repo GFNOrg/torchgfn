@@ -19,8 +19,8 @@ from argparse import ArgumentParser
 
 import torch
 import time
-import wandb
 from tqdm import tqdm, trange
+from math import ceil
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -48,6 +48,7 @@ def dist_init(dist_backend : str = "ccl"):
     global my_size
     print("PMI_SIZE={}".format(int(os.environ.get("PMI_SIZE", "0"))))
 
+    dist_backend = "ccl"
     if int(os.environ.get("PMI_SIZE", "0")) > 1:
         if dist_backend == "ccl":
             print("+ CCL backend requested...")
@@ -83,6 +84,7 @@ def dist_init(dist_backend : str = "ccl"):
         my_size = dist.get_world_size()
         print(f"+ My rank: {my_rank} size: {my_size}")
 
+
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
@@ -91,6 +93,7 @@ def main(args):  # noqa: C901
 
     use_wandb = len(args.wandb_project) > 0
     if use_wandb:
+        import wandb
         wandb.init(project=args.wandb_project)
         wandb.config.update(args)
 
@@ -277,7 +280,8 @@ def main(args):  # noqa: C901
     visited_terminating_states = env.states_from_batch_shape((0,))
 
     states_visited = 0
-    n_iterations = args.n_trajectories // args.batch_size // world_size
+    n_iterations = ceil(args.n_trajectories / args.batch_size)
+    my_batch_size = args.batch_size // world_size
     validation_info = {"l1_dist": float("inf")}
     sample_time = 0
     to_train_samples_time = 0
@@ -286,11 +290,12 @@ def main(args):  # noqa: C901
     opt_time = 0
     rest_time = 0
     print ("n_iterations = ", n_iterations)
+    print ("my_batch_size = ", my_batch_size)
     time_start = time.time()
     for iteration in trange(n_iterations):
         sample_start = time.time()
         trajectories = gflownet.sample_trajectories(
-            env, n_samples=args.batch_size, sample_off_policy=off_policy_sampling
+            env, n_samples=my_batch_size, sample_off_policy=off_policy_sampling
         )
         sample_end = time.time()
         sample_time += (sample_end - sample_start)
@@ -301,7 +306,7 @@ def main(args):  # noqa: C901
         if replay_buffer is not None:
             with torch.no_grad():
                 replay_buffer.add(training_samples)
-                training_objects = replay_buffer.sample(n_trajectories=args.batch_size)
+                training_objects = replay_buffer.sample(n_trajectories=my_batch_size)
         else:
             training_objects = training_samples
 
@@ -323,20 +328,21 @@ def main(args):  # noqa: C901
 
         states_visited += len(trajectories)
 
-        to_log = {"loss": loss.item(), "states_visited": states_visited}
-        if use_wandb:
-            wandb.log(to_log, step=iteration)
-        if iteration % args.validation_interval == 0:
-            validation_info = validate(
-                env,
-                gflownet,
-                args.validation_samples,
-                visited_terminating_states,
-            )
+        if my_rank == 0:
+            to_log = {"loss": loss.item(), "states_visited": states_visited}
             if use_wandb:
-                wandb.log(validation_info, step=iteration)
-            to_log.update(validation_info)
-            tqdm.write(f"{iteration}: {to_log}")
+                wandb.log(to_log, step=iteration)
+            if (iteration % args.validation_interval == 0) or (iteration == n_iterations - 1):
+                validation_info = validate(
+                    env,
+                    gflownet,
+                    args.validation_samples,
+                    visited_terminating_states,
+                )
+                if use_wandb:
+                    wandb.log(validation_info, step=iteration)
+                to_log.update(validation_info)
+                tqdm.write(f"{iteration}: {to_log}")
 
     time_end = time.time()
     total_time = time_end - time_start
@@ -345,6 +351,7 @@ def main(args):  # noqa: C901
     if (my_rank == 0):
         print ("total_time, sample_time, to_train_samples_time, loss_time, loss_backward_time, opt_time, rest_time")
         print (total_time, sample_time, to_train_samples_time, loss_time, loss_backward_time, opt_time, rest_time)
+
     return validation_info["l1_dist"]
 
 
