@@ -12,6 +12,9 @@
 #source /swtools/intel/2024.0/oneapi-vars.sh
 export I_MPI_HYDRA_BOOTSTRAP=slurm
 
+# Adds mpiexec.hydra
+export PATH="${PATH}:/home/mila/v/vivianoj/code/hydra-4.2.1/bin/bin"
+
 eval "$(conda shell.bash hook)"
 conda activate torchgfn_multinode
 
