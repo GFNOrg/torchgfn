@@ -3,6 +3,9 @@ Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
 from typing import Literal, Tuple
+from math import gcd
+from functools import reduce
+from decimal import Decimal
 
 import torch
 from einops import rearrange
@@ -13,6 +16,30 @@ from gfn.env import DiscreteEnv
 from gfn.gym.helpers.preprocessors import KHotPreprocessor, OneHotPreprocessor
 from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
 from gfn.states import DiscreteStates
+
+
+def lcm(a, b):
+    """Returns the lowest common multiple between a and b."""
+    return a * b // gcd(a, b)
+
+
+def lcm_multiple(numbers):
+    """Find the lowest common multiple across a list of numbers"""
+    return reduce(lcm, numbers)
+
+
+def smallest_multiplier_to_integers(float_vector, precision=3):
+    """Used to calculate a scale factor to avoid imprecise floating point arithmetic."""
+    denominators = []
+
+    for num in float_vector:
+        dec = Decimal(str(num))  # Convert to Decimal for precise arithmetic.
+        fraction = dec.as_integer_ratio()
+        denominators.append(fraction[1])
+
+    smallest_multiplier = lcm_multiple(denominators)
+
+    return smallest_multiplier
 
 
 class HyperGrid(DiscreteEnv):
@@ -49,6 +76,9 @@ class HyperGrid(DiscreteEnv):
         self.R1 = R1
         self.R2 = R2
         self.reward_cos = reward_cos
+
+        # This scale is used to stabilize calculations.
+        self.scale_factor = smallest_multiplier_to_integers([R0, R1, R2])
 
         s0 = torch.zeros(ndim, dtype=torch.long, device=torch.device(device_str))
         sf = torch.full(
