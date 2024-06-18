@@ -37,7 +37,7 @@ from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.utils.common import set_seed
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
-from gfn.utils.training import validate
+from .train_hypergrid import validate_hypergrid
 
 DEFAULT_SEED = 4444
 
@@ -292,6 +292,8 @@ def main(args):  # noqa: C901
     print ("n_iterations = ", n_iterations)
     print ("my_batch_size = ", my_batch_size)
     time_start = time.time()
+    discovered_modes = set()
+
     for iteration in trange(n_iterations):
         sample_start = time.time()
         trajectories = gflownet.sample_trajectories(
@@ -333,11 +335,12 @@ def main(args):  # noqa: C901
             if use_wandb:
                 wandb.log(to_log, step=iteration)
             if (iteration % args.validation_interval == 0) or (iteration == n_iterations - 1):
-                validation_info = validate(
+                validation_info, discovered_modes = validate_hypergrid(
                     env,
                     gflownet,
                     args.validation_samples,
                     visited_terminating_states,
+                    discovered_modes,
                 )
                 if use_wandb:
                     wandb.log(validation_info, step=iteration)

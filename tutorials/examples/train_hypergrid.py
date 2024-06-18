@@ -226,6 +226,8 @@ def main(args):  # noqa: C901
     states_visited = 0
     n_iterations = args.n_trajectories // args.batch_size
     validation_info = {"l1_dist": float("inf")}
+    discovered_modes = set()
+
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
             env,
@@ -254,11 +256,12 @@ def main(args):  # noqa: C901
         if use_wandb:
             wandb.log(to_log, step=iteration)
         if (iteration % args.validation_interval == 0) or (iteration == n_iterations - 1):
-            validation_info = validate(
+            validation_info, discovered_modes = validate_hypergrid(
                 env,
                 gflownet,
                 args.validation_samples,
                 visited_terminating_states,
+                discovered_modes,
             )
             if use_wandb:
                 wandb.log(validation_info, step=iteration)
@@ -266,6 +269,37 @@ def main(args):  # noqa: C901
             tqdm.write(f"{iteration}: {to_log}")
 
     return validation_info["l1_dist"]
+
+
+def validate_hypergrid(
+    env,
+    gflownet,
+    n_validation_samples,
+    visited_terminating_states,
+    discovered_modes,
+):
+    validation_info = validate(  # Standard validation shared across envs.
+        env,
+        gflownet,
+        n_validation_samples,
+        visited_terminating_states,
+    )
+
+    # Add the mode counting metric.
+    states, scale = visited_terminating_states.tensor, env.scale_factor
+
+    normalized_states = ((states * scale) - (scale / 2) * (env.height - 1)).abs()
+
+    modes = torch.all(
+        (normalized_states > (0.3 * scale) * (env.height - 1))
+        & (normalized_states <= (0.4 * scale) * (env.height - 1)),
+        dim=-1,
+    )
+    modes_found = set([tuple(s.tolist()) for s in states[modes.bool()]])
+    discovered_modes.update(modes_found)
+    validation_info["n_modes_found"] = len(discovered_modes)
+
+    return validation_info, discovered_modes
 
 
 if __name__ == "__main__":
