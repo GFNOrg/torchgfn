@@ -60,7 +60,7 @@ class HyperGrid(DiscreteEnv):
         reward_cos: bool = False,
         device_str: Literal["cpu", "cuda"] = "cpu",
         preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"] = "KHot",
-        calculate_partition: bool = True,
+        calculate_partition: bool = False,
         calculate_all_states: bool = False,
     ):
         """HyperGrid environment from the GFlowNets paper.
@@ -71,7 +71,7 @@ class HyperGrid(DiscreteEnv):
 
         Args:
             ndim (int, optional): dimension of the grid. Defaults to 2.
-            height (int, optional): height of the grid. Defaults to 4.
+            height (int, optional): height of the grid. Defaults to 8. TODO: This seems like a bad default - the modes are not accessible.
             R0 (float, optional): reward parameter R0. Defaults to 0.1.
             R1 (float, optional): reward parameter R1. Defaults to 0.5.
             R2 (float, optional): reward parameter R1. Defaults to 2.0.
@@ -85,6 +85,7 @@ class HyperGrid(DiscreteEnv):
                 all_states. Might have intractable space complexity for very large
                 problems.
         """
+        assert height > 4, "height <= 4 can lead to unsolvable environments."
         self.ndim = ndim
         self.height = height
         self.R0 = R0
@@ -93,17 +94,19 @@ class HyperGrid(DiscreteEnv):
         self.reward_cos = reward_cos
         self._all_states = None  # Populated at first request.
         self._log_partition = None  # Populated at first request.
+        self._true_dist = None  # Populated at first request.
         self.calculate_partition = calculate_partition
         self.calculate_all_states = calculate_all_states
 
-        # Pre-computes these values.
+        # Pre-computes these values when printing.
         if self.calculate_all_states:
-            self.all_states()
+            print("+ Environment has {} states".format(len(self.all_states)))
         if self.calculate_partition:
-            self.log_partition()
+            print("+ Environment log partition is {}".format(self.log_partition))
 
-        # This scale is used to stabilize calculations.
+        # This scale is used to stabilize some calculations.
         self.scale_factor = smallest_multiplier_to_integers([R0, R1, R2])
+        # self.scale_factor = 1
 
         s0 = torch.zeros(ndim, dtype=torch.long, device=torch.device(device_str))
         sf = torch.full(
@@ -186,6 +189,7 @@ class HyperGrid(DiscreteEnv):
 
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states_raw / (self.height - 1) - 0.5)
+
         if not self.reward_cos:
             reward = (
                 R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
@@ -194,6 +198,7 @@ class HyperGrid(DiscreteEnv):
             pdf_input = ax * 5
             pdf = 1.0 / (2 * torch.pi) ** 0.5 * torch.exp(-(pdf_input**2) / 2)
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
+
         return reward
 
     def get_states_indices(
