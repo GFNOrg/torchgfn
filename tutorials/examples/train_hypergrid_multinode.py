@@ -373,6 +373,7 @@ def validate_hypergrid(
     )
 
     # Add the mode counting metric.
+    # TODO: This is not the same as what is done in `train_hypergrid`.
     states, scale = visited_terminating_states.tensor, env.scale_factor
 
     normalized_states = ((states * scale) - (scale / 2) * (env.height - 1)).abs()
