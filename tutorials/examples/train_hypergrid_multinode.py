@@ -355,7 +355,11 @@ def main(args):  # noqa: C901
         print ("total_time, sample_time, to_train_samples_time, loss_time, loss_backward_time, opt_time, rest_time")
         print (total_time, sample_time, to_train_samples_time, loss_time, loss_backward_time, opt_time, rest_time)
 
-    return validation_info["l1_dist"]
+    try:
+        return validation_info["l1_dist"]
+    except KeyError:
+        print(validation_info.keys())
+        return validation_info["n_modes_found"]
 
 
 def validate_hypergrid(
