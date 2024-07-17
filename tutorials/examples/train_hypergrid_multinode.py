@@ -376,20 +376,29 @@ def validate_hypergrid(
         visited_terminating_states,
     )
 
-    # Add the mode counting metric.
-    # TODO: This is not the same as what is done in `train_hypergrid`.
+    # # Add the mode counting metric.
     states, scale = visited_terminating_states.tensor, env.scale_factor
+    mode_reward_threshold = 1.  # Assumes height >= 5. TODO - verify.
 
-    normalized_states = ((states * scale) - (scale / 2) * (env.height - 1)).abs()
-
-    modes = torch.all(
-        (normalized_states > (0.3 * scale) * (env.height - 1))
-        & (normalized_states <= (0.4 * scale) * (env.height - 1)),
-        dim=-1,
-    )
-    modes_found = set([tuple(s.tolist()) for s in states[modes.bool()]])
+    # # Modes will have a reward greater than 1.
+    modes = states[env.reward(states) >= mode_reward_threshold]
+    modes_found = set([tuple(s.tolist()) for s in modes])
     discovered_modes.update(modes_found)
     validation_info["n_modes_found"] = len(discovered_modes)
+
+    # Old way of counting modes -- potentially buggy - to be removed.
+    # # Add the mode counting metric.
+    # states, scale = visited_terminating_states.tensor, env.scale_factor
+    # normalized_states = ((states * scale) - (scale / 2) * (env.height - 1)).abs()
+
+    # modes = torch.all(
+    #     (normalized_states > (0.3 * scale) * (env.height - 1))
+    #     & (normalized_states <= (0.4 * scale) * (env.height - 1)),
+    #     dim=-1,
+    # )
+    # modes_found = set([tuple(s.tolist()) for s in states[modes.bool()]])
+    # discovered_modes.update(modes_found)
+    # validation_info["n_modes_found"] = len(discovered_modes)
 
     return validation_info, discovered_modes
 
