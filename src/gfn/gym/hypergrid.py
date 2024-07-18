@@ -303,7 +303,7 @@ class HyperGrid(DiscreteEnv):
     @property
     def true_dist_pmf(self) -> torch.Tensor:
         """Returns the pmf over all states in the hypergrid."""
-        if not self._true_dist_pmf and self.calculate_all_states:
+        if self._true_dist_pmf is None and self.calculate_all_states:
             assert torch.all(
                 self.get_states_indices(self.all_states)
                 == torch.arange(self.n_states, device=self.device)
