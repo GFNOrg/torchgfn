@@ -48,6 +48,8 @@ class HypergridArgs(CommonArgs):
     R0: float = 0.1
     R1: float = 0.5
     R2: float = 2.0
+    calculate_partition: bool = True
+    calculate_all_states: bool = True
 
 
 @dataclass
@@ -68,6 +70,7 @@ def test_hypergrid(ndim: int, height: int):
     n_trajectories = 32000 if ndim == 2 else 16000
     args = HypergridArgs(ndim=ndim, height=height, n_trajectories=n_trajectories)
     final_l1_dist = train_hypergrid_main(args)
+    print(final_l1_dist)
     if ndim == 2 and height == 8:
         assert np.isclose(final_l1_dist, 8.78e-4, atol=1e-3)
     elif ndim == 2 and height == 16:
