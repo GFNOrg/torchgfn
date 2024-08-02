@@ -10,6 +10,7 @@ from functools import reduce
 from math import gcd, log
 from time import time
 from typing import Literal, Tuple
+import multiprocessing
 
 import torch
 from einops import rearrange
@@ -21,12 +22,7 @@ from gfn.gym.helpers.preprocessors import KHotPreprocessor, OneHotPreprocessor
 from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
 from gfn.states import DiscreteStates
 
-
-def import_multiprocessing_if_required():
-    """Imports and configures multiprocessing if it isn't already imported."""
-    if "multiprocessing" not in sys.modules:
-        import multiprocessing
-        multiprocessing.set_start_method("fork")  # multiprocessing-torch compatibility.
+multiprocessing.set_start_method("fork")  # multiprocessing-torch compatibility.
 
 
 def lcm(a, b):
@@ -284,7 +280,6 @@ class HyperGrid(DiscreteEnv):
         Args:
             batch_size: Compute this number of hypergrid indices in parallel.
         """
-        import_multiprocessing_if_required()
         if self._all_states is None and self.calculate_all_states:
             start_time = time()
             all_states = []
@@ -357,7 +352,6 @@ class HyperGrid(DiscreteEnv):
             for i in range(0, total_combinations, batch_size)
         ]
 
-        import_multiprocessing_if_required()
         with multiprocessing.Pool() as pool:
             for result in pool.imap(self._worker, tasks):
                 yield result
