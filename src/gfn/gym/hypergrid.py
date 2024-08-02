@@ -3,9 +3,9 @@ Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
 import itertools
-import multiprocessing
 import warnings
 from decimal import Decimal
+import sys
 from functools import reduce
 from math import gcd, log
 from time import time
@@ -21,7 +21,12 @@ from gfn.gym.helpers.preprocessors import KHotPreprocessor, OneHotPreprocessor
 from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
 from gfn.states import DiscreteStates
 
-multiprocessing.set_start_method("fork")  # multiprocessing-torch compatibility.
+
+def import_multiprocessing_if_required():
+    """Imports and configures multiprocessing if it isn't already imported."""
+    if "multiprocessing" not in sys.modules:
+        import multiprocessing
+        multiprocessing.set_start_method("fork")  # multiprocessing-torch compatibility.
 
 
 def lcm(a, b):
@@ -235,6 +240,8 @@ class HyperGrid(DiscreteEnv):
         Args:
             batch_size: Compute this number of hypergrid indices in parallel.
         """
+
+
         if self._log_partition is None and self.calculate_partition:
             # The # of possible combinations (with repetition) of 𝑛 numbers, where each
             # number can be any integer from 0 to 𝑘 (inclusive), is given by:
@@ -277,6 +284,7 @@ class HyperGrid(DiscreteEnv):
         Args:
             batch_size: Compute this number of hypergrid indices in parallel.
         """
+        import_multiprocessing_if_required()
         if self._all_states is None and self.calculate_all_states:
             start_time = time()
             all_states = []
@@ -349,6 +357,7 @@ class HyperGrid(DiscreteEnv):
             for i in range(0, total_combinations, batch_size)
         ]
 
+        import_multiprocessing_if_required()
         with multiprocessing.Pool() as pool:
             for result in pool.imap(self._worker, tasks):
                 yield result

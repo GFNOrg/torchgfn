@@ -20,7 +20,7 @@ classifiers = [
 [tool.poetry.dependencies]
 # core dependencies.
 einops = ">=0.6.1"
-numpy = ">=1.21.2"
+numpy = "<2.*"
 python = "^3.10"
 torch = ">=1.9.0"
 torchtyping = ">=0.1.4"
