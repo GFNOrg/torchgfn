@@ -4,9 +4,12 @@
 #SBATCH -J ddp
 #SBATCH --get-user-env
 #SBATCH --partition=spr
-#SBATCH --ntasks=2
-#SBATCH --cpus-per-task=112
+#SBATCH --ntasks=2           # Number of sockets because we use all threads per socket.
+#SBATCH --cpus-per-task=112  # Number of threads available per socket.
 #SBATCH --time=00:60:00
+
+# In my case (4 numa nodes) - would set ntasks=4 and cpus-per-task=8 because my CPU has
+# 32 cores and I want to divide them across the 4 numa nodes.
 
 source /swtools/intel/2024.0/oneapi-vars.sh
 export I_MPI_HYDRA_BOOTSTRAP=slurm
