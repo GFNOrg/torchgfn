@@ -235,12 +235,13 @@ def main(args):  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
     validation_info = {"l1_dist": float("inf")}
     discovered_modes = set()
+    is_on_policy = args.replay_buffer_size == 0
 
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
             env,
             n_samples=args.batch_size,
-            save_logprobs=args.replay_buffer_size == 0,
+            save_logprobs=is_on_policy,
             save_estimator_outputs=False,
         )
         training_samples = gflownet.to_training_samples(trajectories)
@@ -443,6 +444,17 @@ if __name__ == "__main__":
         type=str,
         default="",
         help="Name of the wandb project. If empty, don't use wandb",
+    )
+
+    parser.add_argument(
+        "--calculate_all_states",
+        action="store_true",
+        help="Enumerates all states.",
+    )
+    parser.add_argument(
+        "--calculate_partition",
+        action="store_true",
+        help="Calculates the true partition function.",
     )
 
     args = parser.parse_args()
