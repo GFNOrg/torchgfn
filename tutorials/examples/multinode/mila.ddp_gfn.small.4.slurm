@@ -7,12 +7,9 @@
 #SBATCH --partition=long
 #SBATCH --constraint=milan     # 64 CPU Cores, 1core:12GB optimal ratio.
 #SBATCH -N 2                   # Number of nodes to request.
-#SBATCH --ntasks=8             # Number of tasks to run in total (need to split among numa nodes).
 #SBATCH --ntasks-per-node=4    # If you use ntasks-per-node you can scale.
 #SBATCH --cpus-per-task=8      # Number of CPUs to run per task.
-#SBATCH --time=00:02:00
-
-# Note - 8 tasks,
+#SBATCH --time=23:59:59
 
 # Olexa notes:
 # TODO: -B 2,16,1
@@ -26,7 +23,7 @@
 # Initalize the conda environment on the target node, which should automatically set all
 # oneapi variables for the user.
 source /home/mila/v/vivianoj/miniconda3/bin/activate
-conda activate torchgfn
+conda activate torchgfn_multinode
 
 # System dependent thing - to delete.
 #source /swtools/intel/2024.0/oneapi-vars.sh
@@ -49,8 +46,7 @@ echo " + Slurm Job Num Nodes: ${SLURM_JOB_NUM_NODES}"
 echo " + Slurm NodeList: ${SLURM_NODELIST}"
 
 #mpiexec.hydra -np 2 -ppn 2 -l -genv I_MPI_PIN_DOMAIN=[0xFFFF,0xFFFF0000] -genv CCL_WORKER_AFFINITY=32,48 -genv CCL_WORKER_COUNT=1 -genv O     MP_NUM_THREADS=16 python -u train_hypergrid_multinode.py --ndim 8 --height 8 --R0 0.01 --tied --loss TB --n_trajectories 512000 --batch_size 256000
-mpiexec.hydra -np 4 -ppn 4 -l -genv CCL_WORKER_COUNT=1 python -u ../train_hypergrid_multinode.py --ndim 8 --height 8 --R0 0.01 --tied --loss TB --n_trajectories 512000 --batch_size 256
-
+mpiexec.hydra -np 4 -ppn 4 -l -genv CCL_WORKER_COUNT=8 python -u ../train_hypergrid_multinode.py --ndim 8 --height 8 --R0 0.01 --tied --loss TB --n_trajectories 512000 --batch_size 256
 
 #./run_dist_ht.sh python -u train_hypergrid_multinode.py --ndim 8 --height 8 --R0 0.01 --tied --loss TB --n_trajectories 512000 --batch_size 256000
 
