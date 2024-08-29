@@ -35,6 +35,7 @@ from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.utils.common import set_seed
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 from gfn.utils.training import validate
+from torch.profiler import profile, ProfilerActivity
 
 DEFAULT_SEED = 4444
 
@@ -308,12 +309,28 @@ def main(args):  # noqa: C901
     total_opt_time, total_rest_time = 0, 0
     time_start = time.time()
 
+    if args.profile:
+        keep_active = args.trajectories_to_profile // args.batch_size
+        prof = profile(
+            schedule=torch.profiler.schedule(wait=1, warmup=1, active=keep_active, repeat=1),
+            activities=[ProfilerActivity.CPU],
+            record_shapes=True,
+            with_stack=True
+            )
+        prof.start()
     for iteration in trange(n_iterations):
 
         iteration_start = time.time()
 
         # Time sample_trajectories method.
         sample_start = time.time()
+
+        # Use the optional profiler.
+        if args.profile:
+            prof.step()
+            if iteration >= 1 + 1 + keep_active:
+                break
+
         trajectories = gflownet.sample_trajectories(
             env,
             n_samples=args.batch_size,
@@ -437,6 +454,10 @@ def main(args):  # noqa: C901
         for k, v in to_log.iteritems():
             print("  {k}: {.:6f}".format(k, v))
 
+    if args.profile:
+        prof.stop()
+        print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=20))
+        prof.export_chrome_trace("trace.json")
     try:
         return validation_info["l1_dist"]
     except KeyError:
@@ -658,6 +679,18 @@ if __name__ == "__main__":
         "--calculate_partition",
         action="store_true",
         help="Calculates the true partition function.",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Profiles the execution using PyTorch Profiler.",
+    )
+    parser.add_argument(
+        "--trajectories_to_profile",
+        type=int,
+        default=2048,
+        help="Number of trajectories to profile using the Pytorch Profiler." +
+        " Preferably, a multiple of batch size.",
     )
 
     args = parser.parse_args()
