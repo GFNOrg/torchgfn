@@ -14,11 +14,7 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 from argparse import ArgumentParser
 
 import torch
-import time
 from tqdm import tqdm, trange
-from math import ceil
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from gfn.containers import ReplayBuffer, PrioritizedReplayBuffer
 from gfn.gflownet import (
@@ -38,50 +34,6 @@ from gfn.utils.training import validate
 DEFAULT_SEED = 4444
 
 
-def dist_init(dist_backend: str = "ccl"):
-    import os
-
-    global my_rank
-    global my_size
-    print("PMI_SIZE={}".format(int(os.environ.get("PMI_SIZE", "0"))))
-
-    dist_backend = "ccl"
-    if int(os.environ.get("PMI_SIZE", "0")) > 1:
-        if dist_backend == "ccl":
-            print("+ CCL backend requested...")
-            try:
-                # Note - intel must be imported before oneccl!
-                import oneccl_bindings_for_pytorch  # noqa: F401
-            except ImportError as e:
-                raise Exception(
-                    "import oneccl_bindings_for_pytorch failed, {}".format(e)
-                )
-
-        elif dist_backend == "mpi":
-            print("+ MPI backend requested...")
-            assert torch.distributed.is_mpi_available()
-            try:
-                import torch_mpi  # noqa: F401
-            except ImportError as e:
-                raise Exception("import torch_mpi failed, {}".format(e))
-        else:
-            raise Exception(f"invalid backend requested: {dist_backend}")
-
-        os.environ["RANK"] = os.environ.get("PMI_RANK", "0")
-        os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
-        print("+ OMP_NUM_THREADS = ", os.getenv("OMP_NUM_THREADS"))
-        dist.init_process_group(
-            backend=dist_backend,
-            init_method="env://",
-            world_size=int(os.environ.get("WORLD_SIZE")),
-            rank=int(os.environ.get("RANK")),
-        )
-
-        my_rank = dist.get_rank()
-        my_size = dist.get_world_size()
-        print(f"+ My rank: {my_rank} size: {my_size}")
-
-
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
@@ -93,12 +45,6 @@ def main(args):  # noqa: C901
 
         wandb.init(project=args.wandb_project)
         wandb.config.update(args)
-
-    # Initalize distributed computation.
-    dist_init()
-    rank = dist.get_rank()
-    world_size = torch.distributed.get_world_size()
-    print(f"Running with DDP on rank {rank}/{world_size}.")
 
     # 1. Create the environment
     env = HyperGrid(
@@ -130,10 +76,6 @@ def main(args):  # noqa: C901
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
             )
-
-        # Prepare the model for data parallel training.
-        module = DDP(module)
-
         estimator = DiscretePolicyEstimator(
             module=module,
             n_actions=env.n_actions,
@@ -172,10 +114,6 @@ def main(args):  # noqa: C901
             pb_module is not None
         ), f"pb_module is None. Command-line arguments: {args}"
 
-        # Prepare the model for data parallel training.
-        pf_module = DDP(pf_module)
-        pb_module = DDP(pb_module)
-
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
@@ -213,8 +151,6 @@ def main(args):  # noqa: C901
                     n_hidden_layers=args.n_hidden,
                     torso=pf_module.torso if args.tied else None,
                 )
-
-            # TODO: make module also DDP?
 
             logF_estimator = ScalarEstimator(
                 module=module, preprocessor=env.preprocessor
@@ -293,112 +229,59 @@ def main(args):  # noqa: C901
 
     optimizer = torch.optim.Adam(params)
 
-    print("-A-")
     visited_terminating_states = env.states_from_batch_shape((0,))
 
     states_visited = 0
-    n_iterations = ceil(args.n_trajectories / args.batch_size)
+    n_iterations = args.n_trajectories // args.batch_size
     validation_info = {"l1_dist": float("inf")}
     discovered_modes = set()
     is_on_policy = args.replay_buffer_size == 0
 
-    # Distributed computation specific.
-    my_batch_size = args.batch_size // world_size
-    sample_time = 0
-    to_train_samples_time = 0
-    loss_time = 0
-    loss_backward_time = 0
-    opt_time = 0
-    rest_time = 0
-    print("n_iterations = ", n_iterations)
-    print("my_batch_size = ", my_batch_size)
-    time_start = time.time()
-
     for iteration in trange(n_iterations):
-        sample_start = time.time()
         trajectories = gflownet.sample_trajectories(
             env,
             n_samples=args.batch_size,
             save_logprobs=is_on_policy,
             save_estimator_outputs=False,
         )
-
-        sample_end = time.time()
-        sample_time += sample_end - sample_start
-
-        to_train_samples_start = time.time()
         training_samples = gflownet.to_training_samples(trajectories)
-        to_train_samples_end = time.time()
-        to_train_samples_time += to_train_samples_end - to_train_samples_start
-
         if replay_buffer is not None:
             with torch.no_grad():
                 replay_buffer.add(training_samples)
-                training_objects = replay_buffer.sample(n_trajectories=my_batch_size)
+                training_objects = replay_buffer.sample(n_trajectories=args.batch_size)
         else:
             training_objects = training_samples
 
         optimizer.zero_grad()
-        loss_start = time.time()
         loss = gflownet.loss(env, training_objects)
-        loss_end = time.time()
-        loss_time += loss_end - loss_start
-        loss_backward_start = time.time()
         loss.backward()
-        loss_backward_end = time.time()
-        loss_backward_time += loss_backward_end - loss_backward_start
-        opt_start = time.time()
         optimizer.step()
-        opt_end = time.time()
-        opt_time += opt_end - opt_start
 
         visited_terminating_states.extend(trajectories.last_states)
 
         states_visited += len(trajectories)
 
-        if my_rank == 0:
-            to_log = {"loss": loss.item(), "states_visited": states_visited}
+        to_log = {"loss": loss.item(), "states_visited": states_visited}
+        if use_wandb:
+            wandb.log(to_log, step=iteration)
+        if (iteration % args.validation_interval == 0) or (
+            iteration == n_iterations - 1
+        ):
+            validation_info, discovered_modes = validate_hypergrid(
+                env,
+                gflownet,
+                args.validation_samples,
+                visited_terminating_states,
+                discovered_modes,
+            )
             if use_wandb:
-                wandb.log(to_log, step=iteration)
-            if (iteration % args.validation_interval == 0) or (
-                iteration == n_iterations - 1
-            ):
-                validation_info, discovered_modes = validate_hypergrid(
-                    env,
-                    gflownet,
-                    args.validation_samples,
-                    visited_terminating_states,
-                    discovered_modes,
-                )
-                if use_wandb:
-                    wandb.log(validation_info, step=iteration)
-                to_log.update(validation_info)
-                tqdm.write(f"{iteration}: {to_log}")
-
-    time_end = time.time()
-    total_time = time_end - time_start
-    rest_time = total_time - (
-        sample_time + to_train_samples_time + loss_time + loss_backward_time + opt_time
-    )
-    dist.barrier()
-    if my_rank == 0:
-        print(
-            "total_time, sample_time, to_train_samples_time, loss_time, loss_backward_time, opt_time, rest_time"
-        )
-        print(
-            total_time,
-            sample_time,
-            to_train_samples_time,
-            loss_time,
-            loss_backward_time,
-            opt_time,
-            rest_time,
-        )
+                wandb.log(validation_info, step=iteration)
+            to_log.update(validation_info)
+            tqdm.write(f"{iteration}: {to_log}")
 
     try:
         return validation_info["l1_dist"]
     except KeyError:
-        print(validation_info.keys())
         return validation_info["n_modes_found"]
 
 
@@ -475,6 +358,11 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
+    )
+    parser.add_argument(
+        "--replay_buffer_prioritized",
+        action="store_true",
+        help="If set and replay_buffer_size > 0, use a prioritized replay buffer.",
     )
 
     parser.add_argument(
@@ -557,7 +445,6 @@ if __name__ == "__main__":
         default="",
         help="Name of the wandb project. If empty, don't use wandb",
     )
-
 
     parser.add_argument(
         "--calculate_all_states",
