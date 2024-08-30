@@ -6,7 +6,7 @@ from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.env import Env
-from gfn.gflownet.base import TrajectoryBasedGFlowNet
+from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.modules import GFNModule, ScalarEstimator
 
 ContributionsTensor = TT["max_len * (1 + max_len) / 2", "n_trajectories"]
@@ -382,15 +382,17 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         return contributions
 
-    def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
+    def loss(self, env: Env, trajectories: Trajectories, reduction: str = "mean") -> TT[0, float]:
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(env, trajectories)
         flattening_mask = torch.cat(flattening_masks)
         all_scores = torch.cat(scores, 0)
 
         if self.weighting == "DB":
-            # Longer trajectories contribute more to the loss
-            return scores[0][~flattening_masks[0]].pow(2).mean()
+            # Longer trajectories contribute more to the loss.
+            # TODO: is this correct with `loss_reduce`?
+            final_scores = scores[0][~flattening_masks[0]].pow(2)
+            return loss_reduce(final_scores, reduction)
 
         elif self.weighting == "geometric":
             # The position i of the following 1D tensor represents the number of sub-
@@ -440,4 +442,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             flat_contributions.sum() - 1.0
         ).abs() < 1e-5, f"{flat_contributions.sum()}"
         losses = flat_contributions * all_scores[~flattening_mask].pow(2)
-        return losses.sum()
+
+        # TODO: default was sum, does this even work with mean?
+        return loss_reduce(final_scores, reduction)

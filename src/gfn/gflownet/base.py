@@ -20,6 +20,16 @@ TrainingSampleType = TypeVar(
 )
 
 
+def loss_reduce(loss, method):
+    """Utility function to handle loss aggregation strategies."""
+    if method == "mean":
+        return torch.mean(loss)
+    elif method == "sum":
+        return torch.sum(loss)
+    elif method == "none":
+        return loss
+
+
 class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
     """Abstract Base Class for GFlowNets.
 
@@ -73,7 +83,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         """Converts trajectories to training samples. The type depends on the GFlowNet."""
 
     @abstractmethod
-    def loss(self, env: Env, training_objects):
+    def loss(self, env: Env, training_objects, reduction: str):
         """Computes the loss given the training objects."""
 
 
@@ -115,6 +125,12 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
 
     def pf_pb_parameters(self):
         return [v for k, v in self.named_parameters() if "pb" in k or "pf" in k]
+
+    def logF_named_parameters(self):
+        return {k: v for k, v in self.named_parameters() if "logF" in k}
+
+    def logF_parameters(self):
+        return [v for k, v in self.named_parameters() if "logF" in k]
 
 
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):

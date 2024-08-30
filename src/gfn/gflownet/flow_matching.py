@@ -5,7 +5,7 @@ from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.env import Env
-from gfn.gflownet.base import GFlowNet
+from gfn.gflownet.base import GFlowNet, loss_reduce
 from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
@@ -60,6 +60,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         self,
         env: Env,
         states: DiscreteStates,
+        reduction: str = "mean",
     ) -> TT["n_trajectories", torch.float]:
         """Computes the FM for the provided states.
 
@@ -113,11 +114,12 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
 
         log_incoming_flows = torch.logsumexp(incoming_log_flows, dim=-1)
         log_outgoing_flows = torch.logsumexp(outgoing_log_flows, dim=-1)
+        scores = (log_incoming_flows - log_outgoing_flows).pow(2)
 
-        return (log_incoming_flows - log_outgoing_flows).pow(2).mean()
+        return loss_reduce(scores, reduction)
 
     def reward_matching_loss(
-        self, env: Env, terminating_states: DiscreteStates
+        self, env: Env, terminating_states: DiscreteStates,reduction: str = "mean"
     ) -> TT[0, float]:
         """Calculates the reward matching loss from the terminating states."""
         del env  # Unused
@@ -127,10 +129,12 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
         terminating_log_edge_flows = log_edge_flows[:, -1]
         log_rewards = terminating_states.log_rewards
-        return (terminating_log_edge_flows - log_rewards).pow(2).mean()
+        scores = (terminating_log_edge_flows - log_rewards).pow(2)
+
+        return loss_reduce(scores, reduction)
 
     def loss(
-        self, env: Env, states_tuple: Tuple[DiscreteStates, DiscreteStates]
+        self, env: Env, states_tuple: Tuple[DiscreteStates, DiscreteStates], reduction: str = "mean"
     ) -> TT[0, float]:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
@@ -139,8 +143,8 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         (i.e. non-terminal states), and the second one being the terminal states of the
         trajectories."""
         intermediary_states, terminating_states = states_tuple
-        fm_loss = self.flow_matching_loss(env, intermediary_states)
-        rm_loss = self.reward_matching_loss(env, terminating_states)
+        fm_loss = self.flow_matching_loss(env, intermediary_states, reduction=reduction)
+        rm_loss = self.reward_matching_loss(env, terminating_states, reduction=reduction)
         return fm_loss + self.alpha * rm_loss
 
     def to_training_samples(

@@ -6,7 +6,7 @@ from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
-from gfn.gflownet.base import PFBasedGFlowNet
+from gfn.gflownet.base import PFBasedGFlowNet, loss_reduce
 from gfn.modules import GFNModule, ScalarEstimator
 from gfn.utils.common import has_log_probs
 
@@ -130,13 +130,14 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         return (valid_log_pf_actions, log_pb_actions, scores)
 
-    def loss(self, env: Env, transitions: Transitions) -> TT[0, float]:
+    def loss(self, env: Env, transitions: Transitions, reduction: str = "mean") -> TT[0, float]:
         """Detailed balance loss.
 
         The detailed balance loss is described in section
         3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266)."""
         _, _, scores = self.get_scores(env, transitions)
-        loss = torch.mean(scores**2)
+        scores = scores**2
+        loss = loss_reduce(scores, reduction)
 
         if torch.isnan(loss):
             raise ValueError("loss is nan")
@@ -215,7 +216,8 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     def loss(self, env: Env, transitions: Transitions) -> TT[0, float]:
         """Calculates the modified detailed balance loss."""
         scores = self.get_scores(transitions)
-        return torch.mean(scores**2)
+        scores = scores**2
+        return loss_reduce(loss, reduction)
 
     def to_training_samples(self, trajectories: Trajectories) -> Transitions:
         return trajectories.to_transitions()
