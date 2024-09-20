@@ -23,13 +23,14 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
     3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
-        logF: LogEdgeFlowEstimator
+        logF: an estimator of log edge flows.
         alpha: weight for the reward matching loss.
     """
 
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
         super().__init__()
 
+        assert isinstance(logF, DiscretePolicyEstimator), "logF must be a Discrete Policy Estimator"
         self.logF = logF
         self.alpha = alpha
 

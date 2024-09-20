@@ -37,9 +37,22 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         log_reward_clip_min: float = -float("inf"),
     ):
         super().__init__(pf, pb)
+        assert isinstance(logF, ScalarEstimator), "logF must be a ScalarEstimator"
         self.logF = logF
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
+
+    def logF_named_parameters(self):
+        try:
+            return {k: v for k, v in self.named_parameters() if "logF" in k}
+        except KeyError as e:
+            print("logF not found in self.named_parameters. Are the weights tied with PF? {}".format(e))
+
+    def logF_parameters(self):
+        try:
+            return [v for k, v in self.named_parameters() if "logF" in k]
+        except KeyError as e:
+            print("logF not found in self.named_parameters. Are the weights tied with PF? {}".format(e))
 
     def get_scores(
         self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
