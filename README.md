@@ -111,7 +111,7 @@ for i in (pbar := tqdm(range(1000))):
         pbar.set_postfix({"loss": loss.item()})
 ```
 
-and in this example, we instead train using Sub Trajectory Balance. You can see we simply assemble our GFlowNet from slightly different building blocks
+and in this example, we instead train using Sub Trajectory Balance. You can see we simply assemble our GFlowNet from slightly different building blocks:
 
 ```python
 import torch
