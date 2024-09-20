@@ -39,7 +39,9 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         if isinstance(logZ, float):
             self.logZ = nn.Parameter(torch.tensor(logZ))
         else:
-            assert isinstance(logZ, ScalarEstimator), "logZ must be either float or a ScalarEstimator"
+            assert isinstance(
+                logZ, ScalarEstimator
+            ), "logZ must be either float or a ScalarEstimator"
             self.logZ = logZ
 
         self.log_reward_clip_min = log_reward_clip_min

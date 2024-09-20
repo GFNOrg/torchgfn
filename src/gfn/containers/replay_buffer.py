@@ -117,13 +117,14 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         p_norm_distance: p-norm distance value to pass to torch.cdist, for the
             determination of novel states.
     """
+
     def __init__(
         self,
         env: Env,
         objects_type: Literal["transitions", "trajectories", "states"],
         capacity: int = 1000,
-        cutoff_distance: float = 0.,
-        p_norm_distance: float = 1.,
+        cutoff_distance: float = 0.0,
+        p_norm_distance: float = 1.0,
     ):
         """Instantiates a prioritized replay buffer.
         Args:
@@ -137,7 +138,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
                 norms are >= 0).
             p_norm_distance: p-norm distance value to pass to torch.cdist, for the
                 determination of novel states.
-    """
+        """
         super().__init__(env, objects_type, capacity)
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance

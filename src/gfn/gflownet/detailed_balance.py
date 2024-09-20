@@ -46,13 +46,21 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         try:
             return {k: v for k, v in self.named_parameters() if "logF" in k}
         except KeyError as e:
-            print("logF not found in self.named_parameters. Are the weights tied with PF? {}".format(e))
+            print(
+                "logF not found in self.named_parameters. Are the weights tied with PF? {}".format(
+                    e
+                )
+            )
 
     def logF_parameters(self):
         try:
             return [v for k, v in self.named_parameters() if "logF" in k]
         except KeyError as e:
-            print("logF not found in self.named_parameters. Are the weights tied with PF? {}".format(e))
+            print(
+                "logF not found in self.named_parameters. Are the weights tied with PF? {}".format(
+                    e
+                )
+            )
 
     def get_scores(
         self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
