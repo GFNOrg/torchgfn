@@ -61,7 +61,7 @@ exclude_patterns = []
 
 html_static_path = ["_static"]
 
-html_theme = "sphinx"
+html_theme = "alabaster"
 html_theme_options = {
     "collapse_navigation": False,
     "navigation_depth": 4,
