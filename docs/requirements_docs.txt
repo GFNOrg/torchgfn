@@ -1,9 +1,8 @@
 pre-commit
 black
 pytest
-sphinx>=7.0.0 # >=6.2.1
+sphinx<8.0.0
 myst-parser
-sphinx_rtd_theme
+sphinx_rtd_theme>=2.0
 sphinx-math-dollar
 sphinx-autoapi>=3.0.0
-renku-sphinx-theme
