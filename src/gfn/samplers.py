@@ -21,16 +21,14 @@ class Sampler:
         estimator: the submitted PolicyEstimator.
     """
 
-    def __init__(
-        self,
-        estimator: GFNModule,
-    ) -> None:
+    def __init__(self, estimator: GFNModule) -> None:
         self.estimator = estimator
 
     def sample_actions(
         self,
         env: Env,
         states: States,
+        conditioning: torch.Tensor = None,
         save_estimator_outputs: bool = False,
         save_logprobs: bool = True,
         **policy_kwargs: Optional[dict],
@@ -45,6 +43,7 @@ class Sampler:
             estimator: A GFNModule to pass to the probability distribution calculator.
             env: The environment to sample actions from.
             states: A batch of states.
+            conditioning: An optional tensor of conditioning information.
             save_estimator_outputs: If True, the estimator outputs will be returned.
             save_logprobs: If True, calculates and saves the log probabilities of sampled
                 actions.
@@ -68,7 +67,20 @@ class Sampler:
                 the sampled actions under the probability distribution of the given
                 states.
         """
-        estimator_output = self.estimator(states)
+        # TODO: Should estimators instead ignore None for the conditioning vector?
+        if conditioning is not None:
+            try:
+                estimator_output = self.estimator(states, conditioning)
+            except TypeError as e:
+                print("conditioning was passed but `estimator` is {}".format(type(self.estimator)))
+                raise e
+        else:
+            try:
+                estimator_output = self.estimator(states)
+            except TypeError as e:
+                print("conditioning was not passed but `estimator` is {}".format(type(self.estimator)))
+                raise e
+
         dist = self.estimator.to_probability_distribution(
             states, estimator_output, **policy_kwargs
         )
@@ -94,6 +106,7 @@ class Sampler:
         self,
         env: Env,
         states: Optional[States] = None,
+        conditioning: Optional[torch.Tensor] = None,
         n_trajectories: Optional[int] = None,
         save_estimator_outputs: bool = False,
         save_logprobs: bool = True,
@@ -105,6 +118,7 @@ class Sampler:
             env: The environment to sample trajectories from.
             states: If given, trajectories would start from such states. Otherwise,
                 trajectories are sampled from $s_o$ and n_trajectories must be provided.
+            conditioning: An optional tensor of conditioning information.
             n_trajectories: If given, a batch of n_trajectories will be sampled all
                 starting from the environment's s_0.
             save_estimator_outputs: If True, the estimator outputs will be returned. This
@@ -136,6 +150,9 @@ class Sampler:
             ), "States should be a linear batch of states"
             n_trajectories = states.batch_shape[0]
 
+        if conditioning is not None:
+            assert states.batch_shape == conditioning.shape[:len(states.batch_shape)]
+
         device = states.tensor.device
 
         dones = (
@@ -166,9 +183,15 @@ class Sampler:
             # during sampling. This is useful if, for example, you want to evaluate off
             # policy actions later without repeating calculations to obtain the env
             # distribution parameters.
+            if conditioning is not None:
+                masked_conditioning = conditioning[~dones]
+            else:
+                masked_conditioning = None
+
             valid_actions, actions_log_probs, estimator_outputs = self.sample_actions(
                 env,
                 states[~dones],
+                masked_conditioning,
                 save_estimator_outputs=True if save_estimator_outputs else False,
                 save_logprobs=save_logprobs,
                 **policy_kwargs,
@@ -201,6 +224,7 @@ class Sampler:
             # Increment the step, determine which trajectories are finisihed, and eval
             # rewards.
             step += 1
+
             # new_dones means those trajectories that just finished. Because we
             # pad the sink state to every short trajectory, we need to make sure
             # to filter out the already done ones.
@@ -236,6 +260,7 @@ class Sampler:
         trajectories = Trajectories(
             env=env,
             states=trajectories_states,
+            conditioning=conditioning,
             actions=trajectories_actions,
             when_is_done=trajectories_dones,
             is_backward=self.estimator.is_backward,
