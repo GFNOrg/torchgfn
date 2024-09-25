@@ -63,10 +63,10 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         return trajectories.last_states
 
     def logz_named_parameters(self):
-        return {"logZ": dict(self.named_parameters())["logZ"]}
+        return {k: v for k, v in dict(self.named_parameters()).items() if "logZ" in k}
 
     def logz_parameters(self):
-        return [dict(self.named_parameters())["logZ"]]
+        return [v for k, v in dict(self.named_parameters()).items() if "logZ" in k]
 
     @abstractmethod
     def to_training_samples(self, trajectories: Trajectories) -> TrainingSampleType:
@@ -176,7 +176,26 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
                     ~trajectories.actions.is_dummy
                 ]
             else:
-                estimator_outputs = self.pf(valid_states)
+                if trajectories.conditioning is not None:
+                    cond_dim = (-1,) * len(trajectories.conditioning.shape)
+                    traj_len = trajectories.states.tensor.shape[0]
+                    masked_cond = trajectories.conditioning.unsqueeze(0).expand(
+                        (traj_len,) + cond_dim
+                    )[~trajectories.states.is_sink_state]
+
+                    # Here, we pass all valid states, i.e., non-sink states.
+                    try:
+                        estimator_outputs = self.pf(valid_states, masked_cond)
+                    except TypeError as e:
+                        print("conditioning was passed but `pf` is {}".format(type(self.pf)))
+                        raise e
+                else:
+                    # Here, we pass all valid states, i.e., non-sink states.
+                    try:
+                        estimator_outputs = self.pf(valid_states)
+                    except TypeError as e:
+                        print("conditioning was not passed but `pf` is {}".format(type(self.pf)))
+                        raise e
 
             # Calculates the log PF of the actions sampled off policy.
             valid_log_pf_actions = self.pf.to_probability_distribution(
@@ -196,7 +215,29 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
 
         # Using all non-initial states, calculate the backward policy, and the logprobs
         # of those actions.
-        estimator_outputs = self.pb(non_initial_valid_states)
+        if trajectories.conditioning is not None:
+
+            # We need to index the conditioning vector to broadcast over the states.
+            cond_dim = (-1,) * len(trajectories.conditioning.shape)
+            traj_len = trajectories.states.tensor.shape[0]
+            masked_cond = trajectories.conditioning.unsqueeze(0).expand(
+                (traj_len,) + cond_dim
+            )[~trajectories.states.is_sink_state][~valid_states.is_initial_state]
+
+            # Pass all valid states, i.e., non-sink states, except the initial state.
+            try:
+                estimator_outputs = self.pb(non_initial_valid_states, masked_cond)
+            except TypeError as e:
+                print("conditioning was passed but `pb` is {}".format(type(self.pb)))
+                raise e
+        else:
+            # Pass all valid states, i.e., non-sink states, except the initial state.
+            try:
+                estimator_outputs = self.pb(non_initial_valid_states)
+            except TypeError as e:
+                print("conditioning was not passed but `pb` is {}".format(type(self.pb)))
+                raise e
+
         valid_log_pb_actions = self.pb.to_probability_distribution(
             non_initial_valid_states, estimator_outputs
         ).log_prob(non_exit_valid_actions.tensor)
