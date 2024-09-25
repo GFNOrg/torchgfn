@@ -50,9 +50,6 @@ def average_gradients(model):
 
 def initalize_distributed_compute(dist_backend: str = "ccl"):
     """Initalizes distributed compute using either ccl or mpi backends."""
-    global my_rank  # TODO: remove globals?
-    global my_size  # TODO: remove globals?
-
     pmi_size = int(os.environ.get("PMI_SIZE", "0"))  # 0 or 1 default value?
     print("+ Initalizing distributed compute, PMI_SIZE={}".format(pmi_size))
 
@@ -95,7 +92,6 @@ def initalize_distributed_compute(dist_backend: str = "ccl"):
 
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    set_seed(seed)
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
     use_wandb = args.wandb_project != ""
@@ -111,12 +107,13 @@ def main(args):  # noqa: C901
 
     if args.distributed:
         initalize_distributed_compute()
-        rank = dist.get_rank()
+        my_rank = dist.get_rank()
         world_size = torch.distributed.get_world_size()
-        print(f"Running with DDP on rank {rank}/{world_size}.")
+        print(f"Running with DDP on rank {my_rank}/{world_size}.")
     else:
         world_size = 1  # Single machine.
         my_rank = 0  # Single machine.
+    set_seed(seed + my_rank)
 
     # 1. Create the environment
     env = HyperGrid(
@@ -468,8 +465,8 @@ def main(args):  # noqa: C901
         }
 
         print("+ Final timing.")
-        for k, v in to_log.iteritems():
-            print("  {k}: {.:6f}".format(k, v))
+        for k, v in to_log.items():
+            print("  {}: {:.6f}".format(k, v))
 
     if args.profile:
         prof.stop()
