@@ -72,13 +72,21 @@ class Sampler:
             try:
                 estimator_output = self.estimator(states, conditioning)
             except TypeError as e:
-                print("conditioning was passed but `estimator` is {}".format(type(self.estimator)))
+                print(
+                    "conditioning was passed but `estimator` is {}".format(
+                        type(self.estimator)
+                    )
+                )
                 raise e
         else:
             try:
                 estimator_output = self.estimator(states)
             except TypeError as e:
-                print("conditioning was not passed but `estimator` is {}".format(type(self.estimator)))
+                print(
+                    "conditioning was not passed but `estimator` is {}".format(
+                        type(self.estimator)
+                    )
+                )
                 raise e
 
         dist = self.estimator.to_probability_distribution(
@@ -151,7 +159,7 @@ class Sampler:
             n_trajectories = states.batch_shape[0]
 
         if conditioning is not None:
-            assert states.batch_shape == conditioning.shape[:len(states.batch_shape)]
+            assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
 
         device = states.tensor.device
 

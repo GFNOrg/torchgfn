@@ -73,7 +73,9 @@ class GFNModule(ABC, nn.Module):
         self._output_dim_is_checked = False
         self.is_backward = is_backward
 
-    def forward(self, input: States | torch.Tensor) -> TT["batch_shape", "output_dim", float]:
+    def forward(
+        self, input: States | torch.Tensor
+    ) -> TT["batch_shape", "output_dim", float]:
         if isinstance(input, States):
             input = self.preprocessor(input)
 
@@ -238,7 +240,9 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         self.conditioning_module = conditioning_module
         self.final_module = final_module
 
-    def forward(self, states: States, conditioning: torch.tensor) -> TT["batch_shape", "output_dim", float]:
+    def forward(
+        self, states: States, conditioning: torch.tensor
+    ) -> TT["batch_shape", "output_dim", float]:
         state_out = self.module(self.preprocessor(states))
         conditioning_out = self.conditioning_module(conditioning)
         out = self.final_module(torch.cat((state_out, conditioning_out), -1))

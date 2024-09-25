@@ -187,14 +187,22 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
                     try:
                         estimator_outputs = self.pf(valid_states, masked_cond)
                     except TypeError as e:
-                        print("conditioning was passed but `pf` is {}".format(type(self.pf)))
+                        print(
+                            "conditioning was passed but `pf` is {}".format(
+                                type(self.pf)
+                            )
+                        )
                         raise e
                 else:
                     # Here, we pass all valid states, i.e., non-sink states.
                     try:
                         estimator_outputs = self.pf(valid_states)
                     except TypeError as e:
-                        print("conditioning was not passed but `pf` is {}".format(type(self.pf)))
+                        print(
+                            "conditioning was not passed but `pf` is {}".format(
+                                type(self.pf)
+                            )
+                        )
                         raise e
 
             # Calculates the log PF of the actions sampled off policy.
@@ -235,7 +243,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
             try:
                 estimator_outputs = self.pb(non_initial_valid_states)
             except TypeError as e:
-                print("conditioning was not passed but `pb` is {}".format(type(self.pb)))
+                print(
+                    "conditioning was not passed but `pb` is {}".format(type(self.pb))
+                )
                 raise e
 
         valid_log_pb_actions = self.pb.to_probability_distribution(
