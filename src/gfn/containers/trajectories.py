@@ -50,6 +50,7 @@ class Trajectories(Container):
         self,
         env: Env,
         states: States | None = None,
+        conditioning: torch.Tensor | None = None,
         actions: Actions | None = None,
         when_is_done: TT["n_trajectories", torch.long] | None = None,
         is_backward: bool = False,
@@ -76,6 +77,7 @@ class Trajectories(Container):
         is used to compute the rewards, at each call of self.log_rewards
         """
         self.env = env
+        self.conditioning = conditioning
         self.is_backward = is_backward
         self.states = (
             states if states is not None else env.states_from_batch_shape((0, 0))
