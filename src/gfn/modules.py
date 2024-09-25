@@ -73,8 +73,12 @@ class GFNModule(ABC, nn.Module):
         self._output_dim_is_checked = False
         self.is_backward = is_backward
 
-    def forward(self, states: States) -> TT["batch_shape", "output_dim", float]:
-        out = self.module(self.preprocessor(states))
+    def forward(self, input: States | torch.Tensor) -> TT["batch_shape", "output_dim", float]:
+        if isinstance(input, States):
+            input = self.preprocessor(input)
+
+        out = self.module(input)
+
         if not self._output_dim_is_checked:
             self.check_output_dim(out)
             self._output_dim_is_checked = True
@@ -193,6 +197,54 @@ class DiscretePolicyEstimator(GFNModule):
 
             return UnsqueezedCategorical(probs=probs)
 
-        # LogEdgeFlows are greedy, as are more P_B.
+        # LogEdgeFlows are greedy, as are most P_B.
         else:
             return UnsqueezedCategorical(logits=logits)
+
+
+class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
+    r"""Container for forward and backward policy estimators for discrete environments.
+
+    $s \mapsto (P_F(s' \mid s, c))_{s' \in Children(s)}$.
+
+    or
+
+    $s \mapsto (P_B(s' \mid s, c))_{s' \in Parents(s)}$.
+
+    Attributes:
+        temperature: scalar to divide the logits by before softmax.
+        sf_bias: scalar to subtract from the exit action logit before dividing by
+            temperature.
+        epsilon: with probability epsilon, a random action is chosen.
+    """
+
+    def __init__(
+        self,
+        state_module: nn.Module,
+        conditioning_module: nn.Module,
+        final_module: nn.Module,
+        n_actions: int,
+        preprocessor: Preprocessor | None,
+        is_backward: bool = False,
+    ):
+        """Initializes a estimator for P_F for discrete environments.
+
+        Args:
+            n_actions: Total number of actions in the Discrete Environment.
+            is_backward: if False, then this is a forward policy, else backward policy.
+        """
+        super().__init__(state_module, n_actions, preprocessor, is_backward)
+        self.n_actions = n_actions
+        self.conditioning_module = conditioning_module
+        self.final_module = final_module
+
+    def forward(self, states: States, conditioning: torch.tensor) -> TT["batch_shape", "output_dim", float]:
+        state_out = self.module(self.preprocessor(states))
+        conditioning_out = self.conditioning_module(conditioning)
+        out = self.final_module(torch.cat((state_out, conditioning_out), -1))
+
+        if not self._output_dim_is_checked:
+            self.check_output_dim(out)
+            self._output_dim_is_checked = True
+
+        return out
