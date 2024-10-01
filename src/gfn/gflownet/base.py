@@ -4,7 +4,6 @@ from typing import Generic, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
-from torch import Tensor
 from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
@@ -14,6 +13,10 @@ from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
 from gfn.utils.common import has_log_probs
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
 
 TrainingSampleType = TypeVar(
     "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
@@ -32,7 +35,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
     def sample_trajectories(
         self,
         env: Env,
-        n_samples: int,
+        n: int,
         save_logprobs: bool = True,
         save_estimator_outputs: bool = False,
     ) -> Trajectories:
@@ -40,7 +43,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
         Args:
             env: the environment to sample trajectories from.
-            n_samples: number of trajectories to be sampled.
+            n: number of trajectories to be sampled.
             save_logprobs: whether to save the logprobs of the actions - useful for on-policy learning.
             save_estimator_outputs: whether to save the estimator outputs - useful for off-policy learning
                         with tempered policy
@@ -48,17 +51,17 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
             Trajectories: sampled trajectories object.
         """
 
-    def sample_terminating_states(self, env: Env, n_samples: int) -> States:
+    def sample_terminating_states(self, env: Env, n: int) -> States:
         """Rolls out the parametrization's policy and returns the terminating states.
 
         Args:
             env: the environment to sample terminating states from.
-            n_samples: number of terminating states to be sampled.
+            n: number of terminating states to be sampled.
         Returns:
             States: sampled terminating states object.
         """
         trajectories = self.sample_trajectories(
-            env, n_samples, save_estimator_outputs=False, save_logprobs=False
+            env, n, save_estimator_outputs=False, save_logprobs=False
         )
         return trajectories.last_states
 
@@ -93,7 +96,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
     def sample_trajectories(
         self,
         env: Env,
-        n_samples: int,
+        n: int,
         save_logprobs: bool = True,
         save_estimator_outputs: bool = False,
         **policy_kwargs,
@@ -102,7 +105,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
         sampler = Sampler(estimator=self.pf)
         trajectories = sampler.sample_trajectories(
             env,
-            n_trajectories=n_samples,
+            n=n,
             save_estimator_outputs=save_estimator_outputs,
             save_logprobs=save_logprobs,
             **policy_kwargs,
@@ -184,26 +187,12 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
                     )[~trajectories.states.is_sink_state]
 
                     # Here, we pass all valid states, i.e., non-sink states.
-                    try:
+                    with has_conditioning_exception_handler("pf", self.pf):
                         estimator_outputs = self.pf(valid_states, masked_cond)
-                    except TypeError as e:
-                        print(
-                            "conditioning was passed but `pf` is {}".format(
-                                type(self.pf)
-                            )
-                        )
-                        raise e
                 else:
                     # Here, we pass all valid states, i.e., non-sink states.
-                    try:
+                    with no_conditioning_exception_handler("pf", self.pf):
                         estimator_outputs = self.pf(valid_states)
-                    except TypeError as e:
-                        print(
-                            "conditioning was not passed but `pf` is {}".format(
-                                type(self.pf)
-                            )
-                        )
-                        raise e
 
             # Calculates the log PF of the actions sampled off policy.
             valid_log_pf_actions = self.pf.to_probability_distribution(
@@ -233,20 +222,12 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
             )[~trajectories.states.is_sink_state][~valid_states.is_initial_state]
 
             # Pass all valid states, i.e., non-sink states, except the initial state.
-            try:
+            with has_conditioning_exception_handler("pb", self.pb):
                 estimator_outputs = self.pb(non_initial_valid_states, masked_cond)
-            except TypeError as e:
-                print("conditioning was passed but `pb` is {}".format(type(self.pb)))
-                raise e
         else:
             # Pass all valid states, i.e., non-sink states, except the initial state.
-            try:
+            with no_conditioning_exception_handler("pb", self.pb):
                 estimator_outputs = self.pb(non_initial_valid_states)
-            except TypeError as e:
-                print(
-                    "conditioning was not passed but `pb` is {}".format(type(self.pb))
-                )
-                raise e
 
         valid_log_pb_actions = self.pb.to_probability_distribution(
             non_initial_valid_states, estimator_outputs
