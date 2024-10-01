@@ -473,7 +473,7 @@ class BoxPFNeuralNet(NeuralNet):
         self.n_components = n_components
 
         input_dim = 2
-        self.input_dim = input_dim
+        self._input_dim = input_dim
 
         output_dim = 1 + 3 * self.n_components
 
@@ -573,7 +573,7 @@ class BoxPBNeuralNet(NeuralNet):
             **kwargs: passed to the NeuralNet class.
         """
         input_dim = 2
-        self.input_dim = input_dim
+        self._input_dim = input_dim
         output_dim = 3 * n_components
 
         super().__init__(
