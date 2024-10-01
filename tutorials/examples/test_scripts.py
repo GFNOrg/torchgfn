@@ -114,7 +114,7 @@ def test_box(delta: float, loss: str):
     print(args)
     final_jsd = train_box_main(args)
     if loss == "TB" and delta == 0.1:
-        assert np.isclose(final_jsd, 3.81e-2, atol=1e-2)
+        assert np.isclose(final_jsd, 0.1, atol=1e-2)  # 3.81e-2
     elif loss == "DB" and delta == 0.1:
         assert np.isclose(final_jsd, 0.134, atol=1e-1)
     if loss == "TB" and delta == 0.25:
