@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Sequence
 if TYPE_CHECKING:
     from gfn.actions import Actions
     from gfn.env import Env
-    from gfn.states import States
+    from gfn.states import States, DiscreteStates
 
 import numpy as np
 import torch
@@ -350,6 +350,7 @@ class Trajectories(Container):
         return Transitions(
             env=self.env,
             states=states,
+            conditioning=self.conditioning,
             actions=actions,
             is_done=is_done,
             next_states=next_states,
@@ -365,7 +366,7 @@ class Trajectories(Container):
 
     def to_non_initial_intermediary_and_terminating_states(
         self,
-    ) -> tuple[States, States]:
+    ) -> tuple[States, States, torch.Tensor]:
         """Returns all intermediate and terminating `States` from the trajectories.
 
         This is useful for the flow matching loss, that requires its inputs to be distinguished.
@@ -378,7 +379,7 @@ class Trajectories(Container):
         intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]
         terminating_states = self.last_states
         terminating_states.log_rewards = self.log_rewards
-        return intermediary_states, terminating_states
+        return (intermediary_states, terminating_states, self.conditioning)
 
 
 def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:
