@@ -5,7 +5,6 @@ from tqdm import tqdm
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator
-from gfn.samplers import Sampler
 from gfn.utils import NeuralNet
 
 torch.manual_seed(0)
@@ -35,10 +34,7 @@ pf_estimator = DiscretePolicyEstimator(
 pb_estimator = DiscretePolicyEstimator(
     module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor
 )
-gflownet = TBGFlowNet(init_logZ=0.0, pf=pf_estimator, pb=pb_estimator)
-
-# Feed pf to the sampler.
-sampler = Sampler(estimator=pf_estimator)
+gflownet = TBGFlowNet(logZ=0.0, pf=pf_estimator, pb=pb_estimator)
 
 # Move the gflownet to the GPU.
 if torch.cuda.is_available():
@@ -53,9 +49,9 @@ n_iterations = int(1e4)
 batch_size = int(1e5)
 
 for i in (pbar := tqdm(range(n_iterations))):
-    trajectories = sampler.sample_trajectories(
+    trajectories = gflownet.sample_trajectories(
         env,
-        n_trajectories=batch_size,
+        n=batch_size,
         save_logprobs=False,
         save_estimator_outputs=True,
         epsilon=exploration_rate,

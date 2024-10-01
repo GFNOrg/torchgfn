@@ -97,9 +97,9 @@ for i in (pbar := tqdm(range(n_iterations))):
     conditioning = torch.rand((batch_size, 1))
     conditioning = (conditioning > 0.5).to(torch.float)  # Randomly 1 and zero.
 
-    trajectories = sampler.sample_trajectories(
+    trajectories = gflownet.sample_trajectories(
         env,
-        n_trajectories=batch_size,
+        n=batch_size,
         conditioning=conditioning,
         save_logprobs=False,
         save_estimator_outputs=True,

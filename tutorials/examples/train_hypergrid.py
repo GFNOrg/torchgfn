@@ -229,7 +229,7 @@ def main(args):  # noqa: C901
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
             env,
-            n_samples=args.batch_size,
+            n=args.batch_size,
             save_logprobs=args.replay_buffer_size == 0,
             save_estimator_outputs=False,
         )
