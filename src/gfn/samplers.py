@@ -9,6 +9,10 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.states import States, stack_states
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
 
 
 class Sampler:
@@ -69,25 +73,11 @@ class Sampler:
         """
         # TODO: Should estimators instead ignore None for the conditioning vector?
         if conditioning is not None:
-            try:
+            with has_conditioning_exception_handler("estimator", self.estimator):
                 estimator_output = self.estimator(states, conditioning)
-            except TypeError as e:
-                print(
-                    "conditioning was passed but `estimator` is {}".format(
-                        type(self.estimator)
-                    )
-                )
-                raise e
         else:
-            try:
+            with no_conditioning_exception_handler("estimator", self.estimator):
                 estimator_output = self.estimator(states)
-            except TypeError as e:
-                print(
-                    "conditioning was not passed but `estimator` is {}".format(
-                        type(self.estimator)
-                    )
-                )
-                raise e
 
         dist = self.estimator.to_probability_distribution(
             states, estimator_output, **policy_kwargs
@@ -113,9 +103,9 @@ class Sampler:
     def sample_trajectories(
         self,
         env: Env,
+        n: Optional[int] = None,
         states: Optional[States] = None,
         conditioning: Optional[torch.Tensor] = None,
-        n_trajectories: Optional[int] = None,
         save_estimator_outputs: bool = False,
         save_logprobs: bool = True,
         **policy_kwargs,
@@ -124,11 +114,11 @@ class Sampler:
 
         Args:
             env: The environment to sample trajectories from.
+            n: If given, a batch of n_trajectories will be sampled all
+                starting from the environment's s_0.
             states: If given, trajectories would start from such states. Otherwise,
                 trajectories are sampled from $s_o$ and n_trajectories must be provided.
             conditioning: An optional tensor of conditioning information.
-            n_trajectories: If given, a batch of n_trajectories will be sampled all
-                starting from the environment's s_0.
             save_estimator_outputs: If True, the estimator outputs will be returned. This
                 is useful for off-policy training with tempered policy.
             save_logprobs: If True, calculates and saves the log probabilities of sampled
@@ -148,14 +138,13 @@ class Sampler:
         """
 
         if states is None:
-            assert (
-                n_trajectories is not None
-            ), "Either states or n_trajectories should be specified"
-            states = env.reset(batch_shape=(n_trajectories,))
+            assert n is not None, "Either kwarg `states` or `n` must be specified"
+            states = env.reset(batch_shape=(n,))
+            n_trajectories = n
         else:
             assert (
                 len(states.batch_shape) == 1
-            ), "States should be a linear batch of states"
+            ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
             n_trajectories = states.batch_shape[0]
 
         if conditioning is not None:
