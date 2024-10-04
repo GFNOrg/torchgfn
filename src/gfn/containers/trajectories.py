@@ -376,7 +376,10 @@ class Trajectories(Container):
 
     def to_non_initial_intermediary_and_terminating_states(
         self,
-    ) -> Union[Tuple[States, States, torch.Tensor, torch.Tensor], Tuple[States, States, None, None]]:
+    ) -> Union[
+        Tuple[States, States, torch.Tensor, torch.Tensor],
+        Tuple[States, States, None, None],
+    ]:
         """Returns all intermediate and terminating `States` from the trajectories.
 
         This is useful for the flow matching loss, that requires its inputs to be distinguished.
@@ -390,9 +393,9 @@ class Trajectories(Container):
         if self.conditioning is not None:
             traj_len = self.states.batch_shape[0]
             expand_dims = (traj_len,) + tuple(self.conditioning.shape)
-            intermediary_conditioning = self.conditioning.unsqueeze(0).expand(expand_dims)[
-                ~states.is_sink_state & ~states.is_initial_state
-            ]
+            intermediary_conditioning = self.conditioning.unsqueeze(0).expand(
+                expand_dims
+            )[~states.is_sink_state & ~states.is_initial_state]
             conditioning = self.conditioning  # n_final_states == n_trajectories.
         else:
             intermediary_conditioning = None
@@ -401,7 +404,12 @@ class Trajectories(Container):
         intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]
         terminating_states = self.last_states
         terminating_states.log_rewards = self.log_rewards
-        return (intermediary_states, terminating_states, intermediary_conditioning, conditioning)
+        return (
+            intermediary_states,
+            terminating_states,
+            intermediary_conditioning,
+            conditioning,
+        )
 
 
 def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:

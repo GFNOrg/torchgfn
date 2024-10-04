@@ -18,10 +18,11 @@ from gfn.utils.handlers import (
 def check_compatibility(states, actions, transitions):
     if states.batch_shape != tuple(actions.batch_shape):
         if type(transitions) is not Transitions:
-            raise TypeError("`transitions` is type={}, not Transitions".format(type(transitions)))
+            raise TypeError(
+                "`transitions` is type={}, not Transitions".format(type(transitions))
+            )
         else:
             raise ValueError(" wrong happening with log_pf evaluations")
-
 
 
 class DBGFlowNet(PFBasedGFlowNet[Transitions]):
@@ -50,7 +51,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         log_reward_clip_min: float = -float("inf"),
     ):
         super().__init__(pf, pb)
-        assert any(isinstance(logF, cls) for cls in [ScalarEstimator, ConditionalScalarEstimator]), "logF must be a ScalarEstimator or derived"
+        assert any(
+            isinstance(logF, cls)
+            for cls in [ScalarEstimator, ConditionalScalarEstimator]
+        ), "logF must be a ScalarEstimator or derived"
         self.logF = logF
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
@@ -152,7 +156,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         # Evaluate the log PB of the actions, with optional conditioning.
         if transitions.conditioning is not None:
             with has_conditioning_exception_handler("pb", self.pb):
-                module_output = self.pb(valid_next_states, transitions.conditioning[~transitions.is_done])
+                module_output = self.pb(
+                    valid_next_states, transitions.conditioning[~transitions.is_done]
+                )
         else:
             with no_conditioning_exception_handler("pb", self.pb):
                 module_output = self.pb(valid_next_states)
@@ -263,7 +269,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         # next_states are also states, for which we already did a forward pass.
         if transitions.conditioning is not None:
             with has_conditioning_exception_handler("pf", self.pf):
-                module_output = self.pf(valid_next_states, transitions.conditioning[mask])
+                module_output = self.pf(
+                    valid_next_states, transitions.conditioning[mask]
+                )
         else:
             with no_conditioning_exception_handler("pf", self.pf):
                 module_output = self.pf(valid_next_states)
@@ -276,7 +284,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         if transitions.conditioning is not None:
             with has_conditioning_exception_handler("pb", self.pb):
-                module_output = self.pb(valid_next_states, transitions.conditioning[mask])
+                module_output = self.pb(
+                    valid_next_states, transitions.conditioning[mask]
+                )
         else:
             with no_conditioning_exception_handler("pb", self.pb):
                 module_output = self.pb(valid_next_states)

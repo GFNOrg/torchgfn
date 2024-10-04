@@ -184,9 +184,18 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         tuple of states, the first one being the internal states of the trajectories
         (i.e. non-terminal states), and the second one being the terminal states of the
         trajectories."""
-        intermediary_states, terminating_states, intermediary_conditioning, terminating_conditioning = states_tuple
-        fm_loss = self.flow_matching_loss(env, intermediary_states, intermediary_conditioning)
-        rm_loss = self.reward_matching_loss(env, terminating_states, terminating_conditioning)
+        (
+            intermediary_states,
+            terminating_states,
+            intermediary_conditioning,
+            terminating_conditioning,
+        ) = states_tuple
+        fm_loss = self.flow_matching_loss(
+            env, intermediary_states, intermediary_conditioning
+        )
+        rm_loss = self.reward_matching_loss(
+            env, terminating_states, terminating_conditioning
+        )
         return fm_loss + self.alpha * rm_loss
 
     def to_training_samples(

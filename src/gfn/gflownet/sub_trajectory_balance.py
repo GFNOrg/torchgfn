@@ -75,7 +75,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         forward_looking: bool = False,
     ):
         super().__init__(pf, pb)
-        assert any(isinstance(logF, cls) for cls in [ScalarEstimator, ConditionalScalarEstimator]), "logF must be a ScalarEstimator or derived"
+        assert any(
+            isinstance(logF, cls)
+            for cls in [ScalarEstimator, ConditionalScalarEstimator]
+        ), "logF must be a ScalarEstimator or derived"
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda
