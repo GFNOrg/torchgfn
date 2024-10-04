@@ -2,7 +2,7 @@
 import torch
 from tqdm import tqdm
 
-from gfn.gflownet import TBGFlowNet, DBGFlowNet, FMGFlowNet, SubTBGFlowNet
+from gfn.gflownet import TBGFlowNet, DBGFlowNet, FMGFlowNet, SubTBGFlowNet, ModifiedDBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import ConditionalDiscretePolicyEstimator, ScalarEstimator, ConditionalScalarEstimator
 from gfn.utils import NeuralNet
@@ -116,6 +116,13 @@ def build_db_gflownet(env):
     return gflownet
 
 
+def build_db_mod_gflownet(env):
+    pf_estimator, pb_estimator = build_conditional_pf_pb(env)
+    gflownet = ModifiedDBGFlowNet(pf=pf_estimator, pb=pb_estimator)
+
+    return gflownet
+
+
 def build_fm_gflownet(env):
     CONCAT_SIZE = 16
     module_logF = NeuralNet(
@@ -171,7 +178,7 @@ def train(env, gflownet):
     elif type(gflownet) is DBGFlowNet or type(gflownet) is SubTBGFlowNet:
         optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=lr)
         optimizer.add_param_group({"params": gflownet.logF_parameters(), "lr": lr * 100})
-    elif type(gflownet) is FMGFlowNet:
+    elif type(gflownet) is FMGFlowNet or type(gflownet) is ModifiedDBGFlowNet:
         optimizer = torch.optim.Adam(gflownet.parameters(), lr=lr)
     else:
         print("What is this gflownet? {}".format(type(gflownet)))
@@ -213,6 +220,9 @@ def main():
     train(environment, gflownet)
 
     gflownet = build_db_gflownet(environment)
+    train(environment, gflownet)
+
+    gflownet = build_db_mod_gflownet(environment)
     train(environment, gflownet)
 
     gflownet = build_subTB_gflownet(environment)
