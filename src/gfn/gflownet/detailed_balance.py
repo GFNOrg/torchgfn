@@ -15,6 +15,15 @@ from gfn.utils.handlers import (
 )
 
 
+def check_compatibility(states, actions, transitions):
+    if states.batch_shape != tuple(actions.batch_shape):
+        if type(transitions) is not Transitions:
+            raise TypeError("`transitions` is type={}, not Transitions".format(type(transitions)))
+        else:
+            raise ValueError(" wrong happening with log_pf evaluations")
+
+
+
 class DBGFlowNet(PFBasedGFlowNet[Transitions]):
     r"""The Detailed Balance GFlowNet.
 
@@ -95,12 +104,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         # uncomment next line for debugging
         # assert transitions.states.is_sink_state.equal(transitions.actions.is_dummy)
-
-        if states.batch_shape != tuple(actions.batch_shape):
-            if type(transitions) is not Transitions:
-                raise TypeError("`transitions` is type={}, not Transitions".format(type(transitions)))
-            else:
-                raise ValueError(" wrong happening with log_pf evaluations")
+        check_compatibility(states, actions, transitions)
 
         if has_log_probs(transitions) and not recalculate_all_logprobs:
             valid_log_pf_actions = transitions.log_probs
@@ -235,6 +239,8 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         actions = transitions.actions[mask]
         all_log_rewards = transitions.all_log_rewards[mask]
 
+        check_compatibility(states, actions, transitions)
+
         if transitions.conditioning is not None:
             with has_conditioning_exception_handler("pf", self.pf):
                 module_output = self.pf(states, transitions.conditioning[mask])
@@ -257,7 +263,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         # next_states are also states, for which we already did a forward pass.
         if transitions.conditioning is not None:
             with has_conditioning_exception_handler("pf", self.pf):
-                module_output = self.pf(valid_next_states, transitions.conditioning)
+                module_output = self.pf(valid_next_states, transitions.conditioning[mask])
         else:
             with no_conditioning_exception_handler("pf", self.pf):
                 module_output = self.pf(valid_next_states)
@@ -270,7 +276,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         if transitions.conditioning is not None:
             with has_conditioning_exception_handler("pb", self.pb):
-                module_output = self.pb(valid_next_states, transitions.conditioning)
+                module_output = self.pb(valid_next_states, transitions.conditioning[mask])
         else:
             with no_conditioning_exception_handler("pb", self.pb):
                 module_output = self.pb(valid_next_states)
