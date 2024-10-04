@@ -7,7 +7,7 @@ from torchtyping import TensorType as TT
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet
-from gfn.modules import GFNModule, ScalarEstimator
+from gfn.modules import GFNModule, ScalarEstimator, ConditionalScalarEstimator
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -60,7 +60,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         pf: GFNModule,
         pb: GFNModule,
-        logF: ScalarEstimator,
+        logF: ScalarEstimator | ConditionalScalarEstimator,
         weighting: Literal[
             "DB",
             "ModifiedDB",
@@ -75,7 +75,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         forward_looking: bool = False,
     ):
         super().__init__(pf, pb)
-        assert isinstance(logF, ScalarEstimator), "logF must be a ScalarEstimator"
+        assert any(isinstance(logF, cls) for cls in [ScalarEstimator, ConditionalScalarEstimator]), "logF must be a ScalarEstimator or derived"
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda
@@ -209,8 +209,15 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         valid_states = states[mask]
 
         if trajectories.conditioning is not None:
+            # Compute the conditioning matrix broadcast to match valid_states.
+            traj_len = states.batch_shape[0]
+            expand_dims = (traj_len,) + tuple(trajectories.conditioning.shape)
+            conditioning = trajectories.conditioning.unsqueeze(0).expand(expand_dims)[
+                mask
+            ]
+
             with has_conditioning_exception_handler("logF", self.logF):
-                log_F = self.logF(valid_states, trajectories.conditioning[mask])
+                log_F = self.logF(valid_states, conditioning)
         else:
             with no_conditioning_exception_handler("logF", self.logF):
                 log_F = self.logF(valid_states).squeeze(-1)
@@ -219,7 +226,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             log_rewards = env.log_reward(states).unsqueeze(-1)
             log_F = log_F + log_rewards
 
-        log_state_flows[mask[:-1]] = log_F
+        log_state_flows[mask[:-1]] = log_F.squeeze()
         return log_state_flows
 
     def calculate_masks(

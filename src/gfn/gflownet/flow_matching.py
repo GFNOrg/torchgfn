@@ -68,7 +68,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         self,
         env: Env,
         states: DiscreteStates,
-        conditioning: torch.Tensor,
+        conditioning: torch.Tensor | None,
     ) -> TT["n_trajectories", torch.float]:
         """Computes the FM for the provided states.
 
@@ -108,15 +108,20 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
             )
 
             if conditioning is not None:
+
+                # Mask out only valid conditioning elements.
+                valid_backward_conditioning = conditioning[valid_backward_mask]
+                valid_forward_conditioning = conditioning[valid_forward_mask]
+
                 with has_conditioning_exception_handler("logF", self.logF):
                     incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
                         valid_backward_states_parents,
-                        conditioning,
+                        valid_backward_conditioning,
                     )[:, action_idx]
 
                     outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
                         valid_forward_states,
-                        conditioning,
+                        valid_forward_conditioning,
                     )[:, action_idx]
 
             else:
@@ -135,7 +140,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
             with has_conditioning_exception_handler("logF", self.logF):
                 outgoing_log_flows[valid_forward_mask, -1] = self.logF(
                     states[valid_forward_mask],
-                    conditioning,
+                    conditioning[valid_forward_mask],
                 )[:, -1]
         else:
             with no_conditioning_exception_handler("logF", self.logF):
@@ -179,9 +184,9 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         tuple of states, the first one being the internal states of the trajectories
         (i.e. non-terminal states), and the second one being the terminal states of the
         trajectories."""
-        intermediary_states, terminating_states, conditioning = states_tuple
-        fm_loss = self.flow_matching_loss(env, intermediary_states, conditioning)
-        rm_loss = self.reward_matching_loss(env, terminating_states, conditioning)
+        intermediary_states, terminating_states, intermediary_conditioning, terminating_conditioning = states_tuple
+        fm_loss = self.flow_matching_loss(env, intermediary_states, intermediary_conditioning)
+        rm_loss = self.reward_matching_loss(env, terminating_states, terminating_conditioning)
         return fm_loss + self.alpha * rm_loss
 
     def to_training_samples(
