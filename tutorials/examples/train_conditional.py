@@ -2,11 +2,16 @@
 import torch
 from tqdm import tqdm
 from torch.optim import Adam
+from argparse import ArgumentParser
 
+from gfn.utils.common import set_seed
 from gfn.gflownet import TBGFlowNet, DBGFlowNet, FMGFlowNet, SubTBGFlowNet, ModifiedDBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import ConditionalDiscretePolicyEstimator, ScalarEstimator, ConditionalScalarEstimator
 from gfn.utils import NeuralNet
+
+
+DEFAULT_SEED = 4444
 
 
 def build_conditional_pf_pb(env):
@@ -162,7 +167,7 @@ def build_subTB_gflownet(env):
     return gflownet
 
 
-def train(env, gflownet):
+def train(env, gflownet, seed):
 
     torch.manual_seed(0)
     exploration_rate = 0.5
@@ -210,28 +215,51 @@ def train(env, gflownet):
     print("+ Training complete!")
 
 
-def main():
+GFN_FNS = {
+    "tb": build_tb_gflownet,
+    "db": build_db_gflownet,
+    "db_mod": build_db_mod_gflownet,
+    "subtb": build_subTB_gflownet,
+    "fm": build_fm_gflownet,
+}
+
+
+def main(args):
     environment = HyperGrid(
         ndim=5,
         height=2,
         device_str="cuda" if torch.cuda.is_available() else "cpu",
     )
 
-    gflownet = build_tb_gflownet(environment)
-    train(environment, gflownet)
+    seed = int(args.seed) if args.seed is not None else DEFAULT_SEED
 
-    gflownet = build_db_gflownet(environment)
-    train(environment, gflownet)
-
-    gflownet = build_db_mod_gflownet(environment)
-    train(environment, gflownet)
-
-    gflownet = build_subTB_gflownet(environment)
-    train(environment, gflownet)
-
-    gflownet = build_fm_gflownet(environment)
-    train(environment, gflownet)
+    if args.gflownet == "all":
+        for fn in GFN_FNS.values():
+            gflownet = fn(environment)
+            train(environment, gflownet, seed)
+    else:
+        assert args.gflownet in GFN_FNS, "invalid gflownet name\n{}".format(GFN_FNS)
+        gflownet = GFN_FNS[args.gflownet](environment)
+        train(environment, gflownet, seed)
 
 
 if __name__ == "__main__":
-    main()
+
+    parser = ArgumentParser()
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed, if not set, then {} is used".format(DEFAULT_SEED),
+    )
+    parser.add_argument(
+        "--gflownet",
+        "-g",
+        type=str,
+        default="all",
+        help="Name of the gflownet. From {}".format(list(GFN_FNS.keys())),
+    )
+
+    args = parser.parse_args()
+    main(args)
