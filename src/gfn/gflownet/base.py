@@ -1,6 +1,6 @@
 import math
 from abc import ABC, abstractmethod
-from typing import Generic, Tuple, TypeVar, Union
+from typing import Generic, Tuple, TypeVar, Union, Any
 
 import torch
 import torch.nn as nn
@@ -76,7 +76,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         """Converts trajectories to training samples. The type depends on the GFlowNet."""
 
     @abstractmethod
-    def loss(self, env: Env, training_objects):
+    def loss(self, env: Env, training_objects: Any):
         """Computes the loss given the training objects."""
 
 
@@ -97,17 +97,19 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
         self,
         env: Env,
         n: int,
+        conditioning: torch.Tensor | None = None,
         save_logprobs: bool = True,
         save_estimator_outputs: bool = False,
-        **policy_kwargs,
+        **policy_kwargs: Any,
     ) -> Trajectories:
         """Samples trajectories, optionally with specified policy kwargs."""
         sampler = Sampler(estimator=self.pf)
         trajectories = sampler.sample_trajectories(
             env,
             n=n,
-            save_estimator_outputs=save_estimator_outputs,
+            conditioning=conditioning,
             save_logprobs=save_logprobs,
+            save_estimator_outputs=save_estimator_outputs,
             **policy_kwargs,
         )
 
