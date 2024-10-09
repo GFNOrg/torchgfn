@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Tuple, Any, Union
 
 import torch
 from torchtyping import TensorType as TT
@@ -8,7 +8,7 @@ from gfn.env import Env
 from gfn.gflownet.base import GFlowNet
 from gfn.modules import DiscretePolicyEstimator, ConditionalDiscretePolicyEstimator
 from gfn.samplers import Sampler
-from gfn.states import DiscreteStates
+from gfn.states import DiscreteStates, States
 from gfn.utils.handlers import (
     no_conditioning_exception_handler,
     has_conditioning_exception_handler,
@@ -45,9 +45,10 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         self,
         env: Env,
         n: int,
+        conditioning: torch.Tensor | None = None,
         save_logprobs: bool = True,
         save_estimator_outputs: bool = False,
-        **policy_kwargs: Optional[dict],
+        **policy_kwargs: Any,
     ) -> Trajectories:
         """Sample trajectory with optional kwargs controling the policy."""
         if not env.is_discrete:
@@ -58,8 +59,9 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         trajectories = sampler.sample_trajectories(
             env,
             n=n,
-            save_estimator_outputs=save_estimator_outputs,
+            conditioning=conditioning,
             save_logprobs=save_logprobs,
+            save_estimator_outputs=save_estimator_outputs,
             **policy_kwargs,
         )
         return trajectories
@@ -176,7 +178,12 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
     def loss(
-        self, env: Env, states_tuple: Tuple[DiscreteStates, DiscreteStates]
+        self,
+        env: Env,
+        states_tuple: Union[
+            Tuple[DiscreteStates, DiscreteStates, torch.Tensor, torch.Tensor],
+            Tuple[DiscreteStates, DiscreteStates, None, None],
+        ],
     ) -> TT[0, float]:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
@@ -198,8 +205,11 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         )
         return fm_loss + self.alpha * rm_loss
 
-    def to_training_samples(
-        self, trajectories: Trajectories
-    ) -> tuple[DiscreteStates, DiscreteStates, torch.Tensor]:
+    def to_training_samples(self, trajectories: Trajectories) -> Union[
+        Tuple[DiscreteStates, DiscreteStates, torch.Tensor, torch.Tensor],
+        Tuple[DiscreteStates, DiscreteStates, None, None],
+        Tuple[States, States, torch.Tensor, torch.Tensor],
+        Tuple[States, States, None, None],
+    ]:
         """Converts a batch of trajectories into a batch of training samples."""
         return trajectories.to_non_initial_intermediary_and_terminating_states()
