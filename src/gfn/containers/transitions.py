@@ -34,6 +34,7 @@ class Transitions(Container):
         self,
         env: Env,
         states: States | None = None,
+        conditioning: torch.Tensor | None = None,
         actions: Actions | None = None,
         is_done: TT["n_transitions", torch.bool] | None = None,
         next_states: States | None = None,
@@ -65,6 +66,7 @@ class Transitions(Container):
                 `batch_shapes`.
         """
         self.env = env
+        self.conditioning = conditioning
         self.is_backward = is_backward
         self.states = (
             states

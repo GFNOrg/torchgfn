@@ -32,6 +32,7 @@ class NeuralNet(nn.Module):
                 (i.e. all layers except last layer).
         """
         super().__init__()
+        self._input_dim = input_dim
         self._output_dim = output_dim
 
         if torso is None:
@@ -68,6 +69,14 @@ class NeuralNet(nn.Module):
         out = self.torso(preprocessed_states)
         out = self.last_layer(out)
         return out
+
+    @property
+    def input_dim(self):
+        return self._input_dim
+
+    @property
+    def output_dim(self):
+        return self._output_dim
 
 
 class Tabular(nn.Module):

@@ -7,8 +7,22 @@ from torchtyping import TensorType as TT
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
 from gfn.gflownet.base import PFBasedGFlowNet
-from gfn.modules import GFNModule, ScalarEstimator
+from gfn.modules import GFNModule, ScalarEstimator, ConditionalScalarEstimator
 from gfn.utils.common import has_log_probs
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
+
+
+def check_compatibility(states, actions, transitions):
+    if states.batch_shape != tuple(actions.batch_shape):
+        if type(transitions) is not Transitions:
+            raise TypeError(
+                "`transitions` is type={}, not Transitions".format(type(transitions))
+            )
+        else:
+            raise ValueError(" wrong happening with log_pf evaluations")
 
 
 class DBGFlowNet(PFBasedGFlowNet[Transitions]):
@@ -32,12 +46,15 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self,
         pf: GFNModule,
         pb: GFNModule,
-        logF: ScalarEstimator,
+        logF: ScalarEstimator | ConditionalScalarEstimator,
         forward_looking: bool = False,
         log_reward_clip_min: float = -float("inf"),
     ):
         super().__init__(pf, pb)
-        assert isinstance(logF, ScalarEstimator), "logF must be a ScalarEstimator"
+        assert any(
+            isinstance(logF, cls)
+            for cls in [ScalarEstimator, ConditionalScalarEstimator]
+        ), "logF must be a ScalarEstimator or derived"
         self.logF = logF
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
@@ -91,25 +108,35 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         # uncomment next line for debugging
         # assert transitions.states.is_sink_state.equal(transitions.actions.is_dummy)
-
-        if states.batch_shape != tuple(actions.batch_shape):
-            raise ValueError("Something wrong happening with log_pf evaluations")
+        check_compatibility(states, actions, transitions)
 
         if has_log_probs(transitions) and not recalculate_all_logprobs:
             valid_log_pf_actions = transitions.log_probs
         else:
-            # Evaluate the log PF of the actions
-            module_output = self.pf(
-                states
-            )  # TODO: Inefficient duplication in case of tempered policy
+            # Evaluate the log PF of the actions, with optional conditioning.
+            # TODO: Inefficient duplication in case of tempered policy
             # The Transitions container should then have some
             # estimator_outputs attribute as well, to avoid duplication here ?
             # See (#156).
+            if transitions.conditioning is not None:
+                with has_conditioning_exception_handler("pf", self.pf):
+                    module_output = self.pf(states, transitions.conditioning)
+            else:
+                with no_conditioning_exception_handler("pf", self.pf):
+                    module_output = self.pf(states)
+
             valid_log_pf_actions = self.pf.to_probability_distribution(
                 states, module_output
             ).log_prob(actions.tensor)
 
-        valid_log_F_s = self.logF(states).squeeze(-1)
+        # LogF is potentially a conditional computation.
+        if transitions.conditioning is not None:
+            with has_conditioning_exception_handler("logF", self.logF):
+                valid_log_F_s = self.logF(states, transitions.conditioning).squeeze(-1)
+        else:
+            with no_conditioning_exception_handler("logF", self.logF):
+                valid_log_F_s = self.logF(states).squeeze(-1)
+
         if self.forward_looking:
             log_rewards = env.log_reward(states)  # TODO: RM unsqueeze(-1) ?
             if math.isfinite(self.log_reward_clip_min):
@@ -126,7 +153,16 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         valid_next_states = transitions.next_states[~transitions.is_done]
         non_exit_actions = actions[~actions.is_exit]
 
-        module_output = self.pb(valid_next_states)
+        # Evaluate the log PB of the actions, with optional conditioning.
+        if transitions.conditioning is not None:
+            with has_conditioning_exception_handler("pb", self.pb):
+                module_output = self.pb(
+                    valid_next_states, transitions.conditioning[~transitions.is_done]
+                )
+        else:
+            with no_conditioning_exception_handler("pb", self.pb):
+                module_output = self.pb(valid_next_states)
+
         valid_log_pb_actions = self.pb.to_probability_distribution(
             valid_next_states, module_output
         ).log_prob(non_exit_actions.tensor)
@@ -135,7 +171,16 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             ~transitions.states.is_sink_state
         ]
 
-        valid_log_F_s_next = self.logF(valid_next_states).squeeze(-1)
+        # LogF is potentially a conditional computation.
+        if transitions.conditioning is not None:
+            with has_conditioning_exception_handler("logF", self.logF):
+                valid_log_F_s_next = self.logF(
+                    valid_next_states, transitions.conditioning[~transitions.is_done]
+                ).squeeze(-1)
+        else:
+            with no_conditioning_exception_handler("logF", self.logF):
+                valid_log_F_s_next = self.logF(valid_next_states).squeeze(-1)
+
         targets[~valid_transitions_is_done] = valid_log_pb_actions
         log_pb_actions = targets.clone()
         targets[~valid_transitions_is_done] += valid_log_F_s_next
@@ -199,7 +244,16 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         valid_next_states = transitions.next_states[mask]
         actions = transitions.actions[mask]
         all_log_rewards = transitions.all_log_rewards[mask]
-        module_output = self.pf(states)
+
+        check_compatibility(states, actions, transitions)
+
+        if transitions.conditioning is not None:
+            with has_conditioning_exception_handler("pf", self.pf):
+                module_output = self.pf(states, transitions.conditioning[mask])
+        else:
+            with no_conditioning_exception_handler("pf", self.pf):
+                module_output = self.pf(states)
+
         pf_dist = self.pf.to_probability_distribution(states, module_output)
 
         if has_log_probs(transitions) and not recalculate_all_logprobs:
@@ -213,13 +267,30 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         # The following two lines are slightly inefficient, given that most
         # next_states are also states, for which we already did a forward pass.
-        module_output = self.pf(valid_next_states)
+        if transitions.conditioning is not None:
+            with has_conditioning_exception_handler("pf", self.pf):
+                module_output = self.pf(
+                    valid_next_states, transitions.conditioning[mask]
+                )
+        else:
+            with no_conditioning_exception_handler("pf", self.pf):
+                module_output = self.pf(valid_next_states)
+
         valid_log_pf_s_prime_exit = self.pf.to_probability_distribution(
             valid_next_states, module_output
         ).log_prob(torch.full_like(actions.tensor, actions.__class__.exit_action[0]))
 
         non_exit_actions = actions[~actions.is_exit]
-        module_output = self.pb(valid_next_states)
+
+        if transitions.conditioning is not None:
+            with has_conditioning_exception_handler("pb", self.pb):
+                module_output = self.pb(
+                    valid_next_states, transitions.conditioning[mask]
+                )
+        else:
+            with no_conditioning_exception_handler("pb", self.pb):
+                module_output = self.pb(valid_next_states)
+
         valid_log_pb_actions = self.pb.to_probability_distribution(
             valid_next_states, module_output
         ).log_prob(non_exit_actions.tensor)
