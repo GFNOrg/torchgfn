@@ -1,6 +1,6 @@
 """This file contains utilitary functions for the Box environment."""
 
-from typing import Tuple
+from typing import Tuple, Any
 
 import numpy as np
 import torch
@@ -454,7 +454,7 @@ class BoxPFNeuralNet(NeuralNet):
         n_hidden_layers: int,
         n_components_s0: int,
         n_components: int,
-        **kwargs,
+        **kwargs: Any,
     ):
         """Instantiates the neural network for the forward policy.
 
@@ -561,7 +561,11 @@ class BoxPBNeuralNet(NeuralNet):
     """
 
     def __init__(
-        self, hidden_dim: int, n_hidden_layers: int, n_components: int, **kwargs
+        self,
+        hidden_dim: int,
+        n_hidden_layers: int,
+        n_components: int,
+        **kwargs: Any,
     ):
         """Instantiates the neural network.
 
@@ -601,7 +605,7 @@ class BoxPBNeuralNet(NeuralNet):
 class BoxStateFlowModule(NeuralNet):
     """A deep neural network for the state flow function."""
 
-    def __init__(self, logZ_value: torch.Tensor, **kwargs):
+    def __init__(self, logZ_value: torch.Tensor, **kwargs: Any):
         super().__init__(**kwargs)
         self.logZ_value = nn.Parameter(logZ_value)
 

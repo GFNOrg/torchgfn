@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import torch
 from tqdm import tqdm
+from torch.optim import Adam
 
 from gfn.gflownet import TBGFlowNet, DBGFlowNet, FMGFlowNet, SubTBGFlowNet, ModifiedDBGFlowNet
 from gfn.gym import HyperGrid
@@ -173,17 +174,17 @@ def train(env, gflownet):
 
     # Policy parameters and logZ/logF get independent LRs (logF/Z typically higher).
     if type(gflownet) is TBGFlowNet:
-        optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=lr)
+        optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
         optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": lr * 100})
     elif type(gflownet) is DBGFlowNet or type(gflownet) is SubTBGFlowNet:
-        optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=lr)
+        optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
         optimizer.add_param_group({"params": gflownet.logF_parameters(), "lr": lr * 100})
     elif type(gflownet) is FMGFlowNet or type(gflownet) is ModifiedDBGFlowNet:
-        optimizer = torch.optim.Adam(gflownet.parameters(), lr=lr)
+        optimizer = Adam(gflownet.parameters(), lr=lr)
     else:
         print("What is this gflownet? {}".format(type(gflownet)))
 
-    n_iterations = int(10)  #1e4)
+    n_iterations = int(10)   # 1e4)
     batch_size = int(1e4)
 
     print("+ Training Conditional {}!".format(type(gflownet)))
