@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Any
 
 import torch
 import torch.nn as nn
@@ -109,7 +109,7 @@ class GFNModule(ABC, nn.Module):
         self,
         states: States,
         module_output: TT["batch_shape", "output_dim", float],
-        **policy_kwargs: Optional[dict],
+        **policy_kwargs: Any,
     ) -> Distribution:
         """Transform the output of the module into a probability distribution.
 
@@ -240,12 +240,19 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         self.conditioning_module = conditioning_module
         self.final_module = final_module
 
-    def forward(
-        self, states: States, conditioning: torch.tensor
+    def _forward_trunk(
+        self, states: States, conditioning: torch.Tensor
     ) -> TT["batch_shape", "output_dim", float]:
         state_out = self.module(self.preprocessor(states))
         conditioning_out = self.conditioning_module(conditioning)
         out = self.final_module(torch.cat((state_out, conditioning_out), -1))
+
+        return out
+
+    def forward(
+        self, states: States, conditioning: torch.tensor
+    ) -> TT["batch_shape", "output_dim", float]:
+        out = self._forward_trunk(states, conditioning)
 
         if not self._output_dim_is_checked:
             self.check_output_dim(out)
@@ -272,6 +279,17 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
             is_backward=is_backward,
         )
 
+    def forward(
+        self, states: States, conditioning: torch.tensor
+    ) -> TT["batch_shape", "output_dim", float]:
+        out = self._forward_trunk(states, conditioning)
+
+        if not self._output_dim_is_checked:
+            self.check_output_dim(out)
+            self._output_dim_is_checked = True
+
+        return out
+
     def expected_output_dim(self) -> int:
         return 1
 
@@ -279,6 +297,6 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         self,
         states: States,
         module_output: TT["batch_shape", "output_dim", float],
-        **policy_kwargs: Optional[dict],
+        **policy_kwargs: Any,
     ) -> Distribution:
         raise NotImplementedError
