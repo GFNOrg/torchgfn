@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 
 import torch
 from torchtyping import TensorType as TT
@@ -32,10 +32,10 @@ class Sampler:
         self,
         env: Env,
         states: States,
-        conditioning: torch.Tensor = None,
+        conditioning: torch.Tensor | None = None,
         save_estimator_outputs: bool = False,
         save_logprobs: bool = True,
-        **policy_kwargs: Optional[dict],
+        **policy_kwargs: Any,
     ) -> Tuple[
         Actions,
         TT["batch_shape", torch.float] | None,
@@ -108,7 +108,7 @@ class Sampler:
         conditioning: Optional[torch.Tensor] = None,
         save_estimator_outputs: bool = False,
         save_logprobs: bool = True,
-        **policy_kwargs,
+        **policy_kwargs: Any,
     ) -> Trajectories:
         """Sample trajectories sequentially.
 
