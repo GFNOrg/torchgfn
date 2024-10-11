@@ -271,7 +271,7 @@ class Env(ABC):
     @property
     def log_partition(self) -> float:
         "Returns the logarithm of the partition function."
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
@@ -432,20 +432,20 @@ class DiscreteEnv(Env, ABC):
 
     @property
     def n_states(self) -> int:
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     @property
     def n_terminating_states(self) -> int:
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     @property
     def true_dist_pmf(self) -> TT["n_states", torch.float]:
         "Returns a one-dimensional tensor representing the true distribution."
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
@@ -456,7 +456,7 @@ class DiscreteEnv(Env, ABC):
         This should satisfy:
         self.get_states_indices(self.all_states) == torch.arange(self.n_states)
         """
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
@@ -467,6 +467,6 @@ class DiscreteEnv(Env, ABC):
         This should satisfy:
         self.get_terminating_states_indices(self.terminating_states) == torch.arange(self.n_terminating_states)
         """
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )

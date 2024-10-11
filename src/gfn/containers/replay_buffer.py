@@ -155,8 +155,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         # Add the terminating states to the buffer.
         if self.terminating_states is not None:
-            assert terminating_states is not None
-            self.terminating_states.extend(terminating_states)
+            assert self.terminating_states is not None
+            self.terminating_states.extend(self.terminating_states)
 
             # Sort terminating states by logreward as well.
             self.terminating_states = self.terminating_states[ix]
@@ -164,7 +164,6 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
     def add(self, training_objects: Transitions | Trajectories | tuple[States]):
         """Adds a training object to the buffer."""
-        terminating_states = None
         if isinstance(training_objects, tuple):
             assert self.objects_type == "states" and self.terminating_states is not None
             training_objects, terminating_states = training_objects
