@@ -20,6 +20,7 @@ from tqdm import tqdm, trange
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.modules import DiscretePolicyEstimator
+from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import NeuralNet, Tabular
 from gfn.utils.training import validate
@@ -80,7 +81,9 @@ def main(args):  # noqa: C901
         loss.backward()
         optimizer.step()
 
-        visited_terminating_states.extend(trajectories.last_states)
+        last_states = trajectories.last_states
+        assert isinstance(last_states, DiscreteStates)
+        visited_terminating_states.extend(last_states)
 
         states_visited += len(trajectories)
 

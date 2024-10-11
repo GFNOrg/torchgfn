@@ -1,7 +1,12 @@
+from typing import Literal
+
 import pytest
 import torch
 from test_samplers_and_trajectories import trajectory_sampling_with_return
 
+from gfn.containers.trajectories import Trajectories
+from gfn.containers.transitions import Transitions
+from gfn.env import Env
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -10,6 +15,7 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
+from gfn.gflownet.base import TrajectoryBasedGFlowNet
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
@@ -18,7 +24,7 @@ from gfn.gym.helpers.box_utils import (
     BoxPFEstimator,
     BoxPFNeuralNet,
 )
-from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
 
@@ -58,14 +64,16 @@ def test_FM(env_name: int, ndim: int, module_name: str):
 
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
     trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
-    states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
+    states_tuple = gflownet.to_training_samples(trajectories)
     loss = gflownet.loss(env, states_tuple)
     assert loss >= 0
 
 
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
-def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
+def test_get_pfs_and_pbs(
+    env_name: str, preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"]
+):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
@@ -82,7 +90,9 @@ def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
 
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
-def test_get_scores(env_name: str, preprocessor_name: str):
+def test_get_scores(
+    env_name: str, preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"]
+):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
@@ -102,14 +112,11 @@ def test_get_scores(env_name: str, preprocessor_name: str):
     )
 
 
-def PFBasedGFlowNet_with_return(
+def _make_env_and_module(
     env_name: str,
     ndim: int,
     module_name: str,
     tie_pb_to_pf: bool,
-    gflownet_name: str,
-    sub_tb_weighting: str,
-    forward_looking: bool,
     zero_logF: bool,
 ):
     if env_name == "HyperGrid":
@@ -131,12 +138,13 @@ def PFBasedGFlowNet_with_return(
         raise ValueError("Unknown environment name")
 
     if module_name == "Tabular":
+        assert not isinstance(env, Box)
         # Cannot be the Box environment
         pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
         pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
         logF_module = Tabular(n_states=env.n_states, output_dim=1)
     else:
-        if env_name == "Box":
+        if isinstance(env, Box):
             pf_module = BoxPFNeuralNet(
                 hidden_dim=32,
                 n_hidden_layers=2,
@@ -149,18 +157,18 @@ def PFBasedGFlowNet_with_return(
                 input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
             )
 
-        if module_name == "NeuralNet" and env_name == "Box":
+        if module_name == "NeuralNet" and isinstance(env, Box):
             pb_module = BoxPBNeuralNet(
                 hidden_dim=32,
                 n_hidden_layers=2,
                 n_components=ndim + 1,
                 torso=pf_module.torso if tie_pb_to_pf else None,
             )
-        elif module_name == "NeuralNet" and env_name != "Box":
+        elif module_name == "NeuralNet" and not isinstance(env, Box):
             pb_module = NeuralNet(
                 input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
             )
-        elif module_name == "Uniform" and env_name != "Box":
+        elif module_name == "Uniform" and not isinstance(env, Box):
             pb_module = DiscreteUniform(output_dim=env.n_actions - 1)
         else:
             # Uniform with Box environment
@@ -170,7 +178,7 @@ def PFBasedGFlowNet_with_return(
         else:
             logF_module = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=1)
 
-    if env_name == "Box":
+    if isinstance(env, Box):
         pf = BoxPFEstimator(env, pf_module, n_components_s0=ndim - 1, n_components=ndim)
         pb = BoxPBEstimator(
             env,
@@ -187,6 +195,26 @@ def PFBasedGFlowNet_with_return(
 
     logF = ScalarEstimator(module=logF_module, preprocessor=env.preprocessor)
 
+    return env, pf, pb, logF
+
+
+def PFBasedGFlowNet_with_return(
+    gflownet_name: str,
+    sub_tb_weighting: Literal[
+        "DB",
+        "ModifiedDB",
+        "TB",
+        "geometric",
+        "equal",
+        "geometric_within",
+        "equal_within",
+    ],
+    env: Env,
+    pf: GFNModule,
+    pb: GFNModule,
+    logF: ScalarEstimator,
+    forward_looking: bool,
+):
     if gflownet_name == "DB":
         gflownet = DBGFlowNet(
             logF=logF,
@@ -210,21 +238,31 @@ def PFBasedGFlowNet_with_return(
     else:
         raise ValueError(f"Unknown gflownet {gflownet_name}")
 
-    trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
-    training_objects = gflownet.to_training_samples(trajectories)
-
-    _ = gflownet.loss(env, training_objects)
-
-    if gflownet_name == "TB":
-        assert torch.all(
-            torch.abs(
-                gflownet.get_pfs_and_pbs(training_objects)[0]
-                - training_objects.log_probs
-            )
-            < 1e-5
+    if isinstance(gflownet, TrajectoryBasedGFlowNet):
+        trajectories = gflownet.sample_trajectories(
+            env, save_logprobs=True, n_samples=10
         )
+        training_objects = gflownet.to_training_samples(trajectories)
+        assert isinstance(training_objects, Trajectories)
+        _ = gflownet.loss(env, training_objects)
 
-    return env, pf, pb, logF, gflownet
+        if isinstance(gflownet, TBGFlowNet):
+            assert torch.all(
+                torch.abs(
+                    gflownet.get_pfs_and_pbs(training_objects)[0]
+                    - training_objects.log_probs
+                )
+                < 1e-5
+            )
+    else:
+        trajectories = gflownet.sample_trajectories(
+            env, save_logprobs=True, n_samples=10
+        )
+        training_objects = gflownet.to_training_samples(trajectories)
+        assert isinstance(training_objects, Transitions)
+        _ = gflownet.loss(env, training_objects)
+
+    return gflownet
 
 
 @pytest.mark.parametrize(
@@ -257,7 +295,15 @@ def test_PFBasedGFlowNet(
     module_name: str,
     tie_pb_to_pf: bool,
     gflownet_name: str,
-    sub_tb_weighting: str,
+    sub_tb_weighting: Literal[
+        "DB",
+        "ModifiedDB",
+        "TB",
+        "geometric",
+        "equal",
+        "geometric_within",
+        "equal_within",
+    ],
     forward_looking: bool,
     zero_logF: bool,
 ):
@@ -266,15 +312,11 @@ def test_PFBasedGFlowNet(
     if env_name != "HyperGrid" and gflownet_name == "ModifiedDB":
         pytest.skip("ModifiedDB not implemented for DiscreteEBM or Box")
 
-    env, pf, pb, logF, gflownet = PFBasedGFlowNet_with_return(
-        env_name,
-        ndim,
-        module_name,
-        tie_pb_to_pf,
-        gflownet_name,
-        sub_tb_weighting,
-        forward_looking,
-        zero_logF,
+    env, pf, pb, logF = _make_env_and_module(
+        env_name, ndim, module_name, tie_pb_to_pf, zero_logF
+    )
+    _ = PFBasedGFlowNet_with_return(
+        gflownet_name, sub_tb_weighting, env, pf, pb, logF, forward_looking
     )
 
 
@@ -292,22 +334,35 @@ def test_subTB_vs_TB(
     ndim: int,
     module_name: str,
     tie_pb_to_pf: bool,
-    weighting: str,
+    weighting: Literal[
+        "DB",
+        "ModifiedDB",
+        "TB",
+        "geometric",
+        "equal",
+        "geometric_within",
+        "equal_within",
+    ],
 ):
     if env_name == "Box" and module_name == "Tabular":
         pytest.skip("Tabular module impossible for Box")
-    env, pf, pb, logF, gflownet = PFBasedGFlowNet_with_return(
-        env_name=env_name,
-        ndim=ndim,
-        module_name=module_name,
-        tie_pb_to_pf=tie_pb_to_pf,
+
+    env, pf, pb, logF = _make_env_and_module(
+        env_name, ndim, module_name, tie_pb_to_pf, zero_logF=True
+    )
+    gflownet = PFBasedGFlowNet_with_return(
         gflownet_name="SubTB",
         sub_tb_weighting=weighting,
+        env=env,
+        pf=pf,
+        pb=pb,
+        logF=logF,
         forward_looking=False,
-        zero_logF=True,
     )
 
+    assert isinstance(gflownet, SubTBGFlowNet)
     trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
+    assert isinstance(trajectories, Trajectories)
     subtb_loss = gflownet.loss(env, trajectories)
 
     if weighting == "TB":

@@ -4,8 +4,8 @@ from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torch.nn.parameter import Parameter
-from torchtyping import TensorType as TT
 
 
 class NeuralNet(nn.Module):
@@ -15,7 +15,7 @@ class NeuralNet(nn.Module):
         self,
         input_dim: int,
         output_dim: int,
-        hidden_dim: Optional[int] = 256,
+        hidden_dim: int = 256,
         n_hidden_layers: Optional[int] = 2,
         activation_fn: Optional[Literal["relu", "tanh", "elu"]] = "relu",
         torso: Optional[nn.Module] = None,
@@ -50,14 +50,15 @@ class NeuralNet(nn.Module):
                 arch.append(nn.Linear(hidden_dim, hidden_dim))
                 arch.append(activation())
             self.torso = nn.Sequential(*arch)
-            self.torso.hidden_dim = hidden_dim
         else:
             self.torso = torso
-        self.last_layer = nn.Linear(self.torso.hidden_dim, output_dim)
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+        sample_input = torch.zeros(1, input_dim)
+        with torch.no_grad():
+            torso_out_dim = self.torso(sample_input).shape[-1]
+        self.last_layer = nn.Linear(torso_out_dim, output_dim)
+
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
         """Forward method for the neural network.
 
         Args:
@@ -97,9 +98,7 @@ class Tabular(nn.Module):
         self.table = nn.parameter.Parameter(self.table)
         self.device = None
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
         if self.device is None:
             self.device = preprocessed_states.device
             self.table = self.table.to(self.device)
@@ -128,9 +127,7 @@ class DiscreteUniform(nn.Module):
         super().__init__()
         self.output_dim = output_dim
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
         out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
             preprocessed_states.device
         )

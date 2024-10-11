@@ -1,9 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch import Tensor
 from torch.distributions import Distribution, Normal  # TODO: extend to Beta
 from torch.distributions.independent import Independent
-from torchtyping import TensorType as TT
 from tqdm import trange
 
 from gfn.gflownet import TBGFlowNet  # TODO: Extend to SubTBGFlowNet
@@ -73,9 +73,9 @@ class ScaledGaussianWithOptionalExit(Distribution):
 
     def __init__(
         self,
-        states: TT["n_states", 2],  # Tensor of [x position, step counter].
-        mus: TT["n_states", 1],  # Parameter of Gaussian distribution.
-        scales: TT["n_states", 1],  # Parameter of Gaussian distribution.
+        states: Tensor,  # Tensor of [x position, step counter].
+        mus: Tensor,  # Parameter of Gaussian distribution.
+        scales: Tensor,  # Parameter of Gaussian distribution.
         backward: bool,
         n_steps: int = 5,
     ):
@@ -146,9 +146,7 @@ class GaussianStepNeuralNet(NeuralNet):
             activation_fn="elu",
         )
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", "3"]:
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
         """Calculate the gaussian parameters, applying the bound to sigma."""
         assert preprocessed_states.ndim == 2
         out = super().forward(preprocessed_states)  # [..., 2]: represents mean & std.
@@ -168,13 +166,14 @@ class StepEstimator(GFNModule):
         self.backward = backward
         self.n_steps_per_trajectory = env.n_steps_per_trajectory
 
+    @property
     def expected_output_dim(self) -> int:
         return 2  # [locs, scales].
 
     def to_probability_distribution(
         self,
         states: States,
-        module_output: TT["batch_shape", "output_dim", float],
+        module_output: Tensor,
         scale_factor=0,  # policy_kwarg.
     ) -> Distribution:
         assert len(states.batch_shape) == 1
@@ -292,7 +291,7 @@ if __name__ == "__main__":
         policy_std_max=policy_std_max,
     )
     pb = StepEstimator(environment, pb_module, backward=True)
-    gflownet = TBGFlowNet(pf=pf, pb=pb, init_logZ=0.0)
+    gflownet = TBGFlowNet(pf=pf, pb=pb, logZ=0.0)
 
     gflownet = train(
         gflownet,

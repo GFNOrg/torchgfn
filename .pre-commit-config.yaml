@@ -3,7 +3,7 @@ default_language_version:
   node: 15.1.0
 repos:
   - repo: https://github.com/python/black
-    rev: 23.7.0
+    rev: 24.10.0
     hooks:
       - id: black
         language_version: python3.10
@@ -11,8 +11,10 @@ repos:
     rev: v2.0.0
     hooks:
       - id: flake8
+        args:
+          - --extend-ignore=E704
   - repo: https://github.com/pycqa/autoflake
-    rev: v2.2.0
+    rev: v2.3.1
     hooks:
       - id: autoflake
         name: autoflake
@@ -26,13 +28,13 @@ repos:
           - "--remove-duplicate-keys"
           - "--remove-unused-variables"
   - repo: https://github.com/pycqa/isort
-    rev: 5.12.0
+    rev: 5.13.2
     hooks:
       - id: isort
         files: "\\.(py)$"
         args: [--settings-path=pyproject.toml]
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.320
+    rev: v1.1.384
     hooks:
       - id: pyright
         name: pyright

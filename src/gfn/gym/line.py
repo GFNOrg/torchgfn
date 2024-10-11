@@ -1,8 +1,8 @@
 from typing import Literal
 
 import torch
+from torch import Tensor
 from torch.distributions import Normal  # TODO: extend to Beta
-from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.env import Env
@@ -44,18 +44,14 @@ class Line(Env):
             exit_action=exit_action,
         )  # sf is -inf by default.
 
-    def step(
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", 2, torch.float]:
+    def step(self, states: States, actions: Actions) -> Tensor:
         states.tensor[..., 0] = states.tensor[..., 0] + actions.tensor.squeeze(
             -1
         )  # x position.
         states.tensor[..., 1] = states.tensor[..., 1] + 1  # Step counter.
         return states.tensor
 
-    def backward_step(
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", 2, torch.float]:
+    def backward_step(self, states: States, actions: Actions) -> Tensor:
         states.tensor[..., 0] = states.tensor[..., 0] - actions.tensor.squeeze(
             -1
         )  # x position.
@@ -71,7 +67,7 @@ class Line(Env):
 
         return True
 
-    def log_reward(self, final_states: States) -> TT["batch_shape", torch.float]:
+    def log_reward(self, final_states: States) -> Tensor:
         s = final_states.tensor[..., 0]
         log_rewards = torch.empty((len(self.mixture),) + final_states.batch_shape)
         for i, m in enumerate(self.mixture):

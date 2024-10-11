@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Literal
+from typing import Literal, Optional
 
 import torch
 
+from gfn.containers.base import Container
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
-
-if TYPE_CHECKING:
-    from gfn.env import Env
-    from gfn.states import States
+from gfn.env import Env
+from gfn.states import States
 
 
 class ReplayBuffer:
@@ -62,18 +61,17 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.training_objects)
 
-    def add(self, training_objects: Transitions | Trajectories | tuple[States]):
+    def add(self, training_objects):
         """Adds a training object to the buffer."""
-        terminating_states = None
         if isinstance(training_objects, tuple):
             assert self.objects_type == "states" and self.terminating_states is not None
-            training_objects, terminating_states = training_objects
+            obj_to_add, terminating_states = training_objects
+        else:
+            obj_to_add, terminating_states = training_objects, None
 
-        to_add = len(training_objects)
+        self._is_full |= len(self) + len(obj_to_add) >= self.capacity
 
-        self._is_full |= len(self) + to_add >= self.capacity
-
-        self.training_objects.extend(training_objects)
+        self.training_objects.extend(obj_to_add)
         self.training_objects = self.training_objects[-self.capacity :]
 
         if self.terminating_states is not None:
@@ -81,7 +79,7 @@ class ReplayBuffer:
             self.terminating_states.extend(terminating_states)
             self.terminating_states = self.terminating_states[-self.capacity :]
 
-    def sample(self, n_trajectories: int) -> Transitions | Trajectories | tuple[States]:
+    def sample(self, n_trajectories: int):
         """Samples `n_trajectories` training objects from the buffer."""
         if self.terminating_states is not None:
             return (
@@ -143,13 +141,16 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
 
-    def _add_objs(self, training_objects: Transitions | Trajectories | tuple[States]):
+    def _add_objs(self, training_objects, terminating_states: Optional[States] = None):
         """Adds a training object to the buffer."""
         # Adds the objects to the buffer.
         self.training_objects.extend(training_objects)
 
         # Sort elements by logreward, capping the size at the defined capacity.
-        ix = torch.argsort(self.training_objects.log_rewards)
+        log_rewards = self.training_objects.log_rewards
+        if log_rewards is None:
+            raise ValueError("Log rewards must be defined for prioritized replay.")
+        ix = torch.argsort(log_rewards)
         self.training_objects = self.training_objects[ix]
         self.training_objects = self.training_objects[-self.capacity :]
 
@@ -162,7 +163,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             self.terminating_states = self.terminating_states[ix]
             self.terminating_states = self.terminating_states[-self.capacity :]
 
-    def add(self, training_objects: Transitions | Trajectories | tuple[States]):
+    def add(self, training_objects):
         """Adds a training object to the buffer."""
         terminating_states = None
         if isinstance(training_objects, tuple):
@@ -174,17 +175,19 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         # The buffer isn't full yet.
         if len(self.training_objects) < self.capacity:
-            self._add_objs(training_objects)
+            self._add_objs(training_objects, terminating_states)
 
         # Our buffer is full and we will prioritize diverse, high reward additions.
         else:
+            log_rewards = training_objects.log_rewards
+            if log_rewards is None:
+                raise ValueError("Log rewards must be defined for prioritized replay.")
             # Sort the incoming elements by their logrewards.
             ix = torch.argsort(training_objects.log_rewards, descending=True)
             training_objects = training_objects[ix]
 
             # Filter all batch logrewards lower than the smallest logreward in buffer.
-            min_reward_in_buffer = self.training_objects.log_rewards.min()
-            idx_bigger_rewards = training_objects.log_rewards >= min_reward_in_buffer
+            idx_bigger_rewards = training_objects.log_rewards >= log_rewards.min()
             training_objects = training_objects[idx_bigger_rewards]
 
             # TODO: Concatenate input with final state for conditional GFN.
@@ -216,6 +219,9 @@ class PrioritizedReplayBuffer(ReplayBuffer):
                 training_objects = training_objects[idx_batch_batch]
 
                 # Compute all pairwise distances between the remaining batch & buffer.
+                assert isinstance(
+                    self.training_objects, (Trajectories, Transitions)
+                )  # TODO: becasue we use last_states... is it correct?
                 batch = training_objects.last_states.tensor.float()
                 buffer = self.training_objects.last_states.tensor.float()
                 batch_dim = training_objects.last_states.batch_shape[0]

@@ -2,10 +2,10 @@ from __future__ import annotations  # This allows to use the class name in type 
 
 from abc import ABC
 from math import prod
-from typing import ClassVar, Sequence
+from typing import ClassVar, Sequence, Tuple
 
 import torch
-from torchtyping import TensorType as TT
+from torch import Tensor
 
 
 class Actions(ABC):
@@ -23,11 +23,11 @@ class Actions(ABC):
     # The following class variable represents the shape of a single action.
     action_shape: ClassVar[tuple[int, ...]]  # All actions need to have the same shape.
     # The following class variable is padded to shorter trajectories.
-    dummy_action: ClassVar[TT["action_shape"]]  # Dummy action for the environment.
+    dummy_action: ClassVar[Tensor]  # Dummy action for the environment.
     # The following class variable corresponds to $s \rightarrow s_f$ transitions.
-    exit_action: ClassVar[TT["action_shape"]]  # Action to exit the environment.
+    exit_action: ClassVar[Tensor]  # Action to exit the environment.
 
-    def __init__(self, tensor: TT["batch_shape", "action_shape"]):
+    def __init__(self, tensor: Tensor):
         """Initialize actions from a tensor.
 
         Args:
@@ -42,7 +42,7 @@ class Actions(ABC):
         self.batch_shape = tuple(self.tensor.shape)[: -len(self.action_shape)]
 
     @classmethod
-    def make_dummy_actions(cls, batch_shape: tuple[int]) -> Actions:
+    def make_dummy_actions(cls, batch_shape: Tuple[int, ...]) -> Actions:
         """Creates an Actions object of dummy actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.dummy_action.repeat(*batch_shape, *((1,) * action_ndim))
@@ -66,13 +66,11 @@ class Actions(ABC):
     def device(self) -> torch.device:
         return self.tensor.device
 
-    def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> Actions:
+    def __getitem__(self, index: int | slice | Sequence | Tensor) -> Actions:
         actions = self.tensor[index]
         return self.__class__(actions)
 
-    def __setitem__(
-        self, index: int | Sequence[int] | Sequence[bool], actions: Actions
-    ) -> None:
+    def __setitem__(self, index: int | Sequence | Tensor, actions: Actions) -> None:
         """Set particular actions of the batch."""
         self.tensor[index] = actions.tensor
 
@@ -134,9 +132,7 @@ class Actions(ABC):
                 "extend_with_dummy_actions is only implemented for bi-dimensional actions."
             )
 
-    def compare(
-        self, other: TT["batch_shape", "action_shape"]
-    ) -> TT["batch_shape", torch.bool]:
+    def compare(self, other: Tensor) -> Tensor:
         """Compares the actions to a tensor of actions.
 
         Args:
@@ -153,7 +149,7 @@ class Actions(ABC):
         return out
 
     @property
-    def is_dummy(self) -> TT["batch_shape", torch.bool]:
+    def is_dummy(self) -> Tensor:
         """Returns a boolean tensor indicating whether the actions are dummy actions."""
         dummy_actions_tensor = self.__class__.dummy_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))
@@ -161,7 +157,7 @@ class Actions(ABC):
         return self.compare(dummy_actions_tensor)
 
     @property
-    def is_exit(self) -> TT["batch_shape", torch.bool]:
+    def is_exit(self) -> Tensor:
         """Returns a boolean tensor indicating whether the actions are exit actions."""
         exit_actions_tensor = self.__class__.exit_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))

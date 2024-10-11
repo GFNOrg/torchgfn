@@ -1,18 +1,17 @@
 import math
 from abc import ABC, abstractmethod
-from typing import Generic, Tuple, TypeVar, Union
+from typing import Generic, Tuple, TypeVar, Union, overload
 
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.containers.base import Container
-from gfn.env import Env
+from gfn.env import DiscreteEnv, Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
-from gfn.states import States
+from gfn.states import DiscreteStates, States
 from gfn.utils.common import has_log_probs
 
 TrainingSampleType = TypeVar(
@@ -47,6 +46,14 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         Returns:
             Trajectories: sampled trajectories object.
         """
+
+    @overload
+    def sample_terminating_states(
+        self, env: DiscreteEnv, n_samples: int
+    ) -> DiscreteStates: ...
+
+    @overload
+    def sample_terminating_states(self, env: Env, n_samples: int) -> States: ...
 
     def sample_terminating_states(self, env: Env, n_samples: int) -> States:
         """Rolls out the parametrization's policy and returns the terminating states.
@@ -124,8 +131,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         fill_value: float = 0.0,
         recalculate_all_logprobs: bool = False,
     ) -> Tuple[
-        TT["max_length", "n_trajectories", torch.float],
-        TT["max_length", "n_trajectories", torch.float],
+        Tensor,
+        Tensor,
     ]:
         r"""Evaluates logprobs for each transition in each trajectory in the batch.
 
@@ -219,9 +226,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = False,
     ) -> Tuple[
-        TT["n_trajectories", torch.float],
-        TT["n_trajectories", torch.float],
-        TT["n_trajectories", torch.float],
+        Tensor,
+        Tensor,
+        Tensor,
     ]:
         """Given a batch of trajectories, calculate forward & backward policy scores."""
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(

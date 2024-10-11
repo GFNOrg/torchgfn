@@ -2,14 +2,14 @@ from collections import Counter
 from typing import Dict, Optional
 
 import torch
-from torchtyping import TensorType as TT
+from torch import Tensor
 
-from gfn.env import Env
+from gfn.env import DiscreteEnv
 from gfn.gflownet import GFlowNet, TBGFlowNet
-from gfn.states import States
+from gfn.states import DiscreteStates
 
 
-def get_terminating_state_dist_pmf(env: Env, states: States) -> TT["n_states", float]:
+def get_terminating_state_dist_pmf(env: DiscreteEnv, states: DiscreteStates) -> Tensor:
     states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
     counter = Counter(states_indices)
     counter_list = [
@@ -21,10 +21,10 @@ def get_terminating_state_dist_pmf(env: Env, states: States) -> TT["n_states", f
 
 
 def validate(
-    env: Env,
+    env: DiscreteEnv,
     gflownet: GFlowNet,
     n_validation_samples: int = 1000,
-    visited_terminating_states: Optional[States] = None,
+    visited_terminating_states: Optional[DiscreteStates] = None,
 ) -> Dict[str, float]:
     """Evaluates the current gflownet on the given environment.
 
@@ -57,7 +57,9 @@ def validate(
     if isinstance(gflownet, TBGFlowNet):
         logZ = gflownet.logZ.item()
     if visited_terminating_states is None:
-        terminating_states = gflownet.sample_terminating_states(n_validation_samples)
+        terminating_states = gflownet.sample_terminating_states(
+            env, n_validation_samples
+        )
     else:
         terminating_states = visited_terminating_states[-n_validation_samples:]
 

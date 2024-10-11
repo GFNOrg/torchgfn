@@ -1,6 +1,6 @@
 import torch
+from torch import Tensor
 from torch.distributions import Categorical
-from torchtyping import TensorType as TT
 
 
 class UnsqueezedCategorical(Categorical):
@@ -18,10 +18,10 @@ class UnsqueezedCategorical(Categorical):
     should be of shape (batch_shape, 1).
     """
 
-    def sample(self, sample_shape=torch.Size()) -> TT["sample_shape", 1]:
+    def sample(self, sample_shape=torch.Size()) -> Tensor:
         """Sample actions with an unsqueezed final dimension."""
         return super().sample(sample_shape).unsqueeze(-1)
 
-    def log_prob(self, sample: TT["sample_shape", 1]) -> TT["sample_shape"]:
+    def log_prob(self, sample: Tensor) -> Tensor:
         """Returns the log probabilities of an unsqueezed sample."""
         return super().log_prob(sample.squeeze(-1))

@@ -1,14 +1,14 @@
 from typing import Optional, Tuple
 
 import torch
-from torchtyping import TensorType as TT
+from torch import Tensor
 
 from gfn.containers import Trajectories
-from gfn.env import Env
+from gfn.env import DiscreteEnv, Env
 from gfn.gflownet.base import GFlowNet
 from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import Sampler
-from gfn.states import DiscreteStates
+from gfn.states import DiscreteStates, States
 
 
 class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
@@ -52,6 +52,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         sampler = Sampler(estimator=self.logF)
         trajectories = sampler.sample_trajectories(
             env,
+            states=None,
             n_trajectories=n_samples,
             save_estimator_outputs=save_estimator_outputs,
             save_logprobs=save_logprobs,
@@ -61,9 +62,9 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
 
     def flow_matching_loss(
         self,
-        env: Env,
+        env: DiscreteEnv,
         states: DiscreteStates,
-    ) -> TT["n_trajectories", torch.float]:
+    ) -> Tensor:
         """Computes the FM for the provided states.
 
         The Flow Matching loss is defined as the log-sum incoming flows minus log-sum
@@ -121,7 +122,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
 
     def reward_matching_loss(
         self, env: Env, terminating_states: DiscreteStates
-    ) -> TT[0, float]:
+    ) -> Tensor:
         """Calculates the reward matching loss from the terminating states."""
         del env  # Unused
         assert terminating_states.log_rewards is not None
@@ -133,8 +134,8 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
     def loss(
-        self, env: Env, states_tuple: Tuple[DiscreteStates, DiscreteStates]
-    ) -> TT[0, float]:
+        self, env: DiscreteEnv, states_tuple: Tuple[DiscreteStates, DiscreteStates]
+    ) -> Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
         Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
@@ -150,4 +151,9 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         self, trajectories: Trajectories
     ) -> tuple[DiscreteStates, DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        return trajectories.to_non_initial_intermediary_and_terminating_states()
+        inter_states, ter_states = (
+            trajectories.to_non_initial_intermediary_and_terminating_states()
+        )
+        assert isinstance(inter_states, DiscreteStates)
+        assert isinstance(ter_states, DiscreteStates)
+        return inter_states, ter_states

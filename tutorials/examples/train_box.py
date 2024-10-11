@@ -16,6 +16,8 @@ from scipy.special import logsumexp
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm, trange
 
+from gfn.containers.trajectories import Trajectories
+from gfn.containers.transitions import Transitions
 from gfn.gflownet import (
     DBGFlowNet,
     LogPartitionVarianceGFlowNet,
@@ -233,11 +235,15 @@ def main(args):  # noqa: C901
         trajectories = gflownet.sample_trajectories(
             env, save_logprobs=True, n_samples=args.batch_size
         )
-
         training_samples = gflownet.to_training_samples(trajectories)
-
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
+        if isinstance(gflownet, DBGFlowNet):
+            assert isinstance(gflownet, DBGFlowNet)
+            assert isinstance(training_samples, Transitions)
+            loss = gflownet.loss(env, training_samples)
+        else:
+            assert isinstance(training_samples, Trajectories)
+            loss = gflownet.loss(env, training_samples)
 
         loss.backward()
         for p in gflownet.parameters():

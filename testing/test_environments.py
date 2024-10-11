@@ -1,6 +1,9 @@
+from typing import Literal
+
 import numpy as np
 import pytest
 import torch
+from torch import Tensor
 
 from gfn.env import NonValidActionsError
 from gfn.gym import Box, DiscreteEBM, HyperGrid
@@ -26,7 +29,7 @@ def format_random_tensor(env, n, h):
 # Tests.
 @pytest.mark.parametrize("preprocessor", ["Identity", "OneHot", "KHot"])
 def test_HyperGrid_preprocessors(
-    preprocessor: str,
+    preprocessor: Literal["KHot", "OneHot", "Identity", "Enum"],
 ):
     NDIM = 2
     ENV_HEIGHT = 3
@@ -65,7 +68,7 @@ def test_HyperGrid_preprocessors(
 
 @pytest.mark.parametrize("preprocessor", ["Identity", "OneHot", "KHot"])
 def test_HyperGrid_fwd_step_with_preprocessors(
-    preprocessor: str,
+    preprocessor: Literal["KHot", "OneHot", "Identity", "Enum"],
 ):
     NDIM = 2
     ENV_HEIGHT = BATCH_SIZE = 3
@@ -98,7 +101,7 @@ def test_HyperGrid_fwd_step_with_preprocessors(
 
 @pytest.mark.parametrize("preprocessor", ["Identity", "OneHot", "KHot"])
 def test_HyperGrid_bwd_step_with_preprocessors(
-    preprocessor: str,
+    preprocessor: Literal["KHot", "OneHot", "Identity", "Enum"],
 ):
     NDIM = 2
     ENV_HEIGHT = 3

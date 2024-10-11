@@ -3,7 +3,6 @@ from typing import Optional, Tuple, Union
 
 import torch
 from torch import Tensor
-from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
@@ -24,12 +23,12 @@ class Env(ABC):
 
     def __init__(
         self,
-        s0: TT["state_shape", torch.float],
+        s0: Tensor,
         state_shape: Tuple,
         action_shape: Tuple,
         dummy_action: Tensor,
         exit_action: Tensor,
-        sf: Optional[TT["state_shape", torch.float]] = None,
+        sf: Optional[Tensor] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -74,27 +73,25 @@ class Env(ABC):
         self.preprocessor = preprocessor
         self.is_discrete = False
 
-    def states_from_tensor(self, tensor: Tensor):
+    def states_from_tensor(self, tensor: Tensor) -> States:
         """Wraps the supplied Tensor in a States instance."""
         return self.States(tensor)
 
-    def states_from_batch_shape(self, batch_shape: Tuple):
+    def states_from_batch_shape(self, batch_shape: Tuple) -> States:
         """Returns a batch of s0 states with a given batch_shape."""
         return self.States.from_batch_shape(batch_shape)
 
-    def actions_from_tensor(self, tensor: Tensor):
+    def actions_from_tensor(self, tensor: Tensor) -> Actions:
         """Wraps the supplied Tensor an an Actions instance."""
         return self.Actions(tensor)
 
-    def actions_from_batch_shape(self, batch_shape: Tuple):
+    def actions_from_batch_shape(self, batch_shape: Tuple) -> Actions:
         """Returns a batch of dummy actions with the supplied batch_shape."""
         return self.Actions.make_dummy_actions(batch_shape)
 
     # To be implemented by the User.
     @abstractmethod
-    def step(
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    def step(self, states: States, actions: Actions) -> Tensor:
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
@@ -102,7 +99,7 @@ class Env(ABC):
     @abstractmethod
     def backward_step(  # TODO: rename to backward_step, other method becomes _backward_step.
         self, states: States, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    ) -> Tensor:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
         """
@@ -159,10 +156,10 @@ class Env(ABC):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int]]] = None,
+        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
         random: bool = False,
         sink: bool = False,
-        seed: int = None,
+        seed: Optional[int] = None,
     ) -> States:
         """
         Instantiates a batch of initial states. random and sink cannot be both True.
@@ -202,7 +199,7 @@ class Env(ABC):
         states and a boolean tensor indicating sink states in the new batch.
         """
         new_states = states.clone()  # TODO: Ensure this is efficient!
-        valid_states_idx: TT["batch_shape", torch.bool] = ~states.is_sink_state
+        valid_states_idx: Tensor = ~states.is_sink_state
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
@@ -239,7 +236,7 @@ class Env(ABC):
         states and a boolean tensor indicating initial states in the new batch.
         """
         new_states = states.clone()  # TODO: Ensure this is efficient!
-        valid_states_idx: TT["batch_shape", torch.bool] = ~new_states.is_initial_state
+        valid_states_idx: Tensor = ~new_states.is_initial_state
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
@@ -251,27 +248,23 @@ class Env(ABC):
         # Calculate the backward step, and update only the states which are not Done.
         new_not_done_states_tensor = self.backward_step(valid_states, valid_actions)
         new_states.tensor[valid_states_idx] = new_not_done_states_tensor
-
-        if isinstance(new_states, DiscreteStates):
-            self.update_masks(new_states)
-
         return new_states
 
-    def reward(self, final_states: States) -> TT["batch_shape", torch.float]:
+    def reward(self, final_states: States) -> Tensor:
         """The environment's reward given a state.
 
         This or log_reward must be implemented.
         """
         raise NotImplementedError("Reward function is not implemented.")
 
-    def log_reward(self, final_states: States) -> TT["batch_shape", torch.float]:
+    def log_reward(self, final_states: States) -> Tensor:
         """Calculates the log reward."""
         return torch.log(self.reward(final_states))
 
     @property
     def log_partition(self) -> float:
         "Returns the logarithm of the partition function."
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
@@ -288,12 +281,12 @@ class DiscreteEnv(Env, ABC):
     def __init__(
         self,
         n_actions: int,
-        s0: TT["state_shape", torch.float],
+        s0: Tensor,
         state_shape: Tuple,
         action_shape: Tuple = (1,),
-        dummy_action: Optional[TT["action_shape", torch.long]] = None,
-        exit_action: Optional[TT["action_shape", torch.long]] = None,
-        sf: Optional[TT["state_shape", torch.float]] = None,
+        dummy_action: Optional[Tensor] = None,
+        exit_action: Optional[Tensor] = None,
+        sf: Optional[Tensor] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -332,23 +325,18 @@ class DiscreteEnv(Env, ABC):
             device_str,
             preprocessor,
         )
+        self.States: type[DiscreteStates] = self.States
 
         self.is_discrete = True  # After init, else it will be overwritten.
-
-    def states_from_tensor(self, tensor: Tensor):
-        """Wraps the supplied Tensor in a States instance & updates masks."""
-        states_instance = self.make_states_class()(tensor)
-        self.update_masks(states_instance)
-        return states_instance
 
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int]]] = None,
+        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
         random: bool = False,
         sink: bool = False,
-        seed: int = None,
-    ) -> States:
+        seed: Optional[int] = None,
+    ) -> DiscreteStates:
         """Instantiates a batch of initial states.
 
         `random` and `sink` cannot be both True. When `random` is `True` and `seed` is
@@ -372,13 +360,13 @@ class DiscreteEnv(Env, ABC):
         return states
 
     @abstractmethod
-    def update_masks(self, states: type[States]) -> None:
+    def update_masks(self, states: DiscreteStates) -> None:
         """Updates the masks in States.
 
         Called automatically after each step for discrete environments.
         """
 
-    def make_states_class(self) -> type[States]:
+    def make_states_class(self) -> type[DiscreteStates]:
         env = self
 
         class DiscreteEnvStates(DiscreteStates):
@@ -391,6 +379,21 @@ class DiscreteEnv(Env, ABC):
 
         return DiscreteEnvStates
 
+    def _backward_step(
+        self,
+        states: DiscreteStates,
+        actions: Actions,
+    ) -> DiscreteStates:
+        """Core backward_step function. Calls the user-defined self.backward_step fn.
+
+        This function takes a batch of states and actions and returns a batch of next
+        states and a boolean tensor indicating initial states in the new batch.
+        """
+        new_states = super()._backward_step(states, actions)
+        assert isinstance(new_states, DiscreteStates)
+        self.update_masks(new_states)
+        return new_states
+
     def make_actions_class(self) -> type[Actions]:
         env = self
 
@@ -402,50 +405,57 @@ class DiscreteEnv(Env, ABC):
         return DiscreteEnvActions
 
     def is_action_valid(
-        self, states: States, actions: Actions, backward: bool = False
-    ) -> bool:
+        self, states: DiscreteStates, actions: Actions, backward: bool = False
+    ) -> Tensor:
         assert states.forward_masks is not None and states.backward_masks is not None
         masks_tensor = states.backward_masks if backward else states.forward_masks
         return torch.gather(masks_tensor, 1, actions.tensor).all()
 
-    def _step(self, states: DiscreteStates, actions: Actions) -> States:
+    def _step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Calls the core self._step method of the parent class, and updates masks."""
         new_states = super()._step(states, actions)
+        assert isinstance(new_states, DiscreteStates)
         self.update_masks(
             new_states
         )  # TODO: update_masks is owned by the env, not the states!!
         return new_states
 
-    def get_states_indices(
-        self, states: DiscreteStates
-    ) -> TT["batch_shape", torch.long]:
-        return NotImplementedError(
+    def states_from_tensor(self, tensor: Tensor) -> DiscreteStates:
+        """Wraps the supplied Tensor in a States instance & updates masks."""
+        states_instance = self.States(tensor)
+        self.update_masks(states_instance)
+        return states_instance
+
+    def states_from_batch_shape(self, batch_shape: Tuple) -> DiscreteStates:
+        """Returns a batch of s0 states with a given batch_shape."""
+        return self.States.from_batch_shape(batch_shape)
+
+    def get_states_indices(self, states: DiscreteStates) -> Tensor:
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
-    def get_terminating_states_indices(
-        self, states: DiscreteStates
-    ) -> TT["batch_shape", torch.long]:
-        return NotImplementedError(
+    def get_terminating_states_indices(self, states: DiscreteStates) -> Tensor:
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     @property
     def n_states(self) -> int:
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     @property
     def n_terminating_states(self) -> int:
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     @property
-    def true_dist_pmf(self) -> TT["n_states", torch.float]:
+    def true_dist_pmf(self) -> Tensor:
         "Returns a one-dimensional tensor representing the true distribution."
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
@@ -456,7 +466,7 @@ class DiscreteEnv(Env, ABC):
         This should satisfy:
         self.get_states_indices(self.all_states) == torch.arange(self.n_states)
         """
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
@@ -467,6 +477,6 @@ class DiscreteEnv(Env, ABC):
         This should satisfy:
         self.get_terminating_states_indices(self.terminating_states) == torch.arange(self.n_terminating_states)
         """
-        return NotImplementedError(
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )

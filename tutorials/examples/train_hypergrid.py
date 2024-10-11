@@ -17,7 +17,9 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.containers import ReplayBuffer, PrioritizedReplayBuffer
+from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
+from gfn.containers.trajectories import Trajectories
+from gfn.containers.transitions import Transitions
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -26,8 +28,10 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
+from gfn.gflownet.base import TrajectoryBasedGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 from gfn.utils.training import validate
@@ -242,11 +246,23 @@ def main(args):  # noqa: C901
             training_objects = training_samples
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_objects)
+        if isinstance(gflownet, TrajectoryBasedGFlowNet):
+            assert isinstance(training_objects, Trajectories)
+            loss = gflownet.loss(env, training_objects)
+        elif isinstance(gflownet, FMGFlowNet):
+            inter_states, ter_states = training_objects
+            assert isinstance(inter_states, DiscreteStates)
+            assert isinstance(ter_states, DiscreteStates)
+            loss = gflownet.loss(env, (inter_states, ter_states))
+        else:
+            assert isinstance(training_objects, Transitions)
+            loss = gflownet.loss(env, training_objects)
         loss.backward()
         optimizer.step()
 
-        visited_terminating_states.extend(trajectories.last_states)
+        last_states = trajectories.last_states
+        assert isinstance(last_states, DiscreteStates)
+        visited_terminating_states.extend(last_states)
 
         states_visited += len(trajectories)
 

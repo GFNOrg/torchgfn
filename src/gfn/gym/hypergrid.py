@@ -6,7 +6,7 @@ from typing import Literal, Tuple
 
 import torch
 from einops import rearrange
-from torchtyping import TensorType as TT
+from torch import Tensor
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
@@ -85,7 +85,7 @@ class HyperGrid(DiscreteEnv):
             preprocessor=preprocessor,
         )
 
-    def update_masks(self, states: type[DiscreteStates]) -> None:
+    def update_masks(self, states: DiscreteStates) -> None:
         """Update the masks based on the current states."""
         states.set_default_typing()
         # Not allowed to take any action beyond the environment height, but
@@ -96,27 +96,21 @@ class HyperGrid(DiscreteEnv):
         )
         states.backward_masks = states.tensor != 0
 
-    def make_random_states_tensor(
-        self, batch_shape: Tuple[int, ...]
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    def make_random_states_tensor(self, batch_shape: Tuple[int, ...]) -> Tensor:
         """Creates a batch of random states."""
         return torch.randint(
             0, self.height, batch_shape + self.s0.shape, device=self.device
         )
 
-    def step(
-        self, states: DiscreteStates, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    def step(self, states: DiscreteStates, actions: Actions) -> Tensor:
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
         return new_states_tensor
 
-    def backward_step(
-        self, states: DiscreteStates, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    def backward_step(self, states: DiscreteStates, actions: Actions) -> Tensor:
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
         return new_states_tensor
 
-    def reward(self, final_states: DiscreteStates) -> TT["batch_shape", torch.float]:
+    def reward(self, final_states: DiscreteStates) -> Tensor:
         r"""In the normal setting, the reward is:
         R(s) = R_0 + 0.5 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1}
           - 0.5 \right\rvert \in (0.25, 0.5] \right)
@@ -135,9 +129,7 @@ class HyperGrid(DiscreteEnv):
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
         return reward
 
-    def get_states_indices(
-        self, states: DiscreteStates
-    ) -> TT["batch_shape", torch.long]:
+    def get_states_indices(self, states: DiscreteStates) -> Tensor:
         states_raw = states.tensor
 
         canonical_base = self.height ** torch.arange(
@@ -146,9 +138,7 @@ class HyperGrid(DiscreteEnv):
         indices = (canonical_base * states_raw).sum(-1).long()
         return indices
 
-    def get_terminating_states_indices(
-        self, states: DiscreteStates
-    ) -> TT["batch_shape", torch.long]:
+    def get_terminating_states_indices(self, states: DiscreteStates) -> Tensor:
         return self.get_states_indices(states)
 
     @property
