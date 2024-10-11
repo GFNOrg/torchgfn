@@ -12,6 +12,7 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 """
 
 from argparse import ArgumentParser
+from typing import Optional
 
 import torch
 import wandb
@@ -20,6 +21,7 @@ from tqdm import tqdm, trange
 from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
+from gfn.env import DiscreteEnv
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -28,7 +30,7 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
-from gfn.gflownet.base import TrajectoryBasedGFlowNet
+from gfn.gflownet.base import GFlowNet, TrajectoryBasedGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.states import DiscreteStates
@@ -60,7 +62,7 @@ def main(args):  # noqa: C901
     #       one (forward only) for FM loss,
     #       two (forward and backward) or other losses
     #       three (same, + logZ) estimators for TB.
-    gflownet = None
+    gflownet: Optional[GFlowNet] = None
     if args.loss == "FM":
         # We need a LogEdgeFlowEstimator
         if args.tabular:
@@ -246,17 +248,7 @@ def main(args):  # noqa: C901
             training_objects = training_samples
 
         optimizer.zero_grad()
-        if isinstance(gflownet, TrajectoryBasedGFlowNet):
-            assert isinstance(training_objects, Trajectories)
-            loss = gflownet.loss(env, training_objects)
-        elif isinstance(gflownet, FMGFlowNet):
-            inter_states, ter_states = training_objects
-            assert isinstance(inter_states, DiscreteStates)
-            assert isinstance(ter_states, DiscreteStates)
-            loss = gflownet.loss(env, (inter_states, ter_states))
-        else:
-            assert isinstance(training_objects, Transitions)
-            loss = gflownet.loss(env, training_objects)
+        loss = gflownet.loss(env, training_objects)
         loss.backward()
         optimizer.step()
 

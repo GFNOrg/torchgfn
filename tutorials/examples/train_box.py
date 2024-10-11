@@ -238,7 +238,6 @@ def main(args):  # noqa: C901
         training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
         if isinstance(gflownet, DBGFlowNet):
-            assert isinstance(gflownet, DBGFlowNet)
             assert isinstance(training_samples, Transitions)
             loss = gflownet.loss(env, training_samples)
         else:

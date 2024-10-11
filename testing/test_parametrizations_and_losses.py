@@ -15,7 +15,7 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
-from gfn.gflownet.base import TrajectoryBasedGFlowNet
+from gfn.gflownet.base import GFlowNet, TrajectoryBasedGFlowNet
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
@@ -214,7 +214,7 @@ def PFBasedGFlowNet_with_return(
     pb: GFNModule,
     logF: ScalarEstimator,
     forward_looking: bool,
-):
+) -> GFlowNet:
     if gflownet_name == "DB":
         gflownet = DBGFlowNet(
             logF=logF,
@@ -237,30 +237,6 @@ def PFBasedGFlowNet_with_return(
         )
     else:
         raise ValueError(f"Unknown gflownet {gflownet_name}")
-
-    if isinstance(gflownet, TrajectoryBasedGFlowNet):
-        trajectories = gflownet.sample_trajectories(
-            env, save_logprobs=True, n_samples=10
-        )
-        training_objects = gflownet.to_training_samples(trajectories)
-        assert isinstance(training_objects, Trajectories)
-        _ = gflownet.loss(env, training_objects)
-
-        if isinstance(gflownet, TBGFlowNet):
-            assert torch.all(
-                torch.abs(
-                    gflownet.get_pfs_and_pbs(training_objects)[0]
-                    - training_objects.log_probs
-                )
-                < 1e-5
-            )
-    else:
-        trajectories = gflownet.sample_trajectories(
-            env, save_logprobs=True, n_samples=10
-        )
-        training_objects = gflownet.to_training_samples(trajectories)
-        assert isinstance(training_objects, Transitions)
-        _ = gflownet.loss(env, training_objects)
 
     return gflownet
 
@@ -315,9 +291,22 @@ def test_PFBasedGFlowNet(
     env, pf, pb, logF = _make_env_and_module(
         env_name, ndim, module_name, tie_pb_to_pf, zero_logF
     )
-    _ = PFBasedGFlowNet_with_return(
+    gflownet = PFBasedGFlowNet_with_return(
         gflownet_name, sub_tb_weighting, env, pf, pb, logF, forward_looking
     )
+
+    trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
+    training_objects = gflownet.to_training_samples(trajectories)
+    _ = gflownet.loss(env, training_objects)
+
+    if isinstance(gflownet, TBGFlowNet):
+        assert torch.all(
+            torch.abs(
+                gflownet.get_pfs_and_pbs(training_objects)[0]
+                - training_objects.log_probs
+            )
+            < 1e-5
+        )
 
 
 @pytest.mark.parametrize(
@@ -360,9 +349,7 @@ def test_subTB_vs_TB(
         forward_looking=False,
     )
 
-    assert isinstance(gflownet, SubTBGFlowNet)
     trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
-    assert isinstance(trajectories, Trajectories)
     subtb_loss = gflownet.loss(env, trajectories)
 
     if weighting == "TB":
