@@ -36,7 +36,7 @@ pip install torchgfn[scripts]
 To install the cutting edge version (from the `main` branch):
 
 ```bash
-git clone https://github.com/saleml/torchgfn.git
+git clone https://github.com/GFNOrg/torchgfn.git
 conda create -n gfn python=3.10
 conda activate gfn
 cd torchgfn
