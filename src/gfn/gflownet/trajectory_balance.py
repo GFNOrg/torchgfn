@@ -5,7 +5,7 @@ and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 
 import torch
 import torch.nn as nn
-from torchtyping import TensorType as TT
+from torch import Tensor
 
 from gfn.containers import Trajectories
 from gfn.env import Env
@@ -51,7 +51,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         env: Env,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = False,
-    ) -> TT[0, float]:
+    ) -> Tensor:
         """Trajectory balance loss.
 
         The trajectory balance loss is described in 2.3 of
@@ -95,7 +95,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         env: Env,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = False,
-    ) -> TT[0, float]:
+    ) -> Tensor:
         """Log Partition Variance loss.
 
         This method is described in section 3.2 of

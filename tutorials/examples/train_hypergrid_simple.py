@@ -35,7 +35,7 @@ pf_estimator = DiscretePolicyEstimator(
 pb_estimator = DiscretePolicyEstimator(
     module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor
 )
-gflownet = TBGFlowNet(init_logZ=0.0, pf=pf_estimator, pb=pb_estimator)
+gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
 
 # Feed pf to the sampler.
 sampler = Sampler(estimator=pf_estimator)

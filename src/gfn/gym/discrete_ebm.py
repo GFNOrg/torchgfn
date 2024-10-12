@@ -4,7 +4,6 @@ from typing import Literal, Tuple
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
@@ -16,24 +15,20 @@ class EnergyFunction(nn.Module, ABC):
     """Base class for energy functions"""
 
     @abstractmethod
-    def forward(
-        self, states: TT["batch_shape", "state_shape", torch.float]
-    ) -> TT["batch_shape"]:
+    def forward(self, states: Tensor) -> Tensor:
         pass
 
 
 class IsingModel(EnergyFunction):
     """Ising model energy function"""
 
-    def __init__(self, J: TT["state_shape", "state_shape", torch.float]):
+    def __init__(self, J: Tensor):
         super().__init__()
         self.J = J
         self.linear = nn.Linear(J.shape[0], 1, bias=False)
         self.linear.weight.data = J
 
-    def forward(
-        self, states: TT["batch_shape", "state_shape", torch.float]
-    ) -> TT["batch_shape"]:
+    def forward(self, states: Tensor) -> Tensor:
         states = states.float()
         tmp = self.linear(states)
         return -(states * tmp).sum(-1)
@@ -98,7 +93,7 @@ class DiscreteEBM(DiscreteEnv):
             preprocessor=preprocessor,
         )
 
-    def update_masks(self, states: type[States]) -> None:
+    def update_masks(self, states: DiscreteStates) -> None:
         states.set_default_typing()
         states.forward_masks[..., : self.ndim] = states.tensor == -1
         states.forward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == -1
@@ -115,12 +110,10 @@ class DiscreteEBM(DiscreteEnv):
             device=self.device,
         )
 
-    def is_exit_actions(self, actions: TT["batch_shape"]) -> TT["batch_shape"]:
+    def is_exit_actions(self, actions: Tensor) -> Tensor:
         return actions == self.n_actions - 1
 
-    def step(
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    def step(self, states: States, actions: Actions) -> Tensor:
         # First, we select that actions that replace a -1 with a 0.
         # Remove singleton dimension for broadcasting.
         mask_0 = (actions.tensor < self.ndim).squeeze(-1)
@@ -138,9 +131,7 @@ class DiscreteEBM(DiscreteEnv):
         )
         return states.tensor
 
-    def backward_step(
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    def backward_step(self, states: States, actions: Actions) -> Tensor:
         """Performs a backward step.
 
         In this env, states are n-dim vectors. s0 is empty (represented as -1),
@@ -152,14 +143,14 @@ class DiscreteEBM(DiscreteEnv):
         """
         return states.tensor.scatter(-1, actions.tensor.fmod(self.ndim), -1)
 
-    def reward(self, final_states: DiscreteStates) -> TT["batch_shape"]:
+    def reward(self, final_states: DiscreteStates) -> Tensor:
         """Not used during training but provided for completeness.
 
         Note the effect of clipping will be seen in these values.
         """
         return torch.exp(self.log_reward(final_states))
 
-    def log_reward(self, final_states: DiscreteStates) -> TT["batch_shape"]:
+    def log_reward(self, final_states: DiscreteStates) -> Tensor:
         """The energy weighted by alpha is our log reward."""
         raw_states = final_states.tensor
         canonical = 2 * raw_states - 1
@@ -167,15 +158,13 @@ class DiscreteEBM(DiscreteEnv):
 
         return log_reward
 
-    def get_states_indices(self, states: DiscreteStates) -> TT["batch_shape"]:
+    def get_states_indices(self, states: DiscreteStates) -> Tensor:
         """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3"""
         states_raw = states.tensor
         canonical_base = 3 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw + 1).mul(canonical_base).sum(-1).long()
 
-    def get_terminating_states_indices(
-        self, states: DiscreteStates
-    ) -> TT["batch_shape"]:
+    def get_terminating_states_indices(self, states: DiscreteStates) -> Tensor:
         states_raw = states.tensor
         canonical_base = 2 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
         return (states_raw).mul(canonical_base).sum(-1).long()

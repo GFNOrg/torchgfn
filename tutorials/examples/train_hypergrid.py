@@ -12,12 +12,16 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 """
 
 from argparse import ArgumentParser
+from typing import Optional
 
 import torch
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.containers import ReplayBuffer, PrioritizedReplayBuffer
+from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
+from gfn.containers.trajectories import Trajectories
+from gfn.containers.transitions import Transitions
+from gfn.env import DiscreteEnv
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -26,8 +30,10 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
+from gfn.gflownet.base import GFlowNet, TrajectoryBasedGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 from gfn.utils.training import validate
@@ -35,28 +41,8 @@ from gfn.utils.training import validate
 DEFAULT_SEED = 4444
 
 
-def main(args):  # noqa: C901
-    seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    set_seed(seed)
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
-
-    use_wandb = len(args.wandb_project) > 0
-    if use_wandb:
-        wandb.init(project=args.wandb_project)
-        wandb.config.update(args)
-
-    # 1. Create the environment
-    env = HyperGrid(
-        args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
-    )
-
-    # 2. Create the gflownets.
-    #    For this we need modules and estimators.
-    #    Depending on the loss, we may need several estimators:
-    #       one (forward only) for FM loss,
-    #       two (forward and backward) or other losses
-    #       three (same, + logZ) estimators for TB.
-    gflownet = None
+def _make_gflownet(args, env) -> GFlowNet:
+    gflownet: Optional[GFlowNet] = None
     if args.loss == "FM":
         # We need a LogEdgeFlowEstimator
         if args.tabular:
@@ -173,6 +159,26 @@ def main(args):  # noqa: C901
             )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
+    return gflownet
+
+
+def main(args):
+    seed = args.seed if args.seed != 0 else DEFAULT_SEED
+    set_seed(seed)
+    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+
+    use_wandb = len(args.wandb_project) > 0
+    if use_wandb:
+        wandb.init(project=args.wandb_project)
+        wandb.config.update(args)
+
+    # 1. Create the environment
+    env = HyperGrid(
+        args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
+    )
+
+    # 2. Create the gflownets.
+    gflownet = _make_gflownet(args, env)
 
     # Initialize the replay buffer ?
     replay_buffer = None
@@ -246,7 +252,9 @@ def main(args):  # noqa: C901
         loss.backward()
         optimizer.step()
 
-        visited_terminating_states.extend(trajectories.last_states)
+        last_states = trajectories.last_states
+        assert isinstance(last_states, DiscreteStates)
+        visited_terminating_states.extend(last_states)
 
         states_visited += len(trajectories)
 

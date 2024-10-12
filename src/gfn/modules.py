@@ -3,8 +3,8 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torch.distributions import Categorical, Distribution
-from torchtyping import TensorType as TT
 
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
@@ -73,7 +73,7 @@ class GFNModule(ABC, nn.Module):
         self._output_dim_is_checked = False
         self.is_backward = is_backward
 
-    def forward(self, states: States) -> TT["batch_shape", "output_dim", float]:
+    def forward(self, states: States) -> Tensor:
         out = self.module(self.preprocessor(states))
         if not self._output_dim_is_checked:
             self.check_output_dim(out)
@@ -89,20 +89,18 @@ class GFNModule(ABC, nn.Module):
     def expected_output_dim(self) -> int:
         """Expected output dimension of the module."""
 
-    def check_output_dim(
-        self, module_output: TT["batch_shape", "output_dim", float]
-    ) -> None:
+    def check_output_dim(self, module_output: Tensor) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
-        if module_output.shape[-1] != self.expected_output_dim():
+        if module_output.shape[-1] != self.expected_output_dim:
             raise ValueError(
-                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim()}"
+                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim}"
                 + f" but is {module_output.shape[-1]}."
             )
 
     def to_probability_distribution(
         self,
         states: States,
-        module_output: TT["batch_shape", "output_dim", float],
+        module_output: Tensor,
         **policy_kwargs: Optional[dict],
     ) -> Distribution:
         """Transform the output of the module into a probability distribution.
@@ -118,6 +116,8 @@ class GFNModule(ABC, nn.Module):
 
 
 class ScalarEstimator(GFNModule):
+
+    @property
     def expected_output_dim(self) -> int:
         return 1
 
@@ -154,6 +154,7 @@ class DiscretePolicyEstimator(GFNModule):
         super().__init__(module, preprocessor, is_backward=is_backward)
         self.n_actions = n_actions
 
+    @property
     def expected_output_dim(self) -> int:
         if self.is_backward:
             return self.n_actions - 1
@@ -163,7 +164,7 @@ class DiscretePolicyEstimator(GFNModule):
     def to_probability_distribution(
         self,
         states: DiscreteStates,
-        module_output: TT["batch_shape", "output_dim", float],
+        module_output: Tensor,
         temperature: float = 1.0,
         sf_bias: float = 0.0,
         epsilon: float = 0.0,

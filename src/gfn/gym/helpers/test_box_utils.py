@@ -102,7 +102,3 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
 
     assert torch.sum(alpha_r == 0.5) == B * max(n_components_s0, n_components)
     assert torch.sum(beta_r == 0.5) == B * max(n_components_s0, n_components)
-
-
-if __name__ == "__main__":
-    test_mixed_distributions()

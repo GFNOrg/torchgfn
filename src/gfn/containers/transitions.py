@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 import torch
-from torchtyping import TensorType as TT
+from torch import Tensor
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
@@ -35,11 +35,11 @@ class Transitions(Container):
         env: Env,
         states: States | None = None,
         actions: Actions | None = None,
-        is_done: TT["n_transitions", torch.bool] | None = None,
+        is_done: Tensor | None = None,
         next_states: States | None = None,
         is_backward: bool = False,
-        log_rewards: TT["n_transitions", torch.float] | None = None,
-        log_probs: TT["n_transitions", torch.float] | None = None,
+        log_rewards: Tensor | None = None,
+        log_probs: Tensor | None = None,
     ):
         """Instantiates a container for transitions.
 
@@ -122,7 +122,7 @@ class Transitions(Container):
         return self.states[self.is_done]
 
     @property
-    def log_rewards(self) -> TT["n_transitions", torch.float] | None:
+    def log_rewards(self) -> Tensor | None:
         if self._log_rewards is not None:
             return self._log_rewards
         if self.is_backward:
@@ -141,7 +141,7 @@ class Transitions(Container):
             return log_rewards
 
     @property
-    def all_log_rewards(self) -> TT["n_transitions", 2, torch.float]:
+    def all_log_rewards(self) -> Tensor:
         """Calculate all log rewards for the transitions.
 
         This is applicable to environments where all states are terminating. This
@@ -176,7 +176,7 @@ class Transitions(Container):
             )
         return log_rewards
 
-    def __getitem__(self, index: int | Sequence[int]) -> Transitions:
+    def __getitem__(self, index: int | Sequence | slice | Tensor) -> Transitions:
         """Access particular transitions of the batch."""
         if isinstance(index, int):
             index = [index]

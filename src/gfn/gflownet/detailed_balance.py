@@ -2,7 +2,7 @@ import math
 from typing import Tuple
 
 import torch
-from torchtyping import TensorType as TT
+from torch import Tensor
 
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
@@ -65,9 +65,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
     def get_scores(
         self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
     ) -> Tuple[
-        TT["n_transitions", float],
-        TT["n_transitions", float],
-        TT["n_transitions", float],
+        Tensor,
+        Tensor,
+        Tensor,
     ]:
         """Given a batch of transitions, calculate the scores.
 
@@ -151,7 +151,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         return (valid_log_pf_actions, log_pb_actions, scores)
 
-    def loss(self, env: Env, transitions: Transitions) -> TT[0, float]:
+    def loss(self, env: Env, transitions: Transitions) -> Tensor:
         """Detailed balance loss.
 
         The detailed balance loss is described in section
@@ -178,7 +178,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
     def get_scores(
         self, transitions: Transitions, recalculate_all_logprobs: bool = False
-    ) -> TT["n_trajectories", torch.float]:
+    ) -> Tensor:
         """DAG-GFN-style detailed balance, when all states are connected to the sink.
 
         Unless recalculate_all_logprobs=True, in which case we re-evaluate the logprobs of the transitions with
@@ -208,7 +208,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             # Evaluate the log PF of the actions sampled off policy.
             valid_log_pf_actions = pf_dist.log_prob(actions.tensor)
         valid_log_pf_s_exit = pf_dist.log_prob(
-            torch.full_like(actions.tensor, actions.__class__.exit_action[0])
+            torch.full_like(actions.tensor, actions.__class__.exit_action.item())
         )
 
         # The following two lines are slightly inefficient, given that most
@@ -233,7 +233,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         return scores
 
-    def loss(self, env: Env, transitions: Transitions) -> TT[0, float]:
+    def loss(self, env: Env, transitions: Transitions) -> Tensor:
         """Calculates the modified detailed balance loss."""
         scores = self.get_scores(transitions)
         return torch.mean(scores**2)

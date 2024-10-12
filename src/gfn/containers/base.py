@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from gfn.env import Env
 
 import torch
+from torch import Tensor
 
 
 class Container(ABC):
@@ -18,7 +19,7 @@ class Container(ABC):
         """Returns the number of elements in the container."""
 
     @abstractmethod
-    def __getitem__(self, index: int | Sequence[int]) -> Container:
+    def __getitem__(self, index: int | Sequence | slice | Tensor) -> Container:
         """Subsets the container."""
 
     @abstractmethod

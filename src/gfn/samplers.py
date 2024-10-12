@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import List, Optional, Tuple
 
 import torch
-from torchtyping import TensorType as TT
+from torch import Tensor
 
 from gfn.actions import Actions
 from gfn.containers import Trajectories
@@ -36,8 +36,8 @@ class Sampler:
         **policy_kwargs: Optional[dict],
     ) -> Tuple[
         Actions,
-        TT["batch_shape", torch.float] | None,
-        TT["batch_shape", torch.float] | None,
+        Tensor | None,
+        Tensor | None,
     ]:
         """Samples actions from the given states.
 
@@ -145,8 +145,8 @@ class Sampler:
         )
 
         trajectories_states: List[States] = [deepcopy(states)]
-        trajectories_actions: List[TT["n_trajectories", torch.long]] = []
-        trajectories_logprobs: List[TT["n_trajectories", torch.float]] = []
+        trajectories_actions: List[Actions] = []
+        trajectories_logprobs: List[Tensor] = []
         trajectories_dones = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
@@ -223,24 +223,22 @@ class Sampler:
 
             trajectories_states += [deepcopy(states)]
 
-        trajectories_states = stack_states(trajectories_states)
-        trajectories_actions = env.Actions.stack(trajectories_actions)
-        trajectories_logprobs = (
-            torch.stack(trajectories_logprobs, dim=0) if save_logprobs else None
-        )
-
         # TODO: use torch.nested.nested_tensor(dtype, device, requires_grad).
         if save_estimator_outputs:
             all_estimator_outputs = torch.stack(all_estimator_outputs, dim=0)
+        else:
+            all_estimator_outputs = None
 
         trajectories = Trajectories(
             env=env,
-            states=trajectories_states,
-            actions=trajectories_actions,
+            states=stack_states(trajectories_states),
+            actions=env.Actions.stack(trajectories_actions),
             when_is_done=trajectories_dones,
             is_backward=self.estimator.is_backward,
             log_rewards=trajectories_log_rewards,
-            log_probs=trajectories_logprobs,
+            log_probs=(
+                torch.stack(trajectories_logprobs, dim=0) if save_logprobs else None
+            ),
             estimator_outputs=all_estimator_outputs if save_estimator_outputs else None,
         )
 

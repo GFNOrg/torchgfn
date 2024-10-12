@@ -5,9 +5,10 @@ from typing import Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
-from torchtyping import TensorType as TT
 
+from gfn.actions import Actions
 from gfn.gym import Box
 from gfn.modules import GFNModule
 from gfn.states import States
@@ -35,10 +36,10 @@ class QuarterCircle(Distribution):
         self,
         delta: float,
         northeastern: bool,
-        centers: TT["n_states", 2],
-        mixture_logits: TT["n_states", "n_components"],
-        alpha: TT["n_states", "n_components"],
-        beta: TT["n_states", "n_components"],
+        centers: States,
+        mixture_logits: Tensor,
+        alpha: Tensor,
+        beta: Tensor,
     ):
         self.delta = delta
         self.northeastern = northeastern
@@ -57,7 +58,7 @@ class QuarterCircle(Distribution):
 
         self.min_angles, self.max_angles = self.get_min_and_max_angles()
 
-    def get_min_and_max_angles(self) -> Tuple[TT["n_states"], TT["n_states"]]:
+    def get_min_and_max_angles(self) -> Tuple[Tensor, Tensor]:
         if self.northeastern:
             min_angles = torch.where(
                 self.centers.tensor[..., 0] <= 1 - self.delta,
@@ -83,7 +84,7 @@ class QuarterCircle(Distribution):
 
         return min_angles, max_angles
 
-    def sample(self, sample_shape: torch.Size = torch.Size()) -> TT["sample_shape", 2]:
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> Tensor:
         base_01_samples = self.base_dist.sample(sample_shape=sample_shape)
 
         sampled_angles = (
@@ -143,7 +144,7 @@ class QuarterCircle(Distribution):
 
         return sampled_actions
 
-    def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
+    def log_prob(self, sampled_actions: Tensor) -> Tensor:
         sampled_actions = sampled_actions.to(
             torch.double
         )  # Arccos is very brittle, so we use double precision
@@ -219,11 +220,11 @@ class QuarterDisk(Distribution):
     def __init__(
         self,
         delta: float,
-        mixture_logits: TT["n_components"],
-        alpha_r: TT["n_components"],
-        beta_r: TT["n_components"],
-        alpha_theta: TT["n_components"],
-        beta_theta: TT["n_components"],
+        mixture_logits: Tensor,
+        alpha_r: Tensor,
+        beta_r: Tensor,
+        alpha_theta: Tensor,
+        beta_theta: Tensor,
     ):
         self.delta = delta
         self.mixture_logits = mixture_logits
@@ -244,7 +245,7 @@ class QuarterDisk(Distribution):
             Beta(alpha_theta, beta_theta),
         )
 
-    def sample(self, sample_shape: torch.Size = torch.Size()) -> TT["sample_shape", 2]:
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> Tensor:
         base_r_01_samples = self.base_r_dist.sample(sample_shape=sample_shape)
         base_theta_01_samples = self.base_theta_dist.sample(sample_shape=sample_shape)
 
@@ -260,7 +261,7 @@ class QuarterDisk(Distribution):
 
         return sampled_actions
 
-    def log_prob(self, sampled_actions: TT["batch_size", 2]) -> TT["batch_size"]:
+    def log_prob(self, sampled_actions: Tensor) -> Tensor:
         sampled_actions = sampled_actions.to(
             torch.double
         )  # Arccos is very brittle, so we use double precision
@@ -299,11 +300,11 @@ class QuarterCircleWithExit(Distribution):
     def __init__(
         self,
         delta: float,
-        centers: TT["n_states", 2],
-        exit_probability: TT["n_states"],
-        mixture_logits: TT["n_states", "n_components"],
-        alpha: TT["n_states", "n_components"],
-        beta: TT["n_states", "n_components"],
+        centers: States,
+        exit_probability: Tensor,
+        mixture_logits: Tensor,
+        alpha: Tensor,
+        beta: Tensor,
         epsilon: float = 1e-4,
     ):
         self.delta = delta
@@ -405,9 +406,8 @@ class DistributionWrapper(Distribution):
         n_disk_samples = len(self.idx_is_initial)
         if n_disk_samples > 0:
             assert self.quarter_disk is not None
-            sample_disk = self.quarter_disk.sample(
-                sample_shape=sample_shape + (n_disk_samples,)
-            )
+            sample_shape = torch.Size(sample_shape + (n_disk_samples,))
+            sample_disk = self.quarter_disk.sample(sample_shape=sample_shape)
             output[self.idx_is_initial] = sample_disk
         if len(self.idx_not_initial) > 0:
             assert self.quarter_circ is not None
@@ -489,9 +489,7 @@ class BoxPFNeuralNet(NeuralNet):
         # impossible at t=0).
         self.PFs0 = torch.nn.Parameter(torch.zeros(1, 5 * self.n_components_s0))
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", "1 + 5 * n_components"]:
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
         if preprocessed_states.ndim != 2:
             raise ValueError(
                 f"preprocessed_states should be of shape [B, 2], got {preprocessed_states.shape}"
@@ -587,9 +585,7 @@ class BoxPBNeuralNet(NeuralNet):
 
         self.n_components = n_components
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", "3 * n_components"]:
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
         out = super().forward(preprocessed_states)
 
         # Apply sigmoid to all except the dimensions between 0 and self.n_components.
@@ -605,9 +601,7 @@ class BoxStateFlowModule(NeuralNet):
         super().__init__(**kwargs)
         self.logZ_value = nn.Parameter(logZ_value)
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
         out = super().forward(preprocessed_states)
         idx_s0 = torch.all(preprocessed_states == 0.0, 1)
         out[idx_s0] = self.logZ_value
@@ -624,18 +618,14 @@ class BoxPBUniform(torch.nn.Module):
 
     input_dim = 2
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", 3]:
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
         # return (1, 1, 1) for all states, thus the "+ (3,)".
         return torch.ones(
             preprocessed_states.shape[:-1] + (3,), device=preprocessed_states.device
         )
 
 
-def split_PF_module_output(
-    output: TT["batch_shape", "output_dim", float], n_comp_max: int
-):
+def split_PF_module_output(output: Tensor, n_comp_max: int):
     """Splits the module output into the expected parameter sets.
 
     Args:
@@ -695,11 +685,12 @@ class BoxPFEstimator(GFNModule):
         self.delta = env.delta
         self.epsilon = env.epsilon
 
+    @property
     def expected_output_dim(self) -> int:
         return 1 + 5 * self._n_comp_max
 
     def to_probability_distribution(
-        self, states: States, module_output: TT["batch_shape", "output_dim", float]
+        self, states: States, module_output: Tensor
     ) -> Distribution:
         # First, we verify that the batch shape of states is 1
         assert len(states.batch_shape) == 1
@@ -775,11 +766,12 @@ class BoxPBEstimator(GFNModule):
 
         self.delta = env.delta
 
+    @property
     def expected_output_dim(self) -> int:
         return 3 * self.n_components
 
     def to_probability_distribution(
-        self, states: States, module_output: TT["batch_shape", "output_dim", float]
+        self, states: States, module_output: Tensor
     ) -> Distribution:
         # First, we verify that the batch shape of states is 1
         assert len(states.batch_shape) == 1

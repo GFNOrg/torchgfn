@@ -8,6 +8,7 @@ from gfn.gym.helpers.box_utils import (
     BoxPFEstimator,
     BoxPFNeuralNet,
 )
+from gfn.gym.hypergrid import HyperGrid
 from gfn.modules import DiscretePolicyEstimator
 from gfn.states import States
 
@@ -42,7 +43,7 @@ def test_trajectory_based_gflownet_generic():
 
 
 def test_flow_matching_gflownet_generic():
-    env = Box()
+    env = HyperGrid()
     module = BoxPFNeuralNet(
         hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
     )
