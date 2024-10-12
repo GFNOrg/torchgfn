@@ -8,6 +8,7 @@ python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
 
 from argparse import ArgumentParser
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -24,6 +25,7 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
+from gfn.gflownet.base import GFlowNet
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
@@ -87,25 +89,9 @@ def estimate_jsd(kde1, kde2):
     return jsd / 2.0
 
 
-def main(args):  # noqa: C901
-    seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    set_seed(seed)
-
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
-
-    use_wandb = len(args.wandb_project) > 0
-    if use_wandb:
-        wandb.init(project=args.wandb_project)
-        wandb.config.update(args)
-
-    n_iterations = args.n_trajectories // args.batch_size
-
-    # 1. Create the environment
-    env = Box(delta=args.delta, epsilon=1e-10, device_str=device_str)
-
-    # 2. Create the gflownet.
-    #    For this we need modules and estimators.
-    #    Depending on the loss, we may need several estimators:
+def make_gflownet(
+    args, env
+) -> Tuple[GFlowNet, BoxPFNeuralNet, BoxPBNeuralNet | None, BoxStateFlowModule | None]:
     gflownet = None
     pf_module = BoxPFNeuralNet(
         hidden_dim=args.hidden_dim,
@@ -181,11 +167,35 @@ def main(args):  # noqa: C901
         )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
+    return gflownet, pf_module, pb_module, module
+
+
+def main(args):  # noqa: C901
+    seed = args.seed if args.seed != 0 else DEFAULT_SEED
+    set_seed(seed)
+
+    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+
+    use_wandb = len(args.wandb_project) > 0
+    if use_wandb:
+        wandb.init(project=args.wandb_project)
+        wandb.config.update(args)
+
+    n_iterations = args.n_trajectories // args.batch_size
+
+    # 1. Create the environment
+    env = Box(delta=args.delta, epsilon=1e-10, device_str=device_str)
+
+    # 2. Create the gflownet.
+    #    For this we need modules and estimators.
+    #    Depending on the loss, we may need several estimators:
+    gflownet, pf_module, pb_module, module = make_gflownet(args, env)
 
     # 3. Create the optimizer and scheduler
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
     if not args.uniform_pb:
+        assert pb_module is not None
         optimizer.add_param_group(
             {
                 "params": (
@@ -235,14 +245,9 @@ def main(args):  # noqa: C901
         trajectories = gflownet.sample_trajectories(
             env, save_logprobs=True, n_samples=args.batch_size
         )
-        training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
-        if isinstance(gflownet, DBGFlowNet):
-            assert isinstance(training_samples, Transitions)
-            loss = gflownet.loss(env, training_samples)
-        else:
-            assert isinstance(training_samples, Trajectories)
-            loss = gflownet.loss(env, training_samples)
+        training_samples = gflownet.to_training_samples(trajectories)
+        loss = gflownet.loss(env, training_samples)
 
         loss.backward()
         for p in gflownet.parameters():

@@ -41,27 +41,7 @@ from gfn.utils.training import validate
 DEFAULT_SEED = 4444
 
 
-def main(args):  # noqa: C901
-    seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    set_seed(seed)
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
-
-    use_wandb = len(args.wandb_project) > 0
-    if use_wandb:
-        wandb.init(project=args.wandb_project)
-        wandb.config.update(args)
-
-    # 1. Create the environment
-    env = HyperGrid(
-        args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
-    )
-
-    # 2. Create the gflownets.
-    #    For this we need modules and estimators.
-    #    Depending on the loss, we may need several estimators:
-    #       one (forward only) for FM loss,
-    #       two (forward and backward) or other losses
-    #       three (same, + logZ) estimators for TB.
+def _make_gflownet(args, env) -> GFlowNet:
     gflownet: Optional[GFlowNet] = None
     if args.loss == "FM":
         # We need a LogEdgeFlowEstimator
@@ -179,6 +159,26 @@ def main(args):  # noqa: C901
             )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
+    return gflownet
+
+
+def main(args):
+    seed = args.seed if args.seed != 0 else DEFAULT_SEED
+    set_seed(seed)
+    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+
+    use_wandb = len(args.wandb_project) > 0
+    if use_wandb:
+        wandb.init(project=args.wandb_project)
+        wandb.config.update(args)
+
+    # 1. Create the environment
+    env = HyperGrid(
+        args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
+    )
+
+    # 2. Create the gflownets.
+    gflownet = _make_gflownet(args, env)
 
     # Initialize the replay buffer ?
     replay_buffer = None

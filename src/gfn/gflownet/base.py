@@ -80,7 +80,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         """Converts trajectories to training samples. The type depends on the GFlowNet."""
 
     @abstractmethod
-    def loss(self, env: Env, training_objects):
+    def loss(self, env: Env, training_objects) -> Tensor:
         """Computes the loss given the training objects."""
 
 
