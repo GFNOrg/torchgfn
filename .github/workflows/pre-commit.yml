@@ -19,5 +19,6 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install pre-commit
+      - run: pip install pytest
       - run: pre-commit --version
       - run: pre-commit run --all-files
