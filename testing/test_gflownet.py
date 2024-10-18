@@ -2,21 +2,16 @@ from gfn.containers import Trajectories
 from gfn.containers.base import Container
 from gfn.gflownet import FMGFlowNet, TBGFlowNet
 from gfn.gym import Box
-from gfn.gym.helpers.box_utils import (
-    BoxPBEstimator,
-    BoxPBNeuralNet,
-    BoxPFEstimator,
-    BoxPFNeuralNet,
-)
+from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator
 from gfn.states import States
 
 
 def test_trajectory_based_gflownet_generic():
-    pf_module = BoxPFNeuralNet(
+    pf_module = BoxPFMLP(
         hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
     )
-    pb_module = BoxPBNeuralNet(
+    pb_module = BoxPBMLP(
         hidden_dim=32, n_hidden_layers=2, n_components=1, torso=pf_module.torso
     )
 
@@ -43,7 +38,7 @@ def test_trajectory_based_gflownet_generic():
 
 def test_flow_matching_gflownet_generic():
     env = Box()
-    module = BoxPFNeuralNet(
+    module = BoxPFMLP(
         hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
     )
     estimator = DiscretePolicyEstimator(
@@ -67,10 +62,10 @@ def test_flow_matching_gflownet_generic():
 
 
 def test_pytorch_inheritance():
-    pf_module = BoxPFNeuralNet(
+    pf_module = BoxPFMLP(
         hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
     )
-    pb_module = BoxPBNeuralNet(
+    pb_module = BoxPBMLP(
         hidden_dim=32, n_hidden_layers=2, n_components=1, torso=pf_module.torso
     )
 

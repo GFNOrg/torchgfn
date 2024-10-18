@@ -59,9 +59,7 @@ class HyperGrid(DiscreteEnv):
         if preprocessor_name == "Identity":
             preprocessor = IdentityPreprocessor(output_dim=ndim)
         elif preprocessor_name == "KHot":
-            preprocessor = KHotPreprocessor(
-                height=height, ndim=ndim, get_states_indices=self.get_states_indices
-            )
+            preprocessor = KHotPreprocessor(height=height, ndim=ndim)
         elif preprocessor_name == "OneHot":
             preprocessor = OneHotPreprocessor(
                 n_states=self.n_states,

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class ReplayBuffer:
-    """A replay buffer of trajectories or transitions.
+    """A replay buffer of trajectories, transitions, or states.
 
     Attributes:
         env: the Environment instance.
@@ -40,17 +40,15 @@ class ReplayBuffer:
         self.env = env
         self.capacity = capacity
         self.terminating_states = None
+        self.objects_type = objects_type
         if objects_type == "trajectories":
             self.training_objects = Trajectories(env)
-            self.objects_type = "trajectories"
         elif objects_type == "transitions":
             self.training_objects = Transitions(env)
-            self.objects_type = "transitions"
         elif objects_type == "states":
             self.training_objects = env.states_from_batch_shape((0,))
             self.terminating_states = env.states_from_batch_shape((0,))
             self.terminating_states.log_rewards = torch.zeros((0,), device=env.device)
-            self.objects_type = "states"
         else:
             raise ValueError(f"Unknown objects_type: {objects_type}")
 

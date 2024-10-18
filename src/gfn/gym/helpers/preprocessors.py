@@ -35,7 +35,6 @@ class KHotPreprocessor(Preprocessor):
         self,
         height: int,
         ndim: int,
-        get_states_indices: Callable[[States], TT["batch_shape", "input_dim"]],
     ) -> None:
         """K Hot Preprocessor for environments with enumerable states (finite number of states) with a grid structure.
 
@@ -47,7 +46,6 @@ class KHotPreprocessor(Preprocessor):
         super().__init__(output_dim=height * ndim)
         self.height = height
         self.ndim = ndim
-        self.get_states_indices = get_states_indices
 
     def preprocess(self, states):
         states_tensor = states.tensor

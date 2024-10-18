@@ -26,7 +26,7 @@ class States(ABC):
     state. This makes it possible to instantly access the allowed actions at each state,
     without having to call the environment's `validate_actions` method. Put different,
     `validate_actions` for such environments, directly calls the masks. This is handled
-    in the DiscreteSpace subclass.
+    in the DiscreteState subclass.
 
     A `batch_shape` attribute is also required, to keep track of the batch dimension.
     A trajectory can be represented by a States object with `batch_shape = (n_states,)`.
@@ -353,7 +353,7 @@ class DiscreteStates(States, ABC):
         forward_masks = self.forward_masks[index]
         backward_masks = self.backward_masks[index]
         out = self.__class__(states, forward_masks, backward_masks)
-        if self.log_rewards is not None:
+        if self._log_rewards is not None:
             log_probs = self._log_rewards[index]
             out.log_rewards = log_probs
         return out

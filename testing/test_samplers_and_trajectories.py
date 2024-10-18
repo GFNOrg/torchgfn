@@ -5,15 +5,10 @@ import pytest
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
-from gfn.gym.helpers.box_utils import (
-    BoxPBEstimator,
-    BoxPBNeuralNet,
-    BoxPFEstimator,
-    BoxPFNeuralNet,
-)
+from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator, GFNModule
 from gfn.samplers import Sampler
-from gfn.utils import NeuralNet
+from gfn.utils.modules import MLP
 
 
 def trajectory_sampling_with_return(
@@ -33,13 +28,13 @@ def trajectory_sampling_with_return(
         if preprocessor_name != "Identity":
             pytest.skip("Useless tests")
         env = Box(delta=delta)
-        pf_module = BoxPFNeuralNet(
+        pf_module = BoxPFMLP(
             hidden_dim=32,
             n_hidden_layers=2,
             n_components=n_components,
             n_components_s0=n_components_s0,
         )
-        pb_module = BoxPBNeuralNet(
+        pb_module = BoxPBMLP(
             hidden_dim=32,
             n_hidden_layers=2,
             n_components=n_components,
@@ -59,10 +54,8 @@ def trajectory_sampling_with_return(
 
     if env_name != "Box":
         assert not isinstance(env, Box)
-        pf_module = NeuralNet(
-            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
-        )
-        pb_module = NeuralNet(
+        pf_module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
+        pb_module = MLP(
             input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
         )
         pf_estimator = DiscretePolicyEstimator(
