@@ -17,7 +17,7 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.containers import ReplayBuffer, PrioritizedReplayBuffer
+from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -124,7 +124,7 @@ def main(args):  # noqa: C901
                 pb_estimator,
             )
 
-        if args.loss in ("DB", "SubTB"):
+        elif args.loss in ("DB", "SubTB"):
             # We need a LogStateFlowEstimator
             assert (
                 pf_estimator is not None
@@ -198,6 +198,9 @@ def main(args):  # noqa: C901
             replay_buffer = ReplayBuffer(
                 env, objects_type=objects_type, capacity=args.replay_buffer_size
             )
+
+    # Move the gflownet to the GPU.
+    gflownet = gflownet.to(device_str)
 
     # 3. Create the optimizer
     # Policy parameters have their own LR.
