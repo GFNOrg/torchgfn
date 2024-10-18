@@ -67,19 +67,19 @@ from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid  # We use the hyper grid environment
 from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import Sampler
-from gfn.utils import NeuralNet  # NeuralNet is a simple multi-layer perceptron (MLP)
+from gfn.utils.modules import MLP  # is a simple multi-layer perceptron (MLP)
 
 # 1 - We define the environment.
 env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
 # 2 - We define the needed modules (neural networks).
 # The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
-module_PF = NeuralNet(
+module_PF = MLP(
     input_dim=env.preprocessor.output_dim,
     output_dim=env.n_actions
 )  # Neural network for the forward policy, with as many outputs as there are actions
 
-module_PB = NeuralNet(
+module_PB = MLP(
     input_dim=env.preprocessor.output_dim,
     output_dim=env.n_actions - 1,
     torso=module_PF.torso  # We share all the parameters of P_F and P_B, except for the last layer
@@ -121,24 +121,24 @@ from gfn.gflownet import SubTBGFlowNet
 from gfn.gym import HyperGrid  # We use the hyper grid environment
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.samplers import Sampler
-from gfn.utils import NeuralNet  # NeuralNet is a simple multi-layer perceptron (MLP)
+from gfn.utils.modules import MLP  # MLP is a simple multi-layer perceptron (MLP)
 
 # 1 - We define the environment.
 env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
 # 2 - We define the needed modules (neural networks).
 # The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
-module_PF = NeuralNet(
+module_PF = MLP(
     input_dim=env.preprocessor.output_dim,
     output_dim=env.n_actions
 )  # Neural network for the forward policy, with as many outputs as there are actions
 
-module_PB = NeuralNet(
+module_PB = MLP(
     input_dim=env.preprocessor.output_dim,
     output_dim=env.n_actions - 1,
     torso=module_PF.torso  # We share all the parameters of P_F and P_B, except for the last layer
 )
-module_logF = NeuralNet(
+module_logF = MLP(
     input_dim=env.preprocessor.output_dim,
     output_dim=1,  # Important for ScalarEstimators!
 )

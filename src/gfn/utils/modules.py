@@ -7,7 +7,7 @@ import torch.nn as nn
 from torchtyping import TensorType as TT
 
 
-class NeuralNet(nn.Module):
+class MLP(nn.Module):
     """Implements a basic MLP."""
 
     def __init__(

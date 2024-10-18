@@ -29,7 +29,7 @@ from gfn.gflownet import (
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.utils.common import set_seed
-from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
+from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
 
 DEFAULT_SEED = 4444
@@ -62,7 +62,7 @@ def main(args):  # noqa: C901
         if args.tabular:
             module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
         else:
-            module = NeuralNet(
+            module = MLP(
                 input_dim=env.preprocessor.output_dim,
                 output_dim=env.n_actions,
                 hidden_dim=args.hidden_dim,
@@ -82,14 +82,14 @@ def main(args):  # noqa: C901
             if not args.uniform_pb:
                 pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
         else:
-            pf_module = NeuralNet(
+            pf_module = MLP(
                 input_dim=env.preprocessor.output_dim,
                 output_dim=env.n_actions,
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
             )
             if not args.uniform_pb:
-                pb_module = NeuralNet(
+                pb_module = MLP(
                     input_dim=env.preprocessor.output_dim,
                     output_dim=env.n_actions - 1,
                     hidden_dim=args.hidden_dim,
@@ -136,7 +136,7 @@ def main(args):  # noqa: C901
             if args.tabular:
                 module = Tabular(n_states=env.n_states, output_dim=1)
             else:
-                module = NeuralNet(
+                module = MLP(
                     input_dim=env.preprocessor.output_dim,
                     output_dim=1,
                     hidden_dim=args.hidden_dim,

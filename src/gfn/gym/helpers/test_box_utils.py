@@ -4,9 +4,9 @@ import torch
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
-    BoxPBNeuralNet,
+    BoxPBMLP,
     BoxPFEstimator,
-    BoxPFNeuralNet,
+    BoxPFMLP,
     QuarterCircle,
     QuarterCircleWithExit,
     QuarterDisk,
@@ -38,7 +38,7 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
         torch.FloatTensor([[0.03, 0.06], [0.2, 0.3], [0.95, 0.7]])
     )
 
-    net_forward = BoxPFNeuralNet(
+    net_forward = BoxPFMLP(
         hidden_dim=hidden_dim,
         n_hidden_layers=n_hidden_layers,
         n_components=n_components,
