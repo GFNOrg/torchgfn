@@ -1,8 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Callable
 
-from torchtyping import TensorType as TT
-
+import torch
 from gfn.states import States
 
 
@@ -16,10 +15,10 @@ class Preprocessor(ABC):
         self.output_dim = output_dim
 
     @abstractmethod
-    def preprocess(self, states: States) -> TT["batch_shape", "input_dim"]:
+    def preprocess(self, states: States) -> torch.Tensor:
         pass
 
-    def __call__(self, states: States) -> TT["batch_shape", "input_dim"]:
+    def __call__(self, states: States) -> torch.Tensor:
         return self.preprocess(states)
 
     def __repr__(self):
@@ -30,7 +29,7 @@ class IdentityPreprocessor(Preprocessor):
     """Simple preprocessor applicable to environments with uni-dimensional states.
     This is the default preprocessor used."""
 
-    def preprocess(self, states: States) -> TT["batch_shape", "input_dim"]:
+    def preprocess(self, states: States) -> torch.Tensor:
         return (
             states.tensor.float()
         )  # TODO: should we typecast here? not a true identity...
@@ -41,7 +40,7 @@ class EnumPreprocessor(Preprocessor):
 
     def __init__(
         self,
-        get_states_indices: Callable[[States], TT["batch_shape", "input_dim"]],
+        get_states_indices: Callable[[States], torch.Tensor],
     ) -> None:
         """Preprocessor for environments with enumerable states (finite number of states).
         Each state is represented by a unique integer (>= 0) index.
@@ -52,5 +51,5 @@ class EnumPreprocessor(Preprocessor):
         super().__init__(output_dim=1)
         self.get_states_indices = get_states_indices
 
-    def preprocess(self, states):
+    def preprocess(self, states) -> torch.Tensor:
         return self.get_states_indices(states).long().unsqueeze(-1)

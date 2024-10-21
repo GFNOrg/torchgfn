@@ -1,7 +1,6 @@
 from typing import Optional, Tuple
 
 import torch
-from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.env import Env
@@ -63,7 +62,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         self,
         env: Env,
         states: DiscreteStates,
-    ) -> TT["n_trajectories", torch.float]:
+    ) -> torch.Tensor:
         """Computes the FM for the provided states.
 
         The Flow Matching loss is defined as the log-sum incoming flows minus log-sum
@@ -121,7 +120,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
 
     def reward_matching_loss(
         self, env: Env, terminating_states: DiscreteStates
-    ) -> TT[0, float]:
+    ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
         del env  # Unused
         assert terminating_states.log_rewards is not None
@@ -134,7 +133,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
 
     def loss(
         self, env: Env, states_tuple: Tuple[DiscreteStates, DiscreteStates]
-    ) -> TT[0, float]:
+    ) -> torch.Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
         Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a

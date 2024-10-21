@@ -5,7 +5,6 @@ from typing import Literal, Optional
 import torch
 import torch.nn as nn
 from torch.nn.parameter import Parameter
-from torchtyping import TensorType as TT
 
 
 class NeuralNet(nn.Module):
@@ -56,8 +55,8 @@ class NeuralNet(nn.Module):
         self.last_layer = nn.Linear(self.torso.hidden_dim, output_dim)
 
     def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+        self, preprocessed_states: torch.Tensor
+    ) -> torch.Tensor:
         """Forward method for the neural network.
 
         Args:
@@ -98,8 +97,8 @@ class Tabular(nn.Module):
         self.device = None
 
     def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+        self, preprocessed_states: torch.Tensor
+    ) -> torch.Tensor:
         if self.device is None:
             self.device = preprocessed_states.device
             self.table = self.table.to(self.device)
@@ -129,8 +128,8 @@ class DiscreteUniform(nn.Module):
         self.output_dim = output_dim
 
     def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+        self, preprocessed_states: torch.Tensor
+    ) -> torch.Tensor:
         out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
             preprocessed_states.device
         )

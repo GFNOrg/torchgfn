@@ -9,8 +9,6 @@ if TYPE_CHECKING:
 
 import numpy as np
 import torch
-from torch import Tensor
-from torchtyping import TensorType as TT
 
 from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
@@ -19,7 +17,7 @@ from gfn.utils.common import has_log_probs
 
 def is_tensor(t) -> bool:
     """Checks whether t is a torch.Tensor instance."""
-    return isinstance(t, Tensor)
+    return isinstance(t, torch.Tensor)
 
 
 # TODO: remove env from this class?
@@ -51,11 +49,11 @@ class Trajectories(Container):
         env: Env,
         states: States | None = None,
         actions: Actions | None = None,
-        when_is_done: TT["n_trajectories", torch.long] | None = None,
+        when_is_done: torch.Tensor | None = None,
         is_backward: bool = False,
-        log_rewards: TT["n_trajectories", torch.float] | None = None,
-        log_probs: TT["max_length", "n_trajectories", torch.float] | None = None,
-        estimator_outputs: TT["batch_shape", "output_dim", torch.float] | None = None,
+        log_rewards: torch.Tensor | None = None,
+        log_probs: torch.Tensor | None = None,
+        estimator_outputs: torch.Tensor | None = None,
     ) -> None:
         """
         Args:
@@ -90,17 +88,26 @@ class Trajectories(Container):
             if when_is_done is not None
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
         )
+        assert self.when_is_done.shape == (self.n_trajectories,) and self.when_is_done.dtype == torch.long
+
         self._log_rewards = (
             log_rewards
             if log_rewards is not None
             else torch.full(size=(0,), fill_value=0, dtype=torch.float)
         )
+        assert self._log_rewards.shape == (self.n_trajectories,) and self._log_rewards.dtype == torch.float
+
         self.log_probs = (
             log_probs
             if log_probs is not None
             else torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
         )
+        assert self.log_probs.shape == (self.max_length, self.n_trajectories) and self.log_probs.dtype == torch.float
+
         self.estimator_outputs = estimator_outputs
+        if self.estimator_outputs is not None:
+            assert self.estimator_outputs.shape[:len(self.states.batch_shape)] == self.states.batch_shape
+            assert self.estimator_outputs.dtype == torch.float
 
     def __repr__(self) -> str:
         states = self.states.tensor.transpose(0, 1)
@@ -139,7 +146,7 @@ class Trajectories(Container):
         return self.states[self.when_is_done - 1, torch.arange(self.n_trajectories)]
 
     @property
-    def log_rewards(self) -> TT["n_trajectories", torch.float] | None:
+    def log_rewards(self) -> torch.Tensor | None:
         if self._log_rewards is not None:
             assert self._log_rewards.shape == (self.n_trajectories,)
             return self._log_rewards
@@ -197,13 +204,14 @@ class Trajectories(Container):
 
     @staticmethod
     def extend_log_probs(
-        log_probs: TT["max_length", "n_trajectories", torch.float], new_max_length: int
-    ) -> TT["max_max_length", "n_trajectories", torch.float]:
+        log_probs: torch.Tensor, new_max_length: int
+    ) -> torch.Tensor:
         """Extend the log_probs matrix by adding 0 until the required length is reached."""
-        if log_probs.shape[0] >= new_max_length:
+        max_length, n_trajectories = log_probs.shape
+        if max_length >= new_max_length:
             return log_probs
         else:
-            return torch.cat(
+            new_log_probs = torch.cat(
                 (
                     log_probs,
                     torch.full(
@@ -218,6 +226,8 @@ class Trajectories(Container):
                 ),
                 dim=0,
             )
+            assert new_log_probs.shape == (new_max_length, n_trajectories)
+            return new_log_probs
 
     def extend(self, other: Trajectories) -> None:
         """Extend the trajectories with another set of trajectories.
@@ -264,11 +274,11 @@ class Trajectories(Container):
         # Either set, or append, estimator outputs if they exist in the submitted
         # trajectory.
         if self.estimator_outputs is None and isinstance(
-            other.estimator_outputs, Tensor
+            other.estimator_outputs, torch.Tensor
         ):
             self.estimator_outputs = other.estimator_outputs
-        elif isinstance(self.estimator_outputs, Tensor) and isinstance(
-            other.estimator_outputs, Tensor
+        elif isinstance(self.estimator_outputs, torch.Tensor) and isinstance(
+            other.estimator_outputs, torch.Tensor
         ):
             batch_shape = self.actions.batch_shape
             n_bs = len(batch_shape)

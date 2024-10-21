@@ -4,7 +4,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
-from torchtyping import TensorType as TT
 
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
@@ -73,7 +72,7 @@ class GFNModule(ABC, nn.Module):
         self._output_dim_is_checked = False
         self.is_backward = is_backward
 
-    def forward(self, states: States) -> TT["batch_shape", "output_dim", float]:
+    def forward(self, states: States) -> torch.Tensor:
         out = self.module(self.preprocessor(states))
         if not self._output_dim_is_checked:
             self.check_output_dim(out)
@@ -90,19 +89,20 @@ class GFNModule(ABC, nn.Module):
         """Expected output dimension of the module."""
 
     def check_output_dim(
-        self, module_output: TT["batch_shape", "output_dim", float]
+        self, module_output: torch.Tensor
     ) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
-        if module_output.shape[-1] != self.expected_output_dim():
+        assert module_output.dtype == torch.float
+        if module_output.shape[-1] != self.expected_output_dim:
             raise ValueError(
-                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim()}"
+                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim}"
                 + f" but is {module_output.shape[-1]}."
             )
 
     def to_probability_distribution(
         self,
         states: States,
-        module_output: TT["batch_shape", "output_dim", float],
+        module_output: torch.Tensor,
         **policy_kwargs: Optional[dict],
     ) -> Distribution:
         """Transform the output of the module into a probability distribution.
@@ -163,7 +163,7 @@ class DiscretePolicyEstimator(GFNModule):
     def to_probability_distribution(
         self,
         states: DiscreteStates,
-        module_output: TT["batch_shape", "output_dim", float],
+        module_output: torch.Tensor,
         temperature: float = 1.0,
         sf_bias: float = 0.0,
         epsilon: float = 0.0,
@@ -180,6 +180,8 @@ class DiscretePolicyEstimator(GFNModule):
                 on policy.
             epsilon: with probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy."""
+        self.check_output_dim(module_output)
+
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
         logits[~masks] = -float("inf")

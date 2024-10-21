@@ -2,20 +2,19 @@ import math
 from typing import List, Literal, Tuple
 
 import torch
-from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet
 from gfn.modules import GFNModule, ScalarEstimator
 
-ContributionsTensor = TT["max_len * (1 + max_len) / 2", "n_trajectories"]
-CumulativeLogProbsTensor = TT["max_length + 1", "n_trajectories"]
-LogStateFlowsTensor = TT["max_length", "n_trajectories"]
-LogTrajectoriesTensor = TT["max_length", "n_trajectories", torch.float]
-MaskTensor = TT["max_length", "n_trajectories"]
-PredictionsTensor = TT["max_length + 1 - i", "n_trajectories"]
-TargetsTensor = TT["max_length + 1 - i", "n_trajectories"]
+ContributionsTensor = torch.Tensor  # shape: [max_len * (1 + max_len) / 2, n_trajectories]
+CumulativeLogProbsTensor = torch.Tensor  # shape: [max_length + 1, n_trajectories]
+LogStateFlowsTensor = torch.Tensor  # shape: [max_length, n_trajectories]
+LogTrajectoriesTensor = torch.Tensor  # shape: [max_length, n_trajectories]
+MaskTensor = torch.Tensor  # shape: [max_length, n_trajectories]
+PredictionsTensor = torch.Tensor  # shape: [max_length + 1 - i, n_trajectories]
+TargetsTensor = torch.Tensor  # shape: [max_length + 1 - i, n_trajectories]
 
 
 class SubTBGFlowNet(TrajectoryBasedGFlowNet):
@@ -225,7 +224,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def get_scores(
         self, env: Env, trajectories: Trajectories
-    ) -> Tuple[List[TT[0, float]], List[TT[0, float]]]:
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Scores all submitted trajectories.
 
         Returns:
@@ -292,7 +291,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             flattening_masks.append(flattening_mask)
             scores.append(preds - targets)
 
-        return (scores, flattening_masks)
+        return scores, flattening_masks
 
     def get_equal_within_contributions(
         self, trajectories: Trajectories
@@ -329,7 +328,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         return contributions
 
     def get_tb_contributions(
-        self, trajectories: Trajectories, all_scores: TT
+        self, trajectories: Trajectories, all_scores: torch.Tensor
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'TB' weighting method.
@@ -403,7 +402,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         return contributions
 
-    def loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
+    def loss(self, env: Env, trajectories: Trajectories) -> torch.Tensor:
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(env, trajectories)
         flattening_mask = torch.cat(flattening_masks)

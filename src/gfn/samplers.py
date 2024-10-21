@@ -2,7 +2,6 @@ from copy import deepcopy
 from typing import List, Optional, Tuple
 
 import torch
-from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.containers import Trajectories
@@ -36,8 +35,8 @@ class Sampler:
         **policy_kwargs: Optional[dict],
     ) -> Tuple[
         Actions,
-        TT["batch_shape", torch.float] | None,
-        TT["batch_shape", torch.float] | None,
+        torch.Tensor | None,
+        torch.Tensor | None,
     ]:
         """Samples actions from the given states.
 
@@ -84,10 +83,11 @@ class Sampler:
             log_probs = None
 
         actions = env.actions_from_tensor(actions)
-
         if not save_estimator_outputs:
             estimator_output = None
 
+        assert log_probs is None or log_probs.shape == actions.batch_shape
+        assert estimator_output is None or estimator_output.shape == actions.batch_shape
         return actions, log_probs, estimator_output
 
     def sample_trajectories(
@@ -145,8 +145,8 @@ class Sampler:
         )
 
         trajectories_states: List[States] = [deepcopy(states)]
-        trajectories_actions: List[TT["n_trajectories", torch.long]] = []
-        trajectories_logprobs: List[TT["n_trajectories", torch.float]] = []
+        trajectories_actions: List[torch.Tensor] = []
+        trajectories_logprobs: List[torch.Tensor] = []
         trajectories_dones = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )

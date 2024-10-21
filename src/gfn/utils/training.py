@@ -2,14 +2,13 @@ from collections import Counter
 from typing import Dict, Optional
 
 import torch
-from torchtyping import TensorType as TT
 
 from gfn.env import Env
 from gfn.gflownet import GFlowNet, TBGFlowNet
 from gfn.states import States
 
 
-def get_terminating_state_dist_pmf(env: Env, states: States) -> TT["n_states", float]:
+def get_terminating_state_dist_pmf(env: Env, states: States) -> torch.Tensor:
     states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
     counter = Counter(states_indices)
     counter_list = [

@@ -3,10 +3,9 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, List, Optional, Sequence, cast
+from typing import Callable, ClassVar, List, Optional, Sequence
 
 import torch
-from torchtyping import TensorType as TT
 
 
 class States(ABC):
@@ -46,21 +45,23 @@ class States(ABC):
     """
 
     state_shape: ClassVar[tuple[int, ...]]  # Shape of one state
-    s0: ClassVar[TT["state_shape", torch.float]]  # Source state of the DAG
-    sf: ClassVar[
-        TT["state_shape", torch.float]
-    ]  # Dummy state, used to pad a batch of states
+    s0: ClassVar[torch.Tensor]  # Source state of the DAG
+    sf: ClassVar[torch.Tensor]  # Dummy state, used to pad a batch of states
     make_random_states_tensor: Callable = lambda x: (_ for _ in ()).throw(
         NotImplementedError(
             "The environment does not support initialization of random states."
         )
     )
 
-    def __init__(self, tensor: TT["batch_shape", "state_shape"]):
+    def __init__(self, tensor: torch.Tensor):
         """Initalize the State container with a batch of states.
         Args:
             tensor: Tensor representing a batch of states.
         """
+        assert self.s0 .shape == self.state_shape
+        assert self.sf.shape == self.state_shape
+        assert tensor.shape[-len(self.state_shape) :] == self.state_shape
+
         self.tensor = tensor
         self.batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
         self._log_rewards = (
@@ -101,7 +102,7 @@ class States(ABC):
     @classmethod
     def make_initial_states_tensor(
         cls, batch_shape: tuple[int]
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    ) -> torch.Tensor:
         """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
@@ -110,7 +111,7 @@ class States(ABC):
     @classmethod
     def make_sink_states_tensor(
         cls, batch_shape: tuple[int]
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    ) -> torch.Tensor:
         """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
@@ -224,9 +225,7 @@ class States(ABC):
                 f"extend_with_sf is not implemented for batch shapes {self.batch_shape}"
             )
 
-    def compare(
-        self, other: TT["batch_shape", "state_shape", torch.float]
-    ) -> TT["batch_shape", torch.bool]:
+    def compare(self, other: torch.tensor) -> torch.Tensor:
         """Computes elementwise equality between state tensor with an external tensor.
 
         Args:
@@ -235,14 +234,17 @@ class States(ABC):
         Returns: Tensor of booleans indicating whether the states are equal to the
             states in self.
         """
+        assert other.shape == self.batch_shape + self.state_shape
         out = self.tensor == other
         state_ndim = len(self.__class__.state_shape)
         for _ in range(state_ndim):
             out = out.all(dim=-1)
+        
+        assert out.shape == self.batch_shape
         return out
 
     @property
-    def is_initial_state(self) -> TT["batch_shape", torch.bool]:
+    def is_initial_state(self) -> torch.Tensor:
         """Return a tensor that is True for states that are $s_0$ of the DAG."""
         source_states_tensor = self.__class__.s0.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.state_shape))
@@ -250,7 +252,7 @@ class States(ABC):
         return self.compare(source_states_tensor)
 
     @property
-    def is_sink_state(self) -> TT["batch_shape", torch.bool]:
+    def is_sink_state(self) -> torch.Tensor:
         """Return a tensor that is True for states that are $s_f$ of the DAG."""
         # TODO: self.__class__.sf == self.tensor -- or something similar?
         sink_states = self.__class__.sf.repeat(
@@ -259,11 +261,12 @@ class States(ABC):
         return self.compare(sink_states)
 
     @property
-    def log_rewards(self) -> TT["batch_shape", torch.float]:
+    def log_rewards(self) -> torch.Tensor:
         return self._log_rewards
 
     @log_rewards.setter
-    def log_rewards(self, log_rewards: TT["batch_shape", torch.float]) -> None:
+    def log_rewards(self, log_rewards: torch.Tensor) -> None:
+        assert log_rewards.shape == self.batch_shape
         self._log_rewards = log_rewards
 
     def sample(self, n_samples: int) -> States:
@@ -289,9 +292,9 @@ class DiscreteStates(States, ABC):
 
     def __init__(
         self,
-        tensor: TT["batch_shape", "state_shape", torch.float],
-        forward_masks: Optional[TT["batch_shape", "n_actions", torch.bool]] = None,
-        backward_masks: Optional[TT["batch_shape", "n_actions - 1", torch.bool]] = None,
+        tensor: torch.Tensor,
+        forward_masks: Optional[torch.Tensor] = None,
+        backward_masks: Optional[torch.Tensor] = None,
     ) -> None:
         """Initalize a DiscreteStates container with a batch of states and masks.
         Args:
@@ -301,44 +304,34 @@ class DiscreteStates(States, ABC):
             backward_masks: Initializes a boolean tensor of allowable backward policy
                 actions.
         """
+        assert tensor.shape == self.batch_shape + self.state_shape
         super().__init__(tensor)
 
         # In the usual case, no masks are provided and we produce these defaults.
         # Note: this **must** be updated externally by the env.
-        if isinstance(forward_masks, type(None)):
+        if forward_masks is None:
             forward_masks = torch.ones(
                 (*self.batch_shape, self.__class__.n_actions),
                 dtype=torch.bool,
                 device=self.__class__.device,
             )
-        if isinstance(backward_masks, type(None)):
+        if backward_masks is None:
             backward_masks = torch.ones(
                 (*self.batch_shape, self.__class__.n_actions - 1),
                 dtype=torch.bool,
                 device=self.__class__.device,
             )
+        assert forward_masks.shape == (*self.batch_shape, self.n_actions)
+        assert backward_masks.shape == (*self.batch_shape, self.n_actions - 1)
 
-        # Ensures typecasting is consistent no matter what is submitted to init.
-        self.forward_masks = cast(torch.Tensor, forward_masks)  # TODO: Required?
-        self.backward_masks = cast(torch.Tensor, backward_masks)  # TODO: Required?
-        self.set_default_typing()
+        self.forward_masks = forward_masks
+        self.backward_masks = backward_masks
 
     def clone(self) -> States:
         """Returns a clone of the current instance."""
         return self.__class__(
             self.tensor.detach().clone(),
             self.forward_masks,
-            self.backward_masks,
-        )
-
-    def set_default_typing(self) -> None:
-        """A convienience function for default typing of the masks."""
-        self.forward_masks = cast(
-            TT["batch_shape", "n_actions", torch.bool],
-            self.forward_masks,
-        )
-        self.backward_masks = cast(
-            TT["batch_shape", "n_actions - 1", torch.bool],
             self.backward_masks,
         )
 
