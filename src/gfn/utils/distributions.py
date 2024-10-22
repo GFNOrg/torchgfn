@@ -20,7 +20,7 @@ class UnsqueezedCategorical(Categorical):
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         """Sample actions with an unsqueezed final dimension."""
         out = super().sample(sample_shape).unsqueeze(-1)
-        assert out.shape == sample_shape + (1,)
+        assert out.shape == sample_shape + self._batch_shape + (1,)
         return out
 
     def log_prob(self, sample: torch.Tensor) -> torch.Tensor:

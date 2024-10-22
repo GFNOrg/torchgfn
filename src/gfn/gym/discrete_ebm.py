@@ -98,7 +98,6 @@ class DiscreteEBM(DiscreteEnv):
         )
 
     def update_masks(self, states: type[States]) -> None:
-        states.set_default_typing()
         states.forward_masks[..., : self.ndim] = states.tensor == -1
         states.forward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == -1
         states.forward_masks[..., -1] = torch.all(states.tensor != -1, dim=-1)

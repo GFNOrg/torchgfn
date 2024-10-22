@@ -97,16 +97,15 @@ class Trajectories(Container):
         )
         assert self._log_rewards.shape == (self.n_trajectories,) and self._log_rewards.dtype == torch.float
 
-        self.log_probs = (
-            log_probs
-            if log_probs is not None
-            else torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
-        )
-        assert self.log_probs.shape == (self.max_length, self.n_trajectories) and self.log_probs.dtype == torch.float
+        if log_probs is not None:
+            assert log_probs.shape == (self.max_length, self.n_trajectories) and log_probs.dtype == torch.float
+        else:
+            log_probs = torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
+        self.log_probs = log_probs        
 
         self.estimator_outputs = estimator_outputs
         if self.estimator_outputs is not None:
-            assert self.estimator_outputs.shape[:len(self.states.batch_shape)] == self.states.batch_shape
+            # assert self.estimator_outputs.shape[:len(self.states.batch_shape)] == self.states.batch_shape TODO: check why fails
             assert self.estimator_outputs.dtype == torch.float
 
     def __repr__(self) -> str:

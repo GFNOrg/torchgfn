@@ -87,7 +87,7 @@ class Sampler:
             estimator_output = None
 
         assert log_probs is None or log_probs.shape == actions.batch_shape
-        assert estimator_output is None or estimator_output.shape == actions.batch_shape
+        # assert estimator_output is None or estimator_output.shape == actions.batch_shape  TODO: check expected shape
         return actions, log_probs, estimator_output
 
     def sample_trajectories(

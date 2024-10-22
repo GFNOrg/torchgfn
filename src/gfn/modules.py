@@ -93,9 +93,9 @@ class GFNModule(ABC, nn.Module):
     ) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
         assert module_output.dtype == torch.float
-        if module_output.shape[-1] != self.expected_output_dim:
+        if module_output.shape[-1] != self.expected_output_dim():
             raise ValueError(
-                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim}"
+                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim()}"
                 + f" but is {module_output.shape[-1]}."
             )
 

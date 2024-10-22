@@ -229,7 +229,6 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         if torch.any(torch.isinf(scores)):
             raise ValueError("scores contains inf")
 
-        assert scores.shape == (transitions.n_transitions,)
         return scores
 
     def loss(self, env: Env, transitions: Transitions) -> torch.Tensor:

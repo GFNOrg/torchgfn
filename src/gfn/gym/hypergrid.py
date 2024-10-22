@@ -86,7 +86,6 @@ class HyperGrid(DiscreteEnv):
 
     def update_masks(self, states: type[DiscreteStates]) -> None:
         """Update the masks based on the current states."""
-        states.set_default_typing()
         # Not allowed to take any action beyond the environment height, but
         # allow early termination.
         states.set_nonexit_action_masks(

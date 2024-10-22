@@ -304,8 +304,8 @@ class DiscreteStates(States, ABC):
             backward_masks: Initializes a boolean tensor of allowable backward policy
                 actions.
         """
-        assert tensor.shape == self.batch_shape + self.state_shape
         super().__init__(tensor)
+        assert tensor.shape == self.batch_shape + self.state_shape
 
         # In the usual case, no masks are provided and we produce these defaults.
         # Note: this **must** be updated externally by the env.
