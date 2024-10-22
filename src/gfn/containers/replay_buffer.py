@@ -143,7 +143,11 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
 
-    def _add_objs(self, training_objects: Transitions | Trajectories | tuple[States]):
+    def _add_objs(
+        self,
+        training_objects: Transitions | Trajectories | tuple[States],
+        terminating_states: States | None = None
+    ):
         """Adds a training object to the buffer."""
         # Adds the objects to the buffer.
         self.training_objects.extend(training_objects)
@@ -155,8 +159,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         # Add the terminating states to the buffer.
         if self.terminating_states is not None:
-            assert self.terminating_states is not None
-            self.terminating_states.extend(self.terminating_states)
+            assert terminating_states is not None
+            self.terminating_states.extend(terminating_states)
 
             # Sort terminating states by logreward as well.
             self.terminating_states = self.terminating_states[ix]
@@ -164,6 +168,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
     def add(self, training_objects: Transitions | Trajectories | tuple[States]):
         """Adds a training object to the buffer."""
+        terminating_states = None
         if isinstance(training_objects, tuple):
             assert self.objects_type == "states" and self.terminating_states is not None
             training_objects, terminating_states = training_objects
@@ -173,7 +178,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         # The buffer isn't full yet.
         if len(self.training_objects) < self.capacity:
-            self._add_objs(training_objects)
+            self._add_objs(training_objects, terminating_states)
 
         # Our buffer is full and we will prioritize diverse, high reward additions.
         else:
