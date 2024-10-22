@@ -19,7 +19,9 @@ class Preprocessor(ABC):
         pass
 
     def __call__(self, states: States) -> torch.Tensor:
-        return self.preprocess(states)
+        out = self.preprocess(states)
+        assert out.shape[-1] == self.output_dim
+        return out
 
     def __repr__(self):
         return f"{self.__class__.__name__}, output_dim={self.output_dim}"
