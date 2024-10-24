@@ -18,7 +18,7 @@ class NeuralNet(nn.Module):
         hidden_dim: Optional[int] = 256,
         n_hidden_layers: Optional[int] = 2,
         activation_fn: Optional[Literal["relu", "tanh", "elu"]] = "relu",
-        torso: Optional[nn.Module] = None,
+        trunk: Optional[nn.Module] = None,
     ):
         """Instantiates a MLP instance.
 
@@ -28,13 +28,14 @@ class NeuralNet(nn.Module):
             hidden_dim: Number of units per hidden layer.
             n_hidden_layers: Number of hidden layers.
             activation_fn: Activation function.
-            torso: If provided, this module will be used as the torso of the network
+            trunk: If provided, this module will be used as the trunk of the network
                 (i.e. all layers except last layer).
         """
         super().__init__()
+        self._input_dim = input_dim
         self._output_dim = output_dim
 
-        if torso is None:
+        if trunk is None:
             assert (
                 n_hidden_layers is not None and n_hidden_layers >= 0
             ), "n_hidden_layers must be >= 0"
@@ -49,11 +50,11 @@ class NeuralNet(nn.Module):
             for _ in range(n_hidden_layers - 1):
                 arch.append(nn.Linear(hidden_dim, hidden_dim))
                 arch.append(activation())
-            self.torso = nn.Sequential(*arch)
-            self.torso.hidden_dim = hidden_dim
+            self.trunk = nn.Sequential(*arch)
+            self.trunk.hidden_dim = hidden_dim
         else:
-            self.torso = torso
-        self.last_layer = nn.Linear(self.torso.hidden_dim, output_dim)
+            self.trunk = trunk
+        self.last_layer = nn.Linear(self.trunk.hidden_dim, output_dim)
 
     def forward(
         self, preprocessed_states: TT["batch_shape", "input_dim", float]
@@ -65,9 +66,17 @@ class NeuralNet(nn.Module):
                 ingestion by the MLP.
         Returns: out, a set of continuous variables.
         """
-        out = self.torso(preprocessed_states)
+        out = self.trunk(preprocessed_states)
         out = self.last_layer(out)
         return out
+
+    @property
+    def input_dim(self):
+        return self._input_dim
+
+    @property
+    def output_dim(self):
+        return self._output_dim
 
 
 class Tabular(nn.Module):

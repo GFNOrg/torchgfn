@@ -227,7 +227,7 @@ def train(
         # Off Policy Sampling.
         trajectories = gflownet.sample_trajectories(
             env,
-            n_samples=batch_size,
+            n=batch_size,
             save_estimator_outputs=True,
             save_logprobs=False,
             scale_factor=scale_schedule[iteration],  # Off policy kwargs.
@@ -292,7 +292,7 @@ if __name__ == "__main__":
         policy_std_max=policy_std_max,
     )
     pb = StepEstimator(environment, pb_module, backward=True)
-    gflownet = TBGFlowNet(pf=pf, pb=pb, init_logZ=0.0)
+    gflownet = TBGFlowNet(pf=pf, pb=pb, logZ=0.0)
 
     gflownet = train(
         gflownet,
