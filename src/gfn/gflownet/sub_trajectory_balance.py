@@ -319,7 +319,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def get_equal_within_contributions(
         self,
         trajectories: Trajectories,
-        all_scores: TT,
+        all_scores: torch.Tensor,
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'equal_within' weighting method.
@@ -343,7 +343,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def get_equal_contributions(
         self,
         trajectories: Trajectories,
-        all_scores: TT,
+        all_scores: torch.Tensor,
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'equal' weighting method.
@@ -375,7 +375,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def get_modified_db_contributions(
         self,
         trajectories: Trajectories,
-        all_scores: TT,
+        all_scores: torch.Tensor,
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'ModifiedDB' weighting method.
@@ -403,7 +403,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def get_geometric_within_contributions(
         self,
         trajectories: Trajectories,
-        all_scores: TT,
+        all_scores: torch.Tensor,
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'geometric_within' weighting method.
