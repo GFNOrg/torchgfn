@@ -244,7 +244,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
 
     def _forward_trunk(
         self, states: States, conditioning: torch.Tensor
-    ) -> TT["batch_shape", "output_dim", float]:
+    ) -> torch.Tensor:
         state_out = self.module(self.preprocessor(states))
         conditioning_out = self.conditioning_module(conditioning)
         out = self.final_module(torch.cat((state_out, conditioning_out), -1))
@@ -253,7 +253,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
 
     def forward(
         self, states: States, conditioning: torch.tensor
-    ) -> TT["batch_shape", "output_dim", float]:
+    ) -> torch.Tensor:
         out = self._forward_trunk(states, conditioning)
 
         if not self._output_dim_is_checked:
@@ -283,7 +283,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
 
     def forward(
         self, states: States, conditioning: torch.tensor
-    ) -> TT["batch_shape", "output_dim", float]:
+    ) -> torch.Tensor:
         out = self._forward_trunk(states, conditioning)
 
         if not self._output_dim_is_checked:
@@ -298,7 +298,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
     def to_probability_distribution(
         self,
         states: States,
-        module_output: TT["batch_shape", "output_dim", float],
+        module_output: torch.Tensor,
         **policy_kwargs: Any,
     ) -> Distribution:
         raise NotImplementedError
