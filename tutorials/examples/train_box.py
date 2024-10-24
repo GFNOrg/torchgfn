@@ -118,7 +118,7 @@ def main(args):  # noqa: C901
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
             n_components=args.n_components,
-            torso=pf_module.torso if args.tied else None,
+            trunk=pf_module.trunk if args.tied else None,
         )
 
     pf_estimator = BoxPFEstimator(
@@ -148,7 +148,7 @@ def main(args):  # noqa: C901
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
-            torso=None,  # We do not tie the parameters of the flow function to PF
+            trunk=None,  # We do not tie the parameters of the flow function to PF
             logZ_value=logZ,
         )
         logF_estimator = ScalarEstimator(module=module, preprocessor=env.preprocessor)

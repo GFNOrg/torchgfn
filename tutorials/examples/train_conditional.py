@@ -25,7 +25,7 @@ def build_conditional_pf_pb(env):
         input_dim=env.preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
-        torso=module_PF.torso,
+        trunk=module_PF.trunk,
     )
 
     # Encoder for the Conditioning information.
@@ -43,7 +43,7 @@ def build_conditional_pf_pb(env):
     module_final_PB = NeuralNet(
         input_dim=CONCAT_SIZE * 2,
         output_dim=env.n_actions - 1,
-        torso=module_final_PF.torso,
+        trunk=module_final_PF.trunk,
     )
 
     pf_estimator = ConditionalDiscretePolicyEstimator(

@@ -43,7 +43,7 @@ def trajectory_sampling_with_return(
             hidden_dim=32,
             n_hidden_layers=2,
             n_components=n_components,
-            torso=pf_module.torso,
+            trunk=pf_module.trunk,
         )
         pf_estimator = BoxPFEstimator(
             env=env,

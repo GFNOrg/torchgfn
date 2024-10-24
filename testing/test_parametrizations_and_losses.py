@@ -157,7 +157,7 @@ def PFBasedGFlowNet_with_return(
                 hidden_dim=32,
                 n_hidden_layers=2,
                 n_components=ndim + 1,
-                torso=pf_module.torso if tie_pb_to_pf else None,
+                trunk=pf_module.trunk if tie_pb_to_pf else None,
             )
         elif module_name == "NeuralNet" and env_name != "Box":
             pb_module = NeuralNet(
