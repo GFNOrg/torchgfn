@@ -3,7 +3,6 @@ import numpy as np
 import torch
 from torch.distributions import Distribution, Normal  # TODO: extend to Beta
 from torch.distributions.independent import Independent
-from torchtyping import TensorType as TT
 from tqdm import trange
 
 from gfn.gflownet import TBGFlowNet  # TODO: Extend to SubTBGFlowNet
@@ -73,9 +72,9 @@ class ScaledGaussianWithOptionalExit(Distribution):
 
     def __init__(
         self,
-        states: TT["n_states", 2],  # Tensor of [x position, step counter].
-        mus: TT["n_states", 1],  # Parameter of Gaussian distribution.
-        scales: TT["n_states", 1],  # Parameter of Gaussian distribution.
+        states: torch.Tensor,  # Tensor of [x position, step counter].
+        mus: torch.Tensor,  # Parameter of Gaussian distribution.
+        scales: torch.Tensor,  # Parameter of Gaussian distribution.
         backward: bool,
         n_steps: int = 5,
     ):
@@ -146,17 +145,18 @@ class GaussianStepNeuralNet(NeuralNet):
             activation_fn="elu",
         )
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", 2, float]
-    ) -> TT["batch_shape", "3"]:
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Calculate the gaussian parameters, applying the bound to sigma."""
-        assert preprocessed_states.ndim == 2
+        batch_shape, state_dim = preprocessed_states.shape
+        assert state_dim == 2
+
         out = super().forward(preprocessed_states)  # [..., 2]: represents mean & std.
         minmax_norm = self.policy_std_max - self.policy_std_min
         out[..., 1] = (
             torch.sigmoid(out[..., 1]) * minmax_norm + self.policy_std_min
         )  # Scales / Variances.
 
+        assert out.shape == (batch_shape, 3)
         return out
 
 
@@ -174,7 +174,7 @@ class StepEstimator(GFNModule):
     def to_probability_distribution(
         self,
         states: States,
-        module_output: TT["batch_shape", "output_dim", float],
+        module_output: torch.Tensor,
         scale_factor=0,  # policy_kwarg.
     ) -> Distribution:
         assert len(states.batch_shape) == 1
