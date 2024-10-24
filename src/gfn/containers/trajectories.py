@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Sequence, Union, Tuple
+
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
     from gfn.env import Env
-    from gfn.states import States
+    from gfn.states import States, DiscreteStates
 
 import numpy as np
 import torch
@@ -48,6 +49,7 @@ class Trajectories(Container):
         self,
         env: Env,
         states: States | None = None,
+        conditioning: torch.Tensor | None = None,
         actions: Actions | None = None,
         when_is_done: torch.Tensor | None = None,
         is_backward: bool = False,
@@ -74,6 +76,7 @@ class Trajectories(Container):
         is used to compute the rewards, at each call of self.log_rewards
         """
         self.env = env
+        self.conditioning = conditioning
         self.is_backward = is_backward
         self.states = (
             states if states is not None else env.states_from_batch_shape((0, 0))
@@ -324,6 +327,15 @@ class Trajectories(Container):
 
     def to_transitions(self) -> Transitions:
         """Returns a `Transitions` object from the trajectories."""
+        if self.conditioning is not None:
+            traj_len = self.actions.batch_shape[0]
+            expand_dims = (traj_len,) + tuple(self.conditioning.shape)
+            conditioning = self.conditioning.unsqueeze(0).expand(expand_dims)[
+                ~self.actions.is_dummy
+            ]
+        else:
+            conditioning = None
+
         states = self.states[:-1][~self.actions.is_dummy]
         next_states = self.states[1:][~self.actions.is_dummy]
         actions = self.actions[~self.actions.is_dummy]
@@ -357,6 +369,7 @@ class Trajectories(Container):
         return Transitions(
             env=self.env,
             states=states,
+            conditioning=conditioning,
             actions=actions,
             is_done=is_done,
             next_states=next_states,
@@ -372,7 +385,10 @@ class Trajectories(Container):
 
     def to_non_initial_intermediary_and_terminating_states(
         self,
-    ) -> tuple[States, States]:
+    ) -> Union[
+        Tuple[States, States, torch.Tensor, torch.Tensor],
+        Tuple[States, States, None, None],
+    ]:
         """Returns all intermediate and terminating `States` from the trajectories.
 
         This is useful for the flow matching loss, that requires its inputs to be distinguished.
@@ -382,10 +398,27 @@ class Trajectories(Container):
             are not s0.
         """
         states = self.states
+
+        if self.conditioning is not None:
+            traj_len = self.states.batch_shape[0]
+            expand_dims = (traj_len,) + tuple(self.conditioning.shape)
+            intermediary_conditioning = self.conditioning.unsqueeze(0).expand(
+                expand_dims
+            )[~states.is_sink_state & ~states.is_initial_state]
+            conditioning = self.conditioning  # n_final_states == n_trajectories.
+        else:
+            intermediary_conditioning = None
+            conditioning = None
+
         intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]
         terminating_states = self.last_states
         terminating_states.log_rewards = self.log_rewards
-        return intermediary_states, terminating_states
+        return (
+            intermediary_states,
+            terminating_states,
+            intermediary_conditioning,
+            conditioning,
+        )
 
 
 def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:

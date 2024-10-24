@@ -83,8 +83,14 @@ def main(args):
     # Learning
     visited_terminating_states = env.States.from_batch_shape((0,))
     states_visited = 0
+
     for i in (pbar := tqdm(range(10000))):
-        trajectories = gflownet.sample_trajectories(env, n_samples=8, off_policy=False)
+        trajectories = gflownet.sample_trajectories(
+            env,
+            n=8,
+            save_estimator_outputs=False,
+            save_logprobs=True,
+        )
         training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples)

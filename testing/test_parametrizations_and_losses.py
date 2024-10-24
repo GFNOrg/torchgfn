@@ -22,6 +22,9 @@ from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
 
+N = 10  # Number of trajectories from sample_trajectories (changes tests globally).
+
+
 @pytest.mark.parametrize(
     "module_name",
     ["NeuralNet", "Tabular"],
@@ -57,7 +60,7 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     )
 
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
-    trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
+    trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
     states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
     loss = gflownet.loss(env, states_tuple)
     assert loss >= 0
@@ -154,7 +157,7 @@ def PFBasedGFlowNet_with_return(
                 hidden_dim=32,
                 n_hidden_layers=2,
                 n_components=ndim + 1,
-                torso=pf_module.torso if tie_pb_to_pf else None,
+                trunk=pf_module.trunk if tie_pb_to_pf else None,
             )
         elif module_name == "NeuralNet" and env_name != "Box":
             pb_module = NeuralNet(
@@ -210,7 +213,7 @@ def PFBasedGFlowNet_with_return(
     else:
         raise ValueError(f"Unknown gflownet {gflownet_name}")
 
-    trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
+    trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
     training_objects = gflownet.to_training_samples(trajectories)
 
     _ = gflownet.loss(env, training_objects)
@@ -307,7 +310,7 @@ def test_subTB_vs_TB(
         zero_logF=True,
     )
 
-    trajectories = gflownet.sample_trajectories(env, save_logprobs=True, n_samples=10)
+    trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
     subtb_loss = gflownet.loss(env, trajectories)
 
     if weighting == "TB":

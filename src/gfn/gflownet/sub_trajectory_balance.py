@@ -6,7 +6,12 @@ import torch
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet
-from gfn.modules import GFNModule, ScalarEstimator
+from gfn.modules import GFNModule, ScalarEstimator, ConditionalScalarEstimator
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
+
 
 ContributionsTensor = torch.Tensor  # shape: [max_len * (1 + max_len) / 2, n_trajectories]
 CumulativeLogProbsTensor = torch.Tensor  # shape: [max_length + 1, n_trajectories]
@@ -54,7 +59,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         pf: GFNModule,
         pb: GFNModule,
-        logF: ScalarEstimator,
+        logF: ScalarEstimator | ConditionalScalarEstimator,
         weighting: Literal[
             "DB",
             "ModifiedDB",
@@ -69,7 +74,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         forward_looking: bool = False,
     ):
         super().__init__(pf, pb)
-        assert isinstance(logF, ScalarEstimator), "logF must be a ScalarEstimator"
+        assert any(
+            isinstance(logF, cls)
+            for cls in [ScalarEstimator, ConditionalScalarEstimator]
+        ), "logF must be a ScalarEstimator or derived"
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda
@@ -159,7 +167,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_rewards = trajectories.log_rewards[trajectories.when_is_done >= i]
 
         if math.isfinite(self.log_reward_clip_min):
-            log_rewards.clamp_min(self.log_reward_clip_min)
+            log_rewards.clamp_min(
+                self.log_reward_clip_min
+            )  # TODO: clamping - check this.
 
         targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
 
@@ -200,12 +210,25 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         mask = ~states.is_sink_state
         valid_states = states[mask]
 
-        log_F = self.logF(valid_states).squeeze(-1)
+        if trajectories.conditioning is not None:
+            # Compute the conditioning matrix broadcast to match valid_states.
+            traj_len = states.batch_shape[0]
+            expand_dims = (traj_len,) + tuple(trajectories.conditioning.shape)
+            conditioning = trajectories.conditioning.unsqueeze(0).expand(expand_dims)[
+                mask
+            ]
+
+            with has_conditioning_exception_handler("logF", self.logF):
+                log_F = self.logF(valid_states, conditioning)
+        else:
+            with no_conditioning_exception_handler("logF", self.logF):
+                log_F = self.logF(valid_states).squeeze(-1)
+
         if self.forward_looking:
             log_rewards = env.log_reward(states).unsqueeze(-1)
             log_F = log_F + log_rewards
 
-        log_state_flows[mask[:-1]] = log_F
+        log_state_flows[mask[:-1]] = log_F.squeeze()
         return log_state_flows
 
     def calculate_masks(
@@ -294,11 +317,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         return scores, flattening_masks
 
     def get_equal_within_contributions(
-        self, trajectories: Trajectories
+        self,
+        trajectories: Trajectories,
+        all_scores: TT,
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'equal_within' weighting method.
         """
+        del all_scores
         is_done = trajectories.when_is_done
         max_len = trajectories.max_length
         n_rows = int(max_len * (1 + max_len) / 2)
@@ -315,7 +341,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         return contributions
 
     def get_equal_contributions(
-        self, trajectories: Trajectories
+        self,
+        trajectories: Trajectories,
+        all_scores: TT,
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'equal' weighting method.
@@ -345,11 +373,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         return contributions
 
     def get_modified_db_contributions(
-        self, trajectories: Trajectories
+        self,
+        trajectories: Trajectories,
+        all_scores: TT,
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'ModifiedDB' weighting method.
         """
+        del all_scores
         is_done = trajectories.when_is_done
         max_len = trajectories.max_length
         n_rows = int(max_len * (1 + max_len) / 2)
@@ -370,11 +401,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         return contributions
 
     def get_geometric_within_contributions(
-        self, trajectories: Trajectories
+        self,
+        trajectories: Trajectories,
+        all_scores: TT,
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'geometric_within' weighting method.
         """
+        del all_scores
         L = self.lamda
         max_len = trajectories.max_length
         is_done = trajectories.when_is_done
@@ -437,22 +471,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
 
-        elif self.weighting == "equal_within":
-            contributions = self.get_equal_within_contributions(trajectories)
-
-        elif self.weighting == "equal":
-            contributions = self.get_equal_contributions(trajectories)
-
-        elif self.weighting == "TB":
-            contributions = self.get_tb_contributions(trajectories, all_scores)
-
-        elif self.weighting == "ModifiedDB":
-            contributions = self.get_modified_db_contributions(trajectories)
-
-        elif self.weighting == "geometric_within":
-            contributions = self.get_geometric_within_contributions(trajectories)
-
-        else:
+        weight_functions = {
+            "equal_within": self.get_equal_within_contributions,
+            "equal": self.get_equal_contributions,
+            "TB": self.get_tb_contributions,
+            "ModifiedDB": self.get_modified_db_contributions,
+            "geometric_within": self.get_geometric_within_contributions,
+        }
+        try:
+            contributions = weight_functions[self.weighting](trajectories, all_scores)
+        except KeyError:
             raise ValueError(f"Unknown weighting method {self.weighting}")
 
         flat_contributions = contributions[~flattening_mask]

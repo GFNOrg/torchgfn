@@ -43,7 +43,7 @@ def trajectory_sampling_with_return(
             hidden_dim=32,
             n_hidden_layers=2,
             n_components=n_components,
-            torso=pf_module.torso,
+            trunk=pf_module.trunk,
         )
         pf_estimator = BoxPFEstimator(
             env=env,
@@ -82,8 +82,8 @@ def trajectory_sampling_with_return(
     # Test mode collects log_probs and estimator_ouputs, not encountered in the wild.
     trajectories = sampler.sample_trajectories(
         env,
+        n=5,
         save_logprobs=True,
-        n_trajectories=5,
         save_estimator_outputs=True,
     )
     #  trajectories = sampler.sample_trajectories(env, n_trajectories=10)  # TODO - why is this duplicated?
