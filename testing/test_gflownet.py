@@ -43,7 +43,7 @@ def test_trajectory_based_gflownet_generic():
 
 
 def test_flow_matching_gflownet_generic():
-    env = HyperGrid()
+    env = Box()
     module = BoxPFNeuralNet(
         hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
     )
