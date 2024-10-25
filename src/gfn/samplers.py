@@ -34,11 +34,7 @@ class Sampler:
         save_estimator_outputs: bool = False,
         save_logprobs: bool = True,
         **policy_kwargs: Optional[dict],
-    ) -> Tuple[
-        Actions,
-        Tensor | None,
-        Tensor | None,
-    ]:
+    ) -> Tuple[Actions, Tensor | None, Tensor | None,]:
         """Samples actions from the given states.
 
         Args:

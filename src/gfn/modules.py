@@ -116,7 +116,6 @@ class GFNModule(ABC, nn.Module):
 
 
 class ScalarEstimator(GFNModule):
-
     @property
     def expected_output_dim(self) -> int:
         return 1

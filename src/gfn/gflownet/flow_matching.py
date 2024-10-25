@@ -151,9 +151,10 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         self, trajectories: Trajectories
     ) -> tuple[DiscreteStates, DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        inter_states, ter_states = (
-            trajectories.to_non_initial_intermediary_and_terminating_states()
-        )
+        (
+            inter_states,
+            ter_states,
+        ) = trajectories.to_non_initial_intermediary_and_terminating_states()
         assert isinstance(inter_states, DiscreteStates)
         assert isinstance(ter_states, DiscreteStates)
         return inter_states, ter_states

@@ -64,11 +64,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
     def get_scores(
         self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
-    ) -> Tuple[
-        Tensor,
-        Tensor,
-        Tensor,
-    ]:
+    ) -> Tuple[Tensor, Tensor, Tensor,]:
         """Given a batch of transitions, calculate the scores.
 
         Args:
