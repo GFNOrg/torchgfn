@@ -51,14 +51,14 @@ class Transitions(Container):
             states: States object with uni-dimensional `batch_shape`, representing the
                 parents of the transitions.
             actions: Actions chosen at the parents of each transitions.
-            is_done: Whether the action is the exit action.
+            is_done: Tensor of shape (n_transitions,) indicating whether the action is the exit action.
             next_states: States object with uni-dimensional `batch_shape`, representing
                 the children of the transitions.
             is_backward: Whether the transitions are backward transitions (i.e.
                 `next_states` is the parent of states).
-            log_rewards: The log-rewards of the transitions (using a default value like
+            log_rewards: Tensor of shape (n_transitions,) containing the log-rewards of the transitions (using a default value like
                 `-float('inf')` for non-terminating transitions).
-            log_probs: The log-probabilities of the actions.
+            log_probs: Tensor of shape (n_transitions,) containing the log-probabilities of the actions.
 
         Raises:
             AssertionError: If states and next_states do not have matching
@@ -130,6 +130,7 @@ class Transitions(Container):
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
+        """Compute the tensor of shape (n_transitions,) containing the log rewards for the transitions."""
         if self._log_rewards is not None:
             return self._log_rewards
         if self.is_backward:
@@ -154,6 +155,10 @@ class Transitions(Container):
         This is applicable to environments where all states are terminating. This
         function evaluates the rewards for all transitions that do not end in the sink
         state. This is useful for the Modified Detailed Balance loss.
+
+        Returns:
+            log_rewards: Tensor of shape (n_transitions, 2) containing the log rewards
+                for the transitions.
 
         Raises:
             NotImplementedError: when used for backward transitions.

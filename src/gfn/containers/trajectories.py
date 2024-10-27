@@ -38,10 +38,10 @@ class Trajectories(Container):
         env: The environment in which the trajectories are defined.
         states: The states of the trajectories.
         actions: The actions of the trajectories.
-        when_is_done: The time step at which each trajectory ends.
+        when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
         is_backward: Whether the trajectories are backward or forward.
-        log_rewards: The log_rewards of the trajectories.
-        log_probs: The log probabilities of the trajectories' actions.
+        log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
+        log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the trajectories' actions.
 
     """
 
@@ -62,12 +62,13 @@ class Trajectories(Container):
             env: The environment in which the trajectories are defined.
             states: The states of the trajectories.
             actions: The actions of the trajectories.
-            when_is_done: The time step at which each trajectory ends.
+            when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
             is_backward: Whether the trajectories are backward or forward.
-            log_rewards: The log_rewards of the trajectories.
-            log_probs: The log probabilities of the trajectories' actions.
-            estimator_outputs: When forward sampling off-policy for an n-step
-                trajectory, n forward passes will be made on some function approximator,
+            log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
+            log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the trajectories' actions.
+            estimator_outputs: Tensor of shape (batch_shape, output_dim).
+                When forward sampling off-policy for an n-step trajectory,
+                n forward passes will be made on some function approximator,
                 which may need to be re-used (for example, for evaluating PF). To avoid
                 duplicated effort, the outputs of the forward passes can be stored here.
 
@@ -149,6 +150,7 @@ class Trajectories(Container):
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
+        """Returns the log rewards of the trajectories as a tensor of shape (n_trajectories,)."""
         if self._log_rewards is not None:
             assert self._log_rewards.shape == (self.n_trajectories,)
             return self._log_rewards
@@ -208,7 +210,16 @@ class Trajectories(Container):
     def extend_log_probs(
         log_probs: torch.Tensor, new_max_length: int
     ) -> torch.Tensor:
-        """Extend the log_probs matrix by adding 0 until the required length is reached."""
+        """Extend the log_probs matrix by adding 0 until the required length is reached.
+        
+        Args:
+            log_probs: The log_probs tensor of shape (max_length, n_trajectories) to extend.
+            new_max_length: The new length of the log_probs tensor.
+        
+        Returns: The extended log_probs tensor of shape (new_max_length, n_trajectories).
+
+        """
+
         max_length, n_trajectories = log_probs.shape
         if max_length >= new_max_length:
             return log_probs

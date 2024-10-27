@@ -251,7 +251,17 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Given a batch of trajectories, calculate forward & backward policy scores."""
+        """Given a batch of trajectories, calculate forward & backward policy scores.
+    
+        Args:
+            trajectories: Trajectories to evaluate.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+        
+        Returns: A tuple of float tensors of shape (n_trajectories,)
+            containing the total log_pf, total log_pb, and the total
+            log-likelihood of the trajectories.
+        
+        """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )

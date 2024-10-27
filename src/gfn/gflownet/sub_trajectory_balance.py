@@ -115,7 +115,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: a batch of trajectories.
             log_p_trajectories: log probabilities of each transition in each trajectory.
 
-        Returns: cumulative sum of log probabilities of each trajectory.
+        Returns: Tensor of shape (max_length + 1, n_trajectories), containing the 
+            cumulative sum of log probabilities of each trajectory.
         """
         return torch.cat(
             (
@@ -135,6 +136,13 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     ) -> PredictionsTensor:
         """
         Calculate the predictions tensor for the current sub-trajectory length.
+    
+        Args:
+            log_pf_trajectories_cum: Tensor of shape (max_length + 1, n_trajectories) containing the cumulative log probabilities of the forward actions.
+            log_state_flows: Tensor of shape (max_length, n_trajectories) containing the log state flows.
+            i: The sub-trajectory length.
+        
+        Returns: The predictions tensor of shape (max_length + 1 - i, n_trajectories).
         """
         current_log_state_flows = (
             log_state_flows if i == 1 else log_state_flows[: -(i - 1)]
@@ -161,6 +169,18 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     ) -> TargetsTensor:
         """
         Calculate the targets tensor for the current sub-trajectory length.
+
+        Args:
+            trajectories: The trajectories data.
+            preds: The predictions tensor of shape (max_length + 1 - i, n_trajectories).
+            log_pb_trajectories_cum: Tensor of shape (max_length + 1, n_trajectories) containing the cumulative log probabilities of the backward actions.
+            log_state_flows: Tensor of shape (max_length, n_trajectories) containing the log state flows.
+            is_terminal_mask: A mask tensor of shape (max_length, n_trajectories) representing terminal states.
+            sink_states_mask: A mask tensor of shape (max_length, n_trajectories) representing sink states.
+            full_mask: A mask tensor of shape (max_length, n_trajectories) representing full states.
+            i: The sub-trajectory length.
+        
+        Returns: The targets tensor of shape (max_length + 1 - i, n_trajectories).
         """
         targets = torch.full_like(preds, fill_value=-float("inf"))
         assert trajectories.log_rewards is not None
@@ -198,12 +218,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Calculate log state flows and masks for sink and terminal states.
 
         Args:
-            trajectories: The trajectories data.
             env: The environment object.
+            trajectories: The trajectories data.
+            log_pf_trajectories: Tensor of shape (max_length, n_trajectories) containing the log forward probabilities of the trajectories.
 
         Returns:
-            log_state_flows: Log state flows.
-            full_mask: A boolean tensor representing full states.
+            log_state_flows: Tensor of shape (max_length, n_trajectories) containing the log state flows.
         """
         states = trajectories.states
         log_state_flows = torch.full_like(log_pf_trajectories, fill_value=-float("inf"))
@@ -238,6 +258,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     ) -> Tuple[MaskTensor, MaskTensor, MaskTensor]:
         """
         Calculate masks for sink and terminal states.
+
+        Args:
+            log_state_flows: Tensor of shape (max_length, n_trajectories) containing the log state flows.
+            trajectories: The trajectories data.
+        
+        Returns: a tuple of three mask tensors of shape (max_length, n_trajectories).
         """
         sink_states_mask = log_state_flows == -float("inf")
         is_terminal_mask = trajectories.actions.is_exit
@@ -323,6 +349,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'equal_within' weighting method.
+
+        Args:
+            trajectories: The trajectories data.
+            all_scores: The scores tensor.
+        
+        Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores
         is_done = trajectories.when_is_done
@@ -347,6 +379,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'equal' weighting method.
+
+        Args:
+            trajectories: The trajectories data.
+            all_scores: The scores tensor.
+        
+        Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         is_done = trajectories.when_is_done
         max_len = trajectories.max_length
@@ -360,6 +398,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'TB' weighting method.
+
+        Args:
+            trajectories: The trajectories data.
+            all_scores: The scores tensor.
+        
+        Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         max_len = trajectories.max_length
         is_done = trajectories.when_is_done
@@ -379,6 +423,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'ModifiedDB' weighting method.
+
+        Args:
+            trajectories: The trajectories data.
+            all_scores: The scores tensor.
+        
+        Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores
         is_done = trajectories.when_is_done
@@ -407,6 +457,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     ) -> ContributionsTensor:
         """
         Calculates contributions for the 'geometric_within' weighting method.
+
+        Args:
+            trajectories: The trajectories data.
+            all_scores: The scores tensor.
+        
+        Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores
         L = self.lamda

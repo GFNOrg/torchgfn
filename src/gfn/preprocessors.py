@@ -16,9 +16,17 @@ class Preprocessor(ABC):
 
     @abstractmethod
     def preprocess(self, states: States) -> torch.Tensor:
+        """Transform the states to the input of the neural network.
+        
+        Args:
+            states: The states to preprocess.
+        
+        Returns the preprocessed states as a tensor of shape (*batch_shape, output_dim).
+        """
         pass
 
     def __call__(self, states: States) -> torch.Tensor:
+        """Transform the states to the input of the neural network, calling the preprocess method."""
         out = self.preprocess(states)
         assert out.shape[-1] == self.output_dim
         return out
@@ -32,6 +40,7 @@ class IdentityPreprocessor(Preprocessor):
     This is the default preprocessor used."""
 
     def preprocess(self, states: States) -> torch.Tensor:
+        """Identity preprocessor. Returns the states as they are."""
         return (
             states.tensor.float()
         )  # TODO: should we typecast here? not a true identity...
@@ -49,9 +58,17 @@ class EnumPreprocessor(Preprocessor):
 
         Args:
             get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
+                BatchOutputTensor is a tensor of shape (*batch_shape, 1).
         """
         super().__init__(output_dim=1)
         self.get_states_indices = get_states_indices
 
     def preprocess(self, states) -> torch.Tensor:
+        """Preprocess the states by returning their unique indices.
+        
+        Args:
+            states: The states to preprocess.
+        
+        Returns the unique indices of the states as a tensor of shape `batch_shape`.
+        """
         return self.get_states_indices(states).long().unsqueeze(-1)

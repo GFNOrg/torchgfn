@@ -56,7 +56,7 @@ class States(ABC):
     def __init__(self, tensor: torch.Tensor):
         """Initalize the State container with a batch of states.
         Args:
-            tensor: Tensor representing a batch of states.
+            tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of states.
         """
         assert self.s0 .shape == self.state_shape
         assert self.sf.shape == self.state_shape
@@ -103,7 +103,13 @@ class States(ABC):
     def make_initial_states_tensor(
         cls, batch_shape: tuple[int]
     ) -> torch.Tensor:
-        """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
+        """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s.
+        
+        Args:
+            batch_shape: Shape of the batch dimensions.
+        
+        Returns a tensor of shape (*batch_shape, *state_shape) with all states equal to $s_0$.
+        """
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
         return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
@@ -112,7 +118,12 @@ class States(ABC):
     def make_sink_states_tensor(
         cls, batch_shape: tuple[int]
     ) -> torch.Tensor:
-        """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
+        """Makes a tensor with a `batch_shape` of states consisting of $s_f$s.
+        
+        Args:
+            batch_shape: Shape of the batch dimensions.
+        
+        Returns a tensor of shape (*batch_shape, *state_shape) with all states equal to $s_f$."""
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
         return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
@@ -128,7 +139,7 @@ class States(ABC):
         return self.tensor.device
 
     def __getitem__(
-        self, index: int | Sequence[int] | Sequence[bool] | Tensor
+        self, index: int | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> States:
         """Access particular states of the batch."""
         out = self.__class__(
@@ -231,10 +242,10 @@ class States(ABC):
         """Computes elementwise equality between state tensor with an external tensor.
 
         Args:
-            other: Tensor of states to compare to.
+            other: Tensor with shape (*batch_shape, *state_shape) representing states to compare to.
 
-        Returns: Tensor of booleans indicating whether the states are equal to the
-            states in self.
+        Returns a tensor of booleans with shape `batch_shape` indicating whether the states are equal
+            to the states in self.
         """
         assert other.shape == self.batch_shape + self.state_shape
         out = self.tensor == other
@@ -247,7 +258,7 @@ class States(ABC):
 
     @property
     def is_initial_state(self) -> torch.Tensor:
-        """Return a tensor that is True for states that are $s_0$ of the DAG."""
+        """Returns a tensor of shape `batch_shape` that is True for states that are $s_0$ of the DAG."""
         source_states_tensor = self.__class__.s0.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.state_shape))
         )
@@ -255,7 +266,7 @@ class States(ABC):
 
     @property
     def is_sink_state(self) -> torch.Tensor:
-        """Return a tensor that is True for states that are $s_f$ of the DAG."""
+        """Returns a tensor of shape `batch_shape` that is True for states that are $s_f$ of the DAG."""
         # TODO: self.__class__.sf == self.tensor -- or something similar?
         sink_states = self.__class__.sf.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.state_shape))
@@ -264,10 +275,16 @@ class States(ABC):
 
     @property
     def log_rewards(self) -> torch.Tensor:
+        """Returns the log rewards of the states as tensor of shape `batch_shape`."""
         return self._log_rewards
 
     @log_rewards.setter
     def log_rewards(self, log_rewards: torch.Tensor) -> None:
+        """Sets the log rewards of the states.
+        
+        Args:
+            log_rewards: Tensor of shape `batch_shape` representing the log rewards of the states.
+        """
         assert log_rewards.shape == self.batch_shape
         self._log_rewards = log_rewards
 
@@ -300,11 +317,11 @@ class DiscreteStates(States, ABC):
     ) -> None:
         """Initalize a DiscreteStates container with a batch of states and masks.
         Args:
-            tensor: A batch of states.
-            forward_masks: Initializes a boolean tensor of allowable forward policy
-                actions.
-            backward_masks: Initializes a boolean tensor of allowable backward policy
-                actions.
+            tensor: A tensor with shape (*batch_shape, *state_shape) representing a batch of states.
+            forward_masks: Optional boolean tensor tensor with shape (*batch_shape, n_actions) of 
+                allowable forward policy actions.
+            backward_masks: Optional boolean tensor tensor with shape (*batch_shape, n_actions) of
+                allowable backward policy actions.
         """
         super().__init__(tensor)
         assert tensor.shape == self.batch_shape + self.state_shape

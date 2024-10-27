@@ -9,6 +9,14 @@ from gfn.states import States
 
 
 def get_terminating_state_dist_pmf(env: Env, states: States) -> torch.Tensor:
+    """Computes the empirical distribution of the terminating states.
+
+    Args:
+        env: The environment.
+        states: The states to compute the distribution of.
+    
+    Returns the empirical distribution of the terminating states as a tensor of shape (n_terminating_states,).
+    """
     states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
     counter = Counter(states_indices)
     counter_list = [

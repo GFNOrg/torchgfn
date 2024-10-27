@@ -62,8 +62,8 @@ class NeuralNet(nn.Module):
 
         Args:
             preprocessed_states: a batch of states appropriately preprocessed for
-                ingestion by the MLP.
-        Returns: out, a set of continuous variables.
+                ingestion by the MLP. The shape of the tensor should be (*batch_shape, input_dim).
+        Returns: a tensor of shape (*batch_shape, output_dim).
         """
         out = self.trunk(preprocessed_states)
         out = self.last_layer(out)
@@ -108,6 +108,13 @@ class Tabular(nn.Module):
     def forward(
         self, preprocessed_states: torch.Tensor
     ) -> torch.Tensor:
+        """Forward method for the tabular policy.
+
+        Args:
+            preprocessed_states: a batch of states appropriately preprocessed for
+                ingestion by the tabular policy. The shape of the tensor should be (*batch_shape, 1).
+        Returns: a tensor of shape (*batch_shape, output_dim).
+        """
         if self.device is None:
             self.device = preprocessed_states.device
             self.table = self.table.to(self.device)
@@ -139,6 +146,14 @@ class DiscreteUniform(nn.Module):
     def forward(
         self, preprocessed_states: torch.Tensor
     ) -> torch.Tensor:
+        """Forward method for the uniform distribution.
+
+        Args:
+            preprocessed_states: a batch of states appropriately preprocessed for
+                ingestion by the uniform distribution. The shape of the tensor should be (*batch_shape, input_dim).
+            
+        Returns: a tensor of shape (*batch_shape, output_dim).
+        """
         out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
             preprocessed_states.device
         )

@@ -46,20 +46,42 @@ class Box(Env):
     def make_random_states_tensor(
         self, batch_shape: Tuple[int, ...]
     ) -> torch.Tensor:
+        """Generates random states tensor of shape (*batch_shape, 2)."""
         return torch.rand(batch_shape + (2,), device=self.device)
 
     def step(
         self, states: States, actions: Actions
     ) -> torch.Tensor:
+        """Step function for the Box environment.
+        
+        Args:
+            states: States object representing the current states.
+            actions: Actions object representing the actions to be taken.
+        
+        Returns the next states as tensor of shape (*batch_shape, 2).
+        """
         return states.tensor + actions.tensor
 
     def backward_step(
         self, states: States, actions: Actions
     ) -> torch.Tensor:
+        """Backward step function for the Box environment.
+
+        Args:
+            states: States object representing the current states.
+            actions: Actions object representing the actions to be taken.
+        
+        Returns the previous states as tensor of shape (*batch_shape, 2).
+        """
         return states.tensor - actions.tensor
 
     @staticmethod
     def norm(x: torch.Tensor) -> torch.Tensor:
+        """Computes the L2 norm of the input tensor along the last dimension.
+        
+        Args:
+            x: Input tensor of shape (*batch_shape, 2).
+        Returns: normalized tensor of shape `batch_shape`."""
         return torch.norm(x, dim=-1)
 
     def is_action_valid(
@@ -103,7 +125,13 @@ class Box(Env):
         return True
 
     def reward(self, final_states: States) -> torch.Tensor:
-        """Reward is distance from the goal point."""
+        """Reward is distance from the goal point.
+        
+        Args:
+            final_states: States object representing the final states.
+        
+        Returns the reward tensor of shape `batch_shape`.
+        """
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states.tensor - 0.5)
         reward = (

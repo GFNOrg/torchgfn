@@ -72,9 +72,13 @@ class GFNModule(ABC, nn.Module):
         self._output_dim_is_checked = False
         self.is_backward = is_backward
 
-    def forward(
-        self, input: States | torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, input: States | torch.Tensor) -> torch.Tensor:
+        """Forward pass of the module.
+        
+        Args:
+            input: The input to the module, as states or a tensor.
+        
+        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim)."""
         if isinstance(input, States):
             input = self.preprocessor(input)
 
@@ -94,9 +98,7 @@ class GFNModule(ABC, nn.Module):
     def expected_output_dim(self) -> int:
         """Expected output dimension of the module."""
 
-    def check_output_dim(
-        self, module_output: torch.Tensor
-    ) -> None:
+    def check_output_dim(self, module_output: torch.Tensor) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
         assert module_output.dtype == torch.float
         if module_output.shape[-1] != self.expected_output_dim():
@@ -119,6 +121,13 @@ class GFNModule(ABC, nn.Module):
         policy from a module's outputs. See `DiscretePolicyEstimator` for an example
         using a categorical distribution, but note this can be done for all continuous
         distributions as well.
+
+        Args:
+            states: The states to use.
+            module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
+            **policy_kwargs: Keyword arguments to modify the distribution.
+        
+        Returns a distribution object.
         """
         raise NotImplementedError
 
@@ -179,6 +188,8 @@ class DiscretePolicyEstimator(GFNModule):
         We handle off-policyness using these kwargs.
 
         Args:
+            states: The states to use.
+            module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
             temperature: scalar to divide the logits by before softmax. Does nothing
                 if set to 1.0 (default), in which case it's on policy.
             sf_bias: scalar to subtract from the exit action logit before dividing by
@@ -245,6 +256,14 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
     def _forward_trunk(
         self, states: States, conditioning: torch.Tensor
     ) -> torch.Tensor:
+        """Forward pass of the trunk of the module.
+        
+        Args:
+            states: The input states.
+            conditioning: The conditioning input.
+        
+        Returns the output of the trunk of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
         state_out = self.module(self.preprocessor(states))
         conditioning_out = self.conditioning_module(conditioning)
         out = self.final_module(torch.cat((state_out, conditioning_out), -1))
@@ -254,6 +273,14 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
     def forward(
         self, states: States, conditioning: torch.tensor
     ) -> torch.Tensor:
+        """Forward pass of the module.
+        
+        Args:
+            states: The input states.
+            conditioning: The conditioning input.
+        
+        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
         out = self._forward_trunk(states, conditioning)
 
         if not self._output_dim_is_checked:
@@ -284,6 +311,14 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
     def forward(
         self, states: States, conditioning: torch.tensor
     ) -> torch.Tensor:
+        """Forward pass of the module.
+        
+        Args:
+            states: The input states.
+            conditioning: The tensor for conditioning.
+        
+        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
         out = self._forward_trunk(states, conditioning)
 
         if not self._output_dim_is_checked:
@@ -301,4 +336,13 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         module_output: torch.Tensor,
         **policy_kwargs: Any,
     ) -> Distribution:
+        """Transform the output of the module into a probability distribution.
+
+        Args:
+            states: The states to use.
+            module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
+            **policy_kwargs: Keyword arguments to modify the distribution.
+        
+        Returns a distribution object.
+        """
         raise NotImplementedError

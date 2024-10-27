@@ -46,6 +46,14 @@ class Line(Env):
     def step(
         self, states: States, actions: Actions
     ) -> torch.Tensor:
+        """Take a step in the environment.
+        
+        Args:
+            states: The current states.
+            actions: The actions to take.
+        
+        Returns the new states after taking the actions as a tensor of shape (*batch_shape, 2).
+        """
         states.tensor[..., 0] = states.tensor[..., 0] + actions.tensor.squeeze(
             -1
         )  # x position.
@@ -56,6 +64,14 @@ class Line(Env):
     def backward_step(
         self, states: States, actions: Actions
     ) -> torch.Tensor:
+        """Take a step in the environment in the backward direction.
+
+        Args:
+            states: The current states.
+            actions: The actions to take.
+        
+        Returns the new states after taking the actions as a tensor of shape (*batch_shape, 2).
+        """
         states.tensor[..., 0] = states.tensor[..., 0] - actions.tensor.squeeze(
             -1
         )  # x position.
@@ -73,6 +89,13 @@ class Line(Env):
         return True
 
     def log_reward(self, final_states: States) -> torch.Tensor:
+        """Log reward log of the environment.
+        
+        Args:
+            final_states: The final states of the environment.
+        
+        Returns the log reward as a tensor of shape `batch_shape`.
+        """
         s = final_states.tensor[..., 0]
         log_rewards = torch.empty((len(self.mixture),) + final_states.batch_shape)
         for i, m in enumerate(self.mixture):

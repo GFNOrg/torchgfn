@@ -66,9 +66,10 @@ class Sampler:
         Returns:
             A tuple of tensors containing:
              - An Actions object containing the sampled actions.
-             - A tensor of shape (*batch_shape,) containing the log probabilities of
+             - An optional tensor of shape `batch_shape` containing the log probabilities of
                 the sampled actions under the probability distribution of the given
                 states.
+             - An optional tensor of shape `batch_shape` containing the estimator outputs
         """
         # TODO: Should estimators instead ignore None for the conditioning vector?
         if conditioning is not None:

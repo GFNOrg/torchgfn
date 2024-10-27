@@ -34,14 +34,14 @@ class Env(ABC):
         """Initializes an environment.
 
         Args:
-            s0: Representation of the initial state. All individual states would be of
-                the same shape.
-            state_shape:
-            action_shape:
-            dummy_action:
-            exit_action:
-            sf: Representation of the final state. Only used for a human
-                readable representation of the states or trajectories.
+            s0: Tensor of shape "state_shape" representing the initial state.
+                All individual states would be of the same shape.
+            state_shape: Tuple representing the shape of the states.
+            action_shape: Tuple representing the shape of the actions.
+            dummy_action: Tensor of shape "action_shape" representing a dummy action.
+            exit_action: Tensor of shape "action_shape" representing the exit action.
+            sf: Tensor of shape "state_shape" representing the final state.
+                Only used for a human readable representation of the states or trajectories.
             device_str: 'cpu' or 'cuda'. Defaults to None, in which case the device is
                 inferred from s0.
             preprocessor: a Preprocessor object that converts raw states to a tensor
@@ -75,19 +75,47 @@ class Env(ABC):
         self.is_discrete = False
 
     def states_from_tensor(self, tensor: torch.Tensor):
-        """Wraps the supplied Tensor in a States instance."""
+        """Wraps the supplied Tensor in a States instance.
+        
+        Args:
+            tensor: The tensor of shape "state_shape" representing the states.
+        
+        Returns:
+            States: An instance of States.
+        """
         return self.States(tensor)
 
     def states_from_batch_shape(self, batch_shape: Tuple):
-        """Returns a batch of s0 states with a given batch_shape."""
+        """Returns a batch of s0 states with a given batch_shape.
+        
+        Args:
+            batch_shape: Tuple representing the shape of the batch of states.
+
+        Returns:
+            States: A batch of initial states.
+        """
         return self.States.from_batch_shape(batch_shape)
 
     def actions_from_tensor(self, tensor: torch.Tensor):
-        """Wraps the supplied Tensor an an Actions instance."""
+        """Wraps the supplied Tensor an an Actions instance.
+        
+        Args:
+            tensor: The tensor of shape "action_shape" representing the actions.
+        
+        Returns:
+            Actions: An instance of Actions.
+        """
         return self.Actions(tensor)
 
     def actions_from_batch_shape(self, batch_shape: Tuple):
-        """Returns a batch of dummy actions with the supplied batch_shape."""
+        """Returns a batch of dummy actions with the supplied batch_shape.
+        
+        Args:
+            batch_shape: Tuple representing the shape of the batch of actions.
+        
+        Returns:
+            Actions: A batch of dummy actions.
+        """
         return self.Actions.make_dummy_actions(batch_shape)
 
     # To be implemented by the User.
@@ -97,6 +125,13 @@ class Env(ABC):
     ) -> torch.Tensor:
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
+
+        Args:
+            states: A batch of states.
+            actions: A batch of actions.
+        
+        Returns:
+            torch.Tensor: A batch of next states.
         """
 
     @abstractmethod
@@ -105,6 +140,13 @@ class Env(ABC):
     ) -> torch.Tensor:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
+    
+        Args:
+            states: A batch of states.
+            actions: A batch of actions.
+        
+        Returns:
+            torch.Tensor: A batch of previous states.
         """
 
     @abstractmethod
@@ -266,13 +308,26 @@ class Env(ABC):
 
     def reward(self, final_states: States) -> torch.Tensor:
         """The environment's reward given a state.
-
         This or log_reward must be implemented.
+
+        Args:
+            final_states: A batch of final states.
+        
+        Returns:
+            torch.Tensor: Tensor of shape "batch_shape" containing the rewards.
         """
         raise NotImplementedError("Reward function is not implemented.")
 
     def log_reward(self, final_states: States) -> torch.Tensor:
-        """Calculates the log reward."""
+        """Calculates the log reward.
+        This or reward must be implemented.
+        
+        Args:
+            final_states: A batch of final states.
+        
+        Returns:
+            torch.Tensor: Tensor of shape "batch_shape" containing the log rewards.
+        """
         return torch.log(self.reward(final_states))
 
     @property
@@ -308,12 +363,12 @@ class DiscreteEnv(Env, ABC):
 
         Args:
             n_actions: The number of actions in the environment.
-            s0: The initial state tensor (shared among all trajectories).
-            state_shape:
-            action_shape: ?
-            dummy_action: The value of the dummy (padding) action.
-            exit_action: The value of the exit action.
-            sf: The final state tensor (shared among all trajectories).
+            s0: Tensor of shape "state_shape" representing the initial state (shared among all trajectories).
+            state_shape: Tuple representing the shape of the states.
+            action_shape: Tuple representing the shape of the actions.
+            dummy_action: Optional tensor of shape "action_shape" representing the dummy (padding) action.
+            exit_action: Optional tensor of shape "action_shape" representing the exit action.
+            sf: Tensor of shape "state_shape" representing the final state tensor (shared among all trajectories).
             device_str: String representation of a torch.device.
             preprocessor: An optional preprocessor for intermediate states.
         """
@@ -347,7 +402,14 @@ class DiscreteEnv(Env, ABC):
         self.is_discrete = True  # After init, else it will be overwritten.
 
     def states_from_tensor(self, tensor: torch.Tensor):
-        """Wraps the supplied Tensor in a States instance & updates masks."""
+        """Wraps the supplied Tensor in a States instance & updates masks.
+        
+        Args:
+            tensor: The tensor of shape "state_shape" representing the states.
+        
+        Returns:
+            States: An instance of States.
+        """
         states_instance = self.make_states_class()(tensor)
         self.update_masks(states_instance)
         return states_instance
@@ -430,6 +492,14 @@ class DiscreteEnv(Env, ABC):
     def get_states_indices(
         self, states: DiscreteStates
     ) -> torch.Tensor:
+        """Returns the indices of the states in the environment.
+        
+        Args:
+            states: The batch of states.
+        
+        Returns:
+            torch.Tensor: Tensor of shape "batch_shape" containing the indices of the states.
+        """
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
@@ -437,6 +507,14 @@ class DiscreteEnv(Env, ABC):
     def get_terminating_states_indices(
         self, states: DiscreteStates
     ) -> torch.Tensor:
+        """Returns the indices of the terminating states in the environment.
+
+        Args:
+            states: The batch of states.
+        
+        Returns:
+            torch.Tensor: Tensor of shape "batch_shape" containing the indices of the terminating states.
+        """
         return NotImplementedError(
             "The environment does not support enumeration of states"
         )
@@ -455,7 +533,7 @@ class DiscreteEnv(Env, ABC):
 
     @property
     def true_dist_pmf(self) -> torch.Tensor:
-        "Returns a one-dimensional tensor representing the true distribution."
+        "Returns a tensor of shape (n_states,) representing the true distribution."
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )

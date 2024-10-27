@@ -91,6 +91,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             - If transitions have log_probs attribute, use them - this is usually for on-policy learning
             - Else, re-evaluate the log_probs using the current self.pf - this is usually for
               off-policy learning with replay buffer
+        
+        Returns: A tuple of three tensors of shapes (n_transitions,), representing the
+            log probabilities of the actions, the log probabilities of the backward actions, and th scores.
 
         Raises:
             ValueError: when supplied with backward transitions.
