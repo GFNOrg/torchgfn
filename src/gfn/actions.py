@@ -30,7 +30,7 @@ class Actions(ABC):
         """Initialize actions from a tensor.
 
         Args:
-            tensor: tensors representing a batch of actions with shape (*batch_shape, *actions_ndims).
+            tensor: tensors representing a batch of actions with shape (*batch_shape, *action_shape).
         """
         assert tensor.shape[-len(self.action_shape):] == self.action_shape, (
             f"Batched actions tensor has shape {tensor.shape}, but the expected action shape is {self.action_shape}."
@@ -136,7 +136,7 @@ class Actions(ABC):
         """Compares the actions to a tensor of actions.
 
         Args:
-            other: tensor of actions to compare, with shape (*batch_shape, *actions_ndims).
+            other: tensor of actions to compare, with shape (*batch_shape, *action_shape).
         
         Returns: boolean tensor of shape batch_shape indicating whether the actions are
             equal.
@@ -155,7 +155,7 @@ class Actions(ABC):
 
     @property
     def is_dummy(self) -> torch.Tensor:
-        """Returns a boolean tensor of shape (batch_shape,) indicating whether the actions are dummy actions."""
+        """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are dummy actions."""
         dummy_actions_tensor = self.__class__.dummy_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))
         )
@@ -163,7 +163,7 @@ class Actions(ABC):
 
     @property
     def is_exit(self) -> torch.Tensor:
-        """Returns a boolean tensor of shape (batch_shape,) indicating whether the actions are exit actions."""
+        """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are exit actions."""
         exit_actions_tensor = self.__class__.exit_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))
         )
