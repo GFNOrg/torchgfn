@@ -94,7 +94,7 @@ def main(args):  # noqa: C901
                     output_dim=env.n_actions - 1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
-                    torso=pf_module.torso if args.tied else None,
+                    trunk=pf_module.trunk if args.tied else None,
                 )
         if args.uniform_pb:
             pb_module = DiscreteUniform(env.n_actions - 1)
@@ -141,7 +141,7 @@ def main(args):  # noqa: C901
                     output_dim=1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
-                    torso=pf_module.torso if args.tied else None,
+                    trunk=pf_module.trunk if args.tied else None,
                 )
 
             logF_estimator = ScalarEstimator(
@@ -232,7 +232,7 @@ def main(args):  # noqa: C901
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
             env,
-            n_samples=args.batch_size,
+            n=args.batch_size,
             save_logprobs=args.replay_buffer_size == 0,
             save_estimator_outputs=False,
         )

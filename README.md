@@ -82,7 +82,7 @@ module_PF = MLP(
 module_PB = MLP(
     input_dim=env.preprocessor.output_dim,
     output_dim=env.n_actions - 1,
-    torso=module_PF.torso  # We share all the parameters of P_F and P_B, except for the last layer
+    trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
 )
 
 # 3 - We define the estimators.
@@ -136,7 +136,7 @@ module_PF = MLP(
 module_PB = MLP(
     input_dim=env.preprocessor.output_dim,
     output_dim=env.n_actions - 1,
-    torso=module_PF.torso  # We share all the parameters of P_F and P_B, except for the last layer
+    trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
 )
 module_logF = MLP(
     input_dim=env.preprocessor.output_dim,

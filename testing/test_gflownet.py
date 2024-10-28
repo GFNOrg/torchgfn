@@ -12,7 +12,7 @@ def test_trajectory_based_gflownet_generic():
         hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
     )
     pb_module = BoxPBMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, torso=pf_module.torso
+        hidden_dim=32, n_hidden_layers=2, n_components=1, trunk=pf_module.trunk
     )
 
     env = Box()
@@ -66,7 +66,7 @@ def test_pytorch_inheritance():
         hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
     )
     pb_module = BoxPBMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, torso=pf_module.torso
+        hidden_dim=32, n_hidden_layers=2, n_components=1, trunk=pf_module.trunk
     )
 
     env = Box()

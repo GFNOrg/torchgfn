@@ -118,7 +118,7 @@ def main(args):  # noqa: C901
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
             n_components=args.n_components,
-            torso=pf_module.torso if args.tied else None,
+            trunk=pf_module.trunk if args.tied else None,
         )
 
     pf_estimator = BoxPFEstimator(
@@ -148,7 +148,7 @@ def main(args):  # noqa: C901
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
-            torso=None,  # We do not tie the parameters of the flow function to PF
+            trunk=None,  # We do not tie the parameters of the flow function to PF
             logZ_value=logZ,
         )
         logF_estimator = ScalarEstimator(module=module, preprocessor=env.preprocessor)
@@ -230,8 +230,9 @@ def main(args):  # noqa: C901
         if iteration % 1000 == 0:
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
+        # Sampling on-policy, so we save logprobs for faster computation.
         trajectories = gflownet.sample_trajectories(
-            env, save_logprobs=True, n_samples=args.batch_size
+            env, save_logprobs=True, n=args.batch_size
         )
 
         training_samples = gflownet.to_training_samples(trajectories)
@@ -241,7 +242,7 @@ def main(args):  # noqa: C901
 
         loss.backward()
         for p in gflownet.parameters():
-            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad
+            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
                 p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()

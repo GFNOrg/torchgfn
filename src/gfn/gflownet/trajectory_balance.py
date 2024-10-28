@@ -11,6 +11,7 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet
 from gfn.modules import GFNModule, ScalarEstimator
+from gfn.utils.handlers import is_callable_exception_handler
 
 
 class TBGFlowNet(TrajectoryBasedGFlowNet):
@@ -64,7 +65,16 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         _, _, scores = self.get_trajectories_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
-        loss = (scores + self.logZ).pow(2).mean()
+
+        # If the conditioning values exist, we pass them to self.logZ
+        # (should be a ScalarEstimator or equivilant).
+        if trajectories.conditioning is not None:
+            with is_callable_exception_handler("logZ", self.logZ):
+                logZ = self.logZ(trajectories.conditioning)
+        else:
+            logZ = self.logZ
+
+        loss = (scores + logZ.squeeze()).pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("loss is nan")
 

@@ -63,7 +63,6 @@ def main(args):  # noqa: C901
     optimizer = torch.optim.Adam(module.parameters(), lr=args.lr)
 
     # 4. Train the gflownet
-
     visited_terminating_states = env.states_from_batch_shape((0,))
 
     states_visited = 0
@@ -71,7 +70,7 @@ def main(args):  # noqa: C901
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
-            env, save_logprobs=True, n_samples=args.batch_size
+            env, save_logprobs=True, n=args.batch_size
         )
         training_samples = gflownet.to_training_samples(trajectories)
 

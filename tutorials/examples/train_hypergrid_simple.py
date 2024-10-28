@@ -27,7 +27,7 @@ def main(args):
     module_PB = MLP(
         input_dim=env.preprocessor.output_dim,
         output_dim=env.n_actions - 1,
-        torso=module_PF.torso,
+        trunk=module_PF.trunk,
     )
     pf_estimator = DiscretePolicyEstimator(
         module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor
