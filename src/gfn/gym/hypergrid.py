@@ -6,7 +6,6 @@ from typing import Literal, Tuple
 
 import torch
 from einops import rearrange
-from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
@@ -87,7 +86,6 @@ class HyperGrid(DiscreteEnv):
 
     def update_masks(self, states: type[DiscreteStates]) -> None:
         """Update the masks based on the current states."""
-        states.set_default_typing()
         # Not allowed to take any action beyond the environment height, but
         # allow early termination.
         states.set_nonexit_action_masks(
@@ -98,29 +96,57 @@ class HyperGrid(DiscreteEnv):
 
     def make_random_states_tensor(
         self, batch_shape: Tuple[int, ...]
-    ) -> TT["batch_shape", "state_shape", torch.float]:
-        """Creates a batch of random states."""
+    ) -> torch.Tensor:
+        """Creates a batch of random states.
+        
+        Args:
+            batch_shape: Tuple indicating the shape of the batch.
+        
+        Returns the batch of random states as tensor of shape (*batch_shape, *state_shape)."""
         return torch.randint(
             0, self.height, batch_shape + self.s0.shape, device=self.device
         )
 
     def step(
         self, states: DiscreteStates, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    ) -> torch.Tensor:
+        """Take a step in the environment.
+        
+        Args:
+            states: The current states.
+            actions: The actions to take.
+        
+        Returns the new states after taking the actions as a tensor of shape (*batch_shape, *state_shape).
+        """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
+        assert new_states_tensor.shape == states.tensor.shape
         return new_states_tensor
 
     def backward_step(
         self, states: DiscreteStates, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    ) -> torch.Tensor:
+        """Take a step in the environment in the backward direction.
+
+        Args:
+            states: The current states.
+            actions: The actions to take.
+        
+        Returns the new states after taking the actions as a tensor of shape (*batch_shape, *state_shape).
+        """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
+        assert new_states_tensor.shape == states.tensor.shape
         return new_states_tensor
 
-    def reward(self, final_states: DiscreteStates) -> TT["batch_shape", torch.float]:
+    def reward(self, final_states: DiscreteStates) -> torch.Tensor:
         r"""In the normal setting, the reward is:
         R(s) = R_0 + 0.5 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1}
           - 0.5 \right\rvert \in (0.25, 0.5] \right)
           + 2 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1} - 0.5 \right\rvert \in (0.3, 0.4) \right)
+        
+        Args:
+            final_states: The final states.
+        
+        Returns the reward as a tensor of shape `batch_shape`.
         """
         final_states_raw = final_states.tensor
         R0, R1, R2 = (self.R0, self.R1, self.R2)
@@ -133,22 +159,36 @@ class HyperGrid(DiscreteEnv):
             pdf_input = ax * 5
             pdf = 1.0 / (2 * torch.pi) ** 0.5 * torch.exp(-(pdf_input**2) / 2)
             reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
+        
+        assert reward.shape == final_states.batch_shape
         return reward
 
     def get_states_indices(
         self, states: DiscreteStates
-    ) -> TT["batch_shape", torch.long]:
+    ) -> torch.Tensor:
+        """Get the indices of the states in the canonical ordering.
+    
+        Args:
+            states: The states to get the indices of.
+        
+        Returns the indices of the states in the canonical ordering as a tensor of shape `batch_shape`.
+        """
         states_raw = states.tensor
 
         canonical_base = self.height ** torch.arange(
             self.ndim - 1, -1, -1, device=states_raw.device
         )
         indices = (canonical_base * states_raw).sum(-1).long()
+        assert indices.shape == states.batch_shape
         return indices
 
     def get_terminating_states_indices(
         self, states: DiscreteStates
-    ) -> TT["batch_shape", torch.long]:
+    ) -> torch.Tensor:
+        """Get the indices of the terminating states in the canonical ordering.
+        
+        Returns the indices of the terminating states in the canonical ordering as a tensor of shape `batch_shape`.
+        """
         return self.get_states_indices(states)
 
     @property

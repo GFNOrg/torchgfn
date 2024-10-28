@@ -3,8 +3,6 @@ from typing import Literal, Tuple
 
 import torch
 import torch.nn as nn
-from torch import Tensor
-from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
@@ -16,24 +14,42 @@ class EnergyFunction(nn.Module, ABC):
     """Base class for energy functions"""
 
     @abstractmethod
-    def forward(
-        self, states: TT["batch_shape", "state_shape", torch.float]
-    ) -> TT["batch_shape"]:
+    def forward(self, states: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the energy function
+        
+        Args:
+            states: tensor of states of shape (*batch_shape, *state_shape)
+        
+        Returns tensor of energies of shape (*batch_shape)
+        """
         pass
 
 
 class IsingModel(EnergyFunction):
     """Ising model energy function"""
 
-    def __init__(self, J: TT["state_shape", "state_shape", torch.float]):
+    def __init__(self, J: torch.Tensor):
+        """Ising model energy function
+
+        Args:
+            J: interaction matrix of shape (state_shape, state_shape)
+        """
         super().__init__()
         self.J = J
-        self.linear = nn.Linear(J.shape[0], 1, bias=False)
+        self._state_shape, _ = J.shape
+        assert J.shape == (self._state_shape, self._state_shape)
+        self.linear = nn.Linear(self._state_shape, 1, bias=False)
         self.linear.weight.data = J
 
-    def forward(
-        self, states: TT["batch_shape", "state_shape", torch.float]
-    ) -> TT["batch_shape"]:
+    def forward(self, states: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the ising model.
+
+        Args:
+            states: tensor of states of shape (*batch_shape, *state_shape)
+        
+        Returns tensor of energies of shape (*batch_shape)
+        """
+        assert states.shape[-1] == self._state_shape
         states = states.float()
         tmp = self.linear(states)
         return -(states * tmp).sum(-1)
@@ -99,14 +115,14 @@ class DiscreteEBM(DiscreteEnv):
         )
 
     def update_masks(self, states: type[States]) -> None:
-        states.set_default_typing()
         states.forward_masks[..., : self.ndim] = states.tensor == -1
         states.forward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == -1
         states.forward_masks[..., -1] = torch.all(states.tensor != -1, dim=-1)
         states.backward_masks[..., : self.ndim] = states.tensor == 0
         states.backward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == 1
 
-    def make_random_states_tensor(self, batch_shape: Tuple) -> Tensor:
+    def make_random_states_tensor(self, batch_shape: Tuple) -> torch.Tensor:
+        """Generates random states tensor of shape (*batch_shape, ndim)."""
         return torch.randint(
             -1,
             2,
@@ -115,12 +131,25 @@ class DiscreteEBM(DiscreteEnv):
             device=self.device,
         )
 
-    def is_exit_actions(self, actions: TT["batch_shape"]) -> TT["batch_shape"]:
+    def is_exit_actions(self, actions: torch.Tensor) -> torch.Tensor:
+        """Determines if the actions are exit actions.
+        
+        Args:
+            actions: tensor of actions of shape (*batch_shape, *action_shape)
+        
+        Returns tensor of booleans of shape (*batch_shape)
+        """
         return actions == self.n_actions - 1
 
-    def step(
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    def step(self, states: States, actions: Actions) -> torch.Tensor:
+        """Performs a step.
+
+        Args:
+            states: States object representing the current states.
+            actions: Actions object representing the actions to be taken.
+        
+        Returns the next states as tensor of shape (*batch_shape, ndim).
+        """
         # First, we select that actions that replace a -1 with a 0.
         # Remove singleton dimension for broadcasting.
         mask_0 = (actions.tensor < self.ndim).squeeze(-1)
@@ -138,9 +167,7 @@ class DiscreteEBM(DiscreteEnv):
         )
         return states.tensor
 
-    def backward_step(
-        self, states: States, actions: Actions
-    ) -> TT["batch_shape", "state_shape", torch.float]:
+    def backward_step(self, states: States, actions: Actions) -> torch.Tensor:
         """Performs a backward step.
 
         In this env, states are n-dim vectors. s0 is empty (represented as -1),
@@ -152,33 +179,61 @@ class DiscreteEBM(DiscreteEnv):
         """
         return states.tensor.scatter(-1, actions.tensor.fmod(self.ndim), -1)
 
-    def reward(self, final_states: DiscreteStates) -> TT["batch_shape"]:
+    def reward(self, final_states: DiscreteStates) -> torch.Tensor:
         """Not used during training but provided for completeness.
 
         Note the effect of clipping will be seen in these values.
-        """
-        return torch.exp(self.log_reward(final_states))
 
-    def log_reward(self, final_states: DiscreteStates) -> TT["batch_shape"]:
-        """The energy weighted by alpha is our log reward."""
+        Args:
+            final_states: DiscreteStates object representing the final states.
+        
+        Returns the reward as tensor of shape (*batch_shape).
+        """
+        reward = torch.exp(self.log_reward(final_states))
+        assert reward.shape == final_states.batch_shape
+        return reward
+
+    def log_reward(self, final_states: DiscreteStates) -> torch.Tensor:
+        """The energy weighted by alpha is our log reward.
+        
+        Args:
+            final_states: DiscreteStates object representing the final states.
+        
+        Returns the log reward as tensor of shape (*batch_shape)."""
         raw_states = final_states.tensor
         canonical = 2 * raw_states - 1
         log_reward = -self.alpha * self.energy(canonical)
 
+        assert log_reward.shape == final_states.batch_shape
         return log_reward
 
-    def get_states_indices(self, states: DiscreteStates) -> TT["batch_shape"]:
-        """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3"""
+    def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
+        """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3
+        
+        Args:
+            states: DiscreteStates object representing the states.
+        
+        Returns the states indices as tensor of shape (*batch_shape).
+        """
         states_raw = states.tensor
         canonical_base = 3 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
-        return (states_raw + 1).mul(canonical_base).sum(-1).long()
+        states_indices = (states_raw + 1).mul(canonical_base).sum(-1).long()
+        assert states_indices.shape == states.batch_shape
+        return states_indices
 
-    def get_terminating_states_indices(
-        self, states: DiscreteStates
-    ) -> TT["batch_shape"]:
+    def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
+        """Returns the indices of the terminating states.
+        
+        Args:
+            states: DiscreteStates object representing the states.
+        
+        Returns the indices of the terminating states as tensor of shape (*batch_shape).
+        """
         states_raw = states.tensor
         canonical_base = 2 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
-        return (states_raw).mul(canonical_base).sum(-1).long()
+        states_indices = (states_raw).mul(canonical_base).sum(-1).long()
+        assert states_indices.shape == states.batch_shape
+        return states_indices
 
     @property
     def n_states(self) -> int:
