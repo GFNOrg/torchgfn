@@ -102,7 +102,7 @@ optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-1})
 
 # 6 - We train the GFlowNet for 1000 iterations, with 16 trajectories per iteration
 for i in (pbar := tqdm(range(1000))):
-    trajectories = sampler.sample_trajectories(env=env, n_trajectories=16)
+    trajectories = sampler.sample_trajectories(env=env, n=16)
     optimizer.zero_grad()
     loss = gfn.loss(env, trajectories)
     loss.backward()
@@ -161,7 +161,7 @@ optimizer.add_param_group({"params": gfn.logF_parameters(), "lr": 1e-2})
 
 # 6 - We train the GFlowNet for 1000 iterations, with 16 trajectories per iteration
 for i in (pbar := tqdm(range(1000))):
-    trajectories = sampler.sample_trajectories(env=env, n_trajectories=16)
+    trajectories = sampler.sample_trajectories(env=env, n=16)
     optimizer.zero_grad()
     loss = gfn.loss(env, trajectories)
     loss.backward()

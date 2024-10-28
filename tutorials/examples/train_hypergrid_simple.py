@@ -54,7 +54,7 @@ def main(args):
     for i in (pbar := tqdm(range(args.n_iterations))):
         trajectories = sampler.sample_trajectories(
             env,
-            n_trajectories=args.batch_size,
+            n=args.batch_size,
             save_logprobs=False,
             save_estimator_outputs=True,
             epsilon=args.epsilon,
