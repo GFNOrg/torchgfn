@@ -146,7 +146,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
     def _add_objs(
         self,
         training_objects: Transitions | Trajectories | tuple[States],
-        terminating_states: States | None = None
+        terminating_states: States | None = None,
     ):
         """Adds a training object to the buffer."""
         # Adds the objects to the buffer.

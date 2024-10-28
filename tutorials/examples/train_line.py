@@ -147,11 +147,12 @@ class GaussianStepNeuralNet(NeuralNet):
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Calculate the gaussian parameters, applying the bound to sigma.
-        
+
         Args:
             preprocessed_states: a tensor of shape (*batch_shape, 2) containing the states.
-        
-        Returns a tensor of shape (*batch_shape, 2) containing the mean and variance of the Gaussian distribution."""
+
+        Returns a tensor of shape (*batch_shape, 2) containing the mean and variance of the Gaussian distribution.
+        """
         batch_shape, state_dim = preprocessed_states.shape
         assert state_dim == 2
 
@@ -183,12 +184,12 @@ class StepEstimator(GFNModule):
         scale_factor=0,  # policy_kwarg.
     ) -> Distribution:
         """Converts the output of the neural network to a probability distribution.
-        
+
         Args:
             states: The states to use for the distribution.
             module_output: The output of the neural network as a tensor of shape (*batch_shape, output_dim).
             scale_factor: The scale factor to use for the distribution.
-        
+
         Returns a distribution object.
         """
         assert len(states.batch_shape) == 1

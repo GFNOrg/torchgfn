@@ -55,9 +55,7 @@ class NeuralNet(nn.Module):
             self.trunk = trunk
         self.last_layer = nn.Linear(self.trunk.hidden_dim, output_dim)
 
-    def forward(
-        self, preprocessed_states: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the neural network.
 
         Args:
@@ -105,9 +103,7 @@ class Tabular(nn.Module):
         self.table = nn.parameter.Parameter(self.table)
         self.device = None
 
-    def forward(
-        self, preprocessed_states: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the tabular policy.
 
         Args:
@@ -143,15 +139,13 @@ class DiscreteUniform(nn.Module):
         super().__init__()
         self.output_dim = output_dim
 
-    def forward(
-        self, preprocessed_states: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the uniform distribution.
 
         Args:
             preprocessed_states: a batch of states appropriately preprocessed for
                 ingestion by the uniform distribution. The shape of the tensor should be (*batch_shape, input_dim).
-            
+
         Returns: a tensor of shape (*batch_shape, output_dim).
         """
         out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(

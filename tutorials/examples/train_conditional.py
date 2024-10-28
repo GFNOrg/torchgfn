@@ -1,15 +1,25 @@
 #!/usr/bin/env python
-import torch
-from tqdm import tqdm
-from torch.optim import Adam
 from argparse import ArgumentParser
 
-from gfn.utils.common import set_seed
-from gfn.gflownet import TBGFlowNet, DBGFlowNet, FMGFlowNet, SubTBGFlowNet, ModifiedDBGFlowNet
-from gfn.gym import HyperGrid
-from gfn.modules import ConditionalDiscretePolicyEstimator, ScalarEstimator, ConditionalScalarEstimator
-from gfn.utils import NeuralNet
+import torch
+from torch.optim import Adam
+from tqdm import tqdm
 
+from gfn.gflownet import (
+    DBGFlowNet,
+    FMGFlowNet,
+    ModifiedDBGFlowNet,
+    SubTBGFlowNet,
+    TBGFlowNet,
+)
+from gfn.gym import HyperGrid
+from gfn.modules import (
+    ConditionalDiscretePolicyEstimator,
+    ConditionalScalarEstimator,
+    ScalarEstimator,
+)
+from gfn.utils import NeuralNet
+from gfn.utils.common import set_seed
 
 DEFAULT_SEED = 4444
 
@@ -168,7 +178,6 @@ def build_subTB_gflownet(env):
 
 
 def train(env, gflownet, seed):
-
     torch.manual_seed(0)
     exploration_rate = 0.5
     lr = 0.0005
@@ -180,16 +189,20 @@ def train(env, gflownet, seed):
     # Policy parameters and logZ/logF get independent LRs (logF/Z typically higher).
     if type(gflownet) is TBGFlowNet:
         optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
-        optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": lr * 100})
+        optimizer.add_param_group(
+            {"params": gflownet.logz_parameters(), "lr": lr * 100}
+        )
     elif type(gflownet) is DBGFlowNet or type(gflownet) is SubTBGFlowNet:
         optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
-        optimizer.add_param_group({"params": gflownet.logF_parameters(), "lr": lr * 100})
+        optimizer.add_param_group(
+            {"params": gflownet.logF_parameters(), "lr": lr * 100}
+        )
     elif type(gflownet) is FMGFlowNet or type(gflownet) is ModifiedDBGFlowNet:
         optimizer = Adam(gflownet.parameters(), lr=lr)
     else:
         print("What is this gflownet? {}".format(type(gflownet)))
 
-    n_iterations = int(10)   # 1e4)
+    n_iterations = int(10)  # 1e4)
     batch_size = int(1e4)
 
     print("+ Training Conditional {}!".format(type(gflownet)))
@@ -244,7 +257,6 @@ def main(args):
 
 
 if __name__ == "__main__":
-
     parser = ArgumentParser()
 
     parser.add_argument(

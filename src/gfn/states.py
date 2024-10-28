@@ -58,7 +58,7 @@ class States(ABC):
         Args:
             tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of states.
         """
-        assert self.s0 .shape == self.state_shape
+        assert self.s0.shape == self.state_shape
         assert self.sf.shape == self.state_shape
         assert tensor.shape[-len(self.state_shape) :] == self.state_shape
 
@@ -100,14 +100,12 @@ class States(ABC):
         return cls(tensor)
 
     @classmethod
-    def make_initial_states_tensor(
-        cls, batch_shape: tuple[int]
-    ) -> torch.Tensor:
+    def make_initial_states_tensor(cls, batch_shape: tuple[int]) -> torch.Tensor:
         """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s.
-        
+
         Args:
             batch_shape: Shape of the batch dimensions.
-        
+
         Returns a tensor of shape (*batch_shape, *state_shape) with all states equal to $s_0$.
         """
         state_ndim = len(cls.state_shape)
@@ -115,15 +113,14 @@ class States(ABC):
         return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
 
     @classmethod
-    def make_sink_states_tensor(
-        cls, batch_shape: tuple[int]
-    ) -> torch.Tensor:
+    def make_sink_states_tensor(cls, batch_shape: tuple[int]) -> torch.Tensor:
         """Makes a tensor with a `batch_shape` of states consisting of $s_f$s.
-        
+
         Args:
             batch_shape: Shape of the batch dimensions.
-        
-        Returns a tensor of shape (*batch_shape, *state_shape) with all states equal to $s_f$."""
+
+        Returns a tensor of shape (*batch_shape, *state_shape) with all states equal to $s_f$.
+        """
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
         return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
@@ -252,7 +249,7 @@ class States(ABC):
         state_ndim = len(self.__class__.state_shape)
         for _ in range(state_ndim):
             out = out.all(dim=-1)
-        
+
         assert out.shape == self.batch_shape
         return out
 
@@ -281,7 +278,7 @@ class States(ABC):
     @log_rewards.setter
     def log_rewards(self, log_rewards: torch.Tensor) -> None:
         """Sets the log rewards of the states.
-        
+
         Args:
             log_rewards: Tensor of shape `batch_shape` representing the log rewards of the states.
         """
@@ -318,7 +315,7 @@ class DiscreteStates(States, ABC):
         """Initalize a DiscreteStates container with a batch of states and masks.
         Args:
             tensor: A tensor with shape (*batch_shape, *state_shape) representing a batch of states.
-            forward_masks: Optional boolean tensor tensor with shape (*batch_shape, n_actions) of 
+            forward_masks: Optional boolean tensor tensor with shape (*batch_shape, n_actions) of
                 allowable forward policy actions.
             backward_masks: Optional boolean tensor tensor with shape (*batch_shape, n_actions) of
                 allowable backward policy actions.

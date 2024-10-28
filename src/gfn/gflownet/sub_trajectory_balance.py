@@ -6,14 +6,15 @@ import torch
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet
-from gfn.modules import GFNModule, ScalarEstimator, ConditionalScalarEstimator
+from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
 )
 
-
-ContributionsTensor = torch.Tensor  # shape: [max_len * (1 + max_len) / 2, n_trajectories]
+ContributionsTensor = (
+    torch.Tensor
+)  # shape: [max_len * (1 + max_len) / 2, n_trajectories]
 CumulativeLogProbsTensor = torch.Tensor  # shape: [max_length + 1, n_trajectories]
 LogStateFlowsTensor = torch.Tensor  # shape: [max_length, n_trajectories]
 LogTrajectoriesTensor = torch.Tensor  # shape: [max_length, n_trajectories]
@@ -115,7 +116,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: a batch of trajectories.
             log_p_trajectories: log probabilities of each transition in each trajectory.
 
-        Returns: Tensor of shape (max_length + 1, n_trajectories), containing the 
+        Returns: Tensor of shape (max_length + 1, n_trajectories), containing the
             cumulative sum of log probabilities of each trajectory.
         """
         return torch.cat(
@@ -136,12 +137,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     ) -> PredictionsTensor:
         """
         Calculate the predictions tensor for the current sub-trajectory length.
-    
+
         Args:
             log_pf_trajectories_cum: Tensor of shape (max_length + 1, n_trajectories) containing the cumulative log probabilities of the forward actions.
             log_state_flows: Tensor of shape (max_length, n_trajectories) containing the log state flows.
             i: The sub-trajectory length.
-        
+
         Returns: The predictions tensor of shape (max_length + 1 - i, n_trajectories).
         """
         current_log_state_flows = (
@@ -179,7 +180,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             sink_states_mask: A mask tensor of shape (max_length, n_trajectories) representing sink states.
             full_mask: A mask tensor of shape (max_length, n_trajectories) representing full states.
             i: The sub-trajectory length.
-        
+
         Returns: The targets tensor of shape (max_length + 1 - i, n_trajectories).
         """
         targets = torch.full_like(preds, fill_value=-float("inf"))
@@ -262,7 +263,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             log_state_flows: Tensor of shape (max_length, n_trajectories) containing the log state flows.
             trajectories: The trajectories data.
-        
+
         Returns: a tuple of three mask tensors of shape (max_length, n_trajectories).
         """
         sink_states_mask = log_state_flows == -float("inf")
@@ -353,7 +354,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             trajectories: The trajectories data.
             all_scores: The scores tensor.
-        
+
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores
@@ -383,7 +384,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             trajectories: The trajectories data.
             all_scores: The scores tensor.
-        
+
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         is_done = trajectories.when_is_done
@@ -402,7 +403,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             trajectories: The trajectories data.
             all_scores: The scores tensor.
-        
+
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         max_len = trajectories.max_length
@@ -427,7 +428,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             trajectories: The trajectories data.
             all_scores: The scores tensor.
-        
+
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores
@@ -461,7 +462,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             trajectories: The trajectories data.
             all_scores: The scores tensor.
-        
+
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores

@@ -43,15 +43,13 @@ class Line(Env):
             exit_action=exit_action,
         )  # sf is -inf by default.
 
-    def step(
-        self, states: States, actions: Actions
-    ) -> torch.Tensor:
+    def step(self, states: States, actions: Actions) -> torch.Tensor:
         """Take a step in the environment.
-        
+
         Args:
             states: The current states.
             actions: The actions to take.
-        
+
         Returns the new states after taking the actions as a tensor of shape (*batch_shape, 2).
         """
         states.tensor[..., 0] = states.tensor[..., 0] + actions.tensor.squeeze(
@@ -61,15 +59,13 @@ class Line(Env):
         assert states.tensor.shape == states.batch_shape + (2,)
         return states.tensor
 
-    def backward_step(
-        self, states: States, actions: Actions
-    ) -> torch.Tensor:
+    def backward_step(self, states: States, actions: Actions) -> torch.Tensor:
         """Take a step in the environment in the backward direction.
 
         Args:
             states: The current states.
             actions: The actions to take.
-        
+
         Returns the new states after taking the actions as a tensor of shape (*batch_shape, 2).
         """
         states.tensor[..., 0] = states.tensor[..., 0] - actions.tensor.squeeze(
@@ -90,10 +86,10 @@ class Line(Env):
 
     def log_reward(self, final_states: States) -> torch.Tensor:
         """Log reward log of the environment.
-        
+
         Args:
             final_states: The final states of the environment.
-        
+
         Returns the log reward as a tensor of shape `batch_shape`.
         """
         s = final_states.tensor[..., 0]

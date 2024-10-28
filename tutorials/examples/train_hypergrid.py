@@ -17,7 +17,7 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.containers import ReplayBuffer, PrioritizedReplayBuffer
+from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,

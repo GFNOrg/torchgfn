@@ -84,7 +84,10 @@ class Transitions(Container):
             if is_done is not None
             else torch.full(size=(0,), fill_value=False, dtype=torch.bool)
         )
-        assert self.is_done.shape == (self.n_transitions,) and self.is_done.dtype == torch.bool
+        assert (
+            self.is_done.shape == (self.n_transitions,)
+            and self.is_done.dtype == torch.bool
+        )
 
         self.next_states = (
             next_states
@@ -96,9 +99,15 @@ class Transitions(Container):
             and self.states.batch_shape == self.next_states.batch_shape
         )
         self._log_rewards = log_rewards if log_rewards is not None else torch.zeros(0)
-        assert self._log_rewards.shape == (self.n_transitions,) and self._log_rewards.dtype == torch.float  
+        assert (
+            self._log_rewards.shape == (self.n_transitions,)
+            and self._log_rewards.dtype == torch.float
+        )
         self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
-        assert self.log_probs.shape == (self.n_transitions,) and self.log_probs.dtype == torch.float
+        assert (
+            self.log_probs.shape == (self.n_transitions,)
+            and self.log_probs.dtype == torch.float
+        )
 
     @property
     def n_transitions(self) -> int:
@@ -186,8 +195,11 @@ class Transitions(Container):
             log_rewards[~is_sink_state, 1] = torch.log(
                 self.env.reward(self.next_states[~is_sink_state])
             )
-        
-        assert log_rewards.shape == (self.n_transitions, 2) and log_rewards.dtype == torch.float
+
+        assert (
+            log_rewards.shape == (self.n_transitions, 2)
+            and log_rewards.dtype == torch.float
+        )
         return log_rewards
 
     def __getitem__(self, index: int | Sequence[int]) -> Transitions:

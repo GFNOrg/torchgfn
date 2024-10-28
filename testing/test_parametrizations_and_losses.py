@@ -21,7 +21,6 @@ from gfn.gym.helpers.box_utils import (
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
 
-
 N = 10  # Number of trajectories from sample_trajectories (changes tests globally).
 
 

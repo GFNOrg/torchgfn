@@ -26,9 +26,6 @@ def main(args):
 
     n_hidden = 2
     acc_fn = "relu"
-    lr = 0.001
-    lr_Z = 0.01
-    validation_samples = 1000
 
     def make_J(L, coupling_constant):
         """Ising model parameters."""
@@ -81,10 +78,10 @@ def main(args):
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-3)
 
     # Learning
-    visited_terminating_states = env.States.from_batch_shape((0,))
+    env.States.from_batch_shape((0,))
     states_visited = 0
 
-    for i in (pbar := tqdm(range(10000))):
+    for i in tqdm(range(10000)):
         trajectories = gflownet.sample_trajectories(
             env,
             n=8,
