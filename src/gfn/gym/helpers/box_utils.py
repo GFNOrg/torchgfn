@@ -258,7 +258,7 @@ class QuarterDisk(Distribution):
         alpha_theta: torch.Tensor,
         beta_theta: torch.Tensor,
     ):
-        """ "Initializes the distribution.
+        """Initializes the distribution.
 
         Args:
             delta: the radius of the quarter disk.
