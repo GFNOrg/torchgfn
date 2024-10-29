@@ -1,6 +1,6 @@
 """This file contains utilitary functions for the Box environment."""
 
-from typing import Tuple, Any
+from typing import Any, Tuple
 
 import numpy as np
 import torch
@@ -10,7 +10,7 @@ from torch.distributions import Beta, Categorical, Distribution, MixtureSameFami
 from gfn.gym import Box
 from gfn.modules import GFNModule
 from gfn.states import States
-from gfn.utils import NeuralNet
+from gfn.utils.modules import MLP
 
 PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0
@@ -67,7 +67,7 @@ class QuarterCircle(Distribution):
 
     def get_min_and_max_angles(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """Computes the minimum and maximum angles for the distribution.
-        
+
         Returns a tuple of two tensors of shape (n_states,) containing the minimum and maximum angles, respectively.
         """
         if self.northeastern:
@@ -99,10 +99,10 @@ class QuarterCircle(Distribution):
 
     def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         """Samples from the distribution.
-        
+
         Args:
             sample_shape: the shape of the samples to generate.
-            
+
         Returns the sampled actions of shape (sample_shape, n_states, 2).
         """
         base_01_samples = self.base_dist.sample(sample_shape=sample_shape)
@@ -167,10 +167,10 @@ class QuarterCircle(Distribution):
 
     def log_prob(self, sampled_actions: torch.Tensor) -> torch.Tensor:
         """Computes the log probability of the sampled actions.
-        
+
         Args:
             sampled_actions: Tensor of shape (*batch_shape, 2) with the actions to compute the log probability of.
-        
+
         Returns the log probability of the sampled actions as a tensor of shape `batch_shape`.
         """
         assert sampled_actions.shape[-1] == 2
@@ -258,7 +258,7 @@ class QuarterDisk(Distribution):
         alpha_theta: torch.Tensor,
         beta_theta: torch.Tensor,
     ):
-        """"Initializes the distribution.
+        """ "Initializes the distribution.
 
         Args:
             delta: the radius of the quarter disk.
@@ -292,7 +292,7 @@ class QuarterDisk(Distribution):
 
         Args:
             sample_shape: the shape of the samples to generate.
-        
+
         Returns the sampled actions of shape (sample_shape, 2).
         """
         base_r_01_samples = self.base_r_dist.sample(sample_shape=sample_shape)
@@ -316,7 +316,7 @@ class QuarterDisk(Distribution):
 
         Args:
             sampled_actions: Tensor of shape (*batch_shape, 2) with the actions to compute the log probability of.
-        
+
         Returns the log probability of the sampled actions as a tensor of shape `batch_shape`.
         """
         assert sampled_actions.shape[-1] == 2
@@ -369,7 +369,7 @@ class QuarterCircleWithExit(Distribution):
         epsilon: float = 1e-4,
     ):
         """Initializes the distribution.
-        
+
         Args:
             delta: the radius of the quarter disk.
             centers: the centers of the distribution with shape (n_states, 2).
@@ -406,7 +406,7 @@ class QuarterCircleWithExit(Distribution):
 
         Args:
             sample_shape: the shape of the samples to generate.
-        
+
         Returns the sampled actions of shape (sample_shape, n_states, 2).
         """
         actions = self.dist_without_exit.sample(sample_shape)
@@ -526,7 +526,7 @@ class DistributionWrapper(Distribution):
         return log_prob
 
 
-class BoxPFNeuralNet(NeuralNet):
+class BoxPFMLP(MLP):
     """A deep neural network for the forward policy.
 
     Attributes:
@@ -552,7 +552,7 @@ class BoxPFNeuralNet(NeuralNet):
                 parameter.
             n_components: the number of output components for each s=t>0 distribution
                 parameter.
-            **kwargs: passed to the NeuralNet class.
+            **kwargs: passed to the MLP class.
 
         """
         self._n_comp_max = max(n_components_s0, n_components)
@@ -578,10 +578,10 @@ class BoxPFNeuralNet(NeuralNet):
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Computes the forward pass of the neural network.
-        
+
         Args:
             preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute the forward pass of the neural network.
-        
+
         Returns the output of the neural network as a tensor of shape (*batch_shape, 1 + 5 * max_n_components).
         """
         assert preprocessed_states.shape[-1] == 2
@@ -649,7 +649,7 @@ class BoxPFNeuralNet(NeuralNet):
         return desired_out
 
 
-class BoxPBNeuralNet(NeuralNet):
+class BoxPBMLP(MLP):
     """A deep neural network for the backward policy.
 
     Attributes:
@@ -670,7 +670,7 @@ class BoxPBNeuralNet(NeuralNet):
             n_hidden_layers: the number of hidden layers.
             n_components: the number of output components for each distribution
                 parameter.
-            **kwargs: passed to the NeuralNet class.
+            **kwargs: passed to the MLP class.
         """
         input_dim = 2
         self._input_dim = input_dim
@@ -692,7 +692,7 @@ class BoxPBNeuralNet(NeuralNet):
 
         Args:
             preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute the forward pass of the neural network.
-        
+
         Returns the output of the neural network as a tensor of shape (*batch_shape, 3 * n_components).
         """
         assert preprocessed_states.shape[-1] == 2
@@ -707,19 +707,19 @@ class BoxPBNeuralNet(NeuralNet):
         return out
 
 
-class BoxStateFlowModule(NeuralNet):
+class BoxStateFlowModule(MLP):
     """A deep neural network for the state flow function."""
 
     def __init__(self, logZ_value: torch.Tensor, **kwargs: Any):
         super().__init__(**kwargs)
         self.logZ_value = nn.Parameter(logZ_value)
 
-    def forward( self, preprocessed_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Computes the forward pass of the neural network.
 
         Args:
             preprocessed_states: The tensor states of shape (*batch_shape, input_dim) to compute the forward pass of the neural network.
-        
+
         Returns the output of the neural network as a tensor of shape (*batch_shape, output_dim).
         """
         out = super().forward(preprocessed_states)
@@ -740,10 +740,10 @@ class BoxPBUniform(torch.nn.Module):
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Computes the forward pass of the neural network.
-        
+
         Args:
             preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute the forward pass of the neural network.
-        
+
         Returns a tensor of shape (*batch_shape, 3) filled by ones.
         """
         # return (1, 1, 1) for all states, thus the "+ (3,)".
@@ -819,11 +819,11 @@ class BoxPFEstimator(GFNModule):
         self, states: States, module_output: torch.Tensor
     ) -> Distribution:
         """Converts the module output to a probability distribution.
-        
+
         Args:
             states: the states for which to convert the module output to a probability distribution.
             module_output: the output of the module for the states as a tensor of shape (*batch_shape, output_dim).
-        
+
         Returns the probability distribution for the states."""
         # First, we verify that the batch shape of states is 1
         assert len(states.batch_shape) == 1
@@ -910,7 +910,7 @@ class BoxPBEstimator(GFNModule):
         Args:
             states: the states for which to convert the module output to a probability distribution.
             module_output: the output of the module for the states as a tensor of shape (*batch_shape, output_dim).
-        
+
         Returns the probability distribution for the states.
         """
         # First, we verify that the batch shape of states is 1

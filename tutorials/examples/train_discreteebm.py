@@ -21,7 +21,7 @@ from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.modules import DiscretePolicyEstimator
 from gfn.utils.common import set_seed
-from gfn.utils.modules import NeuralNet, Tabular
+from gfn.utils.modules import MLP, Tabular
 from gfn.utils.training import validate
 
 DEFAULT_SEED = 4444
@@ -46,7 +46,7 @@ def main(args):  # noqa: C901
     if args.tabular:
         module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
     else:
-        module = NeuralNet(
+        module = MLP(
             input_dim=env.preprocessor.output_dim,
             output_dim=env.n_actions,
             hidden_dim=args.hidden_dim,

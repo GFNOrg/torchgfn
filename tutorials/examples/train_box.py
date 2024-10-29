@@ -25,10 +25,10 @@ from gfn.gflownet import (
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
-    BoxPBNeuralNet,
+    BoxPBMLP,
     BoxPBUniform,
     BoxPFEstimator,
-    BoxPFNeuralNet,
+    BoxPFMLP,
     BoxStateFlowModule,
 )
 from gfn.modules import ScalarEstimator
@@ -105,7 +105,7 @@ def main(args):  # noqa: C901
     #    For this we need modules and estimators.
     #    Depending on the loss, we may need several estimators:
     gflownet = None
-    pf_module = BoxPFNeuralNet(
+    pf_module = BoxPFMLP(
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
         n_components=args.n_components,
@@ -114,7 +114,7 @@ def main(args):  # noqa: C901
     if args.uniform_pb:
         pb_module = BoxPBUniform()
     else:
-        pb_module = BoxPBNeuralNet(
+        pb_module = BoxPBMLP(
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
             n_components=args.n_components,

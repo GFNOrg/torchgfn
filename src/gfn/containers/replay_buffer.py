@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class ReplayBuffer:
-    """A replay buffer of trajectories or transitions.
+    """A replay buffer of trajectories, transitions, or states.
 
     Attributes:
         env: the Environment instance.
@@ -40,17 +40,15 @@ class ReplayBuffer:
         self.env = env
         self.capacity = capacity
         self.terminating_states = None
+        self.objects_type = objects_type
         if objects_type == "trajectories":
             self.training_objects = Trajectories(env)
-            self.objects_type = "trajectories"
         elif objects_type == "transitions":
             self.training_objects = Transitions(env)
-            self.objects_type = "transitions"
         elif objects_type == "states":
             self.training_objects = env.states_from_batch_shape((0,))
             self.terminating_states = env.states_from_batch_shape((0,))
             self.terminating_states.log_rewards = torch.zeros((0,), device=env.device)
-            self.objects_type = "states"
         else:
             raise ValueError(f"Unknown objects_type: {objects_type}")
 
@@ -146,7 +144,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
     def _add_objs(
         self,
         training_objects: Transitions | Trajectories | tuple[States],
-        terminating_states: States | None = None
+        terminating_states: States | None = None,
     ):
         """Adds a training object to the buffer."""
         # Adds the objects to the buffer.
@@ -187,7 +185,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             training_objects = training_objects[ix]
 
             # Filter all batch logrewards lower than the smallest logreward in buffer.
-            min_reward_in_buffer = self.training_objects.log_rewards.min()
+            min_reward_in_buffer = self.training_objects.log_rewards.min()  # type: ignore  # FIXME
             idx_bigger_rewards = training_objects.log_rewards >= min_reward_in_buffer
             training_objects = training_objects[idx_bigger_rewards]
 

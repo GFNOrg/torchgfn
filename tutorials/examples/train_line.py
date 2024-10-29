@@ -9,8 +9,8 @@ from gfn.gflownet import TBGFlowNet  # TODO: Extend to SubTBGFlowNet
 from gfn.gym.line import Line
 from gfn.modules import GFNModule
 from gfn.states import States
-from gfn.utils import NeuralNet
 from gfn.utils.common import set_seed
+from gfn.utils.modules import MLP
 
 
 def render(env, validation_samples=None):
@@ -119,7 +119,7 @@ class ScaledGaussianWithOptionalExit(Distribution):
         return logprobs.squeeze(-1)
 
 
-class GaussianStepNeuralNet(NeuralNet):
+class GaussianStepMLP(MLP):
     """A deep neural network for the forward and backward policy."""
 
     def __init__(
@@ -147,11 +147,12 @@ class GaussianStepNeuralNet(NeuralNet):
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Calculate the gaussian parameters, applying the bound to sigma.
-        
+
         Args:
             preprocessed_states: a tensor of shape (*batch_shape, 2) containing the states.
-        
-        Returns a tensor of shape (*batch_shape, 2) containing the mean and variance of the Gaussian distribution."""
+
+        Returns a tensor of shape (*batch_shape, 2) containing the mean and variance of the Gaussian distribution.
+        """
         batch_shape, state_dim = preprocessed_states.shape
         assert state_dim == 2
 
@@ -183,12 +184,12 @@ class StepEstimator(GFNModule):
         scale_factor=0,  # policy_kwarg.
     ) -> Distribution:
         """Converts the output of the neural network to a probability distribution.
-        
+
         Args:
             states: The states to use for the distribution.
             module_output: The output of the neural network as a tensor of shape (*batch_shape, output_dim).
             scale_factor: The scale factor to use for the distribution.
-        
+
         Returns a distribution object.
         """
         assert len(states.batch_shape) == 1
@@ -224,7 +225,7 @@ def train(
     # if uniform_pb:
     #    pb_module = BoxPBUniform()
     # else:
-    #    pb_module = BoxPBNeuralNet(hidden_dim, n_hidden_layers, n_components)
+    #    pb_module = BoxPBMLP(hidden_dim, n_hidden_layers, n_components)
 
     # 3. Create the optimizer and scheduler.
     optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=lr_base)
@@ -291,7 +292,7 @@ if __name__ == "__main__":
     policy_std_max = 1  # Upper bound of sigma that can be predicted by policy.
     exploration_var_starting_val = 2  # Used for off-policy training.
 
-    pf_module = GaussianStepNeuralNet(
+    pf_module = GaussianStepMLP(
         hidden_dim=hid_dim,
         n_hidden_layers=n_hidden_layers,
         policy_std_min=policy_std_min,
@@ -299,7 +300,7 @@ if __name__ == "__main__":
     )
     pf = StepEstimator(environment, pf_module, backward=False)
 
-    pb_module = GaussianStepNeuralNet(
+    pb_module = GaussianStepMLP(
         hidden_dim=hid_dim,
         n_hidden_layers=n_hidden_layers,
         policy_std_min=policy_std_min,

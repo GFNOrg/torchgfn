@@ -76,10 +76,10 @@ class Env(ABC):
 
     def states_from_tensor(self, tensor: torch.Tensor):
         """Wraps the supplied Tensor in a States instance.
-        
+
         Args:
             tensor: The tensor of shape "state_shape" representing the states.
-        
+
         Returns:
             States: An instance of States.
         """
@@ -87,7 +87,7 @@ class Env(ABC):
 
     def states_from_batch_shape(self, batch_shape: Tuple):
         """Returns a batch of s0 states with a given batch_shape.
-        
+
         Args:
             batch_shape: Tuple representing the shape of the batch of states.
 
@@ -98,10 +98,10 @@ class Env(ABC):
 
     def actions_from_tensor(self, tensor: torch.Tensor):
         """Wraps the supplied Tensor an an Actions instance.
-        
+
         Args:
             tensor: The tensor of shape "action_shape" representing the actions.
-        
+
         Returns:
             Actions: An instance of Actions.
         """
@@ -109,10 +109,10 @@ class Env(ABC):
 
     def actions_from_batch_shape(self, batch_shape: Tuple):
         """Returns a batch of dummy actions with the supplied batch_shape.
-        
+
         Args:
             batch_shape: Tuple representing the shape of the batch of actions.
-        
+
         Returns:
             Actions: A batch of dummy actions.
         """
@@ -120,16 +120,14 @@ class Env(ABC):
 
     # To be implemented by the User.
     @abstractmethod
-    def step(
-        self, states: States, actions: Actions
-    ) -> torch.Tensor:
+    def step(self, states: States, actions: Actions) -> torch.Tensor:
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
 
         Args:
             states: A batch of states.
             actions: A batch of actions.
-        
+
         Returns:
             torch.Tensor: A batch of next states.
         """
@@ -140,11 +138,11 @@ class Env(ABC):
     ) -> torch.Tensor:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
-    
+
         Args:
             states: A batch of states.
             actions: A batch of actions.
-        
+
         Returns:
             torch.Tensor: A batch of previous states.
         """
@@ -312,7 +310,7 @@ class Env(ABC):
 
         Args:
             final_states: A batch of final states.
-        
+
         Returns:
             torch.Tensor: Tensor of shape "batch_shape" containing the rewards.
         """
@@ -321,10 +319,10 @@ class Env(ABC):
     def log_reward(self, final_states: States) -> torch.Tensor:
         """Calculates the log reward.
         This or reward must be implemented.
-        
+
         Args:
             final_states: A batch of final states.
-        
+
         Returns:
             torch.Tensor: Tensor of shape "batch_shape" containing the log rewards.
         """
@@ -333,6 +331,13 @@ class Env(ABC):
     @property
     def log_partition(self) -> float:
         "Returns the logarithm of the partition function."
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
+
+    @property
+    def true_dist_pmf(self) -> torch.Tensor:
+        "Returns a one-dimensional tensor representing the true distribution."
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
@@ -386,7 +391,6 @@ class DiscreteEnv(Env, ABC):
         assert dummy_action.shape == action_shape
         assert exit_action.shape == action_shape
 
-
         self.n_actions = n_actions  # Before init, for compatibility with States.
         super().__init__(
             s0,
@@ -403,10 +407,10 @@ class DiscreteEnv(Env, ABC):
 
     def states_from_tensor(self, tensor: torch.Tensor):
         """Wraps the supplied Tensor in a States instance & updates masks.
-        
+
         Args:
             tensor: The tensor of shape "state_shape" representing the states.
-        
+
         Returns:
             States: An instance of States.
         """
@@ -489,14 +493,12 @@ class DiscreteEnv(Env, ABC):
         )  # TODO: update_masks is owned by the env, not the states!!
         return new_states
 
-    def get_states_indices(
-        self, states: DiscreteStates
-    ) -> torch.Tensor:
+    def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
         """Returns the indices of the states in the environment.
-        
+
         Args:
             states: The batch of states.
-        
+
         Returns:
             torch.Tensor: Tensor of shape "batch_shape" containing the indices of the states.
         """
@@ -504,14 +506,12 @@ class DiscreteEnv(Env, ABC):
             "The environment does not support enumeration of states"
         )
 
-    def get_terminating_states_indices(
-        self, states: DiscreteStates
-    ) -> torch.Tensor:
+    def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
         """Returns the indices of the terminating states in the environment.
 
         Args:
             states: The batch of states.
-        
+
         Returns:
             torch.Tensor: Tensor of shape "batch_shape" containing the indices of the terminating states.
         """

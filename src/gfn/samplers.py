@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import List, Optional, Tuple, Any
+from typing import Any, List, Optional, Tuple
 
 import torch
 
@@ -35,11 +35,7 @@ class Sampler:
         save_estimator_outputs: bool = False,
         save_logprobs: bool = True,
         **policy_kwargs: Any,
-    ) -> Tuple[
-        Actions,
-        torch.Tensor | None,
-        torch.Tensor | None,
-    ]:
+    ) -> Tuple[Actions, torch.Tensor | None, torch.Tensor | None]:
         """Samples actions from the given states.
 
         Args:
@@ -210,8 +206,8 @@ class Sampler:
             if save_logprobs:
                 # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
-            trajectories_actions += [actions]
-            trajectories_logprobs += [log_probs]
+            trajectories_actions.append(actions)
+            trajectories_logprobs.append(log_probs)
 
             if self.estimator.is_backward:
                 new_states = env._backward_step(states, actions)
@@ -243,7 +239,7 @@ class Sampler:
             states = new_states
             dones = dones | new_dones
 
-            trajectories_states += [deepcopy(states)]
+            trajectories_states.append(deepcopy(states))
 
         trajectories_states = stack_states(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)
