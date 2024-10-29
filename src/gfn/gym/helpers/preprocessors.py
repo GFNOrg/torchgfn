@@ -3,7 +3,6 @@ from typing import Callable
 import torch
 from einops import rearrange
 from torch.nn.functional import one_hot
-from torchtyping import TensorType as TT
 
 from gfn.preprocessors import Preprocessor
 from gfn.states import States
@@ -13,19 +12,20 @@ class OneHotPreprocessor(Preprocessor):
     def __init__(
         self,
         n_states: int,
-        get_states_indices: Callable[[States], TT["batch_shape", "input_dim"]],
+        get_states_indices: Callable[[States], torch.Tensor],
     ) -> None:
         """One Hot Preprocessor for environments with enumerable states (finite number of states).
 
         Args:
             n_states (int): The total number of states in the environment (not including s_f).
             get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
+                BatchOutputTensor is a tensor of shape (*batch_shape, input_dim).
         """
         super().__init__(output_dim=n_states)
         self.get_states_indices = get_states_indices
         self.output_dim = n_states
 
-    def preprocess(self, states):
+    def preprocess(self, states) -> torch.Tensor:
         state_indices = self.get_states_indices(states)
         return one_hot(state_indices, self.output_dim).float()
 
@@ -41,7 +41,6 @@ class KHotPreprocessor(Preprocessor):
         Args:
             height (int): number of unique values per dimension.
             ndim (int): number of dimensions.
-            get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
         """
         super().__init__(output_dim=height * ndim)
         self.height = height

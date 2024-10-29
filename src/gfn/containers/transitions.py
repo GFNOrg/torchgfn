@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 import torch
-from torchtyping import TensorType as TT
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
@@ -36,11 +35,11 @@ class Transitions(Container):
         states: States | None = None,
         conditioning: torch.Tensor | None = None,
         actions: Actions | None = None,
-        is_done: TT["n_transitions", torch.bool] | None = None,
+        is_done: torch.Tensor | None = None,
         next_states: States | None = None,
         is_backward: bool = False,
-        log_rewards: TT["n_transitions", torch.float] | None = None,
-        log_probs: TT["n_transitions", torch.float] | None = None,
+        log_rewards: torch.Tensor | None = None,
+        log_probs: torch.Tensor | None = None,
     ):
         """Instantiates a container for transitions.
 
@@ -52,14 +51,14 @@ class Transitions(Container):
             states: States object with uni-dimensional `batch_shape`, representing the
                 parents of the transitions.
             actions: Actions chosen at the parents of each transitions.
-            is_done: Whether the action is the exit action.
+            is_done: Tensor of shape (n_transitions,) indicating whether the action is the exit action.
             next_states: States object with uni-dimensional `batch_shape`, representing
                 the children of the transitions.
             is_backward: Whether the transitions are backward transitions (i.e.
                 `next_states` is the parent of states).
-            log_rewards: The log-rewards of the transitions (using a default value like
+            log_rewards: Tensor of shape (n_transitions,) containing the log-rewards of the transitions (using a default value like
                 `-float('inf')` for non-terminating transitions).
-            log_probs: The log-probabilities of the actions.
+            log_probs: Tensor of shape (n_transitions,) containing the log-probabilities of the actions.
 
         Raises:
             AssertionError: If states and next_states do not have matching
@@ -78,11 +77,15 @@ class Transitions(Container):
         self.actions = (
             actions if actions is not None else env.actions_from_batch_shape((0,))
         )
+        assert self.actions.batch_shape == self.states.batch_shape
+
         self.is_done = (
             is_done
             if is_done is not None
             else torch.full(size=(0,), fill_value=False, dtype=torch.bool)
         )
+        assert self.is_done.shape == (self.n_transitions,) and self.is_done.dtype == torch.bool
+
         self.next_states = (
             next_states
             if next_states is not None
@@ -93,7 +96,9 @@ class Transitions(Container):
             and self.states.batch_shape == self.next_states.batch_shape
         )
         self._log_rewards = log_rewards if log_rewards is not None else torch.zeros(0)
+        assert self._log_rewards.shape == (self.n_transitions,) and self._log_rewards.dtype == torch.float  
         self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
+        assert self.log_probs.shape == (self.n_transitions,) and self.log_probs.dtype == torch.float
 
     @property
     def n_transitions(self) -> int:
@@ -124,7 +129,8 @@ class Transitions(Container):
         return self.states[self.is_done]
 
     @property
-    def log_rewards(self) -> TT["n_transitions", torch.float] | None:
+    def log_rewards(self) -> torch.Tensor | None:
+        """Compute the tensor of shape (n_transitions,) containing the log rewards for the transitions."""
         if self._log_rewards is not None:
             return self._log_rewards
         if self.is_backward:
@@ -143,12 +149,16 @@ class Transitions(Container):
             return log_rewards
 
     @property
-    def all_log_rewards(self) -> TT["n_transitions", 2, torch.float]:
+    def all_log_rewards(self) -> torch.Tensor:
         """Calculate all log rewards for the transitions.
 
         This is applicable to environments where all states are terminating. This
         function evaluates the rewards for all transitions that do not end in the sink
         state. This is useful for the Modified Detailed Balance loss.
+
+        Returns:
+            log_rewards: Tensor of shape (n_transitions, 2) containing the log rewards
+                for the transitions.
 
         Raises:
             NotImplementedError: when used for backward transitions.
@@ -176,6 +186,8 @@ class Transitions(Container):
             log_rewards[~is_sink_state, 1] = torch.log(
                 self.env.reward(self.next_states[~is_sink_state])
             )
+        
+        assert log_rewards.shape == (self.n_transitions, 2) and log_rewards.dtype == torch.float
         return log_rewards
 
     def __getitem__(self, index: int | Sequence[int]) -> Transitions:

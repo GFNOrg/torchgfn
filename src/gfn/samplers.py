@@ -2,7 +2,6 @@ from copy import deepcopy
 from typing import Any, List, Optional, Tuple
 
 import torch
-from torchtyping import TensorType as TT
 
 from gfn.actions import Actions
 from gfn.containers import Trajectories
@@ -36,11 +35,7 @@ class Sampler:
         save_estimator_outputs: bool = False,
         save_logprobs: bool = True,
         **policy_kwargs: Any,
-    ) -> Tuple[
-        Actions,
-        TT["batch_shape", torch.float] | None,
-        TT["batch_shape", torch.float] | None,
-    ]:
+    ) -> Tuple[Actions, torch.Tensor | None, torch.Tensor | None]:
         """Samples actions from the given states.
 
         Args:
@@ -67,9 +62,10 @@ class Sampler:
         Returns:
             A tuple of tensors containing:
              - An Actions object containing the sampled actions.
-             - A tensor of shape (*batch_shape,) containing the log probabilities of
+             - An optional tensor of shape `batch_shape` containing the log probabilities of
                 the sampled actions under the probability distribution of the given
                 states.
+             - An optional tensor of shape `batch_shape` containing the estimator outputs
         """
         # TODO: Should estimators instead ignore None for the conditioning vector?
         if conditioning is not None:
@@ -94,10 +90,11 @@ class Sampler:
             log_probs = None
 
         actions = env.actions_from_tensor(actions)
-
         if not save_estimator_outputs:
             estimator_output = None
 
+        assert log_probs is None or log_probs.shape == actions.batch_shape
+        # assert estimator_output is None or estimator_output.shape == actions.batch_shape  TODO: check expected shape
         return actions, log_probs, estimator_output
 
     def sample_trajectories(
@@ -159,8 +156,8 @@ class Sampler:
         )
 
         trajectories_states: List[States] = [deepcopy(states)]
-        trajectories_actions: List[TT["n_trajectories", torch.long]] = []
-        trajectories_logprobs: List[TT["n_trajectories", torch.float]] = []
+        trajectories_actions: List[torch.Tensor] = []
+        trajectories_logprobs: List[torch.Tensor] = []
         trajectories_dones = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
