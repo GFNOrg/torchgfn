@@ -92,20 +92,29 @@ class Trajectories(Container):
             if when_is_done is not None
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
         )
-        assert self.when_is_done.shape == (self.n_trajectories,) and self.when_is_done.dtype == torch.long
+        assert (
+            self.when_is_done.shape == (self.n_trajectories,)
+            and self.when_is_done.dtype == torch.long
+        )
 
         self._log_rewards = (
             log_rewards
             if log_rewards is not None
             else torch.full(size=(0,), fill_value=0, dtype=torch.float)
         )
-        assert self._log_rewards.shape == (self.n_trajectories,) and self._log_rewards.dtype == torch.float
+        assert (
+            self._log_rewards.shape == (self.n_trajectories,)
+            and self._log_rewards.dtype == torch.float
+        )
 
-        if log_probs is not None:
-            assert log_probs.shape == (self.max_length, self.n_trajectories) and log_probs.dtype == torch.float
+        if log_probs is not None and log_probs.shape != (0, 0):
+            assert (
+                log_probs.shape == (self.max_length, self.n_trajectories)
+                and log_probs.dtype == torch.float
+            )
         else:
             log_probs = torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
-        self.log_probs = log_probs        
+        self.log_probs = log_probs
 
         self.estimator_outputs = estimator_outputs
         if self.estimator_outputs is not None:
@@ -207,15 +216,13 @@ class Trajectories(Container):
         )
 
     @staticmethod
-    def extend_log_probs(
-        log_probs: torch.Tensor, new_max_length: int
-    ) -> torch.Tensor:
+    def extend_log_probs(log_probs: torch.Tensor, new_max_length: int) -> torch.Tensor:
         """Extend the log_probs matrix by adding 0 until the required length is reached.
-        
+
         Args:
             log_probs: The log_probs tensor of shape (max_length, n_trajectories) to extend.
             new_max_length: The new length of the log_probs tensor.
-        
+
         Returns: The extended log_probs tensor of shape (new_max_length, n_trajectories).
 
         """

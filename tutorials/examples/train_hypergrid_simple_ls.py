@@ -7,7 +7,7 @@ from tqdm import tqdm
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator
-from gfn.samplers import Sampler
+from gfn.samplers import LocalSearchSampler
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP
 
@@ -38,7 +38,7 @@ def main(args):
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
 
     # Feed pf to the sampler.
-    sampler = Sampler(estimator=pf_estimator)
+    sampler = LocalSearchSampler(estimator=pf_estimator, pb_estimator=pb_estimator)
 
     # Move the gflownet to the GPU.
     gflownet = gflownet.to(device_str)
@@ -53,10 +53,12 @@ def main(args):
     for i in (pbar := tqdm(range(args.n_iterations))):
         trajectories = sampler.sample_trajectories(
             env,
-            n=args.batch_size,
+            n=(args.batch_size // args.n_local_search_loops),
             save_logprobs=False,
-            save_estimator_outputs=True,
+            save_estimator_outputs=False,
             epsilon=args.epsilon,
+            n_local_search_loops=args.n_local_search_loops,
+            back_ratio=0.5,
         )
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories)
@@ -69,7 +71,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
     parser.add_argument(
-        "--ndim", type=int, default=4, help="Number of dimensions in the environment"
+        "--ndim", type=int, default=2, help="Number of dimensions in the environment"
     )
     parser.add_argument(
         "--height", type=int, default=16, help="Height of the environment"
@@ -93,6 +95,20 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument(
         "--epsilon", type=float, default=0.1, help="Epsilon for the sampler"
+    )
+
+    # Local search parameters.
+    parser.add_argument(
+        "--n_local_search_loops",
+        type=int,
+        default=4,
+        help="Number of local search loops",
+    )
+    parser.add_argument(
+        "--back_ratio",
+        type=float,
+        default=0.5,
+        help="The ratio of the number of backward steps to the length of the trajectory",
     )
 
     args = parser.parse_args()
