@@ -4,10 +4,9 @@ from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
-from torch.nn.parameter import Parameter
 
 
-class NeuralNet(nn.Module):
+class MLP(nn.Module):
     """Implements a basic MLP."""
 
     def __init__(

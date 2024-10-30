@@ -10,7 +10,7 @@ from torch.distributions import Beta, Categorical, Distribution, MixtureSameFami
 from gfn.gym import Box
 from gfn.modules import GFNModule
 from gfn.states import States
-from gfn.utils import NeuralNet
+from gfn.utils.modules import MLP
 
 PI_2_INV = 2.0 / torch.pi
 PI_2 = torch.pi / 2.0
@@ -526,7 +526,7 @@ class DistributionWrapper(Distribution):
         return log_prob
 
 
-class BoxPFNeuralNet(NeuralNet):
+class BoxPFMLP(MLP):
     """A deep neural network for the forward policy.
 
     Attributes:
@@ -552,7 +552,7 @@ class BoxPFNeuralNet(NeuralNet):
                 parameter.
             n_components: the number of output components for each s=t>0 distribution
                 parameter.
-            **kwargs: passed to the NeuralNet class.
+            **kwargs: passed to the MLP class.
 
         """
         self._n_comp_max = max(n_components_s0, n_components)
@@ -649,7 +649,7 @@ class BoxPFNeuralNet(NeuralNet):
         return desired_out
 
 
-class BoxPBNeuralNet(NeuralNet):
+class BoxPBMLP(MLP):
     """A deep neural network for the backward policy.
 
     Attributes:
@@ -670,7 +670,7 @@ class BoxPBNeuralNet(NeuralNet):
             n_hidden_layers: the number of hidden layers.
             n_components: the number of output components for each distribution
                 parameter.
-            **kwargs: passed to the NeuralNet class.
+            **kwargs: passed to the MLP class.
         """
         input_dim = 2
         self._input_dim = input_dim
@@ -707,7 +707,7 @@ class BoxPBNeuralNet(NeuralNet):
         return out
 
 
-class BoxStateFlowModule(NeuralNet):
+class BoxStateFlowModule(MLP):
     """A deep neural network for the state flow function."""
 
     def __init__(self, logZ_value: torch.Tensor, **kwargs: Any):

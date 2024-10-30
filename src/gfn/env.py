@@ -335,6 +335,13 @@ class Env(ABC):
             "The environment does not support enumeration of states"
         )
 
+    @property
+    def true_dist_pmf(self) -> torch.Tensor:
+        "Returns a one-dimensional tensor representing the true distribution."
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
+
 
 class DiscreteEnv(Env, ABC):
     """

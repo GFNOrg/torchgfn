@@ -206,8 +206,8 @@ class Sampler:
             if save_logprobs:
                 # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
-            trajectories_actions += [actions]
-            trajectories_logprobs += [log_probs]
+            trajectories_actions.append(actions)
+            trajectories_logprobs.append(log_probs)
 
             if self.estimator.is_backward:
                 new_states = env._backward_step(states, actions)
@@ -239,7 +239,7 @@ class Sampler:
             states = new_states
             dones = dones | new_dones
 
-            trajectories_states += [deepcopy(states)]
+            trajectories_states.append(deepcopy(states))
 
         trajectories_states = stack_states(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)

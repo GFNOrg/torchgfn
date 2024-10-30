@@ -13,20 +13,20 @@ from gfn.gflownet import (
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
-    BoxPBNeuralNet,
+    BoxPBMLP,
     BoxPBUniform,
     BoxPFEstimator,
-    BoxPFNeuralNet,
+    BoxPFMLP,
 )
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
-from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
+from gfn.utils.modules import DiscreteUniform, MLP, Tabular
 
 N = 10  # Number of trajectories from sample_trajectories (changes tests globally).
 
 
 @pytest.mark.parametrize(
     "module_name",
-    ["NeuralNet", "Tabular"],
+    ["MLP", "Tabular"],
 )
 @pytest.mark.parametrize("ndim", [2, 3])
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
@@ -43,10 +43,8 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     else:
         raise ValueError("Unknown environment name")
 
-    if module_name == "NeuralNet":
-        module = NeuralNet(
-            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
-        )
+    if module_name == "MLP":
+        module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
     elif module_name == "Tabular":
         module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
     else:
@@ -139,7 +137,7 @@ def PFBasedGFlowNet_with_return(
         logF_module = Tabular(n_states=env.n_states, output_dim=1)
     else:
         if env_name == "Box":
-            pf_module = BoxPFNeuralNet(
+            pf_module = BoxPFMLP(
                 hidden_dim=32,
                 n_hidden_layers=2,
                 n_components=ndim,
@@ -147,19 +145,19 @@ def PFBasedGFlowNet_with_return(
             )
 
         else:
-            pf_module = NeuralNet(
+            pf_module = MLP(
                 input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
             )
 
-        if module_name == "NeuralNet" and env_name == "Box":
-            pb_module = BoxPBNeuralNet(
+        if module_name == "MLP" and env_name == "Box":
+            pb_module = BoxPBMLP(
                 hidden_dim=32,
                 n_hidden_layers=2,
                 n_components=ndim + 1,
                 trunk=pf_module.trunk if tie_pb_to_pf else None,
             )
-        elif module_name == "NeuralNet" and env_name != "Box":
-            pb_module = NeuralNet(
+        elif module_name == "MLP" and env_name != "Box":
+            pb_module = MLP(
                 input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
             )
         elif module_name == "Uniform" and env_name != "Box":
@@ -170,7 +168,7 @@ def PFBasedGFlowNet_with_return(
         if zero_logF:
             logF_module = DiscreteUniform(output_dim=1)
         else:
-            logF_module = NeuralNet(input_dim=env.preprocessor.output_dim, output_dim=1)
+            logF_module = MLP(input_dim=env.preprocessor.output_dim, output_dim=1)
 
     if env_name == "Box":
         pf = BoxPFEstimator(env, pf_module, n_components_s0=ndim - 1, n_components=ndim)
@@ -231,7 +229,7 @@ def PFBasedGFlowNet_with_return(
 
 @pytest.mark.parametrize(
     ("module_name", "tie_pb_to_pf"),
-    [("NeuralNet", False), ("NeuralNet", True), ("Uniform", False), ("Tabular", False)],
+    [("MLP", False), ("MLP", True), ("Uniform", False), ("Tabular", False)],
 )
 @pytest.mark.parametrize(
     ("gflownet_name", "sub_tb_weighting"),
@@ -282,7 +280,7 @@ def test_PFBasedGFlowNet(
 
 @pytest.mark.parametrize(
     ("module_name", "tie_pb_to_pf"),
-    [("NeuralNet", False), ("NeuralNet", True), ("Uniform", False), ("Tabular", False)],
+    [("MLP", False), ("MLP", True), ("Uniform", False), ("Tabular", False)],
 )
 @pytest.mark.parametrize(
     "weighting", ["equal", "TB", "DB", "geometric", "equal_within", "geometric_within"]
