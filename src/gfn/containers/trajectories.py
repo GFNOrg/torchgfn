@@ -15,11 +15,6 @@ from gfn.containers.transitions import Transitions
 from gfn.utils.common import has_log_probs
 
 
-def is_tensor(t) -> bool:
-    """Checks whether t is a torch.Tensor instance."""
-    return isinstance(t, torch.Tensor)
-
-
 # TODO: remove env from this class?
 class Trajectories(Container):
     """Container for complete trajectories (starting in $s_0$ and ending in $s_f$).
@@ -113,7 +108,7 @@ class Trajectories(Container):
             )
         else:
             log_probs = torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
-        self.log_probs = log_probs
+        self.log_probs: torch.Tensor = log_probs
 
         self.estimator_outputs = estimator_outputs
         if self.estimator_outputs is not None:
@@ -187,7 +182,7 @@ class Trajectories(Container):
         log_rewards = (
             self._log_rewards[index] if self._log_rewards is not None else None
         )
-        if is_tensor(self.estimator_outputs):
+        if self.estimator_outputs is not None:
             # TODO: Is there a safer way to index self.estimator_outputs for
             #       for n-dimensional estimator outputs?
             #
@@ -292,13 +287,9 @@ class Trajectories(Container):
 
         # Either set, or append, estimator outputs if they exist in the submitted
         # trajectory.
-        if self.estimator_outputs is None and isinstance(
-            other.estimator_outputs, torch.Tensor
-        ):
+        if self.estimator_outputs is None and other.estimator_outputs is not None:
             self.estimator_outputs = other.estimator_outputs
-        elif isinstance(self.estimator_outputs, torch.Tensor) and isinstance(
-            other.estimator_outputs, torch.Tensor
-        ):
+        elif self.estimator_outputs is not None and other.estimator_outputs is not None:
             batch_shape = self.actions.batch_shape
             n_bs = len(batch_shape)
 
