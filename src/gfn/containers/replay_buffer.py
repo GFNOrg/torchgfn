@@ -180,6 +180,12 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         # Our buffer is full and we will prioritize diverse, high reward additions.
         else:
+            if (
+                self.training_objects.log_rewards is None
+                or training_objects.log_rewards is None
+            ):
+                raise ValueError("log_rewards must be defined for prioritized replay.")
+
             # Sort the incoming elements by their logrewards.
             ix = torch.argsort(training_objects.log_rewards, descending=True)
             training_objects = training_objects[ix]

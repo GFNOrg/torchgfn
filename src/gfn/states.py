@@ -337,11 +337,11 @@ class DiscreteStates(States, ABC):
                 dtype=torch.bool,
                 device=self.__class__.device,
             )
-        assert forward_masks.shape == (*self.batch_shape, self.n_actions)
-        assert backward_masks.shape == (*self.batch_shape, self.n_actions - 1)
 
-        self.forward_masks = forward_masks
-        self.backward_masks = backward_masks
+        self.forward_masks: torch.Tensor = forward_masks
+        self.backward_masks: torch.Tensor = backward_masks
+        assert self.forward_masks.shape == (*self.batch_shape, self.n_actions)
+        assert self.backward_masks.shape == (*self.batch_shape, self.n_actions - 1)
 
     def clone(self) -> States:
         """Returns a clone of the current instance."""
