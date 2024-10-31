@@ -1,16 +1,16 @@
-from typing import Tuple, Any, Union
+from typing import Any, Tuple, Union
 
 import torch
 
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import GFlowNet
-from gfn.modules import DiscretePolicyEstimator, ConditionalDiscretePolicyEstimator
+from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates, States
 from gfn.utils.handlers import (
-    no_conditioning_exception_handler,
     has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
 )
 
 
@@ -109,7 +109,6 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
             )
 
             if conditioning is not None:
-
                 # Mask out only valid conditioning elements.
                 valid_backward_conditioning = conditioning[valid_backward_mask]
                 valid_forward_conditioning = conditioning[valid_forward_mask]
@@ -204,7 +203,9 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         )
         return fm_loss + self.alpha * rm_loss
 
-    def to_training_samples(self, trajectories: Trajectories) -> Union[
+    def to_training_samples(
+        self, trajectories: Trajectories
+    ) -> Union[
         Tuple[DiscreteStates, DiscreteStates, torch.Tensor, torch.Tensor],
         Tuple[DiscreteStates, DiscreteStates, None, None],
         Tuple[States, States, torch.Tensor, torch.Tensor],

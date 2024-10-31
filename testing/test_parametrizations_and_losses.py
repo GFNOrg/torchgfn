@@ -19,7 +19,7 @@ from gfn.gym.helpers.box_utils import (
     BoxPFMLP,
 )
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
-from gfn.utils.modules import MLP, DiscreteUniform, Tabular
+from gfn.utils.modules import DiscreteUniform, MLP, Tabular
 
 N = 10  # Number of trajectories from sample_trajectories (changes tests globally).
 

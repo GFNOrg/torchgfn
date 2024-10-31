@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Callable
 
 import torch
+
 from gfn.states import States
 
 
@@ -17,13 +18,12 @@ class Preprocessor(ABC):
     @abstractmethod
     def preprocess(self, states: States) -> torch.Tensor:
         """Transform the states to the input of the neural network.
-        
+
         Args:
             states: The states to preprocess.
-        
+
         Returns the preprocessed states as a tensor of shape (*batch_shape, output_dim).
         """
-        pass
 
     def __call__(self, states: States) -> torch.Tensor:
         """Transform the states to the input of the neural network, calling the preprocess method."""
@@ -65,10 +65,10 @@ class EnumPreprocessor(Preprocessor):
 
     def preprocess(self, states) -> torch.Tensor:
         """Preprocess the states by returning their unique indices.
-        
+
         Args:
             states: The states to preprocess.
-        
+
         Returns the unique indices of the states as a tensor of shape `batch_shape`.
         """
         return self.get_states_indices(states).long().unsqueeze(-1)
