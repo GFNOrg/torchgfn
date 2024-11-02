@@ -16,13 +16,12 @@ class EnergyFunction(nn.Module, ABC):
     @abstractmethod
     def forward(self, states: torch.Tensor) -> torch.Tensor:
         """Forward pass of the energy function
-        
+
         Args:
             states: tensor of states of shape (*batch_shape, *state_shape)
-        
+
         Returns tensor of energies of shape (*batch_shape)
         """
-        pass
 
 
 class IsingModel(EnergyFunction):
@@ -46,7 +45,7 @@ class IsingModel(EnergyFunction):
 
         Args:
             states: tensor of states of shape (*batch_shape, *state_shape)
-        
+
         Returns tensor of energies of shape (*batch_shape)
         """
         assert states.shape[-1] == self._state_shape
@@ -133,10 +132,10 @@ class DiscreteEBM(DiscreteEnv):
 
     def is_exit_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """Determines if the actions are exit actions.
-        
+
         Args:
             actions: tensor of actions of shape (*batch_shape, *action_shape)
-        
+
         Returns tensor of booleans of shape (*batch_shape)
         """
         return actions == self.n_actions - 1
@@ -147,7 +146,7 @@ class DiscreteEBM(DiscreteEnv):
         Args:
             states: States object representing the current states.
             actions: Actions object representing the actions to be taken.
-        
+
         Returns the next states as tensor of shape (*batch_shape, ndim).
         """
         # First, we select that actions that replace a -1 with a 0.
@@ -186,7 +185,7 @@ class DiscreteEBM(DiscreteEnv):
 
         Args:
             final_states: DiscreteStates object representing the final states.
-        
+
         Returns the reward as tensor of shape (*batch_shape).
         """
         reward = torch.exp(self.log_reward(final_states))
@@ -195,10 +194,10 @@ class DiscreteEBM(DiscreteEnv):
 
     def log_reward(self, final_states: DiscreteStates) -> torch.Tensor:
         """The energy weighted by alpha is our log reward.
-        
+
         Args:
             final_states: DiscreteStates object representing the final states.
-        
+
         Returns the log reward as tensor of shape (*batch_shape)."""
         raw_states = final_states.tensor
         canonical = 2 * raw_states - 1
@@ -209,10 +208,10 @@ class DiscreteEBM(DiscreteEnv):
 
     def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
         """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3
-        
+
         Args:
             states: DiscreteStates object representing the states.
-        
+
         Returns the states indices as tensor of shape (*batch_shape).
         """
         states_raw = states.tensor
@@ -223,10 +222,10 @@ class DiscreteEBM(DiscreteEnv):
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
         """Returns the indices of the terminating states.
-        
+
         Args:
             states: DiscreteStates object representing the states.
-        
+
         Returns the indices of the terminating states as tensor of shape (*batch_shape).
         """
         states_raw = states.tensor

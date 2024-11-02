@@ -1,6 +1,6 @@
 import math
 from abc import ABC, abstractmethod
-from typing import Generic, Tuple, TypeVar, Union, Any
+from typing import Any, Generic, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -211,7 +211,6 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         # Using all non-initial states, calculate the backward policy, and the logprobs
         # of those actions.
         if trajectories.conditioning is not None:
-
             # We need to index the conditioning vector to broadcast over the states.
             cond_dim = (-1,) * len(trajectories.conditioning.shape)
             traj_len = trajectories.states.tensor.shape[0]
@@ -242,8 +241,14 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         log_pb_trajectories_slice[~valid_actions.is_exit] = valid_log_pb_actions
         log_pb_trajectories[~trajectories.actions.is_dummy] = log_pb_trajectories_slice
 
-        assert log_pf_trajectories.shape == (trajectories.max_length, trajectories.n_trajectories)
-        assert log_pb_trajectories.shape == (trajectories.max_length, trajectories.n_trajectories)
+        assert log_pf_trajectories.shape == (
+            trajectories.max_length,
+            trajectories.n_trajectories,
+        )
+        assert log_pb_trajectories.shape == (
+            trajectories.max_length,
+            trajectories.n_trajectories,
+        )
         return log_pf_trajectories, log_pb_trajectories
 
     def get_trajectories_scores(
@@ -252,15 +257,15 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         recalculate_all_logprobs: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Given a batch of trajectories, calculate forward & backward policy scores.
-    
+
         Args:
             trajectories: Trajectories to evaluate.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
-        
+
         Returns: A tuple of float tensors of shape (n_trajectories,)
             containing the total log_pf, total log_pb, and the total
             log-likelihood of the trajectories.
-        
+
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -279,7 +284,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
             torch.isinf(total_log_pb_trajectories)
         ):
             raise ValueError("Infinite logprobs found")
-        
+
         assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
         assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
         return (

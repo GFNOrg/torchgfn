@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Any
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -74,11 +74,12 @@ class GFNModule(ABC, nn.Module):
 
     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
         """Forward pass of the module.
-        
+
         Args:
             input: The input to the module, as states or a tensor.
-        
-        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim)."""
+
+        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
         if isinstance(input, States):
             input = self.preprocessor(input)
 
@@ -126,7 +127,7 @@ class GFNModule(ABC, nn.Module):
             states: The states to use.
             module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
             **policy_kwargs: Keyword arguments to modify the distribution.
-        
+
         Returns a distribution object.
         """
         raise NotImplementedError
@@ -257,11 +258,11 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         self, states: States, conditioning: torch.Tensor
     ) -> torch.Tensor:
         """Forward pass of the trunk of the module.
-        
+
         Args:
             states: The input states.
             conditioning: The conditioning input.
-        
+
         Returns the output of the trunk of the module, as a tensor of shape (*batch_shape, output_dim).
         """
         state_out = self.module(self.preprocessor(states))
@@ -270,15 +271,13 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
 
         return out
 
-    def forward(
-        self, states: States, conditioning: torch.tensor
-    ) -> torch.Tensor:
+    def forward(self, states: States, conditioning: torch.tensor) -> torch.Tensor:
         """Forward pass of the module.
-        
+
         Args:
             states: The input states.
             conditioning: The conditioning input.
-        
+
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
         out = self._forward_trunk(states, conditioning)
@@ -308,15 +307,13 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
             is_backward=is_backward,
         )
 
-    def forward(
-        self, states: States, conditioning: torch.tensor
-    ) -> torch.Tensor:
+    def forward(self, states: States, conditioning: torch.tensor) -> torch.Tensor:
         """Forward pass of the module.
-        
+
         Args:
             states: The input states.
             conditioning: The tensor for conditioning.
-        
+
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
         out = self._forward_trunk(states, conditioning)
@@ -342,7 +339,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
             states: The states to use.
             module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
             **policy_kwargs: Keyword arguments to modify the distribution.
-        
+
         Returns a distribution object.
         """
         raise NotImplementedError

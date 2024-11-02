@@ -374,12 +374,12 @@ class LocalSearchSampler(Sampler):
             ].flip(0)
 
             # Forward part
-            trajectories_states_tsr[n_back : n_back + len_recon, i] = (
-                recon_trajectories.states.tensor[:, i]
-            )
-            trajectories_actions_tsr[n_back : n_back + len_recon - 1, i] = (
-                recon_trajectories.actions.tensor[: len_recon - 1, i]
-            )
+            trajectories_states_tsr[
+                n_back : n_back + len_recon, i
+            ] = recon_trajectories.states.tensor[:, i]
+            trajectories_actions_tsr[
+                n_back : n_back + len_recon - 1, i
+            ] = recon_trajectories.actions.tensor[: len_recon - 1, i]
             if save_logprobs:  # concatenate log_probs
                 raise NotImplementedError("metropolis-hastings is not implemented yet.")
 
@@ -390,9 +390,6 @@ class LocalSearchSampler(Sampler):
             actions=env.Actions(trajectories_actions_tsr),
             when_is_done=trajectories_dones,
             is_backward=False,
-            # FIXME: This is weird... since the trajectory contains
-            # both backward and forward parts.
-            # Maybe calculate log_pfs for the backward part -> and set is_backward=True?
             log_rewards=trajectories_log_rewards,
             log_probs=trajectories_logprobs,  # TODO: Support log_probs (`None` for now)
         )
@@ -476,7 +473,7 @@ class LocalSearchSampler(Sampler):
                 last_indices = torch.arange(
                     n * (it + 1), n * (it + 2), device=trajectories.states.device
                 )
-                prev_log_rewards = trajectories.log_rewards[search_indices]
+                prev_log_rewards = trajectories.log_rewards[search_indices]  # type: ignore # FIXME: pyright error
                 new_log_rewards = ls_trajectories.log_rewards
                 update_indices = prev_log_rewards <= new_log_rewards
                 search_indices[update_indices] = last_indices[update_indices]

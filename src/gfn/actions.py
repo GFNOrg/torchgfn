@@ -32,12 +32,12 @@ class Actions(ABC):
         Args:
             tensor: tensors representing a batch of actions with shape (*batch_shape, *action_shape).
         """
-        assert tensor.shape[-len(self.action_shape):] == self.action_shape, (
-            f"Batched actions tensor has shape {tensor.shape}, but the expected action shape is {self.action_shape}."
-        )
-        
+        assert (
+            tensor.shape[-len(self.action_shape) :] == self.action_shape
+        ), f"Batched actions tensor has shape {tensor.shape}, but the expected action shape is {self.action_shape}."
+
         self.tensor = tensor
-        self.batch_shape = tuple(self.tensor.shape)[:-len(self.action_shape)]
+        self.batch_shape = tuple(self.tensor.shape)[: -len(self.action_shape)]
 
     @classmethod
     def make_dummy_actions(cls, batch_shape: tuple[int]) -> Actions:
@@ -137,13 +137,13 @@ class Actions(ABC):
 
         Args:
             other: tensor of actions to compare, with shape (*batch_shape, *action_shape).
-        
+
         Returns: boolean tensor of shape batch_shape indicating whether the actions are
             equal.
         """
-        assert other.shape == self.batch_shape + self.action_shape, (
-            f"Expected shape {self.batch_shape + self.action_shape}, got {other.shape}."
-        )
+        assert (
+            other.shape == self.batch_shape + self.action_shape
+        ), f"Expected shape {self.batch_shape + self.action_shape}, got {other.shape}."
         out = self.tensor == other
         n_batch_dims = len(self.batch_shape)
 

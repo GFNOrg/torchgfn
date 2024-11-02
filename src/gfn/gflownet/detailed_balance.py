@@ -6,7 +6,7 @@ import torch
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
 from gfn.gflownet.base import PFBasedGFlowNet
-from gfn.modules import GFNModule, ScalarEstimator, ConditionalScalarEstimator
+from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.utils.common import has_log_probs
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -91,7 +91,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             - If transitions have log_probs attribute, use them - this is usually for on-policy learning
             - Else, re-evaluate the log_probs using the current self.pf - this is usually for
               off-policy learning with replay buffer
-        
+
         Returns: A tuple of three tensors of shapes (n_transitions,), representing the
             log probabilities of the actions, the log probabilities of the backward actions, and th scores.
 
@@ -194,7 +194,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         assert valid_log_pf_actions.shape == (transitions.n_transitions,)
         assert log_pb_actions.shape == (transitions.n_transitions,)
-        assert scores.shape == (transitions.n_transitions,)   
+        assert scores.shape == (transitions.n_transitions,)
         return valid_log_pf_actions, log_pb_actions, scores
 
     def loss(self, env: Env, transitions: Transitions) -> torch.Tensor:

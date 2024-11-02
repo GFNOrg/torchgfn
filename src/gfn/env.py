@@ -54,8 +54,8 @@ class Env(ABC):
         assert s0.shape == state_shape
         if sf is None:
             sf = torch.full(s0.shape, -float("inf")).to(self.device)
-        assert sf.shape == state_shape
-        self.sf = sf
+        self.sf: torch.Tensor = sf
+        assert self.sf.shape == state_shape
         self.state_shape = state_shape
         self.action_shape = action_shape
         self.dummy_action = dummy_action
@@ -381,11 +381,11 @@ class DiscreteEnv(Env, ABC):
 
         # The default dummy action is -1.
         if dummy_action is None:
-            dummy_action = torch.tensor([-1], device=device)
+            dummy_action: torch.Tensor = torch.tensor([-1], device=device)
 
         # The default exit action index is the final element of the action space.
         if exit_action is None:
-            exit_action = torch.tensor([n_actions - 1], device=device)
+            exit_action: torch.Tensor = torch.tensor([n_actions - 1], device=device)
 
         assert s0.shape == state_shape
         assert dummy_action.shape == action_shape
