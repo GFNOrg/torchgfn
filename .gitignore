@@ -184,3 +184,7 @@ scripts.py
 
 models/
 *.DS_Store
+
+*.db/
+tmp*
+log*/
