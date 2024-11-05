@@ -358,7 +358,6 @@ class LocalSearchSampler(Sampler):
         )  # Episodic reward is assumed.
         trajectories_logprobs = None  # TODO
 
-        len_recon = recon_trajectories.states.tensor.shape[0]
         for i in range(bs):
             # Backward part
             back_source_idx = backward_trajectories.when_is_done[i]
@@ -373,10 +372,11 @@ class LocalSearchSampler(Sampler):
                 back_source_idx - n_back : back_source_idx, i
             ].flip(0)
 
+            len_recon = recon_trajectories.when_is_done[i] + 1
             # Forward part
             trajectories_states_tsr[
                 n_back : n_back + len_recon, i
-            ] = recon_trajectories.states.tensor[:, i]
+            ] = recon_trajectories.states.tensor[:len_recon, i]
             trajectories_actions_tsr[
                 n_back : n_back + len_recon - 1, i
             ] = recon_trajectories.actions.tensor[: len_recon - 1, i]
@@ -385,7 +385,7 @@ class LocalSearchSampler(Sampler):
 
         new_trajectories = Trajectories(
             env=env,
-            states=env.States(trajectories_states_tsr),
+            states=env.states_from_tensor(trajectories_states_tsr),
             conditioning=conditioning,
             actions=env.Actions(trajectories_actions_tsr),
             when_is_done=trajectories_dones,

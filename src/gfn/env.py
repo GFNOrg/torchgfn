@@ -449,7 +449,7 @@ class DiscreteEnv(Env, ABC):
         return states
 
     @abstractmethod
-    def update_masks(self, states: type[States]) -> None:
+    def update_masks(self, states: States) -> None:
         """Updates the masks in States.
 
         Called automatically after each step for discrete environments.

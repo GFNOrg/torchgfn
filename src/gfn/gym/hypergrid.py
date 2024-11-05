@@ -82,7 +82,7 @@ class HyperGrid(DiscreteEnv):
             preprocessor=preprocessor,
         )
 
-    def update_masks(self, states: type[DiscreteStates]) -> None:
+    def update_masks(self, states: DiscreteStates) -> None:
         """Update the masks based on the current states."""
         # Not allowed to take any action beyond the environment height, but
         # allow early termination.
