@@ -1,22 +1,23 @@
 from copy import copy
-from typing import Callable, Literal, Tuple
+from typing import Callable, Literal
 
 import torch
-from gfn.actions import Actions
-from torch_geometric.data import Data, Batch
+from torch_geometric.data import Batch, Data
 from torch_geometric.nn import GCNConv
+
+from gfn.actions import Actions
 from gfn.env import GraphEnv
 from gfn.states import GraphStates
 
 
 class GraphBuilding(GraphEnv):
-
-    def __init__(self,
+    def __init__(
+        self,
         num_nodes: int,
         node_feature_dim: int,
         edge_feature_dim: int,
         state_evaluator: Callable[[Batch], torch.Tensor] | None = None,
-        device_str: Literal["cpu", "cuda"] = "cpu"
+        device_str: Literal["cpu", "cuda"] = "cpu",
     ):
         s0 = Data(x=torch.zeros((num_nodes, node_feature_dim)).to(device_str))
         exit_action = torch.tensor(
@@ -32,13 +33,12 @@ class GraphBuilding(GraphEnv):
         super().__init__(
             s0=s0,
             node_feature_dim=node_feature_dim,
-            edge_feature_dim=edge_feature_dim,           
+            edge_feature_dim=edge_feature_dim,
             action_shape=(2,),
             dummy_action=dummy_action,
             exit_action=exit_action,
             device_str=device_str,
         )
-
 
     def step(self, states: GraphStates, actions: Actions) -> GraphStates:
         """Step function for the GraphBuilding environment.
@@ -55,7 +55,7 @@ class GraphBuilding(GraphEnv):
         for i, act in enumerate(actions.tensor):
             edge_index = torch.cat([graphs[i].edge_index, act.unsqueeze(1)], dim=1)
             graphs[i].edge_index = edge_index
-        
+
         return GraphStates(graphs)
 
     def backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
@@ -74,7 +74,7 @@ class GraphBuilding(GraphEnv):
             edge_index = graphs[i].edge_index
             edge_index = edge_index[:, edge_index[1] != act]
             graphs[i].edge_index = edge_index
-        
+
         return GraphStates(graphs)
 
     def is_action_valid(
@@ -86,7 +86,7 @@ class GraphBuilding(GraphEnv):
             if not backward and torch.any(states.data[i].edge_index[1] == act):
                 return False
         return True
-        
+
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
         This or log_reward must be implemented.
