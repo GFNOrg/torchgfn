@@ -3,7 +3,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, List, Optional, Sequence, cast, Tuple
+from typing import Callable, ClassVar, List, Optional, Sequence
 
 import torch
 from torch_geometric.data import Batch, Data
@@ -503,13 +503,13 @@ def stack_states(states: List[States]):
 
     return stacked_states
 
+
 class GraphStates(ABC):
     """
     Base class for Graph as a state representation. The `GraphStates` object is a batched collection of
     multiple graph objects. The `Batch` object from PyTorch Geometric is used to represent the batch of
     graph objects as states.
     """
-
 
     s0: ClassVar[Data]
     sf: ClassVar[Data]
@@ -527,7 +527,9 @@ class GraphStates(ABC):
         self._log_rewards: float = None
 
     @classmethod
-    def from_batch_shape(cls, batch_shape: int, random: bool = False, sink: bool=False) -> GraphStates:
+    def from_batch_shape(
+        cls, batch_shape: int, random: bool = False, sink: bool = False
+    ) -> GraphStates:
         if random and sink:
             raise ValueError("Only one of `random` and `sink` should be True.")
         if random:
@@ -557,8 +559,10 @@ class GraphStates(ABC):
         return self.data.batch_size
 
     def __repr__(self):
-        return (f"{self.__class__.__name__} object of batch shape {self.batch_shape} and "
-                f"node feature dim {self.node_feature_dim} and edge feature dim {self.edge_feature_dim}")
+        return (
+            f"{self.__class__.__name__} object of batch shape {self.batch_shape} and "
+            f"node feature dim {self.node_feature_dim} and edge feature dim {self.edge_feature_dim}"
+        )
 
     def __getitem__(self, index: int | Sequence[int] | slice) -> GraphStates:
         if isinstance(index, int):
@@ -566,7 +570,9 @@ class GraphStates(ABC):
         elif isinstance(index, (Sequence, slice)):
             out = self.__class__(Batch.from_data_list(self.data.index_select(index)))
         else:
-            raise NotImplementedError("Indexing with type {} is not implemented".format(type(index)))
+            raise NotImplementedError(
+                "Indexing with type {} is not implemented".format(type(index))
+            )
 
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards[index]
@@ -579,20 +585,28 @@ class GraphStates(ABC):
         """
         data_list = self.data.to_data_list()
         if isinstance(index, int):
-            assert len(graph) == 1,  "GraphStates must have a batch size of 1 for single index assignment"
+            assert (
+                len(graph) == 1
+            ), "GraphStates must have a batch size of 1 for single index assignment"
             data_list[index] = graph.data[0]
             self.data = Batch.from_data_list(data_list)
         elif isinstance(index, Sequence):
-            assert len(index) == len(graph), "Index and GraphState must have the same length"
+            assert len(index) == len(
+                graph
+            ), "Index and GraphState must have the same length"
             for i, idx in enumerate(index):
                 data_list[idx] = graph.data[i]
             self.data = Batch.from_data_list(data_list)
         elif isinstance(index, slice):
-            assert index.stop - index.start == len(graph), "Index slice and GraphStates must have the same length"
+            assert index.stop - index.start == len(
+                graph
+            ), "Index slice and GraphStates must have the same length"
             data_list[index] = graph.data.to_data_list()
             self.data = Batch.from_data_list(data_list)
         else:
-            raise NotImplementedError("Setters with type {} is not implemented".format(type(index)))
+            raise NotImplementedError(
+                "Setters with type {} is not implemented".format(type(index))
+            )
 
     @property
     def device(self) -> torch.device:
@@ -612,13 +626,14 @@ class GraphStates(ABC):
 
     def extend(self, other: GraphStates):
         """Concatenates to another GraphStates object along the batch dimension"""
-        self.data = Batch.from_data_list(self.data.to_data_list() + other.data.to_data_list())
+        self.data = Batch.from_data_list(
+            self.data.to_data_list() + other.data.to_data_list()
+        )
         if self._log_rewards is not None:
             assert other._log_rewards is not None
             self._log_rewards = torch.cat(
                 (self._log_rewards, other._log_rewards), dim=0
             )
-
 
     @property
     def log_rewards(self) -> torch.Tensor:

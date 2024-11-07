@@ -2,10 +2,11 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Union
 
 import torch
+from torch_geometric.data import Batch, Data
 
 from gfn.actions import Actions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
-from gfn.states import DiscreteStates, States
+from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import set_seed
 
 # Errors
@@ -559,3 +560,107 @@ class DiscreteEnv(Env, ABC):
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
+
+
+class GraphEnv(Env):
+    """Base class for graph-based environments."""
+
+    def __init__(
+        self,
+        s0: Data,
+        node_feature_dim: int,
+        edge_feature_dim: int,
+        action_shape: Tuple,
+        dummy_action: torch.Tensor,
+        exit_action: torch.Tensor,
+        sf: Optional[Data] = None,
+        device_str: Optional[str] = None,
+        preprocessor: Optional[Preprocessor] = None,
+    ):
+        """Initializes a graph-based environment.
+
+        Args:
+            s0: The initial graph state.
+            node_feature_dim: The dimension of the node features.
+            edge_feature_dim: The dimension of the edge features.
+            action_shape: Tuple representing the shape of the actions.
+            dummy_action: Tensor of shape "action_shape" representing a dummy action.
+            exit_action: Tensor of shape "action_shape" representing the exit action.
+            sf: The final graph state.
+            device_str: 'cpu' or 'cuda'. Defaults to None, in which case the device is
+                inferred from s0.
+            preprocessor: a Preprocessor object that converts raw graph states to a tensor
+                that can be fed into a neural network. Defaults to None, in which case
+                the IdentityPreprocessor is used.
+        """
+        self.device = get_device(device_str, default_device=s0.x.device)
+
+        if sf is None:
+            sf = Data(
+                x=torch.full((s0.num_nodes, node_feature_dim), -float("inf")).to(
+                    self.device
+                ),
+                edge_attr=torch.full(
+                    (s0.num_edges, edge_feature_dim), -float("inf")
+                ).to(self.device),
+                edge_index=s0.edge_index,
+                batch=torch.zeros(s0.num_nodes, dtype=torch.long, device=self.device),
+            )
+
+        super().__init__(
+            s0=s0,
+            state_shape=(s0.num_nodes, node_feature_dim),
+            action_shape=action_shape,
+            dummy_action=dummy_action,
+            exit_action=exit_action,
+            sf=sf,
+            device_str=device_str,
+            preprocessor=preprocessor,
+        )
+
+        self.node_feature_dim = node_feature_dim
+        self.edge_feature_dim = edge_feature_dim
+        self.GraphStates = self.make_graph_states_class()
+
+    def make_graph_states_class(self) -> type[GraphStates]:
+        env = self
+
+        class GraphEnvStates(GraphStates):
+            s0 = env.s0
+            sf = env.sf
+            node_feature_dim = env.node_feature_dim
+            edge_feature_dim = env.edge_feature_dim
+            make_random_states_graph = env.make_random_states_graph
+
+        return GraphEnvStates
+
+    def states_from_tensor(self, tensor: Batch) -> GraphStates:
+        """Wraps the supplied Batch in a GraphStates instance."""
+        return self.GraphStates(tensor)
+
+    def states_from_batch_shape(self, batch_shape: int) -> GraphStates:
+        """Returns a batch of s0 states with a given batch_shape."""
+        return self.GraphStates.from_batch_shape(batch_shape)
+
+    @abstractmethod
+    def step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Function that takes a batch of graph states and actions and returns a batch of next
+        graph states."""
+
+    @abstractmethod
+    def backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Function that takes a batch of graph states and actions and returns a batch of previous
+        graph states."""
+
+    @abstractmethod
+    def is_action_valid(
+        self,
+        states: GraphStates,
+        actions: Actions,
+        backward: bool = False,
+    ) -> bool:
+        """Returns True if the actions are valid in the given graph states."""
+
+    @abstractmethod
+    def make_random_states_graph(self, batch_shape: int) -> Batch:
+        """Optional method inherited by all GraphStates instances to emit a random Batch of graphs."""
