@@ -188,8 +188,15 @@ class DiscretePolicyEstimator(GFNModule):
                 if set to 0.0 (default), in which case it's on policy."""
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
+        # if only one action is allowed in backward, then don't apply mask to other actions
+        # otherwise, the logprob would always be 0. here
+        if self.is_backward:
+            oneway_masks=(masks.long().sum(dim=-1)==1
+                ).unsqueeze(-1).repeat(
+                (*[1]*(len(masks.shape)-1),masks.shape[-1]))
+            masks=torch.where(~oneway_masks,masks,True)
         logits[~masks] = -float("inf")
-
+        
         # Forward policy supports exploration in many implementations.
         if temperature != 1.0 or sf_bias != 0.0 or epsilon != 0.0:
             logits[:, -1] -= sf_bias
