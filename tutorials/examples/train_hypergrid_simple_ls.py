@@ -59,6 +59,7 @@ def main(args):
             epsilon=args.epsilon,
             n_local_search_loops=args.n_local_search_loops,
             back_ratio=0.5,
+            use_metropolis_hastings=False,
         )
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories)
