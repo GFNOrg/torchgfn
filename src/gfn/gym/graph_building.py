@@ -97,7 +97,7 @@ class GraphBuilding(GraphEnv):
             some_edges_not_exist = torch.any(
                 torch.all(current_edges[:, None, :] != new_edges.T[:, :, None], dim=0)
             )
-            return not some_edges_not_exist 
+            return not some_edges_not_exist
         else:
             some_edges_exist = torch.any(
                 torch.all(current_edges[:, None, :] == new_edges.T[:, :, None], dim=0)
@@ -131,6 +131,7 @@ class GraphBuilding(GraphEnv):
     def make_random_states_tensor(self, batch_shape: Tuple) -> GraphStates:
         """Generates random states tensor of shape (*batch_shape, num_nodes, node_feature_dim)."""
         return self.States.from_batch_shape(batch_shape)
+
 
 class GCNConvEvaluator:
     def __init__(self, num_features):

@@ -274,7 +274,7 @@ def test_states_getitem(ndim: int, env_name: str):
     states = env.reset(batch_shape=ND_BATCH_SHAPE, random=True)
 
     # Boolean selector to index batch elements.
-    selections = torch.randint(0, 2,ND_BATCH_SHAPE, dtype=torch.bool)
+    selections = torch.randint(0, 2, ND_BATCH_SHAPE, dtype=torch.bool)
     n_selections = int(torch.sum(selections))
     selected_states = states[selections]
 
@@ -324,28 +324,33 @@ def test_graph_env():
     FEATURE_DIM = 8
     BATCH_SIZE = 3
 
-    env = GraphBuilding(num_nodes=NUM_NODES, node_feature_dim=FEATURE_DIM, edge_feature_dim=FEATURE_DIM)   
+    env = GraphBuilding(
+        num_nodes=NUM_NODES, node_feature_dim=FEATURE_DIM, edge_feature_dim=FEATURE_DIM
+    )
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.batch_shape == BATCH_SIZE
     assert states.state_shape == (NUM_NODES, FEATURE_DIM)
 
-    actions_traj = torch.tensor([
-        [[0, 1], [1, 2], [2, 3]],
-        [[0, 2], [1, 3], [2, 4]],
-        [[0, 3], [1, 4], [2, 5]],
-        [[0, 4], [1, 5], [2, 6]],
-        [[0, 5], [1, 6], [2, 7]],
-    ], dtype=torch.long)
+    actions_traj = torch.tensor(
+        [
+            [[0, 1], [1, 2], [2, 3]],
+            [[0, 2], [1, 3], [2, 4]],
+            [[0, 3], [1, 4], [2, 5]],
+            [[0, 4], [1, 5], [2, 6]],
+            [[0, 5], [1, 6], [2, 7]],
+        ],
+        dtype=torch.long,
+    )
 
     for action_tensor in actions_traj:
         actions = env.actions_from_tensor(action_tensor)
         states = env.step(states, actions)
 
-    invalid_actions = torch.tensor([[0, 0], [1, 1], [2, 2]])  
+    invalid_actions = torch.tensor([[0, 0], [1, 1], [2, 2]])
     actions = env.actions_from_tensor(invalid_actions)
     with pytest.raises(NonValidActionsError):
         states = env.step(states, actions)
-    invalid_actions = torch.tensor(actions_traj[0])  
+    invalid_actions = torch.tensor(actions_traj[0])
     actions = env.actions_from_tensor(invalid_actions)
     with pytest.raises(NonValidActionsError):
         states = env.step(states, actions)

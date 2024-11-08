@@ -515,11 +515,6 @@ class GraphStates(ABC):
     sf: ClassVar[Data]
     node_feature_dim: ClassVar[int]
     edge_feature_dim: ClassVar[int]
-    make_random_states_graph: Callable = lambda x: (_ for _ in ()).throw(
-        NotImplementedError(
-            "The environment does not support initialization of random Graph states."
-        )
-    )
 
     def __init__(self, graphs: Batch):
         self.data: Batch = graphs
@@ -544,7 +539,9 @@ class GraphStates(ABC):
     @classmethod
     def make_initial_states_graph(cls, batch_shape: int | Tuple) -> Batch:
         if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
-            raise NotImplementedError("Batch shape with more than one dimension is not supported")
+            raise NotImplementedError(
+                "Batch shape with more than one dimension is not supported"
+            )
         if isinstance(batch_shape, Tuple):
             batch_shape = batch_shape[0]
 
@@ -554,7 +551,9 @@ class GraphStates(ABC):
     @classmethod
     def make_sink_states_graph(cls, batch_shape: Tuple) -> Batch:
         if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
-            raise NotImplementedError("Batch shape with more than one dimension is not supported")
+            raise NotImplementedError(
+                "Batch shape with more than one dimension is not supported"
+            )
         if isinstance(batch_shape, Tuple):
             batch_shape = batch_shape[0]
 
@@ -564,7 +563,9 @@ class GraphStates(ABC):
     @classmethod
     def make_random_states_graph(cls, batch_shape: int) -> Batch:
         if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
-            raise NotImplementedError("Batch shape with more than one dimension is not supported")
+            raise NotImplementedError(
+                "Batch shape with more than one dimension is not supported"
+            )
         if isinstance(batch_shape, Tuple):
             batch_shape = batch_shape[0]
 
@@ -587,7 +588,9 @@ class GraphStates(ABC):
             f"node feature dim {self.node_feature_dim} and edge feature dim {self.edge_feature_dim}"
         )
 
-    def __getitem__(self, index: int | Sequence[int] | slice | torch.Tensor) -> GraphStates:
+    def __getitem__(
+        self, index: int | Sequence[int] | slice | torch.Tensor
+    ) -> GraphStates:
         out = self.__class__(Batch(self.data[index]))
 
         if self._log_rewards is not None:

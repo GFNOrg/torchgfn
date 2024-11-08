@@ -595,12 +595,12 @@ class GraphEnv(Env):
         """
         self.device = get_device(device_str, default_device=s0.x.device)
         self.s0 = s0.to(self.device)
-        
+
         self.node_feature_dim = node_feature_dim
         self.edge_feature_dim = edge_feature_dim
         self.state_shape = (s0.num_nodes, self.node_feature_dim)
         assert s0.x.shape == self.state_shape
-    
+
         if sf is None:
             sf = Data(
                 x=torch.full(self.state_shape, -float("inf")),
