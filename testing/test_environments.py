@@ -4,6 +4,7 @@ import torch
 
 from gfn.env import NonValidActionsError
 from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym.graph_building import GraphBuilding
 
 
 # Utilities.
@@ -273,7 +274,7 @@ def test_states_getitem(ndim: int, env_name: str):
     states = env.reset(batch_shape=ND_BATCH_SHAPE, random=True)
 
     # Boolean selector to index batch elements.
-    selections = torch.randint(0, 2, ND_BATCH_SHAPE, dtype=torch.bool)
+    selections = torch.randint(0, 2,ND_BATCH_SHAPE, dtype=torch.bool)
     n_selections = int(torch.sum(selections))
     selected_states = states[selections]
 
@@ -316,3 +317,38 @@ def test_get_grid():
 
     # State indices of the grid are ordered from 0:HEIGHT**2.
     assert (env.get_states_indices(grid).ravel() == torch.arange(HEIGHT**2)).all()
+
+
+def test_graph_env():
+    NUM_NODES = 4
+    FEATURE_DIM = 8
+    BATCH_SIZE = 3
+
+    env = GraphBuilding(num_nodes=NUM_NODES, node_feature_dim=FEATURE_DIM, edge_feature_dim=FEATURE_DIM)   
+    states = env.reset(batch_shape=BATCH_SIZE)
+    assert states.batch_shape == BATCH_SIZE
+    assert states.state_shape == (NUM_NODES, FEATURE_DIM)
+
+    actions_traj = torch.tensor([
+        [[0, 1], [1, 2], [2, 3]],
+        [[0, 2], [1, 3], [2, 4]],
+        [[0, 3], [1, 4], [2, 5]],
+        [[0, 4], [1, 5], [2, 6]],
+        [[0, 5], [1, 6], [2, 7]],
+    ], dtype=torch.long)
+
+    for action_tensor in actions_traj:
+        actions = env.actions_from_tensor(action_tensor)
+        states = env.step(states, actions)
+
+    invalid_actions = torch.tensor([[0, 0], [1, 1], [2, 2]])  
+    actions = env.actions_from_tensor(invalid_actions)
+    with pytest.raises(NonValidActionsError):
+        states = env.step(states, actions)
+    invalid_actions = torch.tensor(actions_traj[0])  
+    actions = env.actions_from_tensor(invalid_actions)
+    with pytest.raises(NonValidActionsError):
+        states = env.step(states, actions)
+
+    expected_rewards = torch.zeros(BATCH_SIZE)
+    assert (env.reward(states) == expected_rewards).all()

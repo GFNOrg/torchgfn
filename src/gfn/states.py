@@ -3,7 +3,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, List, Optional, Sequence
+from typing import Callable, ClassVar, List, Optional, Sequence, Tuple
 
 import torch
 from torch_geometric.data import Batch, Data
@@ -523,7 +523,8 @@ class GraphStates(ABC):
 
     def __init__(self, graphs: Batch):
         self.data: Batch = graphs
-        self.batch_shape: int = self.data.num_graphs
+        self.batch_shape: int = len(self.data)
+        self.state_shape = (self.data.get_example(0).num_nodes, self.node_feature_dim)
         self._log_rewards: float = None
 
     @classmethod
@@ -541,19 +542,41 @@ class GraphStates(ABC):
         return cls(data)
 
     @classmethod
-    def make_initial_states_graph(cls, batch_shape: int) -> Batch:
+    def make_initial_states_graph(cls, batch_shape: int | Tuple) -> Batch:
+        if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
+            raise NotImplementedError("Batch shape with more than one dimension is not supported")
+        if isinstance(batch_shape, Tuple):
+            batch_shape = batch_shape[0]
+
         data = Batch.from_data_list([cls.s0 for _ in range(batch_shape)])
         return data
 
     @classmethod
-    def make_sink_states_graph(cls, batch_shape: int) -> Batch:
+    def make_sink_states_graph(cls, batch_shape: Tuple) -> Batch:
+        if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
+            raise NotImplementedError("Batch shape with more than one dimension is not supported")
+        if isinstance(batch_shape, Tuple):
+            batch_shape = batch_shape[0]
+
         data = Batch.from_data_list([cls.sf for _ in range(batch_shape)])
         return data
 
-    # @classmethod
-    # def make_random_states_graph(cls, batch_shape: int) -> Batch:
-    #     data = Batch.from_data_list([cls.make_random_states_graph() for _ in range(batch_shape)])
-    #     return data
+    @classmethod
+    def make_random_states_graph(cls, batch_shape: int) -> Batch:
+        if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
+            raise NotImplementedError("Batch shape with more than one dimension is not supported")
+        if isinstance(batch_shape, Tuple):
+            batch_shape = batch_shape[0]
+
+        data_list = []
+        for _ in range(batch_shape):
+            data = Data(
+                x=torch.rand(cls.s0.num_nodes, cls.node_feature_dim),
+                edge_attr=torch.rand(cls.s0.num_edges, cls.edge_feature_dim),
+                edge_index=cls.s0.edge_index,  # TODO: make it random
+            )
+            data_list.append(data)
+        return Batch.from_data_list(data_list)
 
     def __len__(self):
         return self.data.batch_size
@@ -564,15 +587,8 @@ class GraphStates(ABC):
             f"node feature dim {self.node_feature_dim} and edge feature dim {self.edge_feature_dim}"
         )
 
-    def __getitem__(self, index: int | Sequence[int] | slice) -> GraphStates:
-        if isinstance(index, int):
-            out = self.__class__(Batch.from_data_list([self.data[index]]))
-        elif isinstance(index, (Sequence, slice)):
-            out = self.__class__(Batch.from_data_list(self.data.index_select(index)))
-        else:
-            raise NotImplementedError(
-                "Indexing with type {} is not implemented".format(type(index))
-            )
+    def __getitem__(self, index: int | Sequence[int] | slice | torch.Tensor) -> GraphStates:
+        out = self.__class__(Batch(self.data[index]))
 
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards[index]

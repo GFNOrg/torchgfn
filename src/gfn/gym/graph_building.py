@@ -1,12 +1,12 @@
-from copy import copy
-from typing import Callable, Literal
+from copy import deepcopy
+from typing import Callable, Literal, Tuple
 
 import torch
 from torch_geometric.data import Batch, Data
 from torch_geometric.nn import GCNConv
 
 from gfn.actions import Actions
-from gfn.env import GraphEnv
+from gfn.env import GraphEnv, NonValidActionsError
 from gfn.states import GraphStates
 
 
@@ -19,7 +19,10 @@ class GraphBuilding(GraphEnv):
         state_evaluator: Callable[[Batch], torch.Tensor] | None = None,
         device_str: Literal["cpu", "cuda"] = "cpu",
     ):
-        s0 = Data(x=torch.zeros((num_nodes, node_feature_dim)).to(device_str))
+        s0 = Data(
+            x=torch.zeros((num_nodes, node_feature_dim)),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+        ).to(device_str)
         exit_action = torch.tensor(
             [-float("inf"), -float("inf")], device=torch.device(device_str)
         )
@@ -49,14 +52,14 @@ class GraphBuilding(GraphEnv):
 
         Returns the next graph the new GraphStates.
         """
-        graphs: Batch = copy.deepcopy(states.data)
+        if not self.is_action_valid(states, actions):
+            raise NonValidActionsError("Invalid action.")
+        graphs: Batch = deepcopy(states.data)
         assert len(graphs) == len(actions)
 
-        for i, act in enumerate(actions.tensor):
-            edge_index = torch.cat([graphs[i].edge_index, act.unsqueeze(1)], dim=1)
-            graphs[i].edge_index = edge_index
-
-        return GraphStates(graphs)
+        edge_index = torch.cat([graphs.edge_index, actions.tensor.T], dim=1)
+        graphs.edge_index = edge_index
+        return self.States(graphs)
 
     def backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
         """Backward step function for the GraphBuilding environment.
@@ -67,7 +70,9 @@ class GraphBuilding(GraphEnv):
 
         Returns the previous graph as a new GraphStates.
         """
-        graphs: Batch = copy.deepcopy(states.data)
+        if not self.is_action_valid(states, actions, backward=True):
+            raise NonValidActionsError("Invalid action.")
+        graphs: Batch = deepcopy(states.data)
         assert len(graphs) == len(actions)
 
         for i, act in enumerate(actions.tensor):
@@ -75,17 +80,29 @@ class GraphBuilding(GraphEnv):
             edge_index = edge_index[:, edge_index[1] != act]
             graphs[i].edge_index = edge_index
 
-        return GraphStates(graphs)
+        return self.States(graphs)
 
     def is_action_valid(
         self, states: GraphStates, actions: Actions, backward: bool = False
     ) -> bool:
-        for i, act in enumerate(actions.tensor):
-            if backward and len(states.data[i].edge_index[1]) == 0:
-                return False
-            if not backward and torch.any(states.data[i].edge_index[1] == act):
-                return False
-        return True
+        current_edges = states.data.edge_index
+        new_edges = actions.tensor
+
+        if torch.any(new_edges[:, 0] == new_edges[:, 1]):
+            return False
+        if current_edges.shape[1] == 0:
+            return not backward
+
+        if backward:
+            some_edges_not_exist = torch.any(
+                torch.all(current_edges[:, None, :] != new_edges.T[:, :, None], dim=0)
+            )
+            return not some_edges_not_exist 
+        else:
+            some_edges_exist = torch.any(
+                torch.all(current_edges[:, None, :] == new_edges.T[:, :, None], dim=0)
+            )
+            return not some_edges_exist
 
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
@@ -97,7 +114,9 @@ class GraphBuilding(GraphEnv):
         Returns:
             torch.Tensor: Tensor of shape "batch_shape" containing the rewards.
         """
-        return self.state_evaluator(final_states.data).sum(dim=1)
+        per_node_rew = self.state_evaluator(final_states.data)
+        node_batch_idx = final_states.data.batch
+        return torch.bincount(node_batch_idx, weights=per_node_rew)
 
     @property
     def log_partition(self) -> float:
@@ -109,10 +128,13 @@ class GraphBuilding(GraphEnv):
         "Returns a one-dimensional tensor representing the true distribution."
         raise NotImplementedError
 
+    def make_random_states_tensor(self, batch_shape: Tuple) -> GraphStates:
+        """Generates random states tensor of shape (*batch_shape, num_nodes, node_feature_dim)."""
+        return self.States.from_batch_shape(batch_shape)
 
 class GCNConvEvaluator:
     def __init__(self, num_features):
         self.net = GCNConv(num_features, 1)
 
     def __call__(self, batch: Batch) -> torch.Tensor:
-        return self.net(batch.x, batch.edge_index)
+        return self.net(batch.x, batch.edge_index).squeeze(-1)

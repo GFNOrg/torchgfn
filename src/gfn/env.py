@@ -594,35 +594,33 @@ class GraphEnv(Env):
                 the IdentityPreprocessor is used.
         """
         self.device = get_device(device_str, default_device=s0.x.device)
-
-        if sf is None:
-            sf = Data(
-                x=torch.full((s0.num_nodes, node_feature_dim), -float("inf")).to(
-                    self.device
-                ),
-                edge_attr=torch.full(
-                    (s0.num_edges, edge_feature_dim), -float("inf")
-                ).to(self.device),
-                edge_index=s0.edge_index,
-                batch=torch.zeros(s0.num_nodes, dtype=torch.long, device=self.device),
-            )
-
-        super().__init__(
-            s0=s0,
-            state_shape=(s0.num_nodes, node_feature_dim),
-            action_shape=action_shape,
-            dummy_action=dummy_action,
-            exit_action=exit_action,
-            sf=sf,
-            device_str=device_str,
-            preprocessor=preprocessor,
-        )
-
+        self.s0 = s0.to(self.device)
+        
         self.node_feature_dim = node_feature_dim
         self.edge_feature_dim = edge_feature_dim
-        self.GraphStates = self.make_graph_states_class()
+        self.state_shape = (s0.num_nodes, self.node_feature_dim)
+        assert s0.x.shape == self.state_shape
+    
+        if sf is None:
+            sf = Data(
+                x=torch.full(self.state_shape, -float("inf")),
+                edge_attr=torch.full((s0.num_edges, edge_feature_dim), -float("inf")),
+                edge_index=s0.edge_index,
+            ).to(self.device)
+        self.sf: torch.Tensor = sf
+        assert self.sf.x.shape == self.state_shape
 
-    def make_graph_states_class(self) -> type[GraphStates]:
+        self.action_shape = action_shape
+        self.dummy_action = dummy_action
+        self.exit_action = exit_action
+
+        self.States = self.make_states_class()
+        self.Actions = self.make_actions_class()
+
+        self.preprocessor = preprocessor
+        self.is_discrete = False
+
+    def make_states_class(self) -> type[GraphStates]:
         env = self
 
         class GraphEnvStates(GraphStates):
@@ -630,17 +628,9 @@ class GraphEnv(Env):
             sf = env.sf
             node_feature_dim = env.node_feature_dim
             edge_feature_dim = env.edge_feature_dim
-            make_random_states_graph = env.make_random_states_graph
+            make_random_states_graph = env.make_random_states_tensor
 
         return GraphEnvStates
-
-    def states_from_tensor(self, tensor: Batch) -> GraphStates:
-        """Wraps the supplied Batch in a GraphStates instance."""
-        return self.GraphStates(tensor)
-
-    def states_from_batch_shape(self, batch_shape: int) -> GraphStates:
-        """Returns a batch of s0 states with a given batch_shape."""
-        return self.GraphStates.from_batch_shape(batch_shape)
 
     @abstractmethod
     def step(self, states: GraphStates, actions: Actions) -> GraphStates:
@@ -651,16 +641,3 @@ class GraphEnv(Env):
     def backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""
-
-    @abstractmethod
-    def is_action_valid(
-        self,
-        states: GraphStates,
-        actions: Actions,
-        backward: bool = False,
-    ) -> bool:
-        """Returns True if the actions are valid in the given graph states."""
-
-    @abstractmethod
-    def make_random_states_graph(self, batch_shape: int) -> Batch:
-        """Optional method inherited by all GraphStates instances to emit a random Batch of graphs."""
