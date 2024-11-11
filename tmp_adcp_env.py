@@ -402,7 +402,7 @@ class ADCPCycEnv(DiscreteEnv):
             )
         elif self.module_mode=='MLP':
              module_PF= SimplestModule(self,self.n_actions,**kwargs)
-             module_PB = SimplestModule(self,self.n_actions-1,share_trunk_with=module_PF)
+             module_PB = SimplestModule(self,self.n_actions-1,share_trunk_with=module_PF,**kwargs)
         else:
             raise ValueError
         
