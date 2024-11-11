@@ -33,6 +33,7 @@ from gfn.utils.modules import NeuralNet
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 # Batch.from_data_list
 # %%
 class IdentityLongPreprocessor(Preprocessor):
@@ -218,7 +219,7 @@ class ADCPCycEnv(DiscreteEnv):
         )
 
         # a_tensor=actions.tensor.clone()
-        # import pdb;pdb.set_trace()
+        
         # a_tensor[a_tensor==self.dummy_code]=self.exit_code
         a_tensor = torch.where(
             actions.tensor != self.dummy_code, actions.tensor, self.exit_code
@@ -227,7 +228,7 @@ class ADCPCycEnv(DiscreteEnv):
         log_probs = torch.log(
             torch.gather(input=fw_probs, dim=-1, index=a_tensor).squeeze(-1)
         )
-        # import pdb;pdb.set_trace()
+        
         # log_probs=torch.log(log_probs) .sum(dim=0)
         final_states = states[when_is_done - 1, torch.arange(len(seqs)).to(self.device)]
         log_rewards = self.log_reward(final_states)
@@ -292,22 +293,22 @@ class ADCPCycEnv(DiscreteEnv):
             def simple_pattern(seq:str):
                 s=0.
                 seq_len=len(seq)
-                if seq_len==0:
-                    return (s/5)+1e-5
+                if seq_len in [0,20]:
+                    return s+1e-5
                 elif seq_len<=4:
                     s+=2*seq_len
                 elif seq_len<=9:
                     s+=10-2*(seq_len-5)
                 elif seq_len<=14:
                     s+=2*(seq_len-10)
-                elif seq_len<=20:
+                elif seq_len<20:
                     s+=10-2*(seq_len-15)
                     
                 pos_score=10/len(seq)
                 for i,a in enumerate(seq):
                     if a in mode_dict[i%3]:
                         s+=pos_score
-                return (s/5)+1e-5
+                return s+1e-5
             return torch.log(torch.tensor([simple_pattern(i) for i in seqs])).to(self.device)
         else:
             raise ValueError
@@ -327,18 +328,13 @@ class ADCPCycEnv(DiscreteEnv):
         )
 
         # for full-filled states, only allow exit
-        try:
-            states.forward_masks[
-                (
-                    *(last_filled_pos == self.max_length - 1).nonzero(as_tuple=True),
-                    slice(None, self.n_actions - 1),
-                )
-            ] = False
+        states.forward_masks[
+            (
+                *(last_filled_pos == self.max_length - 1).nonzero(as_tuple=True),
+                slice(None, self.n_actions - 1),
+            )
+        ] = False
             # states.forward_masks[(*(last_filled_pos==self.max_length-1).nonzero(as_tuple=True),slice(None,self.n_actions-1))]
-        except:
-            import pdb
-
-            pdb.set_trace()
         # for l<l_min, prohibit exit actions
         states.forward_masks[
             (
@@ -600,6 +596,10 @@ class SimplestModule(nn.Module):
         x=self.output(x)
         return x
         
+       
+class SillyFeatureModule(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()       
         
 class OfflineSeqOnlyDataSet(Dataset):
     def __init__(self, env: ADCPCycEnv):
@@ -632,7 +632,7 @@ def seqlength_dist(seqs:List[str]):
     ax.set_xticks(np.arange(0.5,21),np.arange(0,21))
     return fig,ax
 
-aa_tokens = tuple(protein_letters_1to3.keys())
+# aa_tokens = tuple(protein_letters_1to3.keys())
 aa_tokens = tuple('KREDHQNCGPASTMLVIFWY')
 def aa_dist(seqs:List[str]):
     fig,ax=plt.subplots(1,1)
@@ -642,12 +642,12 @@ def aa_dist(seqs:List[str]):
         for i,aa in enumerate(seq):
             array[i,aa_tokens.index(aa)]+=1
     
-    # import pdb;pdb.set_trace()
+    
     # return array
     array=(array/(array.sum(axis=1).reshape(-1,1))).T
     
     np.nan_to_num(array,nan=0.) 
-    ax.imshow(array,cmap='YlGn')
+    ax.imshow(array,cmap='YlGn',vmin=0., vmax=1.)
     ax.set_xticks(np.arange(0,20),np.arange(1,21))
     ax.set_yticks(np.arange(0,20),aa_tokens)
     return fig,ax
@@ -656,18 +656,19 @@ def reward_dist(rewards:Tensor):
     fig,ax=plt.subplots(1,1)
     ax:Axes
     rewards=torch.exp(rewards).to('cpu').numpy()
-    ax.hist(rewards,bins=np.linspace(0,4,21))
+    ax.hist(rewards,bins=np.linspace(0,20,21),density=True)
     return fig,ax
+
 if __name__ == "__main__":
     reward_mode='simple_pattern'
     if reward_mode=='simple_pattern':
-        exp_id = 15
-        exp_name = 'exp-simple-large'
+        exp_id = 22
+        exp_name = 'exp-simple-hp-ls-lr0.01-hd1024-nl5-plateau'
         writer = SummaryWriter(log_dir=f"log/{exp_name}{exp_id}")
         # adcp_env = ADCPCycEnv(max_length=20)
         adcp_env = ADCPCycEnv(max_length=20,reward_mode='simple_pattern',module_mode='MLP',min_length=4)
         
-        module_pf, module_pb = adcp_env.make_modules(hide_dim=4096,num_layers=10)
+        module_pf, module_pb = adcp_env.make_modules(hide_dim=1024,num_layers=5)
         # dataloader = adcp_env.make_offline_dataloader(
         #     module_pf=module_pf, batch_size=32, shuffle=True
         # )
@@ -687,13 +688,13 @@ if __name__ == "__main__":
         )
 
         gfn = TBGFlowNet(logZ=0.0, pf=pf_estimator, pb=pb_estimator)
-        # gfn:TBGFlowNet = torch.load('log/exp-simple-nolog6-gfn.pt')
+        # gfn:TBGFlowNet = torch.load('/root/torchgfn/log/exp-simple-hp-ls-lr0.1-hd1024-nl5-20-gfn.pt')
         gfn.to(0)
         # gfn:TBGFlowNet = torch.load('log/exp2-gfn.pt',map_location='cpu')
         # TODO don't save model as a whole. Save its parameters/states only.
-        optimizer = torch.optim.Adam(gfn.pf_pb_parameters(), lr=1e-4)
-        optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-3})
-        # import pdb;pdb.set_trace()
+        optimizer = torch.optim.Adam(gfn.pf_pb_parameters(), lr=5e-1)
+        optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 5e-1})
+        
         # torch.nn.utils.clip_grad_value_(module_PF.parameters(), 0.5)
         # torch.nn.utils.clip_grad_value_(gfn.logz_parameters(), 1.)
 
@@ -709,10 +710,10 @@ if __name__ == "__main__":
                     
                 optimizer.zero_grad()
                 # optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-1})
-                # import pdb;pdb.set_trace()
+                scheduler=ReduceLROnPlateau(optimizer,threshold=0.05,min_lr=10e-4)
                 loss = gfn.loss(adcp_env, trajectories)
                 # print(loss)
-                # import pdb;pdb.set_trace()
+                
                 loss.backward()
                 writer.add_scalar("train/loss", loss.item(), global_step=step)
                 optimizer.step()
@@ -721,16 +722,19 @@ if __name__ == "__main__":
                     torch.save(gfn, f"log/{exp_name}{exp_id}-gfn.pt")
                     with torch.no_grad():
                         torch.save(gfn, f"log/{exp_name}{exp_id}-gfn.pt")
-                        valid_bs=250
+                        valid_bs=500
                         gfn.eval()
                         trajectories=gfn.sample_trajectories(adcp_env,valid_bs)
                         # trajectories.states[trajectories.when_is_done-1]
                         final_states=trajectories.states[trajectories.when_is_done - 1, torch.arange(valid_bs).to(adcp_env.device)]
                         seqs=adcp_env.states_to_seqs(final_states)
-                        writer.add_figure(tag='length_dist',figure=seqlength_dist(seqs)[0],global_step=step)
-                        writer.add_figure(tag='aa_dist',figure=aa_dist(seqs)[0],global_step=step)
-                        writer.add_figure(tag='reward_dist',figure=reward_dist(trajectories.log_rewards)[0],global_step=step)
-                        writer.add_text(tag='raw-seqs',text_string='\n'.join(seqs),global_step=step)
+                        writer.add_figure(tag='val/length_dist',figure=seqlength_dist(seqs)[0],global_step=step)
+                        writer.add_figure(tag='val/aa_dist',figure=aa_dist(seqs)[0],global_step=step)
+                        writer.add_figure(tag='val/reward_dist',figure=reward_dist(trajectories.log_rewards)[0],global_step=step)
+                        writer.add_text(tag='val/raw-seqs',text_string='\n'.join(seqs),global_step=step)
+                        loss = gfn.loss(adcp_env, trajectories)
+                        writer.add_scalar("val/loss", loss.item(), global_step=step)
+                        scheduler.step(loss)
                         gfn.train()
     else:
         exp_id = 4
@@ -763,7 +767,7 @@ if __name__ == "__main__":
         # TODO don't save model as a whole. Save its parameters/states only.
         optimizer = torch.optim.Adam(gfn.pf_pb_parameters(), lr=1e-4)
         optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-3})
-        # import pdb;pdb.set_trace()
+        
         # torch.nn.utils.clip_grad_value_(module_PF.parameters(), 0.5)
         # torch.nn.utils.clip_grad_value_(gfn.logz_parameters(), 1.)
 
@@ -776,10 +780,10 @@ if __name__ == "__main__":
                 for trajectories in tqdm(dataloader):
                     optimizer.zero_grad()
                     # optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-1})
-                    # import pdb;pdb.set_trace()
+                    
                     loss = gfn.loss(adcp_env, trajectories)
                     # print(loss)
-                    # import pdb;pdb.set_trace()
+                    
                     loss.backward()
                     writer.add_scalar("train/loss", loss.item(), global_step=step)
                     optimizer.step()
