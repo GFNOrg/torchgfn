@@ -1,7 +1,7 @@
 # %%
 # %load_ext autoreload
 # %autoreload 2
-
+from __future__ import annotations
 from functools import partial
 from typing import List, Literal, Optional, Tuple
 
@@ -11,7 +11,8 @@ import pandas as pd
 # %%
 import torch
 from Bio.Data.IUPACData import protein_letters_1to3
-from torch import nn
+from torch import nn,Tensor
+from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard.writer import SummaryWriter
 from torch_geometric.data import Batch, Data
@@ -30,7 +31,8 @@ from gfn.states import DiscreteStates, States
 from gfn.utils import NeuralNet
 from gfn.utils.modules import NeuralNet
 
-
+import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 # Batch.from_data_list
 # %%
 class IdentityLongPreprocessor(Preprocessor):
@@ -52,13 +54,17 @@ class ADCPCycEnv(DiscreteEnv):
         self,
         min_length: int = 5,
         max_length: int = 16,
-        device_str: str = 0,
+        device_str: str|int = 0,
+        reward_mode:Literal['look_up','simple_pattern']='look_up',
+        module_mode:Literal['CycEncoder','MLP']='CycEncoder'
         # preprocessor: Optional[Preprocessor] = None,
     ):
         self.min_length = min_length
         self.max_length = max_length
         self.device = torch.device(device_str)
         self.aa_tokens = tuple(protein_letters_1to3.keys())
+        self.reward_mode=reward_mode
+        self.module_mode=module_mode
         n_actions = len(self.aa_tokens) + 1  # last action reserved for exit
 
         self.s0_code, self.sf_code, self.dummy_code, self.exit_code = (
@@ -123,12 +129,7 @@ class ADCPCycEnv(DiscreteEnv):
             & (action_tensor != self.exit_code)
             & (action_tensor != self.dummy_code)
         )
-        try:
-            valid_indices = first_unfilled_pos[valid_mask]
-        except:
-            import pdb
-
-            pdb.set_trace()
+        valid_indices = first_unfilled_pos[valid_mask]
         # batch_indices = torch.arange(states_tensor.shape[0]
         #         )[valid_mask].to(states_tensor.device)
         # return states_tensor,valid_mask,valid_indices
@@ -260,12 +261,56 @@ class ADCPCycEnv(DiscreteEnv):
 
     def log_reward(
         self, final_states: DiscreteStates
-    ) -> TT["batch_shape", torch.float]:
+    ) -> Tensor:
         # place holder
         seqs = self.states_to_seqs(final_states)
-        return torch.tensor([self.offline_db["score"].get(i, 0.02) for i in seqs]).to(
-            self.device
-        )
+        if self.reward_mode=='look_up':
+            return torch.tensor([self.offline_db["score"].get(i, 0.02) for i in seqs]).to(self.device)
+        elif self.reward_mode=='simple_pattern':
+            '''
+            debug rewards:
+            1. seq-length: rewards:
+            length:
+                [0,4]: 2*x
+                [5,9]: 10-2*(x-5)
+                [10,14]: 2*(x-10)
+                [15,20]: 10-2*(x-15)
+            
+            1-5 up; 5-15 down; 15-20 up
+            2. pattern rewards:
+            switch(pos%3):
+                0 -> KREDHQN +p;
+                1 -> CGPAST +p;
+                2 -> VMLVIFWY +p;
+                p: pos-wise score = (10/seq-length)
+            '''
+            mode_dict={
+                0:'KREDHQN',
+                1:'CGPAST',
+                2:'MLVIFWY',
+            }
+            def simple_pattern(seq:str):
+                s=0.
+                seq_len=len(seq)
+                if seq_len==0:
+                    return (s/5)+1e-5
+                elif seq_len<=4:
+                    s+=2*seq_len
+                elif seq_len<=9:
+                    s+=10-2*(seq_len-5)
+                elif seq_len<=14:
+                    s+=2*(seq_len-10)
+                elif seq_len<=20:
+                    s+=10-2*(seq_len-15)
+                    
+                pos_score=10/len(seq)
+                for i,a in enumerate(seq):
+                    if a in mode_dict[i%3]:
+                        s+=pos_score
+                return (s/5)+1e-5
+            return torch.log(torch.tensor([simple_pattern(i) for i in seqs])).to(self.device)
+        else:
+            raise ValueError
         # return torch.log(torch.tensor([self.offline_db['score'].get(i,0.02) for i in seqs])).to(self.device)
         # return torch.randn(final_states.batch_shape,device=final_states.tensor.device)
 
@@ -312,18 +357,16 @@ class ADCPCycEnv(DiscreteEnv):
         valid_indices = states_tensor[
             (*valid_mask.nonzero(as_tuple=True), last_filled_pos[valid_mask])
         ]
-        try:
-            states.backward_masks[
-                (*valid_mask.nonzero(as_tuple=True), valid_indices)
-            ] = True
-        except:
-            import pdb
-
-            pdb.set_trace()
+        states.backward_masks[
+            (*valid_mask.nonzero(as_tuple=True), valid_indices)
+        ] = True
 
     def make_random_states_tensor(
         self, batch_shape: Tuple[int, ...]
     ) -> TT["batch_shape", "state_shape", torch.float]:
+        '''
+        #TODO sf in randoms?
+        '''
         states_tensor = torch.full(
             (*batch_shape, self.max_length), self.s0_code, device=self.device
         ).long()
@@ -345,14 +388,24 @@ class ADCPCycEnv(DiscreteEnv):
         # )
         # states.backward_masks = states.tensor != 0
 
-    def make_modules(self):
+    def make_modules(self,**kwargs)->Tuple[nn.Module,nn.Module]:
         # raise NotImplementedError
         # env=self
-        encoder = CircularEncoder(self)
-        module_PF, module_PB = SillyModule(self.n_actions, encoder), SillyModule(
-            self.n_actions - 1, encoder
-        )
-
+        '''
+        TODO set up shared truncks
+        kwargs: for Module initialization
+        '''
+        if self.module_mode=='CycEncoder':
+            encoder = CircularEncoder(self)
+            module_PF, module_PB = SillyModule(self.n_actions, encoder), SillyModule(
+                self.n_actions - 1, encoder
+            )
+        elif self.module_mode=='MLP':
+             module_PF= SimplestModule(self,self.n_actions,**kwargs)
+             module_PB = SimplestModule(self,self.n_actions-1,share_trunk_with=module_PF)
+        else:
+            raise ValueError
+        
         return module_PF.to(self.device), module_PB.to(self.device)
 
     def make_offline_dataloader(
@@ -396,6 +449,9 @@ class ADCPCycEnv(DiscreteEnv):
 
 
 class CircularEncoder(nn.Module):
+    '''
+    TODO remove ADCPCycEnv dependence
+    '''
     def __init__(self, env: ADCPCycEnv):
         super().__init__()
         self.embedding_dim = 128
@@ -494,6 +550,57 @@ class SillyModule(nn.Module):
         return trajs
 
 
+class SimplestModule(nn.Module):
+    def __init__(self,
+        env:ADCPCycEnv,num_outputs:int,
+        hide_dim:int=2048,num_layers:int=5,dropout:float=0.1,
+        share_trunk_with:SimplestModule|None=None,
+        ):
+        super().__init__()
+        self.max_length,self.num_tokens,self.sf_code = (
+                env.max_length,
+                len(env.aa_tokens),
+                env.sf_code,
+                )
+        
+        if share_trunk_with is None:
+            (self.num_outputs,self.hide_dim,
+            self.num_layers,self.dropout
+                )=num_outputs,hide_dim,num_layers,dropout
+            
+            self.input = nn.Linear(self.max_length*(self.num_tokens+1),hide_dim)
+            
+            hidden_layers = []
+            for _ in range(num_layers):
+                hidden_layers.append(nn.Dropout(dropout))
+                hidden_layers.append(nn.ReLU())
+                hidden_layers.append(nn.Linear(hide_dim, hide_dim))
+            self.hidden = nn.Sequential(*hidden_layers)
+        else:
+            (self.num_outputs,self.hide_dim,
+            self.num_layers,self.dropout
+                )=(share_trunk_with.num_outputs,
+                   share_trunk_with.hide_dim,
+                   share_trunk_with.num_layers,
+                   share_trunk_with.dropout
+                   )
+            self.input=share_trunk_with.input
+            self.hidden=share_trunk_with.hidden
+        self.output = nn.Linear(hide_dim, num_outputs)
+        
+    def forward(self, states_tensor:Tensor):
+        # states_tensor=torch.where(states_tensor!=self.sf_code,states_tensor,self.num_tokens+1)
+        # states_tensor=F.one_hot(states_tensor,num_classes=self.num_tokens+2)
+        x=torch.zeros(*states_tensor.shape,self.num_tokens+1).to(states_tensor.device)
+        mask=states_tensor!=self.sf_code
+        x[mask]=F.one_hot(states_tensor[mask],self.num_tokens+1).type_as(x)
+        x=x.reshape(*x.shape[:-2],-1)
+        x=self.input(x)
+        x=self.hidden(x)
+        x=self.output(x)
+        return x
+        
+        
 class OfflineSeqOnlyDataSet(Dataset):
     def __init__(self, env: ADCPCycEnv):
         super().__init__()
@@ -518,45 +625,88 @@ def check_grads(model: nn.Module):
                 print(f"NaN gradient in {name}")
 
 
-if __name__ == "__main__":
-    exp_id = 4
-    writer = SummaryWriter(log_dir=f"log/exp{exp_id}")
-    adcp_env = ADCPCycEnv(max_length=20)
-    module_pf, module_pb = adcp_env.make_modules()
-    dataloader = adcp_env.make_offline_dataloader(
-        module_pf=module_pf, batch_size=32, shuffle=True
-    )
+def seqlength_dist(seqs:List[str]):
+    fig,ax=plt.subplots(1,1)
+    ax:Axes
+    pd.Series([len(i)for i in seqs]).hist(ax=ax,density=True,bins=np.linspace(0,20,21))
+    ax.set_xticks(np.arange(0.5,21),np.arange(0,21))
+    return fig,ax
 
-    pf_estimator = DiscretePolicyEstimator(
-        module_pf,
-        adcp_env.n_actions,
-        is_backward=False,
-        preprocessor=adcp_env.preprocessor,
-    )
-
-    pb_estimator = DiscretePolicyEstimator(
-        module_pb,
-        adcp_env.n_actions,
-        is_backward=True,
-        preprocessor=adcp_env.preprocessor,
-    )
-
-    gfn = TBGFlowNet(logZ=0.0, pf=pf_estimator, pb=pb_estimator)
-    # gfn:TBGFlowNet = torch.load('log/exp2-gfn.pt',map_location='cpu')
-    # TODO don't save model as a whole. Save its parameters/states only.
-    optimizer = torch.optim.Adam(gfn.pf_pb_parameters(), lr=1e-4)
-    optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-3})
+aa_tokens = tuple(protein_letters_1to3.keys())
+aa_tokens = tuple('KREDHQNCGPASTMLVIFWY')
+def aa_dist(seqs:List[str]):
+    fig,ax=plt.subplots(1,1)
+    ax:Axes
+    array=np.zeros((20,20),dtype=np.int64)
+    for seq in seqs:
+        for i,aa in enumerate(seq):
+            array[i,aa_tokens.index(aa)]+=1
+    
     # import pdb;pdb.set_trace()
-    # torch.nn.utils.clip_grad_value_(module_PF.parameters(), 0.5)
-    # torch.nn.utils.clip_grad_value_(gfn.logz_parameters(), 1.)
+    # return array
+    array=(array/(array.sum(axis=1).reshape(-1,1))).T
+    
+    np.nan_to_num(array,nan=0.) 
+    ax.imshow(array,cmap='YlGn')
+    ax.set_xticks(np.arange(0,20),np.arange(1,21))
+    ax.set_yticks(np.arange(0,20),aa_tokens)
+    return fig,ax
 
-    step = 0
-    from tqdm import tqdm
+def reward_dist(rewards:Tensor):
+    fig,ax=plt.subplots(1,1)
+    ax:Axes
+    rewards=torch.exp(rewards).to('cpu').numpy()
+    ax.hist(rewards,bins=np.linspace(0,4,21))
+    return fig,ax
+if __name__ == "__main__":
+    reward_mode='simple_pattern'
+    if reward_mode=='simple_pattern':
+        exp_id = 15
+        exp_name = 'exp-simple-large'
+        writer = SummaryWriter(log_dir=f"log/{exp_name}{exp_id}")
+        # adcp_env = ADCPCycEnv(max_length=20)
+        adcp_env = ADCPCycEnv(max_length=20,reward_mode='simple_pattern',module_mode='MLP',min_length=4)
+        
+        module_pf, module_pb = adcp_env.make_modules(hide_dim=4096,num_layers=10)
+        # dataloader = adcp_env.make_offline_dataloader(
+        #     module_pf=module_pf, batch_size=32, shuffle=True
+        # )
 
-    with torch.autograd.set_detect_anomaly(True):
-        for e in range(100):
-            writer.add_scalar("epoch", e, global_step=step)
-            for trajectories in tqdm(dataloader):
+        pf_estimator = DiscretePolicyEstimator(
+            module_pf,
+            adcp_env.n_actions,
+            is_backward=False,
+            preprocessor=adcp_env.preprocessor,
+        )
+
+        pb_estimator = DiscretePolicyEstimator(
+            module_pb,
+            adcp_env.n_actions,
+            is_backward=True,
+            preprocessor=adcp_env.preprocessor,
+        )
+
+        gfn = TBGFlowNet(logZ=0.0, pf=pf_estimator, pb=pb_estimator)
+        # gfn:TBGFlowNet = torch.load('log/exp-simple-nolog6-gfn.pt')
+        gfn.to(0)
+        # gfn:TBGFlowNet = torch.load('log/exp2-gfn.pt',map_location='cpu')
+        # TODO don't save model as a whole. Save its parameters/states only.
+        optimizer = torch.optim.Adam(gfn.pf_pb_parameters(), lr=1e-4)
+        optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-3})
+        # import pdb;pdb.set_trace()
+        # torch.nn.utils.clip_grad_value_(module_PF.parameters(), 0.5)
+        # torch.nn.utils.clip_grad_value_(gfn.logz_parameters(), 1.)
+
+        step = 0
+        from tqdm import tqdm
+
+        with torch.autograd.set_detect_anomaly(True):
+            for e in tqdm(range(300000)):
+                # writer.add_scalar("epoch", e, global_step=step)
+                # for trajectories in tqdm(dataloader):
+                with torch.no_grad():
+                    trajectories=gfn.sample_trajectories(adcp_env,32)
+                    
                 optimizer.zero_grad()
                 # optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-1})
                 # import pdb;pdb.set_trace()
@@ -567,9 +717,75 @@ if __name__ == "__main__":
                 writer.add_scalar("train/loss", loss.item(), global_step=step)
                 optimizer.step()
                 step += 1
+                if e%100==0:
+                    torch.save(gfn, f"log/{exp_name}{exp_id}-gfn.pt")
+                    with torch.no_grad():
+                        torch.save(gfn, f"log/{exp_name}{exp_id}-gfn.pt")
+                        valid_bs=250
+                        gfn.eval()
+                        trajectories=gfn.sample_trajectories(adcp_env,valid_bs)
+                        # trajectories.states[trajectories.when_is_done-1]
+                        final_states=trajectories.states[trajectories.when_is_done - 1, torch.arange(valid_bs).to(adcp_env.device)]
+                        seqs=adcp_env.states_to_seqs(final_states)
+                        writer.add_figure(tag='length_dist',figure=seqlength_dist(seqs)[0],global_step=step)
+                        writer.add_figure(tag='aa_dist',figure=aa_dist(seqs)[0],global_step=step)
+                        writer.add_figure(tag='reward_dist',figure=reward_dist(trajectories.log_rewards)[0],global_step=step)
+                        writer.add_text(tag='raw-seqs',text_string='\n'.join(seqs),global_step=step)
+                        gfn.train()
+    else:
+        exp_id = 4
+        exp_name = 'exp'
+        writer = SummaryWriter(log_dir=f"log/{exp_name}{exp_id}")
+        adcp_env = ADCPCycEnv(max_length=20)
+        # adcp_env = ADCPCycEnv(max_length=20,reward_mode='simple_pattern',module_mode='MLP')
+        
+        module_pf, module_pb = adcp_env.make_modules()
+        dataloader = adcp_env.make_offline_dataloader(
+            module_pf=module_pf, batch_size=32, shuffle=True
+        )
 
-            torch.save(gfn, f"log/exp{exp_id}-gfn.pt")
+        pf_estimator = DiscretePolicyEstimator(
+            module_pf,
+            adcp_env.n_actions,
+            is_backward=False,
+            preprocessor=adcp_env.preprocessor,
+        )
 
+        pb_estimator = DiscretePolicyEstimator(
+            module_pb,
+            adcp_env.n_actions,
+            is_backward=True,
+            preprocessor=adcp_env.preprocessor,
+        )
+
+        gfn = TBGFlowNet(logZ=0.0, pf=pf_estimator, pb=pb_estimator)
+        # gfn:TBGFlowNet = torch.load('log/exp2-gfn.pt',map_location='cpu')
+        # TODO don't save model as a whole. Save its parameters/states only.
+        optimizer = torch.optim.Adam(gfn.pf_pb_parameters(), lr=1e-4)
+        optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-3})
+        # import pdb;pdb.set_trace()
+        # torch.nn.utils.clip_grad_value_(module_PF.parameters(), 0.5)
+        # torch.nn.utils.clip_grad_value_(gfn.logz_parameters(), 1.)
+
+        step = 0
+        from tqdm import tqdm
+
+        with torch.autograd.set_detect_anomaly(True):
+            for e in range(100):
+                writer.add_scalar("epoch", e, global_step=step)
+                for trajectories in tqdm(dataloader):
+                    optimizer.zero_grad()
+                    # optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-1})
+                    # import pdb;pdb.set_trace()
+                    loss = gfn.loss(adcp_env, trajectories)
+                    # print(loss)
+                    # import pdb;pdb.set_trace()
+                    loss.backward()
+                    writer.add_scalar("train/loss", loss.item(), global_step=step)
+                    optimizer.step()
+                    step += 1
+
+                torch.save(gfn, f"log/exp{exp_id}-gfn.pt")
 
 def test_ADCPCycEnv():
     raise NotImplementedError

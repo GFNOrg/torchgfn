@@ -37,7 +37,8 @@
         "*pkl",
         "reseek*",
         "log/",
-        "*.db/"
+        "*.db/",
+        "*csv",
       ],
       "reportPrivateImportUsage":"information",
       "reportAttributeAccessIssue":"information",
