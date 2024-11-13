@@ -203,9 +203,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         )
         return fm_loss + self.alpha * rm_loss
 
-    def to_training_samples(
-        self, trajectories: Trajectories
-    ) -> Union[
+    def to_training_samples(self, trajectories: Trajectories) -> Union[
         Tuple[DiscreteStates, DiscreteStates, torch.Tensor, torch.Tensor],
         Tuple[DiscreteStates, DiscreteStates, None, None],
         Tuple[States, States, torch.Tensor, torch.Tensor],
