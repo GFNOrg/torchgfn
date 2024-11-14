@@ -11,11 +11,7 @@ from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
-from gfn.utils.common import has_log_probs
-from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
-)
+from gfn.utils.prob_calculations import get_traj_pfs_and_pbs
 
 TrainingSampleType = TypeVar(
     "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
@@ -145,6 +141,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
             trajectories: Trajectories to evaluate.
             fill_value: Value to use for invalid states (i.e. $s_f$ that is added to
                 shorter trajectories).
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns: A tuple of float tensors of shape (max_length, n_trajectories) containing
             the log_pf and log_pb for each action in each trajectory. The first one can be None.
@@ -153,103 +150,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
             ValueError: if the trajectories are backward.
             AssertionError: when actions and states dimensions mismatch.
         """
-        # fill value is the value used for invalid states (sink state usually)
-        if trajectories.is_backward:
-            raise ValueError("Backward trajectories are not supported")
-
-        valid_states = trajectories.states[~trajectories.states.is_sink_state]
-        valid_actions = trajectories.actions[~trajectories.actions.is_dummy]
-
-        # uncomment next line for debugging
-        # assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions.is_dummy)
-
-        if valid_states.batch_shape != tuple(valid_actions.batch_shape):
-            raise AssertionError("Something wrong happening with log_pf evaluations")
-
-        if has_log_probs(trajectories) and not recalculate_all_logprobs:
-            log_pf_trajectories = trajectories.log_probs
-        else:
-            if (
-                trajectories.estimator_outputs is not None
-                and not recalculate_all_logprobs
-            ):
-                estimator_outputs = trajectories.estimator_outputs[
-                    ~trajectories.actions.is_dummy
-                ]
-            else:
-                if trajectories.conditioning is not None:
-                    cond_dim = (-1,) * len(trajectories.conditioning.shape)
-                    traj_len = trajectories.states.tensor.shape[0]
-                    masked_cond = trajectories.conditioning.unsqueeze(0).expand(
-                        (traj_len,) + cond_dim
-                    )[~trajectories.states.is_sink_state]
-
-                    # Here, we pass all valid states, i.e., non-sink states.
-                    with has_conditioning_exception_handler("pf", self.pf):
-                        estimator_outputs = self.pf(valid_states, masked_cond)
-                else:
-                    # Here, we pass all valid states, i.e., non-sink states.
-                    with no_conditioning_exception_handler("pf", self.pf):
-                        estimator_outputs = self.pf(valid_states)
-
-            # Calculates the log PF of the actions sampled off policy.
-            valid_log_pf_actions = self.pf.to_probability_distribution(
-                valid_states, estimator_outputs
-            ).log_prob(
-                valid_actions.tensor
-            )  # Using the actions sampled off-policy.
-            log_pf_trajectories = torch.full_like(
-                trajectories.actions.tensor[..., 0],
-                fill_value=fill_value,
-                dtype=torch.float,
-            )
-            log_pf_trajectories[~trajectories.actions.is_dummy] = valid_log_pf_actions
-
-        non_initial_valid_states = valid_states[~valid_states.is_initial_state]
-        non_exit_valid_actions = valid_actions[~valid_actions.is_exit]
-
-        # Using all non-initial states, calculate the backward policy, and the logprobs
-        # of those actions.
-        if trajectories.conditioning is not None:
-            # We need to index the conditioning vector to broadcast over the states.
-            cond_dim = (-1,) * len(trajectories.conditioning.shape)
-            traj_len = trajectories.states.tensor.shape[0]
-            masked_cond = trajectories.conditioning.unsqueeze(0).expand(
-                (traj_len,) + cond_dim
-            )[~trajectories.states.is_sink_state][~valid_states.is_initial_state]
-
-            # Pass all valid states, i.e., non-sink states, except the initial state.
-            with has_conditioning_exception_handler("pb", self.pb):
-                estimator_outputs = self.pb(non_initial_valid_states, masked_cond)
-        else:
-            # Pass all valid states, i.e., non-sink states, except the initial state.
-            with no_conditioning_exception_handler("pb", self.pb):
-                estimator_outputs = self.pb(non_initial_valid_states)
-
-        valid_log_pb_actions = self.pb.to_probability_distribution(
-            non_initial_valid_states, estimator_outputs
-        ).log_prob(non_exit_valid_actions.tensor)
-
-        log_pb_trajectories = torch.full_like(
-            trajectories.actions.tensor[..., 0],
-            fill_value=fill_value,
-            dtype=torch.float,
+        return get_traj_pfs_and_pbs(
+            self.pf, self.pb, trajectories, fill_value, recalculate_all_logprobs
         )
-        log_pb_trajectories_slice = torch.full_like(
-            valid_actions.tensor[..., 0], fill_value=fill_value, dtype=torch.float
-        )
-        log_pb_trajectories_slice[~valid_actions.is_exit] = valid_log_pb_actions
-        log_pb_trajectories[~trajectories.actions.is_dummy] = log_pb_trajectories_slice
-
-        assert log_pf_trajectories.shape == (
-            trajectories.max_length,
-            trajectories.n_trajectories,
-        )
-        assert log_pb_trajectories.shape == (
-            trajectories.max_length,
-            trajectories.n_trajectories,
-        )
-        return log_pf_trajectories, log_pb_trajectories
 
     def get_trajectories_scores(
         self,
@@ -265,7 +168,6 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         Returns: A tuple of float tensors of shape (n_trajectories,)
             containing the total log_pf, total log_pb, and the total
             log-likelihood of the trajectories.
-
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs

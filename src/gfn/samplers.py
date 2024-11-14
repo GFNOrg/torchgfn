@@ -35,7 +35,7 @@ class Sampler:
         save_estimator_outputs: bool = False,
         save_logprobs: bool = True,
         **policy_kwargs: Any,
-    ) -> Tuple[Actions, torch.Tensor | None, torch.Tensor | None,]:
+    ) -> Tuple[Actions, torch.Tensor | None, torch.Tensor | None]:
         """Samples actions from the given states.
 
         Args:
