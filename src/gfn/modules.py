@@ -9,7 +9,6 @@ from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import UnsqueezedCategorical
 
-
 REDUCTION_FXNS = {
     "mean": torch.mean,
     "sum": torch.sum,
