@@ -11,7 +11,7 @@ from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
-from gfn.utils.prob_calculations import get_traj_pfs_and_pbs
+from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
 
 TrainingSampleType = TypeVar(
     "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
@@ -150,7 +150,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
             ValueError: if the trajectories are backward.
             AssertionError: when actions and states dimensions mismatch.
         """
-        return get_traj_pfs_and_pbs(
+        return get_trajectory_pfs_and_pbs(
             self.pf, self.pb, trajectories, fill_value, recalculate_all_logprobs
         )
 

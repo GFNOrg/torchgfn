@@ -31,7 +31,7 @@ def check_cond_forward(
 #########################
 
 
-def get_traj_pfs_and_pbs(
+def get_trajectory_pfs_and_pbs(
     pf: GFNModule,
     pb: GFNModule,
     trajectories: Trajectories,
@@ -45,13 +45,13 @@ def get_traj_pfs_and_pbs(
     # uncomment next line for debugging
     # assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions.is_dummy)
 
-    log_pf_trajectories = get_traj_pfs(
+    log_pf_trajectories = get_trajectory_pfs(
         pf,
         trajectories,
         fill_value=fill_value,
         recalculate_all_logprobs=recalculate_all_logprobs,
     )
-    log_pb_trajectories = get_traj_pbs(pb, trajectories, fill_value=fill_value)
+    log_pb_trajectories = get_trajectory_pbs(pb, trajectories, fill_value=fill_value)
 
     assert log_pf_trajectories.shape == (
         trajectories.max_length,
@@ -65,7 +65,7 @@ def get_traj_pfs_and_pbs(
     return log_pf_trajectories, log_pb_trajectories
 
 
-def get_traj_pfs(
+def get_trajectory_pfs(
     pf: GFNModule,
     trajectories: Trajectories,
     fill_value: float = 0.0,
@@ -113,7 +113,7 @@ def get_traj_pfs(
     return log_pf_trajectories
 
 
-def get_traj_pbs(
+def get_trajectory_pbs(
     pb: GFNModule, trajectories: Trajectories, fill_value: float = 0.0
 ) -> torch.Tensor:
     # Note the different mask for valid states and actions compared to the pf case.
@@ -160,7 +160,7 @@ def get_traj_pbs(
 ########################
 
 
-def get_trans_pfs_and_pbs(
+def get_transition_pfs_and_pbs(
     pf: GFNModule,
     pb: GFNModule,
     transitions: Transitions,
@@ -169,8 +169,8 @@ def get_trans_pfs_and_pbs(
     if transitions.is_backward:
         raise ValueError("Backward transitions are not supported")
 
-    log_pf_transitions = get_trans_pfs(pf, transitions, recalculate_all_logprobs)
-    log_pb_transitions = get_trans_pbs(pb, transitions)
+    log_pf_transitions = get_transition_pfs(pf, transitions, recalculate_all_logprobs)
+    log_pb_transitions = get_transition_pbs(pb, transitions)
 
     assert log_pf_transitions.shape == (transitions.n_transitions,)
     assert log_pb_transitions.shape == (transitions.n_transitions,)
@@ -178,7 +178,7 @@ def get_trans_pfs_and_pbs(
     return log_pf_transitions, log_pb_transitions
 
 
-def get_trans_pfs(
+def get_transition_pfs(
     pf: GFNModule, transitions: Transitions, recalculate_all_logprobs: bool = False
 ) -> torch.Tensor:
     states = transitions.states
@@ -203,7 +203,7 @@ def get_trans_pfs(
     return log_pf_actions
 
 
-def get_trans_pbs(pb: GFNModule, transitions: Transitions) -> torch.Tensor:
+def get_transition_pbs(pb: GFNModule, transitions: Transitions) -> torch.Tensor:
     # automatically removes invalid transitions (i.e. s_f -> s_f)
     valid_next_states = transitions.next_states[~transitions.is_done]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]

@@ -12,7 +12,7 @@ from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
 )
-from gfn.utils.prob_calculations import get_trans_pfs_and_pbs
+from gfn.utils.prob_calculations import get_transition_pfs_and_pbs
 
 
 def check_compatibility(states, actions, transitions):
@@ -82,7 +82,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
     def get_pfs_and_pbs(
         self, transitions: Transitions, recalculate_all_logprobs: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return get_trans_pfs_and_pbs(
+        return get_transition_pfs_and_pbs(
             self.pf, self.pb, transitions, recalculate_all_logprobs
         )
 
