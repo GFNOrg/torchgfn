@@ -1,8 +1,9 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
 from abc import ABC
+import enum
 from math import prod
-from typing import ClassVar, Sequence
+from typing import ClassVar, Optional, Sequence
 
 import torch
 
@@ -168,3 +169,86 @@ class Actions(ABC):
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))
         )
         return self.compare(exit_actions_tensor)
+
+
+class GraphActionType(enum.Enum):
+    EXIT = enum.auto()
+    ADD_NODE = enum.auto()
+    ADD_EDGE = enum.auto()
+
+
+class GraphActions:
+
+    nodes_features_dim: ClassVar[int]  # Dim size of the features tensor.
+    edge_features_dim: ClassVar[int]  # Dim size of the edge features tensor.
+
+    def __init__(self, action_type: GraphActionType, features: torch.Tensor, edge_index: Optional[torch.Tensor] = None):
+        """Initializes a GraphAction object.
+    
+        Args:
+            action: a GraphActionType indicating the type of action.
+            features: a tensor of shape (*batch_shape, feature_shape) representing the features of the nodes or of the edges, depending on the action type
+            edge_index: an tensor of shape (*batch_shape, 2) representing the edge to add.
+                This must defined if and only if the action type is GraphActionType.AddEdge.
+        """
+        self.action_type = action_type
+        if self.action_type == GraphActionType.ADD_NODE:
+            assert features.shape[-1] == self.nodes_features_dim
+            assert edge_index is None
+        elif self.action_type == GraphActionType.ADD_EDGE:
+            assert features.shape[-1] == self.edge_features_dim
+            assert edge_index is not None
+            assert edge_index.shape[-1] == 2
+
+    
+        self.features = features
+        self.edge_index = edge_index
+        self.batch_shape = tuple(self.features.shape[:-1])
+
+    def __repr__(self):
+        return f"""GraphAction object of type {self.action_type} and features of shape {self.features.shape}."""
+
+    @property
+    def device(self) -> torch.device:
+        """Returns the device of the features tensor."""
+        return self.features.device
+
+    def __len__(self) -> int:
+        """Returns the number of actions in the batch."""
+        return prod(self.batch_shape)
+
+    def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> GraphActions:
+        """Get particular actions of the batch."""
+        features = self.features[index]
+        edge_index = self.edge_index[index] if self.edge_index is not None else None
+        return GraphActions(self.action_type, features, edge_index)
+
+    def __setitem__(self, index: int | Sequence[int] | Sequence[bool], action: GraphActions) -> None:
+        """Set particular actions of the batch."""
+        assert self.action_type == action.action_type
+        self.features[index] = action.features
+        if self.edge_index is not None:
+            self.edge_index[index] = action.edge_index
+    
+    def compare(self, other: GraphActions) -> torch.Tensor:
+        """Compares the actions to another GraphAction object.
+
+        Args:
+            other: GraphAction object to compare.
+
+        Returns: boolean tensor of shape batch_shape indicating whether the actions are equal.
+        """
+        if self.action_type != other.action_type:
+            return torch.zeros(self.batch_shape, dtype=torch.bool, device=self.device)
+        out = torch.all(self.features == other.features, dim=-1)
+        if self.edge_index is not None:
+            out &= torch.all(self.edge_index == other.edge_index, dim=-1)
+        return out
+
+    @property
+    def is_exit(self) -> torch.Tensor:
+        """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are exit actions."""
+        return torch.full(self.batch_shape, self.action_type == GraphActionType.Exit, dtype=torch.bool, device=self.device)
+
+
+        

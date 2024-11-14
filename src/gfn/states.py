@@ -512,14 +512,13 @@ class GraphStates(ABC):
     """
 
     s0: ClassVar[Data]
-    sf: ClassVar[Data]
+    sf: ClassVar[Optional[Data]]
     node_feature_dim: ClassVar[int]
     edge_feature_dim: ClassVar[int]
 
     def __init__(self, graphs: Batch):
         self.data: Batch = graphs
         self.batch_shape: int = len(self.data)
-        self.state_shape = (self.data.get_example(0).num_nodes, self.node_feature_dim)
         self._log_rewards: float = None
 
     @classmethod
@@ -550,6 +549,9 @@ class GraphStates(ABC):
 
     @classmethod
     def make_sink_states_graph(cls, batch_shape: Tuple) -> Batch:
+        if cls.sf is None:
+            raise NotImplementedError("Sink state is not defined")
+
         if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
             raise NotImplementedError(
                 "Batch shape with more than one dimension is not supported"

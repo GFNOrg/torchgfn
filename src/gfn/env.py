@@ -4,7 +4,7 @@ from typing import Optional, Tuple, Union
 import torch
 from torch_geometric.data import Batch, Data
 
-from gfn.actions import Actions
+from gfn.actions import Actions, GraphActions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import set_seed
@@ -570,9 +570,6 @@ class GraphEnv(Env):
         s0: Data,
         node_feature_dim: int,
         edge_feature_dim: int,
-        action_shape: Tuple,
-        dummy_action: torch.Tensor,
-        exit_action: torch.Tensor,
         sf: Optional[Data] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
@@ -593,26 +590,12 @@ class GraphEnv(Env):
                 that can be fed into a neural network. Defaults to None, in which case
                 the IdentityPreprocessor is used.
         """
-        self.device = get_device(device_str, default_device=s0.x.device)
-        self.s0 = s0.to(self.device)
+        self.s0 = s0.to(device_str)
 
         self.node_feature_dim = node_feature_dim
         self.edge_feature_dim = edge_feature_dim
-        self.state_shape = (s0.num_nodes, self.node_feature_dim)
-        assert s0.x.shape == self.state_shape
 
-        if sf is None:
-            sf = Data(
-                x=torch.full(self.state_shape, -float("inf")),
-                edge_attr=torch.full((s0.num_edges, edge_feature_dim), -float("inf")),
-                edge_index=s0.edge_index,
-            ).to(self.device)
-        self.sf: torch.Tensor = sf
-        assert self.sf.x.shape == self.state_shape
-
-        self.action_shape = action_shape
-        self.dummy_action = dummy_action
-        self.exit_action = exit_action
+        self.sf = sf
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
@@ -631,6 +614,21 @@ class GraphEnv(Env):
             make_random_states_graph = env.make_random_states_tensor
 
         return GraphEnvStates
+
+    def make_actions_class(self) -> type[GraphActions]:
+        """The default Actions class factory for all Environments.
+
+        Returns a class that inherits from Actions and implements assumed methods.
+        The make_actions_class method should be overwritten to achieve more
+        environment-specific Actions functionality.
+        """
+        env = self
+
+        class DefaultGraphAction(GraphActions):
+            nodes_features_dim = env.node_feature_dim
+            edge_features_dim = env.edge_feature_dim
+
+        return DefaultGraphAction
 
     @abstractmethod
     def step(self, states: GraphStates, actions: Actions) -> GraphStates:
