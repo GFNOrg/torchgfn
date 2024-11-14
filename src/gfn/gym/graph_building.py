@@ -47,19 +47,19 @@ class GraphBuilding(GraphEnv):
 
         if actions.action_type == GraphActionType.ADD_NODE:
             if graphs.x is None:
-                graphs.x = actions.features[:, None, :]
+                graphs.x = actions.features
             else:
-                graphs.x = torch.cat([graphs.x, actions.features[:, None, :]], dim=1)
+                graphs.x = torch.cat([graphs.x, actions.features])
 
         if actions.action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
             if graphs.edge_attr is None:
-                graphs.edge_attr = actions.features[:, None, :]
+                graphs.edge_attr = actions.features
                 assert graphs.edge_index is None
-                graphs.edge_index = actions.edge_index[:, :, None]
+                graphs.edge_index = actions.edge_index
             else:
-                graphs.edge_attr = torch.cat([graphs.edge_attr, actions.features[:, None, :]], dim=1)
-                graphs.edge_index = torch.cat([graphs.edge_index, actions.edge_index[:, :, None]], dim=2)
+                graphs.edge_attr = torch.cat([graphs.edge_attr, actions.features])
+                graphs.edge_index = torch.cat([graphs.edge_index, actions.edge_index], dim=1)
 
         return self.States(graphs)
 
@@ -80,17 +80,17 @@ class GraphBuilding(GraphEnv):
 
         if actions.action_type == GraphActionType.ADD_NODE:
             assert graphs.x is not None
-            is_equal = torch.all(graphs.x == actions.features[:, None], dim=-1)
-            assert torch.all(torch.sum(is_equal, dim=-1) == 1)
-            graphs.x = graphs.x[~is_equal].reshape(states.data.batch_size, -1, self.node_feature_dim)
-
+            is_equal = torch.any(
+                torch.all(graphs.x[:, None] == actions.features, dim=-1),
+                dim=-1
+            )
+            graphs.x = graphs.x[~is_equal]
         elif actions.action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
-            is_equal = torch.all(graphs.edge_index == actions.edge_index[:, :, None], dim=1)
-            assert torch.all(torch.sum(is_equal, dim=-1) == 1)
-            graphs.edge_attr = graphs.edge_attr[~is_equal].reshape(states.data.batch_size, -1, self.edge_feature_dim)
-            edge_index = graphs.edge_index.permute(0, 2, 1)[~is_equal]
-            graphs.edge_index = edge_index.reshape(states.data.batch_size, -1, 2).permute(0, 2, 1)
+            is_equal = torch.all(graphs.edge_index[:, None] == actions.edge_index[:, :, None], dim=0)
+            is_equal = torch.any(is_equal, dim=0)
+            graphs.edge_attr = graphs.edge_attr[~is_equal]
+            graphs.edge_index = graphs.edge_index[:, ~is_equal]
 
         return self.States(graphs)
 
@@ -103,10 +103,10 @@ class GraphBuilding(GraphEnv):
             if states.data.x is None:
                 return not backward
             
-            equal_nodes_per_batch = torch.sum(
-                torch.all(states.data.x == actions.features[:, None], dim=-1),
-                dim=-1
-            )
+            equal_nodes_per_batch = torch.all(
+                states.data.x == actions.features[:, None], dim=-1
+            ).reshape(states.data.batch_size, -1)
+            equal_nodes_per_batch = torch.sum(equal_nodes_per_batch, dim=-1)
 
             if backward:  # TODO: check if no edge are connected?
                 return torch.all(equal_nodes_per_batch == 1)
@@ -114,19 +114,28 @@ class GraphBuilding(GraphEnv):
         
         if actions.action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
-            if torch.any(actions.edge_index[:, 0] == actions.edge_index[:, 1]):
+            if torch.any(actions.edge_index[0] == actions.edge_index[1]):
                 return False
-            if states.data.edge_index is None:
-                return not backward
+            if states.data.num_nodes is None or states.data.num_nodes == 0:
+                return False
+            if torch.any(actions.edge_index > states.data.num_nodes):
+                return False
+            
+            batch_idx = actions.edge_index % actions.batch_shape[0] 
+            if torch.any(batch_idx != torch.arange(actions.batch_shape[0])):
+                return False
+            if states.data.edge_attr is None:
+                return True
 
-            equal_edges_per_batch_attr = torch.sum(
-                torch.all(states.data.edge_attr == actions.features[:, None], dim=-1),
-                dim=-1
-            )
-            equal_edges_per_batch_index = torch.sum(
-                torch.all(states.data.edge_index == actions.edge_index[:, :, None], dim=1),
-                dim=-1
-            )
+            equal_edges_per_batch_attr = torch.all(
+                states.data.edge_attr == actions.features[:, None], dim=-1
+            ).reshape(states.data.batch_size, -1)
+            equal_edges_per_batch_attr = torch.sum(equal_edges_per_batch_attr, dim=-1)
+    
+            equal_edges_per_batch_index = torch.all(
+                states.data.edge_index[:, None] == actions.edge_index[:, :, None], dim=0
+            ).reshape(states.data.batch_size, -1)
+            equal_edges_per_batch_index = torch.sum(equal_edges_per_batch_index, dim=-1)
             if backward:
                 return torch.all(equal_edges_per_batch_attr == 1) and torch.all(equal_edges_per_batch_index == 1)
             return torch.all(equal_edges_per_batch_attr == 0) and torch.all(equal_edges_per_batch_index == 0)
@@ -164,8 +173,6 @@ class GCNConvEvaluator:
         self.net = GCNConv(num_features, 1)
 
     def __call__(self, batch: Batch) -> torch.Tensor:
-        out = torch.empty(len(batch), device=batch.x.device)
-        for i in range(len(batch)):  # looks like net doesn't work with batch
-            out[i] = self.net(batch.x[i], batch.edge_index[i]).mean()
-        
-        return out
+        out = self.net(batch.x, batch.edge_index)
+        out = out.reshape(batch.batch_size, -1)
+        return out.mean(-1)

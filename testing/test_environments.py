@@ -334,7 +334,7 @@ def test_graph_env():
         actions = action_cls(
             GraphActionType.ADD_EDGE,
             torch.rand((BATCH_SIZE, FEATURE_DIM)),
-            torch.randint(0, 10, (BATCH_SIZE, 2), dtype=torch.long)
+            torch.randint(0, 10, (2, BATCH_SIZE), dtype=torch.long)
         )
         states = env.step(states, actions)
 
@@ -345,12 +345,13 @@ def test_graph_env():
         )
         states = env.step(states, actions)
     
-    assert states.data.x.shape == (BATCH_SIZE, NUM_NODES, FEATURE_DIM)
+    assert states.data.x.shape == (BATCH_SIZE * NUM_NODES, FEATURE_DIM)
 
     with pytest.raises(NonValidActionsError):
+        first_node_mask = torch.arange(len(states.data.x)) // BATCH_SIZE == 0
         actions = action_cls(
             GraphActionType.ADD_NODE,
-            states.data.x[:, 0],
+            states.data.x[first_node_mask],
         )
         states = env.step(states, actions)
 
@@ -359,16 +360,17 @@ def test_graph_env():
         actions = action_cls(
             GraphActionType.ADD_EDGE,
             torch.rand((BATCH_SIZE, FEATURE_DIM)),
-            torch.stack([edge_index, edge_index], dim=1)
+            torch.stack([edge_index, edge_index])
         )
         states = env.step(states, actions)
 
     for i in range(NUM_NODES - 1):
-        edge_index = torch.tensor([[i, i + 1]] * BATCH_SIZE)
+        node_is = torch.arange(i * BATCH_SIZE, (i + 1) * BATCH_SIZE) 
+        node_js = torch.arange((i + 1) * BATCH_SIZE, (i + 2) * BATCH_SIZE)
         actions = action_cls(
             GraphActionType.ADD_EDGE,
             torch.rand((BATCH_SIZE, FEATURE_DIM)),
-            edge_index
+            torch.stack([node_is, node_js])
         )
         states = env.step(states, actions)
 
@@ -377,7 +379,7 @@ def test_graph_env():
         actions = action_cls(
             GraphActionType.ADD_EDGE,
             torch.rand((BATCH_SIZE, FEATURE_DIM)),
-            edge_index
+            edge_index.T
         )
         states = env.step(states, actions)
 
@@ -390,11 +392,13 @@ def test_graph_env():
     #     )
     #     states = env.backward_step(states, actions)
 
-    for i in reversed(range(states.data.edge_attr.shape[1])):
+    num_edges_per_batch = states.data.edge_attr.shape[0] // BATCH_SIZE
+    for i in reversed(range(num_edges_per_batch)):
+        edge_idx = torch.arange(i * BATCH_SIZE, (i + 1) * BATCH_SIZE)
         actions = action_cls(
             GraphActionType.ADD_EDGE,
-            states.data.edge_attr[:, i],
-            states.data.edge_index[:, :, i]
+            states.data.edge_attr[edge_idx],
+            states.data.edge_index[:, edge_idx]
         )
         states = env.backward_step(states, actions)
     
@@ -402,18 +406,19 @@ def test_graph_env():
         actions = action_cls(
             GraphActionType.ADD_EDGE,
             torch.rand((BATCH_SIZE, FEATURE_DIM)),
-            torch.randint(0, 10, (BATCH_SIZE, 2), dtype=torch.long)
+            torch.randint(0, 10, (2, BATCH_SIZE), dtype=torch.long)
         )
         states = env.backward_step(states, actions)
 
     for i in reversed(range(NUM_NODES)):
+        edge_idx = torch.arange(i * BATCH_SIZE, (i + 1) * BATCH_SIZE)
         actions = action_cls(
             GraphActionType.ADD_NODE,
-            states.data.x[:, i],
+            states.data.x[edge_idx],
         )
         states = env.backward_step(states, actions)
     
-    assert states.data.x.shape == (BATCH_SIZE, 0, FEATURE_DIM)
+    assert states.data.x.shape == (0, FEATURE_DIM)
 
     with pytest.raises(NonValidActionsError):
         actions = action_cls(

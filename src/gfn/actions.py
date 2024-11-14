@@ -192,18 +192,18 @@ class GraphActions:
                 This must defined if and only if the action type is GraphActionType.AddEdge.
         """
         self.action_type = action_type
+        batch_dim, features_dim = features.shape
         if self.action_type == GraphActionType.ADD_NODE:
-            assert features.shape[-1] == self.nodes_features_dim
+            assert features_dim == self.nodes_features_dim
             assert edge_index is None
         elif self.action_type == GraphActionType.ADD_EDGE:
-            assert features.shape[-1] == self.edge_features_dim
+            assert features_dim == self.edge_features_dim
             assert edge_index is not None
-            assert edge_index.shape[-1] == 2
-
+            assert edge_index.shape == (2, batch_dim)
     
         self.features = features
         self.edge_index = edge_index
-        self.batch_shape = tuple(self.features.shape[:-1])
+        self.batch_shape = (batch_dim,)
 
     def __repr__(self):
         return f"""GraphAction object of type {self.action_type} and features of shape {self.features.shape}."""
@@ -248,7 +248,7 @@ class GraphActions:
     @property
     def is_exit(self) -> torch.Tensor:
         """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are exit actions."""
-        return torch.full(self.batch_shape, self.action_type == GraphActionType.Exit, dtype=torch.bool, device=self.device)
+        return torch.full(self.batch_shape, self.action_type == GraphActionType.EXIT, dtype=torch.bool, device=self.device)
 
 
         
