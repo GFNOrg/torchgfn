@@ -221,7 +221,7 @@ class DiscreteEBM(DiscreteEnv):
         return states_indices
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Returns the indices of the terminating states.
+        """Get the indices of the terminating states in the canonical ordering from the submitted states.
 
         Args:
             states: DiscreteStates object representing the states.
