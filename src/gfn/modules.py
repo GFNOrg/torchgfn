@@ -352,7 +352,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
 
         return out
 
-    def forward(self, states: States, conditioning: torch.tensor) -> torch.Tensor:
+    def forward(self, states: States, conditioning: torch.Tensor) -> torch.Tensor:
         """Forward pass of the module.
 
         Args:
