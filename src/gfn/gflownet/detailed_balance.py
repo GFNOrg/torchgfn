@@ -157,7 +157,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 valid_log_F_s_next = self.logF(valid_next_states).squeeze(-1)
 
         log_F_s_next = torch.zeros_like(log_pb_actions)
-        log_F_s_next[~valid_transitions_is_done] += valid_log_F_s_next
+        log_F_s_next[~valid_transitions_is_done] = valid_log_F_s_next
         assert transitions.log_rewards is not None
         valid_transitions_log_rewards = transitions.log_rewards[
             ~transitions.states.is_sink_state
