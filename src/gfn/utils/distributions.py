@@ -3,7 +3,7 @@ from torch.distributions import Categorical
 
 
 class UnsqueezedCategorical(Categorical):
-    """Samples froma categorical distribution with an unsqueezed final dimension.
+    """Samples from a categorical distribution with an unsqueezed final dimension.
 
     Samples are unsqueezed to be of shape (batch_size, 1) instead of (batch_size,).
 
