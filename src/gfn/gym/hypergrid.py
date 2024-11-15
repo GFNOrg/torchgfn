@@ -178,7 +178,7 @@ class HyperGrid(DiscreteEnv):
 
         Returns the indices of the terminating states in the canonical ordering as a tensor of shape `batch_shape`.
         """
-        return self.get_states_indices(states)
+        return self.get_states_indices(self.all_states)
 
     @property
     def n_states(self) -> int:
