@@ -142,7 +142,7 @@ class GFNModule(ABC, nn.Module):
 
 
 class ScalarEstimator(GFNModule):
-    r"""Class for estimating scalars such as LogZ.
+    r"""Class for estimating scalars such as LogZ or state flow functions of DB/SubTB.
 
     Training a GFlowNet requires sometimes requires the estimation of precise scalar
     values, such as the partition function of flows on the DAG. This Estimator is
@@ -371,7 +371,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
 
 
 class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
-    r"""Class for conditionally estimating scalars such as LogZ.
+    r"""Class for conditionally estimating scalars (LogZ,  DB/SubTB state logF).
 
     Training a GFlowNet requires sometimes requires the estimation of precise scalar
     values, such as the partition function of flows on the DAG. In the case of a
