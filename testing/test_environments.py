@@ -383,12 +383,15 @@ def test_graph_env():
         )
         states = env.step(states, actions)
 
+    actions = action_cls(GraphActionType.EXIT)
+    states = env.step(states, actions)
     env.reward(states)
 
     # with pytest.raises(NonValidActionsError):
+    #     node_idx = torch.arange(0, BATCH_SIZE)
     #     actions = action_cls(
     #         GraphActionType.ADD_NODE,
-    #         states.data.x[:, 0],
+    #         states.data.x[node_idxs],
     #     )
     #     states = env.backward_step(states, actions)
 

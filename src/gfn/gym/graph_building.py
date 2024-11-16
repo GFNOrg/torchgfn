@@ -43,15 +43,16 @@ class GraphBuilding(GraphEnv):
         if not self.is_action_valid(states, actions):
             raise NonValidActionsError("Invalid action.")
         graphs: Batch = deepcopy(states.data)
-        assert len(graphs) == len(actions)
 
         if actions.action_type == GraphActionType.ADD_NODE:
+            assert len(graphs) == len(actions)
             if graphs.x is None:
                 graphs.x = actions.features
             else:
                 graphs.x = torch.cat([graphs.x, actions.features])
 
         if actions.action_type == GraphActionType.ADD_EDGE:
+            assert len(graphs) == len(actions)
             assert actions.edge_index is not None
             if graphs.edge_attr is None:
                 graphs.edge_attr = actions.features
@@ -97,6 +98,9 @@ class GraphBuilding(GraphEnv):
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
     ) -> bool:
+        if actions.action_type == GraphActionType.EXIT:
+            return True  # TODO: what are the conditions for exit action?
+    
         if actions.action_type == GraphActionType.ADD_NODE:
             if actions.edge_index is not None:
                 return False
@@ -121,8 +125,9 @@ class GraphBuilding(GraphEnv):
             if torch.any(actions.edge_index > states.data.num_nodes):
                 return False
             
-            batch_idx = actions.edge_index % actions.batch_shape[0] 
-            if torch.any(batch_idx != torch.arange(actions.batch_shape[0])):
+            batch_dim = actions.features.shape[0]
+            batch_idx = actions.edge_index % batch_dim 
+            if torch.any(batch_idx != torch.arange(batch_dim)):
                 return False
             if states.data.edge_attr is None:
                 return True
