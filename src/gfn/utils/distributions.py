@@ -1,5 +1,6 @@
+from typing import Dict
 import torch
-from torch.distributions import Categorical
+from torch.distributions import Distribution, Categorical
 
 
 class UnsqueezedCategorical(Categorical):
@@ -39,3 +40,19 @@ class UnsqueezedCategorical(Categorical):
         """
         assert sample.shape[-1] == 1
         return super().log_prob(sample.squeeze(-1))
+
+
+class ComposedDistribution(Distribution):
+    """A mixture distribution."""
+
+    def __init__(self, dists: Dict[str, Distribution]):
+        """Initializes the mixture distribution.
+
+        Args:
+            dists: A dictionary of distributions.
+        """
+        super().__init__()
+        self.dists = dists
+
+    def sample(self, sample_shape: torch.Size) -> Dict[str, torch.Tensor]:
+        return {k: v.sample(sample_shape) for k, v in self.dists.items()}

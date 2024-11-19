@@ -172,9 +172,9 @@ class Actions(ABC):
 
 
 class GraphActionType(enum.Enum):
-    EXIT = enum.auto()
     ADD_NODE = enum.auto()
     ADD_EDGE = enum.auto()
+    EXIT = enum.auto()
 
 
 class GraphActions:

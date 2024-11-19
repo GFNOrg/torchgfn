@@ -1,13 +1,14 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Dict
 
 import torch
 import torch.nn as nn
-from torch.distributions import Categorical, Distribution
+from torch.distributions import Categorical, Distribution, Normal
 
+from gfn.actions import GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
-from gfn.states import DiscreteStates, States
-from gfn.utils.distributions import UnsqueezedCategorical
+from gfn.states import DiscreteStates, GraphStates, States
+from gfn.utils.distributions import ComposedDistribution, UnsqueezedCategorical
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -90,31 +91,10 @@ class GFNModule(ABC, nn.Module):
         """
         if isinstance(input, States):
             input = self.preprocessor(input)
-
-        out = self.module(input)
-
-        if not self._output_dim_is_checked:
-            self.check_output_dim(out)
-            self._output_dim_is_checked = True
-
-        return out
+        return self.module(input)
 
     def __repr__(self):
         return f"{self.__class__.__name__} module"
-
-    @property
-    @abstractmethod
-    def expected_output_dim(self) -> int:
-        """Expected output dimension of the module."""
-
-    def check_output_dim(self, module_output: torch.Tensor) -> None:
-        """Check that the output of the module has the correct shape. Raises an error if not."""
-        assert module_output.dtype == torch.float
-        if module_output.shape[-1] != self.expected_output_dim():
-            raise ValueError(
-                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim()}"
-                + f" but is {module_output.shape[-1]}."
-            )
 
     def to_probability_distribution(
         self,
@@ -192,9 +172,6 @@ class ScalarEstimator(GFNModule):
         )
         self.reduction_fxn = REDUCTION_FXNS[reduction]
 
-    def expected_output_dim(self) -> int:
-        return 1
-
     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
         """Forward pass of the module.
 
@@ -212,10 +189,7 @@ class ScalarEstimator(GFNModule):
         if out.shape[-1] != 1:
             out = self.reduction_fxn(out, -1)
 
-        if not self._output_dim_is_checked:
-            self.check_output_dim(out)
-            self._output_dim_is_checked = True
-
+        assert out.shape[-1] == 1
         return out
 
 
@@ -250,12 +224,19 @@ class DiscretePolicyEstimator(GFNModule):
         """
         super().__init__(module, preprocessor, is_backward=is_backward)
         self.n_actions = n_actions
+        self.expected_output_dim = self.n_actions - int(self.is_backward)
 
-    def expected_output_dim(self) -> int:
-        if self.is_backward:
-            return self.n_actions - 1
-        else:
-            return self.n_actions
+    def forward(self, states: DiscreteStates) -> torch.Tensor:
+        """Forward pass of the module.
+
+        Args:
+            states: The input states.
+
+        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        out = super().forward(states)
+        assert out.shape[-1] == self.expected_output_dim
+        return out
 
     def to_probability_distribution(
         self,
@@ -279,7 +260,7 @@ class DiscretePolicyEstimator(GFNModule):
                 on policy.
             epsilon: with probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy."""
-        self.check_output_dim(module_output)
+        assert module_output.shape[-1] == self.expected_output_dim
 
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
@@ -296,7 +277,7 @@ class DiscretePolicyEstimator(GFNModule):
 
         # LogEdgeFlows are greedy, as are most P_B.
         else:
-            return UnsqueezedCategorical(logits=logits)
+            return UnsqueezedCategorical(logits=logits)    
 
 
 class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
@@ -362,11 +343,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
         out = self._forward_trunk(states, conditioning)
-
-        if not self._output_dim_is_checked:
-            self.check_output_dim(out)
-            self._output_dim_is_checked = True
-
+        assert out.shape[-1] == self.expected_output_dim
         return out
 
 
@@ -450,14 +427,8 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         if out.shape[-1] != 1:
             out = self.reduction_fxn(out, -1)
 
-        if not self._output_dim_is_checked:
-            self.check_output_dim(out)
-            self._output_dim_is_checked = True
-
+        assert out.shape[-1] == 1
         return out
-
-    def expected_output_dim(self) -> int:
-        return 1
 
     def to_probability_distribution(
         self,
@@ -466,3 +437,93 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         **policy_kwargs: Any,
     ) -> Distribution:
         raise NotImplementedError
+
+
+class GraphActionPolicyEstimator(GFNModule):
+    r"""Container for forward and backward policy estimators for graph environments.
+
+    $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$.
+
+    or
+
+    $s \mapsto (P_B(s' \mid s))_{s' \in Parents(s)}$.
+
+    Attributes:
+        temperature: scalar to divide the logits by before softmax.
+        sf_bias: scalar to subtract from the exit action logit before dividing by
+            temperature.
+        epsilon: with probability epsilon, a random action is chosen.
+    """
+
+    def __init__(
+        self,
+        module: nn.ModuleDict,
+        preprocessor: Preprocessor | None = None,
+        is_backward: bool = False,
+    ):
+        """Initializes a estimator for P_F for graph environments.
+
+        Args:
+            is_backward: if False, then this is a forward policy, else backward policy.
+        """
+        super().__init__(module, preprocessor, is_backward)
+        assert isinstance(self.module, nn.ModuleDict)
+        assert self.module.keys() == {"action_type", "edge_index", "features"}
+    
+    def forward(self, states: GraphStates) -> Dict[str, torch.Tensor]:
+        """Forward pass of the module.
+
+        Args:
+            states: The input graph states.
+
+        Returns the .
+        """
+        action_type_logits = self.module["action_type"](states)
+        edge_index_logits = self.module["edge_index"](states)
+        features = self.module["features"](states)
+
+        assert action_type_logits == len(GraphActionType)
+        assert edge_index_logits.shape[-1] == 2
+        return {
+            "action_type": action_type_logits,
+            "edge_index": edge_index_logits,
+            "features": features
+        }
+
+    def to_probability_distribution(
+        self,
+        states: GraphStates,
+        module_output: Dict[str, torch.Tensor],
+        temperature: float = 1.0,
+        epsilon: float = 0.0,
+    ) -> ComposedDistribution:
+        """Returns a probability distribution given a batch of states and module output.
+
+        We handle off-policyness using these kwargs.
+
+        Args:
+            states: The states to use.
+            module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
+            temperature: scalar to divide the logits by before softmax. Does nothing
+                if set to 1.0 (default), in which case it's on policy.
+            epsilon: with probability epsilon, a random action is chosen. Does nothing
+                if set to 0.0 (default), in which case it's on policy."""
+        
+        dists = {}
+
+        action_type_logits = module_output["action_type"]
+        action_type_masks = states.backward_masks if self.is_backward else states.forward_masks
+        action_type_logits[~action_type_masks] = -float("inf")
+        action_type_probs = torch.softmax(action_type_logits / temperature, dim=-1)
+        uniform_dist_probs = action_type_masks.float() / action_type_masks.sum(dim=-1, keepdim=True)
+        action_type_probs = (1 - epsilon) * action_type_probs + epsilon * uniform_dist_probs
+
+        edge_index_logits = module_output["edge_index"]
+        edge_index_probs = torch.softmax(edge_index_logits / temperature, dim=-1)
+        uniform_dist_probs = torch.ones_like(edge_index_probs) / edge_index_probs.shape[-1]
+        edge_index_probs = (1 - epsilon) * edge_index_probs + epsilon * uniform_dist_probs
+
+        dists["action_type"] = Categorical(probs=action_type_probs)
+        dists["features"] = Normal(module_output["features"], temperature)
+        dists["edge_index"] = Categorical(probs=edge_index_probs)
+        return ComposedDistribution(dists=dists)

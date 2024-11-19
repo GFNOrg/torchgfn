@@ -5,10 +5,12 @@ import pytest
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
-from gfn.modules import DiscretePolicyEstimator, GFNModule
+from gfn.modules import DiscretePolicyEstimator, GFNModule, GraphActionPolicyEstimator
 from gfn.samplers import Sampler
 from gfn.utils.modules import MLP
+from torch_geometric.nn import GCNConv
 
 
 def trajectory_sampling_with_return(
@@ -214,3 +216,11 @@ def test_replay_buffer(
         replay_buffer.add(training_objects)
     except Exception as e:
         raise ValueError(f"Error while testing {env_name}") from e
+
+
+def test_graph_building():
+    node_feature_dim = 8
+    env = GraphBuilding(node_feature_dim=node_feature_dim, edge_feature_dim=4)
+    graph_net = GCNConv(node_feature_dim, 1)
+
+    GraphActionPolicyEstimator(module=graph_net)

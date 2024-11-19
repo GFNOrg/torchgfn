@@ -8,6 +8,8 @@ from typing import Callable, ClassVar, List, Optional, Sequence, Tuple
 import torch
 from torch_geometric.data import Batch, Data
 
+from gfn.actions import GraphActionType
+
 
 class States(ABC):
     """Base class for states, seen as nodes of the DAG.
@@ -520,6 +522,16 @@ class GraphStates(ABC):
         self.data: Batch = graphs
         self.batch_shape: int = len(self.data)
         self._log_rewards: float = None
+
+        # TODO logic repeated from env.is_valid_action
+        self.forward_masks = torch.ones((self.batch_shape, 3), dtype=torch.bool)
+        self.forward_masks[:, GraphActionType.ADD_EDGE.value] = self.data.x.shape[0] > 0
+        self.forward_masks[:, GraphActionType.EXIT.value] = self.data.x.shape[0] > 0
+
+        self.backward_masks = torch.ones((self.batch_shape, 3), dtype=torch.bool)
+        self.backward_masks[:, GraphActionType.ADD_NODE.value] = self.data.x.shape[0] > 0
+        self.backward_masks[:, GraphActionType.ADD_EDGE.value] = self.data.edge_attr.shape[0] > 0
+        self.backward_masks[:, GraphActionType.EXIT.value] = self.data.x.shape[0] > 0
 
     @classmethod
     def from_batch_shape(
