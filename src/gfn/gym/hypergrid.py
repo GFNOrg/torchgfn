@@ -86,6 +86,7 @@ class HyperGrid(DiscreteEnv):
         """Update the masks based on the current states."""
         # Not allowed to take any action beyond the environment height, but
         # allow early termination.
+        # TODO: do we need to handle the conditional case here?
         states.set_nonexit_action_masks(
             states.tensor == self.height - 1,
             allow_exit=True,
@@ -174,9 +175,9 @@ class HyperGrid(DiscreteEnv):
         return indices
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Get the indices of the terminating states in the canonical ordering.
+        """Get the indices of the terminating states in the canonical ordering from the submitted states.
 
-        Returns the indices of the terminating states in the canonical ordering as a tensor of shape `batch_shape`.
+        Canonical ordering is returned as a tensor of shape `batch_shape`.
         """
         return self.get_states_indices(states)
 
