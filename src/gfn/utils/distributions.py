@@ -54,5 +54,12 @@ class ComposedDistribution(Distribution):
         super().__init__()
         self.dists = dists
 
-    def sample(self, sample_shape: torch.Size) -> Dict[str, torch.Tensor]:
+    def sample(self, sample_shape=torch.Size()) -> Dict[str, torch.Tensor]:
         return {k: v.sample(sample_shape) for k, v in self.dists.items()}
+    
+    def log_prob(self, sample: Dict[str, torch.Tensor]) -> torch.Tensor:
+        log_probs = [
+            v.log_prob(sample[k]).reshape(sample[k].shape[0], -1).sum(dim=-1)
+            for k, v in self.dists.items()
+        ]
+        return sum(log_probs)

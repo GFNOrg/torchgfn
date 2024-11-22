@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 from torch_geometric.data import Batch, Data
@@ -568,8 +568,8 @@ class GraphEnv(Env):
     def __init__(
         self,
         s0: Data,
-        node_feature_dim: int,
-        edge_feature_dim: int,
+        # node_feature_dim: int,
+        # edge_feature_dim: int,
         sf: Optional[Data] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
@@ -592,8 +592,8 @@ class GraphEnv(Env):
         """
         self.s0 = s0.to(device_str)
 
-        self.node_feature_dim = node_feature_dim
-        self.edge_feature_dim = edge_feature_dim
+        self.node_feature_dim = s0.x.shape[1]
+        self.edge_feature_dim = s0.edge_attr.shape[1]
 
         self.sf = sf
 
@@ -609,8 +609,8 @@ class GraphEnv(Env):
         class GraphEnvStates(GraphStates):
             s0 = env.s0
             sf = env.sf
-            node_feature_dim = env.node_feature_dim
-            edge_feature_dim = env.edge_feature_dim
+            # node_feature_dim = env.node_feature_dim
+            # edge_feature_dim = env.edge_feature_dim
             make_random_states_graph = env.make_random_states_tensor
 
         return GraphEnvStates
@@ -629,6 +629,17 @@ class GraphEnv(Env):
             edge_features_dim = env.edge_feature_dim
 
         return DefaultGraphAction
+
+    def actions_from_tensor(self, tensor: Dict[str, torch.Tensor]):
+        """Wraps the supplied Tensor in an Actions instance.
+
+        Args:
+            tensor: The tensor of shape "action_shape" representing the actions.
+
+        Returns:
+            Actions: An instance of Actions.
+        """
+        return self.Actions(**tensor)
 
     @abstractmethod
     def step(self, states: GraphStates, actions: Actions) -> GraphStates:

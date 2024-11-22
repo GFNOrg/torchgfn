@@ -1,7 +1,12 @@
 from typing import Literal, Tuple
 
 import pytest
+import torch
+from torch import nn
+from torch_geometric.nn import GCNConv
+from torch_geometric.data import Batch
 
+from gfn.actions import GraphActionType
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
@@ -9,9 +14,8 @@ from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator, GFNModule, GraphActionPolicyEstimator
 from gfn.samplers import Sampler
+from gfn.states import GraphStates
 from gfn.utils.modules import MLP
-from torch_geometric.nn import GCNConv
-
 
 def trajectory_sampling_with_return(
     env_name: str,
@@ -218,9 +222,65 @@ def test_replay_buffer(
         raise ValueError(f"Error while testing {env_name}") from e
 
 
-def test_graph_building():
-    node_feature_dim = 8
-    env = GraphBuilding(node_feature_dim=node_feature_dim, edge_feature_dim=4)
-    graph_net = GCNConv(node_feature_dim, 1)
+# ------ GRAPH TESTS ------
 
-    GraphActionPolicyEstimator(module=graph_net)
+
+class ActionTypeNet(nn.Module):
+    def __init__(self, feature_dim: int):
+        super().__init__()
+        self.conv = GCNConv(feature_dim, len(GraphActionType))
+
+    def forward(self, states: GraphStates) -> torch.Tensor:
+        if len(states.data.x) == 0:
+            out = torch.zeros((len(states), len(GraphActionType)))
+            out[:, GraphActionType.ADD_NODE] = 1
+            return out
+    
+        x = self.conv(states.data.x, states.data.edge_index)
+        return torch.mean(x, dim=0)
+
+class FeaturesNet(nn.Module):
+    def __init__(self, feature_dim: int):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.conv = GCNConv(feature_dim, feature_dim)
+
+    def forward(self, states: GraphStates) -> torch.Tensor:
+        if len(states.data.x) == 0:
+            return torch.zeros((len(states), self.feature_dim))
+        x = self.conv(states.data.x, states.data.edge_index)
+        x = x.reshape(len(states), -1, x.shape[-1]).mean(dim=0)
+        return x
+
+class EdgeIndexNet(nn.Module):
+    def __init__(self, feature_dim: int):
+        super().__init__()
+        self.conv = GCNConv(feature_dim, 8)
+
+    def forward(self, states: GraphStates) -> torch.Tensor:
+        x = self.conv(states.data.x, states.data.edge_index)
+        return torch.einsum("nf,mf->nm", x, x)
+
+def test_graph_building():
+    feature_dim = 8
+    env = GraphBuilding(node_feature_dim=feature_dim, edge_feature_dim=feature_dim)
+
+    action_type_net = ActionTypeNet(feature_dim)
+    features_net = FeaturesNet(feature_dim)
+    edge_index = EdgeIndexNet(feature_dim)
+    module = nn.ModuleDict({
+        "action_type": action_type_net,
+        "features": features_net,
+        "edge_index": edge_index
+    })
+
+    pf_estimator = GraphActionPolicyEstimator(module=module)
+
+    sampler = Sampler(estimator=pf_estimator)
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=5,
+        save_logprobs=True,
+        save_estimator_outputs=True,
+    )
+

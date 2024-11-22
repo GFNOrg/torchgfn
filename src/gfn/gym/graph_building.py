@@ -18,7 +18,14 @@ class GraphBuilding(GraphEnv):
         state_evaluator: Callable[[Batch], torch.Tensor] | None = None,
         device_str: Literal["cpu", "cuda"] = "cpu",
     ):
-        s0 = Data().to(device_str)
+        s0 = Data(
+            x=torch.zeros((0, node_feature_dim), dtype=torch.float32),
+            edge_attr=torch.zeros((0, edge_feature_dim), dtype=torch.float32),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+        ).to(device_str)
+        sf = Data(
+            x=torch.ones((1, node_feature_dim), dtype=torch.float32) * float('inf'),
+        ).to(device_str)
 
         if state_evaluator is None:
             state_evaluator = GCNConvEvaluator(node_feature_dim)
@@ -26,8 +33,7 @@ class GraphBuilding(GraphEnv):
 
         super().__init__(
             s0=s0,
-            node_feature_dim=node_feature_dim,
-            edge_feature_dim=edge_feature_dim,
+            sf=sf,
             device_str=device_str,
         )
 

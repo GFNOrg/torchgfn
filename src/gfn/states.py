@@ -5,6 +5,7 @@ from copy import deepcopy
 from math import prod
 from typing import Callable, ClassVar, List, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
 from torch_geometric.data import Batch, Data
 
@@ -478,34 +479,6 @@ class DiscreteStates(States, ABC):
             self.forward_masks = torch.zeros(shape).bool()
 
 
-def stack_states(states: List[States]):
-    """Given a list of states, stacks them along a new dimension (0)."""
-    state_example = states[0]  # We assume all elems of `states` are the same.
-
-    stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
-    stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
-    if state_example._log_rewards:
-        stacked_states._log_rewards = torch.stack(
-            [s._log_rewards for s in states], dim=0
-        )
-
-    # We are dealing with a list of DiscretrStates instances.
-    if hasattr(state_example, "forward_masks"):
-        stacked_states.forward_masks = torch.stack(
-            [s.forward_masks for s in states], dim=0
-        )
-        stacked_states.backward_masks = torch.stack(
-            [s.backward_masks for s in states], dim=0
-        )
-
-    # Adds the trajectory dimension.
-    stacked_states.batch_shape = (
-        stacked_states.tensor.shape[0],
-    ) + state_example.batch_shape
-
-    return stacked_states
-
-
 class GraphStates(ABC):
     """
     Base class for Graph as a state representation. The `GraphStates` object is a batched collection of
@@ -515,8 +488,6 @@ class GraphStates(ABC):
 
     s0: ClassVar[Data]
     sf: ClassVar[Optional[Data]]
-    node_feature_dim: ClassVar[int]
-    edge_feature_dim: ClassVar[int]
 
     def __init__(self, graphs: Batch):
         self.data: Batch = graphs
@@ -524,14 +495,15 @@ class GraphStates(ABC):
         self._log_rewards: float = None
 
         # TODO logic repeated from env.is_valid_action
+        not_empty = self.data.x is not None and self.data.x.shape[0] > 0
         self.forward_masks = torch.ones((self.batch_shape, 3), dtype=torch.bool)
-        self.forward_masks[:, GraphActionType.ADD_EDGE.value] = self.data.x.shape[0] > 0
-        self.forward_masks[:, GraphActionType.EXIT.value] = self.data.x.shape[0] > 0
-
+        self.forward_masks[:, GraphActionType.ADD_EDGE] = not_empty
+        self.forward_masks[:, GraphActionType.EXIT] = not_empty
+    
         self.backward_masks = torch.ones((self.batch_shape, 3), dtype=torch.bool)
-        self.backward_masks[:, GraphActionType.ADD_NODE.value] = self.data.x.shape[0] > 0
-        self.backward_masks[:, GraphActionType.ADD_EDGE.value] = self.data.edge_attr.shape[0] > 0
-        self.backward_masks[:, GraphActionType.EXIT.value] = self.data.x.shape[0] > 0
+        self.backward_masks[:, GraphActionType.ADD_NODE] = not_empty
+        self.backward_masks[:, GraphActionType.ADD_EDGE] = not_empty and self.data.edge_attr.shape[0] > 0
+        self.backward_masks[:, GraphActionType.EXIT] = not_empty
 
     @classmethod
     def from_batch_shape(
@@ -586,8 +558,8 @@ class GraphStates(ABC):
         data_list = []
         for _ in range(batch_shape):
             data = Data(
-                x=torch.rand(cls.s0.num_nodes, cls.node_feature_dim),
-                edge_attr=torch.rand(cls.s0.num_edges, cls.edge_feature_dim),
+                x=torch.rand(cls.s0.num_nodes, cls.s0.x.shape[1]),
+                edge_attr=torch.rand(cls.s0.num_edges, cls.s0.edge_attr.shape[1]),
                 edge_index=cls.s0.edge_index,  # TODO: make it random
             )
             data_list.append(data)
@@ -599,13 +571,18 @@ class GraphStates(ABC):
     def __repr__(self):
         return (
             f"{self.__class__.__name__} object of batch shape {self.batch_shape} and "
-            f"node feature dim {self.node_feature_dim} and edge feature dim {self.edge_feature_dim}"
+            f"node feature dim {self.s0.x.shape[1]} and edge feature dim {self.s0.edge_attr.shape[1]}"
         )
 
     def __getitem__(
         self, index: int | Sequence[int] | slice | torch.Tensor
     ) -> GraphStates:
-        out = self.__class__(Batch(self.data[index]))
+        idxs = np.arange(len(self.data))[index]
+        data = []
+        for i in idxs:
+            data.append(self.data.get_example(i))
+
+        out = GraphStates(Batch.from_data_list(data))
 
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards[index]
@@ -643,7 +620,10 @@ class GraphStates(ABC):
 
     @property
     def device(self) -> torch.device:
-        return self.data.get_example(0).x.device
+        sample = self.data.get_example(0).x
+        if sample is not None:
+            return sample.device
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def to(self, device: torch.device) -> GraphStates:
         """
@@ -675,3 +655,10 @@ class GraphStates(ABC):
     @log_rewards.setter
     def log_rewards(self, log_rewards: torch.Tensor) -> None:
         self._log_rewards = log_rewards
+    
+    @property
+    def is_sink_state(self) -> torch.Tensor:
+        batch_dim = len(self.data.ptr) - 1
+        if len(self.data.x) == 0:
+            return torch.zeros(batch_dim, dtype=torch.bool)
+        return torch.all(self.data.x == self.sf.x, dim=-1).reshape(batch_dim,)

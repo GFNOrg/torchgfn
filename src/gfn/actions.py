@@ -171,10 +171,10 @@ class Actions(ABC):
         return self.compare(exit_actions_tensor)
 
 
-class GraphActionType(enum.Enum):
-    ADD_NODE = enum.auto()
-    ADD_EDGE = enum.auto()
-    EXIT = enum.auto()
+class GraphActionType(enum.IntEnum):
+    ADD_NODE = 0
+    ADD_EDGE = 1
+    EXIT = 2
 
 
 class GraphActions:
@@ -182,7 +182,7 @@ class GraphActions:
     nodes_features_dim: ClassVar[int]
     edge_features_dim: ClassVar[int]
 
-    def __init__(self, action_type: GraphActionType, features: Optional[torch.Tensor] = None, edge_index: Optional[torch.Tensor] = None):
+    def __init__(self, action_type: torch.Tensor, features: Optional[torch.Tensor] = None, edge_index: Optional[torch.Tensor] = None):
         """Initializes a GraphAction object.
     
         Args:
@@ -192,7 +192,9 @@ class GraphActions:
             edge_index: an tensor of shape (batch_shape, 2) representing the edge to add.
                 This must defined if and only if the action type is GraphActionType.AddEdge.
         """
-        self.action_type = action_type
+        self.batch_shape = action_type.shape
+        assert torch.all(action_type == action_type[0])
+        self.action_type = action_type[0]
         if self.action_type == GraphActionType.EXIT:
             assert features is None
             assert edge_index is None
@@ -201,9 +203,9 @@ class GraphActions:
         else:
             assert features is not None
             batch_dim, features_dim = features.shape
+            assert (batch_dim,) == self.batch_shape
             if self.action_type == GraphActionType.ADD_NODE:
                 assert features_dim == self.nodes_features_dim
-                assert edge_index is None
             elif self.action_type == GraphActionType.ADD_EDGE:
                 assert features_dim == self.edge_features_dim
                 assert edge_index is not None
@@ -265,5 +267,13 @@ class GraphActions:
         """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are exit actions."""
         return torch.full((1,), self.action_type == GraphActionType.EXIT, dtype=torch.bool, device=self.device)
 
+    @classmethod
+    def make_dummy_actions(cls, batch_shape: tuple[int]) -> GraphActions:  # TODO: remove make_dummy_actions
+        """Creates an Actions object of dummy actions with the given batch shape."""
+        return GraphActions(
+            action_type=torch.full(batch_shape, fill_value=GraphActionType.EXIT),
+            features=None,
+            edge_index=None
+        )
 
         

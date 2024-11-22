@@ -458,7 +458,7 @@ class GraphActionPolicyEstimator(GFNModule):
     def __init__(
         self,
         module: nn.ModuleDict,
-        preprocessor: Preprocessor | None = None,
+        # preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
     ):
         """Initializes a estimator for P_F for graph environments.
@@ -466,9 +466,12 @@ class GraphActionPolicyEstimator(GFNModule):
         Args:
             is_backward: if False, then this is a forward policy, else backward policy.
         """
-        super().__init__(module, preprocessor, is_backward)
-        assert isinstance(self.module, nn.ModuleDict)
-        assert self.module.keys() == {"action_type", "edge_index", "features"}
+        #super().__init__(module, preprocessor, is_backward)
+        nn.Module.__init__(self)
+        assert isinstance(module, nn.ModuleDict)
+        assert module.keys() == {"action_type", "edge_index", "features"}
+        self.module = module
+        self.is_backward = is_backward
     
     def forward(self, states: GraphStates) -> Dict[str, torch.Tensor]:
         """Forward pass of the module.
@@ -482,8 +485,7 @@ class GraphActionPolicyEstimator(GFNModule):
         edge_index_logits = self.module["edge_index"](states)
         features = self.module["features"](states)
 
-        assert action_type_logits == len(GraphActionType)
-        assert edge_index_logits.shape[-1] == 2
+        assert action_type_logits.shape[-1] == len(GraphActionType)
         return {
             "action_type": action_type_logits,
             "edge_index": edge_index_logits,
@@ -517,13 +519,14 @@ class GraphActionPolicyEstimator(GFNModule):
         action_type_probs = torch.softmax(action_type_logits / temperature, dim=-1)
         uniform_dist_probs = action_type_masks.float() / action_type_masks.sum(dim=-1, keepdim=True)
         action_type_probs = (1 - epsilon) * action_type_probs + epsilon * uniform_dist_probs
+        dists["action_type"] = Categorical(probs=action_type_probs)
 
         edge_index_logits = module_output["edge_index"]
-        edge_index_probs = torch.softmax(edge_index_logits / temperature, dim=-1)
-        uniform_dist_probs = torch.ones_like(edge_index_probs) / edge_index_probs.shape[-1]
-        edge_index_probs = (1 - epsilon) * edge_index_probs + epsilon * uniform_dist_probs
+        if edge_index_logits.shape[-1] != 0:
+            edge_index_probs = torch.softmax(edge_index_logits / temperature, dim=-1)
+            uniform_dist_probs = torch.ones_like(edge_index_probs) / edge_index_probs.shape[-1]
+            edge_index_probs = (1 - epsilon) * edge_index_probs + epsilon * uniform_dist_probs
+            dists["edge_index"] = UnsqueezedCategorical(probs=edge_index_probs)
 
-        dists["action_type"] = Categorical(probs=action_type_probs)
         dists["features"] = Normal(module_output["features"], temperature)
-        dists["edge_index"] = Categorical(probs=edge_index_probs)
         return ComposedDistribution(dists=dists)
