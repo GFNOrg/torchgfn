@@ -97,8 +97,6 @@ class DiscreteEBM(DiscreteEnv):
 
         n_actions = 2 * ndim + 1
         # the last action is the exit action that is only available for complete states
-        #
-        # Action i in [ndim, 2 * ndim - 1] corresponds to replacing s[i - ndim] with 1
 
         if preprocessor_name == "Identity":
             preprocessor = IdentityPreprocessor(output_dim=ndim)
