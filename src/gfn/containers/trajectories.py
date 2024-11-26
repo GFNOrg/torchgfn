@@ -122,7 +122,7 @@ class Trajectories(Container):
         for traj in states[:10]:
             one_traj_repr = []
             for step in traj:
-                one_traj_repr.append(str(step.numpy()))
+                one_traj_repr.append(str(step.cpu().numpy()))
                 if step.equal(self.env.s0 if self.is_backward else self.env.sf):
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
@@ -130,7 +130,7 @@ class Trajectories(Container):
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length}, First 10 trajectories:"
             + f"states=\n{trajectories_representation}"
             # + f"actions=\n{self.actions.tensor.squeeze().transpose(0, 1)[:10].numpy()}, "
-            + f"when_is_done={self.when_is_done[:10].numpy()})"
+            + f"when_is_done={self.when_is_done[:10].cpu().numpy()})"
         )
 
     @property
