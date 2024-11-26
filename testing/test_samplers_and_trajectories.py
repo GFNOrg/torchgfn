@@ -2,9 +2,9 @@ from typing import Literal, Tuple
 
 import pytest
 import torch
+from tensordict import TensorDict
 from torch import nn
 from torch_geometric.nn import GCNConv
-from torch_geometric.data import Batch
 
 from gfn.actions import GraphActionType
 from gfn.containers import Trajectories
@@ -16,6 +16,7 @@ from gfn.modules import DiscretePolicyEstimator, GFNModule, GraphActionPolicyEst
 from gfn.samplers import Sampler
 from gfn.states import GraphStates
 from gfn.utils.modules import MLP
+
 
 def trajectory_sampling_with_return(
     env_name: str,
@@ -225,55 +226,44 @@ def test_replay_buffer(
 # ------ GRAPH TESTS ------
 
 
-class ActionTypeNet(nn.Module):
-    def __init__(self, feature_dim: int):
-        super().__init__()
-        self.conv = GCNConv(feature_dim, len(GraphActionType))
-
-    def forward(self, states: GraphStates) -> torch.Tensor:
-        if len(states.data.x) == 0:
-            out = torch.zeros((len(states), len(GraphActionType)))
-            out[:, GraphActionType.ADD_NODE] = 1
-            return out
-    
-        x = self.conv(states.data.x, states.data.edge_index)
-        return torch.mean(x, dim=0)
-
-class FeaturesNet(nn.Module):
+class GraphActionNet(nn.Module):
     def __init__(self, feature_dim: int):
         super().__init__()
         self.feature_dim = feature_dim
-        self.conv = GCNConv(feature_dim, feature_dim)
+        self.action_type_conv = GCNConv(feature_dim, len(GraphActionType))
+        self.features_conv = GCNConv(feature_dim, feature_dim)
+        self.edge_index_conv = GCNConv(feature_dim, 8)
 
-    def forward(self, states: GraphStates) -> torch.Tensor:
+    def forward(self, states: GraphStates) -> TensorDict:
         if len(states.data.x) == 0:
-            return torch.zeros((len(states), self.feature_dim))
-        x = self.conv(states.data.x, states.data.edge_index)
-        x = x.reshape(len(states), -1, x.shape[-1]).mean(dim=0)
-        return x
+            action_type = torch.zeros((len(states), len(GraphActionType)))
+            action_type[:, GraphActionType.ADD_NODE] = 1
+            features = torch.zeros((len(states), self.feature_dim))
+        else:
+            action_type = self.action_type_conv(states.data.x, states.data.edge_index)
+            action_type = torch.mean(action_type, dim=0)
+            features = self.features_conv(states.data.x, states.data.edge_index)
+            features = features.reshape(len(states), -1, features.shape[-1]).mean(dim=0)
 
-class EdgeIndexNet(nn.Module):
-    def __init__(self, feature_dim: int):
-        super().__init__()
-        self.conv = GCNConv(feature_dim, 8)
+        edge_index = self.edge_index_conv(states.data.x, states.data.edge_index)
+        edge_index = edge_index.reshape(states.batch_shape, -1, 8)
+        edge_index = torch.einsum("bnf,bmf->bnm", edge_index, edge_index)
 
-    def forward(self, states: GraphStates) -> torch.Tensor:
-        x = self.conv(states.data.x, states.data.edge_index)
-        return torch.einsum("nf,mf->nm", x, x)
+        return TensorDict(
+            {
+                "action_type": action_type,
+                "features": features,
+                "edge_index": edge_index,
+            },
+            batch_size=states.batch_shape,
+        )
+
 
 def test_graph_building():
     feature_dim = 8
     env = GraphBuilding(node_feature_dim=feature_dim, edge_feature_dim=feature_dim)
 
-    action_type_net = ActionTypeNet(feature_dim)
-    features_net = FeaturesNet(feature_dim)
-    edge_index = EdgeIndexNet(feature_dim)
-    module = nn.ModuleDict({
-        "action_type": action_type_net,
-        "features": features_net,
-        "edge_index": edge_index
-    })
-
+    module = GraphActionNet(feature_dim)
     pf_estimator = GraphActionPolicyEstimator(module=module)
 
     sampler = Sampler(estimator=pf_estimator)
@@ -283,4 +273,3 @@ def test_graph_building():
         save_logprobs=True,
         save_estimator_outputs=True,
     )
-

@@ -3,7 +3,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, List, Optional, Sequence, Tuple
+from typing import Callable, ClassVar, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -499,10 +499,12 @@ class GraphStates(ABC):
         self.forward_masks = torch.ones((self.batch_shape, 3), dtype=torch.bool)
         self.forward_masks[:, GraphActionType.ADD_EDGE] = not_empty
         self.forward_masks[:, GraphActionType.EXIT] = not_empty
-    
+
         self.backward_masks = torch.ones((self.batch_shape, 3), dtype=torch.bool)
         self.backward_masks[:, GraphActionType.ADD_NODE] = not_empty
-        self.backward_masks[:, GraphActionType.ADD_EDGE] = not_empty and self.data.edge_attr.shape[0] > 0
+        self.backward_masks[:, GraphActionType.ADD_EDGE] = (
+            not_empty and self.data.edge_attr.shape[0] > 0
+        )
         self.backward_masks[:, GraphActionType.EXIT] = not_empty
 
     @classmethod
@@ -655,10 +657,12 @@ class GraphStates(ABC):
     @log_rewards.setter
     def log_rewards(self, log_rewards: torch.Tensor) -> None:
         self._log_rewards = log_rewards
-    
+
     @property
     def is_sink_state(self) -> torch.Tensor:
         batch_dim = len(self.data.ptr) - 1
         if len(self.data.x) == 0:
             return torch.zeros(batch_dim, dtype=torch.bool)
-        return torch.all(self.data.x == self.sf.x, dim=-1).reshape(batch_dim,)
+        return torch.all(self.data.x == self.sf.x, dim=-1).reshape(
+            batch_dim,
+        )

@@ -24,7 +24,7 @@ class GraphBuilding(GraphEnv):
             edge_index=torch.zeros((2, 0), dtype=torch.long),
         ).to(device_str)
         sf = Data(
-            x=torch.ones((1, node_feature_dim), dtype=torch.float32) * float('inf'),
+            x=torch.ones((1, node_feature_dim), dtype=torch.float32) * float("inf"),
         ).to(device_str)
 
         if state_evaluator is None:
@@ -66,10 +66,11 @@ class GraphBuilding(GraphEnv):
                 graphs.edge_index = actions.edge_index
             else:
                 graphs.edge_attr = torch.cat([graphs.edge_attr, actions.features])
-                graphs.edge_index = torch.cat([graphs.edge_index, actions.edge_index], dim=1)
+                graphs.edge_index = torch.cat(
+                    [graphs.edge_index, actions.edge_index], dim=1
+                )
 
         return self.States(graphs)
-
 
     def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Backward step function for the GraphBuilding environment.
@@ -88,13 +89,14 @@ class GraphBuilding(GraphEnv):
         if actions.action_type == GraphActionType.ADD_NODE:
             assert graphs.x is not None
             is_equal = torch.any(
-                torch.all(graphs.x[:, None] == actions.features, dim=-1),
-                dim=-1
+                torch.all(graphs.x[:, None] == actions.features, dim=-1), dim=-1
             )
             graphs.x = graphs.x[~is_equal]
         elif actions.action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
-            is_equal = torch.all(graphs.edge_index[:, None] == actions.edge_index[:, :, None], dim=0)
+            is_equal = torch.all(
+                graphs.edge_index[:, None] == actions.edge_index[:, :, None], dim=0
+            )
             is_equal = torch.any(is_equal, dim=0)
             graphs.edge_attr = graphs.edge_attr[~is_equal]
             graphs.edge_index = graphs.edge_index[:, ~is_equal]
@@ -106,13 +108,13 @@ class GraphBuilding(GraphEnv):
     ) -> bool:
         if actions.action_type == GraphActionType.EXIT:
             return True  # TODO: what are the conditions for exit action?
-    
+
         if actions.action_type == GraphActionType.ADD_NODE:
             if actions.edge_index is not None:
                 return False
             if states.data.x is None:
                 return not backward
-            
+
             equal_nodes_per_batch = torch.all(
                 states.data.x == actions.features[:, None], dim=-1
             ).reshape(states.data.batch_size, -1)
@@ -121,7 +123,7 @@ class GraphBuilding(GraphEnv):
             if backward:  # TODO: check if no edge are connected?
                 return torch.all(equal_nodes_per_batch == 1)
             return torch.all(equal_nodes_per_batch == 0)
-        
+
         if actions.action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
             if torch.any(actions.edge_index[0] == actions.edge_index[1]):
@@ -130,9 +132,9 @@ class GraphBuilding(GraphEnv):
                 return False
             if torch.any(actions.edge_index > states.data.num_nodes):
                 return False
-            
+
             batch_dim = actions.features.shape[0]
-            batch_idx = actions.edge_index % batch_dim 
+            batch_idx = actions.edge_index % batch_dim
             if torch.any(batch_idx != torch.arange(batch_dim)):
                 return False
             if states.data.edge_attr is None:
@@ -142,15 +144,18 @@ class GraphBuilding(GraphEnv):
                 states.data.edge_attr == actions.features[:, None], dim=-1
             ).reshape(states.data.batch_size, -1)
             equal_edges_per_batch_attr = torch.sum(equal_edges_per_batch_attr, dim=-1)
-    
+
             equal_edges_per_batch_index = torch.all(
                 states.data.edge_index[:, None] == actions.edge_index[:, :, None], dim=0
             ).reshape(states.data.batch_size, -1)
             equal_edges_per_batch_index = torch.sum(equal_edges_per_batch_index, dim=-1)
             if backward:
-                return torch.all(equal_edges_per_batch_attr == 1) and torch.all(equal_edges_per_batch_index == 1)
-            return torch.all(equal_edges_per_batch_attr == 0) and torch.all(equal_edges_per_batch_index == 0)
-
+                return torch.all(equal_edges_per_batch_attr == 1) and torch.all(
+                    equal_edges_per_batch_index == 1
+                )
+            return torch.all(equal_edges_per_batch_attr == 0) and torch.all(
+                equal_edges_per_batch_index == 0
+            )
 
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
