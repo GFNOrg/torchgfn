@@ -11,6 +11,9 @@ def set_seed(seed: int, performance_mode: bool = False) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
+
     # These are only set when we care about reproducibility over performance.
     if not performance_mode:
         torch.backends.cudnn.deterministic = True

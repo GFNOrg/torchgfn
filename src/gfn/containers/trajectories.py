@@ -5,9 +5,8 @@ from typing import TYPE_CHECKING, Sequence, Tuple, Union
 if TYPE_CHECKING:
     from gfn.actions import Actions
     from gfn.env import Env
-    from gfn.states import States, DiscreteStates
+    from gfn.states import States
 
-import numpy as np
 import torch
 
 from gfn.containers.base import Container
@@ -122,7 +121,7 @@ class Trajectories(Container):
         for traj in states[:10]:
             one_traj_repr = []
             for step in traj:
-                one_traj_repr.append(str(step.numpy()))
+                one_traj_repr.append(str(step.cpu().numpy()))
                 if step.equal(self.env.s0 if self.is_backward else self.env.sf):
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
@@ -130,7 +129,7 @@ class Trajectories(Container):
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length}, First 10 trajectories:"
             + f"states=\n{trajectories_representation}"
             # + f"actions=\n{self.actions.tensor.squeeze().transpose(0, 1)[:10].numpy()}, "
-            + f"when_is_done={self.when_is_done[:10].numpy()})"
+            + f"when_is_done={self.when_is_done[:10].cpu().numpy()})"
         )
 
     @property
@@ -426,6 +425,68 @@ class Trajectories(Container):
             terminating_states,
             intermediary_conditioning,
             conditioning,
+        )
+
+    @staticmethod
+    def reverse_backward_trajectories(trajectories: Trajectories) -> Trajectories:
+        """Reverses a backward trajectory"""
+        # FIXME: This method is not compatible with continuous GFN.
+
+        assert trajectories.is_backward, "Trajectories must be backward."
+        new_actions = torch.full(
+            (
+                trajectories.max_length + 1,
+                len(trajectories),
+                *trajectories.actions.action_shape,
+            ),
+            -1,
+        )
+
+        # env.sf should never be None unless something went wrong during class
+        # instantiation.
+        if trajectories.env.sf is None:
+            raise AttributeError(
+                "Something went wrong during the instantiation of environment {}".format(
+                    trajectories.env
+                )
+            )
+
+        new_when_is_done = trajectories.when_is_done + 1
+        new_states = trajectories.env.sf.repeat(
+            new_when_is_done.max() + 1, len(trajectories), 1
+        )
+
+        # FIXME: Can we vectorize this?
+        # FIXME: Also, loop over batch or sequence?
+        for i in range(len(trajectories)):
+            new_actions[trajectories.when_is_done[i], i] = (
+                trajectories.env.n_actions - 1
+            )
+            new_actions[
+                : trajectories.when_is_done[i], i
+            ] = trajectories.actions.tensor[: trajectories.when_is_done[i], i].flip(0)
+
+            new_states[
+                : trajectories.when_is_done[i] + 1, i
+            ] = trajectories.states.tensor[: trajectories.when_is_done[i] + 1, i].flip(
+                0
+            )
+
+        trajectories_states = trajectories.env.States(new_states)
+        trajectories_actions = trajectories.env.Actions(new_actions)
+
+        return Trajectories(
+            env=trajectories.env,
+            states=trajectories_states,
+            conditioning=trajectories.conditioning,
+            actions=trajectories_actions,
+            when_is_done=new_when_is_done,
+            is_backward=False,
+            log_rewards=trajectories.log_rewards,
+            log_probs=None,  # We can't simply pass the trajectories.log_probs
+            # Since `log_probs` is assumed to be the forward log probabilities.
+            # FIXME: To resolve this, we can save log_pfs and log_pbs in the trajectories object.
+            estimator_outputs=None,  # Same as `log_probs`.
         )
 
 
