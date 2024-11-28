@@ -6,6 +6,7 @@ from math import prod
 from typing import ClassVar, Optional, Sequence
 
 import torch
+from tensordict import TensorDict
 
 
 class Actions(ABC):
@@ -196,8 +197,6 @@ class GraphActions(Actions):
                 This must defined if and only if the action type is GraphActionType.AddEdge.
         """
         self.batch_shape = action_type.shape
-        self.action_type = action_type
-
         if features is None:
             assert torch.all(action_type == GraphActionType.EXIT)
             features = torch.zeros((*self.batch_shape, self.features_dim))
@@ -205,19 +204,19 @@ class GraphActions(Actions):
             assert torch.all(action_type != GraphActionType.ADD_EDGE)
             edge_index = torch.zeros((2, *self.batch_shape))
 
-        batch_dim, _ = features.shape
-        assert (batch_dim,) == self.batch_shape
-        assert edge_index.shape == (2, batch_dim)
-        self.features = features
-        self.edge_index = edge_index
+        self.tensor = TensorDict({
+            "action_type": action_type,
+            "features": features,
+            "edge_index": edge_index.T,
+        }, batch_size=self.batch_shape)
 
     def __repr__(self):
-        return f"""GraphAction object of type {self.action_type} and features of shape {self.features.shape}."""
+        return f"""GraphAction object with {self.batch_shape} actions."""
 
     @property
     def device(self) -> torch.device:
         """Returns the device of the features tensor."""
-        return self.features.device
+        return self.tensor.device
 
     def __len__(self) -> int:
         """Returns the number of actions in the batch."""
@@ -225,18 +224,18 @@ class GraphActions(Actions):
 
     def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> GraphActions:
         """Get particular actions of the batch."""
-        action_type = self.action_type[index]
-        features = self.features[index]
-        edge_index = self.edge_index[:, index]
-        return GraphActions(action_type, features, edge_index)
+        tensor = self.tensor[index]
+        return GraphActions(
+            tensor["action_type"],
+            tensor["features"],
+            tensor["edge_index"].T
+        )
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], action: GraphActions
     ) -> None:
         """Set particular actions of the batch."""
-        self.action_type[index] = action.action_type
-        self.features[index] = action.features
-        self.edge_index[:, index] = action.edge_index
+        self.tensor[index] = action.tensor
 
     def compare(self, other: GraphActions) -> torch.Tensor:
         """Compares the actions to another GraphAction object.
@@ -246,18 +245,30 @@ class GraphActions(Actions):
 
         Returns: boolean tensor of shape batch_shape indicating whether the actions are equal.
         """
-        if self.action_type != other.action_type:
-            len_ = self.features.shape[0] if self.features is not None else 1
-            return torch.zeros(len_, dtype=torch.bool, device=self.device)
-        out = torch.all(self.features == other.features, dim=-1)
-        if self.edge_index is not None:
-            out &= torch.all(self.edge_index == other.edge_index, dim=-1)
-        return out
+        compare = torch.all(self.tensor == other.tensor, dim=-1)
+        return compare["action_type"] & \
+            (compare["action_type"] == GraphActionType.EXIT | compare["features"]) & \
+            (compare["action_type"] != GraphActionType.ADD_EDGE | compare["edge_index"])
 
     @property
     def is_exit(self) -> torch.Tensor:
         """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are exit actions."""
         return self.action_type == GraphActionType.EXIT
+
+    @property
+    def action_type(self) -> torch.Tensor:
+        """Returns the action type tensor."""
+        return self.tensor["action_type"]
+
+    @property
+    def features(self) -> torch.Tensor:
+        """Returns the features tensor."""
+        return self.tensor["features"]
+    
+    @property
+    def edge_index(self) -> torch.Tensor:
+        """Returns the edge index tensor."""
+        return self.tensor["edge_index"].T
 
     @classmethod
     def make_dummy_actions(
