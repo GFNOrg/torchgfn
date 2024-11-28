@@ -225,7 +225,6 @@ def test_replay_buffer(
 
 # ------ GRAPH TESTS ------
 
-
 class GraphActionNet(nn.Module):
     def __init__(self, feature_dim: int):
         super().__init__()
@@ -246,7 +245,7 @@ class GraphActionNet(nn.Module):
             features = features.reshape(len(states), -1, features.shape[-1]).mean(dim=0)
 
         edge_index = self.edge_index_conv(states.data.x, states.data.edge_index)
-        edge_index = edge_index.reshape(states.batch_shape, -1, 8)
+        edge_index = edge_index.reshape(*states.batch_shape, -1, 8)
         edge_index = torch.einsum("bnf,bmf->bnm", edge_index, edge_index)
 
         return TensorDict(
@@ -261,7 +260,7 @@ class GraphActionNet(nn.Module):
 
 def test_graph_building():
     feature_dim = 8
-    env = GraphBuilding(node_feature_dim=feature_dim, edge_feature_dim=feature_dim)
+    env = GraphBuilding(feature_dim=feature_dim)
 
     module = GraphActionNet(feature_dim)
     pf_estimator = GraphActionPolicyEstimator(module=module)

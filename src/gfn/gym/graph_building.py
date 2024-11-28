@@ -13,22 +13,21 @@ from gfn.states import GraphStates
 class GraphBuilding(GraphEnv):
     def __init__(
         self,
-        node_feature_dim: int,
-        edge_feature_dim: int,
+        feature_dim: int,
         state_evaluator: Callable[[Batch], torch.Tensor] | None = None,
         device_str: Literal["cpu", "cuda"] = "cpu",
     ):
         s0 = Data(
-            x=torch.zeros((0, node_feature_dim), dtype=torch.float32),
-            edge_attr=torch.zeros((0, edge_feature_dim), dtype=torch.float32),
+            x=torch.zeros((0, feature_dim), dtype=torch.float32),
+            edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
         ).to(device_str)
         sf = Data(
-            x=torch.ones((1, node_feature_dim), dtype=torch.float32) * float("inf"),
+            x=torch.ones((1, feature_dim), dtype=torch.float32) * float("inf"),
         ).to(device_str)
 
         if state_evaluator is None:
-            state_evaluator = GCNConvEvaluator(node_feature_dim)
+            state_evaluator = GCNConvEvaluator(feature_dim)
         self.state_evaluator = state_evaluator
 
         super().__init__(
@@ -37,7 +36,7 @@ class GraphBuilding(GraphEnv):
             device_str=device_str,
         )
 
-    def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
+    def step(self, states: GraphStates, actions: GraphActions) -> Data:
         """Step function for the GraphBuilding environment.
 
         Args:
@@ -50,14 +49,17 @@ class GraphBuilding(GraphEnv):
             raise NonValidActionsError("Invalid action.")
         graphs: Batch = deepcopy(states.data)
 
-        if actions.action_type == GraphActionType.ADD_NODE:
+        action_type = actions.action_type[0]
+        assert torch.all(actions.action_type == action_type)
+
+        if action_type == GraphActionType.ADD_NODE:
             assert len(graphs) == len(actions)
             if graphs.x is None:
                 graphs.x = actions.features
             else:
                 graphs.x = torch.cat([graphs.x, actions.features])
 
-        if actions.action_type == GraphActionType.ADD_EDGE:
+        if action_type == GraphActionType.ADD_EDGE:
             assert len(graphs) == len(actions)
             assert actions.edge_index is not None
             if graphs.edge_attr is None:
@@ -70,7 +72,7 @@ class GraphBuilding(GraphEnv):
                     [graphs.edge_index, actions.edge_index], dim=1
                 )
 
-        return self.States(graphs)
+        return graphs
 
     def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Backward step function for the GraphBuilding environment.
@@ -106,56 +108,57 @@ class GraphBuilding(GraphEnv):
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
     ) -> bool:
-        if actions.action_type == GraphActionType.EXIT:
-            return True  # TODO: what are the conditions for exit action?
-
-        if actions.action_type == GraphActionType.ADD_NODE:
-            if actions.edge_index is not None:
-                return False
-            if states.data.x is None:
-                return not backward
-
+        add_node_mask = actions.action_type == GraphActionType.ADD_NODE
+        if not torch.any(add_node_mask):
+            add_node_out = True
+        else:
             equal_nodes_per_batch = torch.all(
-                states.data.x == actions.features[:, None], dim=-1
+                states[add_node_mask].data.x == actions[add_node_mask].features[:, None], dim=-1
             ).reshape(states.data.batch_size, -1)
             equal_nodes_per_batch = torch.sum(equal_nodes_per_batch, dim=-1)
-
             if backward:  # TODO: check if no edge are connected?
-                return torch.all(equal_nodes_per_batch == 1)
-            return torch.all(equal_nodes_per_batch == 0)
+                add_node_out = torch.all(equal_nodes_per_batch == 1)
+            else:
+                add_node_out = torch.all(equal_nodes_per_batch == 0)
+        
+        add_edge_mask = actions.action_type == GraphActionType.ADD_EDGE
+        if not torch.any(add_edge_mask):
+            add_edge_out = True
+        else:
+            add_edge_states = states[add_edge_mask]
+            add_edge_actions = actions[add_edge_mask]
 
-        if actions.action_type == GraphActionType.ADD_EDGE:
-            assert actions.edge_index is not None
-            if torch.any(actions.edge_index[0] == actions.edge_index[1]):
+            if torch.any(add_edge_actions.edge_index[0] == add_edge_actions.edge_index[1]):
                 return False
-            if states.data.num_nodes is None or states.data.num_nodes == 0:
+            if add_edge_states.data.num_nodes == 0:
                 return False
-            if torch.any(actions.edge_index > states.data.num_nodes):
+            if torch.any(add_edge_actions.edge_index > add_edge_states.data.num_nodes):
                 return False
 
-            batch_dim = actions.features.shape[0]
-            batch_idx = actions.edge_index % batch_dim
+            batch_dim = add_edge_actions.features.shape[0]
+            batch_idx = add_edge_actions.edge_index % batch_dim
             if torch.any(batch_idx != torch.arange(batch_dim)):
                 return False
-            if states.data.edge_attr is None:
-                return True
 
             equal_edges_per_batch_attr = torch.all(
-                states.data.edge_attr == actions.features[:, None], dim=-1
-            ).reshape(states.data.batch_size, -1)
+                add_edge_states.data.edge_attr == add_edge_actions.features[:, None], dim=-1
+            ).reshape(add_edge_states.data.batch_size, -1)
             equal_edges_per_batch_attr = torch.sum(equal_edges_per_batch_attr, dim=-1)
-
             equal_edges_per_batch_index = torch.all(
-                states.data.edge_index[:, None] == actions.edge_index[:, :, None], dim=0
-            ).reshape(states.data.batch_size, -1)
+                add_edge_states.data.edge_index[:, None] == add_edge_actions.edge_index[:, :, None], dim=0
+            ).reshape(add_edge_states.data.batch_size, -1)
             equal_edges_per_batch_index = torch.sum(equal_edges_per_batch_index, dim=-1)
+        
             if backward:
-                return torch.all(equal_edges_per_batch_attr == 1) and torch.all(
+                add_edge_out = torch.all(equal_edges_per_batch_attr == 1) and torch.all(
                     equal_edges_per_batch_index == 1
                 )
-            return torch.all(equal_edges_per_batch_attr == 0) and torch.all(
-                equal_edges_per_batch_index == 0
-            )
+            else:
+                add_edge_out = torch.all(equal_edges_per_batch_attr == 0) and torch.all(
+                    equal_edges_per_batch_index == 0
+                )
+            
+        return bool(add_node_out) and bool(add_edge_out)
 
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
@@ -180,7 +183,7 @@ class GraphBuilding(GraphEnv):
         raise NotImplementedError
 
     def make_random_states_tensor(self, batch_shape: Tuple) -> GraphStates:
-        """Generates random states tensor of shape (*batch_shape, num_nodes, node_feature_dim)."""
+        """Generates random states tensor of shape (*batch_shape, feature_dim)."""
         return self.States.from_batch_shape(batch_shape)
 
 

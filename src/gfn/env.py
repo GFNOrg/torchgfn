@@ -264,10 +264,12 @@ class Env(ABC):
         not_done_actions = actions[~new_sink_states_idx]
 
         new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
-        if not isinstance(new_not_done_states_tensor, torch.Tensor):
-            raise Exception(
-                "User implemented env.step function *must* return a torch.Tensor!"
-            )
+        
+        # TODO: uncomment (change Data to TensorDict)
+        # if not isinstance(new_not_done_states_tensor, torch.Tensor):
+        #     raise Exception(
+        #         "User implemented env.step function *must* return a torch.Tensor!"
+        #     )
 
         new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
 
@@ -568,8 +570,6 @@ class GraphEnv(Env):
     def __init__(
         self,
         s0: Data,
-        # node_feature_dim: int,
-        # edge_feature_dim: int,
         sf: Optional[Data] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
@@ -578,8 +578,6 @@ class GraphEnv(Env):
 
         Args:
             s0: The initial graph state.
-            node_feature_dim: The dimension of the node features.
-            edge_feature_dim: The dimension of the edge features.
             action_shape: Tuple representing the shape of the actions.
             dummy_action: Tensor of shape "action_shape" representing a dummy action.
             exit_action: Tensor of shape "action_shape" representing the exit action.
@@ -591,10 +589,7 @@ class GraphEnv(Env):
                 the IdentityPreprocessor is used.
         """
         self.s0 = s0.to(device_str)
-
-        self.node_feature_dim = s0.x.shape[1]
-        self.edge_feature_dim = s0.edge_attr.shape[1]
-
+        self.features_dim = s0.x.shape[1]
         self.sf = sf
 
         self.States = self.make_states_class()
@@ -609,8 +604,6 @@ class GraphEnv(Env):
         class GraphEnvStates(GraphStates):
             s0 = env.s0
             sf = env.sf
-            # node_feature_dim = env.node_feature_dim
-            # edge_feature_dim = env.edge_feature_dim
             make_random_states_graph = env.make_random_states_tensor
 
         return GraphEnvStates
@@ -625,8 +618,7 @@ class GraphEnv(Env):
         env = self
 
         class DefaultGraphAction(GraphActions):
-            nodes_features_dim = env.node_feature_dim
-            edge_features_dim = env.edge_feature_dim
+            features_dim = env.features_dim
 
         return DefaultGraphAction
 

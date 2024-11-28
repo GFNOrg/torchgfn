@@ -325,7 +325,7 @@ def test_graph_env():
     BATCH_SIZE = 3
     NUM_NODES = 5
 
-    env = GraphBuilding(node_feature_dim=FEATURE_DIM, edge_feature_dim=FEATURE_DIM)
+    env = GraphBuilding(feature_dim=FEATURE_DIM)
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.batch_shape == BATCH_SIZE
     action_cls = env.make_actions_class()

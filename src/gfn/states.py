@@ -491,16 +491,16 @@ class GraphStates(ABC):
 
     def __init__(self, graphs: Batch):
         self.data: Batch = graphs
-        self.batch_shape: int = len(self.data)
+        self.batch_shape: tuple = (len(self.data),)
         self._log_rewards: float = None
 
         # TODO logic repeated from env.is_valid_action
         not_empty = self.data.x is not None and self.data.x.shape[0] > 0
-        self.forward_masks = torch.ones((self.batch_shape, 3), dtype=torch.bool)
+        self.forward_masks = torch.ones((*self.batch_shape, 3), dtype=torch.bool)
         self.forward_masks[:, GraphActionType.ADD_EDGE] = not_empty
         self.forward_masks[:, GraphActionType.EXIT] = not_empty
 
-        self.backward_masks = torch.ones((self.batch_shape, 3), dtype=torch.bool)
+        self.backward_masks = torch.ones((*self.batch_shape, 3), dtype=torch.bool)
         self.backward_masks[:, GraphActionType.ADD_NODE] = not_empty
         self.backward_masks[:, GraphActionType.ADD_EDGE] = (
             not_empty and self.data.edge_attr.shape[0] > 0
@@ -580,10 +580,13 @@ class GraphStates(ABC):
         self, index: int | Sequence[int] | slice | torch.Tensor
     ) -> GraphStates:
         idxs = np.arange(len(self.data))[index]
-        data = []
-        for i in idxs:
-            data.append(self.data.get_example(i))
-
+        data = [self.data.get_example(i) for i in idxs]
+        if len(data) == 0:
+            data.append(Data(
+                x=torch.zeros((0, self.data.x.shape[1]), dtype=torch.float32),
+                edge_attr=torch.zeros((0, self.data.edge_attr.shape[1]), dtype=torch.float32),
+                edge_index=torch.zeros((2, 0), dtype=torch.long),
+            ))
         out = GraphStates(Batch.from_data_list(data))
 
         if self._log_rewards is not None:
@@ -666,3 +669,7 @@ class GraphStates(ABC):
         return torch.all(self.data.x == self.sf.x, dim=-1).reshape(
             batch_dim,
         )
+
+    @property
+    def tensor(self) -> Batch:
+        return self.data
