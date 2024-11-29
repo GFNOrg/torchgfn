@@ -223,13 +223,13 @@ class HyperGrid(DiscreteEnv):
         rearrange_string += " ".join([f"n{i}" for i in range(ndim, 0, -1)])
         rearrange_string += " ndim"
         grid = rearrange(grid, rearrange_string).long()
-        return self.States(grid)
+        return self.states_from_tensor(grid)
 
     @property
     def all_states(self) -> DiscreteStates:
         grid = self.build_grid()
         flat_grid = rearrange(grid.tensor, "... ndim -> (...) ndim")
-        return self.States(flat_grid)
+        return self.states_from_tensor(flat_grid)
 
     @property
     def terminating_states(self) -> DiscreteStates:

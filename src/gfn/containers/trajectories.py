@@ -472,8 +472,8 @@ class Trajectories(Container):
                 0
             )
 
-        trajectories_states = trajectories.env.States(new_states)
-        trajectories_actions = trajectories.env.Actions(new_actions)
+        trajectories_states = trajectories.env.states_from_tensor(new_states)
+        trajectories_actions = trajectories.env.actions_from_tensor(new_actions)
 
         return Trajectories(
             env=trajectories.env,

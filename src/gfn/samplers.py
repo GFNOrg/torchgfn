@@ -12,6 +12,7 @@ from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
 )
+from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 
 
 class Sampler:
@@ -154,9 +155,15 @@ class Sampler:
             else states.is_sink_state
         )
 
+        # Define dummy actions to avoid errors when stacking empty lists.
+        dummy_actions = env.actions_from_batch_shape((n_trajectories,))
+        dummy_logprobs = torch.full(
+            (n_trajectories,), fill_value=0, dtype=torch.float, device=device
+        )
+
         trajectories_states: List[States] = [deepcopy(states)]
-        trajectories_actions: List[torch.Tensor] = []
-        trajectories_logprobs: List[torch.Tensor] = []
+        trajectories_actions: List[Actions] = [dummy_actions]
+        trajectories_logprobs: List[torch.Tensor] = [dummy_logprobs]
         trajectories_dones = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
@@ -168,10 +175,8 @@ class Sampler:
         all_estimator_outputs = []
 
         while not all(dones):
-            actions = env.actions_from_batch_shape((n_trajectories,))  # Dummy actions.
-            log_probs = torch.full(
-                (n_trajectories,), fill_value=0, dtype=torch.float, device=device
-            )
+            actions = deepcopy(dummy_actions)
+            log_probs = dummy_logprobs.clone()
             # This optionally allows you to retrieve the estimator_outputs collected
             # during sampling. This is useful if, for example, you want to evaluate off
             # policy actions later without repeating calculations to obtain the env
@@ -241,9 +246,9 @@ class Sampler:
             trajectories_states.append(deepcopy(states))
 
         trajectories_states = stack_states(trajectories_states)
-        trajectories_actions = env.Actions.stack(trajectories_actions)
+        trajectories_actions = env.Actions.stack(trajectories_actions)[1:, :]
         trajectories_logprobs = (
-            torch.stack(trajectories_logprobs, dim=0) if save_logprobs else None
+            torch.stack(trajectories_logprobs, dim=0)[1:, :] if save_logprobs else None
         )
 
         # TODO: use torch.nested.nested_tensor(dtype, device, requires_grad).
@@ -292,9 +297,13 @@ class LocalSearchSampler(Sampler):
         back_ratio: float | None = None,
         use_metropolis_hastings: bool = True,
         **policy_kwargs: Any,
-    ) -> tuple[Trajectories, tuple[torch.Tensor, torch.Tensor]]:
+    ) -> tuple[Trajectories, torch.Tensor]:
+        assert (
+            trajectories.log_rewards is not None
+        ), "Trajectories must have log rewards"
         save_logprobs = save_logprobs or use_metropolis_hastings
 
+        device = trajectories.states.device
         bs = trajectories.n_trajectories
         state_shape = trajectories.states.state_shape
         action_shape = trajectories.env.action_shape
@@ -321,52 +330,15 @@ class LocalSearchSampler(Sampler):
             save_logprobs=save_logprobs,
             **policy_kwargs,
         )
-        # Calculate the forward probability if needed (metropolis-hastings).
-        ### COPIED FROM `TrajectoryBasedGFlowNet.get_pfs_and_pbs` ###
-        if use_metropolis_hastings:
-            ### FIXME: I realize that the trajectory needs to be reverted to get the forward probability.
-            ### TODO: Resolve the issue first https://github.com/GFNOrg/torchgfn/issues/109
-            valid_states = backward_trajectories.states[
-                ~backward_trajectories.states.is_sink_state
-            ]
-            valid_actions = backward_trajectories.actions[
-                ~backward_trajectories.actions.is_dummy
-            ]
 
-            if backward_trajectories.conditioning is not None:
-                cond_dim = (-1,) * len(backward_trajectories.conditioning.shape)
-                traj_len = backward_trajectories.states.tensor.shape[0]
-                masked_cond = backward_trajectories.conditioning.unsqueeze(0).expand(
-                    (traj_len,) + cond_dim
-                )[~backward_trajectories.states.is_sink_state]
-
-                # Here, we pass all valid states, i.e., non-sink states.
-                with has_conditioning_exception_handler("pf", self.estimator):
-                    estimator_outputs = self.estimator(valid_states, masked_cond)
-            else:
-                # Here, we pass all valid states, i.e., non-sink states.
-                with no_conditioning_exception_handler("pf", self.estimator):
-                    estimator_outputs = self.estimator(valid_states)
-
-            # Calculates the log PF of the actions sampled off policy.
-            valid_log_pf_actions = self.estimator.to_probability_distribution(
-                valid_states, estimator_outputs
-            ).log_prob(
-                valid_actions.tensor
-            )  # Using the actions sampled off-policy.
-            log_pf_backward_trajectories = torch.full_like(
-                backward_trajectories.actions.tensor[..., 0],
-                fill_value=0.0,
-                dtype=torch.float,
-            )
-            log_pf_backward_trajectories[
-                ~backward_trajectories.actions.is_dummy
-            ] = valid_log_pf_actions
+        # Calculate the forward probability if needed (Metropolis-Hastings).
+        prev_trajectories = Trajectories.reverse_backward_trajectories(
+            backward_trajectories
+        )
+        prev_trajectories_log_rewards = trajectories.log_rewards
 
         all_states = backward_trajectories.to_states()
-        junction_states = all_states[
-            torch.arange(bs, device=all_states.device) + bs * K
-        ]
+        junction_states = all_states[torch.arange(bs, device=device) + bs * K]
 
         ### Reconstructing with self.estimator
         recon_trajectories = super().sample_trajectories(
@@ -379,129 +351,115 @@ class LocalSearchSampler(Sampler):
         )
 
         # Obtain full trajectories by concatenating the backward and forward parts.
-        trajectories_dones = (
+        new_trajectories_dones = (
             backward_trajectories.when_is_done - K + recon_trajectories.when_is_done
         )
-        max_traj_len = trajectories_dones.max() + 1
-        trajectories_states_tsr = torch.full((max_traj_len, bs, *state_shape), -1).to(
-            all_states.tensor
-        )
-        trajectories_actions_tsr = torch.full(
+        new_trajectories_log_rewards = recon_trajectories.log_rewards  # Episodic reward
+
+        max_traj_len = new_trajectories_dones.max() + 1
+        new_trajectories_states_tsr = torch.full(
+            (max_traj_len, bs, *state_shape), -1
+        ).to(trajectories.states.tensor)
+        new_trajectories_actions_tsr = torch.full(
             (max_traj_len - 1, bs, *action_shape), -1
-        ).to(all_states.tensor)
-        trajectories_log_rewards = (
-            recon_trajectories.log_rewards
-        )  # Episodic reward is assumed.
-        trajectories_logprobs = None  # TODO
+        ).to(trajectories.actions.tensor)
+
+        # Calculate the log probabilities as needed.
+        if save_logprobs:
+            log_pf_prev_trajectories = get_trajectory_pfs(
+                pf=self.estimator, trajectories=prev_trajectories
+            )
+            log_pf_recon_trajectories = get_trajectory_pfs(
+                pf=self.estimator, trajectories=recon_trajectories
+            )
+            log_pf_new_trajectories = torch.full((max_traj_len - 1, bs), 0.0).to(
+                device=device, dtype=torch.float
+            )
+        if use_metropolis_hastings:
+            log_pb_prev_trajectories = get_trajectory_pbs(
+                pb=self.backward_sampler.estimator,
+                trajectories=prev_trajectories,
+            )
+            log_pb_recon_trajectories = get_trajectory_pbs(
+                pb=self.backward_sampler.estimator, trajectories=recon_trajectories
+            )
+            log_pb_new_trajectories = torch.full((max_traj_len - 1, bs), 0.0).to(
+                device=device, dtype=torch.float
+            )
 
         for i in range(bs):  # FIXME: Can we vectorize this?
+            n_back = backward_trajectories.when_is_done[i] - K[i]
+
+            # Sanity check
+            assert (
+                prev_trajectories.states.tensor[n_back, i]
+                == recon_trajectories.states.tensor[0, i]
+            ).all()
+
             # Backward part
-            back_source_idx = backward_trajectories.when_is_done[i]
-            n_back = back_source_idx - K[i]
-            trajectories_states_tsr[:n_back, i] = backward_trajectories.states.tensor[
-                back_source_idx - n_back + 1 : back_source_idx + 1, i
-            ].flip(0)
+            new_trajectories_states_tsr[
+                : n_back + 1, i
+            ] = prev_trajectories.states.tensor[: n_back + 1, i]
+            new_trajectories_actions_tsr[:n_back, i] = prev_trajectories.actions.tensor[
+                :n_back, i
+            ]
+            if save_logprobs:
+                log_pf_new_trajectories[:n_back, i] = log_pf_prev_trajectories[
+                    :n_back, i
+                ]
+            if use_metropolis_hastings:
+                log_pb_new_trajectories[:n_back, i] = log_pb_prev_trajectories[
+                    :n_back, i
+                ]
 
-            # FIXME: This is not correct in general...
-            # Because the action index may not be consistent between the forward and backward.
-            trajectories_actions_tsr[:n_back, i] = backward_trajectories.actions.tensor[
-                back_source_idx - n_back : back_source_idx, i
-            ].flip(0)
-
-            len_recon = recon_trajectories.when_is_done[i] + 1
             # Forward part
-            trajectories_states_tsr[
+            len_recon = recon_trajectories.when_is_done[i]
+            new_trajectories_states_tsr[
+                n_back + 1 : n_back + len_recon + 1, i
+            ] = recon_trajectories.states.tensor[1 : len_recon + 1, i]
+            new_trajectories_actions_tsr[
                 n_back : n_back + len_recon, i
-            ] = recon_trajectories.states.tensor[:len_recon, i]
-            trajectories_actions_tsr[
-                n_back : n_back + len_recon - 1, i
-            ] = recon_trajectories.actions.tensor[: len_recon - 1, i]
+            ] = recon_trajectories.actions.tensor[:len_recon, i]
+            if save_logprobs:
+                log_pf_new_trajectories[
+                    n_back : n_back + len_recon, i
+                ] = log_pf_recon_trajectories[:len_recon, i]
+            if use_metropolis_hastings:
+                log_pb_new_trajectories[
+                    n_back : n_back + len_recon, i
+                ] = log_pb_recon_trajectories[:len_recon, i]
 
         new_trajectories = Trajectories(
             env=env,
-            states=env.states_from_tensor(trajectories_states_tsr),
+            states=env.states_from_tensor(new_trajectories_states_tsr),
             conditioning=conditioning,
-            actions=env.Actions(trajectories_actions_tsr),
-            when_is_done=trajectories_dones,
+            actions=env.actions_from_tensor(new_trajectories_actions_tsr),
+            when_is_done=new_trajectories_dones,
             is_backward=False,
-            log_rewards=trajectories_log_rewards,
-            log_probs=trajectories_logprobs,  # TODO: Support log_probs (`None` for now)
+            log_rewards=new_trajectories_log_rewards,
+            log_probs=log_pf_new_trajectories if save_logprobs else None,
         )
 
-        ### COPIED FROM `TrajectoryBasedGFlowNet.get_pfs_and_pbs` ###
         if use_metropolis_hastings:
-            valid_states = new_trajectories.states[
-                ~new_trajectories.states.is_sink_state
-            ]
-            valid_actions = new_trajectories.actions[~new_trajectories.actions.is_dummy]
-
-            non_initial_valid_states = valid_states[~valid_states.is_initial_state]
-            non_exit_valid_actions = valid_actions[~valid_actions.is_exit]
-
-            # Using all non-initial states, calculate the backward policy, and the logprobs
-            # of those actions.
-            if new_trajectories.conditioning is not None:
-                # We need to index the conditioning vector to broadcast over the states.
-                cond_dim = (-1,) * len(new_trajectories.conditioning.shape)
-                traj_len = new_trajectories.states.tensor.shape[0]
-                masked_cond = new_trajectories.conditioning.unsqueeze(0).expand(
-                    (traj_len,) + cond_dim
-                )[~new_trajectories.states.is_sink_state][
-                    ~valid_states.is_initial_state
-                ]
-
-                # Pass all valid states, i.e., non-sink states, except the initial state.
-                with has_conditioning_exception_handler(
-                    "pb", self.backward_sampler.estimator
-                ):
-                    estimator_outputs = self.backward_sampler.estimator(
-                        non_initial_valid_states, masked_cond
-                    )
-            else:
-                # Pass all valid states, i.e., non-sink states, except the initial state.
-                with no_conditioning_exception_handler(
-                    "pb", self.backward_sampler.estimator
-                ):
-                    estimator_outputs = self.backward_sampler.estimator(
-                        non_initial_valid_states
-                    )
-
-            valid_log_pb_actions = (
-                self.backward_sampler.estimator.to_probability_distribution(
-                    non_initial_valid_states, estimator_outputs
-                ).log_prob(non_exit_valid_actions.tensor)
-            )
-
-            log_pb_new_trajectories = torch.full_like(
-                new_trajectories.actions.tensor[..., 0],
-                fill_value=0.0,
-                dtype=torch.float,
-            )
-            log_pb_new_trajectories_slice = torch.full_like(
-                valid_actions.tensor[..., 0], fill_value=0.0, dtype=torch.float
-            )
-            log_pb_new_trajectories_slice[~valid_actions.is_exit] = valid_log_pb_actions
-            log_pb_new_trajectories[
-                ~new_trajectories.actions.is_dummy
-            ] = log_pb_new_trajectories_slice
-
-            # TODO: Implement Metropolis-Hastings acceptance criterion.
-            # p(x->s'->x') = p_B(x->s')p_F(s'->x')
-            # p(x'->s'->x) = p_B(x'->s')p_F(s'->x)
-            # The acceptance ratio is
-            # min(1, R(x')p(x->s'->x') / R(x)p(x'->s'-> x))
-            # Note that
+            # The acceptance ratio is: min(1, R(x')p(x->s'->x') / R(x)p(x'->s'-> x))
+            # Also, note this:
             # p(x->s'->x') / p(x'->s'-> x))
             # = p_B(x->s')p_F(s'->x') / p_B(x'->s')p_F(s'->x)
             # = p_B(x->s'->s0)p_F(s0->s'->x') / p_B(x'->s'->s0)p_F(s0->s'->x)
             # = p_B(tau|x)p_F(tau') / p_B(tau'|x')p_F(tau)
-
-            # Calculate the acceptance ratio here.
-            is_updated = None  # Sample here
+            log_accept_ratio = torch.clamp_max(
+                new_trajectories_log_rewards
+                + log_pb_prev_trajectories.sum(0)
+                + log_pf_new_trajectories.sum(0)
+                - prev_trajectories_log_rewards
+                - log_pb_new_trajectories.sum(0)
+                - log_pf_prev_trajectories.sum(0),
+                0.0,
+            )
+            is_updated = torch.rand(bs, device=device) < torch.exp(log_accept_ratio)
         else:
-            prev_log_rewards = trajectories.log_rewards
             new_log_rewards = new_trajectories.log_rewards
-            is_updated = prev_log_rewards <= new_log_rewards
+            is_updated = prev_trajectories_log_rewards <= new_log_rewards
 
         return new_trajectories, is_updated
 
@@ -574,9 +532,7 @@ class LocalSearchSampler(Sampler):
                 use_metropolis_hastings,
                 **policy_kwargs,
             )
-            trajectories.extend(
-                ls_trajectories
-            )  # Store all regardless of the acceptance.
+            trajectories.extend(ls_trajectories)
 
             last_indices = torch.arange(
                 n * (it + 1), n * (it + 2), device=trajectories.states.device

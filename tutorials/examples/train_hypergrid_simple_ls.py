@@ -50,7 +50,7 @@ def main(args):
         {"params": gflownet.logz_parameters(), "lr": args.lr_logz}
     )
 
-    for i in (pbar := tqdm(range(args.n_iterations))):
+    for _ in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
         trajectories = sampler.sample_trajectories(
             env,
             n=(args.batch_size // args.n_local_search_loops),
