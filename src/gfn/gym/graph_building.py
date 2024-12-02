@@ -52,6 +52,9 @@ class GraphBuilding(GraphEnv):
         action_type = actions.action_type[0]
         assert torch.all(actions.action_type == action_type)
 
+        if action_type == GraphActionType.EXIT:
+            return self.sf  # TODO: not possible to backtrack then... maybe a boolen in state?
+
         if action_type == GraphActionType.ADD_NODE:
             assert len(graphs) == len(actions)
             if graphs.x is None:
@@ -72,6 +75,7 @@ class GraphBuilding(GraphEnv):
                     [graphs.edge_index, actions.edge_index], dim=1
                 )
 
+        import pdb; pdb.set_trace()
         return graphs
 
     def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
