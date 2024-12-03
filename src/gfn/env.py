@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple, Union
 
 import torch
-from torch_geometric.data import Batch, Data
+from tensordict import TensorDict
 
 from gfn.actions import Actions, GraphActions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
@@ -256,7 +256,8 @@ class Env(ABC):
             )
 
         new_sink_states_idx = actions.is_exit
-        new_states.tensor[new_sink_states_idx] = self.sf
+        sf_tensor = self.States.make_sink_states_tensor(new_sink_states_idx.sum())
+        new_states[new_sink_states_idx] = self.States(sf_tensor)
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
         assert new_sink_states_idx.shape == states.batch_shape
 
@@ -265,14 +266,12 @@ class Env(ABC):
 
         new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
         
-        # TODO: uncomment (change Data to TensorDict)
-        # if not isinstance(new_not_done_states_tensor, torch.Tensor):
-        #     raise Exception(
-        #         "User implemented env.step function *must* return a torch.Tensor!"
-        #     )
+        if not isinstance(new_not_done_states_tensor, (torch.Tensor, TensorDict)):
+            raise Exception(
+                "User implemented env.step function *must* return a torch.Tensor!"
+            )
 
-        new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
-
+        new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
         return new_states
 
     def _backward_step(
@@ -569,8 +568,8 @@ class GraphEnv(Env):
 
     def __init__(
         self,
-        s0: Data,
-        sf: Optional[Data] = None,
+        s0: TensorDict,
+        sf: Optional[TensorDict] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -578,9 +577,6 @@ class GraphEnv(Env):
 
         Args:
             s0: The initial graph state.
-            action_shape: Tuple representing the shape of the actions.
-            dummy_action: Tensor of shape "action_shape" representing a dummy action.
-            exit_action: Tensor of shape "action_shape" representing the exit action.
             sf: The final graph state.
             device_str: 'cpu' or 'cuda'. Defaults to None, in which case the device is
                 inferred from s0.
@@ -589,7 +585,7 @@ class GraphEnv(Env):
                 the IdentityPreprocessor is used.
         """
         self.s0 = s0.to(device_str)
-        self.features_dim = s0.x.shape[1]
+        self.features_dim = s0["node_feature"].shape[-1]
         self.sf = sf
 
         self.States = self.make_states_class()

@@ -234,19 +234,24 @@ class GraphActionNet(nn.Module):
         self.edge_index_conv = GCNConv(feature_dim, 8)
 
     def forward(self, states: GraphStates) -> TensorDict:
-        if len(states.data.x) == 0:
+        node_feature = states.tensor["node_feature"].reshape(-1, self.feature_dim)
+        edge_index = states.tensor["edge_index"].reshape(-1, 2).T
+
+        if states.tensor["node_feature"].shape[1] == 0:
             action_type = torch.zeros((len(states), len(GraphActionType)))
             action_type[:, GraphActionType.ADD_NODE] = 1
             features = torch.zeros((len(states), self.feature_dim))
         else:
-            action_type = self.action_type_conv(states.data.x, states.data.edge_index)
-            action_type = torch.mean(action_type, dim=0)
-            features = self.features_conv(states.data.x, states.data.edge_index)
-            features = features.reshape(len(states), -1, features.shape[-1]).mean(dim=0)
+            action_type = self.action_type_conv(node_feature, edge_index)
+            action_type = action_type.reshape(len(states), -1, action_type.shape[-1]).mean(dim=1)
+            action_type = action_type.mean(dim=0).expand(len(states), -1)
+            features = self.features_conv(node_feature, edge_index)
+            features = features.reshape(len(states), -1, features.shape[-1]).mean(dim=1)
 
-        edge_index = self.edge_index_conv(states.data.x, states.data.edge_index)
+        edge_index = self.edge_index_conv(node_feature, edge_index)
         edge_index = edge_index.reshape(*states.batch_shape, -1, 8)
         edge_index = torch.einsum("bnf,bmf->bnm", edge_index, edge_index)
+        torch.diagonal(edge_index, dim1=-2, dim2=-1).fill_(float("-inf"))
 
         return TensorDict(
             {
@@ -259,6 +264,7 @@ class GraphActionNet(nn.Module):
 
 
 def test_graph_building():
+    torch.manual_seed(7)
     feature_dim = 8
     env = GraphBuilding(feature_dim=feature_dim)
 

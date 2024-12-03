@@ -7,6 +7,7 @@ from typing import Callable, ClassVar, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
+from tensordict import TensorDict
 from torch_geometric.data import Batch, Data
 
 from gfn.actions import GraphActionType
@@ -486,16 +487,19 @@ class GraphStates(ABC):
     graph objects as states.
     """
 
-    s0: ClassVar[Data]
-    sf: ClassVar[Optional[Data]]
+    s0: ClassVar[TensorDict]
+    sf: ClassVar[TensorDict]
 
-    def __init__(self, graphs: Batch):
-        self.data: Batch = graphs
-        self.batch_shape: tuple = (len(self.data),)
+    def __init__(self, tensor: TensorDict):
+        self.tensor = tensor
+        self.node_features_dim = tensor["node_feature"].shape[-1]
+        self.edge_features_dim = tensor["edge_feature"].shape[-1]
+
+        self.batch_shape: tuple = tensor.batch_size
         self._log_rewards: float = None
 
         # TODO logic repeated from env.is_valid_action
-        not_empty = self.data.x is not None and self.data.x.shape[0] > 0
+        not_empty = self.tensor["node_feature"].shape[1] > 1
         self.forward_masks = torch.ones((*self.batch_shape, 3), dtype=torch.bool)
         self.forward_masks[:, GraphActionType.ADD_EDGE] = not_empty
         self.forward_masks[:, GraphActionType.EXIT] = not_empty
@@ -503,7 +507,7 @@ class GraphStates(ABC):
         self.backward_masks = torch.ones((*self.batch_shape, 3), dtype=torch.bool)
         self.backward_masks[:, GraphActionType.ADD_NODE] = not_empty
         self.backward_masks[:, GraphActionType.ADD_EDGE] = (
-            not_empty and self.data.edge_attr.shape[0] > 0
+            not_empty and self.tensor["edge_feature"].shape[1] > 0 > 0
         )
         self.backward_masks[:, GraphActionType.EXIT] = not_empty
 
@@ -514,15 +518,15 @@ class GraphStates(ABC):
         if random and sink:
             raise ValueError("Only one of `random` and `sink` should be True.")
         if random:
-            data = cls.make_random_states_graph(batch_shape)
+            tensor = cls.make_random_states_tensor(batch_shape)
         elif sink:
-            data = cls.make_sink_states_graph(batch_shape)
+            tensor = cls.make_sink_states_tensor(batch_shape)
         else:
-            data = cls.make_initial_states_graph(batch_shape)
-        return cls(data)
+            tensor = cls.make_initial_states_tensor(batch_shape)
+        return cls(tensor)
 
     @classmethod
-    def make_initial_states_graph(cls, batch_shape: int | Tuple) -> Batch:
+    def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> TensorDict:
         if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
             raise NotImplementedError(
                 "Batch shape with more than one dimension is not supported"
@@ -530,11 +534,14 @@ class GraphStates(ABC):
         if isinstance(batch_shape, Tuple):
             batch_shape = batch_shape[0]
 
-        data = Batch.from_data_list([cls.s0 for _ in range(batch_shape)])
-        return data
+        return TensorDict({
+            "node_feature": cls.s0["node_feature"].repeat(batch_shape, 1, 1),
+            "edge_feature": cls.s0["edge_feature"].repeat(batch_shape, 1, 1),
+            "edge_index": cls.s0["edge_index"].repeat(batch_shape, 1, 1)            
+        }, batch_size=batch_shape)
 
     @classmethod
-    def make_sink_states_graph(cls, batch_shape: Tuple) -> Batch:
+    def make_sink_states_tensor(cls, batch_shape: Tuple) -> TensorDict:
         if cls.sf is None:
             raise NotImplementedError("Sink state is not defined")
 
@@ -545,11 +552,14 @@ class GraphStates(ABC):
         if isinstance(batch_shape, Tuple):
             batch_shape = batch_shape[0]
 
-        data = Batch.from_data_list([cls.sf for _ in range(batch_shape)])
-        return data
+        return TensorDict({
+            "node_feature": cls.sf["node_feature"].repeat(batch_shape, 1, 1),
+            "edge_feature": cls.sf["edge_feature"].repeat(batch_shape, 1, 1),
+            "edge_index": cls.sf["edge_index"].repeat(batch_shape, 1, 1)            
+        }, batch_size=int(batch_shape))
 
     @classmethod
-    def make_random_states_graph(cls, batch_shape: int) -> Batch:
+    def make_random_states_tensor(cls, batch_shape: int) -> TensorDict:
         if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
             raise NotImplementedError(
                 "Batch shape with more than one dimension is not supported"
@@ -557,37 +567,30 @@ class GraphStates(ABC):
         if isinstance(batch_shape, Tuple):
             batch_shape = batch_shape[0]
 
-        data_list = []
-        for _ in range(batch_shape):
-            data = Data(
-                x=torch.rand(cls.s0.num_nodes, cls.s0.x.shape[1]),
-                edge_attr=torch.rand(cls.s0.num_edges, cls.s0.edge_attr.shape[1]),
-                edge_index=cls.s0.edge_index,  # TODO: make it random
-            )
-            data_list.append(data)
-        return Batch.from_data_list(data_list)
+        num_nodes = np.random.randint(10)
+        num_edges = np.random.randint(num_nodes * (num_nodes - 1) // 2)
+        node_features_dim = cls.s0["node_feature"].shape[-1]
+        edge_features_dim = cls.s0["edge_feature"].shape[-1]
+        tensor = TensorDict({
+            "node_feature": torch.rand(batch_shape, num_nodes, node_features_dim),
+            "edge_feature": torch.rand(batch_shape, num_edges, edge_features_dim),
+            "edge_index": torch.randint(num_nodes, size=(batch_shape, num_edges, 2)),
+        })
+        return tensor
 
     def __len__(self):
-        return self.data.batch_size
+        return np.prod(self.tensor.batch_size)
 
     def __repr__(self):
         return (
             f"{self.__class__.__name__} object of batch shape {self.batch_shape} and "
-            f"node feature dim {self.s0.x.shape[1]} and edge feature dim {self.s0.edge_attr.shape[1]}"
+            f"node feature dim {self.node_features_dim} and edge feature dim {self.edge_features_dim}"
         )
 
     def __getitem__(
         self, index: int | Sequence[int] | slice | torch.Tensor
     ) -> GraphStates:
-        idxs = np.arange(len(self.data))[index]
-        data = [self.data.get_example(i) for i in idxs]
-        if len(data) == 0:
-            data.append(Data(
-                x=torch.zeros((0, self.data.x.shape[1]), dtype=torch.float32),
-                edge_attr=torch.zeros((0, self.data.edge_attr.shape[1]), dtype=torch.float32),
-                edge_index=torch.zeros((2, 0), dtype=torch.long),
-            ))
-        out = GraphStates(Batch.from_data_list(data))
+        out = GraphStates(self.tensor[index])
 
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards[index]
@@ -598,44 +601,21 @@ class GraphStates(ABC):
         """
         Set particular states of the Batch
         """
-        data_list = self.data.to_data_list()
-        if isinstance(index, int):
-            assert (
-                len(graph) == 1
-            ), "GraphStates must have a batch size of 1 for single index assignment"
-            data_list[index] = graph.data[0]
-            self.data = Batch.from_data_list(data_list)
-        elif isinstance(index, Sequence):
-            assert len(index) == len(
-                graph
-            ), "Index and GraphState must have the same length"
-            for i, idx in enumerate(index):
-                data_list[idx] = graph.data[i]
-            self.data = Batch.from_data_list(data_list)
-        elif isinstance(index, slice):
-            assert index.stop - index.start == len(
-                graph
-            ), "Index slice and GraphStates must have the same length"
-            data_list[index] = graph.data.to_data_list()
-            self.data = Batch.from_data_list(data_list)
-        else:
-            raise NotImplementedError(
-                "Setters with type {} is not implemented".format(type(index))
-            )
+        len_index = len(self.tensor[index])
+        if len_index != 0 and len_index != len(self.tensor):
+            raise ValueError("Can only set states with the same batch size as the original batch")
+
+        self.tensor[index] = graph.tensor
 
     @property
     def device(self) -> torch.device:
-        sample = self.data.get_example(0).x
-        if sample is not None:
-            return sample.device
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return self.tensor.device
 
     def to(self, device: torch.device) -> GraphStates:
         """
         Moves and/or casts the graph states to the specified device
         """
-        if self.device != device:
-            self.data = self.data.to(device)
+        self.tensor = self.tensor.to(device)
         return self
 
     def clone(self) -> GraphStates:
@@ -644,14 +624,9 @@ class GraphStates(ABC):
 
     def extend(self, other: GraphStates):
         """Concatenates to another GraphStates object along the batch dimension"""
-        self.data = Batch.from_data_list(
-            self.data.to_data_list() + other.data.to_data_list()
-        )
-        if self._log_rewards is not None:
-            assert other._log_rewards is not None
-            self._log_rewards = torch.cat(
-                (self._log_rewards, other._log_rewards), dim=0
-            )
+        self.tensor["node_feature"] = torch.cat([self.tensor["node_feature"], other.tensor["node_feature"]], dim=1)
+        self.tensor["edge_feature"] = torch.cat([self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=1)
+        self.tensor["edge_index"] = torch.cat([self.tensor["edge_index"], other.tensor["edge_index"]], dim=1)
 
     @property
     def log_rewards(self) -> torch.Tensor:
@@ -663,13 +638,10 @@ class GraphStates(ABC):
 
     @property
     def is_sink_state(self) -> torch.Tensor:
-        batch_dim = len(self.data.ptr) - 1
-        if len(self.data.x) == 0:
-            return torch.zeros(batch_dim, dtype=torch.bool)
-        return torch.all(self.data.x == self.sf.x, dim=-1).reshape(
-            batch_dim,
+        if self.tensor["node_feature"].shape[1] == 0:
+            return torch.zeros(self.batch_shape, dtype=torch.bool)
+        return (
+            torch.all(self.tensor["node_feature"] == self.sf["node_feature"], dim=(1, 2)) &
+            torch.all(self.tensor["edge_feature"] == self.sf["edge_feature"], dim=(1, 2)) &
+            torch.all(self.tensor["edge_index"] == self.sf["edge_index"], dim=(1, 2))
         )
-
-    @property
-    def tensor(self) -> Batch:
-        return self.data

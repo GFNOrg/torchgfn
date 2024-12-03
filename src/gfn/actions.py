@@ -202,12 +202,12 @@ class GraphActions(Actions):
             features = torch.zeros((*self.batch_shape, self.features_dim))
         if edge_index is None:
             assert torch.all(action_type != GraphActionType.ADD_EDGE)
-            edge_index = torch.zeros((2, *self.batch_shape))
+            edge_index = torch.zeros((*self.batch_shape, 2), dtype=torch.long)
 
         self.tensor = TensorDict({
             "action_type": action_type,
             "features": features,
-            "edge_index": edge_index.T,
+            "edge_index": edge_index,
         }, batch_size=self.batch_shape)
 
     def __repr__(self):
@@ -228,7 +228,7 @@ class GraphActions(Actions):
         return GraphActions(
             tensor["action_type"],
             tensor["features"],
-            tensor["edge_index"].T
+            tensor["edge_index"]
         )
 
     def __setitem__(
@@ -268,7 +268,7 @@ class GraphActions(Actions):
     @property
     def edge_index(self) -> torch.Tensor:
         """Returns the edge index tensor."""
-        return self.tensor["edge_index"].T
+        return self.tensor["edge_index"]
 
     @classmethod
     def make_dummy_actions(

@@ -64,3 +64,27 @@ class ComposedDistribution(Distribution):  # TODO: CompositeDistribution in Tens
             for k, v in self.dists.items()
         ]
         return sum(log_probs)
+
+
+class CategoricalIndexes(Categorical):
+    """Samples indexes from a categorical distribution."""
+
+    def __init__(self, probs: torch.Tensor):
+        """Initializes the distribution.
+
+        Args:
+            probs: The probabilities of the categorical distribution.
+        """
+        self.n = probs.shape[-1]
+        batch_size = probs.shape[0]
+        assert probs.shape == (batch_size, self.n, self.n)
+        super().__init__(probs.reshape(batch_size, self.n * self.n))
+
+    def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
+        samples = super().sample(sample_shape)
+        out = torch.stack([samples // self.n, samples % self.n], dim=-1)
+        return out
+
+    def log_prob(self, value):
+        value = value[..., 0] * self.n + value[..., 1]
+        return super().log_prob(value)

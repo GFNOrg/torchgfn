@@ -167,7 +167,7 @@ class Sampler:
 
         step = 0
         all_estimator_outputs = []
-
+        
         while not all(dones):
             actions = env.actions_from_batch_shape((n_trajectories,))  # Dummy actions.
             log_probs = torch.full(
