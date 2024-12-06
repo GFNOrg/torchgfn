@@ -9,7 +9,7 @@ from torch.distributions import Categorical, Distribution, Normal
 from gfn.actions import GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, GraphStates, States
-from gfn.utils.distributions import CategoricalIndexes, ComposedDistribution, UnsqueezedCategorical
+from gfn.utils.distributions import CategoricalActionType, CategoricalIndexes, ComposedDistribution, UnsqueezedCategorical
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -515,7 +515,7 @@ class GraphActionPolicyEstimator(GFNModule):
         action_type_probs = (
             1 - epsilon
         ) * action_type_probs + epsilon * uniform_dist_probs
-        dists["action_type"] = Categorical(probs=action_type_probs)
+        dists["action_type"] = CategoricalActionType(probs=action_type_probs)
 
         edge_index_logits = module_output["edge_index"]
         if states.tensor["node_feature"].shape[1] > 1:

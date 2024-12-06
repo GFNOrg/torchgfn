@@ -602,10 +602,12 @@ class GraphStates(ABC):
         Set particular states of the Batch
         """
         len_index = len(self.tensor[index])
-        if len_index != 0 and len_index != len(self.tensor):
+        if len_index == 0:
+            return
+        elif len_index == len(self.tensor):
+            self.tensor = graph.tensor
+        else:  # TODO: fix this
             raise ValueError("Can only set states with the same batch size as the original batch")
-
-        self.tensor[index] = graph.tensor
 
     @property
     def device(self) -> torch.device:

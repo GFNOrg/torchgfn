@@ -194,11 +194,9 @@ class Sampler:
                 # Place estimator outputs into a stackable tensor. Note that this
                 # will be replaced with torch.nested.nested_tensor in the future.
                 estimator_outputs_padded = torch.full_like(
-                    estimator_outputs.expand(
-                        (n_trajectories,) + estimator_outputs.shape[1:]
-                    ),
-                    fill_value=-float("inf"),
-                ).clone()  # TODO: inefficient
+                    estimator_outputs.expand((n_trajectories,) + estimator_outputs.shape[1:]).clone(),
+                    fill_value=-float("inf")
+                )
                 estimator_outputs_padded[~dones] = estimator_outputs
                 all_estimator_outputs.append(estimator_outputs_padded)
 
@@ -243,6 +241,7 @@ class Sampler:
             states = new_states
             dones = dones | new_dones
 
+            import pdb; pdb.set_trace()
             trajectories_states.extend(deepcopy(states))
 
         trajectories_logprobs = (

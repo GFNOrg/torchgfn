@@ -50,6 +50,8 @@ class GraphBuilding(GraphEnv):
         if not self.is_action_valid(states, actions):
             raise NonValidActionsError("Invalid action.")
         state_tensor = deepcopy(states.tensor)
+        if len(actions) == 0:
+            return state_tensor
 
         action_type = actions.action_type[0]
         assert torch.all(actions.action_type == action_type)

@@ -244,7 +244,6 @@ class GraphActionNet(nn.Module):
         else:
             action_type = self.action_type_conv(node_feature, edge_index)
             action_type = action_type.reshape(len(states), -1, action_type.shape[-1]).mean(dim=1)
-            action_type = action_type.mean(dim=0).expand(len(states), -1)
             features = self.features_conv(node_feature, edge_index)
             features = features.reshape(len(states), -1, features.shape[-1]).mean(dim=1)
 
@@ -274,7 +273,11 @@ def test_graph_building():
     sampler = Sampler(estimator=pf_estimator)
     trajectories = sampler.sample_trajectories(
         env,
-        n=5,
+        n=7,
         save_logprobs=True,
-        save_estimator_outputs=True,
+        save_estimator_outputs=False,
     )
+
+
+if __name__ == "__main__":
+    test_graph_building()
