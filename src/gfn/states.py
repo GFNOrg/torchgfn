@@ -3,9 +3,14 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, List, Optional, Sequence
+from typing import Callable, ClassVar, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
+from tensordict import TensorDict
+from torch_geometric.data import Batch, Data
+
+from gfn.actions import GraphActionType
 
 
 class States(ABC):
@@ -475,29 +480,170 @@ class DiscreteStates(States, ABC):
             self.forward_masks = torch.zeros(shape).bool()
 
 
-def stack_states(states: List[States]):
-    """Given a list of states, stacks them along a new dimension (0)."""
-    state_example = states[0]  # We assume all elems of `states` are the same.
+class GraphStates(ABC):
+    """
+    Base class for Graph as a state representation. The `GraphStates` object is a batched collection of
+    multiple graph objects. The `Batch` object from PyTorch Geometric is used to represent the batch of
+    graph objects as states.
+    """
 
-    stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
-    stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
-    if state_example._log_rewards:
-        stacked_states._log_rewards = torch.stack(
-            [s._log_rewards for s in states], dim=0
+    s0: ClassVar[TensorDict]
+    sf: ClassVar[TensorDict]
+
+    def __init__(self, tensor: TensorDict):
+        self.tensor = tensor
+        self.node_features_dim = tensor["node_feature"].shape[-1]
+        self.edge_features_dim = tensor["edge_feature"].shape[-1]
+
+        self.batch_shape: tuple = tensor.batch_size
+        self._log_rewards: float = None
+
+        # TODO logic repeated from env.is_valid_action
+        not_empty = self.tensor["node_feature"].shape[1] > 1
+        self.forward_masks = torch.ones((*self.batch_shape, 3), dtype=torch.bool)
+        self.forward_masks[:, GraphActionType.ADD_EDGE] = not_empty
+        self.forward_masks[:, GraphActionType.EXIT] = not_empty
+
+        self.backward_masks = torch.ones((*self.batch_shape, 3), dtype=torch.bool)
+        self.backward_masks[:, GraphActionType.ADD_NODE] = not_empty
+        self.backward_masks[:, GraphActionType.ADD_EDGE] = (
+            not_empty and self.tensor["edge_feature"].shape[1] > 0 > 0
+        )
+        self.backward_masks[:, GraphActionType.EXIT] = not_empty
+
+    @classmethod
+    def from_batch_shape(
+        cls, batch_shape: int, random: bool = False, sink: bool = False
+    ) -> GraphStates:
+        if random and sink:
+            raise ValueError("Only one of `random` and `sink` should be True.")
+        if random:
+            tensor = cls.make_random_states_tensor(batch_shape)
+        elif sink:
+            tensor = cls.make_sink_states_tensor(batch_shape)
+        else:
+            tensor = cls.make_initial_states_tensor(batch_shape)
+        return cls(tensor)
+
+    @classmethod
+    def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> TensorDict:
+        if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
+            raise NotImplementedError(
+                "Batch shape with more than one dimension is not supported"
+            )
+        if isinstance(batch_shape, Tuple):
+            batch_shape = batch_shape[0]
+
+        return TensorDict({
+            "node_feature": cls.s0["node_feature"].repeat(batch_shape, 1, 1),
+            "edge_feature": cls.s0["edge_feature"].repeat(batch_shape, 1, 1),
+            "edge_index": cls.s0["edge_index"].repeat(batch_shape, 1, 1)            
+        }, batch_size=batch_shape)
+
+    @classmethod
+    def make_sink_states_tensor(cls, batch_shape: Tuple) -> TensorDict:
+        if cls.sf is None:
+            raise NotImplementedError("Sink state is not defined")
+
+        if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
+            raise NotImplementedError(
+                "Batch shape with more than one dimension is not supported"
+            )
+        if isinstance(batch_shape, Tuple):
+            batch_shape = batch_shape[0]
+
+        return TensorDict({
+            "node_feature": cls.sf["node_feature"].repeat(batch_shape, 1, 1),
+            "edge_feature": cls.sf["edge_feature"].repeat(batch_shape, 1, 1),
+            "edge_index": cls.sf["edge_index"].repeat(batch_shape, 1, 1)            
+        }, batch_size=int(batch_shape))
+
+    @classmethod
+    def make_random_states_tensor(cls, batch_shape: int) -> TensorDict:
+        if isinstance(batch_shape, Tuple) and len(batch_shape) > 1:
+            raise NotImplementedError(
+                "Batch shape with more than one dimension is not supported"
+            )
+        if isinstance(batch_shape, Tuple):
+            batch_shape = batch_shape[0]
+
+        num_nodes = np.random.randint(10)
+        num_edges = np.random.randint(num_nodes * (num_nodes - 1) // 2)
+        node_features_dim = cls.s0["node_feature"].shape[-1]
+        edge_features_dim = cls.s0["edge_feature"].shape[-1]
+        tensor = TensorDict({
+            "node_feature": torch.rand(batch_shape, num_nodes, node_features_dim),
+            "edge_feature": torch.rand(batch_shape, num_edges, edge_features_dim),
+            "edge_index": torch.randint(num_nodes, size=(batch_shape, num_edges, 2)),
+        })
+        return tensor
+
+    def __len__(self):
+        return np.prod(self.tensor.batch_size)
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__} object of batch shape {self.batch_shape} and "
+            f"node feature dim {self.node_features_dim} and edge feature dim {self.edge_features_dim}"
         )
 
-    # We are dealing with a list of DiscretrStates instances.
-    if hasattr(state_example, "forward_masks"):
-        stacked_states.forward_masks = torch.stack(
-            [s.forward_masks for s in states], dim=0
-        )
-        stacked_states.backward_masks = torch.stack(
-            [s.backward_masks for s in states], dim=0
-        )
+    def __getitem__(
+        self, index: int | Sequence[int] | slice | torch.Tensor
+    ) -> GraphStates:
+        out = GraphStates(self.tensor[index])
 
-    # Adds the trajectory dimension.
-    stacked_states.batch_shape = (
-        stacked_states.tensor.shape[0],
-    ) + state_example.batch_shape
+        if self._log_rewards is not None:
+            out._log_rewards = self._log_rewards[index]
 
-    return stacked_states
+        return out
+
+    def __setitem__(self, index: int | Sequence[int], graph: GraphStates):
+        """
+        Set particular states of the Batch
+        """
+        len_index = len(self.tensor[index])
+        if len_index == 0:
+            return
+        elif len_index == len(self.tensor):
+            self.tensor = graph.tensor
+        else:  # TODO: fix this
+            raise ValueError("Can only set states with the same batch size as the original batch")
+
+    @property
+    def device(self) -> torch.device:
+        return self.tensor.device
+
+    def to(self, device: torch.device) -> GraphStates:
+        """
+        Moves and/or casts the graph states to the specified device
+        """
+        self.tensor = self.tensor.to(device)
+        return self
+
+    def clone(self) -> GraphStates:
+        """Returns a *detached* clone of the current instance using deepcopy."""
+        return deepcopy(self)
+
+    def extend(self, other: GraphStates):
+        """Concatenates to another GraphStates object along the batch dimension"""
+        self.tensor["node_feature"] = torch.cat([self.tensor["node_feature"], other.tensor["node_feature"]], dim=1)
+        self.tensor["edge_feature"] = torch.cat([self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=1)
+        self.tensor["edge_index"] = torch.cat([self.tensor["edge_index"], other.tensor["edge_index"]], dim=1)
+
+    @property
+    def log_rewards(self) -> torch.Tensor:
+        return self._log_rewards
+
+    @log_rewards.setter
+    def log_rewards(self, log_rewards: torch.Tensor) -> None:
+        self._log_rewards = log_rewards
+
+    @property
+    def is_sink_state(self) -> torch.Tensor:
+        if self.tensor["node_feature"].shape[1] == 0:
+            return torch.zeros(self.batch_shape, dtype=torch.bool)
+        return (
+            torch.all(self.tensor["node_feature"] == self.sf["node_feature"], dim=(1, 2)) &
+            torch.all(self.tensor["edge_feature"] == self.sf["edge_feature"], dim=(1, 2)) &
+            torch.all(self.tensor["edge_index"] == self.sf["edge_index"], dim=(1, 2))
+        )
