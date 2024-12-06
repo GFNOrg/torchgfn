@@ -38,7 +38,7 @@ def main(args):
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
 
     # Feed pf to the sampler.
-    sampler = LocalSearchSampler(estimator=pf_estimator, pb_estimator=pb_estimator)
+    sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)
 
     # Move the gflownet to the GPU.
     gflownet = gflownet.to(device_str)

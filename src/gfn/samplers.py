@@ -247,10 +247,10 @@ class Sampler:
 
         trajectories_states = stack_states(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)[
-            1:, ...  # Drop dummy action
+            1:  # Drop dummy action
         ]
         trajectories_logprobs = (
-            torch.stack(trajectories_logprobs, dim=0)[1:, ...]  # Drop dummy logprob
+            torch.stack(trajectories_logprobs, dim=0)[1:]  # Drop dummy logprob
             if save_logprobs
             else None
         )
@@ -546,7 +546,7 @@ class LocalSearchSampler(Sampler):
             n = trajectories.n_trajectories
 
         search_indices = torch.arange(n, device=trajectories.states.device)
-        for it in range(n_local_search_loops - 1):
+        for it in range(1, n_local_search_loops):  # 0-th loop is the initial sampling
             # Search phase
             ls_trajectories, is_updated = self.local_search(
                 env,
@@ -562,7 +562,7 @@ class LocalSearchSampler(Sampler):
             trajectories.extend(ls_trajectories)
 
             last_indices = torch.arange(
-                n * (it + 1), n * (it + 2), device=trajectories.states.device
+                n * it, n * (it + 1), device=trajectories.states.device
             )
             search_indices[is_updated] = last_indices[is_updated]
 
