@@ -94,6 +94,8 @@ class Env(ABC):
 
         Args:
             batch_shape: Tuple representing the shape of the batch of states.
+            random (optional): Initalize states randomly.
+            sink (optional): States initialized with s_f (the sink state).
 
         Returns:
             States: A batch of initial states.
