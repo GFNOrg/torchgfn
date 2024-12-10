@@ -59,14 +59,14 @@ class GraphBuilding(GraphEnv):
             return self.States.make_sink_states_tensor(states.batch_shape)
 
         if action_type == GraphActionType.ADD_NODE:
-            assert len(state_tensor) == len(actions)
-            state_tensor["node_feature"] = torch.cat([state_tensor["node_feature"], actions.features[:, None]], dim=1)
+            batch_indices = torch.arange(len(states))[actions.action_type == GraphActionType.ADD_NODE]
+            state_tensor = self._add_node(state_tensor, batch_indices, actions.features)
 
         if action_type == GraphActionType.ADD_EDGE:
             assert len(state_tensor) == len(actions)
-            state_tensor["edge_feature"] = torch.cat([state_tensor["edge_feature"], actions.features[:, None]], dim=1)
+            state_tensor["edge_feature"] = torch.cat([state_tensor["edge_feature"], actions.features], dim=0)
             state_tensor["edge_index"] = torch.cat(
-                [state_tensor["edge_index"], actions.edge_index[:, None]], dim=1
+                [state_tensor["edge_index"], actions.edge_index], dim=0
             )
         return state_tensor
 
@@ -108,11 +108,10 @@ class GraphBuilding(GraphEnv):
         if not torch.any(add_node_mask):
             add_node_out = True
         else:
-            node_feature = states.tensor["node_feature"][add_node_mask]
+            node_feature = states[add_node_mask].tensor["node_feature"]
             equal_nodes_per_batch = torch.all(
                 node_feature == actions[add_node_mask].features[:, None], dim=-1
-            ).reshape(len(node_feature), -1)
-            equal_nodes_per_batch = torch.sum(equal_nodes_per_batch, dim=-1)
+            ).reshape(-1)
             if backward:  # TODO: check if no edge are connected?
                 add_node_out = torch.all(equal_nodes_per_batch == 1)
             else:
@@ -127,9 +126,9 @@ class GraphBuilding(GraphEnv):
 
             if torch.any(add_edge_actions.edge_index[:, 0] == add_edge_actions.edge_index[:, 1]):
                 return False
-            if add_edge_states["node_feature"].shape[1] == 0:
+            if add_edge_states["node_feature"].shape[0] == 0:
                 return False
-            if torch.any(add_edge_actions.edge_index > add_edge_states["node_feature"].shape[1]):
+            if torch.any(add_edge_actions.edge_index > add_edge_states["node_feature"].shape[0]):
                 return False
 
             batch_dim = add_edge_actions.features.shape[0]
@@ -156,6 +155,47 @@ class GraphBuilding(GraphEnv):
                 )
         
         return bool(add_node_out) and bool(add_edge_out)
+    
+    def _add_node(self, tensor_dict: TensorDict, batch_indices: torch.Tensor, nodes_to_add: torch.Tensor) -> TensorDict:
+        if isinstance(batch_indices, list):
+            batch_indices = torch.tensor(batch_indices)
+        if len(batch_indices) != len(nodes_to_add):
+            raise ValueError("Number of batch indices must match number of node feature lists")
+        
+        modified_dict = tensor_dict.clone()
+        node_feature_dim = modified_dict['node_feature'].shape[1]
+        edge_feature_dim = modified_dict['edge_feature'].shape[1]
+        
+        for graph_idx, new_nodes in zip(batch_indices, nodes_to_add):
+            start_ptr = tensor_dict['batch_ptr'][graph_idx]
+            end_ptr = tensor_dict['batch_ptr'][graph_idx + 1]
+            num_original_nodes = end_ptr - start_ptr
+
+            if new_nodes.ndim == 1:
+                new_nodes = new_nodes.unsqueeze(0)
+            if new_nodes.shape[1] != node_feature_dim:
+                raise ValueError(f"Node features must have dimension {node_feature_dim}")
+            
+            # Update batch pointers for subsequent graphs
+            shift = new_nodes.shape[0]
+            modified_dict['batch_ptr'][graph_idx + 1:] += shift
+            
+            # Expand node features
+            original_nodes = modified_dict['node_feature'][start_ptr:end_ptr]
+            modified_dict['node_feature'] = torch.cat([
+                modified_dict['node_feature'][:end_ptr],
+                new_nodes,
+                modified_dict['node_feature'][end_ptr:]
+            ])
+            
+            # Update edge indices
+            # Increment indices for edges after the current graph
+            edge_mask_0 = modified_dict['edge_index'][:, 0] >= end_ptr
+            edge_mask_1 = modified_dict['edge_index'][:, 1] >= end_ptr
+            modified_dict['edge_index'][edge_mask_0, 0] += shift
+            modified_dict['edge_index'][edge_mask_1, 1] += shift
+        
+        return modified_dict
 
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
@@ -186,12 +226,14 @@ class GraphBuilding(GraphEnv):
 
 class GCNConvEvaluator:
     def __init__(self, num_features):
-        self.num_features = num_features
         self.net = GCNConv(num_features, 1)
 
     def __call__(self, state: GraphStates) -> torch.Tensor:
-        node_feature = state.tensor["node_feature"].reshape(-1, self.num_features)
-        edge_index = state.tensor["edge_index"].reshape(-1, 2).T
+        node_feature = state.tensor["node_feature"]
+        edge_index = state.tensor["edge_index"].T
+        if len(node_feature) == 0:
+            return torch.zeros(len(state))
+
         out = self.net(node_feature, edge_index)
-        out = out.reshape(len(state), state.tensor["node_feature"].shape[1])
+        out = out.reshape(*state.batch_shape, -1)
         return out.mean(-1)

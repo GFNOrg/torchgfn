@@ -518,7 +518,7 @@ class GraphActionPolicyEstimator(GFNModule):
         dists["action_type"] = CategoricalActionType(probs=action_type_probs)
 
         edge_index_logits = module_output["edge_index"]
-        if states.tensor["node_feature"].shape[1] > 1:
+        if states.tensor["node_feature"].shape[0] > 1 and torch.any(edge_index_logits != -float("inf")):
             edge_index_probs = torch.softmax(edge_index_logits / temperature, dim=-1)
             uniform_dist_probs = (
                 torch.ones_like(edge_index_probs) / edge_index_probs.shape[-1]

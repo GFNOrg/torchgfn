@@ -241,7 +241,6 @@ class Sampler:
             states = new_states
             dones = dones | new_dones
 
-            import pdb; pdb.set_trace()
             trajectories_states.extend(deepcopy(states))
 
         trajectories_logprobs = (
