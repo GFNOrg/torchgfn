@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import torch
+from tensordict import TensorDict
 
-from gfn.actions import Actions
+from gfn.actions import Actions, GraphActions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
-from gfn.states import DiscreteStates, States
+from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import set_seed
 
 # Errors
@@ -255,7 +256,8 @@ class Env(ABC):
             )
 
         new_sink_states_idx = actions.is_exit
-        new_states.tensor[new_sink_states_idx] = self.sf
+        sf_tensor = self.States.make_sink_states_tensor(new_sink_states_idx.sum())
+        new_states[new_sink_states_idx] = self.States(sf_tensor)
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
         assert new_sink_states_idx.shape == states.batch_shape
 
@@ -263,13 +265,13 @@ class Env(ABC):
         not_done_actions = actions[~new_sink_states_idx]
 
         new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
-        if not isinstance(new_not_done_states_tensor, torch.Tensor):
+        
+        if not isinstance(new_not_done_states_tensor, (torch.Tensor, TensorDict)):
             raise Exception(
                 "User implemented env.step function *must* return a torch.Tensor!"
             )
 
-        new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
-
+        new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
         return new_states
 
     def _backward_step(
@@ -559,3 +561,80 @@ class DiscreteEnv(Env, ABC):
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
+
+
+class GraphEnv(Env):
+    """Base class for graph-based environments."""
+
+    def __init__(
+        self,
+        s0: TensorDict,
+        sf: Optional[TensorDict] = None,
+        device_str: Optional[str] = None,
+        preprocessor: Optional[Preprocessor] = None,
+    ):
+        """Initializes a graph-based environment.
+
+        Args:
+            s0: The initial graph state.
+            sf: The final graph state.
+            device_str: 'cpu' or 'cuda'. Defaults to None, in which case the device is
+                inferred from s0.
+            preprocessor: a Preprocessor object that converts raw graph states to a tensor
+                that can be fed into a neural network. Defaults to None, in which case
+                the IdentityPreprocessor is used.
+        """
+        self.s0 = s0.to(device_str)
+        self.features_dim = s0["node_feature"].shape[-1]
+        self.sf = sf
+
+        self.States = self.make_states_class()
+        self.Actions = self.make_actions_class()
+
+        self.preprocessor = preprocessor
+        self.is_discrete = False
+
+    def make_states_class(self) -> type[GraphStates]:
+        env = self
+
+        class GraphEnvStates(GraphStates):
+            s0 = env.s0
+            sf = env.sf
+            make_random_states_graph = env.make_random_states_tensor
+
+        return GraphEnvStates
+
+    def make_actions_class(self) -> type[GraphActions]:
+        """The default Actions class factory for all Environments.
+
+        Returns a class that inherits from Actions and implements assumed methods.
+        The make_actions_class method should be overwritten to achieve more
+        environment-specific Actions functionality.
+        """
+        env = self
+
+        class DefaultGraphAction(GraphActions):
+            features_dim = env.features_dim
+
+        return DefaultGraphAction
+
+    def actions_from_tensor(self, tensor: Dict[str, torch.Tensor]):
+        """Wraps the supplied Tensor in an Actions instance.
+
+        Args:
+            tensor: The tensor of shape "action_shape" representing the actions.
+
+        Returns:
+            Actions: An instance of Actions.
+        """
+        return self.Actions(**tensor)
+
+    @abstractmethod
+    def step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Function that takes a batch of graph states and actions and returns a batch of next
+        graph states."""
+
+    @abstractmethod
+    def backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Function that takes a batch of graph states and actions and returns a batch of previous
+        graph states."""

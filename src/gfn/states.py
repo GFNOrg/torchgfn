@@ -3,9 +3,14 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, List, Optional, Sequence
+from typing import Callable, ClassVar, List, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
+from tensordict import TensorDict
+from torch_geometric.data import Batch, Data
+
+from gfn.actions import GraphActionType
 
 
 class States(ABC):
@@ -473,6 +478,252 @@ class DiscreteStates(States, ABC):
             self.forward_masks = torch.ones(shape).bool()
         else:
             self.forward_masks = torch.zeros(shape).bool()
+
+
+class GraphStates(ABC):
+    """
+    Base class for Graph as a state representation. The `GraphStates` object is a batched collection of
+    multiple graph objects. The `Batch` object from PyTorch Geometric is used to represent the batch of
+    graph objects as states.
+    """
+
+    s0: ClassVar[TensorDict]
+    sf: ClassVar[TensorDict]
+
+    def __init__(self, tensor: TensorDict):
+        self.tensor = tensor
+        self.node_features_dim = tensor["node_feature"].shape[-1]
+        self.edge_features_dim = tensor["edge_feature"].shape[-1]
+
+        self.batch_shape: tuple = tuple(tensor["batch_shape"].tolist())
+        self._log_rewards: float = None
+
+        # TODO logic repeated from env.is_valid_action
+        not_empty = self.tensor["batch_ptr"][:-1] + 1 < self.tensor["batch_ptr"][1:]
+        self.forward_masks = torch.ones((np.prod(self.batch_shape), 3), dtype=torch.bool)
+        self.forward_masks[..., GraphActionType.ADD_EDGE] = not_empty
+        self.forward_masks[..., GraphActionType.EXIT] = not_empty
+        self.forward_masks = self.forward_masks.view(*self.batch_shape, 3)
+
+        self.backward_masks = torch.ones((np.prod(self.batch_shape), 3), dtype=torch.bool)
+        self.backward_masks[..., GraphActionType.ADD_NODE] = not_empty
+        self.backward_masks[..., GraphActionType.ADD_EDGE] = not_empty  # TODO: check at least one edge is present
+        self.backward_masks[..., GraphActionType.EXIT] = not_empty
+        self.backward_masks = self.backward_masks.view(*self.batch_shape, 3)
+
+    @classmethod
+    def from_batch_shape(
+        cls, batch_shape: int | Tuple, random: bool = False, sink: bool = False
+    ) -> GraphStates:
+        if random and sink:
+            raise ValueError("Only one of `random` and `sink` should be True.")
+        if random:
+            tensor = cls.make_random_states_tensor(batch_shape)
+        elif sink:
+            tensor = cls.make_sink_states_tensor(batch_shape)
+        else:
+            tensor = cls.make_initial_states_tensor(batch_shape)
+        return cls(tensor)
+
+    @classmethod
+    def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> TensorDict:
+        batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
+
+        return TensorDict({
+            "node_feature": cls.s0["node_feature"].repeat(np.prod(batch_shape), 1),
+            "edge_feature": cls.s0["edge_feature"].repeat(np.prod(batch_shape), 1),
+            "edge_index": cls.s0["edge_index"].repeat(np.prod(batch_shape), 1),
+            "batch_ptr": torch.arange(np.prod(batch_shape) + 1) * cls.s0["node_feature"].shape[0],
+            "batch_shape": batch_shape
+        })
+
+    @classmethod
+    def make_sink_states_tensor(cls, batch_shape: int | Tuple) -> TensorDict:
+        if cls.sf is None:
+            raise NotImplementedError("Sink state is not defined")
+
+        batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
+        return TensorDict({
+            "node_feature": cls.sf["node_feature"].repeat(np.prod(batch_shape), 1),
+            "edge_feature": cls.sf["edge_feature"].repeat(np.prod(batch_shape), 1),
+            "edge_index": cls.sf["edge_index"].repeat(np.prod(batch_shape), 1),
+            "batch_ptr": torch.arange(np.prod(batch_shape) + 1) * cls.sf["node_feature"].shape[0],
+            "batch_shape": batch_shape
+        })
+
+    @classmethod
+    def make_random_states_tensor(cls, batch_shape: int | Tuple) -> TensorDict:
+        batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
+
+        num_nodes = np.random.randint(10)
+        num_edges = np.random.randint(num_nodes * (num_nodes - 1) // 2)
+        node_features_dim = cls.s0["node_feature"].shape[-1]
+        edge_features_dim = cls.s0["edge_feature"].shape[-1]
+        return TensorDict({
+            "node_feature": torch.rand(np.prod(batch_shape) * num_nodes, node_features_dim),
+            "edge_feature": torch.rand(np.prod(batch_shape) * num_edges, edge_features_dim),
+            "edge_index": torch.randint(num_nodes, size=(np.prod(batch_shape) * num_edges, 2)),
+            "batch_ptr": torch.arange(np.prod(batch_shape) + 1) * num_nodes,
+            "batch_shape": batch_shape
+        })
+
+    def __len__(self):
+        return np.prod(self.batch_shape)
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__} object of batch shape {self.tensor['batch_shape']} and "
+            f"node feature dim {self.node_features_dim} and edge feature dim {self.edge_features_dim}"
+        )
+
+    def __getitem__(
+        self, index: int | Sequence[int] | slice | torch.Tensor
+    ) -> GraphStates:
+        if isinstance(index, (int, list)):
+            index = torch.tensor(index)
+        if index.dtype == torch.bool:
+            index = torch.where(index)[0]
+        
+        if torch.any(index >= len(self.tensor['batch_ptr']) - 1):
+            raise ValueError("Graph index out of bounds")
+        
+        start_ptrs = self.tensor['batch_ptr'][:-1][index]
+        end_ptrs = self.tensor['batch_ptr'][1:][index]
+        
+        node_features = [torch.empty(0, self.node_features_dim)]
+        edge_features = [torch.empty(0, self.edge_features_dim)]
+        edge_indices = [torch.empty(0, 2, dtype=torch.long)]
+        batch_ptr = [0]
+        
+        for start, end in zip(start_ptrs, end_ptrs):
+            graph_nodes = self.tensor['node_feature'][start:end]
+            node_features.append(graph_nodes)
+            batch_ptr.append(batch_ptr[-1] + len(graph_nodes))
+
+            # Find edges for this graph
+            edge_mask = ((self.tensor['edge_index'][:, 0] >= start) & 
+                        (self.tensor['edge_index'][:, 0] < end))
+            graph_edges = self.tensor['edge_feature'][edge_mask]
+            edge_features.append(graph_edges)
+            
+            # Adjust edge indices to be local to this graph
+            graph_edge_index = self.tensor['edge_index'][edge_mask]
+            graph_edge_index[:, 0] -= start
+            graph_edge_index[:, 1] -= start
+            edge_indices.append(graph_edge_index)
+        
+        out = self.__class__(TensorDict({
+            'node_feature': torch.cat(node_features),
+            'edge_feature': torch.cat(edge_features),
+            'edge_index': torch.cat(edge_indices),
+            'batch_ptr': torch.tensor(batch_ptr),
+            'batch_shape': (len(index),)
+        }))
+
+            
+        if self._log_rewards is not None:
+            out._log_rewards = self._log_rewards[index]
+
+        return out
+
+    def __setitem__(self, index: int | Sequence[int], graph: GraphStates):
+        """
+        Set particular states of the Batch
+        """
+        if isinstance(index, (int, list)):
+            index = torch.tensor(index)
+        if index.dtype == torch.bool:
+            index = torch.where(index)[0]
+    
+        # Validate indices
+        if torch.any(index >= len(self.tensor['batch_ptr']) - 1):
+            raise ValueError("Target graph index out of bounds")
+        
+        # Get batch pointers for target and source
+        target_start_ptrs = self.tensor['batch_ptr'][:-1][index]
+        target_end_ptrs = self.tensor['batch_ptr'][1:][index]
+        
+        # Source graph details
+        source_tensor_dict = graph.tensor
+        source_num_graphs = torch.prod(source_tensor_dict['batch_shape'])
+        
+        # Validate source and target indices match
+        if len(index) != source_num_graphs:
+            raise ValueError("Number of source graphs must match number of target indices")
+        
+        for i, graph_idx in enumerate(index):
+            # Get start and end pointers for the current graph
+            start_ptr = self.tensor['batch_ptr'][graph_idx]
+            end_ptr = self.tensor['batch_ptr'][graph_idx + 1]
+
+            new_nodes = source_tensor_dict['node_feature'][
+                source_tensor_dict['batch_ptr'][i]:source_tensor_dict['batch_ptr'][i + 1]
+            ]
+            
+            # Ensure new nodes have correct feature dimension
+            if new_nodes.ndim == 1:
+                new_nodes = new_nodes.unsqueeze(0)
+            
+            if new_nodes.shape[1] != self.node_features_dim:
+                raise ValueError(f"Node features must have dimension {node_feature_dim}")
+            
+            # Number of new nodes to add
+            shift = new_nodes.shape[0] - (end_ptr - start_ptr)
+            
+            # Concatenate node features
+            self.tensor['node_feature'] = torch.cat([
+                self.tensor['node_feature'][:start_ptr],  # Nodes before the current graph
+                new_nodes,  # New nodes to add
+                self.tensor['node_feature'][end_ptr:]   # Nodes after the current graph
+            ])
+            
+            # Update edge indices for subsequent graphs
+            edge_mask_0 = self.tensor['edge_index'][:, 0] >= end_ptr
+            edge_mask_1 = self.tensor['edge_index'][:, 1] >= end_ptr    
+            self.tensor['edge_index'][edge_mask_0, 0] += shift
+            self.tensor['edge_index'][edge_mask_1, 1] += shift
+
+            # Update batch pointers
+            self.tensor['batch_ptr'][graph_idx + 1:] += shift
+
+            # TODO: add new edges
+
+
+    @property
+    def device(self) -> torch.device:
+        return self.tensor.device
+
+    def to(self, device: torch.device) -> GraphStates:
+        """
+        Moves and/or casts the graph states to the specified device
+        """
+        self.tensor = self.tensor.to(device)
+        return self
+
+    def clone(self) -> GraphStates:
+        """Returns a *detached* clone of the current instance using deepcopy."""
+        return deepcopy(self)
+
+    def extend(self, other: GraphStates):
+        """Concatenates to another GraphStates object along the batch dimension"""
+        self.tensor["node_feature"] = torch.cat([self.tensor["node_feature"], other.tensor["node_feature"]], dim=0)
+        self.tensor["edge_feature"] = torch.cat([self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=0)
+        self.tensor["edge_index"] = torch.cat([self.tensor["edge_index"], other.tensor["edge_index"]], dim=0)
+
+
+    @property
+    def log_rewards(self) -> torch.Tensor:
+        return self._log_rewards
+
+    @log_rewards.setter
+    def log_rewards(self, log_rewards: torch.Tensor) -> None:
+        self._log_rewards = log_rewards
+
+    @property
+    def is_sink_state(self) -> torch.Tensor:
+        if len(self.tensor["node_feature"]) != np.prod(self.batch_shape):
+            return torch.zeros(self.batch_shape, dtype=torch.bool)
+        return torch.all(self.tensor["node_feature"] == self.sf["node_feature"], dim=-1).view(self.batch_shape)
 
 
 def stack_states(states: List[States]):
