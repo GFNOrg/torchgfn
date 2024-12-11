@@ -280,3 +280,16 @@ class GraphActions(Actions):
             #features=torch.zeros((*batch_shape, 0, cls.nodes_features_dim)),
             #edge_index=torch.zeros((2, *batch_shape, 0)),
         )
+    
+    @classmethod
+    def stack(cls, actions_list: list[GraphActions]) -> GraphActions:
+        """Stacks a list of GraphActions objects into a single GraphActions object."""
+        actions_tensor = torch.stack(
+            [actions.tensor for actions in actions_list], dim=0
+        )
+        return cls(
+            actions_tensor["action_type"],
+            actions_tensor["features"],
+            actions_tensor["edge_index"]
+        )
+

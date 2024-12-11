@@ -155,8 +155,8 @@ class Sampler:
             else states.is_sink_state
         )
 
-        trajectories_states: States = deepcopy(states)
-        trajectories_actions: Optional[Actions] = None
+        trajectories_states: List[States] = [deepcopy(states)]
+        trajectories_actions: List[Actions] = []
         trajectories_logprobs: List[torch.Tensor] = []
         trajectories_dones = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
@@ -205,10 +205,7 @@ class Sampler:
                 # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
 
-            if trajectories_actions is None:
-                trajectories_actions = actions
-            else:
-                trajectories_actions.extend(actions)
+            trajectories_actions.append(actions)
             trajectories_logprobs.append(log_probs)
 
             if self.estimator.is_backward:
@@ -241,8 +238,8 @@ class Sampler:
             states = new_states
             dones = dones | new_dones
 
-            trajectories_states.extend(deepcopy(states))
-
+        trajectories_states = env.States.stack(trajectories_states)
+        trajectories_actions = env.Actions.stack(trajectories_actions)
         trajectories_logprobs = (
             torch.stack(trajectories_logprobs, dim=0) if save_logprobs else None
         )

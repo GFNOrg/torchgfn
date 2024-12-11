@@ -293,6 +293,34 @@ class States(ABC):
     def sample(self, n_samples: int) -> States:
         """Samples a subset of the States object."""
         return self[torch.randperm(len(self))[:n_samples]]
+    
+    @classmethod
+    def stack(cls, states: List[States]):
+        """Given a list of states, stacks them along a new dimension (0)."""
+        state_example = states[0]  # We assume all elems of `states` are the same.
+
+        stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
+        stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
+        if state_example._log_rewards:
+            stacked_states._log_rewards = torch.stack(
+                [s._log_rewards for s in states], dim=0
+            )
+
+        # We are dealing with a list of DiscretrStates instances.
+        if hasattr(state_example, "forward_masks"):
+            stacked_states.forward_masks = torch.stack(
+                [s.forward_masks for s in states], dim=0
+            )
+            stacked_states.backward_masks = torch.stack(
+                [s.backward_masks for s in states], dim=0
+            )
+
+        # Adds the trajectory dimension.
+        stacked_states.batch_shape = (
+            stacked_states.tensor.shape[0],
+        ) + state_example.batch_shape
+
+        return stacked_states
 
 
 class DiscreteStates(States, ABC):
@@ -480,7 +508,7 @@ class DiscreteStates(States, ABC):
             self.forward_masks = torch.zeros(shape).bool()
 
 
-class GraphStates(ABC):
+class GraphStates(States):
     """
     Base class for Graph as a state representation. The `GraphStates` object is a batched collection of
     multiple graph objects. The `Batch` object from PyTorch Geometric is used to represent the batch of
@@ -724,31 +752,3 @@ class GraphStates(ABC):
         if len(self.tensor["node_feature"]) != np.prod(self.batch_shape):
             return torch.zeros(self.batch_shape, dtype=torch.bool)
         return torch.all(self.tensor["node_feature"] == self.sf["node_feature"], dim=-1).view(self.batch_shape)
-
-
-def stack_states(states: List[States]):
-    """Given a list of states, stacks them along a new dimension (0)."""
-    state_example = states[0]  # We assume all elems of `states` are the same.
-
-    stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
-    stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
-    if state_example._log_rewards:
-        stacked_states._log_rewards = torch.stack(
-            [s._log_rewards for s in states], dim=0
-        )
-
-    # We are dealing with a list of DiscretrStates instances.
-    if hasattr(state_example, "forward_masks"):
-        stacked_states.forward_masks = torch.stack(
-            [s.forward_masks for s in states], dim=0
-        )
-        stacked_states.backward_masks = torch.stack(
-            [s.backward_masks for s in states], dim=0
-        )
-
-    # Adds the trajectory dimension.
-    stacked_states.batch_shape = (
-        stacked_states.tensor.shape[0],
-    ) + state_example.batch_shape
-
-    return stacked_states
