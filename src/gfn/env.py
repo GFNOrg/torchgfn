@@ -256,7 +256,7 @@ class Env(ABC):
             )
 
         new_sink_states_idx = actions.is_exit
-        sf_tensor = self.States.make_sink_states_tensor(new_sink_states_idx.sum())
+        sf_tensor = self.States.make_sink_states_tensor((new_sink_states_idx.sum(),))
         new_states[new_sink_states_idx] = self.States(sf_tensor)
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
         assert new_sink_states_idx.shape == states.batch_shape

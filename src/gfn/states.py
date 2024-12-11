@@ -523,9 +523,7 @@ class GraphStates(States):
         self.node_features_dim = tensor["node_feature"].shape[-1]
         self.edge_features_dim = tensor["edge_feature"].shape[-1]
 
-        self.batch_shape: tuple = tuple(tensor["batch_shape"].tolist())
         self._log_rewards: float = None
-
         # TODO logic repeated from env.is_valid_action
         not_empty = self.tensor["batch_ptr"][:-1] + 1 < self.tensor["batch_ptr"][1:]
         self.forward_masks = torch.ones((np.prod(self.batch_shape), 3), dtype=torch.bool)
@@ -538,6 +536,10 @@ class GraphStates(States):
         self.backward_masks[..., GraphActionType.ADD_EDGE] = not_empty  # TODO: check at least one edge is present
         self.backward_masks[..., GraphActionType.EXIT] = not_empty
         self.backward_masks = self.backward_masks.view(*self.batch_shape, 3)
+    
+    @property
+    def batch_shape(self) -> tuple:
+        return tuple(self.tensor["batch_shape"].tolist())
 
     @classmethod
     def from_batch_shape(
@@ -667,10 +669,6 @@ class GraphStates(States):
         if torch.any(index >= len(self.tensor['batch_ptr']) - 1):
             raise ValueError("Target graph index out of bounds")
         
-        # Get batch pointers for target and source
-        target_start_ptrs = self.tensor['batch_ptr'][:-1][index]
-        target_end_ptrs = self.tensor['batch_ptr'][1:][index]
-        
         # Source graph details
         source_tensor_dict = graph.tensor
         source_num_graphs = torch.prod(source_tensor_dict['batch_shape'])
@@ -736,8 +734,10 @@ class GraphStates(States):
         """Concatenates to another GraphStates object along the batch dimension"""
         self.tensor["node_feature"] = torch.cat([self.tensor["node_feature"], other.tensor["node_feature"]], dim=0)
         self.tensor["edge_feature"] = torch.cat([self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=0)
-        self.tensor["edge_index"] = torch.cat([self.tensor["edge_index"], other.tensor["edge_index"]], dim=0)
-
+        self.tensor["edge_index"] = torch.cat([self.tensor["edge_index"], other.tensor["edge_index"] + self.tensor["batch_ptr"][-1]], dim=0)
+        self.tensor["batch_ptr"] = torch.cat([self.tensor["batch_ptr"], other.tensor["batch_ptr"][1:] + self.tensor["batch_ptr"][-1]], dim=0)
+        assert torch.all(self.tensor["batch_shape"][1:] == other.tensor["batch_shape"][1:])
+        self.tensor["batch_shape"] = (self.tensor["batch_shape"][0] + other.tensor["batch_shape"][0],) + self.batch_shape[1:]
 
     @property
     def log_rewards(self) -> torch.Tensor:
@@ -752,3 +752,21 @@ class GraphStates(States):
         if len(self.tensor["node_feature"]) != np.prod(self.batch_shape):
             return torch.zeros(self.batch_shape, dtype=torch.bool)
         return torch.all(self.tensor["node_feature"] == self.sf["node_feature"], dim=-1).view(self.batch_shape)
+
+    @classmethod
+    def stack(cls, states: List[GraphStates]):
+        """Given a list of states, stacks them along a new dimension (0)."""
+        stacked_states = cls.from_batch_shape(0)
+        state_batch_shape = states[0].batch_shape
+        for state in states:
+            assert state.batch_shape == state_batch_shape
+            stacked_states.extend(state)
+
+        stacked_states.forward_masks = torch.stack(
+            [s.forward_masks for s in states], dim=0
+        )
+        stacked_states.backward_masks = torch.stack(
+            [s.backward_masks for s in states], dim=0
+        )
+        stacked_states.tensor["batch_shape"] = (len(states),) + state_batch_shape
+        return stacked_states

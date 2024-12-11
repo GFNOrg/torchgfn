@@ -193,9 +193,11 @@ class Sampler:
             if estimator_outputs is not None:
                 # Place estimator outputs into a stackable tensor. Note that this
                 # will be replaced with torch.nested.nested_tensor in the future.
-                estimator_outputs_padded = torch.full_like(
-                    estimator_outputs.expand((n_trajectories,) + estimator_outputs.shape[1:]).clone(),
-                    fill_value=-float("inf")
+                estimator_outputs_padded = torch.full(
+                    (n_trajectories,) + estimator_outputs.shape[1:],
+                    fill_value=-float("inf"),
+                    dtype=torch.float,
+                    device=device,
                 )
                 estimator_outputs_padded[~dones] = estimator_outputs
                 all_estimator_outputs.append(estimator_outputs_padded)
@@ -237,6 +239,7 @@ class Sampler:
                 )
             states = new_states
             dones = dones | new_dones
+            trajectories_states.append(deepcopy(states))
 
         trajectories_states = env.States.stack(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)
