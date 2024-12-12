@@ -628,7 +628,6 @@ class GraphStates(States):
         for start, end in zip(start_ptrs, end_ptrs):
             graph_nodes = self.tensor['node_feature'][start:end]
             node_features.append(graph_nodes)
-            batch_ptr.append(batch_ptr[-1] + len(graph_nodes))
 
             # Find edges for this graph
             edge_mask = ((self.tensor['edge_index'][:, 0] >= start) & 
@@ -638,10 +637,11 @@ class GraphStates(States):
             
             # Adjust edge indices to be local to this graph
             graph_edge_index = self.tensor['edge_index'][edge_mask]
-            graph_edge_index[:, 0] -= start
-            graph_edge_index[:, 1] -= start
+            graph_edge_index[:, 0] -= (batch_ptr[-1] - start)
+            graph_edge_index[:, 1] -= (batch_ptr[-1] - start)
             edge_indices.append(graph_edge_index)
-        
+            batch_ptr.append(batch_ptr[-1] + len(graph_nodes))
+
         out = self.__class__(TensorDict({
             'node_feature': torch.cat(node_features),
             'edge_feature': torch.cat(edge_features),

@@ -630,11 +630,11 @@ class GraphEnv(Env):
         return self.Actions(**tensor)
 
     @abstractmethod
-    def step(self, states: GraphStates, actions: Actions) -> GraphStates:
+    def step(self, states: GraphStates, actions: Actions) -> torch.Tensor:
         """Function that takes a batch of graph states and actions and returns a batch of next
         graph states."""
 
     @abstractmethod
-    def backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
+    def backward_step(self, states: GraphStates, actions: Actions) -> torch.Tensor:
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""

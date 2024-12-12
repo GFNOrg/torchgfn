@@ -63,14 +63,12 @@ class GraphBuilding(GraphEnv):
             state_tensor = self._add_node(state_tensor, batch_indices, actions.features)
 
         if action_type == GraphActionType.ADD_EDGE:
-            assert len(state_tensor) == len(actions)
             state_tensor["edge_feature"] = torch.cat([state_tensor["edge_feature"], actions.features], dim=0)
-            state_tensor["edge_index"] = torch.cat(
-                [state_tensor["edge_index"], actions.edge_index], dim=0
-            )
+            state_tensor["edge_index"] = torch.cat([state_tensor["edge_index"], actions.edge_index], dim=0)
+
         return state_tensor
 
-    def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
+    def backward_step(self, states: GraphStates, actions: GraphActions) -> torch.Tensor:
         """Backward step function for the GraphBuilding environment.
 
         Args:
@@ -81,25 +79,26 @@ class GraphBuilding(GraphEnv):
         """
         if not self.is_action_valid(states, actions, backward=True):
             raise NonValidActionsError("Invalid action.")
-        graphs: Batch = deepcopy(states.data)
-        assert len(graphs) == len(actions)
+        state_tensor = deepcopy(states.tensor)
 
-        if actions.action_type == GraphActionType.ADD_NODE:
-            assert graphs.x is not None
+        action_type = actions.action_type[0]
+        assert torch.all(actions.action_type == action_type)
+        if action_type == GraphActionType.ADD_NODE:
             is_equal = torch.any(
-                torch.all(graphs.x[:, None] == actions.features, dim=-1), dim=-1
+                torch.all(state_tensor["node_feature"][:, None] == actions.features, dim=-1),
+                dim=-1
             )
-            graphs.x = graphs.x[~is_equal]
-        elif actions.action_type == GraphActionType.ADD_EDGE:
+            state_tensor["node_feature"] = state_tensor["node_feature"][~is_equal]
+        elif action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
             is_equal = torch.all(
-                graphs.edge_index[:, None] == actions.edge_index[:, :, None], dim=0
+                state_tensor["edge_index"] == actions.edge_index[:, None], dim=-1
             )
             is_equal = torch.any(is_equal, dim=0)
-            graphs.edge_attr = graphs.edge_attr[~is_equal]
-            graphs.edge_index = graphs.edge_index[:, ~is_equal]
+            state_tensor["edge_feature"] = state_tensor["edge_feature"][~is_equal]
+            state_tensor["edge_index"] = state_tensor["edge_index"][~is_equal]
 
-        return self.States(graphs)
+        return state_tensor
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
@@ -111,8 +110,8 @@ class GraphBuilding(GraphEnv):
             node_feature = states[add_node_mask].tensor["node_feature"]
             equal_nodes_per_batch = torch.all(
                 node_feature == actions[add_node_mask].features[:, None], dim=-1
-            ).reshape(-1)
-            if backward:  # TODO: check if no edge are connected?
+            ).sum(dim=-1)
+            if backward:  # TODO: check if no edge is connected?
                 add_node_out = torch.all(equal_nodes_per_batch == 1)
             else:
                 add_node_out = torch.all(equal_nodes_per_batch == 0)
@@ -131,18 +130,13 @@ class GraphBuilding(GraphEnv):
             if torch.any(add_edge_actions.edge_index > add_edge_states["node_feature"].shape[0]):
                 return False
 
-            batch_dim = add_edge_actions.features.shape[0]
-            batch_idx = add_edge_actions.edge_index % batch_dim
-            if torch.any(batch_idx != torch.arange(batch_dim)):
-                return False
-
             equal_edges_per_batch_attr = torch.all(
                 add_edge_states["edge_feature"] == add_edge_actions.features[:, None], dim=-1
-            ).reshape(len(add_edge_states), -1)
+            )
             equal_edges_per_batch_attr = torch.sum(equal_edges_per_batch_attr, dim=-1)
             equal_edges_per_batch_index = torch.all(
-                add_edge_states["edge_index"] == add_edge_actions.edge_index, dim=0
-            ).reshape(len(add_edge_states), -1)
+                add_edge_states["edge_index"] == add_edge_actions.edge_index[:, None], dim=-1
+            )
             equal_edges_per_batch_index = torch.sum(equal_edges_per_batch_index, dim=-1)
         
             if backward:
@@ -164,12 +158,10 @@ class GraphBuilding(GraphEnv):
         
         modified_dict = tensor_dict.clone()
         node_feature_dim = modified_dict['node_feature'].shape[1]
-        edge_feature_dim = modified_dict['edge_feature'].shape[1]
         
         for graph_idx, new_nodes in zip(batch_indices, nodes_to_add):
             start_ptr = tensor_dict['batch_ptr'][graph_idx]
             end_ptr = tensor_dict['batch_ptr'][graph_idx + 1]
-            num_original_nodes = end_ptr - start_ptr
 
             if new_nodes.ndim == 1:
                 new_nodes = new_nodes.unsqueeze(0)
@@ -181,7 +173,6 @@ class GraphBuilding(GraphEnv):
             modified_dict['batch_ptr'][graph_idx + 1:] += shift
             
             # Expand node features
-            original_nodes = modified_dict['node_feature'][start_ptr:end_ptr]
             modified_dict['node_feature'] = torch.cat([
                 modified_dict['node_feature'][:end_ptr],
                 new_nodes,
