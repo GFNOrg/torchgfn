@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 from torchtyping import TensorType as TT
