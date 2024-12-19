@@ -76,7 +76,7 @@ class Trajectories(Container):
         self.states = (
             states if states is not None else env.states_from_batch_shape((0, 0))
         )
-        assert len(self.states.batch_shape) == 2
+        assert len(self.states.batch_shape) == 2, self.states.batch_shape
         self.actions = (
             actions if actions is not None else env.actions_from_batch_shape((0, 0))
         )
