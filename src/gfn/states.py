@@ -597,8 +597,8 @@ class GraphStates(States):
             "batch_shape": batch_shape
         })
 
-    def __len__(self):
-        return np.prod(self.batch_shape)
+    def __len__(self) -> int:
+        return int(np.prod(self.batch_shape))
 
     def __repr__(self):
         return (
@@ -609,10 +609,8 @@ class GraphStates(States):
     def __getitem__(
         self, index: int | Sequence[int] | slice | torch.Tensor
     ) -> GraphStates:
-        if isinstance(index, (int, list)):
-            index = torch.tensor(index)
-        if index.dtype == torch.bool:
-            index = torch.where(index)[0]
+        tensor_idx = torch.arange(len(self)).view(*self.batch_shape)
+        index = tensor_idx[index].flatten()
         
         if torch.any(index >= len(self.tensor['batch_ptr']) - 1):
             raise ValueError("Graph index out of bounds")
@@ -747,11 +745,23 @@ class GraphStates(States):
     def log_rewards(self, log_rewards: torch.Tensor) -> None:
         self._log_rewards = log_rewards
 
+    def _compare(self, other: TensorDict) -> torch.Tensor:
+        out = torch.zeros(len(self.tensor["batch_ptr"]) - 1, dtype=torch.bool)
+        for i in range(len(self.tensor["batch_ptr"]) - 1):
+            start, end = self.tensor["batch_ptr"][i], self.tensor["batch_ptr"][i + 1]
+            if end - start != len(other["node_feature"]):
+                out[i] = False
+            else:
+                out[i] = torch.all(self.tensor["node_feature"][start:end] == other["node_feature"])
+        return out.view(self.batch_shape)
+
     @property
     def is_sink_state(self) -> torch.Tensor:
-        if len(self.tensor["node_feature"]) != np.prod(self.batch_shape):
-            return torch.zeros(self.batch_shape, dtype=torch.bool)
-        return torch.all(self.tensor["node_feature"] == self.sf["node_feature"], dim=-1).view(self.batch_shape)
+        return self._compare(self.sf)
+
+    @property
+    def is_initial_state(self) -> torch.Tensor:
+        return self._compare(self.s0)
 
     @classmethod
     def stack(cls, states: List[GraphStates]):

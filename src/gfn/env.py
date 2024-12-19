@@ -219,6 +219,7 @@ class Env(ABC):
             batch_shape = (1,)
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
+        
         return self.States.from_batch_shape(
             batch_shape=batch_shape, random=random, sink=sink
         )
@@ -617,17 +618,6 @@ class GraphEnv(Env):
             features_dim = env.features_dim
 
         return DefaultGraphAction
-
-    def actions_from_tensor(self, tensor: Dict[str, torch.Tensor]):
-        """Wraps the supplied Tensor in an Actions instance.
-
-        Args:
-            tensor: The tensor of shape "action_shape" representing the actions.
-
-        Returns:
-            Actions: An instance of Actions.
-        """
-        return self.Actions(**tensor)
 
     @abstractmethod
     def step(self, states: GraphStates, actions: Actions) -> torch.Tensor:

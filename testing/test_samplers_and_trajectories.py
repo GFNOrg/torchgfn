@@ -277,7 +277,3 @@ def test_graph_building():
         save_logprobs=True,
         save_estimator_outputs=False,
     )
-
-
-if __name__ == "__main__":
-    test_graph_building()

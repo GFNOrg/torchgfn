@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import torch
+from tensordict import TensorDict
 
 from gfn.actions import GraphActionType
 from gfn.env import NonValidActionsError
@@ -331,18 +332,18 @@ def test_graph_env():
     action_cls = env.make_actions_class()
 
     with pytest.raises(NonValidActionsError):
-        actions = action_cls(
-            torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-            torch.rand((BATCH_SIZE, FEATURE_DIM)),
-            torch.randint(0, 10, (BATCH_SIZE, 2), dtype=torch.long),
-        )
+        actions = action_cls(TensorDict({
+            "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
+            "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
+            "edge_index": torch.randint(0, 10, (BATCH_SIZE, 2), dtype=torch.long),
+        }, batch_size=BATCH_SIZE))
         states = env.step(states, actions)
 
     for _ in range(NUM_NODES):
-        actions = action_cls(
-            torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-            torch.rand((BATCH_SIZE, FEATURE_DIM)),
-        )
+        actions = action_cls(TensorDict({
+            "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
+            "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
+        }, batch_size=BATCH_SIZE))
         states = env.step(states, actions)
         states = env.States(states)
 
@@ -350,33 +351,35 @@ def test_graph_env():
 
     with pytest.raises(NonValidActionsError):
         first_node_mask = torch.arange(len(states.tensor["node_feature"])) // BATCH_SIZE == 0
-        actions = action_cls(
-            torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-            states.tensor["node_feature"][first_node_mask],
-        )
+        actions = action_cls(TensorDict({
+            "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
+            "features": states.tensor["node_feature"][first_node_mask],
+        }, batch_size=BATCH_SIZE))
         states = env.step(states, actions)
 
     with pytest.raises(NonValidActionsError):
         edge_index = torch.randint(0, 3, (BATCH_SIZE,), dtype=torch.long)
-        actions = action_cls(
-            torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-            torch.rand((BATCH_SIZE, FEATURE_DIM)),
-            torch.stack([edge_index, edge_index], dim=1),
-        )
+        actions = action_cls(TensorDict({
+            "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
+            "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
+            "edge_index": torch.stack([edge_index, edge_index], dim=1),
+        }, batch_size=BATCH_SIZE))
         states = env.step(states, actions)
 
     for i in range(NUM_NODES - 1):
         node_is = states.tensor["batch_ptr"][:-1] + i
         node_js = states.tensor["batch_ptr"][:-1] + i + 1
-        actions = action_cls(
-            torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-            torch.rand((BATCH_SIZE, FEATURE_DIM)),
-            torch.stack([node_is, node_js], dim=1),
-        )
+        actions = action_cls(TensorDict({
+            "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
+            "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
+            "edge_index": torch.stack([node_is, node_js], dim=1),
+        }, batch_size=BATCH_SIZE))
         states = env.step(states, actions)
         states = env.States(states)
 
-    actions = action_cls(torch.full((BATCH_SIZE,), GraphActionType.EXIT))
+    actions = action_cls(TensorDict({
+        "action_type": torch.full((BATCH_SIZE,), GraphActionType.EXIT),
+    }, batch_size=BATCH_SIZE))
     sf_states = env.step(states, actions)
     sf_states = env.States(sf_states)
     assert torch.all(sf_states.is_sink_state)
@@ -393,36 +396,36 @@ def test_graph_env():
     num_edges_per_batch = len(states.tensor["edge_feature"]) // BATCH_SIZE
     for i in reversed(range(num_edges_per_batch)):
         edge_idx = torch.arange(i * BATCH_SIZE, (i + 1) * BATCH_SIZE)
-        actions = action_cls(
-            torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-            states.tensor["edge_feature"][edge_idx],
-            states.tensor["edge_index"][edge_idx],
-        )
+        actions = action_cls(TensorDict({
+            "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
+            "features": states.tensor["edge_feature"][edge_idx],
+            "edge_index": states.tensor["edge_index"][edge_idx],
+        }, batch_size=BATCH_SIZE))
         states = env.backward_step(states, actions)
         states = env.States(states)
 
     with pytest.raises(NonValidActionsError):
-        actions = action_cls(
-            torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-            torch.rand((BATCH_SIZE, FEATURE_DIM)),
-            torch.randint(0, 10, (BATCH_SIZE, 2), dtype=torch.long),
-        )
+        actions = action_cls(TensorDict({
+            "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
+            "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
+            "edge_index": torch.randint(0, 10, (BATCH_SIZE, 2), dtype=torch.long),
+        }, batch_size=BATCH_SIZE))
         states = env.backward_step(states, actions)
 
     for i in reversed(range(1, NUM_NODES + 1)):
         edge_idx = torch.arange(BATCH_SIZE) * i
-        actions = action_cls(
-            torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-            states.tensor["node_feature"][edge_idx],
-        )
+        actions = action_cls(TensorDict({
+            "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
+            "features": states.tensor["node_feature"][edge_idx],
+        }, batch_size=BATCH_SIZE))
         states = env.backward_step(states, actions)
         states = env.States(states)
 
     assert states.tensor["node_feature"].shape == (0, FEATURE_DIM)
 
     with pytest.raises(NonValidActionsError):
-        actions = action_cls(
-            torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-            torch.rand((BATCH_SIZE, FEATURE_DIM)),
-        )
+        actions = action_cls(TensorDict({
+            "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
+            "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
+        }, batch_size=BATCH_SIZE))
         states = env.backward_step(states, actions)

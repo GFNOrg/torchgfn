@@ -79,7 +79,6 @@ class GFNModule(ABC, nn.Module):
             )
             preprocessor = IdentityPreprocessor(module.input_dim)
         self.preprocessor = preprocessor
-        self._output_dim_is_checked = False
         self.is_backward = is_backward
 
     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
@@ -236,7 +235,7 @@ class DiscretePolicyEstimator(GFNModule):
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
         out = super().forward(states)
-        assert out.shape[-1] == self.expected_output_dim
+        assert out.shape[-1] == self.expected_output_dim, f"Expected output dim: {self.expected_output_dim}, got: {out.shape[-1]}"
         return out
 
     def to_probability_distribution(

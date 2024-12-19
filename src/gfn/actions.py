@@ -181,12 +181,7 @@ class GraphActionType(enum.IntEnum):
 class GraphActions(Actions):
     features_dim: ClassVar[int]
 
-    def __init__(
-        self,
-        action_type: torch.Tensor,
-        features: Optional[torch.Tensor] = None,
-        edge_index: Optional[torch.Tensor] = None,
-    ):
+    def __init__(self, tensor: TensorDict):
         """Initializes a GraphAction object.
 
         Args:
@@ -196,16 +191,18 @@ class GraphActions(Actions):
             edge_index: an tensor of shape (batch_shape, 2) representing the edge to add.
                 This must defined if and only if the action type is GraphActionType.AddEdge.
         """
-        self.batch_shape = action_type.shape
+        self.batch_shape = tensor["action_type"].shape
+        features = tensor.get("features", None)
         if features is None:
-            assert torch.all(action_type == GraphActionType.EXIT)
+            assert torch.all(tensor["action_type"] == GraphActionType.EXIT)
             features = torch.zeros((*self.batch_shape, self.features_dim))
+        edge_index = tensor.get("edge_index", None)
         if edge_index is None:
-            assert torch.all(action_type != GraphActionType.ADD_EDGE)
+            assert torch.all(tensor["action_type"] != GraphActionType.ADD_EDGE)
             edge_index = torch.zeros((*self.batch_shape, 2), dtype=torch.long)
 
         self.tensor = TensorDict({
-            "action_type": action_type,
+            "action_type": tensor["action_type"],
             "features": features,
             "edge_index": edge_index,
         }, batch_size=self.batch_shape)
@@ -224,12 +221,8 @@ class GraphActions(Actions):
 
     def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> GraphActions:
         """Get particular actions of the batch."""
-        tensor = self.tensor[index]
-        return GraphActions(
-            tensor["action_type"],
-            tensor["features"],
-            tensor["edge_index"]
-        )
+        return GraphActions(self.tensor[index])
+
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], action: GraphActions
@@ -276,9 +269,11 @@ class GraphActions(Actions):
     ) -> GraphActions:
         """Creates an Actions object of dummy actions with the given batch shape."""
         return cls(
-            action_type=torch.full(batch_shape, fill_value=GraphActionType.EXIT),
-            #features=torch.zeros((*batch_shape, 0, cls.nodes_features_dim)),
-            #edge_index=torch.zeros((2, *batch_shape, 0)),
+            TensorDict({
+                "action_type": torch.full(batch_shape, fill_value=GraphActionType.EXIT),
+                # "features": torch.zeros((*batch_shape, 0, cls.nodes_features_dim)),
+                # "edge_index": torch.zeros((2, *batch_shape, 0)),
+            }, batch_size=batch_shape)
         )
     
     @classmethod
@@ -287,9 +282,5 @@ class GraphActions(Actions):
         actions_tensor = torch.stack(
             [actions.tensor for actions in actions_list], dim=0
         )
-        return cls(
-            actions_tensor["action_type"],
-            actions_tensor["features"],
-            actions_tensor["edge_index"]
-        )
+        return cls(actions_tensor)
 
