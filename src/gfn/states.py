@@ -635,8 +635,8 @@ class GraphStates(States):
             
             # Adjust edge indices to be local to this graph
             graph_edge_index = self.tensor['edge_index'][edge_mask]
-            graph_edge_index[:, 0] -= (batch_ptr[-1] - start)
-            graph_edge_index[:, 1] -= (batch_ptr[-1] - start)
+            graph_edge_index[:, 0] -= (start - batch_ptr[-1])
+            graph_edge_index[:, 1] -= (start - batch_ptr[-1])
             edge_indices.append(graph_edge_index)
             batch_ptr.append(batch_ptr[-1] + len(graph_nodes))
 

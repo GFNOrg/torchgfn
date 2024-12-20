@@ -137,8 +137,7 @@ class GraphBuilding(GraphEnv):
             global_edge_index = add_edge_actions.edge_index + add_edge_states["batch_ptr"][:-1][:, None]
             equal_edges_per_batch = torch.all(
                 add_edge_states["edge_index"] == global_edge_index[:, None], dim=-1
-            )
-            equal_edges_per_batch = equal_edges_per_batch.sum(dim=-1)
+            ).sum(dim=-1)
         
             if backward:
                 add_edge_out = torch.all(equal_edges_per_batch == 1)
