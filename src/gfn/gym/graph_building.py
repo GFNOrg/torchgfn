@@ -123,7 +123,6 @@ class GraphBuilding(GraphEnv):
             add_edge_states = states[add_edge_mask].tensor
             add_edge_actions = actions[add_edge_mask]
 
-            import pdb; pdb.set_trace()
             if torch.any(add_edge_actions.edge_index[:, 0] == add_edge_actions.edge_index[:, 1]):
                 return False
             if add_edge_states["node_feature"].shape[0] == 0:
