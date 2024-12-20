@@ -7,7 +7,7 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
-from gfn.states import States, stack_states
+from gfn.states import States
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -147,7 +147,7 @@ class Sampler:
         if conditioning is not None:
             assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
 
-        device = states.tensor.device
+        device = states.device
 
         dones = (
             states.is_initial_state
@@ -156,7 +156,7 @@ class Sampler:
         )
 
         trajectories_states: List[States] = [deepcopy(states)]
-        trajectories_actions: List[torch.Tensor] = []
+        trajectories_actions: List[Actions] = []
         trajectories_logprobs: List[torch.Tensor] = []
         trajectories_dones = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
@@ -167,7 +167,7 @@ class Sampler:
 
         step = 0
         all_estimator_outputs = []
-
+        
         while not all(dones):
             actions = env.actions_from_batch_shape((n_trajectories,))  # Dummy actions.
             log_probs = torch.full(
@@ -206,6 +206,7 @@ class Sampler:
             if save_logprobs:
                 # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
+
             trajectories_actions.append(actions)
             trajectories_logprobs.append(log_probs)
 
@@ -238,10 +239,9 @@ class Sampler:
                 )
             states = new_states
             dones = dones | new_dones
-
             trajectories_states.append(deepcopy(states))
 
-        trajectories_states = stack_states(trajectories_states)
+        trajectories_states = env.States.stack(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)
         trajectories_logprobs = (
             torch.stack(trajectories_logprobs, dim=0) if save_logprobs else None
