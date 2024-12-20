@@ -658,10 +658,8 @@ class GraphStates(States):
         """
         Set particular states of the Batch
         """
-        if isinstance(index, (int, list)):
-            index = torch.tensor(index)
-        if index.dtype == torch.bool:
-            index = torch.where(index)[0]
+        tensor_idx = torch.arange(len(self)).view(*self.batch_shape)
+        index = tensor_idx[index].flatten()
     
         # Validate indices
         if torch.any(index >= len(self.tensor['batch_ptr']) - 1):
@@ -679,10 +677,10 @@ class GraphStates(States):
             # Get start and end pointers for the current graph
             start_ptr = self.tensor['batch_ptr'][graph_idx]
             end_ptr = self.tensor['batch_ptr'][graph_idx + 1]
+            source_start_ptr = source_tensor_dict['batch_ptr'][i]
+            source_end_ptr = source_tensor_dict['batch_ptr'][i + 1]
 
-            new_nodes = source_tensor_dict['node_feature'][
-                source_tensor_dict['batch_ptr'][i]:source_tensor_dict['batch_ptr'][i + 1]
-            ]
+            new_nodes = source_tensor_dict['node_feature'][source_start_ptr:source_end_ptr]
             
             # Ensure new nodes have correct feature dimension
             if new_nodes.ndim == 1:
@@ -706,12 +704,17 @@ class GraphStates(States):
             edge_mask_1 = self.tensor['edge_index'][:, 1] >= end_ptr    
             self.tensor['edge_index'][edge_mask_0, 0] += shift
             self.tensor['edge_index'][edge_mask_1, 1] += shift
+            self.tensor['edge_index'] = torch.cat([
+                self.tensor['edge_index'],
+                source_tensor_dict['edge_index'] - source_start_ptr + start_ptr,
+            ], dim=0)
+            self.tensor['edge_feature'] = torch.cat([
+                self.tensor['edge_feature'],
+                source_tensor_dict['edge_feature'],
+            ], dim=0)
 
             # Update batch pointers
             self.tensor['batch_ptr'][graph_idx + 1:] += shift
-
-            # TODO: add new edges
-
 
     @property
     def device(self) -> torch.device:
