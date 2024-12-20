@@ -123,6 +123,7 @@ class GraphBuilding(GraphEnv):
             add_edge_states = states[add_edge_mask].tensor
             add_edge_actions = actions[add_edge_mask]
 
+            import pdb; pdb.set_trace()
             if torch.any(add_edge_actions.edge_index[:, 0] == add_edge_actions.edge_index[:, 1]):
                 return False
             if add_edge_states["node_feature"].shape[0] == 0:
@@ -130,23 +131,15 @@ class GraphBuilding(GraphEnv):
             if torch.any(add_edge_actions.edge_index > add_edge_states["node_feature"].shape[0]):
                 return False
 
-            equal_edges_per_batch_attr = torch.all(
-                add_edge_states["edge_feature"] == add_edge_actions.features[:, None], dim=-1
-            )
-            equal_edges_per_batch_attr = torch.sum(equal_edges_per_batch_attr, dim=-1)
             equal_edges_per_batch_index = torch.all(
                 add_edge_states["edge_index"] == add_edge_actions.edge_index[:, None], dim=-1
             )
             equal_edges_per_batch_index = torch.sum(equal_edges_per_batch_index, dim=-1)
         
             if backward:
-                add_edge_out = torch.all(equal_edges_per_batch_attr == 1) and torch.all(
-                    equal_edges_per_batch_index == 1
-                )
+                add_edge_out = torch.all(equal_edges_per_batch_index == 1)
             else:
-                add_edge_out = torch.all(equal_edges_per_batch_attr == 0) and torch.all(
-                    equal_edges_per_batch_index == 0
-                )
+                add_edge_out = torch.all(equal_edges_per_batch_index == 0)
         
         return bool(add_node_out) and bool(add_edge_out)
     
