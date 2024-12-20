@@ -64,7 +64,10 @@ class GraphBuilding(GraphEnv):
 
         if action_type == GraphActionType.ADD_EDGE:
             state_tensor["edge_feature"] = torch.cat([state_tensor["edge_feature"], actions.features], dim=0)
-            state_tensor["edge_index"] = torch.cat([state_tensor["edge_index"], actions.edge_index], dim=0)
+            state_tensor["edge_index"] = torch.cat([
+                state_tensor["edge_index"],
+                actions.edge_index + state_tensor["batch_ptr"][:-1][:, None]
+            ], dim=0)
 
         return state_tensor
 
@@ -91,8 +94,9 @@ class GraphBuilding(GraphEnv):
             state_tensor["node_feature"] = state_tensor["node_feature"][~is_equal]
         elif action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
+            global_edge_index = actions.edge_index + state_tensor["batch_ptr"][:-1][:, None]
             is_equal = torch.all(
-                state_tensor["edge_index"] == actions.edge_index[:, None], dim=-1
+                state_tensor["edge_index"] == global_edge_index[:, None], dim=-1
             )
             is_equal = torch.any(is_equal, dim=0)
             state_tensor["edge_feature"] = state_tensor["edge_feature"][~is_equal]
@@ -130,15 +134,16 @@ class GraphBuilding(GraphEnv):
             if torch.any(add_edge_actions.edge_index > add_edge_states["node_feature"].shape[0]):
                 return False
 
-            equal_edges_per_batch_index = torch.all(
-                add_edge_states["edge_index"] == add_edge_actions.edge_index[:, None], dim=-1
+            global_edge_index = add_edge_actions.edge_index + add_edge_states["batch_ptr"][:-1][:, None]
+            equal_edges_per_batch = torch.all(
+                add_edge_states["edge_index"] == global_edge_index[:, None], dim=-1
             )
-            equal_edges_per_batch_index = torch.sum(equal_edges_per_batch_index, dim=-1)
+            equal_edges_per_batch = equal_edges_per_batch.sum(dim=-1)
         
             if backward:
-                add_edge_out = torch.all(equal_edges_per_batch_index == 1)
+                add_edge_out = torch.all(equal_edges_per_batch == 1)
             else:
-                add_edge_out = torch.all(equal_edges_per_batch_index == 0)
+                add_edge_out = torch.all(equal_edges_per_batch == 0)
         
         return bool(add_node_out) and bool(add_edge_out)
     

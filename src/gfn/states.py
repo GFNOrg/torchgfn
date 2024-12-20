@@ -704,13 +704,15 @@ class GraphStates(States):
             edge_mask_1 = self.tensor['edge_index'][:, 1] >= end_ptr    
             self.tensor['edge_index'][edge_mask_0, 0] += shift
             self.tensor['edge_index'][edge_mask_1, 1] += shift
+            edge_to_add_mask = torch.all(source_tensor_dict['edge_index'] >= source_start_ptr, dim=-1)
+            edge_to_add_mask &= torch.all(source_tensor_dict['edge_index'] < source_end_ptr, dim=-1)
             self.tensor['edge_index'] = torch.cat([
                 self.tensor['edge_index'],
-                source_tensor_dict['edge_index'] - source_start_ptr + start_ptr,
+                source_tensor_dict['edge_index'][edge_to_add_mask] - source_start_ptr + start_ptr,
             ], dim=0)
             self.tensor['edge_feature'] = torch.cat([
                 self.tensor['edge_feature'],
-                source_tensor_dict['edge_feature'],
+                source_tensor_dict['edge_feature'][edge_to_add_mask],
             ], dim=0)
 
             # Update batch pointers
@@ -735,6 +737,7 @@ class GraphStates(States):
         """Concatenates to another GraphStates object along the batch dimension"""
         self.tensor["node_feature"] = torch.cat([self.tensor["node_feature"], other.tensor["node_feature"]], dim=0)
         self.tensor["edge_feature"] = torch.cat([self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=0)
+        # TODO: fix indices
         self.tensor["edge_index"] = torch.cat([self.tensor["edge_index"], other.tensor["edge_index"] + self.tensor["batch_ptr"][-1]], dim=0)
         self.tensor["batch_ptr"] = torch.cat([self.tensor["batch_ptr"], other.tensor["batch_ptr"][1:] + self.tensor["batch_ptr"][-1]], dim=0)
         assert torch.all(self.tensor["batch_shape"][1:] == other.tensor["batch_shape"][1:])
