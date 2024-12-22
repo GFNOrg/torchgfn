@@ -1,5 +1,6 @@
 """Write ane xamples where we want to create graphs that are rings."""
 
+from typing import Optional
 import torch
 from torch import nn
 from gfn.actions import Actions, GraphActionType, GraphActions
@@ -13,17 +14,24 @@ from torch_geometric.nn import GCNConv
 
 
 def state_evaluator(states: GraphStates) -> torch.Tensor:
+    eps = 1e-6
     if states.tensor["edge_index"].shape[0] == 0:
-        return torch.zeros(states.batch_shape)
+        return torch.full(states.batch_shape, eps)
     if states.tensor["edge_index"].shape[0] != states.tensor["node_feature"].shape[0]:
-        return torch.zeros(states.batch_shape)
-    
-    i0 = torch.unique(states.tensor["edge_index"][0], sorted=False)
-    i1 = torch.unique(states.tensor["edge_index"][1], sorted=False)
+        return torch.full(states.batch_shape, eps)
 
-    if len(i0) == len(i1) == states.tensor["node_feature"].shape[0]:
-        return torch.ones(states.batch_shape)
-    return torch.zeros(states.batch_shape)
+    out = torch.zeros(len(states))
+    for i in range(len(states)):
+        start, end = states.tensor["batch_ptr"][i], states.tensor["batch_ptr"][i + 1]
+        edge_index_mask = torch.all(states.tensor["edge_index"] >= start, dim=-1) & torch.all(states.tensor["edge_index"] < end, dim=-1)
+        edge_index = states.tensor["edge_index"][edge_index_mask]
+        arange = torch.arange(start, end)
+        # TODO: not correct, accepts multiple rings
+        if torch.all(torch.sort(edge_index[:, 0])[0] == arange) and torch.all(torch.sort(edge_index[:, 1])[0] == arange):
+            out[i] = 1
+        else:
+            out[i] = eps
+    return out.view(*states.batch_shape)
 
 
 class RingPolicyEstimator(nn.Module):
@@ -47,18 +55,16 @@ class RingPolicyEstimator(nn.Module):
         action_type = self._group_sum(action_type, batch_ptr)
 
         edge_index = self.edge_index_conv(node_feature, edge_index)
-        #edge_index = self._group_sum(edge_index, batch_ptr)
-        edge_index = edge_index.reshape(*states_tensor["batch_shape"], -1, 8)
+        edge_index = edge_index.reshape(*states_tensor["batch_shape"], self.n_nodes, 8)
         edge_index = torch.einsum("bnf,bmf->bnm", edge_index, edge_index)
-        torch.diagonal(edge_index, dim1=-2, dim2=-1).fill_(float("-inf"))
-        edge_actions = edge_index.reshape(*states_tensor["batch_shape"], -1)
+        edge_actions = edge_index.reshape(*states_tensor["batch_shape"], self.n_nodes * self.n_nodes)
 
         return torch.cat([action_type, edge_actions], dim=-1)
 
 class RingGraphBuilding(GraphBuilding):
-    def __init__(self, nodes: int = 10):
-        self.nodes = nodes
-        self.n_actions = 1 + nodes * nodes
+    def __init__(self, n_nodes: int = 10):
+        self.n_nodes = n_nodes
+        self.n_actions = 1 + n_nodes * n_nodes
         super().__init__(feature_dim=1, state_evaluator=state_evaluator)
 
     
@@ -77,22 +83,52 @@ class RingGraphBuilding(GraphBuilding):
 
         class RingStates(GraphStates):
             s0 = TensorDict({
-                "node_feature": torch.zeros((env.nodes, 1)),
+                "node_feature": torch.zeros((env.n_nodes, 1)),
                 "edge_feature": torch.zeros((0, 1)),
                 "edge_index": torch.zeros((0, 2), dtype=torch.long),
             }, batch_size=())
             sf = TensorDict({
-                "node_feature": torch.ones((env.nodes, 1)),
+                "node_feature": torch.ones((env.n_nodes, 1)),
                 "edge_feature": torch.zeros((0, 1)),
                 "edge_index": torch.zeros((0, 2), dtype=torch.long),
             }, batch_size=())
-            n_actions = env.n_actions
 
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
+            def __init__(self, tensor: TensorDict):
+                self.tensor = tensor
+                self.node_features_dim = tensor["node_feature"].shape[-1]
+                self.edge_features_dim = tensor["edge_feature"].shape[-1]
+                self._log_rewards: Optional[float] = None
+    
+                self.n_nodes = env.n_nodes
+                self.n_actions = env.n_actions
 
-                self.forward_masks = torch.ones(self.batch_shape + (self.n_actions,), dtype=torch.bool)
-                self.backward_masks = torch.ones(self.batch_shape + (self.n_actions,), dtype=torch.bool)
+            @property
+            def forward_masks(self):
+                forward_masks = torch.ones(len(self), self.n_actions, dtype=torch.bool)
+                forward_masks[:, 1::self.n_nodes + 1] = False
+                for i in range(len(self)):
+                    existing_edges = self[i].tensor["edge_index"]
+                    forward_masks[i, 1 + existing_edges[:, 0] * self.n_nodes + existing_edges[:, 1]] = False
+                
+                return forward_masks.view(*self.batch_shape, self.n_actions)
+        
+            @forward_masks.setter
+            def forward_masks(self, value: torch.Tensor):
+                pass # fwd masks is computed on the fly
+
+            @property
+            def backward_masks(self):
+                backward_masks = torch.zeros(len(self), self.n_actions, dtype=torch.bool)
+                for i in range(len(self)):
+                    existing_edges = self[i].tensor["edge_index"]
+                    backward_masks[i, 1 + existing_edges[:, 0] * self.n_nodes + existing_edges[:, 1]] = True
+                
+                return backward_masks.view(*self.batch_shape, self.n_actions)
+        
+            @backward_masks.setter
+            def backward_masks(self, value: torch.Tensor):
+                pass # bwd masks is computed on the fly
+    
         return RingStates
     
     def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
@@ -106,9 +142,8 @@ class RingGraphBuilding(GraphBuilding):
     def convert_actions(self, actions: Actions) -> GraphActions:
         action_tensor = actions.tensor.squeeze(-1)
         action_type = torch.where(action_tensor == 0, GraphActionType.EXIT, GraphActionType.ADD_EDGE)
-        edge_index_i0 = (action_tensor - 1) // (self.nodes)
-        edge_index_i1 = (action_tensor - 1) % (self.nodes)
-        # edge_index_i1 = edge_index_i1 + (edge_index_i1 >= edge_index_i0)
+        edge_index_i0 = (action_tensor - 1) // (self.n_nodes)
+        edge_index_i1 = (action_tensor - 1) % (self.n_nodes)
 
         edge_index = torch.stack([edge_index_i0, edge_index_i1], dim=-1)
         return GraphActions(TensorDict({
@@ -132,8 +167,8 @@ class GraphPreprocessor(Preprocessor):
 
 if __name__ == "__main__":
     torch.random.manual_seed(42)
-    env = RingGraphBuilding(nodes=10)
-    module = RingPolicyEstimator(env.nodes)
+    env = RingGraphBuilding(n_nodes=3)
+    module = RingPolicyEstimator(env.n_nodes)
 
     pf_estimator = DiscretePolicyEstimator(module=module, n_actions=env.n_actions, preprocessor=GraphPreprocessor())
 
@@ -143,9 +178,8 @@ if __name__ == "__main__":
     visited_terminating_states = env.States.from_batch_shape((0,))
     losses = []
 
-    for iteration in range(100):
-        print(f"Iteration {iteration}")
-        trajectories = gflownet.sample_trajectories(env, n=128)
+    for iteration in range(128):
+        trajectories = gflownet.sample_trajectories(env, n=32)
         samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
         loss = gflownet.loss(env, samples)

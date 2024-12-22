@@ -523,7 +523,7 @@ class GraphStates(States):
         self.node_features_dim = tensor["node_feature"].shape[-1]
         self.edge_features_dim = tensor["edge_feature"].shape[-1]
 
-        self._log_rewards: float = None
+        self._log_rewards: Optional[float] = None
         # TODO logic repeated from env.is_valid_action
         not_empty = self.tensor["batch_ptr"][:-1] + 1 < self.tensor["batch_ptr"][1:]
         self.forward_masks = torch.ones((np.prod(self.batch_shape), 3), dtype=torch.bool)
@@ -700,18 +700,19 @@ class GraphStates(States):
             ])
             
             # Update edge indices for subsequent graphs
-            edge_mask_0 = self.tensor['edge_index'][:, 0] >= end_ptr
-            edge_mask_1 = self.tensor['edge_index'][:, 1] >= end_ptr    
-            self.tensor['edge_index'][edge_mask_0, 0] += shift
-            self.tensor['edge_index'][edge_mask_1, 1] += shift
+            edge_mask = self.tensor['edge_index'] >= end_ptr
+            assert torch.all(edge_mask[..., 0] == edge_mask[..., 1])
+            edge_mask = torch.all(edge_mask, dim=-1)
+            self.tensor['edge_index'][edge_mask] += shift
+            edge_mask |= torch.all(self.tensor['edge_index'] < start_ptr, dim=-1)
             edge_to_add_mask = torch.all(source_tensor_dict['edge_index'] >= source_start_ptr, dim=-1)
             edge_to_add_mask &= torch.all(source_tensor_dict['edge_index'] < source_end_ptr, dim=-1)
             self.tensor['edge_index'] = torch.cat([
-                self.tensor['edge_index'],
+                self.tensor['edge_index'][edge_mask],
                 source_tensor_dict['edge_index'][edge_to_add_mask] - source_start_ptr + start_ptr,
             ], dim=0)
             self.tensor['edge_feature'] = torch.cat([
-                self.tensor['edge_feature'],
+                self.tensor['edge_feature'][edge_mask],
                 source_tensor_dict['edge_feature'][edge_to_add_mask],
             ], dim=0)
 
@@ -759,6 +760,11 @@ class GraphStates(States):
                 out[i] = False
             else:
                 out[i] = torch.all(self.tensor["node_feature"][start:end] == other["node_feature"])
+                edge_mask = torch.all((self.tensor["edge_index"] >= start) & (self.tensor["edge_index"] < end), dim=-1)
+                edge_index = self.tensor["edge_index"][edge_mask] - start
+                out[i] &= len(edge_index) == len(other["edge_index"]) and torch.all(edge_index == other["edge_index"])
+                edge_feature = self.tensor["edge_feature"][edge_mask]
+                out[i] &= len(edge_feature) == len(other["edge_feature"]) and torch.all(edge_feature == other["edge_feature"])
         return out.view(self.batch_shape)
 
     @property

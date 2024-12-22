@@ -300,7 +300,7 @@ class Env(ABC):
 
         # Calculate the backward step, and update only the states which are not Done.
         new_not_done_states_tensor = self.backward_step(valid_states, valid_actions)
-        new_states.tensor[valid_states_idx] = new_not_done_states_tensor
+        new_states[valid_states_idx] = self.States(new_not_done_states_tensor)
 
         if isinstance(new_states, DiscreteStates):
             self.update_masks(new_states)

@@ -71,7 +71,7 @@ class GraphBuilding(GraphEnv):
 
         return state_tensor
 
-    def backward_step(self, states: GraphStates, actions: GraphActions) -> torch.Tensor:
+    def backward_step(self, states: GraphStates, actions: GraphActions) -> TensorDict:
         """Backward step function for the GraphBuilding environment.
 
         Args:
@@ -83,6 +83,8 @@ class GraphBuilding(GraphEnv):
         if not self.is_action_valid(states, actions, backward=True):
             raise NonValidActionsError("Invalid action.")
         state_tensor = deepcopy(states.tensor)
+        if len(actions) == 0:
+            return state_tensor
 
         action_type = actions.action_type[0]
         assert torch.all(actions.action_type == action_type)
@@ -126,14 +128,12 @@ class GraphBuilding(GraphEnv):
         else:
             add_edge_states = states[add_edge_mask].tensor
             add_edge_actions = actions[add_edge_mask]
-
             if torch.any(add_edge_actions.edge_index[:, 0] == add_edge_actions.edge_index[:, 1]):
                 return False
             if add_edge_states["node_feature"].shape[0] == 0:
                 return False
             if torch.any(add_edge_actions.edge_index > add_edge_states["node_feature"].shape[0]):
                 return False
-
             global_edge_index = add_edge_actions.edge_index + add_edge_states["batch_ptr"][:-1][:, None]
             equal_edges_per_batch = torch.all(
                 add_edge_states["edge_index"] == global_edge_index[:, None], dim=-1
