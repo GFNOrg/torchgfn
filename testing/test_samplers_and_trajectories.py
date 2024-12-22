@@ -7,7 +7,7 @@ from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator, GFNModule
-from gfn.samplers import Sampler
+from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.modules import MLP
 
 
@@ -214,3 +214,86 @@ def test_replay_buffer(
         replay_buffer.add(training_objects)
     except Exception as e:
         raise ValueError(f"Error while testing {env_name}") from e
+
+
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
+def test_reverse_backward_trajectories(env_name: str):
+    """
+    Ensures that the vectorized `Trajectories.reverse_backward_trajectories`
+    matches the for-loop approach by toggling `debug=True`.
+
+    Note that `Trajectories.reverse_backward_trajectories` is not compatible with
+    environment with continuous states (e.g., Box).
+    """
+    _, backward_trajectories, *_ = trajectory_sampling_with_return(
+        env_name,
+        preprocessor_name="Identity",
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,
+    )
+    try:
+        _ = Trajectories.reverse_backward_trajectories(
+            backward_trajectories, debug=True  # <--- TRIGGER THE COMPARISON
+        )
+    except Exception as e:
+        raise ValueError(
+            f"Error while testing Trajectories.reverse_backward_trajectories in {env_name}"
+        ) from e
+
+
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
+def test_local_search_for_loop_equivalence(env_name):
+    """
+    Ensures that the vectorized `LocalSearchSampler.local_search` matches
+    the for-loop approach by toggling `debug=True`.
+
+    Note that this is not supported for environment with continuous state
+    space (e.g., Box), since `Trajectories.reverse_backward_trajectories`
+    is not compatible with continuous states.
+    """
+    # Build environment
+    if env_name == "HyperGrid":
+        env = HyperGrid(ndim=2, height=5, preprocessor_name="KHot")
+    elif env_name == "DiscreteEBM":
+        env = DiscreteEBM(ndim=5)
+    else:
+        raise ValueError("Unknown environment name")
+
+    # Build pf & pb
+    pf_module = MLP(env.preprocessor.output_dim, env.n_actions)
+    pb_module = MLP(env.preprocessor.output_dim, env.n_actions - 1)
+    pf_estimator = DiscretePolicyEstimator(
+        module=pf_module,
+        n_actions=env.n_actions,
+        is_backward=False,
+        preprocessor=env.preprocessor,
+    )
+    pb_estimator = DiscretePolicyEstimator(
+        module=pb_module,
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=env.preprocessor,
+    )
+
+    sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)
+
+    # Initial forward-sampler call
+    trajectories = sampler.sample_trajectories(env, n=3, save_logprobs=True)
+
+    # Now run local_search in debug mode so that for-loop logic is compared
+    # to the vectorized logic.
+    # If there’s any mismatch, local_search() will raise AssertionError
+    try:
+        new_trajectories, is_updated = sampler.local_search(
+            env,
+            trajectories,
+            save_logprobs=True,
+            back_ratio=0.5,
+            use_metropolis_hastings=True,
+            debug=True,  # <--- TRIGGER THE COMPARISON
+        )
+    except Exception as e:
+        raise ValueError(
+            f"Error while testing LocalSearchSampler.local_search in {env_name}"
+        ) from e

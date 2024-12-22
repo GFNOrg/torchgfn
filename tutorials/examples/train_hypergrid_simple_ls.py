@@ -58,8 +58,8 @@ def main(args):
             save_estimator_outputs=False,
             epsilon=args.epsilon,
             n_local_search_loops=args.n_local_search_loops,
-            back_ratio=0.5,
-            use_metropolis_hastings=False,
+            back_ratio=args.back_ratio,
+            use_metropolis_hastings=args.use_metropolis_hastings,
         )
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories)
@@ -110,6 +110,11 @@ if __name__ == "__main__":
         type=float,
         default=0.5,
         help="The ratio of the number of backward steps to the length of the trajectory",
+    )
+    parser.add_argument(
+        "--use_metropolis_hastings",
+        action="store_true",
+        help="Use Metropolis-Hastings acceptance criterion",
     )
 
     args = parser.parse_args()

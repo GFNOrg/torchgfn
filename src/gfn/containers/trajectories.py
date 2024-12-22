@@ -428,7 +428,9 @@ class Trajectories(Container):
         )
 
     @staticmethod
-    def reverse_backward_trajectories(trajectories: Trajectories) -> Trajectories:
+    def reverse_backward_trajectories(
+        trajectories: Trajectories, debug: bool = False
+    ) -> Trajectories:
         """Reverses a backward trajectory"""
         # FIXME: This method is not compatible with continuous GFN.
 
@@ -519,35 +521,11 @@ class Trajectories(Container):
             0, 1
         )  # shape (max_len + 2, n_trajectories, *state_dim)
 
-        # TODO: Add below into the test suite to ensure correctness
-        # new_actions2 = torch.full((max_len + 1, len(trajectories), *trajectories.actions.action_shape), -1).to(actions)
-        # new_states2 = trajectories.env.sf.repeat(max_len + 2, len(trajectories), 1).to(states)  # shape (max_len + 2, n_trajectories, *state_dim)
-
-        # for i in range(len(trajectories)):
-        #     new_actions2[trajectories.when_is_done[i], i] = (
-        #         trajectories.env.n_actions - 1
-        #     )
-        #     new_actions2[
-        #         : trajectories.when_is_done[i], i
-        #     ] = trajectories.actions.tensor[: trajectories.when_is_done[i], i].flip(0)
-
-        #     new_states2[
-        #         : trajectories.when_is_done[i] + 1, i
-        #     ] = trajectories.states.tensor[: trajectories.when_is_done[i] + 1, i].flip(
-        #         0
-        #     )
-
-        # assert torch.all(new_actions == new_actions2)
-        # assert torch.all(new_states == new_states2)
-
-        trajectories_states = trajectories.env.states_from_tensor(new_states)
-        trajectories_actions = trajectories.env.actions_from_tensor(new_actions)
-
-        return Trajectories(
+        reversed_trajectories = Trajectories(
             env=trajectories.env,
-            states=trajectories_states,
+            states=trajectories.env.states_from_tensor(new_states),
             conditioning=trajectories.conditioning,
-            actions=trajectories_actions,
+            actions=trajectories.env.actions_from_tensor(new_actions),
             when_is_done=trajectories.when_is_done + 1,
             is_backward=False,
             log_rewards=trajectories.log_rewards,
@@ -556,6 +534,42 @@ class Trajectories(Container):
             # FIXME: To resolve this, we can save log_pfs and log_pbs in the trajectories object.
             estimator_outputs=None,  # Same as `log_probs`.
         )
+
+        # ------------------------------ DEBUG ------------------------------
+        # If `debug` is True (expected only when testing), compare the
+        # vectorized approach's results (above) to the for-loop results (below).
+        if debug:
+            _new_actions = torch.full(
+                (max_len + 1, len(trajectories), *trajectories.actions.action_shape), -1
+            ).to(actions)
+            _new_states = trajectories.env.sf.repeat(
+                max_len + 2, len(trajectories), 1
+            ).to(
+                states
+            )  # shape (max_len + 2, n_trajectories, *state_dim)
+
+            for i in range(len(trajectories)):
+                _new_actions[trajectories.when_is_done[i], i] = (
+                    trajectories.env.n_actions - 1
+                )
+                _new_actions[
+                    : trajectories.when_is_done[i], i
+                ] = trajectories.actions.tensor[: trajectories.when_is_done[i], i].flip(
+                    0
+                )
+
+                _new_states[
+                    : trajectories.when_is_done[i] + 1, i
+                ] = trajectories.states.tensor[
+                    : trajectories.when_is_done[i] + 1, i
+                ].flip(
+                    0
+                )
+
+            assert torch.all(new_actions == _new_actions)
+            assert torch.all(new_states == _new_states)
+
+        return reversed_trajectories
 
 
 def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:
