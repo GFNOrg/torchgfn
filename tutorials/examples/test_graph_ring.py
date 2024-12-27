@@ -1,5 +1,6 @@
 """Write ane xamples where we want to create graphs that are rings."""
 
+import math
 from typing import Optional
 import torch
 from torch import nn
@@ -11,6 +12,7 @@ from gfn.preprocessors import Preprocessor
 from gfn.states import GraphStates
 from tensordict import TensorDict
 from torch_geometric.nn import GCNConv
+import matplotlib.pyplot as plt
 
 
 def state_evaluator(states: GraphStates) -> torch.Tensor:
@@ -165,6 +167,53 @@ class GraphPreprocessor(Preprocessor):
         return self.preprocess(states)
 
 
+def render_states(states: GraphStates):
+    fig, ax = plt.subplots(2, 4, figsize=(15, 7))
+    for i in range(8):
+        current_ax = ax[i // 4, i % 4]
+        state = states[i]
+        n_circles = state.tensor["node_feature"].shape[0]
+        radius = 5
+        xs, ys = [], []
+        for j in range(n_circles):
+            angle = 2 * math.pi * j / n_circles
+            x = radius * math.cos(angle)
+            y = radius * math.sin(angle)
+            xs.append(x)
+            ys.append(y)
+            current_ax.add_patch(plt.Circle((x, y), 0.5, facecolor='none', edgecolor='black'))
+        
+        for edge in state.tensor["edge_index"]:
+            start_x, start_y = xs[edge[0]], ys[edge[0]]
+            end_x, end_y = xs[edge[1]], ys[edge[1]]
+            dx = end_x - start_x
+            dy = end_y - start_y
+            length = math.sqrt(dx**2 + dy**2)
+            dx, dy = dx/length, dy/length
+            
+            circle_radius = 0.5
+            head_thickness = 0.2
+            start_x += dx * (circle_radius)
+            start_y += dy * (circle_radius)
+            end_x -= dx * (circle_radius + head_thickness)
+            end_y -= dy * (circle_radius + head_thickness)
+            
+            current_ax.arrow(start_x, start_y, 
+                           end_x - start_x, end_y - start_y, 
+                           head_width=head_thickness, head_length=head_thickness, 
+                           fc='black', ec='black')
+        
+        current_ax.set_title(f"State {i}")
+        current_ax.set_xlim(-(radius + 1), radius + 1)
+        current_ax.set_ylim(-(radius + 1), radius + 1)
+        current_ax.set_aspect("equal")
+        current_ax.set_xticks([])
+        current_ax.set_yticks([])
+
+
+    plt.show()
+
+
 if __name__ == "__main__":
     torch.random.manual_seed(42)
     env = RingGraphBuilding(n_nodes=3)
@@ -188,6 +237,8 @@ if __name__ == "__main__":
 
         visited_terminating_states.extend(trajectories.last_states)
         losses.append(loss.item())
+    
+    render_states(visited_terminating_states[:-8])
 
 
 
