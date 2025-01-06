@@ -1,6 +1,7 @@
 """Write ane xamples where we want to create graphs that are rings."""
 
 import math
+import time
 from typing import Optional
 import torch
 from torch import nn
@@ -37,11 +38,12 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
 
 
 class RingPolicyEstimator(nn.Module):
-    def __init__(self, n_nodes: int):
+    def __init__(self, n_nodes: int, edge_hidden_dim: int = 128):
         super().__init__()
         self.action_type_conv = GCNConv(1, 1)
-        self.edge_index_conv = GCNConv(1, 8)
+        self.edge_index_conv = GCNConv(1, edge_hidden_dim)
         self.n_nodes = n_nodes
+        self.edge_hidden_dim = edge_hidden_dim
 
     def _group_sum(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
         cumsum = torch.zeros((len(tensor) + 1, *tensor.shape[1:]), dtype=tensor.dtype, device=tensor.device)
@@ -57,7 +59,7 @@ class RingPolicyEstimator(nn.Module):
         action_type = self._group_sum(action_type, batch_ptr)
 
         edge_index = self.edge_index_conv(node_feature, edge_index)
-        edge_index = edge_index.reshape(*states_tensor["batch_shape"], self.n_nodes, 8)
+        edge_index = edge_index.reshape(*states_tensor["batch_shape"], self.n_nodes, self.edge_hidden_dim)
         edge_index = torch.einsum("bnf,bmf->bnm", edge_index, edge_index)
         edge_actions = edge_index.reshape(*states_tensor["batch_shape"], self.n_nodes * self.n_nodes)
 
@@ -85,12 +87,12 @@ class RingGraphBuilding(GraphBuilding):
 
         class RingStates(GraphStates):
             s0 = TensorDict({
-                "node_feature": torch.zeros((env.n_nodes, 1)),
-                "edge_feature": torch.zeros((0, 1)),
-                "edge_index": torch.zeros((0, 2), dtype=torch.long),
+                "node_feature": torch.arange(env.n_nodes).unsqueeze(-1),
+                "edge_feature": torch.ones((0, 1)),
+                "edge_index": torch.ones((0, 2), dtype=torch.long),
             }, batch_size=())
             sf = TensorDict({
-                "node_feature": torch.ones((env.n_nodes, 1)),
+                "node_feature": torch.zeros((env.n_nodes, 1)),
                 "edge_feature": torch.zeros((0, 1)),
                 "edge_index": torch.zeros((0, 2), dtype=torch.long),
             }, batch_size=())
@@ -168,6 +170,7 @@ class GraphPreprocessor(Preprocessor):
 
 
 def render_states(states: GraphStates):
+    rewards = state_evaluator(states)
     fig, ax = plt.subplots(2, 4, figsize=(15, 7))
     for i in range(8):
         current_ax = ax[i // 4, i % 4]
@@ -203,7 +206,7 @@ def render_states(states: GraphStates):
                            head_width=head_thickness, head_length=head_thickness, 
                            fc='black', ec='black')
         
-        current_ax.set_title(f"State {i}")
+        current_ax.set_title(f"State {i}, $r={rewards[i]:.2f}$")
         current_ax.set_xlim(-(radius + 1), radius + 1)
         current_ax.set_ylim(-(radius + 1), radius + 1)
         current_ax.set_aspect("equal")
@@ -215,30 +218,34 @@ def render_states(states: GraphStates):
 
 
 if __name__ == "__main__":
+    N_NODES = 3
+    N_ITERATIONS = 1024
     torch.random.manual_seed(42)
-    env = RingGraphBuilding(n_nodes=3)
+    env = RingGraphBuilding(n_nodes=N_NODES)
     module = RingPolicyEstimator(env.n_nodes)
 
     pf_estimator = DiscretePolicyEstimator(module=module, n_actions=env.n_actions, preprocessor=GraphPreprocessor())
 
     gflownet = FMGFlowNet(pf_estimator)
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-2)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=N_ITERATIONS, eta_min=1e-4)
 
-    visited_terminating_states = env.States.from_batch_shape((0,))
     losses = []
 
-    for iteration in range(128):
-        trajectories = gflownet.sample_trajectories(env, n=32)
+    t1 = time.time()
+    for iteration in range(N_ITERATIONS):
+        trajectories = gflownet.sample_trajectories(env, n=64)
         samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
         loss = gflownet.loss(env, samples)
+        print("Iteration", iteration, "Loss:", loss.item())
         loss.backward()
         optimizer.step()
-
-        visited_terminating_states.extend(trajectories.last_states)
         losses.append(loss.item())
-    
-    render_states(visited_terminating_states[:-8])
+        scheduler.step()
+    t2 = time.time()
+    print("Time:", t2 - t1)
+    render_states(trajectories.last_states[:8])
 
 
 
