@@ -40,7 +40,7 @@ git clone https://github.com/GFNOrg/torchgfn.git
 conda create -n gfn python=3.10
 conda activate gfn
 cd torchgfn
-pip install .
+pip install -e ".[all]"
 ```
 
 
