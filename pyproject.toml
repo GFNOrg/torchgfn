@@ -82,7 +82,7 @@ all = [
     "wandb",
 ]
 
-[project.urls]
+[tool.poetry.urls]
 "Homepage" = "https://gfn.readthedocs.io/en/latest/"
 "Bug Tracker" = "https://github.com/saleml/gfn/issues"
 
