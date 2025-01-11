@@ -10,6 +10,7 @@ from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import LocalSearchSampler
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP
+from gfn.utils.training import validate
 
 
 def main(args):
@@ -50,7 +51,9 @@ def main(args):
         {"params": gflownet.logz_parameters(), "lr": args.lr_logz}
     )
 
-    for _ in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
+    validation_info = {"l1_dist": float("inf")}
+    visited_terminating_states = env.states_from_batch_shape((0,))
+    for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
         trajectories = sampler.sample_trajectories(
             env,
             n=(args.batch_size // args.n_local_search_loops),
@@ -61,10 +64,20 @@ def main(args):
             back_ratio=args.back_ratio,
             use_metropolis_hastings=args.use_metropolis_hastings,
         )
+        visited_terminating_states.extend(trajectories.last_states)
+
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories)
         loss.backward()
         optimizer.step()
+        if (it + 1) % args.validation_interval == 0:
+            validation_info = validate(
+                env,
+                gflownet,
+                args.validation_samples,
+                visited_terminating_states,
+            )
+            print(f"Iter {it + 1}: L1 distance {validation_info['l1_dist']:.8f}")
         pbar.set_postfix({"loss": loss.item()})
 
 
@@ -72,7 +85,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
     parser.add_argument(
-        "--ndim", type=int, default=2, help="Number of dimensions in the environment"
+        "--ndim", type=int, default=4, help="Number of dimensions in the environment"
     )
     parser.add_argument(
         "--height", type=int, default=16, help="Height of the environment"
@@ -93,6 +106,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_iterations", type=int, default=1000, help="Number of iterations"
     )
+    parser.add_argument(
+        "--validation_interval", type=int, default=100, help="Validation interval"
+    )
+    parser.add_argument(
+        "--validation_samples",
+        type=int,
+        default=100000,
+        help="Number of validation samples to use to evaluate the probability mass function.",
+    )
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument(
         "--epsilon", type=float, default=0.1, help="Epsilon for the sampler"
@@ -102,7 +124,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_local_search_loops",
         type=int,
-        default=4,
+        default=2,
         help="Number of local search loops",
     )
     parser.add_argument(
