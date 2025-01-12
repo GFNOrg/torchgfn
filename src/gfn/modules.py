@@ -9,7 +9,12 @@ from torch.distributions import Categorical, Distribution, Normal
 from gfn.actions import GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, GraphStates, States
-from gfn.utils.distributions import CategoricalActionType, CategoricalIndexes, ComposedDistribution, UnsqueezedCategorical
+from gfn.utils.distributions import (
+    CategoricalActionType,
+    CategoricalIndexes,
+    ComposedDistribution,
+    UnsqueezedCategorical,
+)
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -235,7 +240,9 @@ class DiscretePolicyEstimator(GFNModule):
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
         out = super().forward(states)
-        assert out.shape[-1] == self.expected_output_dim, f"Expected output dim: {self.expected_output_dim}, got: {out.shape[-1]}"
+        assert (
+            out.shape[-1] == self.expected_output_dim
+        ), f"Expected output dim: {self.expected_output_dim}, got: {out.shape[-1]}"
         return out
 
     def to_probability_distribution(
@@ -517,7 +524,9 @@ class GraphActionPolicyEstimator(GFNModule):
         dists["action_type"] = CategoricalActionType(probs=action_type_probs)
 
         edge_index_logits = module_output["edge_index"]
-        if states.tensor["node_feature"].shape[0] > 1 and torch.any(edge_index_logits != -float("inf")):
+        if states.tensor["node_feature"].shape[0] > 1 and torch.any(
+            edge_index_logits != -float("inf")
+        ):
             edge_index_probs = torch.softmax(edge_index_logits / temperature, dim=-1)
             uniform_dist_probs = (
                 torch.ones_like(edge_index_probs) / edge_index_probs.shape[-1]

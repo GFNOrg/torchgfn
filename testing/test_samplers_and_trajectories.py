@@ -225,6 +225,7 @@ def test_replay_buffer(
 
 # ------ GRAPH TESTS ------
 
+
 class GraphActionNet(nn.Module):
     def __init__(self, feature_dim: int):
         super().__init__()
@@ -243,7 +244,9 @@ class GraphActionNet(nn.Module):
             features = torch.zeros((len(states), self.feature_dim))
         else:
             action_type = self.action_type_conv(node_feature, edge_index)
-            action_type = action_type.reshape(len(states), -1, action_type.shape[-1]).mean(dim=1)
+            action_type = action_type.reshape(
+                len(states), -1, action_type.shape[-1]
+            ).mean(dim=1)
             features = self.features_conv(node_feature, edge_index)
             features = features.reshape(len(states), -1, features.shape[-1]).mean(dim=1)
 
@@ -277,3 +280,5 @@ def test_graph_building():
         save_logprobs=True,
         save_estimator_outputs=False,
     )
+
+    assert len(trajectories) == 7

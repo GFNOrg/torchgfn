@@ -91,7 +91,6 @@ class CategoricalIndexes(Categorical):
 
 
 class CategoricalActionType(Categorical):  # TODO: remove, just to sample 1 action_type
-
     def __init__(self, probs: torch.Tensor):
         self.batch_len = len(probs)
         super().__init__(probs[0])
@@ -99,6 +98,6 @@ class CategoricalActionType(Categorical):  # TODO: remove, just to sample 1 acti
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         samples = super().sample(sample_shape)
         return samples.repeat(self.batch_len)
-    
+
     def log_prob(self, value):
         return super().log_prob(value[0]).repeat(self.batch_len)

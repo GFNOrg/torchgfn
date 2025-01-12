@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from tensordict import TensorDict
@@ -219,7 +219,7 @@ class Env(ABC):
             batch_shape = (1,)
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
-        
+
         return self.States.from_batch_shape(
             batch_shape=batch_shape, random=random, sink=sink
         )
@@ -266,7 +266,7 @@ class Env(ABC):
         not_done_actions = actions[~new_sink_states_idx]
 
         new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
-        
+
         if not isinstance(new_not_done_states_tensor, (torch.Tensor, TensorDict)):
             raise Exception(
                 "User implemented env.step function *must* return a torch.Tensor!"
