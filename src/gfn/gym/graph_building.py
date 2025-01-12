@@ -42,7 +42,7 @@ class GraphBuilding(GraphEnv):
             {
                 "node_feature": torch.ones((1, feature_dim), dtype=torch.float32)
                 * float("inf"),
-                "edge_feature": torch.ones((1, feature_dim), dtype=torch.float32)
+                "edge_feature": torch.ones((0, feature_dim), dtype=torch.float32)
                 * float("inf"),
                 "edge_index": torch.zeros((0, 2), dtype=torch.long),
             },

@@ -596,16 +596,17 @@ class GraphStates(States):
             raise NotImplementedError("Sink state is not defined")
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
-        return TensorDict(
+        out = TensorDict(
             {
                 "node_feature": cls.sf["node_feature"].repeat(np.prod(batch_shape), 1),
                 "edge_feature": cls.sf["edge_feature"].repeat(np.prod(batch_shape), 1),
                 "edge_index": cls.sf["edge_index"].repeat(np.prod(batch_shape), 1),
-                "batch_ptr": torch.arange(np.prod(batch_shape) + 1)
+                "batch_ptr": torch.arange(np.prod(batch_shape) + 1, device=cls.sf.device)
                 * cls.sf["node_feature"].shape[0],
                 "batch_shape": batch_shape,
             }
         )
+        return out
 
     @classmethod
     def make_random_states_tensor(cls, batch_shape: int | Tuple) -> TensorDict:
