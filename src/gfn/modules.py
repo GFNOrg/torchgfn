@@ -1,12 +1,11 @@
 from abc import ABC
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
 from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution, Normal
 
-from gfn.actions import GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.distributions import (
@@ -484,14 +483,18 @@ class GraphActionPolicyEstimator(GFNModule):
         Args:
             states: The input graph states.
 
-        Returns the .
+        Returns:
+            TensorDict containing:
+                - action_type: logits for action type selection (batch_shape, n_actions)
+                - features: parameters for node/edge features (batch_shape, feature_dim)
+                - edge_index: logits for edge connections (batch_shape, n_nodes, n_nodes)
         """
         return self.module(states)
 
     def to_probability_distribution(
         self,
         states: GraphStates,
-        module_output: Dict[str, torch.Tensor],
+        module_output: TensorDict,
         temperature: float = 1.0,
         epsilon: float = 0.0,
     ) -> ComposedDistribution:

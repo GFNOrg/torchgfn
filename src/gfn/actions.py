@@ -179,6 +179,21 @@ class GraphActionType(enum.IntEnum):
 
 
 class GraphActions(Actions):
+    """Actions for graph-based environments.
+
+    Each action is one of:
+    - ADD_NODE: Add a node with given features
+    - ADD_EDGE: Add an edge between two nodes with given features
+    - EXIT: Terminate the trajectory
+
+    Attributes:
+        features_dim: Dimension of node/edge features
+        tensor: TensorDict containing:
+            - action_type: Type of action (GraphActionType)
+            - features: Features for nodes/edges
+            - edge_index: Source/target nodes for edges
+    """
+
     features_dim: ClassVar[int]
 
     def __init__(self, tensor: TensorDict):
@@ -279,8 +294,6 @@ class GraphActions(Actions):
                     "action_type": torch.full(
                         batch_shape, fill_value=GraphActionType.EXIT
                     ),
-                    # "features": torch.zeros((*batch_shape, 0, cls.nodes_features_dim)),
-                    # "edge_index": torch.zeros((2, *batch_shape, 0)),
                 },
                 batch_size=batch_shape,
             )

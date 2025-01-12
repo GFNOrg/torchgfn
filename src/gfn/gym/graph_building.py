@@ -3,7 +3,6 @@ from typing import Callable, Literal, Tuple
 
 import torch
 from tensordict import TensorDict
-from torch_geometric.nn import GCNConv
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import GraphEnv, NonValidActionsError
@@ -11,10 +10,24 @@ from gfn.states import GraphStates
 
 
 class GraphBuilding(GraphEnv):
+    """Environment for incrementally building graphs.
+
+    This environment allows constructing graphs by:
+    - Adding nodes with features
+    - Adding edges between existing nodes with features
+    - Terminating construction (EXIT)
+
+    Args:
+        feature_dim: Dimension of node and edge features
+        state_evaluator: Callable that computes rewards for final states.
+            If None, uses default GCNConvEvaluator
+        device_str: Device to run computations on ('cpu' or 'cuda')
+    """
+
     def __init__(
         self,
         feature_dim: int,
-        state_evaluator: Callable[[GraphStates], torch.Tensor] | None = None,
+        state_evaluator: Callable[[GraphStates], torch.Tensor],
         device_str: Literal["cpu", "cuda"] = "cpu",
     ):
         s0 = TensorDict(
@@ -36,8 +49,6 @@ class GraphBuilding(GraphEnv):
             device=device_str,
         )
 
-        if state_evaluator is None:
-            state_evaluator = GCNConvEvaluator(feature_dim)
         self.state_evaluator = state_evaluator
 
         super().__init__(
@@ -245,18 +256,3 @@ class GraphBuilding(GraphEnv):
     def make_random_states_tensor(self, batch_shape: Tuple) -> GraphStates:
         """Generates random states tensor of shape (*batch_shape, feature_dim)."""
         return self.States.from_batch_shape(batch_shape)
-
-
-class GCNConvEvaluator:
-    def __init__(self, num_features):
-        self.net = GCNConv(num_features, 1)
-
-    def __call__(self, state: GraphStates) -> torch.Tensor:
-        node_feature = state.tensor["node_feature"]
-        edge_index = state.tensor["edge_index"].T
-        if len(node_feature) == 0:
-            return torch.zeros(len(state))
-
-        out = self.net(node_feature, edge_index)
-        out = out.reshape(*state.batch_shape, -1)
-        return out.mean(-1)

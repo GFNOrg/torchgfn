@@ -268,7 +268,9 @@ class GraphActionNet(nn.Module):
 def test_graph_building():
     torch.manual_seed(7)
     feature_dim = 8
-    env = GraphBuilding(feature_dim=feature_dim)
+    env = GraphBuilding(
+        feature_dim=feature_dim, state_evaluator=lambda s: torch.zeros(s.batch_shape)
+    )
 
     module = GraphActionNet(feature_dim)
     pf_estimator = GraphActionPolicyEstimator(module=module)

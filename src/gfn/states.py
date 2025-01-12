@@ -8,7 +8,6 @@ from typing import Callable, ClassVar, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 from tensordict import TensorDict
-from torch_geometric.data import Batch, Data
 
 from gfn.actions import GraphActionType
 
@@ -297,7 +296,10 @@ class States(ABC):
     @classmethod
     def stack(cls, states: List[States]):
         """Given a list of states, stacks them along a new dimension (0)."""
-        state_example = states[0]  # We assume all elems of `states` are the same.
+        state_example = states[0]
+        assert all(
+            state.batch_shape == state_example.batch_shape for state in states
+        ), "All states must have the same batch_shape"
 
         stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
         stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
@@ -519,6 +521,18 @@ class GraphStates(States):
     sf: ClassVar[TensorDict]
 
     def __init__(self, tensor: TensorDict):
+        REQUIRED_KEYS = {
+            "node_feature",
+            "edge_feature",
+            "edge_index",
+            "batch_ptr",
+            "batch_shape",
+        }
+        if not all(key in tensor for key in REQUIRED_KEYS):
+            raise ValueError(
+                f"TensorDict must contain all required keys: {REQUIRED_KEYS}"
+            )
+
         self.tensor = tensor
         self.node_features_dim = tensor["node_feature"].shape[-1]
         self.edge_features_dim = tensor["edge_feature"].shape[-1]
@@ -601,18 +615,20 @@ class GraphStates(States):
         num_edges = np.random.randint(num_nodes * (num_nodes - 1) // 2)
         node_features_dim = cls.s0["node_feature"].shape[-1]
         edge_features_dim = cls.s0["edge_feature"].shape[-1]
+        device = cls.s0.device
         return TensorDict(
             {
                 "node_feature": torch.rand(
-                    np.prod(batch_shape) * num_nodes, node_features_dim
+                    np.prod(batch_shape) * num_nodes, node_features_dim, device=device
                 ),
                 "edge_feature": torch.rand(
-                    np.prod(batch_shape) * num_edges, edge_features_dim
+                    np.prod(batch_shape) * num_edges, edge_features_dim, device=device
                 ),
                 "edge_index": torch.randint(
-                    num_nodes, size=(np.prod(batch_shape) * num_edges, 2)
+                    num_nodes, size=(np.prod(batch_shape) * num_edges, 2), device=device
                 ),
-                "batch_ptr": torch.arange(np.prod(batch_shape) + 1) * num_nodes,
+                "batch_ptr": torch.arange(np.prod(batch_shape) + 1, device=device)
+                * num_nodes,
                 "batch_shape": batch_shape,
             }
         )
@@ -716,7 +732,7 @@ class GraphStates(States):
 
             if new_nodes.shape[1] != self.node_features_dim:
                 raise ValueError(
-                    f"Node features must have dimension {node_feature_dim}"
+                    f"Node features must have dimension {self.node_features_dim}"
                 )
 
             # Number of new nodes to add
@@ -768,7 +784,7 @@ class GraphStates(States):
             self.tensor["batch_ptr"][graph_idx + 1 :] += shift
 
     @property
-    def device(self) -> torch.device:
+    def device(self) -> torch.device | None:
         return self.tensor.device
 
     def to(self, device: torch.device) -> GraphStates:
