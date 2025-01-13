@@ -393,8 +393,8 @@ def test_graph_env():
         states = env.step(states, actions)
 
     for i in range(NUM_NODES - 1):
-        node_is = states.tensor["batch_ptr"][:-1] + i
-        node_js = states.tensor["batch_ptr"][:-1] + i + 1
+        node_is = torch.full((BATCH_SIZE,), i)
+        node_js = torch.full((BATCH_SIZE,), i + 1)
         actions = action_cls(
             TensorDict(
                 {
@@ -437,7 +437,7 @@ def test_graph_env():
                 {
                     "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
                     "features": states.tensor["edge_feature"][edge_idx],
-                    "edge_index": states.tensor["edge_index"][edge_idx],
+                    "edge_index": states.tensor["edge_index"][edge_idx] - states.tensor["batch_ptr"][:-1][:, None],
                 },
                 batch_size=BATCH_SIZE,
             )
