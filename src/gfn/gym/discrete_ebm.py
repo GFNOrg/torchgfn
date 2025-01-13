@@ -118,7 +118,7 @@ class DiscreteEBM(DiscreteEnv):
             preprocessor=preprocessor,
         )
 
-    def update_masks(self, states: type[States]) -> None:
+    def update_masks(self, states: DiscreteStates) -> None:
         states.forward_masks[..., : self.ndim] = states.tensor == -1
         states.forward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == -1
         states.forward_masks[..., -1] = torch.all(states.tensor != -1, dim=-1)
@@ -262,13 +262,13 @@ class DiscreteEBM(DiscreteEnv):
         digits = torch.arange(3, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
         all_states = all_states - 1
-        return self.States(all_states)
+        return self.states_from_tensor(all_states)
 
     @property
     def terminating_states(self) -> DiscreteStates:
         digits = torch.arange(2, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
-        return self.States(all_states)
+        return self.states_from_tensor(all_states)
 
     @property
     def true_dist_pmf(self) -> torch.Tensor:

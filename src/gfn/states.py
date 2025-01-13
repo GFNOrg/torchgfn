@@ -239,7 +239,7 @@ class States(ABC):
                 f"extend_with_sf is not implemented for batch shapes {self.batch_shape}"
             )
 
-    def compare(self, other: torch.tensor) -> torch.Tensor:
+    def compare(self, other: torch.Tensor) -> torch.Tensor:
         """Computes elementwise equality between state tensor with an external tensor.
 
         Args:

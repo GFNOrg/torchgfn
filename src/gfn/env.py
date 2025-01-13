@@ -62,6 +62,8 @@ class Env(ABC):
         self.dummy_action = dummy_action
         self.exit_action = exit_action
 
+        # Warning: don't use self.States or self.Actions to initialize an instance of the class.
+        # Use self.states_from_tensor or self.actions_from_tensor instead.
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
 
@@ -86,16 +88,20 @@ class Env(ABC):
         """
         return self.States(tensor)
 
-    def states_from_batch_shape(self, batch_shape: Tuple):
+    def states_from_batch_shape(
+        self, batch_shape: Tuple, random: bool = False, sink: bool = False
+    ):
         """Returns a batch of s0 states with a given batch_shape.
 
         Args:
             batch_shape: Tuple representing the shape of the batch of states.
+            random (optional): Initalize states randomly.
+            sink (optional): States initialized with s_f (the sink state).
 
         Returns:
             States: A batch of initial states.
         """
-        return self.States.from_batch_shape(batch_shape)
+        return self.States.from_batch_shape(batch_shape, random=random, sink=sink)
 
     def actions_from_tensor(self, tensor: torch.Tensor):
         """Wraps the supplied Tensor an an Actions instance.
@@ -219,8 +225,7 @@ class Env(ABC):
             batch_shape = (1,)
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
-
-        return self.States.from_batch_shape(
+        return self.states_from_batch_shape(
             batch_shape=batch_shape, random=random, sink=sink
         )
 
@@ -444,7 +449,7 @@ class DiscreteEnv(Env, ABC):
             batch_shape = (1,)
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
-        states = self.States.from_batch_shape(
+        states = self.states_from_batch_shape(
             batch_shape=batch_shape, random=random, sink=sink
         )
         self.update_masks(states)
@@ -452,13 +457,13 @@ class DiscreteEnv(Env, ABC):
         return states
 
     @abstractmethod
-    def update_masks(self, states: type[States]) -> None:
+    def update_masks(self, states: States) -> None:
         """Updates the masks in States.
 
         Called automatically after each step for discrete environments.
         """
 
-    def make_states_class(self) -> type[States]:
+    def make_states_class(self) -> type[DiscreteStates]:
         env = self
 
         class DiscreteEnvStates(DiscreteStates):
