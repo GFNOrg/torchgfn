@@ -60,7 +60,7 @@ dev = [
     "sphinx",
     "tox",
     "flake8",
-    "torch_geometric>=2.6.0",
+    "torch_geometric",
 ]
 
 scripts = ["tqdm", "wandb", "scikit-learn", "scipy", "matplotlib"]
