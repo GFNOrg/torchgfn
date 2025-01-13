@@ -601,7 +601,9 @@ class GraphStates(States):
                 "node_feature": cls.sf["node_feature"].repeat(np.prod(batch_shape), 1),
                 "edge_feature": cls.sf["edge_feature"].repeat(np.prod(batch_shape), 1),
                 "edge_index": cls.sf["edge_index"].repeat(np.prod(batch_shape), 1),
-                "batch_ptr": torch.arange(np.prod(batch_shape) + 1, device=cls.sf.device)
+                "batch_ptr": torch.arange(
+                    np.prod(batch_shape) + 1, device=cls.sf.device
+                )
                 * cls.sf["node_feature"].shape[0],
                 "batch_shape": batch_shape,
             }
