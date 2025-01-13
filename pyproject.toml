@@ -82,6 +82,7 @@ all = [
     "tox",
     "tqdm",
     "wandb",
+    "torch_geometric",
 ]
 
 [tool.poetry.urls]

@@ -809,7 +809,6 @@ class GraphStates(States):
         self.tensor["edge_feature"] = torch.cat(
             [self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=0
         )
-        # TODO: fix indices
         self.tensor["edge_index"] = torch.cat(
             [
                 self.tensor["edge_index"],
