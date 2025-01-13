@@ -1,10 +1,16 @@
 from typing import Literal, Tuple
 
 import pytest
+import torch
+from tensordict import TensorDict
+from torch import nn
+from torch_geometric.nn import GCNConv
 
+from gfn.actions import GraphActionType
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator, GFNModule, GraphActionPolicyEstimator
 from gfn.samplers import LocalSearchSampler, Sampler

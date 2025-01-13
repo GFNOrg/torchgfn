@@ -104,7 +104,7 @@ class Trajectories(Container):
             assert (
                 log_probs.shape == (self.max_length, self.n_trajectories)
                 and log_probs.dtype == torch.float
-            )
+            ), f"log_probs.shape={log_probs.shape}, self.max_length={self.max_length}, self.n_trajectories={self.n_trajectories}"
         else:
             log_probs = torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
         self.log_probs: torch.Tensor = log_probs
