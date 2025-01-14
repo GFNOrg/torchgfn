@@ -527,6 +527,8 @@ class GraphActionPolicyEstimator(GFNModule):
         dists["action_type"] = CategoricalActionType(probs=action_type_probs)
 
         edge_index_logits = module_output["edge_index"]
+        B, N, N = edge_index_logits.shape
+        edge_index_logits = edge_index_logits.reshape(B, N * N)
         if states.tensor["node_feature"].shape[0] > 1 and torch.any(
             edge_index_logits != -float("inf")
         ):
@@ -537,7 +539,7 @@ class GraphActionPolicyEstimator(GFNModule):
             edge_index_probs = (
                 1 - epsilon
             ) * edge_index_probs + epsilon * uniform_dist_probs
-            dists["edge_index"] = CategoricalIndexes(probs=edge_index_probs)
+            dists["edge_index"] = CategoricalIndexes(probs=edge_index_probs, n=N)
 
         dists["features"] = Normal(module_output["features"], temperature)
         return ComposedDistribution(dists=dists)
