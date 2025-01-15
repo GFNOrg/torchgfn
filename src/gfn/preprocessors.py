@@ -77,7 +77,7 @@ class EnumPreprocessor(Preprocessor):
 
 class GraphPreprocessor(Preprocessor):
     def __init__(self) -> None:
-        super().__init__(-1)
+        super().__init__(-1)  # TODO: review output_dim API
 
     def preprocess(self, states: GraphStates) -> TensorDict:
         return states.tensor
