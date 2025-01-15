@@ -313,7 +313,7 @@ class GraphActionNet(nn.Module):
     def __init__(self, feature_dim: int):
         super().__init__()
         self.feature_dim = feature_dim
-        self.action_type_conv = GCNConv(feature_dim, len(GraphActionType))
+        self.action_type_conv = GCNConv(feature_dim, 3)
         self.features_conv = GCNConv(feature_dim, feature_dim)
         self.edge_index_conv = GCNConv(feature_dim, 8)
 
@@ -322,7 +322,7 @@ class GraphActionNet(nn.Module):
         edge_index = states.tensor["edge_index"].T
 
         if states.tensor["node_feature"].shape[0] == 0:
-            action_type = torch.zeros((len(states), len(GraphActionType)))
+            action_type = torch.zeros((len(states), 3))
             action_type[:, GraphActionType.ADD_NODE] = 1
             features = torch.zeros((len(states), self.feature_dim))
         else:
