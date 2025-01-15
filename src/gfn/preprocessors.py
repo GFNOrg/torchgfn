@@ -2,8 +2,9 @@ from abc import ABC, abstractmethod
 from typing import Callable
 
 import torch
+from tensordict import TensorDict
 
-from gfn.states import States
+from gfn.states import GraphStates, States
 
 
 class Preprocessor(ABC):
@@ -72,3 +73,11 @@ class EnumPreprocessor(Preprocessor):
         Returns the unique indices of the states as a tensor of shape `batch_shape`.
         """
         return self.get_states_indices(states).long().unsqueeze(-1)
+
+
+class GraphPreprocessor(Preprocessor):
+    def __init__(self) -> None:
+        super().__init__(-1)
+
+    def preprocess(self, states: GraphStates) -> TensorDict:
+        return states.tensor

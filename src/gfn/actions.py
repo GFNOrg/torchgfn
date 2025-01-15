@@ -210,7 +210,12 @@ class GraphActions(Actions):
         self.batch_shape = tensor["action_type"].shape
         features = tensor.get("features", None)
         if features is None:
-            assert torch.all(torch.logical_or(tensor["action_type"] == GraphActionType.EXIT, tensor["action_type"] == GraphActionType.DUMMY))
+            assert torch.all(
+                torch.logical_or(
+                    tensor["action_type"] == GraphActionType.EXIT,
+                    tensor["action_type"] == GraphActionType.DUMMY,
+                )
+            )
             features = torch.zeros((*self.batch_shape, self.features_dim))
         edge_index = tensor.get("edge_index", None)
         if edge_index is None:
@@ -270,7 +275,7 @@ class GraphActions(Actions):
     def is_exit(self) -> torch.Tensor:
         """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are exit actions."""
         return self.action_type == GraphActionType.EXIT
-    
+
     @property
     def is_dummy(self) -> torch.Tensor:
         """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are dummy actions."""
@@ -318,4 +323,3 @@ class GraphActions(Actions):
                 batch_size=batch_shape,
             )
         )
-

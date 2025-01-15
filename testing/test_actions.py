@@ -1,8 +1,10 @@
 from copy import deepcopy
-from gfn.actions import Actions, GraphActions
+
 import pytest
 import torch
 from tensordict import TensorDict
+
+from gfn.actions import Actions, GraphActions
 
 
 class ContinuousActions(Actions):
@@ -10,15 +12,15 @@ class ContinuousActions(Actions):
     dummy_action = torch.zeros(10)
     exit_action = torch.ones(10)
 
+
 class GraphActions(GraphActions):
     features_dim = 10
 
 
 @pytest.fixture
 def continuous_action():
-    return ContinuousActions(
-        tensor=torch.arange(0, 10)
-    )
+    return ContinuousActions(tensor=torch.arange(0, 10))
+
 
 @pytest.fixture
 def graph_action():
@@ -37,19 +39,26 @@ def test_continuous_action(continuous_action):
     BATCH = 5
 
     exit_actions = continuous_action.make_exit_actions((BATCH,))
-    assert torch.all(exit_actions.tensor == continuous_action.exit_action.repeat(BATCH, 1))
+    assert torch.all(
+        exit_actions.tensor == continuous_action.exit_action.repeat(BATCH, 1)
+    )
     assert torch.all(exit_actions.is_exit == torch.ones(BATCH, dtype=torch.bool))
     assert torch.all(exit_actions.is_dummy == torch.zeros(BATCH, dtype=torch.bool))
 
     dummy_actions = continuous_action.make_dummy_actions((BATCH,))
-    assert torch.all(dummy_actions.tensor == continuous_action.dummy_action.repeat(BATCH, 1))
+    assert torch.all(
+        dummy_actions.tensor == continuous_action.dummy_action.repeat(BATCH, 1)
+    )
     assert torch.all(dummy_actions.is_dummy == torch.ones(BATCH, dtype=torch.bool))
     assert torch.all(dummy_actions.is_exit == torch.zeros(BATCH, dtype=torch.bool))
 
     # Test stack
     stacked_actions = continuous_action.stack([exit_actions, dummy_actions])
-    assert stacked_actions.batch_shape == (2,  BATCH)
-    assert torch.all(stacked_actions.tensor == torch.stack([exit_actions.tensor, dummy_actions.tensor], dim=0))
+    assert stacked_actions.batch_shape == (2, BATCH)
+    assert torch.all(
+        stacked_actions.tensor
+        == torch.stack([exit_actions.tensor, dummy_actions.tensor], dim=0)
+    )
     is_exit_stacked = torch.stack([exit_actions.is_exit, dummy_actions.is_exit], dim=0)
     assert torch.all(stacked_actions.is_exit == is_exit_stacked)
     assert stacked_actions[0, 1].is_exit
@@ -59,15 +68,19 @@ def test_continuous_action(continuous_action):
 
     # Test extend
     extended_actions = deepcopy(exit_actions)
-    extended_actions.extend(dummy_actions) 
+    extended_actions.extend(dummy_actions)
     assert extended_actions.batch_shape == (BATCH * 2,)
-    assert torch.all(extended_actions.tensor == torch.cat([exit_actions.tensor, dummy_actions.tensor], dim=0))
+    assert torch.all(
+        extended_actions.tensor
+        == torch.cat([exit_actions.tensor, dummy_actions.tensor], dim=0)
+    )
     is_exit_extended = torch.cat([exit_actions.is_exit, dummy_actions.is_exit], dim=0)
     assert torch.all(extended_actions.is_exit == is_exit_extended)
     assert extended_actions[0].is_exit and extended_actions[BATCH].is_dummy
     extended_actions[0] = extended_actions[BATCH]
     is_exit_extended[0] = False
     assert torch.all(extended_actions.is_exit == is_exit_extended)
+
 
 def test_graph_action(graph_action):
     BATCH = 5
@@ -81,11 +94,19 @@ def test_graph_action(graph_action):
 
     # Test stack
     stacked_actions = graph_action.stack([exit_actions, dummy_actions])
-    assert stacked_actions.batch_shape == (2,  BATCH)
-    manually_stacked_tensor = torch.stack([exit_actions.tensor, dummy_actions.tensor], dim=0)
-    assert torch.all(stacked_actions.tensor["action_type"] == manually_stacked_tensor["action_type"])
-    assert torch.all(stacked_actions.tensor["features"] == manually_stacked_tensor["features"])
-    assert torch.all(stacked_actions.tensor["edge_index"] == manually_stacked_tensor["edge_index"])
+    assert stacked_actions.batch_shape == (2, BATCH)
+    manually_stacked_tensor = torch.stack(
+        [exit_actions.tensor, dummy_actions.tensor], dim=0
+    )
+    assert torch.all(
+        stacked_actions.tensor["action_type"] == manually_stacked_tensor["action_type"]
+    )
+    assert torch.all(
+        stacked_actions.tensor["features"] == manually_stacked_tensor["features"]
+    )
+    assert torch.all(
+        stacked_actions.tensor["edge_index"] == manually_stacked_tensor["edge_index"]
+    )
     is_exit_stacked = torch.stack([exit_actions.is_exit, dummy_actions.is_exit], dim=0)
     assert torch.all(stacked_actions.is_exit == is_exit_stacked)
     assert stacked_actions[0, 1].is_exit
@@ -95,12 +116,21 @@ def test_graph_action(graph_action):
 
     # Test extend
     extended_actions = deepcopy(exit_actions)
-    extended_actions.extend(dummy_actions) 
+    extended_actions.extend(dummy_actions)
     assert extended_actions.batch_shape == (BATCH * 2,)
-    manually_extended_tensor = torch.cat([exit_actions.tensor, dummy_actions.tensor], dim=0)
-    assert torch.all(extended_actions.tensor["action_type"] == manually_extended_tensor["action_type"])
-    assert torch.all(extended_actions.tensor["features"] == manually_extended_tensor["features"])
-    assert torch.all(extended_actions.tensor["edge_index"] == manually_extended_tensor["edge_index"])
+    manually_extended_tensor = torch.cat(
+        [exit_actions.tensor, dummy_actions.tensor], dim=0
+    )
+    assert torch.all(
+        extended_actions.tensor["action_type"]
+        == manually_extended_tensor["action_type"]
+    )
+    assert torch.all(
+        extended_actions.tensor["features"] == manually_extended_tensor["features"]
+    )
+    assert torch.all(
+        extended_actions.tensor["edge_index"] == manually_extended_tensor["edge_index"]
+    )
     is_exit_extended = torch.cat([exit_actions.is_exit, dummy_actions.is_exit], dim=0)
     assert torch.all(extended_actions.is_exit == is_exit_extended)
     assert extended_actions[0].is_exit and extended_actions[BATCH].is_dummy

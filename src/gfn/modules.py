@@ -6,7 +6,7 @@ import torch.nn as nn
 from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution, Normal
 
-from gfn.preprocessors import IdentityPreprocessor, Preprocessor
+from gfn.preprocessors import GraphPreprocessor, IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.distributions import (
     CategoricalActionType,
@@ -464,7 +464,7 @@ class GraphActionPolicyEstimator(GFNModule):
     def __init__(
         self,
         module: nn.Module,
-        # preprocessor: Preprocessor | None = None,
+        preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
     ):
         """Initializes a estimator for P_F for graph environments.
@@ -472,10 +472,9 @@ class GraphActionPolicyEstimator(GFNModule):
         Args:
             is_backward: if False, then this is a forward policy, else backward policy.
         """
-        # super().__init__(module, preprocessor, is_backward)
-        nn.Module.__init__(self)
-        self.module = module
-        self.is_backward = is_backward
+        if preprocessor is None:
+            preprocessor = GraphPreprocessor()
+        super().__init__(module, preprocessor, is_backward)
 
     def forward(self, states: GraphStates) -> TensorDict:
         """Forward pass of the module.

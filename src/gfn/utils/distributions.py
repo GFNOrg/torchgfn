@@ -43,7 +43,9 @@ class UnsqueezedCategorical(Categorical):
         return super().log_prob(sample.squeeze(-1))
 
 
-class ComposedDistribution(Distribution):  # TODO: remove in favor of CompositeDistribution in TensorDict
+class ComposedDistribution(
+    Distribution
+):  # TODO: remove in favor of CompositeDistribution in TensorDict
     """A mixture distribution."""
 
     def __init__(self, dists: Dict[str, Distribution]):
