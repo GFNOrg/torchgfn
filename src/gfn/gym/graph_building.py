@@ -166,7 +166,8 @@ class GraphBuilding(GraphEnv):
             ):
                 return False
             equal_edges_per_batch = torch.all(
-                add_edge_states["edge_index"] == add_edge_actions.edge_index[:, None], dim=-1
+                add_edge_states["edge_index"] == add_edge_actions.edge_index[:, None],
+                dim=-1,
             ).sum(dim=-1)
 
             if backward:

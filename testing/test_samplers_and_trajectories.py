@@ -336,12 +336,14 @@ class GraphActionNet(nn.Module):
         edge_index = self.edge_index_conv(node_feature, edge_index)
         edge_index = torch.einsum("nf,mf->nm", edge_index, edge_index)
         edge_index = edge_index[None].repeat(len(states), 1, 1)
-        
+
         return TensorDict(
             {
                 "action_type": action_type,
                 "features": features,
-                "edge_index": edge_index.reshape(states.batch_shape + edge_index.shape[1:]),
+                "edge_index": edge_index.reshape(
+                    states.batch_shape + edge_index.shape[1:]
+                ),
             },
             batch_size=states.batch_shape,
         )

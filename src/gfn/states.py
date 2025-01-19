@@ -538,7 +538,6 @@ class GraphStates(States):
         self.edge_features_dim = tensor["edge_feature"].shape[-1]
         self._log_rewards: Optional[float] = None
 
-
     @property
     def batch_shape(self) -> tuple:
         return tuple(self.tensor["batch_shape"].tolist())
@@ -864,50 +863,91 @@ class GraphStates(States):
 
         stacked_states.tensor["batch_shape"] = (len(states),) + state_batch_shape
         return stacked_states
-    
+
     @property
     def forward_masks(self) -> TensorDict:
         n_nodes = self.tensor["batch_ptr"][1:] - self.tensor["batch_ptr"][:-1]
-        ei_mask_shape = (len(self.tensor["node_feature"]), len(self.tensor["node_feature"]))
-        forward_masks = TensorDict({
-            "action_type": torch.ones(self.batch_shape + (3,), dtype=torch.bool),
-            "features": torch.ones(self.batch_shape + (self.node_features_dim,), dtype=torch.bool),
-            "edge_index": torch.zeros(self.batch_shape + ei_mask_shape, dtype=torch.bool),
-        })  # TODO: edge_index mask is very memory consuming...
+        ei_mask_shape = (
+            len(self.tensor["node_feature"]),
+            len(self.tensor["node_feature"]),
+        )
+        forward_masks = TensorDict(
+            {
+                "action_type": torch.ones(self.batch_shape + (3,), dtype=torch.bool),
+                "features": torch.ones(
+                    self.batch_shape + (self.node_features_dim,), dtype=torch.bool
+                ),
+                "edge_index": torch.zeros(
+                    self.batch_shape + ei_mask_shape, dtype=torch.bool
+                ),
+            }
+        )  # TODO: edge_index mask is very memory consuming...
         forward_masks["action_type"][..., GraphActionType.ADD_EDGE] = n_nodes > 1
         forward_masks["action_type"][..., GraphActionType.EXIT] = n_nodes >= 1
 
         arange = torch.arange(len(self)).view(self.batch_shape)
         arange_nodes = torch.arange(len(self.tensor["node_feature"]))[None, :]
-        same_graph_mask = (arange_nodes >= self.tensor["batch_ptr"][:-1, None]) & (arange_nodes < self.tensor["batch_ptr"][1:, None])
+        same_graph_mask = (arange_nodes >= self.tensor["batch_ptr"][:-1, None]) & (
+            arange_nodes < self.tensor["batch_ptr"][1:, None]
+        )
         ei1 = self.tensor["edge_index"][..., 0]
         ei2 = self.tensor["edge_index"][..., 1]
         for _ in range(len(self.batch_shape)):
-            ei1, ei2, = ei1.unsqueeze(0), ei2.unsqueeze(0)
+            (
+                ei1,
+                ei2,
+            ) = ei1.unsqueeze(
+                0
+            ), ei2.unsqueeze(0)
 
         # First allow nodes in the same graph to connect, then disable nodes with existing edges
-        forward_masks["edge_index"][same_graph_mask[:, :, None] & same_graph_mask[:, None, :]] = True
+        forward_masks["edge_index"][
+            same_graph_mask[:, :, None] & same_graph_mask[:, None, :]
+        ] = True
         torch.diagonal(forward_masks["edge_index"], dim1=-2, dim2=-1).fill_(False)
         forward_masks["edge_index"][arange[..., None], ei1, ei2] = False
-        forward_masks["action_type"][..., GraphActionType.ADD_EDGE] &= torch.any(forward_masks["edge_index"], dim=(-1, -2))
+        forward_masks["action_type"][..., GraphActionType.ADD_EDGE] &= torch.any(
+            forward_masks["edge_index"], dim=(-1, -2)
+        )
         return forward_masks
 
     @property
     def backward_masks(self) -> TensorDict:
         n_nodes = self.tensor["batch_ptr"][1:] - self.tensor["batch_ptr"][:-1]
         n_edges = torch.count_nonzero(
-            (self.tensor["edge_index"][None, :, 0] >= self.tensor["batch_ptr"][:-1, None]) &
-            (self.tensor["edge_index"][None, :, 0] < self.tensor["batch_ptr"][1:, None]) &
-            (self.tensor["edge_index"][None, :, 1] >= self.tensor["batch_ptr"][:-1, None]) &
-            (self.tensor["edge_index"][None, :, 1] < self.tensor["batch_ptr"][1:, None]),
-            dim=-1
+            (
+                self.tensor["edge_index"][None, :, 0]
+                >= self.tensor["batch_ptr"][:-1, None]
+            )
+            & (
+                self.tensor["edge_index"][None, :, 0]
+                < self.tensor["batch_ptr"][1:, None]
+            )
+            & (
+                self.tensor["edge_index"][None, :, 1]
+                >= self.tensor["batch_ptr"][:-1, None]
+            )
+            & (
+                self.tensor["edge_index"][None, :, 1]
+                < self.tensor["batch_ptr"][1:, None]
+            ),
+            dim=-1,
         )
-        ei_mask_shape = (len(self.tensor["node_feature"]), len(self.tensor["node_feature"]))
-        backward_masks = TensorDict({
-            "action_type": torch.ones(self.batch_shape + (3,), dtype=torch.bool),
-            "features": torch.ones(self.batch_shape + (self.node_features_dim,), dtype=torch.bool),
-            "edge_index": torch.zeros(self.batch_shape + ei_mask_shape, dtype=torch.bool),
-        })  # TODO: edge_index mask is very memory consuming...
+        ei_mask_shape = (
+            len(self.tensor["node_feature"]),
+            len(self.tensor["node_feature"]),
+        )
+        backward_masks = TensorDict(
+            {
+                "action_type": torch.ones(self.batch_shape + (3,), dtype=torch.bool),
+                "features": torch.ones(
+                    self.batch_shape + (self.node_features_dim,), dtype=torch.bool
+                ),
+                "edge_index": torch.zeros(
+                    self.batch_shape + ei_mask_shape, dtype=torch.bool
+                ),
+            }
+        )  # TODO: edge_index mask is very memory consuming...
         backward_masks["action_type"][..., GraphActionType.ADD_NODE] = n_nodes >= 1
         backward_masks["action_type"][..., GraphActionType.ADD_EDGE] = n_edges
         backward_masks["action_type"][..., GraphActionType.EXIT] = n_nodes >= 1
@@ -917,6 +957,11 @@ class GraphStates(States):
         ei1 = self.tensor["edge_index"][..., 0]
         ei2 = self.tensor["edge_index"][..., 1]
         for _ in range(len(self.batch_shape)):
-            ei1, ei2, = ei1.unsqueeze(0), ei2.unsqueeze(0)
+            (
+                ei1,
+                ei2,
+            ) = ei1.unsqueeze(
+                0
+            ), ei2.unsqueeze(0)
         backward_masks["edge_index"][arange[..., None], ei1, ei2] = False
         return backward_masks

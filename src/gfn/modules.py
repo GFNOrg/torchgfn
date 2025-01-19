@@ -512,9 +512,7 @@ class GraphActionPolicyEstimator(GFNModule):
         dists = {}
 
         action_type_logits = module_output["action_type"]
-        masks = (
-            states.backward_masks if self.is_backward else states.forward_masks
-        )
+        masks = states.backward_masks if self.is_backward else states.forward_masks
         action_type_logits[~masks["action_type"]] = -float("inf")
         action_type_probs = torch.softmax(action_type_logits / temperature, dim=-1)
         uniform_dist_probs = masks["action_type"].float() / masks["action_type"].sum(
