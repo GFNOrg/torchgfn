@@ -79,7 +79,9 @@ class GraphBuilding(GraphEnv):
             batch_indices = torch.arange(len(states))[
                 actions.action_type == GraphActionType.ADD_NODE
             ]
-            states.tensor = self._add_node(states.tensor, batch_indices, actions.features)
+            states.tensor = self._add_node(
+                states.tensor, batch_indices, actions.features
+            )
 
         if action_type == GraphActionType.ADD_EDGE:
             states.tensor["edge_feature"] = torch.cat(
