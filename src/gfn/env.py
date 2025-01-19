@@ -261,6 +261,7 @@ class Env(ABC):
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
 
+        # Set to the sink state when the action is exit.
         new_sink_states_idx = actions.is_exit
         sf_tensor = self.States.make_sink_states_tensor((new_sink_states_idx.sum(),))
         new_states[new_sink_states_idx] = self.States(sf_tensor)

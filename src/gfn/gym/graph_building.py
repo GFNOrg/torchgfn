@@ -1,4 +1,3 @@
-from copy import deepcopy
 from typing import Callable, Literal, Tuple
 
 import torch
@@ -68,9 +67,8 @@ class GraphBuilding(GraphEnv):
         """
         if not self.is_action_valid(states, actions):
             raise NonValidActionsError("Invalid action.")
-        state_tensor = deepcopy(states.tensor)
         if len(actions) == 0:
-            return state_tensor
+            return states.tensor
 
         action_type = actions.action_type[0]
         assert torch.all(actions.action_type == action_type)
@@ -81,21 +79,21 @@ class GraphBuilding(GraphEnv):
             batch_indices = torch.arange(len(states))[
                 actions.action_type == GraphActionType.ADD_NODE
             ]
-            state_tensor = self._add_node(state_tensor, batch_indices, actions.features)
+            states.tensor = self._add_node(states.tensor, batch_indices, actions.features)
 
         if action_type == GraphActionType.ADD_EDGE:
-            state_tensor["edge_feature"] = torch.cat(
-                [state_tensor["edge_feature"], actions.features], dim=0
+            states.tensor["edge_feature"] = torch.cat(
+                [states.tensor["edge_feature"], actions.features], dim=0
             )
-            state_tensor["edge_index"] = torch.cat(
+            states.tensor["edge_index"] = torch.cat(
                 [
-                    state_tensor["edge_index"],
-                    actions.edge_index + state_tensor["batch_ptr"][:-1][:, None],
+                    states.tensor["edge_index"],
+                    actions.edge_index + states.tensor["batch_ptr"][:-1][:, None],
                 ],
                 dim=0,
             )
 
-        return state_tensor
+        return states.tensor
 
     def backward_step(self, states: GraphStates, actions: GraphActions) -> TensorDict:
         """Backward step function for the GraphBuilding environment.
@@ -108,30 +106,29 @@ class GraphBuilding(GraphEnv):
         """
         if not self.is_action_valid(states, actions, backward=True):
             raise NonValidActionsError("Invalid action.")
-        state_tensor = deepcopy(states.tensor)
         if len(actions) == 0:
-            return state_tensor
+            return states.tensor
 
         action_type = actions.action_type[0]
         assert torch.all(actions.action_type == action_type)
         if action_type == GraphActionType.ADD_NODE:
             is_equal = torch.any(
                 torch.all(
-                    state_tensor["node_feature"][:, None] == actions.features, dim=-1
+                    states.tensor["node_feature"][:, None] == actions.features, dim=-1
                 ),
                 dim=-1,
             )
-            state_tensor["node_feature"] = state_tensor["node_feature"][~is_equal]
+            states.tensor["node_feature"] = states.tensor["node_feature"][~is_equal]
         elif action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
             is_equal = torch.all(
-                state_tensor["edge_index"] == actions.edge_index[:, None], dim=-1
+                states.tensor["edge_index"] == actions.edge_index[:, None], dim=-1
             )
             is_equal = torch.any(is_equal, dim=0)
-            state_tensor["edge_feature"] = state_tensor["edge_feature"][~is_equal]
-            state_tensor["edge_index"] = state_tensor["edge_index"][~is_equal]
+            states.tensor["edge_feature"] = states.tensor["edge_feature"][~is_equal]
+            states.tensor["edge_index"] = states.tensor["edge_index"][~is_equal]
 
-        return state_tensor
+        return states.tensor
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False

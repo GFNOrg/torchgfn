@@ -45,7 +45,7 @@ wandb = { version = "*", optional = true }
 scikit-learn = {version = "*", optional = true }
 scipy = { version = "*", optional = true }
 matplotlib = { version = "*", optional = true }
-torch_geometric = { version = "*", optional = true }
+torch_geometric = { version = ">=2.6.1", optional = true }
 
 [tool.poetry.extras]
 dev = [
