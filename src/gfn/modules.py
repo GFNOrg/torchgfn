@@ -512,12 +512,12 @@ class GraphActionPolicyEstimator(GFNModule):
         dists = {}
 
         action_type_logits = module_output["action_type"]
-        action_type_masks = (
+        masks = (
             states.backward_masks if self.is_backward else states.forward_masks
         )
-        action_type_logits[~action_type_masks] = -float("inf")
+        action_type_logits[~masks["action_type"]] = -float("inf")
         action_type_probs = torch.softmax(action_type_logits / temperature, dim=-1)
-        uniform_dist_probs = action_type_masks.float() / action_type_masks.sum(
+        uniform_dist_probs = masks["action_type"].float() / masks["action_type"].sum(
             dim=-1, keepdim=True
         )
         action_type_probs = (
@@ -526,11 +526,10 @@ class GraphActionPolicyEstimator(GFNModule):
         dists["action_type"] = CategoricalActionType(probs=action_type_probs)
 
         edge_index_logits = module_output["edge_index"]
-        B, N, N = edge_index_logits.shape
-        edge_index_logits = edge_index_logits.reshape(B, N * N)
-        if states.tensor["node_feature"].shape[0] > 1 and torch.any(
-            edge_index_logits != -float("inf")
-        ):
+        edge_index_logits[~masks["edge_index"]] = -float("inf")
+        if torch.any(edge_index_logits != -float("inf")):
+            B, N, N = edge_index_logits.shape
+            edge_index_logits = edge_index_logits.reshape(B, N * N)
             edge_index_probs = torch.softmax(edge_index_logits / temperature, dim=-1)
             uniform_dist_probs = (
                 torch.ones_like(edge_index_probs) / edge_index_probs.shape[-1]
@@ -538,6 +537,7 @@ class GraphActionPolicyEstimator(GFNModule):
             edge_index_probs = (
                 1 - epsilon
             ) * edge_index_probs + epsilon * uniform_dist_probs
+            edge_index_probs[torch.isnan(edge_index_probs)] = 1
             dists["edge_index"] = CategoricalIndexes(probs=edge_index_probs, n=N)
 
         dists["features"] = Normal(module_output["features"], temperature)
