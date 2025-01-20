@@ -11,7 +11,7 @@ from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.distributions import (
     CategoricalActionType,
     CategoricalIndexes,
-    ComposedDistribution,
+    CompositeDistribution,
     UnsqueezedCategorical,
 )
 
@@ -496,7 +496,7 @@ class GraphActionPolicyEstimator(GFNModule):
         module_output: TensorDict,
         temperature: float = 1.0,
         epsilon: float = 0.0,
-    ) -> ComposedDistribution:
+    ) -> CompositeDistribution:
         """Returns a probability distribution given a batch of states and module output.
 
         We handle off-policyness using these kwargs.
@@ -539,4 +539,4 @@ class GraphActionPolicyEstimator(GFNModule):
             dists["edge_index"] = CategoricalIndexes(probs=edge_index_probs, n=N)
 
         dists["features"] = Normal(module_output["features"], temperature)
-        return ComposedDistribution(dists=dists)
+        return CompositeDistribution(dists=dists)

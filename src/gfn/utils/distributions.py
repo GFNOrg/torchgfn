@@ -43,9 +43,9 @@ class UnsqueezedCategorical(Categorical):
         return super().log_prob(sample.squeeze(-1))
 
 
-class ComposedDistribution(
+class CompositeDistribution(
     Distribution
-):  # TODO: remove in favor of CompositeDistribution in TensorDict
+):  # TODO: may use CompositeDistribution in TensorDict
     """A mixture distribution."""
 
     def __init__(self, dists: Dict[str, Distribution]):
@@ -65,6 +65,8 @@ class ComposedDistribution(
             v.log_prob(sample[k]).reshape(sample[k].shape[0], -1).sum(dim=-1)
             for k, v in self.dists.items()
         ]
+        # Note: this returns the sum of the log_probs over all the components
+        # as it is a uniform mixture distribution.
         return sum(log_probs)
 
 
