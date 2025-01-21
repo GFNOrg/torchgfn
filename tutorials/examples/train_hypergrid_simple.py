@@ -57,7 +57,7 @@ def main(args):
         trajectories = sampler.sample_trajectories(
             env,
             n=args.batch_size,
-            save_logprobs=False,
+            save_logprobs=True,
             save_estimator_outputs=False,
             epsilon=args.epsilon,
         )
