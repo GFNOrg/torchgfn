@@ -45,7 +45,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         env: Env,
         n: int,
         conditioning: torch.Tensor | None = None,
-        save_logprobs: bool = True,
+        save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:

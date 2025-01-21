@@ -31,7 +31,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         self,
         env: Env,
         n: int,
-        save_logprobs: bool = True,
+        save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
     ) -> Trajectories:
         """Sample a specific number of complete trajectories.
@@ -93,7 +93,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
         env: Env,
         n: int,
         conditioning: torch.Tensor | None = None,
-        save_logprobs: bool = True,
+        save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:

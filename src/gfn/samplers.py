@@ -34,7 +34,7 @@ class Sampler:
         states: States,
         conditioning: torch.Tensor | None = None,
         save_estimator_outputs: bool = False,
-        save_logprobs: bool = True,
+        save_logprobs: bool = False,
         **policy_kwargs: Any,
     ) -> Tuple[Actions, torch.Tensor | None, torch.Tensor | None]:
         """Samples actions from the given states.
@@ -104,7 +104,7 @@ class Sampler:
         states: Optional[States] = None,
         conditioning: Optional[torch.Tensor] = None,
         save_estimator_outputs: bool = False,
-        save_logprobs: bool = True,
+        save_logprobs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:
         """Sample trajectories sequentially.
@@ -296,7 +296,7 @@ class LocalSearchSampler(Sampler):
         trajectories: Trajectories,
         conditioning: torch.Tensor | None = None,
         save_estimator_outputs: bool = False,
-        save_logprobs: bool = True,
+        save_logprobs: bool = False,
         back_steps: torch.Tensor | None = None,
         back_ratio: float | None = None,
         use_metropolis_hastings: bool = True,
@@ -456,7 +456,7 @@ class LocalSearchSampler(Sampler):
         states: Optional[States] = None,
         conditioning: Optional[torch.Tensor] = None,
         save_estimator_outputs: bool = False,  # FIXME: currently not work when this is True
-        save_logprobs: bool = True,  # TODO: Support save_logprobs=True
+        save_logprobs: bool = False,  # TODO: Support save_logprobs=True
         n_local_search_loops: int = 0,
         back_steps: torch.Tensor | None = None,
         back_ratio: float | None = None,

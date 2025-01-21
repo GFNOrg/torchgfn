@@ -58,7 +58,7 @@ def main(args):
             env,
             n=args.batch_size,
             save_logprobs=False,
-            save_estimator_outputs=True,
+            save_estimator_outputs=False,
             epsilon=args.epsilon,
         )
         visited_terminating_states.extend(trajectories.last_states)
