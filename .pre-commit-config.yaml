@@ -47,4 +47,4 @@ repos:
         language: python
         files: testing/
         types: [python]
-        always_run: true
+        always_run: false
