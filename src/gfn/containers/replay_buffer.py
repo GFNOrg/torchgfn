@@ -206,6 +206,10 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             #         dim=-1,
             #     )
 
+            # If all trajectories were filtered, stop there.
+            if not len(training_objects):
+                return
+
             if self.cutoff_distance >= 0:
                 # Filter the batch for diverse final_states with high reward.
                 batch = training_objects.last_states.tensor.float()
