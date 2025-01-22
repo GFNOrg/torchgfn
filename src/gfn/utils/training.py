@@ -6,6 +6,7 @@ from tqdm import trange
 from gfn.containers import ReplayBuffer
 from gfn.env import Env, DiscreteEnv
 from gfn.gflownet import GFlowNet, TBGFlowNet
+from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
 from gfn.states import States, stack_states
 import torch
@@ -84,12 +85,35 @@ def states_actions_tns_to_traj(
     actions_tns: torch.Tensor,
     env: DiscreteEnv,
 ) -> Trajectories:
+    """
+    This utility function helps integrate external data (e.g. expert demonstrations)
+    into the GFlowNet framework by converting raw tensors into proper Trajectories objects.
+    The downstream GFN needs to be capable of recalculating all logprobs (e.g. PFBasedGFlowNets)
 
-    # TODO shape assumption needs to be refined with torchgfn gang
-    # states_tns currently assumed to be the states of a single trajectory
-    # states_tns.shape is [traj_len, state_ndim]
-    # actions_tns is assumed to be the actions to the aforementioned traj
-    # actions_tns.shape is [traj_len]
+    Args:
+        states_tns: Tensor of shape [traj_len, *state_shape] containing states for a single trajectory
+        actions_tns: Tensor of shape [traj_len] containing discrete action indices
+        env: The discrete environment that defines the state/action spaces
+
+    Returns:
+        Trajectories: A Trajectories object containing the converted states and actions
+
+    Raises:
+        ValueError: If tensor shapes are invalid or inconsistent
+    """
+
+    if states_tns.shape[1:] != env.state_shape:
+        raise ValueError(
+            f"states_tns state dimensions must match env.state_shape {env.state_shape}, "
+            f"got shape {states_tns.shape[1:]}"
+        )
+    if len(actions_tns.shape) != 1:
+        raise ValueError(f"actions_tns must be 1D, got batch_shape {actions_tns.shape}")
+    if states_tns.shape[0] != actions_tns.shape[0]:
+        raise ValueError(
+            f"states and actions must have same trajectory length, got "
+            f"states: {states_tns.shape[0]}, actions: {actions_tns.shape[0]}"
+        )
 
     states = [env.states_from_tensor(s.unsqueeze(0)) for s in states_tns]
     actions = [
@@ -103,7 +127,7 @@ def states_actions_tns_to_traj(
     when_is_done = torch.tensor([len(states_tns) - 1])
 
     # WARNING: This is sketchy. Create dummy values to avoid indexing / batch shape errors.
-    # WARNING: Assumes gfn.loss() uses recalculate_all_logprobs=True (thus only TBGFNs are supported right now)!!
+    # WARNING: Assumes gfn.loss() uses recalculate_all_logprobs=True (thus only PFBasedGFlowNet are supported right now)!!
     # WARNING: To reviewers: Can we bypass needing to define this?
     log_probs = torch.full(size=(len(actions), 1), fill_value=0, dtype=torch.float)
 
@@ -123,23 +147,40 @@ def states_actions_tns_to_traj(
 def warm_up(
     replay_buf: ReplayBuffer,
     optimizer: torch.optim.Optimizer,
-    gfn: GFlowNet,
+    gflownet: GFlowNet,
     env: Env,
-    n_steps: int,
+    n_epochs: int,
     batch_size: int,
-    recalculate_all_logprobs=True,
+    recalculate_all_logprobs: bool = True,
 ):
-    t = trange(n_steps, desc="Bar desc", leave=True)
+    """
+    This utility function is an example implementation of pre-training for GFlowNets agent.
+
+    Args:
+        replay_buf: Replay Buffer, which collects Trajectories
+        optimizer: Any torch.optim optimizer (e.g. Adam, SGD)
+        gflownet: The GFlowNet to train
+        env: The environment instance
+        n_epochs: Number of epochs for warmup
+        batch_size: Number of trajectories to sample from replay buffer
+        recalculate_all_logprobs: For PFBasedGFlowNets only, force recalculating all log probs. Useful trajectories do not already have log probs.
+    Returns:
+        GFlowNet: A trained GFlowNet
+    """
+    t = trange(n_epochs, desc="Bar desc", leave=True)
     for epoch in t:
         training_trajs = replay_buf.sample(batch_size)
         optimizer.zero_grad()
-        if isinstance(gfn, TBGFlowNet):
-            loss = gfn.loss(
+        if isinstance(gflownet, PFBasedGFlowNet):
+            loss = gflownet.loss(
                 env, training_trajs, recalculate_all_logprobs=recalculate_all_logprobs
             )
         else:
-            loss = gfn.loss(env, training_trajs)
+            loss = gflownet.loss(env, training_trajs)
 
         loss.backward()
         optimizer.step()
         t.set_description(f"{epoch=}, {loss=}")
+
+    optimizer.zero_grad()
+    return gflownet
