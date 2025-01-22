@@ -43,8 +43,8 @@ repos:
     hooks:
       - id: pytest-check
         name: pytest-check
-        entry:  /Users/salem.lahlou/miniconda3/envs/gfn2/bin/pytest testing
-        language: system # python
+        entry:  pytest
+        language: python
         files: testing/
         types: [python]
         always_run: true
