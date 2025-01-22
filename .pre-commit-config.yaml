@@ -48,4 +48,3 @@ repos:
         files: testing/
         types: [python]
         always_run: true
-        
