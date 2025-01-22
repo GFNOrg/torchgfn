@@ -85,7 +85,7 @@ def main(args):
             env,
             n=8,
             save_estimator_outputs=False,
-            save_logprobs=True,
+            save_logprobs=False,
         )
         training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
