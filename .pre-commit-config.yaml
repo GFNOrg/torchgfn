@@ -43,7 +43,7 @@ repos:
     hooks:
       - id: pytest-check
         name: pytest-check
-        entry:  pytest
+        entry: pytest
         language: python
         files: testing/
         types: [python]
