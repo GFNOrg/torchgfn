@@ -43,9 +43,8 @@ repos:
     hooks:
       - id: pytest-check
         name: pytest-check
-        entry: bash -c 'cd testing && pytest'
+        entry: pytest testing/
         language: python
         files: testing/
         types: [python]
         always_run: true
-        args: ["-v", "--tb=short"]  # Add verbose output and shorter tracebacks
