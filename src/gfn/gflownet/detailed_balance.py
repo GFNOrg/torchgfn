@@ -280,9 +280,13 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         return scores
 
-    def loss(self, env: Env, transitions: Transitions) -> torch.Tensor:
+    def loss(
+        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+    ) -> torch.Tensor:
         """Calculates the modified detailed balance loss."""
-        scores = self.get_scores(transitions)
+        scores = self.get_scores(
+            transitions, recalculate_all_logprobs=recalculate_all_logprobs
+        )
         return torch.mean(scores**2)
 
     def to_training_samples(self, trajectories: Trajectories) -> Transitions:

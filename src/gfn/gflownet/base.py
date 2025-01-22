@@ -71,17 +71,12 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         """Converts trajectories to training samples. The type depends on the GFlowNet."""
 
     @abstractmethod
-    def loss(self, env: Env, training_objects: Any):
+    def loss(self, env: Env, training_objects: Any, **kwargs: Any):
         """Computes the loss given the training objects."""
 
 
-class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
-    r"""Base class for gflownets that explicitly uses $P_F$.
-
-    Attributes:
-        pf: GFNModule
-        pb: GFNModule
-    """
+class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
+    """A GFlowNet that uses forward (PF) and backward (PB) policy networks."""
 
     def __init__(self, pf: GFNModule, pb: GFNModule):
         super().__init__()
@@ -115,6 +110,24 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType]):
 
     def pf_pb_parameters(self):
         return [v for k, v in self.named_parameters() if "pb" in k or "pf" in k]
+
+    @abstractmethod
+    def loss(
+        self,
+        env: Env,
+        training_objects: Any,
+        recalculate_all_logprobs: bool = False,
+        **kwargs: Any,
+    ):
+        """Computes the loss given the training objects.
+
+        Args:
+            env: The environment to compute the loss for
+            training_objects: The objects to compute the loss on
+            recalculate_all_logprobs: If True, always recalculate logprobs even if they exist.
+                                     If False, use existing logprobs when available.
+            **kwargs: Additional arguments specific to the loss
+        """
 
 
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):

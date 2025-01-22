@@ -273,7 +273,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         return full_mask, sink_states_mask, is_terminal_mask
 
     def get_scores(
-        self, env: Env, trajectories: Trajectories
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        recalculate_all_logprobs: bool = False,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Scores all submitted trajectories.
 
@@ -290,7 +293,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 True if the corresponding sub-trajectory does not exist.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-            trajectories, fill_value=-float("inf")
+            trajectories,
+            fill_value=-float("inf"),
+            recalculate_all_logprobs=recalculate_all_logprobs,
         )
 
         log_pf_trajectories_cum = self.cumulative_logprobs(
@@ -493,9 +498,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         return contributions
 
-    def loss(self, env: Env, trajectories: Trajectories) -> torch.Tensor:
+    def loss(
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        recalculate_all_logprobs: bool = False,
+    ) -> torch.Tensor:
         # Get all scores and masks from the trajectories.
-        scores, flattening_masks = self.get_scores(env, trajectories)
+        scores, flattening_masks = self.get_scores(
+            env, trajectories, recalculate_all_logprobs=recalculate_all_logprobs
+        )
         flattening_mask = torch.cat(flattening_masks)
         all_scores = torch.cat(scores, 0)
 
