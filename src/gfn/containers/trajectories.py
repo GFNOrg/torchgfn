@@ -467,11 +467,18 @@ class Trajectories(Container):
 
         # Initialize new actions and states
         new_actions = torch.full(
-            (max_len + 1, len(trajectories), *trajectories.actions.action_shape), -1
+            (
+                max_len + 1,  # pyright: ignore
+                len(trajectories),
+                *trajectories.actions.action_shape,
+            ),
+            -1,
         ).to(
             actions
         )  # shape (max_len + 1, n_trajectories, *action_dim)
-        new_states = trajectories.env.sf.repeat(max_len + 2, len(trajectories), 1).to(
+        new_states = trajectories.env.sf.repeat(
+            max_len + 2, len(trajectories), 1  # pyright: ignore
+        ).to(
             states
         )  # shape (max_len + 2, n_trajectories, *state_dim)
 
@@ -505,7 +512,7 @@ class Trajectories(Container):
         # Assign reversed actions to new_actions
         new_actions[:, :-1][mask] = actions[mask][rev_idx[mask]]
         new_actions[torch.arange(len(trajectories)), seq_lengths] = (
-            trajectories.env.n_actions - 1
+            trajectories.env.n_actions - 1  # pyright: ignore
         )  # FIXME: This can be problematic if action_dim != 1 (e.g. continuous actions)
 
         # Assign reversed states to new_states
@@ -539,31 +546,37 @@ class Trajectories(Container):
         # If `debug` is True (expected only when testing), compare the
         # vectorized approach's results (above) to the for-loop results (below).
         if debug:
+            # TODO: do not ignore the next four ignores
             _new_actions = torch.full(
-                (max_len + 1, len(trajectories), *trajectories.actions.action_shape), -1
-            ).to(actions)
+                (
+                    max_len + 1,  # pyright: ignore
+                    len(trajectories),
+                    *trajectories.actions.action_shape,
+                ),
+                -1,
+            ).to(
+                actions
+            )  # pyright: ignore
             _new_states = trajectories.env.sf.repeat(
-                max_len + 2, len(trajectories), 1
+                max_len + 2, len(trajectories), 1  # pyright: ignore
             ).to(
                 states
             )  # shape (max_len + 2, n_trajectories, *state_dim)
 
             for i in range(len(trajectories)):
                 _new_actions[trajectories.when_is_done[i], i] = (
-                    trajectories.env.n_actions - 1
+                    trajectories.env.n_actions - 1  # pyright: ignore
                 )
-                _new_actions[
-                    : trajectories.when_is_done[i], i
-                ] = trajectories.actions.tensor[: trajectories.when_is_done[i], i].flip(
-                    0
+                _new_actions[: trajectories.when_is_done[i], i] = (
+                    trajectories.actions.tensor[: trajectories.when_is_done[i], i].flip(
+                        0
+                    )
                 )
 
-                _new_states[
-                    : trajectories.when_is_done[i] + 1, i
-                ] = trajectories.states.tensor[
-                    : trajectories.when_is_done[i] + 1, i
-                ].flip(
-                    0
+                _new_states[: trajectories.when_is_done[i] + 1, i] = (
+                    trajectories.states.tensor[
+                        : trajectories.when_is_done[i] + 1, i
+                    ].flip(0)
                 )
 
             assert torch.all(new_actions == _new_actions)
