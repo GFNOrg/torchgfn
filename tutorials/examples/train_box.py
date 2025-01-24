@@ -32,6 +32,7 @@ from gfn.gym.helpers.box_utils import (
     BoxStateFlowModule,
 )
 from gfn.modules import ScalarEstimator
+from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.common import set_seed
 
 DEFAULT_SEED = 4444
@@ -179,6 +180,20 @@ def main(args):  # noqa: C901
         )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
+    gflownet = gflownet.to(device_str)
+
+    if not args.use_local_search:
+        sampler = Sampler(estimator=pf_estimator)
+        local_search_params = {}
+    else:
+        sampler = LocalSearchSampler(
+            pf_estimator=pf_estimator, pb_estimator=pb_estimator
+        )
+        local_search_params = {
+            "n_local_search_loops": args.n_local_search_loops,
+            "back_ratio": args.back_ratio,
+            "use_metropolis_hastings": args.use_metropolis_hastings,
+        }
 
     # 3. Create the optimizer and scheduler
 
@@ -226,13 +241,13 @@ def main(args):  # noqa: C901
     states_visited = 0
 
     jsd = float("inf")
-    for iteration in trange(n_iterations):
+    for iteration in trange(n_iterations, dynamic_ncols=True):
         if iteration % 1000 == 0:
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
         # Sampling on-policy, so we save logprobs for faster computation.
-        trajectories = gflownet.sample_trajectories(
-            env, save_logprobs=True, n=args.batch_size
+        trajectories = sampler.sample_trajectories(
+            env, save_logprobs=True, n=args.batch_size, **local_search_params
         )
 
         training_samples = gflownet.to_training_samples(trajectories)
@@ -397,6 +412,31 @@ if __name__ == "__main__":
         type=int,
         default=2500,
         help="Every scheduler_milestone steps, multiply the learning rate by gamma_scheduler",
+    )
+
+    parser.add_argument(
+        "--use_local_search",
+        action="store_true",
+        help="Use local search to sample the next state",
+    )
+
+    # Local search parameters.
+    parser.add_argument(
+        "--n_local_search_loops",
+        type=int,
+        default=2,
+        help="Number of local search loops",
+    )
+    parser.add_argument(
+        "--back_ratio",
+        type=float,
+        default=0.5,
+        help="The ratio of the number of backward steps to the length of the trajectory",
+    )
+    parser.add_argument(
+        "--use_metropolis_hastings",
+        action="store_true",
+        help="Use Metropolis-Hastings acceptance criterion",
     )
 
     parser.add_argument(
