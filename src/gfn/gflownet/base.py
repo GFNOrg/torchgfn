@@ -71,7 +71,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         """Converts trajectories to training samples. The type depends on the GFlowNet."""
 
     @abstractmethod
-    def loss(self, env: Env, training_objects: Any, **kwargs: Any):
+    def loss(self, env: Env, training_objects: Any):
         """Computes the loss given the training objects."""
 
 
@@ -113,11 +113,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
 
     @abstractmethod
     def loss(
-        self,
-        env: Env,
-        training_objects: Any,
-        recalculate_all_logprobs: bool = False,
-        **kwargs: Any,
+        self, env: Env, training_objects: Any, recalculate_all_logprobs: bool = False
     ):
         """Computes the loss given the training objects.
 
