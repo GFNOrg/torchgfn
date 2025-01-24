@@ -7,7 +7,7 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
-from gfn.states import States, stack_states
+from gfn.states import States
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -147,7 +147,7 @@ class Sampler:
         if conditioning is not None:
             assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
 
-        device = states.tensor.device
+        device = states.device
 
         dones = (
             states.is_initial_state
@@ -207,11 +207,12 @@ class Sampler:
                 all_estimator_outputs.append(estimator_outputs_padded)
 
             actions[~dones] = valid_actions
-            trajectories_actions.append(actions)
             if save_logprobs:
                 # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
-                trajectories_logprobs.append(log_probs)
+
+            trajectories_actions.append(actions)
+            trajectories_logprobs.append(log_probs)
 
             if self.estimator.is_backward:
                 new_states = env._backward_step(states, actions)
@@ -242,13 +243,12 @@ class Sampler:
                 )
             states = new_states
             dones = dones | new_dones
-
             trajectories_states.append(deepcopy(states))
 
-        trajectories_states = stack_states(trajectories_states)
+        trajectories_states = env.States.stack(trajectories_states)
         trajectories_actions = env.Actions.stack(trajectories_actions)[
-            1:  # Drop dummy action
-        ]
+            1:
+        ]  # Drop dummy action
         trajectories_logprobs = (
             torch.stack(trajectories_logprobs, dim=0)[1:]  # Drop dummy logprob
             if save_logprobs
@@ -258,7 +258,6 @@ class Sampler:
         # TODO: use torch.nested.nested_tensor(dtype, device, requires_grad).
         if save_estimator_outputs:
             all_estimator_outputs = torch.stack(all_estimator_outputs, dim=0)
-
         trajectories = Trajectories(
             env=env,
             states=trajectories_states,
