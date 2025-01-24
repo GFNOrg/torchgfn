@@ -208,7 +208,7 @@ class Env(ABC):
         batch_shape: Optional[Union[int, Tuple[int]]] = None,
         random: bool = False,
         sink: bool = False,
-        seed: int = None,
+        seed: int = None,  # pyright: ignore
     ) -> States:
         """
         Instantiates a batch of initial states. random and sink cannot be both True.
@@ -306,7 +306,7 @@ class Env(ABC):
         new_states.tensor[valid_states_idx] = new_not_done_states_tensor
 
         if isinstance(new_states, DiscreteStates):
-            self.update_masks(new_states)
+            self.update_masks(new_states)  # pyright: ignore
 
         return new_states
 
@@ -364,8 +364,8 @@ class DiscreteEnv(Env, ABC):
         s0: torch.Tensor,
         state_shape: Tuple,
         action_shape: Tuple = (1,),
-        dummy_action: Optional[torch.Tensor] = None,
-        exit_action: Optional[torch.Tensor] = None,
+        dummy_action: Optional[torch.Tensor] = None,  # pyright: ignore
+        exit_action: Optional[torch.Tensor] = None,  # pyright: ignore
         sf: Optional[torch.Tensor] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
@@ -430,7 +430,7 @@ class DiscreteEnv(Env, ABC):
         batch_shape: Optional[Union[int, Tuple[int]]] = None,
         random: bool = False,
         sink: bool = False,
-        seed: int = None,
+        seed: int = None,  # pyright: ignore
     ) -> States:
         """Instantiates a batch of initial states.
 
@@ -487,9 +487,16 @@ class DiscreteEnv(Env, ABC):
     def is_action_valid(
         self, states: States, actions: Actions, backward: bool = False
     ) -> bool:
-        assert states.forward_masks is not None and states.backward_masks is not None
-        masks_tensor = states.backward_masks if backward else states.forward_masks
-        return torch.gather(masks_tensor, 1, actions.tensor).all()
+        assert (
+            states.forward_masks is not None  # pyright: ignore
+            and states.backward_masks is not None  # pyright: ignore
+        )
+        masks_tensor = (
+            states.backward_masks  # pyright: ignore
+            if backward
+            else states.forward_masks  # pyright: ignore
+        )
+        return torch.gather(masks_tensor, 1, actions.tensor).all()  # pyright: ignore
 
     def _step(self, states: DiscreteStates, actions: Actions) -> States:
         """Calls the core self._step method of the parent class, and updates masks."""

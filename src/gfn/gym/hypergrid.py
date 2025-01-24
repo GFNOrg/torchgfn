@@ -62,11 +62,11 @@ class HyperGrid(DiscreteEnv):
         elif preprocessor_name == "OneHot":
             preprocessor = OneHotPreprocessor(
                 n_states=self.n_states,
-                get_states_indices=self.get_states_indices,
+                get_states_indices=self.get_states_indices,  # pyright: ignore
             )
         elif preprocessor_name == "Enum":
             preprocessor = EnumPreprocessor(
-                get_states_indices=self.get_states_indices,
+                get_states_indices=self.get_states_indices,  # pyright: ignore
             )
         else:
             raise ValueError(f"Unknown preprocessor {preprocessor_name}")
