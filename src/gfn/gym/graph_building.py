@@ -123,8 +123,9 @@ class GraphBuilding(GraphEnv):
             states.tensor["node_feature"] = states.tensor["node_feature"][~is_equal]
         elif action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
+            remove_edge_index = actions.edge_index + states.tensor["batch_ptr"][:-1][:, None]
             is_equal = torch.all(
-                states.tensor["edge_index"] == actions.edge_index[:, None], dim=-1
+                states.tensor["edge_index"] == remove_edge_index[:, None], dim=-1
             )
             is_equal = torch.any(is_equal, dim=0)
             states.tensor["edge_feature"] = states.tensor["edge_feature"][~is_equal]
@@ -153,19 +154,18 @@ class GraphBuilding(GraphEnv):
             add_edge_out = True
         else:
             add_edge_states = states[add_edge_mask].tensor
-            add_edge_actions = actions[add_edge_mask]
-            if torch.any(
-                add_edge_actions.edge_index[:, 0] == add_edge_actions.edge_index[:, 1]
-            ):
+            add_edge_actions = actions[add_edge_mask].edge_index + add_edge_states["batch_ptr"][:-1][:, None]
+            if torch.any(add_edge_actions[:, 0] == add_edge_actions[:, 1]):
                 return False
             if add_edge_states["node_feature"].shape[0] == 0:
                 return False
             if torch.any(
-                add_edge_actions.edge_index > add_edge_states["node_feature"].shape[0]
+                add_edge_actions > add_edge_states["node_feature"].shape[0]
             ):
                 return False
+            
             equal_edges_per_batch = torch.all(
-                add_edge_states["edge_index"] == add_edge_actions.edge_index[:, None],
+                add_edge_states["edge_index"] == add_edge_actions[:, None],
                 dim=-1,
             ).sum(dim=-1)
 

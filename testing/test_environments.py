@@ -440,7 +440,7 @@ def test_graph_env():
                 {
                     "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
                     "features": states.tensor["edge_feature"][edge_idx],
-                    "edge_index": states.tensor["edge_index"][edge_idx],
+                    "edge_index": states.tensor["edge_index"][edge_idx] - states.tensor["batch_ptr"][:-1][:, None],
                 },
                 batch_size=BATCH_SIZE,
             )
