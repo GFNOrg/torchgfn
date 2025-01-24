@@ -554,8 +554,6 @@ class LocalSearchSampler(Sampler):
 
         bs = prev_trajectories.n_trajectories
         device = prev_trajectories.states.device
-        state_shape = prev_trajectories.states.state_shape
-        action_shape = prev_trajectories.env.action_shape
         env = prev_trajectories.env
 
         # Obtain full trajectories by concatenating the backward and forward parts.
@@ -590,12 +588,12 @@ class LocalSearchSampler(Sampler):
 
         # Prepare the new states and actions
         # Note that these are initialized in transposed shapes
-        new_trajectories_states_tsr = prev_trajectories.env.sf.repeat(
-            bs, max_traj_len + 1, 1
-        ).to(prev_trajectories.states.tensor)
-        new_trajectories_actions_tsr = prev_trajectories.env.dummy_action.repeat(
-            bs, max_traj_len, 1
-        ).to(prev_trajectories.actions.tensor)
+        new_trajectories_states_tsr = env.sf.repeat(bs, max_traj_len + 1, 1).to(
+            prev_trajectories.states.tensor
+        )
+        new_trajectories_actions_tsr = env.dummy_action.repeat(bs, max_traj_len, 1).to(
+            prev_trajectories.actions.tensor
+        )
 
         # Assign the first part (backtracked from backward policy) of the trajectory
         prev_mask_truc = prev_mask[:, :max_n_prev]
@@ -664,10 +662,10 @@ class LocalSearchSampler(Sampler):
         # If `debug` is True (expected only when testing), compare the
         # vectorized approach's results (above) to the for-loop results (below).
         if debug:
-            _new_trajectories_states_tsr = prev_trajectories.env.sf.repeat(
-                max_traj_len + 1, bs, 1
-            ).to(prev_trajectories.states.tensor)
-            _new_trajectories_actions_tsr = prev_trajectories.env.dummy_action.repeat(
+            _new_trajectories_states_tsr = env.sf.repeat(max_traj_len + 1, bs, 1).to(
+                prev_trajectories.states.tensor
+            )
+            _new_trajectories_actions_tsr = env.dummy_action.repeat(
                 max_traj_len, bs, 1
             ).to(prev_trajectories.actions.tensor)
 

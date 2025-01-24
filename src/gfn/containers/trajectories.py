@@ -458,7 +458,9 @@ class Trajectories(Container):
         # Initialize new actions and states
         new_actions = trajectories.env.dummy_action.repeat(
             max_len + 1, len(trajectories), 1
-        ).to(actions)  # shape (max_len + 1, n_trajectories, *action_dim)
+        ).to(
+            actions
+        )  # shape (max_len + 1, n_trajectories, *action_dim)
         new_states = trajectories.env.sf.repeat(max_len + 2, len(trajectories), 1).to(
             states
         )  # shape (max_len + 2, n_trajectories, *state_dim)
@@ -492,9 +494,9 @@ class Trajectories(Container):
 
         # Assign reversed actions to new_actions
         new_actions[:, :-1][mask] = actions[mask][rev_idx[mask]]
-        new_actions[torch.arange(len(trajectories)), seq_lengths] = (
-            trajectories.env.exit_action
-        )
+        new_actions[
+            torch.arange(len(trajectories)), seq_lengths
+        ] = trajectories.env.exit_action
 
         # Assign reversed states to new_states
         assert torch.all(states[:, -1] == trajectories.env.s0), "Last state must be s0"
@@ -529,15 +531,19 @@ class Trajectories(Container):
         if debug:
             _new_actions = trajectories.env.dummy_action.repeat(
                 max_len + 1, len(trajectories), 1
-            ).to(actions)  # shape (max_len + 1, n_trajectories, *action_dim)
+            ).to(
+                actions
+            )  # shape (max_len + 1, n_trajectories, *action_dim)
             _new_states = trajectories.env.sf.repeat(
                 max_len + 2, len(trajectories), 1
-            ).to(states)  # shape (max_len + 2, n_trajectories, *state_dim)
+            ).to(
+                states
+            )  # shape (max_len + 2, n_trajectories, *state_dim)
 
             for i in range(len(trajectories)):
-                _new_actions[trajectories.when_is_done[i], i] = (
-                    trajectories.env.exit_action
-                )
+                _new_actions[
+                    trajectories.when_is_done[i], i
+                ] = trajectories.env.exit_action
                 _new_actions[
                     : trajectories.when_is_done[i], i
                 ] = trajectories.actions.tensor[: trajectories.when_is_done[i], i].flip(

@@ -32,7 +32,7 @@ from gfn.gym.helpers.box_utils import (
     BoxStateFlowModule,
 )
 from gfn.modules import ScalarEstimator
-from gfn.samplers import Sampler, LocalSearchSampler
+from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.common import set_seed
 
 DEFAULT_SEED = 4444
@@ -186,7 +186,9 @@ def main(args):  # noqa: C901
         sampler = Sampler(estimator=pf_estimator)
         local_search_params = {}
     else:
-        sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)
+        sampler = LocalSearchSampler(
+            pf_estimator=pf_estimator, pb_estimator=pb_estimator
+        )
         local_search_params = {
             "n_local_search_loops": args.n_local_search_loops,
             "back_ratio": args.back_ratio,
