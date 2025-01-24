@@ -3,13 +3,7 @@ import torch
 
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
-    BoxPBEstimator,
-    BoxPBMLP,
-    BoxPFEstimator,
     BoxPFMLP,
-    QuarterCircle,
-    QuarterCircleWithExit,
-    QuarterDisk,
     split_PF_module_output,
 )
 
@@ -105,4 +99,4 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
 
 
 if __name__ == "__main__":
-    test_mixed_distributions()
+    test_mixed_distributions(n_components=5, n_components_s0=6)
