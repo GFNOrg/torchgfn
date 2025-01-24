@@ -108,11 +108,11 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
 
         # for now, let us enforce that each agent gets equal number of ranks.
         # TODO: later, we can relax this condition.
-        assert (my_size % args.num_agents == 0)
-        agent_group_size = my_size // args.num_agents
-        agent_group_rank_list = [list(range(i * agent_group_size, (i + 1) * agent_group_size)) for i in range(args.num_agents)]
+        assert (my_size % args.num_agent_groups == 0)
+        agent_group_size = my_size // args.num_agent_groups
+        agent_group_rank_list = [list(range(i * agent_group_size, (i + 1) * agent_group_size)) for i in range(args.num_agent_groups)]
         print (agent_group_rank_list)
-        agent_group_list = [dist.new_group(agent_group_rank_list[i], backend=dist_backend, timeout=datetime.timedelta(minutes=5),)  for i in range(args.num_agents)]
+        agent_group_list = [dist.new_group(agent_group_rank_list[i], backend=dist_backend, timeout=datetime.timedelta(minutes=5),)  for i in range(args.num_agent_groups)]
 
         print(f"+ My rank: {my_rank} size: {my_size}")
 
@@ -839,7 +839,7 @@ if __name__ == "__main__":
 
     # Environment settings.
     parser.add_argument(
-        "--num_agents",
+        "--num_agent_groups",
         type=int,
         default=1,
         help="Number of agents learning together",
