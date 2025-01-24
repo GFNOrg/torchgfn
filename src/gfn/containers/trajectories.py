@@ -432,17 +432,7 @@ class Trajectories(Container):
         trajectories: Trajectories, debug: bool = False
     ) -> Trajectories:
         """Reverses a backward trajectory"""
-        # FIXME: This method is not compatible with continuous GFN.
-
         assert trajectories.is_backward, "Trajectories must be backward."
-        new_actions = torch.full(
-            (
-                trajectories.max_length + 1,
-                len(trajectories),
-                *trajectories.actions.action_shape,
-            ),
-            -1,
-        )
 
         # env.sf should never be None unless something went wrong during class
         # instantiation.
@@ -466,8 +456,8 @@ class Trajectories(Container):
         )  # shape (max_len + 1, n_trajectories, *state_dim)
 
         # Initialize new actions and states
-        new_actions = torch.full(
-            (max_len + 1, len(trajectories), *trajectories.actions.action_shape), -1
+        new_actions = trajectories.env.dummy_action.repeat(
+            max_len + 1, len(trajectories), 1
         ).to(
             actions
         )  # shape (max_len + 1, n_trajectories, *action_dim)
@@ -504,9 +494,9 @@ class Trajectories(Container):
 
         # Assign reversed actions to new_actions
         new_actions[:, :-1][mask] = actions[mask][rev_idx[mask]]
-        new_actions[torch.arange(len(trajectories)), seq_lengths] = (
-            trajectories.env.n_actions - 1
-        )  # FIXME: This can be problematic if action_dim != 1 (e.g. continuous actions)
+        new_actions[
+            torch.arange(len(trajectories)), seq_lengths
+        ] = trajectories.env.exit_action
 
         # Assign reversed states to new_states
         assert torch.all(states[:, -1] == trajectories.env.s0), "Last state must be s0"
@@ -539,9 +529,11 @@ class Trajectories(Container):
         # If `debug` is True (expected only when testing), compare the
         # vectorized approach's results (above) to the for-loop results (below).
         if debug:
-            _new_actions = torch.full(
-                (max_len + 1, len(trajectories), *trajectories.actions.action_shape), -1
-            ).to(actions)
+            _new_actions = trajectories.env.dummy_action.repeat(
+                max_len + 1, len(trajectories), 1
+            ).to(
+                actions
+            )  # shape (max_len + 1, n_trajectories, *action_dim)
             _new_states = trajectories.env.sf.repeat(
                 max_len + 2, len(trajectories), 1
             ).to(
@@ -549,9 +541,9 @@ class Trajectories(Container):
             )  # shape (max_len + 2, n_trajectories, *state_dim)
 
             for i in range(len(trajectories)):
-                _new_actions[trajectories.when_is_done[i], i] = (
-                    trajectories.env.n_actions - 1
-                )
+                _new_actions[
+                    trajectories.when_is_done[i], i
+                ] = trajectories.env.exit_action
                 _new_actions[
                     : trajectories.when_is_done[i], i
                 ] = trajectories.actions.tensor[: trajectories.when_is_done[i], i].flip(
