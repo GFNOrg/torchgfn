@@ -7,7 +7,7 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
-from gfn.states import States, stack_states
+from gfn.states import States
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -245,7 +245,9 @@ class Sampler:
 
             trajectories_states.append(deepcopy(states))
         # TODO: do not ignore the next three ignores
-        trajectories_states = stack_states(trajectories_states)  # pyright: ignore
+        trajectories_states = states.stack_states(
+            trajectories_states
+        )  # pyright: ignore
         trajectories_actions = env.Actions.stack(trajectories_actions)[
             1:  # Drop dummy action
         ]  # pyright: ignore

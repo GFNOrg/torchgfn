@@ -277,6 +277,26 @@ class States(ABC):
         """Samples a subset of the States object."""
         return self[torch.randperm(len(self))[:n_samples]]
 
+    @classmethod
+    def stack_states(cls, states: List[States]):
+        """Given a list of states, stacks them along a new dimension (0)."""
+        state_example = states[0]  # We assume all elems of `states` are the same.
+
+        stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
+        stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
+        # TODO: do not ignore the next ignore
+        if state_example._log_rewards:
+            stacked_states._log_rewards = torch.stack(
+                [s._log_rewards for s in states], dim=0  # pyright: ignore
+            )
+
+        # Adds the trajectory dimension.
+        stacked_states.batch_shape = (
+            stacked_states.tensor.shape[0],
+        ) + state_example.batch_shape
+
+        return stacked_states
+
 
 class DiscreteStates(States, ABC):
     """Base class for states of discrete environments.
@@ -463,32 +483,13 @@ class DiscreteStates(States, ABC):
         else:
             self.forward_masks = torch.zeros(shape).bool()
 
-
-def stack_states(states: List[States]):
-    """Given a list of states, stacks them along a new dimension (0)."""
-    state_example = states[0]  # We assume all elems of `states` are the same.
-
-    stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
-    stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
-    # TODO: do not ignore the next ignore
-    if state_example._log_rewards:
-        stacked_states._log_rewards = torch.stack(
-            [s._log_rewards for s in states], dim=0  # pyright: ignore
-        )
-
-    # We are dealing with a list of DiscretrStates instances.
-    if isinstance(stacked_states, DiscreteStates):
-        # TODO: do not ignore the next two ignores
+    @classmethod
+    def stack_states(cls, states: List[DiscreteStates]):
+        stacked_states: DiscreteStates = super().stack_states(states)  # pyright: ignore
         stacked_states.forward_masks = torch.stack(
             [s.forward_masks for s in states], dim=0  # pyright: ignore
         )
         stacked_states.backward_masks = torch.stack(
             [s.backward_masks for s in states], dim=0  # pyright: ignore
         )
-
-    # Adds the trajectory dimension.
-    stacked_states.batch_shape = (
-        stacked_states.tensor.shape[0],
-    ) + state_example.batch_shape
-
-    return stacked_states
+        return stacked_states
