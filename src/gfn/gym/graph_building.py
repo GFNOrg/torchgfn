@@ -89,8 +89,8 @@ class GraphBuilding(GraphEnv):
             )
             state_tensor["edge_index"] = torch.cat(
                 [
-                    state_tensor["edge_index"],
-                    actions.edge_index + state_tensor["batch_ptr"][:-1][:, None],
+                    states.tensor["edge_index"],
+                    actions.edge_index,
                 ],
                 dim=0,
             )
@@ -124,11 +124,8 @@ class GraphBuilding(GraphEnv):
             state_tensor["node_feature"] = state_tensor["node_feature"][~is_equal]
         elif action_type == GraphActionType.ADD_EDGE:
             assert actions.edge_index is not None
-            global_edge_index = (
-                actions.edge_index + state_tensor["batch_ptr"][:-1][:, None]
-            )
             is_equal = torch.all(
-                state_tensor["edge_index"] == global_edge_index[:, None], dim=-1
+                states.tensor["edge_index"] == actions.edge_index[:, None], dim=-1
             )
             is_equal = torch.any(is_equal, dim=0)
             state_tensor["edge_feature"] = state_tensor["edge_feature"][~is_equal]
@@ -156,11 +153,9 @@ class GraphBuilding(GraphEnv):
         if not torch.any(add_edge_mask):
             add_edge_out = True
         else:
-            add_edge_states = states[add_edge_mask].tensor
-            add_edge_actions = actions[add_edge_mask]
-            if torch.any(
-                add_edge_actions.edge_index[:, 0] == add_edge_actions.edge_index[:, 1]
-            ):
+            add_edge_states = states.tensor
+            add_edge_actions = actions[add_edge_mask].edge_index
+            if torch.any(add_edge_actions[:, 0] == add_edge_actions[:, 1]):
                 return False
             if add_edge_states["node_feature"].shape[0] == 0:
                 return False
@@ -222,8 +217,8 @@ class GraphBuilding(GraphEnv):
                 ]
             )
 
-            # Update edge indices
-            # Increment indices for edges after the current graph
+            # Increment indices for edges after the graph at graph_idx,
+            # i.e. the edges that point to nodes after end_ptr
             edge_mask_0 = modified_dict["edge_index"][:, 0] >= end_ptr
             edge_mask_1 = modified_dict["edge_index"][:, 1] >= end_ptr
             modified_dict["edge_index"][edge_mask_0, 0] += shift

@@ -166,14 +166,14 @@ class RingGraphBuilding(GraphBuilding):
         return RingStates
 
     def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
-        actions = self.convert_actions(actions)
+        actions = self.convert_actions(states, actions)
         return super()._step(states, actions)
 
     def _backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
-        actions = self.convert_actions(actions)
+        actions = self.convert_actions(states, actions)
         return super()._backward_step(states, actions)
 
-    def convert_actions(self, actions: Actions) -> GraphActions:
+    def convert_actions(self, states: GraphStates, actions: Actions) -> GraphActions:
         action_tensor = actions.tensor.squeeze(-1)
         action_type = torch.where(
             action_tensor == 0, GraphActionType.EXIT, GraphActionType.ADD_EDGE
@@ -187,7 +187,7 @@ class RingGraphBuilding(GraphBuilding):
                 {
                     "action_type": action_type,
                     "features": torch.ones(action_tensor.shape + (1,)),
-                    "edge_index": edge_index,
+                    "edge_index": edge_index + states.tensor["batch_ptr"][:-1][:, None],
                 },
                 batch_size=action_tensor.shape,
             )
