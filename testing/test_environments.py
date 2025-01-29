@@ -393,8 +393,8 @@ def test_graph_env():
         states = env.step(states, actions)
 
     for i in range(NUM_NODES - 1):
-        node_is = torch.full((BATCH_SIZE,), i)
-        node_js = torch.full((BATCH_SIZE,), i + 1)
+        node_is = torch.arange(BATCH_SIZE) * NUM_NODES + i
+        node_js = torch.arange(BATCH_SIZE) * NUM_NODES + i + 1
         actions = action_cls(
             TensorDict(
                 {
