@@ -245,7 +245,9 @@ class Sampler:
 
             trajectories_states.append(deepcopy(states))
         # TODO: do not ignore the next three ignores
-        trajectories_states = states.stack_states(trajectories_states)  # pyright: ignore
+        trajectories_states = states.stack_states(
+            trajectories_states
+        )  # pyright: ignore
         trajectories_actions = env.Actions.stack(trajectories_actions)[
             1:  # Drop dummy action
         ]  # pyright: ignore

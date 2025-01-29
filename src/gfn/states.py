@@ -276,7 +276,7 @@ class States(ABC):
     def sample(self, n_samples: int) -> States:
         """Samples a subset of the States object."""
         return self[torch.randperm(len(self))[:n_samples]]
-    
+
     @classmethod
     def stack_states(cls, states: List[States]):
         """Given a list of states, stacks them along a new dimension (0)."""
@@ -482,10 +482,10 @@ class DiscreteStates(States, ABC):
             self.forward_masks = torch.ones(shape).bool()
         else:
             self.forward_masks = torch.zeros(shape).bool()
-    
+
     @classmethod
-    def stack_states(cls, states:List[DiscreteStates]):
-        stacked_states: DiscreteStates = super().stack_states(states) # pyright: ignore
+    def stack_states(cls, states: List[DiscreteStates]):
+        stacked_states: DiscreteStates = super().stack_states(states)  # pyright: ignore
         stacked_states.forward_masks = torch.stack(
             [s.forward_masks for s in states], dim=0  # pyright: ignore
         )
@@ -493,4 +493,3 @@ class DiscreteStates(States, ABC):
             [s.backward_masks for s in states], dim=0  # pyright: ignore
         )
         return stacked_states
-
