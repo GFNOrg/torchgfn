@@ -176,6 +176,7 @@ class GraphActionType(enum.IntEnum):
     ADD_NODE = 0
     ADD_EDGE = 1
     EXIT = 2
+    DUMMY = 3
 
 
 class GraphActions(Actions):
@@ -209,7 +210,12 @@ class GraphActions(Actions):
         self.batch_shape = tensor["action_type"].shape
         features = tensor.get("features", None)
         if features is None:
-            assert torch.all(tensor["action_type"] == GraphActionType.EXIT)
+            assert torch.all(
+                torch.logical_or(
+                    tensor["action_type"] == GraphActionType.EXIT,
+                    tensor["action_type"] == GraphActionType.DUMMY,
+                )
+            )
             features = torch.zeros((*self.batch_shape, self.features_dim))
         edge_index = tensor.get("edge_index", None)
         if edge_index is None:
@@ -271,6 +277,11 @@ class GraphActions(Actions):
         return self.action_type == GraphActionType.EXIT
 
     @property
+    def is_dummy(self) -> torch.Tensor:
+        """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are dummy actions."""
+        return self.action_type == GraphActionType.DUMMY
+
+    @property
     def action_type(self) -> torch.Tensor:
         """Returns the action type tensor."""
         return self.tensor["action_type"]
@@ -287,7 +298,21 @@ class GraphActions(Actions):
 
     @classmethod
     def make_dummy_actions(cls, batch_shape: tuple[int]) -> GraphActions:
-        """Creates an Actions object of dummy actions with the given batch shape."""
+        """Creates a GraphActions object of dummy actions with the given batch shape."""
+        return cls(
+            TensorDict(
+                {
+                    "action_type": torch.full(
+                        batch_shape, fill_value=GraphActionType.DUMMY
+                    ),
+                },
+                batch_size=batch_shape,
+            )
+        )
+
+    @classmethod
+    def make_exit_actions(cls, batch_shape: tuple[int]) -> Actions:
+        """Creates an GraphActions object of exit actions with the given batch shape."""
         return cls(
             TensorDict(
                 {
@@ -298,11 +323,3 @@ class GraphActions(Actions):
                 batch_size=batch_shape,
             )
         )
-
-    @classmethod
-    def stack(cls, actions_list: list[GraphActions]) -> GraphActions:
-        """Stacks a list of GraphActions objects into a single GraphActions object."""
-        actions_tensor = torch.stack(
-            [actions.tensor for actions in actions_list], dim=0
-        )
-        return cls(actions_tensor)

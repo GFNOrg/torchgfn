@@ -6,12 +6,12 @@ import torch.nn as nn
 from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution, Normal
 
-from gfn.preprocessors import IdentityPreprocessor, Preprocessor
+from gfn.preprocessors import GraphPreprocessor, IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.distributions import (
     CategoricalActionType,
     CategoricalIndexes,
-    ComposedDistribution,
+    CompositeDistribution,
     UnsqueezedCategorical,
 )
 
@@ -464,7 +464,7 @@ class GraphActionPolicyEstimator(GFNModule):
     def __init__(
         self,
         module: nn.Module,
-        # preprocessor: Preprocessor | None = None,
+        preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
     ):
         """Initializes a estimator for P_F for graph environments.
@@ -472,10 +472,9 @@ class GraphActionPolicyEstimator(GFNModule):
         Args:
             is_backward: if False, then this is a forward policy, else backward policy.
         """
-        # super().__init__(module, preprocessor, is_backward)
-        nn.Module.__init__(self)
-        self.module = module
-        self.is_backward = is_backward
+        if preprocessor is None:
+            preprocessor = GraphPreprocessor()
+        super().__init__(module, preprocessor, is_backward)
 
     def forward(self, states: GraphStates) -> TensorDict:
         """Forward pass of the module.
@@ -497,7 +496,7 @@ class GraphActionPolicyEstimator(GFNModule):
         module_output: TensorDict,
         temperature: float = 1.0,
         epsilon: float = 0.0,
-    ) -> ComposedDistribution:
+    ) -> CompositeDistribution:
         """Returns a probability distribution given a batch of states and module output.
 
         We handle off-policyness using these kwargs.
@@ -513,12 +512,10 @@ class GraphActionPolicyEstimator(GFNModule):
         dists = {}
 
         action_type_logits = module_output["action_type"]
-        action_type_masks = (
-            states.backward_masks if self.is_backward else states.forward_masks
-        )
-        action_type_logits[~action_type_masks] = -float("inf")
+        masks = states.backward_masks if self.is_backward else states.forward_masks
+        action_type_logits[~masks["action_type"]] = -float("inf")
         action_type_probs = torch.softmax(action_type_logits / temperature, dim=-1)
-        uniform_dist_probs = action_type_masks.float() / action_type_masks.sum(
+        uniform_dist_probs = masks["action_type"].float() / masks["action_type"].sum(
             dim=-1, keepdim=True
         )
         action_type_probs = (
@@ -527,9 +524,10 @@ class GraphActionPolicyEstimator(GFNModule):
         dists["action_type"] = CategoricalActionType(probs=action_type_probs)
 
         edge_index_logits = module_output["edge_index"]
-        if states.tensor["node_feature"].shape[0] > 1 and torch.any(
-            edge_index_logits != -float("inf")
-        ):
+        edge_index_logits[~masks["edge_index"]] = -float("inf")
+        if torch.any(edge_index_logits != -float("inf")):
+            B, N, N = edge_index_logits.shape
+            edge_index_logits = edge_index_logits.reshape(B, N * N)
             edge_index_probs = torch.softmax(edge_index_logits / temperature, dim=-1)
             uniform_dist_probs = (
                 torch.ones_like(edge_index_probs) / edge_index_probs.shape[-1]
@@ -537,7 +535,8 @@ class GraphActionPolicyEstimator(GFNModule):
             edge_index_probs = (
                 1 - epsilon
             ) * edge_index_probs + epsilon * uniform_dist_probs
-            dists["edge_index"] = CategoricalIndexes(probs=edge_index_probs)
+            edge_index_probs[torch.isnan(edge_index_probs)] = 1
+            dists["edge_index"] = CategoricalIndexes(probs=edge_index_probs, n=N)
 
         dists["features"] = Normal(module_output["features"], temperature)
-        return ComposedDistribution(dists=dists)
+        return CompositeDistribution(dists=dists)

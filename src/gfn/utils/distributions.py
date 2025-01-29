@@ -43,7 +43,9 @@ class UnsqueezedCategorical(Categorical):
         return super().log_prob(sample.squeeze(-1))
 
 
-class ComposedDistribution(Distribution):  # TODO: CompositeDistribution in TensorDict
+class CompositeDistribution(
+    Distribution
+):  # TODO: may use CompositeDistribution in TensorDict
     """A mixture distribution."""
 
     def __init__(self, dists: Dict[str, Distribution]):
@@ -63,22 +65,24 @@ class ComposedDistribution(Distribution):  # TODO: CompositeDistribution in Tens
             v.log_prob(sample[k]).reshape(sample[k].shape[0], -1).sum(dim=-1)
             for k, v in self.dists.items()
         ]
+        # Note: this returns the sum of the log_probs over all the components
+        # as it is a uniform mixture distribution.
         return sum(log_probs)
 
 
 class CategoricalIndexes(Categorical):
     """Samples indexes from a categorical distribution."""
 
-    def __init__(self, probs: torch.Tensor):
+    def __init__(self, probs: torch.Tensor, n: int):
         """Initializes the distribution.
 
         Args:
             probs: The probabilities of the categorical distribution.
+            n: The number of nodes in the graph.
         """
-        self.n = probs.shape[-1]
-        batch_size = probs.shape[0]
-        assert probs.shape == (batch_size, self.n, self.n)
-        super().__init__(probs.reshape(batch_size, self.n * self.n))
+        self.n = n
+        assert probs.shape == (probs.shape[0], self.n * self.n)
+        super().__init__(probs)
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         samples = super().sample(sample_shape)

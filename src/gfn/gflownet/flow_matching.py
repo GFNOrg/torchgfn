@@ -50,10 +50,10 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         **policy_kwargs: Any,
     ) -> Trajectories:
         """Sample trajectory with optional kwargs controling the policy."""
-        # if not env.is_discrete:
-        #     raise NotImplementedError(
-        #         "Flow Matching GFlowNet only supports discrete environments for now."
-        #     )
+        if not env.is_discrete:
+            raise NotImplementedError(
+                "Flow Matching GFlowNet only supports discrete environments for now."
+            )
         sampler = Sampler(estimator=self.logF)
         trajectories = sampler.sample_trajectories(
             env,

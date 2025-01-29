@@ -416,6 +416,9 @@ def test_graph_env():
             batch_size=BATCH_SIZE,
         )
     )
+
+    states.forward_masks
+    states.backward_masks
     sf_states = env.step(states, actions)
     sf_states = env.States(sf_states)
     assert torch.all(sf_states.is_sink_state)

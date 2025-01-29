@@ -85,6 +85,7 @@ class RingGraphBuilding(GraphBuilding):
         self.n_nodes = n_nodes
         self.n_actions = 1 + n_nodes * n_nodes
         super().__init__(feature_dim=1, state_evaluator=state_evaluator)
+        self.is_discrete = True  # actions here are discrete, needed for FlowMatching
 
     def make_actions_class(self) -> type[Actions]:
         env = self
