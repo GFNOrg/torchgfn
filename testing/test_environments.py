@@ -422,15 +422,7 @@ def test_graph_env():
     sf_states = env.step(states, actions)
     sf_states = env.States(sf_states)
     assert torch.all(sf_states.is_sink_state)
-    env.reward(states)
-
-    # with pytest.raises(NonValidActionsError):
-    #     node_idx = torch.arange(0, BATCH_SIZE)
-    #     actions = action_cls(
-    #         GraphActionType.ADD_NODE,
-    #         states.data.x[node_idxs],
-    #     )
-    #     states = env.backward_step(states, actions)
+    env.reward(sf_states)
 
     num_edges_per_batch = len(states.tensor["edge_feature"]) // BATCH_SIZE
     for i in reversed(range(num_edges_per_batch)):

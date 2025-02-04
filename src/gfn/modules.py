@@ -536,7 +536,7 @@ class GraphActionPolicyEstimator(GFNModule):
                 1 - epsilon
             ) * edge_index_probs + epsilon * uniform_dist_probs
             edge_index_probs[torch.isnan(edge_index_probs)] = 1
-            dists["edge_index"] = CategoricalIndexes(probs=edge_index_probs, n=N)
+            dists["edge_index"] = CategoricalIndexes(probs=edge_index_probs, node_indexes=states.tensor["node_index"])
 
         dists["features"] = Normal(module_output["features"], temperature)
         return CompositeDistribution(dists=dists)

@@ -73,24 +73,26 @@ class CompositeDistribution(
 class CategoricalIndexes(Categorical):
     """Samples indexes from a categorical distribution."""
 
-    def __init__(self, probs: torch.Tensor, n: int):
+    def __init__(self, probs: torch.Tensor, node_indexes: torch.Tensor):
         """Initializes the distribution.
 
         Args:
             probs: The probabilities of the categorical distribution.
             n: The number of nodes in the graph.
         """
-        self.n = n
-        assert probs.shape == (probs.shape[0], self.n * self.n)
+        self.node_indexes = node_indexes
+        assert probs.shape == (probs.shape[0], node_indexes.shape[0] * node_indexes.shape[0])
         super().__init__(probs)
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         samples = super().sample(sample_shape)
-        out = torch.stack([samples // self.n, samples % self.n], dim=-1)
+        out = torch.stack([samples // self.node_indexes.shape[0], samples % self.node_indexes.shape[0]], dim=-1)
+        out = self.node_indexes.index_select(0, out.flatten()).reshape(*out.shape)
         return out
 
     def log_prob(self, value):
-        value = value[..., 0] * self.n + value[..., 1]
+        value = value[..., 0] * self.node_indexes.shape[0] + value[..., 1]
+        value = torch.bucketize(value, self.node_indexes)
         return super().log_prob(value)
 
 

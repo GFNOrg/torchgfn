@@ -157,19 +157,17 @@ class GraphBuilding(GraphEnv):
             if torch.any(add_edge_actions[:, 0] == add_edge_actions[:, 1]):
                 return False
             if add_edge_states["node_feature"].shape[0] == 0:
-                return False
-            if torch.any(
-                add_edge_actions > add_edge_states["node_feature"].shape[0]
-            ):
+                return False            
+            node_exists = torch.isin(add_edge_actions, add_edge_states["node_index"])
+            if not torch.all(node_exists):
                 return False
             
             equal_edges_per_batch = torch.all(
                 add_edge_states["edge_index"] == add_edge_actions[:, None],
                 dim=-1,
             ).sum(dim=-1)
-
             if backward:
-                add_edge_out = torch.all(equal_edges_per_batch == 1)
+                add_edge_out = torch.all(equal_edges_per_batch != 0)
             else:
                 add_edge_out = torch.all(equal_edges_per_batch == 0)
 
@@ -194,17 +192,15 @@ class GraphBuilding(GraphEnv):
         for graph_idx, new_nodes in zip(batch_indices, nodes_to_add):
             tensor_dict["batch_ptr"][graph_idx]
             end_ptr = tensor_dict["batch_ptr"][graph_idx + 1]
-
-            if new_nodes.ndim == 1:
-                new_nodes = new_nodes.unsqueeze(0)
+            new_nodes = torch.atleast_2d(new_nodes)
             if new_nodes.shape[1] != node_feature_dim:
                 raise ValueError(
                     f"Node features must have dimension {node_feature_dim}"
                 )
 
             # Update batch pointers for subsequent graphs
-            shift = new_nodes.shape[0]
-            modified_dict["batch_ptr"][graph_idx + 1 :] += shift
+            num_new_nodes = new_nodes.shape[0]
+            modified_dict["batch_ptr"][graph_idx + 1 :] += num_new_nodes
 
             # Expand node features
             modified_dict["node_feature"] = torch.cat(
@@ -214,13 +210,13 @@ class GraphBuilding(GraphEnv):
                     modified_dict["node_feature"][end_ptr:],
                 ]
             )
-
-            # Increment indices for edges after the graph at graph_idx,
-            # i.e. the edges that point to nodes after end_ptr
-            edge_mask_0 = modified_dict["edge_index"][:, 0] >= end_ptr
-            edge_mask_1 = modified_dict["edge_index"][:, 1] >= end_ptr
-            modified_dict["edge_index"][edge_mask_0, 0] += shift
-            modified_dict["edge_index"][edge_mask_1, 1] += shift
+            modified_dict["node_index"] = torch.cat(
+                [
+                    modified_dict["node_index"][:end_ptr],
+                    GraphStates.unique_node_indices(num_new_nodes),
+                    modified_dict["node_index"][end_ptr:],
+                ]
+            )
 
         return modified_dict
 
