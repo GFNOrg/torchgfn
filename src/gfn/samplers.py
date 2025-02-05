@@ -360,9 +360,7 @@ class LocalSearchSampler(Sampler):
         # This is called `prev_trajectories` since they are the trajectories before
         # the local search. The `new_trajectories` will be obtained by performing local
         # search on them.
-        prev_trajectories = Trajectories.reverse_backward_trajectories(
-            prev_trajectories
-        )
+        prev_trajectories = prev_trajectories.reverse_backward_trajectories()
         assert prev_trajectories.log_rewards is not None
 
         ### Reconstructing with self.estimator
