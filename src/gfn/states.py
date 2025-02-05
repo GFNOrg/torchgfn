@@ -371,8 +371,8 @@ class DiscreteStates(States, ABC):
         backward_masks = self.backward_masks[index]
         out = self.__class__(states, forward_masks, backward_masks)
         if self._log_rewards is not None:
-            log_probs = self._log_rewards[index]
-            out.log_rewards = log_probs
+            log_rewards = self._log_rewards[index]
+            out.log_rewards = log_rewards
         return out
 
     def __setitem__(
