@@ -115,7 +115,6 @@ class RingPolicyEstimator(nn.Module):
         )
         edge_index = torch.einsum("bnf,bmf->bnm", edge_index, edge_index)
 
-        #
         edge_actions = edge_index.reshape(
             *states_tensor["batch_shape"], self.n_nodes * self.n_nodes
         )
@@ -178,6 +177,7 @@ class RingGraphBuilding(GraphBuilding):
                 forward_masks[:, 1 :: self.n_nodes + 1] = False
                 for i in range(len(self)):
                     existing_edges = self[i].tensor["edge_index"] - self.tensor['node_index'][self.tensor['batch_ptr'][i]]
+                    assert torch.all(existing_edges >= 0)  # TODO: convert to test.
                     forward_masks[
                         i,
                         1 + existing_edges[:, 0] * self.n_nodes + existing_edges[:, 1],
@@ -223,8 +223,13 @@ class RingGraphBuilding(GraphBuilding):
         action_type = torch.where(
             action_tensor == 0, GraphActionType.EXIT, GraphActionType.ADD_EDGE
         )
-        edge_index_i0 = (action_tensor - 1) // (self.n_nodes)
-        edge_index_i1 = (action_tensor - 1) % (self.n_nodes)
+
+        # TODO: refactor.
+        # action = [exit, src_node_idx, dest_node_idx] <- 2n + 1
+        # action = [node] <- n^2 + 1
+        
+        edge_index_i0 = (action_tensor - 1) // (self.n_nodes)  # column
+        edge_index_i1 = (action_tensor - 1) % (self.n_nodes)   # row
 
         edge_index = torch.stack([edge_index_i0, edge_index_i1], dim=-1)
         offset = states.tensor["node_index"][states.tensor["batch_ptr"][:-1]]
@@ -314,11 +319,11 @@ if __name__ == "__main__":
     # ring_state = GraphStates(
     #     TensorDict(
     #         {
-    #             "node_feature": torch.tensor([[0], [1], [2]]),
-    #             "node_index": torch.tensor([0, 1, 2]),
-    #             "edge_feature": torch.ones((3, 1)),
-    #             "edge_index": torch.tensor([[1, 0], [1, 2], [2, 0]]),
-    #             "batch_ptr": torch.tensor([0, 3]),
+    #             "node_feature": torch.tensor([[10], [11]]),
+    #             "node_index": torch.tensor([10, 11]),
+    #             "edge_feature": torch.ones((2, 1)),
+    #             "edge_index": torch.tensor([[10, 11], [11, 10]]),
+    #             "batch_ptr": torch.tensor([0, 2]),
     #             "batch_shape": torch.ones((1,), dtype=torch.long),
     #         },
     #         batch_size=(),
@@ -326,8 +331,8 @@ if __name__ == "__main__":
     # )
     # print(state_evaluator(ring_state))
 
-    N_NODES = 3
-    N_ITERATIONS = 128
+    N_NODES = 2
+    N_ITERATIONS = 4096
     torch.random.manual_seed(7)
     env = RingGraphBuilding(n_nodes=N_NODES)
     module = RingPolicyEstimator(env.n_nodes)
@@ -337,17 +342,15 @@ if __name__ == "__main__":
     )
 
     gflownet = FMGFlowNet(logf_estimator)
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-2)
-    batch_size = 32
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    #     optimizer, T_max=N_ITERATIONS, eta_min=1e-4
-    # )
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-3)
+    batch_size = 4
 
     losses = []
 
     t1 = time.time()
     for iteration in range(N_ITERATIONS):
         trajectories = gflownet.sample_trajectories(env, n=batch_size)
+        print(torch.count_nonzero(state_evaluator(trajectories.last_states) > 0.1))
         samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
         loss = gflownet.loss(env, samples)
@@ -355,7 +358,6 @@ if __name__ == "__main__":
         loss.backward()
         optimizer.step()
         losses.append(loss.item())
-        # scheduler.step()
 
     t2 = time.time()
     print("Time:", t2 - t1)

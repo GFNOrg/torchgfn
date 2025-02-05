@@ -684,12 +684,14 @@ class GraphStates(States):
             out._log_rewards = self._log_rewards[index]
 
         assert out.tensor["node_index"].unique().numel() == len(out.tensor["node_index"])
+
         return out
 
     def __setitem__(self, index: int | Sequence[int], graph: GraphStates):
         """
         Set particular states of the Batch
         """
+        # This is to convert index to type int (linear indexing).
         tensor_idx = torch.arange(len(self)).view(*self.batch_shape)
         index = tensor_idx[index].flatten()
 
@@ -802,12 +804,15 @@ class GraphStates(States):
         other_edge_index = other.tensor["edge_index"]
         common_node_indices = torch.any(self.tensor["node_index"][:, None] == other_node_index[None, :], dim=0)
         if torch.any(common_node_indices):
+            # This renumbers nodes across batch indices such that all nodes have 
+            # a unique ID.
             new_indices = self.unique_node_indices(torch.sum(common_node_indices))
-            # find edge_index which contains other_node_index[common_node_indices]
-            edge_mask = other_edge_index[:, None] == other_node_index[common_node_indices, None]
-            repeat_indices = new_indices[None, :, None].repeat(edge_mask.shape[0], 1, 2)
-            other_edge_index[torch.any(edge_mask, dim=1)] = repeat_indices[edge_mask]
             
+            # find edge_index which contains other_node_index[common_node_indices]. this is 
+            # because all new edges must be to new nodes (unique).
+            edge_mask = other_edge_index[:, :, None] == other_node_index[None, common_node_indices]
+            repeat_indices = new_indices[None, None].repeat(edge_mask.shape[0], 2, 1)
+            other_edge_index[torch.any(edge_mask, dim=-1)] = repeat_indices[edge_mask]
             other_node_index[common_node_indices] = new_indices
 
         self.tensor["node_index"] = torch.cat(
