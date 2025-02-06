@@ -211,8 +211,7 @@ class RingGraphBuilding(GraphBuilding):
 
     def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
         actions = self.convert_actions(states, actions)
-        out = super()._step(states, actions)
-        return out
+        return super()._step(states, actions)
 
     def _backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
         actions = self.convert_actions(states, actions)
@@ -331,8 +330,8 @@ if __name__ == "__main__":
     # )
     # print(state_evaluator(ring_state))
 
-    N_NODES = 2
-    N_ITERATIONS = 4096
+    N_NODES = 3
+    N_ITERATIONS = 1024
     torch.random.manual_seed(7)
     env = RingGraphBuilding(n_nodes=N_NODES)
     module = RingPolicyEstimator(env.n_nodes)
@@ -343,14 +342,15 @@ if __name__ == "__main__":
 
     gflownet = FMGFlowNet(logf_estimator)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-3)
-    batch_size = 4
+    batch_size = 64
 
     losses = []
 
     t1 = time.time()
     for iteration in range(N_ITERATIONS):
         trajectories = gflownet.sample_trajectories(env, n=batch_size)
-        print(torch.count_nonzero(state_evaluator(trajectories.last_states) > 0.1))
+        rews = state_evaluator(trajectories.last_states) 
+        print(f"Percentage of rings sampled {torch.mean(rews > 1.1, dtype=torch.float) * 100:.0f}%")
         samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
         loss = gflownet.loss(env, samples)

@@ -806,7 +806,7 @@ class GraphStates(States):
         if torch.any(common_node_indices):
             # This renumbers nodes across batch indices such that all nodes have 
             # a unique ID.
-            new_indices = self.unique_node_indices(torch.sum(common_node_indices))
+            new_indices = GraphStates.unique_node_indices(torch.sum(common_node_indices))
             
             # find edge_index which contains other_node_index[common_node_indices]. this is 
             # because all new edges must be to new nodes (unique).
