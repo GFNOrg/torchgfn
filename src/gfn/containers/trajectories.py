@@ -70,6 +70,7 @@ class Trajectories(Container):
         is used to compute the rewards, at each call of self.log_rewards
         """
         self.env = env
+        self.device = env.device
         self.conditioning = conditioning
         self.is_backward = is_backward
         self.states = (
@@ -83,7 +84,9 @@ class Trajectories(Container):
         self.when_is_done = (
             when_is_done
             if when_is_done is not None
-            else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
+            else torch.full(
+                size=(0,), fill_value=-1, dtype=torch.long, device=self.device
+            )
         )
         assert (
             self.when_is_done.shape == (self.n_trajectories,)
@@ -93,7 +96,9 @@ class Trajectories(Container):
         self._log_rewards = (
             log_rewards
             if log_rewards is not None
-            else torch.full(size=(0,), fill_value=0, dtype=torch.float)
+            else torch.full(
+                size=(0,), fill_value=0, dtype=torch.float, device=self.device
+            )
         )
         assert (
             self._log_rewards.shape == (self.n_trajectories,)
@@ -106,7 +111,9 @@ class Trajectories(Container):
                 and log_probs.dtype == torch.float
             )
         else:
-            log_probs = torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
+            log_probs = torch.full(
+                size=(0, 0), fill_value=0, dtype=torch.float, device=self.device
+            )
         self.log_probs: torch.Tensor = log_probs
 
         self.estimator_outputs = estimator_outputs
