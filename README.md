@@ -77,7 +77,7 @@ conda install pytorch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 cpuonly -c py
 git clone https://github.com/intel/torch-ccl.git torch-ccl && cd torch-ccl
 git checkout tags/v2.2.0+cpu
 git submodule sync
-git submodule update --init –recursive
+git submodule update --init --recursive
 
 # TODO: this didn't work for me -- I had to use a prebuilt wheel.
 # ONECCL_BINDINGS_FOR_PYTORCH_BACKEND=cpu python setup.py install
