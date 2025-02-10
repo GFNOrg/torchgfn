@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import torch
 
@@ -157,7 +157,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         self,
         env: Env,
         terminating_states: DiscreteStates,
-        conditioning: torch.Tensor,
+        conditioning: Optional[torch.Tensor],
     ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
         del env  # Unused
