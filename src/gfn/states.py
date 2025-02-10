@@ -74,7 +74,7 @@ class States(ABC):
 
     @classmethod
     def from_batch_shape(
-        cls, batch_shape: tuple[int], random: bool = False, sink: bool = False
+        cls, batch_shape: tuple[int, ...], random: bool = False, sink: bool = False
     ) -> States:
         """Create a States object with the given batch shape.
 
@@ -104,27 +104,15 @@ class States(ABC):
         return cls(tensor)
 
     @classmethod
-    def make_initial_states_tensor(cls, batch_shape: tuple[int]) -> torch.Tensor:
-        """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s.
-
-        Args:
-            batch_shape: Shape of the batch dimensions.
-
-        Returns a tensor of shape (*batch_shape, *state_shape) with all states equal to $s_0$.
-        """
+    def make_initial_states_tensor(cls, batch_shape: tuple[int, ...]) -> torch.Tensor:
+        """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
         return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
 
     @classmethod
-    def make_sink_states_tensor(cls, batch_shape: tuple[int]) -> torch.Tensor:
-        """Makes a tensor with a `batch_shape` of states consisting of $s_f$s.
-
-        Args:
-            batch_shape: Shape of the batch dimensions.
-
-        Returns a tensor of shape (*batch_shape, *state_shape) with all states equal to $s_f$.
-        """
+    def make_sink_states_tensor(cls, batch_shape: tuple[int, ...]) -> torch.Tensor:
+        """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
         return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
@@ -140,7 +128,7 @@ class States(ABC):
         return self.tensor.device
 
     def __getitem__(
-        self, index: int | Sequence[int] | Sequence[bool] | torch.Tensor
+        self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> States:
         """Access particular states of the batch."""
         out = self.__class__(
@@ -390,7 +378,7 @@ class DiscreteStates(States, ABC):
         assert self.forward_masks is not None and self.backward_masks is not None
 
     def __getitem__(
-        self, index: int | Sequence[int] | Sequence[bool]
+        self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> DiscreteStates:
         states = self.tensor[index]
         self._check_both_forward_backward_masks_exist()
@@ -398,8 +386,8 @@ class DiscreteStates(States, ABC):
         backward_masks = self.backward_masks[index]
         out = self.__class__(states, forward_masks, backward_masks)
         if self._log_rewards is not None:
-            log_probs = self._log_rewards[index]
-            out.log_rewards = log_probs
+            log_rewards = self._log_rewards[index]
+            out.log_rewards = log_rewards
         return out
 
     def __setitem__(
@@ -417,7 +405,7 @@ class DiscreteStates(States, ABC):
         backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
         return self.__class__(states, forward_masks, backward_masks)
 
-    def extend(self, other: States) -> None:
+    def extend(self, other: DiscreteStates) -> None:
         super().extend(other)
         self.forward_masks = torch.cat(
             (self.forward_masks, other.forward_masks), dim=len(self.batch_shape) - 1
@@ -486,13 +474,14 @@ class DiscreteStates(States, ABC):
             batch_idx: A Boolean index along the batch dimension, along which to
                 enforce exits.
         """
+        # TODO: do not ignore the next three ignores
         self.forward_masks[batch_idx, :] = torch.cat(
             [
-                torch.zeros((torch.sum(batch_idx),) + self.s0.shape),
-                torch.ones((torch.sum(batch_idx),) + (1,)),
+                torch.zeros((torch.sum(batch_idx),) + self.s0.shape),  # pyright: ignore
+                torch.ones((torch.sum(batch_idx),) + (1,)),  # pyright: ignore
             ],
             dim=-1,
-        ).bool()
+        ).bool()  # pyright: ignore
 
     def init_forward_masks(self, set_ones: bool = True):
         """Initalizes forward masks.

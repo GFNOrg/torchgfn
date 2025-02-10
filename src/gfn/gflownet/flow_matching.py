@@ -3,7 +3,7 @@ from typing import Any, Optional, Tuple, Union
 import torch
 
 from gfn.containers import Trajectories
-from gfn.env import Env
+from gfn.env import DiscreteEnv
 from gfn.gflownet.base import GFlowNet
 from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
 from gfn.samplers import Sampler
@@ -42,10 +42,10 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
 
     def sample_trajectories(
         self,
-        env: Env,
+        env: DiscreteEnv,
         n: int,
         conditioning: torch.Tensor | None = None,
-        save_logprobs: bool = True,
+        save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:
@@ -67,7 +67,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
 
     def flow_matching_loss(
         self,
-        env: Env,
+        env: DiscreteEnv,
         states: DiscreteStates,
         conditioning: torch.Tensor | None,
     ) -> torch.Tensor:
@@ -155,7 +155,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
 
     def reward_matching_loss(
         self,
-        env: Env,
+        env: DiscreteEnv,
         terminating_states: DiscreteStates,
         conditioning: Optional[torch.Tensor],
     ) -> torch.Tensor:
@@ -178,7 +178,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
 
     def loss(
         self,
-        env: Env,
+        env: DiscreteEnv,
         states_tuple: Union[
             Tuple[DiscreteStates, DiscreteStates, torch.Tensor, torch.Tensor],
             Tuple[DiscreteStates, DiscreteStates, None, None],
@@ -204,9 +204,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         )
         return fm_loss + self.alpha * rm_loss
 
-    def to_training_samples(
-        self, trajectories: Trajectories
-    ) -> Union[
+    def to_training_samples(self, trajectories: Trajectories) -> Union[
         Tuple[DiscreteStates, DiscreteStates, torch.Tensor, torch.Tensor],
         Tuple[DiscreteStates, DiscreteStates, None, None],
         Tuple[States, States, torch.Tensor, torch.Tensor],

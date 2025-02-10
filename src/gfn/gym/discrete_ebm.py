@@ -102,7 +102,7 @@ class DiscreteEBM(DiscreteEnv):
             preprocessor = IdentityPreprocessor(output_dim=ndim)
         elif preprocessor_name == "Enum":
             preprocessor = EnumPreprocessor(
-                get_states_indices=self.get_states_indices,
+                get_states_indices=self.get_states_indices,  # pyright: ignore
             )
         else:
             raise ValueError(f"Unknown preprocessor {preprocessor_name}")

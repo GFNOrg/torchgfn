@@ -75,7 +75,7 @@ def main(args):  # noqa: C901
         training_samples = gflownet.to_training_samples(trajectories)
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
+        loss = gflownet.loss(env, training_samples)  # pyright: ignore
         loss.backward()
         optimizer.step()
 

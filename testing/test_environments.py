@@ -37,7 +37,9 @@ def test_HyperGrid_preprocessors(
     ND_BATCH_SHAPE = (4, 2)
     SEED = 1234
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor)
+    env = HyperGrid(
+        ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor  # pyright: ignore
+    )
 
     # Test with a 1-d batch size.
     random_states = env.reset(batch_shape=BATCH_SHAPE, random=True, seed=SEED)
@@ -51,7 +53,9 @@ def test_HyperGrid_preprocessors(
         assert tuple(preprocessed_grid.shape) == (BATCH_SHAPE, ENV_HEIGHT * NDIM)
 
     # Test with a n-d batch size.
-    random_states = env.reset(batch_shape=ND_BATCH_SHAPE, random=True, seed=SEED)
+    random_states = env.reset(
+        batch_shape=ND_BATCH_SHAPE, random=True, seed=SEED  # pyright: ignore
+    )
     preprocessed_grid = env.preprocessor.preprocess(random_states)
 
     if preprocessor == "Identity":
@@ -73,7 +77,9 @@ def test_HyperGrid_fwd_step_with_preprocessors(
     NDIM = 2
     ENV_HEIGHT = BATCH_SIZE = 3
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor)
+    env = HyperGrid(
+        ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor  # pyright: ignore
+    )
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, NDIM)
 
@@ -88,15 +94,18 @@ def test_HyperGrid_fwd_step_with_preprocessors(
 
     for actions_list in passing_actions_lists:
         actions = env.actions_from_tensor(format_tensor(actions_list))
-        states = env._step(states, actions)
+        states = env._step(states, actions)  # pyright: ignore
 
     # Step 4 fails due an invalid input action.
     actions = env.actions_from_tensor(format_tensor(failing_actions_list))
     with pytest.raises(NonValidActionsError):
-        states = env._step(states, actions)
+        states = env._step(states, actions)  # pyright: ignore
 
     expected_rewards = torch.tensor([0.6, 0.1, 0.6])
-    assert (torch.round(env.reward(states), decimals=7) == expected_rewards).all()
+    assert (
+        torch.round(env.reward(states), decimals=7)  # pyright: ignore
+        == expected_rewards
+    ).all()
 
 
 @pytest.mark.parametrize("preprocessor", ["Identity", "OneHot", "KHot"])
@@ -108,8 +117,12 @@ def test_HyperGrid_bwd_step_with_preprocessors(
     SEED = 1234
 
     # Testing the backward method from a batch of random (seeded) state.
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor)
-    states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED)
+    env = HyperGrid(
+        ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor  # pyright: ignore
+    )
+    states = env.reset(
+        batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED  # pyright: ignore
+    )
 
     passing_actions_lists = [
         [[0, 1, 0], [0, 0, 1]],
@@ -131,7 +144,9 @@ def test_HyperGrid_bwd_step_with_preprocessors(
         states = env._backward_step(states, actions)
 
     # Fails due to an invalid input action.
-    states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED)
+    states = env.reset(
+        batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED  # pyright: ignore
+    )
     failing_actions = env.actions_from_tensor(format_tensor(failing_actions_list))
     with pytest.raises(NonValidActionsError):
         states = env._backward_step(states, failing_actions)
@@ -155,20 +170,23 @@ def test_DiscreteEBM_fwd_step():
 
     for actions_list in passing_actions_lists:
         actions = env.actions_from_tensor(format_tensor(actions_list))
-        states = env._step(states, actions)
+        states = env._step(states, actions)  # pyright: ignore
 
     # Step 4 fails due an invalid input action (15 is not possible).
     actions = env.actions_from_tensor(format_tensor([4, 15, 4, 4]))
     with pytest.raises(RuntimeError):
-        states = env._step(states, actions)
+        states = env._step(states, actions)  # pyright: ignore
 
     # Step 5 fails due an invalid input action (1 is possible but not in this state).
     actions = env.actions_from_tensor(format_tensor([1, 4, 4, 4]))
     with pytest.raises(NonValidActionsError):
-        states = env._step(states, actions)
+        states = env._step(states, actions)  # pyright: ignore
 
     expected_rewards = torch.tensor([1, 1, 54.5982, 1])
-    assert (torch.round(env.reward(states), decimals=4) == expected_rewards).all()
+    assert (
+        torch.round(env.reward(states), decimals=4)  # pyright: ignore
+        == expected_rewards
+    ).all()
 
 
 def test_DiscreteEBM_bwd_step():
@@ -273,7 +291,7 @@ def test_states_getitem(ndim: int, env_name: str):
     else:
         raise ValueError(f"Unknown env_name {env_name}")
 
-    states = env.reset(batch_shape=ND_BATCH_SHAPE, random=True)
+    states = env.reset(batch_shape=ND_BATCH_SHAPE, random=True)  # pyright: ignore
 
     # Boolean selector to index batch elements.
     selections = torch.randint(0, 2, ND_BATCH_SHAPE, dtype=torch.bool)
