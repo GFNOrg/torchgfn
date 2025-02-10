@@ -237,13 +237,13 @@ class GraphActions(Actions):
         return f"""GraphAction object with {self.batch_shape} actions."""
 
     @property
-    def device(self) -> torch.device:
+    def device(self) -> torch.device | None:
         """Returns the device of the features tensor."""
         return self.tensor.device
 
     def __len__(self) -> int:
         """Returns the number of actions in the batch."""
-        return prod(self.batch_shape)
+        return int(prod(self.batch_shape))
 
     def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> GraphActions:
         """Get particular actions of the batch."""

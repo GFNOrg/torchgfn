@@ -169,11 +169,11 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         else:
             with no_conditioning_exception_handler("logF", self.logF):
                 log_edge_flows = self.logF(terminating_states)
-        
+
         # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
         terminating_log_edge_flows = log_edge_flows[:, -1]
         log_rewards = terminating_states.log_rewards
-        
+
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
     def loss(

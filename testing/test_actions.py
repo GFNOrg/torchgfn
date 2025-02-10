@@ -13,7 +13,7 @@ class ContinuousActions(Actions):
     exit_action = torch.ones(10)
 
 
-class GraphActions(GraphActions):
+class TestGraphActions(GraphActions):
     features_dim = 10
 
 
@@ -24,7 +24,7 @@ def continuous_action():
 
 @pytest.fixture
 def graph_action():
-    return GraphActions(
+    return TestGraphActions(
         tensor=TensorDict(
             {
                 "action_type": torch.zeros((1,), dtype=torch.float32),

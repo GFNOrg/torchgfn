@@ -4,6 +4,7 @@ import math
 import time
 from typing import Optional
 
+from matplotlib import patches
 import matplotlib.pyplot as plt
 import torch
 from tensordict import TensorDict
@@ -20,7 +21,7 @@ from gfn.states import GraphStates
 
 def state_evaluator(states: GraphStates) -> torch.Tensor:
     """Compute the reward of a graph.
-    
+
     Specifically, the reward is 1 if the graph is a ring, 1e-6 otherwise.
 
     Args:
@@ -41,7 +42,9 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
         edge_index_mask = torch.all(
             states.tensor["edge_index"] >= nodes_index_range[0], dim=-1
         ) & torch.all(states.tensor["edge_index"] <= nodes_index_range[-1], dim=-1)
-        masked_edge_index = states.tensor["edge_index"][edge_index_mask] - nodes_index_range[0]
+        masked_edge_index = (
+            states.tensor["edge_index"][edge_index_mask] - nodes_index_range[0]
+        )
 
         n_nodes = nodes_index_range.shape[0]
         adj_matrix = torch.zeros(n_nodes, n_nodes)
@@ -70,7 +73,7 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
                 break
             else:
                 break  # TODO: This actually should never happen, should be caught on line 45.
-                
+
         # Check if we visited all vertices and the last vertex connects back to start.
         if len(visited) == n_nodes and adj_matrix[current][0] == 1:
             out[i] = 1.0
@@ -80,14 +83,19 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
 
 class RingPolicyEstimator(nn.Module):
     """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
-    
+
     Args:
         n_nodes: The number of nodes in the graph.
     """
+
     def __init__(self, n_nodes: int):
         super().__init__()
         self.n_nodes = n_nodes
-        self.params = nn.Parameter(nn.init.xavier_normal_(torch.empty(self.n_nodes + 1, self.n_nodes * self.n_nodes + 1)))
+        self.params = nn.Parameter(
+            nn.init.xavier_normal_(
+                torch.empty(self.n_nodes + 1, self.n_nodes * self.n_nodes + 1)
+            )
+        )
         with torch.no_grad():
             self.params[-1] = torch.zeros(self.n_nodes * self.n_nodes + 1)
             self.params[-1][-1] = 1.0
@@ -96,13 +104,17 @@ class RingPolicyEstimator(nn.Module):
         batch_size = states_tensor["batch_shape"][0]
         if batch_size == 0:
             return torch.zeros(0, self.n_nodes * self.n_nodes + 1, requires_grad=True)
-        
+
         first_idx = states_tensor["node_index"][states_tensor["batch_ptr"][:-1]]
         last_idx = states_tensor["node_index"][states_tensor["batch_ptr"][1:] - 1]
-        n_edges = torch.logical_and(
-            states_tensor["edge_index"] >= first_idx[:, None, None],
-            states_tensor["edge_index"] <= last_idx[:, None, None],
-        ).all(dim=-1).sum(dim=-1)
+        n_edges = (
+            torch.logical_and(
+                states_tensor["edge_index"] >= first_idx[:, None, None],
+                states_tensor["edge_index"] <= last_idx[:, None, None],
+            )
+            .all(dim=-1)
+            .sum(dim=-1)
+        )
 
         n_edges = torch.clamp(n_edges, 0, self.n_nodes)
         return self.params[n_edges]
@@ -110,7 +122,7 @@ class RingPolicyEstimator(nn.Module):
 
 class RingGraphBuilding(GraphBuilding):
     """Override the GraphBuilding class to create have discrete actions.
-    
+
     Specifically, at initialization, we have n nodes.
     The policy can only add edges between existing nodes or use the exit action.
     The action space is thus discrete and of size n^2 + 1, where the last action is the exit action,
@@ -119,6 +131,7 @@ class RingGraphBuilding(GraphBuilding):
     Args:
         n_nodes: The number of nodes in the graph.
     """
+
     def __init__(self, n_nodes: int):
         self.n_nodes = n_nodes
         self.n_actions = 1 + n_nodes * n_nodes
@@ -141,7 +154,9 @@ class RingGraphBuilding(GraphBuilding):
         class RingStates(GraphStates):
             s0 = TensorDict(
                 {
-                    "node_feature": F.one_hot(torch.arange(env.n_nodes), num_classes=env.n_nodes).float(),
+                    "node_feature": F.one_hot(
+                        torch.arange(env.n_nodes), num_classes=env.n_nodes
+                    ).float(),
                     "edge_feature": torch.ones((0, 1)),
                     "edge_index": torch.ones((0, 2), dtype=torch.long),
                 },
@@ -168,9 +183,12 @@ class RingGraphBuilding(GraphBuilding):
             @property
             def forward_masks(self):
                 forward_masks = torch.ones(len(self), self.n_actions, dtype=torch.bool)
-                forward_masks[:, ::self.n_nodes + 1] = False
+                forward_masks[:, :: self.n_nodes + 1] = False
                 for i in range(len(self)):
-                    existing_edges = self[i].tensor["edge_index"] - self.tensor['node_index'][self.tensor['batch_ptr'][i]]
+                    existing_edges = (
+                        self[i].tensor["edge_index"]
+                        - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
+                    )
                     assert torch.all(existing_edges >= 0)  # TODO: convert to test.
                     forward_masks[
                         i,
@@ -189,7 +207,10 @@ class RingGraphBuilding(GraphBuilding):
                     len(self), self.n_actions, dtype=torch.bool
                 )
                 for i in range(len(self)):
-                    existing_edges = self[i].tensor["edge_index"] - self.tensor['node_index'][self.tensor['batch_ptr'][i]]
+                    existing_edges = (
+                        self[i].tensor["edge_index"]
+                        - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
+                    )
                     backward_masks[
                         i,
                         existing_edges[:, 0] * self.n_nodes + existing_edges[:, 1],
@@ -205,24 +226,30 @@ class RingGraphBuilding(GraphBuilding):
 
     def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
         actions = self.convert_actions(states, actions)
-        return super()._step(states, actions)
+        new_states = super()._step(states, actions)
+        assert isinstance(new_states, GraphStates)
+        return new_states
 
     def _backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
         actions = self.convert_actions(states, actions)
-        return super()._backward_step(states, actions)
+        new_states = super()._backward_step(states, actions)
+        assert isinstance(new_states, GraphStates)
+        return new_states
 
     def convert_actions(self, states: GraphStates, actions: Actions) -> GraphActions:
         action_tensor = actions.tensor.squeeze(-1)
         action_type = torch.where(
-            action_tensor == self.n_actions - 1, GraphActionType.EXIT, GraphActionType.ADD_EDGE
+            action_tensor == self.n_actions - 1,
+            GraphActionType.EXIT,
+            GraphActionType.ADD_EDGE,
         )
 
         # TODO: refactor.
         # action = [exit, src_node_idx, dest_node_idx] <- 2n + 1
         # action = [node] <- n^2 + 1
-        
+
         edge_index_i0 = action_tensor // (self.n_nodes)  # column
-        edge_index_i1 = action_tensor % (self.n_nodes)   # row
+        edge_index_i1 = action_tensor % (self.n_nodes)  # row
 
         edge_index = torch.stack([edge_index_i0, edge_index_i1], dim=-1)
         offset = states.tensor["node_index"][states.tensor["batch_ptr"][:-1]]
@@ -240,6 +267,7 @@ class RingGraphBuilding(GraphBuilding):
 
 class GraphPreprocessor(Preprocessor):
     """Extract the tensor from the states."""
+
     def __init__(self, feature_dim: int = 1):
         super().__init__(output_dim=feature_dim)
 
@@ -252,7 +280,7 @@ class GraphPreprocessor(Preprocessor):
 
 def render_states(states: GraphStates):
     """Render the states as a matplotlib plot.
-    
+
     Args:
         states: A batch of graphs.
     """
@@ -271,7 +299,7 @@ def render_states(states: GraphStates):
             xs.append(x)
             ys.append(y)
             current_ax.add_patch(
-                plt.Circle((x, y), 0.5, facecolor="none", edgecolor="black")
+                patches.Circle((x, y), 0.5, facecolor="none", edgecolor="black")
             )
 
         edge_index = states[i].tensor["edge_index"]
@@ -318,14 +346,16 @@ def test():
     module = RingPolicyEstimator(4)
 
     states = GraphStates(
-        TensorDict({
-            "node_feature": torch.eye(4),
-            "edge_feature": torch.zeros((0, 1)),
-            "edge_index": torch.zeros((0, 2), dtype=torch.long),
-            "node_index": torch.arange(4),
-            "batch_ptr": torch.tensor([0, 4]),
-            "batch_shape": torch.tensor([1]),
-        })
+        TensorDict(
+            {
+                "node_feature": torch.eye(4),
+                "edge_feature": torch.zeros((0, 1)),
+                "edge_index": torch.zeros((0, 2), dtype=torch.long),
+                "node_index": torch.arange(4),
+                "batch_ptr": torch.tensor([0, 4]),
+                "batch_shape": torch.tensor([1]),
+            }
+        )
     )
 
     out = module(states.tensor)
@@ -333,6 +363,7 @@ def test():
     loss.backward()
     print("Params:", [p for p in module.params])
     print("Gradients:", [p.grad for p in module.params])
+
 
 if __name__ == "__main__":
     N_NODES = 3
@@ -353,16 +384,28 @@ if __name__ == "__main__":
 
     t1 = time.time()
     for iteration in range(N_ITERATIONS):
-        trajectories = gflownet.sample_trajectories(env, n=batch_size)
-        rews = state_evaluator(trajectories.last_states) 
+        trajectories = gflownet.sample_trajectories(
+            env, n=batch_size  # pyright: ignore
+        )
+        last_states = trajectories.last_states
+        assert isinstance(last_states, GraphStates)
+        rews = state_evaluator(last_states)
         samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
-        loss = gflownet.loss(env, samples)
-        print("Iteration", iteration, "Loss:", loss.item(), f"rings: {torch.mean(rews > 0.1, dtype=torch.float) * 100:.0f}%")
+        loss = gflownet.loss(env, samples)  # pyright: ignore
+        print(
+            "Iteration",
+            iteration,
+            "Loss:",
+            loss.item(),
+            f"rings: {torch.mean(rews > 0.1, dtype=torch.float) * 100:.0f}%",
+        )
         loss.backward()
         optimizer.step()
         losses.append(loss.item())
 
     t2 = time.time()
     print("Time:", t2 - t1)
-    render_states(trajectories.last_states[:8])
+    last_states = trajectories.last_states[:8]
+    assert isinstance(last_states, GraphStates)
+    render_states(last_states)

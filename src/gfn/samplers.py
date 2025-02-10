@@ -245,32 +245,22 @@ class Sampler:
             dones = dones | new_dones
             trajectories_states.append(deepcopy(states))
 
-        trajectories_states = env.States.stack(trajectories_states)
-        trajectories_actions = env.Actions.stack(trajectories_actions)[
-            1:  # Drop dummy action
-        ]  # pyright: ignore
-        trajectories_logprobs = (
-            torch.stack(trajectories_logprobs, dim=0)[1:]  # Drop dummy logprob
-            if save_logprobs
-            else None
-        )  # pyright: ignore
-
-        # TODO: use torch.nested.nested_tensor(dtype, device, requires_grad).
-        if save_estimator_outputs:
-            all_estimator_outputs = torch.stack(all_estimator_outputs, dim=0)
-        # TODO: do not ignore the next ignores
         trajectories = Trajectories(
             env=env,
-            states=trajectories_states,  # pyright: ignore
+            states=env.States.stack(trajectories_states),
             conditioning=conditioning,
-            actions=trajectories_actions,  # pyright: ignore
+            actions=env.Actions.stack(trajectories_actions[1:]),
             when_is_done=trajectories_dones,
             is_backward=self.estimator.is_backward,
             log_rewards=trajectories_log_rewards,
-            log_probs=trajectories_logprobs,  # pyright: ignore
+            log_probs=(
+                torch.stack(trajectories_logprobs, dim=0)[1:] if save_logprobs else None
+            ),
             estimator_outputs=(
-                all_estimator_outputs if save_estimator_outputs else None
-            ),  # pyright: ignore
+                torch.stack(all_estimator_outputs, dim=0)
+                if save_estimator_outputs
+                else None
+            ),
         )
 
         return trajectories

@@ -81,12 +81,21 @@ class CategoricalIndexes(Categorical):
             n: The number of nodes in the graph.
         """
         self.node_indexes = node_indexes
-        assert probs.shape == (probs.shape[0], node_indexes.shape[0] * node_indexes.shape[0])
+        assert probs.shape == (
+            probs.shape[0],
+            node_indexes.shape[0] * node_indexes.shape[0],
+        )
         super().__init__(probs)
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         samples = super().sample(sample_shape)
-        out = torch.stack([samples // self.node_indexes.shape[0], samples % self.node_indexes.shape[0]], dim=-1)
+        out = torch.stack(
+            [
+                samples // self.node_indexes.shape[0],
+                samples % self.node_indexes.shape[0],
+            ],
+            dim=-1,
+        )
         out = self.node_indexes.index_select(0, out.flatten()).reshape(*out.shape)
         return out
 

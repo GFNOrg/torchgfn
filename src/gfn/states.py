@@ -282,7 +282,7 @@ class States(ABC):
         return self[torch.randperm(len(self))[:n_samples]]
 
     @classmethod
-    def stack(cls, states: List[States]):
+    def stack(cls, states: Sequence[States]) -> States:
         """Given a list of states, stacks them along a new dimension (0)."""
         state_example = states[0]
         assert all(
@@ -292,18 +292,12 @@ class States(ABC):
         stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
         stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
         if state_example._log_rewards:
-            stacked_states._log_rewards = torch.stack(
-                [s._log_rewards for s in states], dim=0
-            )
-
-        # We are dealing with a list of DiscretrStates instances.
-        if hasattr(state_example, "forward_masks"):
-            stacked_states.forward_masks = torch.stack(
-                [s.forward_masks for s in states], dim=0
-            )
-            stacked_states.backward_masks = torch.stack(
-                [s.backward_masks for s in states], dim=0
-            )
+            log_rewards = []
+            for s in states:
+                if s._log_rewards is None:
+                    raise ValueError("Some states have no log rewards.")
+                log_rewards.append(s._log_rewards)
+            stacked_states._log_rewards = torch.stack(log_rewards, dim=0)
 
         # Adds the trajectory dimension.
         stacked_states.batch_shape = (
@@ -498,6 +492,15 @@ class DiscreteStates(States, ABC):
         else:
             self.forward_masks = torch.zeros(shape).bool()
 
+    @classmethod
+    def stack(cls, states: List[DiscreteStates]) -> DiscreteStates:
+        """Stacks a list of DiscreteStates objects along a new dimension (0)."""
+        out = super().stack(states)
+        assert isinstance(out, DiscreteStates)
+        out.forward_masks = torch.stack([s.forward_masks for s in states], dim=0)
+        out.backward_masks = torch.stack([s.backward_masks for s in states], dim=0)
+        return out
+
 
 class GraphStates(States):
     """
@@ -529,7 +532,7 @@ class GraphStates(States):
         self.tensor = tensor
         self.node_features_dim = tensor["node_feature"].shape[-1]
         self.edge_features_dim = tensor["edge_feature"].shape[-1]
-        self._log_rewards: Optional[float] = None
+        self._log_rewards: Optional[torch.Tensor] = None
 
     @property
     def batch_shape(self) -> tuple:
@@ -553,7 +556,7 @@ class GraphStates(States):
     def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> TensorDict:
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         nodes = cls.s0["node_feature"].repeat(np.prod(batch_shape), 1)
-    
+
         return TensorDict(
             {
                 "node_feature": nodes,
@@ -602,7 +605,9 @@ class GraphStates(States):
                 "node_feature": torch.rand(
                     np.prod(batch_shape) * num_nodes, node_features_dim, device=device
                 ),
-                "node_index": GraphStates.unique_node_indices(np.prod(batch_shape) * num_nodes),
+                "node_index": GraphStates.unique_node_indices(
+                    np.prod(batch_shape) * num_nodes
+                ),
                 "edge_feature": torch.rand(
                     np.prod(batch_shape) * num_edges, edge_features_dim, device=device
                 ),
@@ -628,14 +633,14 @@ class GraphStates(States):
         self, index: int | Sequence[int] | slice | torch.Tensor
     ) -> GraphStates:
         tensor_idx = torch.arange(len(self)).view(*self.batch_shape)
-        index = tensor_idx[index].flatten()
+        idx = tensor_idx[index].flatten()
 
-        if torch.any(index >= len(self.tensor["batch_ptr"]) - 1):
+        if torch.any(idx >= len(self.tensor["batch_ptr"]) - 1):
             raise ValueError("Graph index out of bounds")
 
         # TODO: explain batch_ptr and node_index semantics
-        start_ptrs = self.tensor["batch_ptr"][:-1][index]
-        end_ptrs = self.tensor["batch_ptr"][1:][index]
+        start_ptrs = self.tensor["batch_ptr"][:-1][idx]
+        end_ptrs = self.tensor["batch_ptr"][1:][idx]
 
         node_features = [torch.empty(0, self.node_features_dim)]
         node_indices = [torch.empty(0, dtype=torch.long)]
@@ -650,8 +655,11 @@ class GraphStates(States):
 
             # Find edges for this graph
             if self.tensor["node_index"].numel() > 0:
-                edge_mask = (self.tensor["edge_index"][:, 0] >= self.tensor["node_index"][start]) & (
-                    self.tensor["edge_index"][:, 0] <= self.tensor["node_index"][end - 1]
+                edge_mask = (
+                    self.tensor["edge_index"][:, 0] >= self.tensor["node_index"][start]
+                ) & (
+                    self.tensor["edge_index"][:, 0]
+                    <= self.tensor["node_index"][end - 1]
                 )
                 edge_features.append(self.tensor["edge_feature"][edge_mask])
                 edge_indices.append(self.tensor["edge_index"][edge_mask])
@@ -664,15 +672,17 @@ class GraphStates(States):
                     "edge_feature": torch.cat(edge_features),
                     "edge_index": torch.cat(edge_indices),
                     "batch_ptr": torch.tensor(batch_ptr),
-                    "batch_shape": (len(index),),
+                    "batch_shape": (len(idx),),
                 }
             )
         )
 
         if self._log_rewards is not None:
-            out._log_rewards = self._log_rewards[index]
+            out._log_rewards = self._log_rewards[idx]
 
-        assert out.tensor["node_index"].unique().numel() == len(out.tensor["node_index"])
+        assert out.tensor["node_index"].unique().numel() == len(
+            out.tensor["node_index"]
+        )
 
         return out
 
@@ -681,11 +691,11 @@ class GraphStates(States):
         Set particular states of the Batch
         """
         # This is to convert index to type int (linear indexing).
-        tensor_idx = torch.arange(len(self)).view(*self.batch_shape)
-        index = tensor_idx[index].flatten()
+        idx = torch.arange(len(self)).view(*self.batch_shape)
+        idx = idx[index].flatten()
 
         # Validate indices
-        if torch.any(index >= len(self.tensor["batch_ptr"]) - 1):
+        if torch.any(idx >= len(self.tensor["batch_ptr"]) - 1):
             raise ValueError("Target graph index out of bounds")
 
         # Source graph details
@@ -693,12 +703,12 @@ class GraphStates(States):
         source_num_graphs = torch.prod(source_tensor_dict["batch_shape"])
 
         # Validate source and target indices match
-        if len(index) != source_num_graphs:
+        if len(idx) != source_num_graphs:
             raise ValueError(
                 "Number of source graphs must match number of target indices"
             )
 
-        for i, graph_idx in enumerate(index):
+        for i, graph_idx in enumerate(idx):
             # Get start and end pointers for the current graph
             start_ptr = self.tensor["batch_ptr"][graph_idx]
             end_ptr = self.tensor["batch_ptr"][graph_idx + 1]
@@ -730,19 +740,29 @@ class GraphStates(States):
 
             edge_mask = torch.empty(0, dtype=torch.bool)
             if self.tensor["edge_index"].numel() > 0:
-                edge_mask = torch.all(self.tensor["edge_index"] > self.tensor["node_index"][end_ptr - 1], dim=-1)
-                edge_mask |= torch.all(self.tensor["edge_index"] < self.tensor["node_index"][start_ptr], dim=-1)
-        
+                edge_mask = torch.all(
+                    self.tensor["edge_index"] > self.tensor["node_index"][end_ptr - 1],
+                    dim=-1,
+                )
+                edge_mask |= torch.all(
+                    self.tensor["edge_index"] < self.tensor["node_index"][start_ptr],
+                    dim=-1,
+                )
+
             edge_to_add_mask = torch.all(
-                source_tensor_dict["edge_index"] >= source_tensor_dict["node_index"][source_start_ptr], dim=-1
+                source_tensor_dict["edge_index"]
+                >= source_tensor_dict["node_index"][source_start_ptr],
+                dim=-1,
             )
             edge_to_add_mask &= torch.all(
-                source_tensor_dict["edge_index"] <= source_tensor_dict["node_index"][source_end_ptr - 1], dim=-1
+                source_tensor_dict["edge_index"]
+                <= source_tensor_dict["node_index"][source_end_ptr - 1],
+                dim=-1,
             )
             self.tensor["edge_index"] = torch.cat(
                 [
                     self.tensor["edge_index"][edge_mask],
-                    source_tensor_dict["edge_index"][edge_to_add_mask]
+                    source_tensor_dict["edge_index"][edge_to_add_mask],
                 ],
                 dim=0,
             )
@@ -764,8 +784,10 @@ class GraphStates(States):
             # Update batch pointers
             shift = new_nodes.shape[0] - (end_ptr - start_ptr)
             self.tensor["batch_ptr"][graph_idx + 1 :] += shift
-    
-        assert self.tensor["node_index"].unique().numel() == len(self.tensor["node_index"])
+
+        assert self.tensor["node_index"].unique().numel() == len(
+            self.tensor["node_index"]
+        )
 
     @property
     def device(self) -> torch.device | None:
@@ -791,15 +813,22 @@ class GraphStates(States):
         # find if there are common node indices
         other_node_index = other.tensor["node_index"]
         other_edge_index = other.tensor["edge_index"]
-        common_node_indices = torch.any(self.tensor["node_index"][:, None] == other_node_index[None, :], dim=0)
+        common_node_indices = torch.any(
+            self.tensor["node_index"][:, None] == other_node_index[None, :], dim=0
+        )
         if torch.any(common_node_indices):
-            # This renumbers nodes across batch indices such that all nodes have 
+            # This renumbers nodes across batch indices such that all nodes have
             # a unique ID.
-            new_indices = GraphStates.unique_node_indices(torch.sum(common_node_indices))
-            
-            # find edge_index which contains other_node_index[common_node_indices]. this is 
+            new_indices = GraphStates.unique_node_indices(
+                torch.sum(common_node_indices)
+            )
+
+            # find edge_index which contains other_node_index[common_node_indices]. this is
             # because all new edges must be to new nodes (unique).
-            edge_mask = other_edge_index[:, :, None] == other_node_index[None, common_node_indices]
+            edge_mask = (
+                other_edge_index[:, :, None]
+                == other_node_index[None, common_node_indices]
+            )
             repeat_indices = new_indices[None, None].repeat(edge_mask.shape[0], 2, 1)
             other_edge_index[torch.any(edge_mask, dim=-1)] = repeat_indices[edge_mask]
             other_node_index[common_node_indices] = new_indices
@@ -811,10 +840,7 @@ class GraphStates(States):
             [self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=0
         )
         self.tensor["edge_index"] = torch.cat(
-            [
-                self.tensor["edge_index"],
-                other.tensor["edge_index"]
-            ],
+            [self.tensor["edge_index"], other.tensor["edge_index"]],
             dim=0,
         )
         self.tensor["batch_ptr"] = torch.cat(
@@ -882,7 +908,9 @@ class GraphStates(States):
             stacked_states.extend(state)
 
         stacked_states.tensor["batch_shape"] = (len(states),) + state_batch_shape
-        assert stacked_states.tensor["node_index"].unique().numel() == len(stacked_states.tensor["node_index"])
+        assert stacked_states.tensor["node_index"].unique().numel() == len(
+            stacked_states.tensor["node_index"]
+        )
         return stacked_states
 
     @property
@@ -992,6 +1020,8 @@ class GraphStates(States):
 
     @classmethod
     def unique_node_indices(cls, num_new_nodes: int) -> torch.Tensor:
-        indices = torch.arange(cls._next_node_index, cls._next_node_index + num_new_nodes)
+        indices = torch.arange(
+            cls._next_node_index, cls._next_node_index + num_new_nodes
+        )
         cls._next_node_index += num_new_nodes
         return indices

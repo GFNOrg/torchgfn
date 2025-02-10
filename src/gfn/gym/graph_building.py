@@ -56,6 +56,12 @@ class GraphBuilding(GraphEnv):
             device_str=device_str,
         )
 
+    def reset(self, batch_shape: Tuple | int) -> GraphStates:
+        """Reset the environment to a new batch of graphs."""
+        states = super().reset(batch_shape)
+        assert isinstance(states, GraphStates)
+        return states
+
     def step(self, states: GraphStates, actions: GraphActions) -> TensorDict:
         """Step function for the GraphBuilding environment.
 
@@ -157,11 +163,11 @@ class GraphBuilding(GraphEnv):
             if torch.any(add_edge_actions[:, 0] == add_edge_actions[:, 1]):
                 return False
             if add_edge_states["node_feature"].shape[0] == 0:
-                return False            
+                return False
             node_exists = torch.isin(add_edge_actions, add_edge_states["node_index"])
             if not torch.all(node_exists):
                 return False
-            
+
             equal_edges_per_batch = torch.all(
                 add_edge_states["edge_index"] == add_edge_actions[:, None],
                 dim=-1,
