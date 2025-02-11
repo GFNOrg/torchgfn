@@ -1,15 +1,15 @@
 from collections import Counter
 from typing import Dict, Optional
 
+import torch
 from tqdm import trange
 
 from gfn.containers import ReplayBuffer
-from gfn.env import Env, DiscreteEnv
+from gfn.env import DiscreteEnv, Env
 from gfn.gflownet import GFlowNet, TBGFlowNet
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
 from gfn.states import States, stack_states
-import torch
 
 
 def get_terminating_state_dist_pmf(env: Env, states: States) -> torch.Tensor:
