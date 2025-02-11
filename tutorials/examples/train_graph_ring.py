@@ -10,7 +10,7 @@ import torch
 from tensordict import TensorDict
 from torch import nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GINEConv, GINConv, GCNConv
 
 from gfn.actions import Actions, GraphActions, GraphActionType
 from gfn.gflownet.flow_matching import FMGFlowNet
@@ -130,8 +130,10 @@ class RingPolicyEstimator(nn.Module):
     def __init__(self, n_nodes: int):
         super().__init__()
         self.n_nodes = n_nodes
-        self.action_type_conv = GCNConv(n_nodes, 4)
-        self.edge_index_conv = GCNConv(n_nodes, 16)
+        embedding_dim = 16
+        self.embedding = nn.Embedding(n_nodes, embedding_dim)
+        self.action_type_conv = GINConv(nn.Linear(embedding_dim, embedding_dim))
+        self.edge_index_conv = GINConv(nn.Linear(embedding_dim, embedding_dim))
         self.n_nodes = n_nodes
         self.edge_hidden_dim = 16
 
@@ -148,10 +150,12 @@ class RingPolicyEstimator(nn.Module):
 
     def forward(self, states_tensor: TensorDict) -> torch.Tensor:
         node_feature, batch_ptr = states_tensor["node_feature"], states_tensor["batch_ptr"]
+        node_feature = self.embedding(node_feature.squeeze().int())
 
         edge_index = torch.where(
             states_tensor["edge_index"][..., None] == states_tensor["node_index"]
         )[2].reshape(states_tensor["edge_index"].shape)   # (M, 2)
+        #edge_attrs = states_tensor["edge_feature"]
 
         action_type = self.action_type_conv(node_feature, edge_index.T)
         action_type = self._group_sum(torch.mean(action_type, dim=-1, keepdim=True), batch_ptr)
@@ -167,6 +171,98 @@ class RingPolicyEstimator(nn.Module):
         )
         return torch.cat([edge_actions, action_type], dim=-1)
 
+
+# class RingPolicyEstimator(nn.Module):
+#     """Module that implements a GCN-based policy estimator for graph-structured data.
+#     Outputs action logits for both node-level and edge-level actions.
+    
+#     Args:
+#         node_feature_dim: Dimension of input node features
+#         n_nodes: Number of nodes in the graph
+#         hidden_dim: Hidden dimension for edge features
+#     """
+#     def __init__(self, node_feature_dim: int, n_nodes: int, hidden_dim: int = 16):
+#         super().__init__()
+#         self.n_nodes = n_nodes
+#         self.edge_hidden_dim = hidden_dim
+        
+#         self.feature_embedding = nn.Embedding(n_nodes, node_feature_dim)
+#         self.action_type_convs = nn.ModuleList([
+#             GCNConv(node_feature_dim, hidden_dim),
+#             GCNConv(hidden_dim, hidden_dim),
+#         ])
+#         self.edge_index_convs = nn.ModuleList([
+#             GCNConv(node_feature_dim, hidden_dim),
+#             GCNConv(hidden_dim, hidden_dim),
+#         ])
+        
+#     def _group_sum(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
+#         cumsum = torch.zeros(
+#             (len(tensor) + 1, *tensor.shape[1:]),
+#             dtype=tensor.dtype,
+#             device=tensor.device,
+#         )
+#         cumsum[1:] = torch.cumsum(tensor, dim=0)
+#         return cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]
+
+#     def forward(self, states_tensor: TensorDict) -> torch.Tensor:
+#         """
+#         Forward pass of the GCN policy estimator.
+        
+#         Args:
+#             states_tensor: TensorDict containing:
+#                 - node_feature: Node features tensor (N, feature_dim)
+#                 - batch_ptr: Batch pointers for batched graphs
+#                 - edge_index: Edge indices tensor (M, 2)
+#                 - batch_shape: Shape of the batch
+        
+#         Returns:
+#             torch.Tensor: Concatenated logits for edge actions and node actions
+#         """
+#         node_feature = self.feature_embedding(states_tensor["node_feature"].squeeze().int())
+#         node_feature = F.relu(node_feature)  # Add non-linearity
+#         batch_ptr = states_tensor["batch_ptr"]
+#         edge_index = torch.where(
+#             states_tensor["edge_index"][..., None] == states_tensor["node_index"]
+#         )[2].reshape(states_tensor["edge_index"].shape).T
+        
+#         # Node-level actions through GCN
+#         action_type = node_feature
+#         for conv in self.action_type_convs:
+#             action_type = conv(action_type, edge_index)
+#             action_type = F.relu(action_type)
+
+#         # Average over feature dimension and sum over batch
+#         action_type = self._group_sum(
+#             torch.mean(action_type, dim=-1, keepdim=True),
+#             batch_ptr
+#         )
+        
+#         # Edge-level actions through GCN
+#         edge_embeddings = node_feature
+#         for conv in self.edge_index_convs:
+#             edge_embeddings = conv(edge_embeddings, edge_index)
+#             edge_embeddings = F.relu(edge_embeddings)  # Add non-linearity
+        
+#         # Reshape to proper batch dimensions
+#         edge_embeddings = edge_embeddings.reshape(
+#             -1,  # Flatten batch dimension
+#             self.n_nodes,
+#             self.edge_hidden_dim
+#         )
+        
+#         # Compute pairwise interactions between nodes
+#         edge_scores = torch.einsum('bnf,bmf->bnm', edge_embeddings, edge_embeddings)
+        
+#         # Reshape to final output format
+#         batch_size = len(batch_ptr) - 1
+#         edge_actions = edge_scores.reshape(
+#             batch_size,
+#             self.n_nodes**2
+#         )
+        
+#         # Concatenate edge and node action logits
+#         return torch.cat([edge_actions, action_type], dim=-1)
 
 class RingGraphBuilding(GraphBuilding):
     """Override the GraphBuilding class to create have discrete actions.
@@ -202,9 +298,7 @@ class RingGraphBuilding(GraphBuilding):
         class RingStates(GraphStates):
             s0 = TensorDict(
                 {
-                    "node_feature": F.one_hot(
-                        torch.arange(env.n_nodes), num_classes=env.n_nodes
-                    ).float(),
+                    "node_feature": torch.arange(env.n_nodes)[:, None],
                     "edge_feature": torch.ones((0, 1)),
                     "edge_index": torch.ones((0, 2), dtype=torch.long),
                 },
@@ -212,7 +306,7 @@ class RingGraphBuilding(GraphBuilding):
             )
             sf = TensorDict(
                 {
-                    "node_feature": torch.zeros((env.n_nodes, env.n_nodes)),
+                    "node_feature": -torch.ones(env.n_nodes)[:, None],
                     "edge_feature": torch.zeros((0, 1)),
                     "edge_index": torch.zeros((0, 2), dtype=torch.long),
                 },
@@ -414,7 +508,7 @@ def test():
 
 
 if __name__ == "__main__":
-    N_NODES = 2
+    N_NODES = 3
     N_ITERATIONS = 2048
     torch.random.manual_seed(7)
     env = RingGraphBuilding(n_nodes=N_NODES)
@@ -426,7 +520,7 @@ if __name__ == "__main__":
 
     gflownet = FMGFlowNet(logf_estimator, alpha=1)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=0.001)
-    batch_size = 8
+    batch_size = 256
 
     losses = []
 
