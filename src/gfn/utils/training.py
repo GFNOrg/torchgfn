@@ -109,7 +109,7 @@ def states_actions_tns_to_traj(
         )
     if len(actions_tns.shape) != 1:
         raise ValueError(f"actions_tns must be 1D, got batch_shape {actions_tns.shape}")
-    if states_tns.shape[0] != actions_tns.shape[0]:
+    if states_tns.shape[0] != actions_tns.shape[0] + 1:
         raise ValueError(
             f"states and actions must have same trajectory length, got "
             f"states: {states_tns.shape[0]}, actions: {actions_tns.shape[0]}"
@@ -126,12 +126,9 @@ def states_actions_tns_to_traj(
     states = stack_states(states)
     when_is_done = torch.tensor([len(states_tns) - 1])
 
-    # WARNING: This is sketchy. Create dummy values to avoid indexing / batch shape errors.
-    # WARNING: Assumes gfn.loss() uses recalculate_all_logprobs=True (thus only PFBasedGFlowNet are supported right now)!!
-    # WARNING: To reviewers: Can we bypass needing to define this?
-    log_probs = torch.full(size=(len(actions), 1), fill_value=0, dtype=torch.float)
+    log_probs = None
+    estimator_outputs = None
 
-    estimator_outputs = torch.zeros((len(actions), 1, env.n_actions))
     trajectory = Trajectories(
         env,
         states,
