@@ -85,11 +85,11 @@ def main(args):
             env,
             n=8,
             save_estimator_outputs=False,
-            save_logprobs=True,
+            save_logprobs=False,
         )
-        training_samples = gflownet.to_training_samples(trajectories)
+        training_samples = gflownet.to_training_samples(trajectories)  # pyright: ignore
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
+        loss = gflownet.loss(env, training_samples)  # pyright: ignore
         loss.backward()
         optimizer.step()
 

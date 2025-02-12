@@ -21,11 +21,16 @@ def get_terminating_state_dist_pmf(env: Env, states: States) -> torch.Tensor:
 
     Returns the empirical distribution of the terminating states as a tensor of shape (n_terminating_states,).
     """
-    states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
+    states_indices = (
+        env.get_terminating_states_indices(states)  # pyright: ignore
+        .cpu()
+        .numpy()
+        .tolist()
+    )
     counter = Counter(states_indices)
     counter_list = [
         counter[state_idx] if state_idx in counter else 0
-        for state_idx in range(env.n_terminating_states)
+        for state_idx in range(env.n_terminating_states)  # pyright: ignore
     ]
 
     return torch.tensor(counter_list, dtype=torch.float) / len(states_indices)
@@ -68,7 +73,9 @@ def validate(
     if isinstance(gflownet, TBGFlowNet):
         logZ = gflownet.logZ.item()
     if visited_terminating_states is None:
-        terminating_states = gflownet.sample_terminating_states(n_validation_samples)
+        terminating_states = gflownet.sample_terminating_states(
+            n_validation_samples
+        )  # pyright: ignore
     else:
         terminating_states = visited_terminating_states[-n_validation_samples:]
 

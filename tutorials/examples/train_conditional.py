@@ -18,20 +18,19 @@ from gfn.modules import (
     ConditionalScalarEstimator,
     ScalarEstimator,
 )
-from gfn.utils import NeuralNet
-from gfn.utils.common import set_seed
+from gfn.utils.modules import MLP
 
 DEFAULT_SEED = 4444
 
 
 def build_conditional_pf_pb(env):
     CONCAT_SIZE = 16
-    module_PF = NeuralNet(
+    module_PF = MLP(
         input_dim=env.preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
     )
-    module_PB = NeuralNet(
+    module_PB = MLP(
         input_dim=env.preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
@@ -39,18 +38,18 @@ def build_conditional_pf_pb(env):
     )
 
     # Encoder for the Conditioning information.
-    module_cond = NeuralNet(
+    module_cond = MLP(
         input_dim=1,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
     )
 
     # Modules post-concatenation.
-    module_final_PF = NeuralNet(
+    module_final_PF = MLP(
         input_dim=CONCAT_SIZE * 2,
         output_dim=env.n_actions,
     )
-    module_final_PB = NeuralNet(
+    module_final_PB = MLP(
         input_dim=CONCAT_SIZE * 2,
         output_dim=env.n_actions - 1,
         trunk=module_final_PF.trunk,
@@ -78,19 +77,19 @@ def build_conditional_pf_pb(env):
 
 def build_conditional_logF_scalar_estimator(env):
     CONCAT_SIZE = 16
-    module_state_logF = NeuralNet(
+    module_state_logF = MLP(
         input_dim=env.preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
         n_hidden_layers=1,
     )
-    module_conditioning_logF = NeuralNet(
+    module_conditioning_logF = MLP(
         input_dim=1,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
         n_hidden_layers=1,
     )
-    module_final_logF = NeuralNet(
+    module_final_logF = MLP(
         input_dim=CONCAT_SIZE * 2,
         output_dim=1,
         hidden_dim=256,
@@ -111,7 +110,7 @@ def build_conditional_logF_scalar_estimator(env):
 def build_tb_gflownet(env):
     pf_estimator, pb_estimator = build_conditional_pf_pb(env)
 
-    module_logZ = NeuralNet(
+    module_logZ = MLP(
         input_dim=1,
         output_dim=1,
         hidden_dim=16,
@@ -141,17 +140,17 @@ def build_db_mod_gflownet(env):
 
 def build_fm_gflownet(env):
     CONCAT_SIZE = 16
-    module_logF = NeuralNet(
+    module_logF = MLP(
         input_dim=env.preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
     )
-    module_cond = NeuralNet(
+    module_cond = MLP(
         input_dim=1,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
     )
-    module_final_logF = NeuralNet(
+    module_final_logF = MLP(
         input_dim=CONCAT_SIZE * 2,
         output_dim=env.n_actions,
     )
@@ -220,7 +219,8 @@ def train(env, gflownet, seed):
         )
         training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
+        # TODO: do not ignore the next ignore
+        loss = gflownet.loss(env, training_samples)  # pyright: ignore
         loss.backward()
         optimizer.step()
         pbar.set_postfix({"loss": loss.item()})
