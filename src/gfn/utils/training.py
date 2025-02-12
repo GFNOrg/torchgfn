@@ -9,7 +9,7 @@ from gfn.env import DiscreteEnv, Env
 from gfn.gflownet import GFlowNet, TBGFlowNet
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
-from gfn.states import States, stack_states
+from gfn.states import States
 
 
 def get_terminating_state_dist_pmf(env: Env, states: States) -> torch.Tensor:
@@ -91,6 +91,7 @@ def states_actions_tns_to_traj(
     states_tns: torch.Tensor,
     actions_tns: torch.Tensor,
     env: DiscreteEnv,
+    conditioning: torch.Tensor | None = None,
 ) -> Trajectories:
     """
     This utility function helps integrate external data (e.g. expert demonstrations)
@@ -101,6 +102,7 @@ def states_actions_tns_to_traj(
         states_tns: Tensor of shape [traj_len, *state_shape] containing states for a single trajectory
         actions_tns: Tensor of shape [traj_len] containing discrete action indices
         env: The discrete environment that defines the state/action spaces
+        conditioning: Tensor of shape [traj_len, *conditioning_shape] containing states for a single trajectory
 
     Returns:
         Trajectories: A Trajectories object containing the converted states and actions
@@ -130,7 +132,7 @@ def states_actions_tns_to_traj(
     # stack is a class method, so actions[0] is just to access a class instance and is not particularly relevant
     actions = actions[0].stack(actions)
     log_rewards = env.log_reward(states[-2])
-    states = stack_states(states)
+    states = states[0].stack_states(states)
     when_is_done = torch.tensor([len(states_tns) - 1])
 
     log_probs = None
@@ -139,6 +141,7 @@ def states_actions_tns_to_traj(
     trajectory = Trajectories(
         env,
         states,
+        conditioning,
         actions,
         log_rewards=log_rewards,
         when_is_done=when_is_done,
@@ -177,8 +180,10 @@ def warm_up(
         optimizer.zero_grad()
         if isinstance(gflownet, PFBasedGFlowNet):
             loss = gflownet.loss(
-                env, training_trajs, recalculate_all_logprobs=recalculate_all_logprobs
-            )
+                env,
+                training_trajs,
+                recalculate_all_logprobs=recalculate_all_logprobs,  # pyright: ignore
+            )  # pyright: ignore
         else:
             loss = gflownet.loss(env, training_trajs)
 
