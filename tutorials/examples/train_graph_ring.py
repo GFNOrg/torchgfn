@@ -14,6 +14,7 @@ from torch_geometric.nn import GINEConv, GINConv, GCNConv
 
 from gfn.actions import Actions, GraphActions, GraphActionType
 from gfn.gflownet.flow_matching import FMGFlowNet
+from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym import GraphBuilding
 from gfn.modules import DiscretePolicyEstimator
 from gfn.preprocessors import Preprocessor
@@ -81,45 +82,6 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
 
     return out.view(*states.batch_shape)
 
-
-# class RingPolicyEstimator(nn.Module):
-#     """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
-
-#     Args:
-#         n_nodes: The number of nodes in the graph.
-#     """
-
-#     def __init__(self, n_nodes: int):
-#         super().__init__()
-#         self.n_nodes = n_nodes
-#         self.params = nn.Parameter(
-#             nn.init.xavier_normal_(
-#                 torch.empty(self.n_nodes + 1, self.n_nodes * self.n_nodes + 1)
-#             )
-#         )
-#         with torch.no_grad():
-#             self.params[-1] = torch.zeros(self.n_nodes * self.n_nodes + 1)
-#             self.params[-1][-1] = 1.0
-
-#     def forward(self, states_tensor: TensorDict) -> torch.Tensor:
-#         batch_size = states_tensor["batch_shape"][0]
-#         if batch_size == 0:
-#             return torch.zeros(0, self.n_nodes * self.n_nodes + 1, requires_grad=True)
-
-#         first_idx = states_tensor["node_index"][states_tensor["batch_ptr"][:-1]]
-#         last_idx = states_tensor["node_index"][states_tensor["batch_ptr"][1:] - 1]
-#         n_edges = (
-#             torch.logical_and(
-#                 states_tensor["edge_index"] >= first_idx[:, None, None],
-#                 states_tensor["edge_index"] <= last_idx[:, None, None],
-#             )
-#             .all(dim=-1)
-#             .sum(dim=-1)
-#         )
-
-#         n_edges = torch.clamp(n_edges, 0, self.n_nodes)
-#         return self.params[n_edges]
-
 class RingPolicyEstimator(nn.Module):
     """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
 
@@ -127,7 +89,7 @@ class RingPolicyEstimator(nn.Module):
         n_nodes: The number of nodes in the graph.
     """
 
-    def __init__(self, n_nodes: int):
+    def __init__(self, n_nodes: int, is_backward: bool = False):
         super().__init__()
         self.n_nodes = n_nodes
         embedding_dim = 16
@@ -136,8 +98,9 @@ class RingPolicyEstimator(nn.Module):
         self.edge_index_conv = GINConv(nn.Linear(embedding_dim, embedding_dim))
         self.n_nodes = n_nodes
         self.edge_hidden_dim = 16
+        self.is_backward = is_backward
 
-    def _group_sum(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
+    def _group_mean(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
         cumsum = torch.zeros(
             (len(tensor) + 1, *tensor.shape[1:]),
             dtype=tensor.dtype,
@@ -146,7 +109,8 @@ class RingPolicyEstimator(nn.Module):
         cumsum[1:] = torch.cumsum(tensor, dim=0)
 
         # Subtract the end val from each batch idx fom the start val of each batch idx. 
-        return cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]
+        size = batch_ptr[1:] - batch_ptr[:-1]
+        return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
 
     def forward(self, states_tensor: TensorDict) -> torch.Tensor:
         node_feature, batch_ptr = states_tensor["node_feature"], states_tensor["batch_ptr"]
@@ -158,7 +122,7 @@ class RingPolicyEstimator(nn.Module):
         #edge_attrs = states_tensor["edge_feature"]
 
         action_type = self.action_type_conv(node_feature, edge_index.T)
-        action_type = self._group_sum(torch.mean(action_type, dim=-1, keepdim=True), batch_ptr)
+        action_type = self._group_mean(torch.mean(action_type, dim=-1, keepdim=True), batch_ptr)
 
         edge_index = self.edge_index_conv(node_feature, edge_index.T)
         edge_index = edge_index.reshape(
@@ -169,100 +133,11 @@ class RingPolicyEstimator(nn.Module):
         edge_actions = edge_index.reshape(
             *states_tensor["batch_shape"], self.n_nodes * self.n_nodes
         )
-        return torch.cat([edge_actions, action_type], dim=-1)
+        if self.is_backward:
+            return edge_actions
+        else:
+            return torch.cat([edge_actions, action_type], dim=-1)
 
-
-# class RingPolicyEstimator(nn.Module):
-#     """Module that implements a GCN-based policy estimator for graph-structured data.
-#     Outputs action logits for both node-level and edge-level actions.
-    
-#     Args:
-#         node_feature_dim: Dimension of input node features
-#         n_nodes: Number of nodes in the graph
-#         hidden_dim: Hidden dimension for edge features
-#     """
-#     def __init__(self, node_feature_dim: int, n_nodes: int, hidden_dim: int = 16):
-#         super().__init__()
-#         self.n_nodes = n_nodes
-#         self.edge_hidden_dim = hidden_dim
-        
-#         self.feature_embedding = nn.Embedding(n_nodes, node_feature_dim)
-#         self.action_type_convs = nn.ModuleList([
-#             GCNConv(node_feature_dim, hidden_dim),
-#             GCNConv(hidden_dim, hidden_dim),
-#         ])
-#         self.edge_index_convs = nn.ModuleList([
-#             GCNConv(node_feature_dim, hidden_dim),
-#             GCNConv(hidden_dim, hidden_dim),
-#         ])
-        
-#     def _group_sum(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
-#         cumsum = torch.zeros(
-#             (len(tensor) + 1, *tensor.shape[1:]),
-#             dtype=tensor.dtype,
-#             device=tensor.device,
-#         )
-#         cumsum[1:] = torch.cumsum(tensor, dim=0)
-#         return cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]
-
-#     def forward(self, states_tensor: TensorDict) -> torch.Tensor:
-#         """
-#         Forward pass of the GCN policy estimator.
-        
-#         Args:
-#             states_tensor: TensorDict containing:
-#                 - node_feature: Node features tensor (N, feature_dim)
-#                 - batch_ptr: Batch pointers for batched graphs
-#                 - edge_index: Edge indices tensor (M, 2)
-#                 - batch_shape: Shape of the batch
-        
-#         Returns:
-#             torch.Tensor: Concatenated logits for edge actions and node actions
-#         """
-#         node_feature = self.feature_embedding(states_tensor["node_feature"].squeeze().int())
-#         node_feature = F.relu(node_feature)  # Add non-linearity
-#         batch_ptr = states_tensor["batch_ptr"]
-#         edge_index = torch.where(
-#             states_tensor["edge_index"][..., None] == states_tensor["node_index"]
-#         )[2].reshape(states_tensor["edge_index"].shape).T
-        
-#         # Node-level actions through GCN
-#         action_type = node_feature
-#         for conv in self.action_type_convs:
-#             action_type = conv(action_type, edge_index)
-#             action_type = F.relu(action_type)
-
-#         # Average over feature dimension and sum over batch
-#         action_type = self._group_sum(
-#             torch.mean(action_type, dim=-1, keepdim=True),
-#             batch_ptr
-#         )
-        
-#         # Edge-level actions through GCN
-#         edge_embeddings = node_feature
-#         for conv in self.edge_index_convs:
-#             edge_embeddings = conv(edge_embeddings, edge_index)
-#             edge_embeddings = F.relu(edge_embeddings)  # Add non-linearity
-        
-#         # Reshape to proper batch dimensions
-#         edge_embeddings = edge_embeddings.reshape(
-#             -1,  # Flatten batch dimension
-#             self.n_nodes,
-#             self.edge_hidden_dim
-#         )
-        
-#         # Compute pairwise interactions between nodes
-#         edge_scores = torch.einsum('bnf,bmf->bnm', edge_embeddings, edge_embeddings)
-        
-#         # Reshape to final output format
-#         batch_size = len(batch_ptr) - 1
-#         edge_actions = edge_scores.reshape(
-#             batch_size,
-#             self.n_nodes**2
-#         )
-        
-#         # Concatenate edge and node action logits
-#         return torch.cat([edge_actions, action_type], dim=-1)
 
 class RingGraphBuilding(GraphBuilding):
     """Override the GraphBuilding class to create have discrete actions.
@@ -346,7 +221,7 @@ class RingGraphBuilding(GraphBuilding):
             @property
             def backward_masks(self):
                 backward_masks = torch.zeros(
-                    len(self), self.n_actions, dtype=torch.bool
+                    len(self), self.n_actions - 1, dtype=torch.bool
                 )
                 for i in range(len(self)):
                     existing_edges = (
@@ -358,7 +233,7 @@ class RingGraphBuilding(GraphBuilding):
                         existing_edges[:, 0] * self.n_nodes + existing_edges[:, 1],
                     ] = True
 
-                return backward_masks.view(*self.batch_shape, self.n_actions)
+                return backward_masks.view(*self.batch_shape, self.n_actions - 1)
 
             @backward_masks.setter
             def backward_masks(self, value: torch.Tensor):
@@ -509,18 +384,17 @@ def test():
 
 if __name__ == "__main__":
     N_NODES = 3
-    N_ITERATIONS = 2048
+    N_ITERATIONS = 4096
     torch.random.manual_seed(7)
     env = RingGraphBuilding(n_nodes=N_NODES)
-    module = RingPolicyEstimator(env.n_nodes)
+    module_pf = RingPolicyEstimator(env.n_nodes)
+    module_pb = RingPolicyEstimator(env.n_nodes, is_backward=True)
+    pf = DiscretePolicyEstimator(module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor())
+    pb = DiscretePolicyEstimator(module=module_pb, n_actions=env.n_actions, preprocessor=GraphPreprocessor(), is_backward=True)
 
-    logf_estimator = DiscretePolicyEstimator(
-        module=module, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
-    )
-
-    gflownet = FMGFlowNet(logf_estimator, alpha=1)
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=0.001)
-    batch_size = 256
+    gflownet = TBGFlowNet(pf, pb)
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=0.005)
+    batch_size = 128
 
     losses = []
 
