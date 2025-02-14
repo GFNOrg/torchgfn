@@ -1,7 +1,7 @@
 from typing import Literal, Tuple
 
-from gfn.utils.prob_calculations import get_trajectory_pfs
 import pytest
+import torch
 
 from gfn.containers import Trajectories
 from gfn.containers.replay_buffer import ReplayBuffer
@@ -10,6 +10,8 @@ from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, 
 from gfn.modules import DiscretePolicyEstimator, GFNModule
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.modules import MLP
+from gfn.utils.prob_calculations import get_trajectory_pfs
+from gfn.utils.training import states_actions_tns_to_traj
 
 
 def trajectory_sampling_with_return(
@@ -344,3 +346,13 @@ def test_replay_buffer(
         replay_buffer.add(training_objects)
     except Exception as e:
         raise ValueError(f"Error while testing {env_name}") from e
+
+
+def test_create_and_add_trajectory_to_buffer():
+    env = HyperGrid(2, 4)
+    states = torch.tensor([[0, 0], [0, 1], [0, 2], [-1, -1]])
+    actions = torch.tensor([1, 1, 2])
+    replay_buffer = ReplayBuffer(env, "trajectories")
+    trajs = states_actions_tns_to_traj(states, actions, env)
+
+    replay_buffer.add(trajs)
