@@ -9,11 +9,9 @@ import matplotlib.pyplot as plt
 import torch
 from tensordict import TensorDict
 from torch import nn
-import torch.nn.functional as F
-from torch_geometric.nn import GINEConv, GINConv, GCNConv
+from torch_geometric.nn import GINConv
 
 from gfn.actions import Actions, GraphActions, GraphActionType
-from gfn.gflownet.flow_matching import FMGFlowNet
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym import GraphBuilding
 from gfn.modules import DiscretePolicyEstimator
@@ -78,9 +76,18 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
 
         # Check if we visited all vertices and the last vertex connects back to start.
         if len(visited) == n_nodes and adj_matrix[current][0] == 1:
-            out[i] = 1.0
+            out[i] = 100.0  # 1.0
 
     return out.view(*states.batch_shape)
+
+
+def create_mlp(in_channels, hidden_channels, out_channels):
+    return nn.Sequential(
+        nn.Linear(in_channels, hidden_channels),
+        nn.ReLU(),
+        nn.Linear(hidden_channels, out_channels),
+    )
+
 
 class RingPolicyEstimator(nn.Module):
     """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
@@ -91,16 +98,20 @@ class RingPolicyEstimator(nn.Module):
 
     def __init__(self, n_nodes: int, is_backward: bool = False):
         super().__init__()
-        self.n_nodes = n_nodes
-        embedding_dim = 16
-        self.embedding = nn.Embedding(n_nodes, embedding_dim)
-        self.action_type_conv = GINConv(nn.Linear(embedding_dim, embedding_dim))
-        self.edge_index_conv = GINConv(nn.Linear(embedding_dim, embedding_dim))
-        self.n_nodes = n_nodes
-        self.edge_hidden_dim = 16
+        embedding_dim = 32
+        self.edge_hidden_dim = 32
         self.is_backward = is_backward
+        self.n_nodes = n_nodes
 
-    def _group_mean(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
+        self.embedding = nn.Embedding(n_nodes, embedding_dim)
+        mlp_action = create_mlp(embedding_dim, embedding_dim, embedding_dim)
+        self.action_type_conv = GINConv(mlp_action)
+        mlp_edge = create_mlp(embedding_dim, embedding_dim, embedding_dim)
+        self.edge_index_conv = GINConv(mlp_edge)
+
+    def _group_mean(
+        self, tensor: torch.Tensor, batch_ptr: torch.Tensor
+    ) -> torch.Tensor:
         cumsum = torch.zeros(
             (len(tensor) + 1, *tensor.shape[1:]),
             dtype=tensor.dtype,
@@ -108,21 +119,28 @@ class RingPolicyEstimator(nn.Module):
         )
         cumsum[1:] = torch.cumsum(tensor, dim=0)
 
-        # Subtract the end val from each batch idx fom the start val of each batch idx. 
+        # Subtract the end val from each batch idx fom the start val of each batch idx.
         size = batch_ptr[1:] - batch_ptr[:-1]
         return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
 
     def forward(self, states_tensor: TensorDict) -> torch.Tensor:
-        node_feature, batch_ptr = states_tensor["node_feature"], states_tensor["batch_ptr"]
+        node_feature, batch_ptr = (
+            states_tensor["node_feature"],
+            states_tensor["batch_ptr"],
+        )
         node_feature = self.embedding(node_feature.squeeze().int())
 
         edge_index = torch.where(
             states_tensor["edge_index"][..., None] == states_tensor["node_index"]
-        )[2].reshape(states_tensor["edge_index"].shape)   # (M, 2)
-        #edge_attrs = states_tensor["edge_feature"]
+        )[2].reshape(
+            states_tensor["edge_index"].shape
+        )  # (M, 2)
+        # edge_attrs = states_tensor["edge_feature"]
 
         action_type = self.action_type_conv(node_feature, edge_index.T)
-        action_type = self._group_mean(torch.mean(action_type, dim=-1, keepdim=True), batch_ptr)
+        action_type = self._group_mean(
+            torch.mean(action_type, dim=-1, keepdim=True), batch_ptr
+        )
 
         edge_index = self.edge_index_conv(node_feature, edge_index.T)
         edge_index = edge_index.reshape(
@@ -385,23 +403,31 @@ def test():
 if __name__ == "__main__":
     N_NODES = 3
     N_ITERATIONS = 4096
+    LR = 0.005
+    BATCH_SIZE = 128
+
     torch.random.manual_seed(7)
     env = RingGraphBuilding(n_nodes=N_NODES)
     module_pf = RingPolicyEstimator(env.n_nodes)
     module_pb = RingPolicyEstimator(env.n_nodes, is_backward=True)
-    pf = DiscretePolicyEstimator(module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor())
-    pb = DiscretePolicyEstimator(module=module_pb, n_actions=env.n_actions, preprocessor=GraphPreprocessor(), is_backward=True)
-
+    pf = DiscretePolicyEstimator(
+        module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
+    )
+    pb = DiscretePolicyEstimator(
+        module=module_pb,
+        n_actions=env.n_actions,
+        preprocessor=GraphPreprocessor(),
+        is_backward=True,
+    )
     gflownet = TBGFlowNet(pf, pb)
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=0.005)
-    batch_size = 128
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=LR)
 
     losses = []
 
     t1 = time.time()
     for iteration in range(N_ITERATIONS):
         trajectories = gflownet.sample_trajectories(
-            env, n=batch_size  # pyright: ignore
+            env, n=BATCH_SIZE  # pyright: ignore
         )
         last_states = trajectories.last_states
         assert isinstance(last_states, GraphStates)
