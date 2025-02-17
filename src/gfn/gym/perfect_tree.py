@@ -4,7 +4,7 @@ from gfn.gym.helpers.preprocessors import OneHotPreprocessor
 import torch
 
 
-class PerfectTree(DiscreteEnv):
+class PerfectBinaryTree(DiscreteEnv):
     r"""
     Perfect Tree Environment where there is a bijection between trajectories and terminating states.
     e.g.:
