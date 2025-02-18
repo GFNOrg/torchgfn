@@ -23,7 +23,7 @@ from gfn.states import GraphStates
 def state_evaluator(states: GraphStates) -> torch.Tensor:
     """Compute the reward of a graph.
 
-    Specifically, the reward is 1 if the graph is a ring, 1e-6 otherwise.
+    Specifically, the reward is 1 if the graph is an undirected ring, 1e-6 otherwise.
 
     Args:
         states: A batch of graphs.
@@ -31,7 +31,7 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
     Returns:
         A tensor of rewards.
     """
-    eps = 1e-6
+    eps = 1e-4
     if states.tensor["edge_index"].shape[0] == 0:
         return torch.full(states.batch_shape, eps)
 
@@ -48,36 +48,44 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
         )
 
         n_nodes = nodes_index_range.shape[0]
-        adj_matrix = torch.zeros(n_nodes, n_nodes)
-        adj_matrix[masked_edge_index[:, 0], masked_edge_index[:, 1]] = 1
-
-        if not torch.all(adj_matrix.sum(axis=1) == 1):
+        if n_nodes == 0:
             continue
 
-        visited = []
-        current = 0
-        while current not in visited:
-            visited.append(current)
+        # Construct a symmetric adjacency matrix for the undirected graph.
+        adj_matrix = torch.zeros(n_nodes, n_nodes)
+        if masked_edge_index.shape[0] > 0:
+            adj_matrix[masked_edge_index[:, 0], masked_edge_index[:, 1]] = 1
+            adj_matrix[masked_edge_index[:, 1], masked_edge_index[:, 0]] = 1
 
-            def set_diff(tensor1, tensor2):
-                mask = ~torch.isin(tensor1, tensor2)
-                return tensor1[mask]
+        # In an undirected ring, every vertex should have degree 2.
+        if not torch.all(adj_matrix.sum(dim=1) == 2):
+            continue
 
-            # Find an unvisited neighbor
-            neighbors = torch.where(adj_matrix[current] == 1)[0]
-            valid_neighbours = set_diff(neighbors, torch.tensor(visited))
+        # Traverse the cycle starting from vertex 0.
+        start_vertex = 0
+        visited = [start_vertex]
+        neighbors = torch.where(adj_matrix[start_vertex] == 1)[0]
+        if neighbors.numel() == 0:
+            continue
+        # Arbitrarily choose one neighbor to begin the traversal.
+        current = neighbors[0].item()
+        prev = start_vertex
 
-            # Visit the fir
-            if len(valid_neighbours) == 1:
-                current = valid_neighbours[0]
-            elif len(valid_neighbours) == 0:
+        while True:
+            if current == start_vertex:
                 break
-            else:
-                break  # TODO: This actually should never happen, should be caught on line 45.
+            visited.append(current)
+            current_neighbors = torch.where(adj_matrix[current] == 1)[0]
+            # Exclude the neighbor we just came from.
+            current_neighbors_list = [n.item() for n in current_neighbors]
+            possible = [n for n in current_neighbors_list if n != prev]
+            if len(possible) != 1:
+                break
+            next_node = possible[0]
+            prev, current = current, next_node
 
-        # Check if we visited all vertices and the last vertex connects back to start.
-        if len(visited) == n_nodes and adj_matrix[current][0] == 1:
-            out[i] = 100.0  # 1.0
+        if current == start_vertex and len(visited) == n_nodes:
+            out[i] = 100.0
 
     return out.view(*states.batch_shape)
 
@@ -85,34 +93,34 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
 def create_mlp(in_channels, hidden_channels, out_channels, num_layers=1):
     """
     Create a Multi-Layer Perceptron with configurable number of layers.
-    
+
     Args:
         in_channels (int): Number of input features
         hidden_channels (int): Number of hidden features per layer
         out_channels (int): Number of output features
         num_layers (int): Number of hidden layers (default: 2)
-    
+
     Returns:
         nn.Sequential: MLP model
     """
     layers = []
-    
+
     # Input layer
     layers.append(nn.Linear(in_channels, hidden_channels))
     layers.append(nn.LayerNorm(hidden_channels))
     layers.append(nn.ReLU())
-    
+
     # Hidden layers
     for _ in range(num_layers - 1):
         layers.append(nn.Linear(hidden_channels, hidden_channels))
         layers.append(nn.LayerNorm(hidden_channels))
         layers.append(nn.ReLU())
-    
+
     # Output layer
     layers.append(nn.Linear(hidden_channels, out_channels))
-    
+
     return nn.Sequential(*layers)
- 
+
 
 class RingPolicyEstimator(nn.Module):
     """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
@@ -123,8 +131,9 @@ class RingPolicyEstimator(nn.Module):
 
     def __init__(self, n_nodes: int, num_conv_layers: int = 1, is_backward: bool = False):
         super().__init__()
-        embedding_dim = 64
         self.edge_hidden_dim = 64
+        self.embedding_dim = 32
+
         self.is_backward = is_backward
         self.n_nodes = n_nodes
         self.num_conv_layers = num_conv_layers
@@ -132,19 +141,19 @@ class RingPolicyEstimator(nn.Module):
 
         # Node embedding layer
         self.embedding = nn.Embedding(n_nodes, embedding_dim)
-        
+
         # Multiple action type convolution layers
         self.action_type_convs = nn.ModuleList()
         for _ in range(num_conv_layers):
             mlp = create_mlp(embedding_dim, embedding_dim, embedding_dim)
             self.action_type_convs.append(GINConv(mlp))
-            
+
         # Multiple edge index convolution layers
         self.edge_index_convs = nn.ModuleList()
         for _ in range(num_conv_layers):
             mlp = create_mlp(embedding_dim, embedding_dim, embedding_dim)
             self.edge_index_convs.append(GINConv(mlp))
-        
+
         # Layer normalization for stability
         self.action_norm = nn.LayerNorm(embedding_dim)
         self.edge_norm = nn.LayerNorm(embedding_dim)
@@ -169,6 +178,7 @@ class RingPolicyEstimator(nn.Module):
             states_tensor["batch_ptr"],
         )
         x = self.embedding(node_feature.squeeze().int())
+        batch_size = int(torch.prod(states_tensor["batch_shape"]))
 
         edge_index = torch.where(
             states_tensor["edge_index"][..., None] == states_tensor["node_index"]
@@ -176,7 +186,7 @@ class RingPolicyEstimator(nn.Module):
             states_tensor["edge_index"].shape
         )  # (M, 2)
         # edge_attrs = states_tensor["edge_feature"]
-        action_type = x 
+        action_type = x
 
         # Multiple action type convolutions with residual connections.
         for conv in self.action_type_convs:
@@ -199,11 +209,18 @@ class RingPolicyEstimator(nn.Module):
 
         edge_feature = edge_feature.reshape(
             *states_tensor["batch_shape"], self.n_nodes, self.edge_hidden_dim
+
+        edge_index = self.edge_index_conv(node_feature, edge_index.T)
+        edge_index = edge_index.reshape(
+            batch_size, self.n_nodes, self.embedding_dim
         )
         edge_index = torch.einsum("bnf,bmf->bnm", edge_feature, edge_feature)
 
-        edge_actions = edge_index.reshape(
-            *states_tensor["batch_shape"], self.n_nodes * self.n_nodes
+        i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+        batch_arange = torch.arange(batch_size)
+        edge_actions = edge_index[batch_arange[:, None, None], i0, i1]
+        edge_actions = edge_actions.reshape(
+            *states_tensor["batch_shape"], self.n_nodes * (self.n_nodes - 1) // 2
         )
 
         if self.is_backward:
@@ -226,7 +243,7 @@ class RingGraphBuilding(GraphBuilding):
 
     def __init__(self, n_nodes: int):
         self.n_nodes = n_nodes
-        self.n_actions = 1 + n_nodes * n_nodes
+        self.n_actions = 1 + n_nodes * (n_nodes - 1) // 2
         super().__init__(feature_dim=n_nodes, state_evaluator=state_evaluator)
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
 
@@ -274,9 +291,8 @@ class RingGraphBuilding(GraphBuilding):
             def forward_masks(self):
                 # Allow all actions.
                 forward_masks = torch.ones(len(self), self.n_actions, dtype=torch.bool)
-               
                 forward_masks[:, :: self.n_nodes + 1] = False  # Remove self-loops.
-                
+
                 # Remove existing edges.s
                 for i in range(len(self)):
                     existing_edges = (
@@ -284,10 +300,9 @@ class RingGraphBuilding(GraphBuilding):
                         - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
                     )
                     assert torch.all(existing_edges >= 0)  # TODO: convert to test.
-                    forward_masks[
-                        i,
-                        existing_edges[:, 0] * self.n_nodes + existing_edges[:, 1],
-                    ] = False
+                    edge = existing_edges[:, 0] * (2 * self.n_nodes - existing_edges[:, 0] - 1) // 2
+                    edge += (existing_edges[:, 1] - existing_edges[:, 0] - 1)
+                    forward_masks[i, edge] = False
 
                 return forward_masks.view(*self.batch_shape, self.n_actions)
 
@@ -305,10 +320,9 @@ class RingGraphBuilding(GraphBuilding):
                         self[i].tensor["edge_index"]
                         - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
                     )
-                    backward_masks[
-                        i,
-                        existing_edges[:, 0] * self.n_nodes + existing_edges[:, 1],
-                    ] = True
+                    edge = existing_edges[:, 0] * (2 * self.n_nodes - existing_edges[:, 0] - 1) // 2
+                    edge += (existing_edges[:, 1] - existing_edges[:, 0] - 1)
+                    backward_masks[i, edge,] = True
 
                 return backward_masks.view(*self.batch_shape, self.n_actions - 1)
 
@@ -331,32 +345,30 @@ class RingGraphBuilding(GraphBuilding):
         return new_states
 
     def convert_actions(self, states: GraphStates, actions: Actions) -> GraphActions:
-        action_tensor = actions.tensor.squeeze(-1)
+        action_tensor = actions.tensor.squeeze(-1).clone()
         action_type = torch.where(
             action_tensor == self.n_actions - 1,
             GraphActionType.EXIT,
             GraphActionType.ADD_EDGE,
         )
+        action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
 
-        # TODO: refactor.
-        # action = [exit, src_node_idx, dest_node_idx] <- 2n + 1
-        # action = [node] <- n^2 + 1
+        ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+        action_tensor[action_tensor >= (self.n_actions - 1)] = 0
+        ei0, ei1 = ei0[action_tensor], ei1[action_tensor]
 
-        edge_index_i0 = action_tensor // (self.n_nodes)  # column
-        edge_index_i1 = action_tensor % (self.n_nodes)  # row
-
-        edge_index = torch.stack([edge_index_i0, edge_index_i1], dim=-1)
         offset = states.tensor["node_index"][states.tensor["batch_ptr"][:-1]]
-        return GraphActions(
+        out = GraphActions(
             TensorDict(
                 {
                     "action_type": action_type,
                     "features": torch.ones(action_tensor.shape + (1,)),
-                    "edge_index": edge_index + offset[:, None],
+                    "edge_index": torch.stack([ei0, ei1], dim=-1) + offset[:, None],
                 },
                 batch_size=action_tensor.shape,
             )
         )
+        return out
 
 
 class GraphPreprocessor(Preprocessor):
@@ -409,22 +421,11 @@ def render_states(states: GraphStates):
             dx, dy = dx / length, dy / length
 
             circle_radius = 0.5
-            head_thickness = 0.2
-            start_x += dx * (circle_radius)
-            start_y += dy * (circle_radius)
-            end_x -= dx * (circle_radius + head_thickness)
-            end_y -= dy * (circle_radius + head_thickness)
-
-            current_ax.arrow(
-                start_x,
-                start_y,
-                end_x - start_x,
-                end_y - start_y,
-                head_width=head_thickness,
-                head_length=head_thickness,
-                fc="black",
-                ec="black",
-            )
+            start_x += dx * circle_radius
+            start_y += dy * circle_radius
+            end_x -= dx * circle_radius
+            end_y -= dy * circle_radius
+            current_ax.plot([start_x, end_x], [start_y, end_y], color="black")
 
         current_ax.set_title(f"State {i}, $r={rewards[i]:.2f}$")
         current_ax.set_xlim(-(radius + 1), radius + 1)
@@ -435,33 +436,9 @@ def render_states(states: GraphStates):
 
     plt.show()
 
-
-def test():
-    module = RingPolicyEstimator(4)
-
-    states = GraphStates(
-        TensorDict(
-            {
-                "node_feature": torch.eye(4),
-                "edge_feature": torch.zeros((0, 1)),
-                "edge_index": torch.zeros((0, 2), dtype=torch.long),
-                "node_index": torch.arange(4),
-                "batch_ptr": torch.tensor([0, 4]),
-                "batch_shape": torch.tensor([1]),
-            }
-        )
-    )
-
-    out = module(states.tensor)
-    loss = torch.sum(out)
-    loss.backward()
-    print("Params:", [p for p in module.params])
-    print("Gradients:", [p.grad for p in module.params])
-
-
 if __name__ == "__main__":
-    N_NODES = 3
-    N_ITERATIONS = 4096
+    N_NODES = 4
+    N_ITERATIONS = 128
     LR = 0.005
     BATCH_SIZE = 128
 
