@@ -10,6 +10,7 @@ import torch
 from tensordict import TensorDict
 from torch import nn
 from torch_geometric.nn import GINConv
+import torch.nn.functional as F
 
 from gfn.actions import Actions, GraphActions, GraphActionType
 from gfn.gflownet.trajectory_balance import TBGFlowNet
@@ -81,13 +82,37 @@ def state_evaluator(states: GraphStates) -> torch.Tensor:
     return out.view(*states.batch_shape)
 
 
-def create_mlp(in_channels, hidden_channels, out_channels):
-    return nn.Sequential(
-        nn.Linear(in_channels, hidden_channels),
-        nn.ReLU(),
-        nn.Linear(hidden_channels, out_channels),
-    )
-
+def create_mlp(in_channels, hidden_channels, out_channels, num_layers=1):
+    """
+    Create a Multi-Layer Perceptron with configurable number of layers.
+    
+    Args:
+        in_channels (int): Number of input features
+        hidden_channels (int): Number of hidden features per layer
+        out_channels (int): Number of output features
+        num_layers (int): Number of hidden layers (default: 2)
+    
+    Returns:
+        nn.Sequential: MLP model
+    """
+    layers = []
+    
+    # Input layer
+    layers.append(nn.Linear(in_channels, hidden_channels))
+    layers.append(nn.LayerNorm(hidden_channels))
+    layers.append(nn.ReLU())
+    
+    # Hidden layers
+    for _ in range(num_layers - 1):
+        layers.append(nn.Linear(hidden_channels, hidden_channels))
+        layers.append(nn.LayerNorm(hidden_channels))
+        layers.append(nn.ReLU())
+    
+    # Output layer
+    layers.append(nn.Linear(hidden_channels, out_channels))
+    
+    return nn.Sequential(*layers)
+ 
 
 class RingPolicyEstimator(nn.Module):
     """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
@@ -96,18 +121,33 @@ class RingPolicyEstimator(nn.Module):
         n_nodes: The number of nodes in the graph.
     """
 
-    def __init__(self, n_nodes: int, is_backward: bool = False):
+    def __init__(self, n_nodes: int, num_conv_layers: int = 1, is_backward: bool = False):
         super().__init__()
-        embedding_dim = 32
-        self.edge_hidden_dim = 32
+        embedding_dim = 64
+        self.edge_hidden_dim = 64
         self.is_backward = is_backward
         self.n_nodes = n_nodes
+        self.num_conv_layers = num_conv_layers
 
+
+        # Node embedding layer
         self.embedding = nn.Embedding(n_nodes, embedding_dim)
-        mlp_action = create_mlp(embedding_dim, embedding_dim, embedding_dim)
-        self.action_type_conv = GINConv(mlp_action)
-        mlp_edge = create_mlp(embedding_dim, embedding_dim, embedding_dim)
-        self.edge_index_conv = GINConv(mlp_edge)
+        
+        # Multiple action type convolution layers
+        self.action_type_convs = nn.ModuleList()
+        for _ in range(num_conv_layers):
+            mlp = create_mlp(embedding_dim, embedding_dim, embedding_dim)
+            self.action_type_convs.append(GINConv(mlp))
+            
+        # Multiple edge index convolution layers
+        self.edge_index_convs = nn.ModuleList()
+        for _ in range(num_conv_layers):
+            mlp = create_mlp(embedding_dim, embedding_dim, embedding_dim)
+            self.edge_index_convs.append(GINConv(mlp))
+        
+        # Layer normalization for stability
+        self.action_norm = nn.LayerNorm(embedding_dim)
+        self.edge_norm = nn.LayerNorm(embedding_dim)
 
     def _group_mean(
         self, tensor: torch.Tensor, batch_ptr: torch.Tensor
@@ -128,7 +168,7 @@ class RingPolicyEstimator(nn.Module):
             states_tensor["node_feature"],
             states_tensor["batch_ptr"],
         )
-        node_feature = self.embedding(node_feature.squeeze().int())
+        x = self.embedding(node_feature.squeeze().int())
 
         edge_index = torch.where(
             states_tensor["edge_index"][..., None] == states_tensor["node_index"]
@@ -136,21 +176,36 @@ class RingPolicyEstimator(nn.Module):
             states_tensor["edge_index"].shape
         )  # (M, 2)
         # edge_attrs = states_tensor["edge_feature"]
+        action_type = x 
 
-        action_type = self.action_type_conv(node_feature, edge_index.T)
+        # Multiple action type convolutions with residual connections.
+        for conv in self.action_type_convs:
+            action_type_new = conv(action_type, edge_index.T)
+            action_type = action_type + action_type_new  # Residual connection
+            action_type = self.action_norm(action_type)
+            action_type = F.relu(action_type)
+
         action_type = self._group_mean(
             torch.mean(action_type, dim=-1, keepdim=True), batch_ptr
         )
 
-        edge_index = self.edge_index_conv(node_feature, edge_index.T)
-        edge_index = edge_index.reshape(
+        # Multiple edge index convolutions with residual connections
+        edge_feature = x
+        for conv in self.edge_index_convs:
+            edge_feature_new = conv(edge_feature, edge_index.T)
+            edge_feature = edge_feature + edge_feature_new  # Residual connection
+            edge_feature = self.edge_norm(edge_feature)
+            edge_feature = F.relu(edge_feature)
+
+        edge_feature = edge_feature.reshape(
             *states_tensor["batch_shape"], self.n_nodes, self.edge_hidden_dim
         )
-        edge_index = torch.einsum("bnf,bmf->bnm", edge_index, edge_index)
+        edge_index = torch.einsum("bnf,bmf->bnm", edge_feature, edge_feature)
 
         edge_actions = edge_index.reshape(
             *states_tensor["batch_shape"], self.n_nodes * self.n_nodes
         )
+
         if self.is_backward:
             return edge_actions
         else:
@@ -217,8 +272,12 @@ class RingGraphBuilding(GraphBuilding):
 
             @property
             def forward_masks(self):
+                # Allow all actions.
                 forward_masks = torch.ones(len(self), self.n_actions, dtype=torch.bool)
-                forward_masks[:, :: self.n_nodes + 1] = False
+               
+                forward_masks[:, :: self.n_nodes + 1] = False  # Remove self-loops.
+                
+                # Remove existing edges.s
                 for i in range(len(self)):
                     existing_edges = (
                         self[i].tensor["edge_index"]
