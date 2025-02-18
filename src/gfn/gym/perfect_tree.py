@@ -22,10 +22,10 @@ class PerfectBinaryTree(DiscreteEnv):
 
     """
 
-    def __init__(self, reward_fn: Callable, depth: int = 4, branching_factor: int = 2):
+    def __init__(self, reward_fn: Callable, depth: int = 4):
         self.reward_fn = reward_fn
         self.depth = depth
-        self.branching_factor = branching_factor
+        self.branching_factor = 2
         self.n_actions = branching_factor + 1
         self.n_nodes = 2 ** (self.depth + 1) - 1
 
