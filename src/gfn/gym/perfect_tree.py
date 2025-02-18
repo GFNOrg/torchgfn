@@ -1,7 +1,9 @@
 from typing import Callable
+
+import torch
+
 from gfn.env import Actions, DiscreteEnv, DiscreteStates
 from gfn.gym.helpers.preprocessors import OneHotPreprocessor
-import torch
 
 
 class PerfectBinaryTree(DiscreteEnv):
@@ -33,9 +35,11 @@ class PerfectBinaryTree(DiscreteEnv):
             self.n_actions, self.s0, (1,), preprocessor=preprocessor, sf=self.sf
         )
 
-        self.transition_table, self.inverse_transition_table, self.term_states = (
-            self._build_tree()
-        )
+        (
+            self.transition_table,
+            self.inverse_transition_table,
+            self.term_states,
+        ) = self._build_tree()
 
     def _build_tree(self) -> tuple[dict, dict, DiscreteStates]:
         """Create a transition table ensuring a bijection between trajectories and last states."""

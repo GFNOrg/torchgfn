@@ -1,6 +1,8 @@
 from typing import Callable
-from gfn.env import Actions, DiscreteEnv, DiscreteStates
+
 import torch
+
+from gfn.env import Actions, DiscreteEnv, DiscreteStates
 
 
 class SetAddition(DiscreteEnv):
