@@ -10,7 +10,6 @@ import torch
 from tensordict import TensorDict
 from torch import nn
 from torch_geometric.nn import GINConv, GCNConv
-import torch.nn.functional as F
 
 from gfn.actions import Actions, GraphActions, GraphActionType
 from gfn.gflownet.trajectory_balance import TBGFlowNet
@@ -191,14 +190,19 @@ class RingPolicyModule(nn.Module):
         n_nodes: The number of nodes in the graph.
     """
 
-    def __init__(self, n_nodes: int, directed: bool, num_conv_layers: int = 1, is_backward: bool = False):
+    def __init__(
+        self,
+        n_nodes: int,
+        directed: bool,
+        num_conv_layers: int = 1,
+        is_backward: bool = False,
+    ):
         super().__init__()
         self.hidden_dim = self.embedding_dim = 64
 
         self.is_backward = is_backward
         self.n_nodes = n_nodes
         self.num_conv_layers = num_conv_layers
-
 
         # Node embedding layer.
         self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
@@ -209,46 +213,62 @@ class RingPolicyModule(nn.Module):
             # Multiple action type convolution layers.
             for i in range(num_conv_layers):
                 # mlp = create_mlp(self.embedding_dim, self.embedding_dim, self.embedding_dim)
-                self.action_conv_blks.extend([
-                    GCNConv(
-                        self.embedding_dim if i == 0 else self.hidden_dim,
-                        self.hidden_dim,
-                    ),
-                    nn.Linear(self.hidden_dim, self.hidden_dim),
-                    nn.ReLU(),
-                    nn.Linear(self.hidden_dim, self.hidden_dim),
-                ])
+                self.action_conv_blks.extend(
+                    [
+                        GCNConv(
+                            self.embedding_dim if i == 0 else self.hidden_dim,
+                            self.hidden_dim,
+                        ),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                        nn.ReLU(),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                    ]
+                )
 
             # Multiple edge index convolution layers.
             for i in range(num_conv_layers):
                 # mlp = create_mlp(self.embedding_dim, self.embedding_dim, self.embedding_dim)
-                self.edge_conv_blks.extend([
-                    GCNConv(
-                        self.embedding_dim if i == 0 else self.hidden_dim,
-                        self.hidden_dim,
-                    ),
-                    nn.Linear(self.hidden_dim, self.hidden_dim),
-                    nn.ReLU(),
-                    nn.Linear(self.hidden_dim, self.hidden_dim),
-                ])
+                self.edge_conv_blks.extend(
+                    [
+                        GCNConv(
+                            self.embedding_dim if i == 0 else self.hidden_dim,
+                            self.hidden_dim,
+                        ),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                        nn.ReLU(),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                    ]
+                )
         else:  # Undirected case.
             # Multiple action type convolution layers.
             for _ in range(num_conv_layers):
-                self.action_conv_blks.extend([
-                    GINConv(create_mlp(self.embedding_dim, self.hidden_dim, self.hidden_dim)),
-                    nn.Linear(self.hidden_dim, self.hidden_dim),
-                    nn.ReLU(),
-                    nn.Linear(self.hidden_dim, self.hidden_dim)
-                ])
+                self.action_conv_blks.extend(
+                    [
+                        GINConv(
+                            create_mlp(
+                                self.embedding_dim, self.hidden_dim, self.hidden_dim
+                            )
+                        ),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                        nn.ReLU(),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                    ]
+                )
 
             # Multiple edge index convolution layers.
             for _ in range(num_conv_layers):
-                self.edge_conv_blks.extend([
-                    GINConv(create_mlp(self.embedding_dim, self.hidden_dim, self.hidden_dim)),
-                    nn.Linear(self.hidden_dim, self.hidden_dim),
-                    nn.ReLU(),
-                    nn.Linear(self.hidden_dim, self.hidden_dim)
-                ])
+                self.edge_conv_blks.extend(
+                    [
+                        GINConv(
+                            create_mlp(
+                                self.embedding_dim, self.hidden_dim, self.hidden_dim
+                            )
+                        ),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                        nn.ReLU(),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                    ]
+                )
 
         # Layer normalization for stability
         self.action_norm = nn.LayerNorm(self.hidden_dim)
@@ -412,8 +432,12 @@ class RingGraphBuilding(GraphBuilding):
                         - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
                     )
                     assert torch.all(existing_edges >= 0)  # TODO: convert to test.
-                    edge = existing_edges[:, 0] * (2 * self.n_nodes - existing_edges[:, 0] - 1) // 2
-                    edge += (existing_edges[:, 1] - existing_edges[:, 0] - 1)
+                    edge = (
+                        existing_edges[:, 0]
+                        * (2 * self.n_nodes - existing_edges[:, 0] - 1)
+                        // 2
+                    )
+                    edge += existing_edges[:, 1] - existing_edges[:, 0] - 1
                     forward_masks[i, edge] = False
 
                 return forward_masks.view(*self.batch_shape, self.n_actions)
@@ -432,9 +456,16 @@ class RingGraphBuilding(GraphBuilding):
                         self[i].tensor["edge_index"]
                         - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
                     )
-                    edge = existing_edges[:, 0] * (2 * self.n_nodes - existing_edges[:, 0] - 1) // 2
-                    edge += (existing_edges[:, 1] - existing_edges[:, 0] - 1)
-                    backward_masks[i, edge,] = True
+                    edge = (
+                        existing_edges[:, 0]
+                        * (2 * self.n_nodes - existing_edges[:, 0] - 1)
+                        // 2
+                    )
+                    edge += existing_edges[:, 1] - existing_edges[:, 0] - 1
+                    backward_masks[
+                        i,
+                        edge,
+                    ] = True
 
                 return backward_masks.view(*self.batch_shape, self.n_actions - 1)
 
@@ -547,6 +578,7 @@ def render_states(states: GraphStates, state_evaluator: callable):
         current_ax.set_yticks([])
 
     plt.show()
+
 
 if __name__ == "__main__":
     N_NODES = 3
