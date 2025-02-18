@@ -60,6 +60,7 @@ class BoxArgs(CommonArgs):
     gamma_scheduler: float = 0.5
     scheduler_milestone: int = 2500
     lr_F: float = 1e-2
+    use_local_search: bool = False
 
 
 @pytest.mark.parametrize("ndim", [2, 4])

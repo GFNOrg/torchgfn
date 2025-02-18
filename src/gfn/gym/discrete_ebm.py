@@ -67,6 +67,13 @@ class DiscreteEBM(DiscreteEnv):
     ):
         """Discrete EBM environment.
 
+        The states are represented as 1d tensors of length `ndim` with values in
+        {-1, 0, 1}. s0 is empty (represented as -1), so s0=[-1, -1, ..., -1],
+        An action corresponds to replacing a -1 with a 0 or a 1.
+        Action i in [0, ndim - 1] corresponds to replacing s[i] with 0
+        Action i in [ndim, 2 * ndim - 1] corresponds to replacing s[i - ndim] with 1
+        The last action is the exit action that is only available for complete states (those with no -1)
+
         Args:
             ndim: dimension D of the sampling space {0, 1}^D.
             energy: energy function of the EBM. Defaults to None. If
@@ -90,14 +97,12 @@ class DiscreteEBM(DiscreteEnv):
 
         n_actions = 2 * ndim + 1
         # the last action is the exit action that is only available for complete states
-        # Action i in [0, ndim - 1] corresponds to replacing s[i] with 0
-        # Action i in [ndim, 2 * ndim - 1] corresponds to replacing s[i - ndim] with 1
 
         if preprocessor_name == "Identity":
             preprocessor = IdentityPreprocessor(output_dim=ndim)
         elif preprocessor_name == "Enum":
             preprocessor = EnumPreprocessor(
-                get_states_indices=self.get_states_indices,
+                get_states_indices=self.get_states_indices,  # pyright: ignore
             )
         else:
             raise ValueError(f"Unknown preprocessor {preprocessor_name}")
@@ -113,7 +118,7 @@ class DiscreteEBM(DiscreteEnv):
             preprocessor=preprocessor,
         )
 
-    def update_masks(self, states: type[States]) -> None:
+    def update_masks(self, states: DiscreteStates) -> None:
         states.forward_masks[..., : self.ndim] = states.tensor == -1
         states.forward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == -1
         states.forward_masks[..., -1] = torch.all(states.tensor != -1, dim=-1)
@@ -207,7 +212,12 @@ class DiscreteEBM(DiscreteEnv):
         return log_reward
 
     def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """The chosen encoding is the following: -1 -> 0, 0 -> 1, 1 -> 2, then we convert to base 3
+        """Given that each state is of length ndim with values in {-1, 0, 1},
+        there are 3**ndim states, which we can label from 0 to 3**ndim - 1.
+
+        The easiest way to map each state to a unique integer is to consider the
+        state as a number in base 3, where each digit can be in {0, 1, 2}.
+        We thus need to shift this number by 1 so that {-1, 0, 1} -> {0, 1, 2}.
 
         Args:
             states: DiscreteStates object representing the states.
@@ -221,7 +231,11 @@ class DiscreteEBM(DiscreteEnv):
         return states_indices
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Get the indices of the terminating states in the canonical ordering from the submitted states.
+        """Given that each terminating state is of length ndim with values in {0, 1},
+        there are 2**ndim terminating states, which we can label from 0 to 2**ndim - 1.
+
+        The easiest way to map each state to a unique integer is to consider the
+        state as a number in base 2.
 
         Args:
             states: DiscreteStates object representing the states.
@@ -248,13 +262,13 @@ class DiscreteEBM(DiscreteEnv):
         digits = torch.arange(3, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
         all_states = all_states - 1
-        return self.States(all_states)
+        return self.states_from_tensor(all_states)
 
     @property
     def terminating_states(self) -> DiscreteStates:
         digits = torch.arange(2, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
-        return self.States(all_states)
+        return self.states_from_tensor(all_states)
 
     @property
     def true_dist_pmf(self) -> torch.Tensor:

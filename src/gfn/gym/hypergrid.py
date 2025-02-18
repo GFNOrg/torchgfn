@@ -62,11 +62,11 @@ class HyperGrid(DiscreteEnv):
         elif preprocessor_name == "OneHot":
             preprocessor = OneHotPreprocessor(
                 n_states=self.n_states,
-                get_states_indices=self.get_states_indices,
+                get_states_indices=self.get_states_indices,  # pyright: ignore
             )
         elif preprocessor_name == "Enum":
             preprocessor = EnumPreprocessor(
-                get_states_indices=self.get_states_indices,
+                get_states_indices=self.get_states_indices,  # pyright: ignore
             )
         else:
             raise ValueError(f"Unknown preprocessor {preprocessor_name}")
@@ -82,7 +82,7 @@ class HyperGrid(DiscreteEnv):
             preprocessor=preprocessor,
         )
 
-    def update_masks(self, states: type[DiscreteStates]) -> None:
+    def update_masks(self, states: DiscreteStates) -> None:
         """Update the masks based on the current states."""
         # Not allowed to take any action beyond the environment height, but
         # allow early termination.
@@ -223,13 +223,13 @@ class HyperGrid(DiscreteEnv):
         rearrange_string += " ".join([f"n{i}" for i in range(ndim, 0, -1)])
         rearrange_string += " ndim"
         grid = rearrange(grid, rearrange_string).long()
-        return self.States(grid)
+        return self.states_from_tensor(grid)
 
     @property
     def all_states(self) -> DiscreteStates:
         grid = self.build_grid()
         flat_grid = rearrange(grid.tensor, "... ndim -> (...) ndim")
-        return self.States(flat_grid)
+        return self.states_from_tensor(flat_grid)
 
     @property
     def terminating_states(self) -> DiscreteStates:

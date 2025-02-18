@@ -39,8 +39,6 @@ def get_trajectory_pfs_and_pbs(
     recalculate_all_logprobs: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     # fill value is the value used for invalid states (sink state usually)
-    if trajectories.is_backward:
-        raise ValueError("Backward trajectories are not supported")
 
     # uncomment next line for debugging
     # assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions.is_dummy)
@@ -53,15 +51,6 @@ def get_trajectory_pfs_and_pbs(
     )
     log_pb_trajectories = get_trajectory_pbs(pb, trajectories, fill_value=fill_value)
 
-    assert log_pf_trajectories.shape == (
-        trajectories.max_length,
-        trajectories.n_trajectories,
-    )
-    assert log_pb_trajectories.shape == (
-        trajectories.max_length,
-        trajectories.n_trajectories,
-    )
-
     return log_pf_trajectories, log_pb_trajectories
 
 
@@ -71,6 +60,9 @@ def get_trajectory_pfs(
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = False,
 ) -> torch.Tensor:
+    if trajectories.is_backward:
+        raise ValueError("Backward trajectories are not supported")
+
     state_mask = ~trajectories.states.is_sink_state
     action_mask = ~trajectories.actions.is_dummy
 
@@ -83,6 +75,15 @@ def get_trajectory_pfs(
     if has_log_probs(trajectories) and not recalculate_all_logprobs:
         log_pf_trajectories = trajectories.log_probs
     else:
+        log_pf_trajectories = torch.full_like(
+            trajectories.actions.tensor[..., 0],
+            fill_value=fill_value,
+            dtype=torch.float,
+        )
+
+        if len(valid_states) == 0:
+            return log_pf_trajectories
+
         if trajectories.estimator_outputs is not None and not recalculate_all_logprobs:
             estimator_outputs = trajectories.estimator_outputs[action_mask]
         else:
@@ -103,12 +104,12 @@ def get_trajectory_pfs(
             valid_actions.tensor
         )  # Using the actions sampled off-policy.
 
-        log_pf_trajectories = torch.full_like(
-            trajectories.actions.tensor[..., 0],
-            fill_value=fill_value,
-            dtype=torch.float,
-        )
         log_pf_trajectories[action_mask] = valid_log_pf_actions
+
+    assert log_pf_trajectories.shape == (
+        trajectories.max_length,
+        trajectories.n_trajectories,
+    )
 
     return log_pf_trajectories
 
@@ -116,10 +117,21 @@ def get_trajectory_pfs(
 def get_trajectory_pbs(
     pb: GFNModule, trajectories: Trajectories, fill_value: float = 0.0
 ) -> torch.Tensor:
+    if trajectories.is_backward:
+        raise ValueError("Backward trajectories are not supported")
+
+    log_pb_trajectories = torch.full_like(
+        trajectories.actions.tensor[..., 0],
+        fill_value=fill_value,
+        dtype=torch.float,
+    )
+
     # Note the different mask for valid states and actions compared to the pf case.
     state_mask = (
         ~trajectories.states.is_sink_state & ~trajectories.states.is_initial_state
     )
+    # We can't calculate the PB of the first state, even it's not an initial state.
+    state_mask[0, :] = False
     action_mask = ~trajectories.actions.is_dummy & ~trajectories.actions.is_exit
 
     valid_states = trajectories.states[state_mask]
@@ -127,6 +139,9 @@ def get_trajectory_pbs(
 
     if valid_states.batch_shape != tuple(valid_actions.batch_shape):
         raise AssertionError("Something wrong happening with log_pf evaluations")
+
+    if len(valid_states) == 0:
+        return log_pb_trajectories
 
     # Using all non-initial states, calculate the backward policy, and the logprobs
     # of those actions.
@@ -145,12 +160,12 @@ def get_trajectory_pbs(
         valid_states, estimator_outputs
     ).log_prob(valid_actions.tensor)
 
-    log_pb_trajectories = torch.full_like(
-        trajectories.actions.tensor[..., 0],
-        fill_value=fill_value,
-        dtype=torch.float,
-    )
     log_pb_trajectories[action_mask] = valid_log_pb_actions
+
+    assert log_pb_trajectories.shape == (
+        trajectories.max_length,
+        trajectories.n_trajectories,
+    )
 
     return log_pb_trajectories
 

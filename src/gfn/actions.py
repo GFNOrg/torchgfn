@@ -40,14 +40,14 @@ class Actions(ABC):
         self.batch_shape = tuple(self.tensor.shape)[: -len(self.action_shape)]
 
     @classmethod
-    def make_dummy_actions(cls, batch_shape: tuple[int]) -> Actions:
+    def make_dummy_actions(cls, batch_shape: tuple[int, ...]) -> Actions:
         """Creates an Actions object of dummy actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.dummy_action.repeat(*batch_shape, *((1,) * action_ndim))
         return cls(tensor)
 
     @classmethod
-    def make_exit_actions(cls, batch_shape: tuple[int]) -> Actions:
+    def make_exit_actions(cls, batch_shape: tuple[int, ...]) -> Actions:
         """Creates an Actions object of exit actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.exit_action.repeat(*batch_shape, *((1,) * action_ndim))
@@ -64,7 +64,9 @@ class Actions(ABC):
     def device(self) -> torch.device:
         return self.tensor.device
 
-    def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> Actions:
+    def __getitem__(
+        self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
+    ) -> Actions:
         actions = self.tensor[index]
         return self.__class__(actions)
 
