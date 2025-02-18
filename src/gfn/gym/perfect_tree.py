@@ -1,5 +1,6 @@
 from typing import Callable
 
+from gfn.states import States
 import torch
 
 from gfn.env import Actions, DiscreteEnv, DiscreteStates
@@ -103,7 +104,7 @@ class PerfectBinaryTree(DiscreteEnv):
         # Initial state has no available backward action
         states.backward_masks[initial_state_mask, :] = False
 
-    def get_states_indices(self, states: DiscreteStates):
+    def get_states_indices(self, states: States):
         return torch.flatten(states.tensor)
 
     @property
