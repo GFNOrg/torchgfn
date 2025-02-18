@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import torch
 from tensordict import TensorDict
 from torch import nn
-from torch_geometric.nn import GINConv
+from torch_geometric.nn import GINConv, GCNConv
 import torch.nn.functional as F
 
 from gfn.actions import Actions, GraphActions, GraphActionType
@@ -20,7 +20,69 @@ from gfn.preprocessors import Preprocessor
 from gfn.states import GraphStates
 
 
-def state_evaluator(states: GraphStates) -> torch.Tensor:
+def directed_reward(states: GraphStates) -> torch.Tensor:
+    """Compute the reward of a graph.
+
+    Specifically, the reward is 1 if the graph is a ring, 1e-6 otherwise.
+
+    Args:
+        states: A batch of graphs.
+
+    Returns:
+        A tensor of rewards.
+    """
+    eps = 1e-6
+    if states.tensor["edge_index"].shape[0] == 0:
+        return torch.full(states.batch_shape, eps)
+
+    out = torch.full((len(states),), eps)  # Default reward.
+
+    for i in range(len(states)):
+        start, end = states.tensor["batch_ptr"][i], states.tensor["batch_ptr"][i + 1]
+        nodes_index_range = states.tensor["node_index"][start:end]
+        edge_index_mask = torch.all(
+            states.tensor["edge_index"] >= nodes_index_range[0], dim=-1
+        ) & torch.all(states.tensor["edge_index"] <= nodes_index_range[-1], dim=-1)
+        masked_edge_index = (
+            states.tensor["edge_index"][edge_index_mask] - nodes_index_range[0]
+        )
+
+        n_nodes = nodes_index_range.shape[0]
+        adj_matrix = torch.zeros(n_nodes, n_nodes)
+        adj_matrix[masked_edge_index[:, 0], masked_edge_index[:, 1]] = 1
+
+        if not torch.all(adj_matrix.sum(axis=1) == 1):
+            continue
+
+        visited = []
+        current = 0
+        while current not in visited:
+            visited.append(current)
+
+            def set_diff(tensor1, tensor2):
+                mask = ~torch.isin(tensor1, tensor2)
+                return tensor1[mask]
+
+            # Find an unvisited neighbor
+            neighbors = torch.where(adj_matrix[current] == 1)[0]
+            valid_neighbours = set_diff(neighbors, torch.tensor(visited))
+
+            # Visit the fir
+            if len(valid_neighbours) == 1:
+                current = valid_neighbours[0]
+            elif len(valid_neighbours) == 0:
+                break
+            else:
+                break  # TODO: This actually should never happen, should be caught on line 45.
+
+        # Check if we visited all vertices and the last vertex connects back to start.
+        if len(visited) == n_nodes and adj_matrix[current][0] == 1:
+            out[i] = 1.0
+
+    return out.view(*states.batch_shape)
+
+
+def undirected_reward(states: GraphStates) -> torch.Tensor:
     """Compute the reward of a graph.
 
     Specifically, the reward is 1 if the graph is an undirected ring, 1e-6 otherwise.
@@ -122,41 +184,75 @@ def create_mlp(in_channels, hidden_channels, out_channels, num_layers=1):
     return nn.Sequential(*layers)
 
 
-class RingPolicyEstimator(nn.Module):
+class RingPolicyModule(nn.Module):
     """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
 
     Args:
         n_nodes: The number of nodes in the graph.
     """
 
-    def __init__(self, n_nodes: int, num_conv_layers: int = 1, is_backward: bool = False):
+    def __init__(self, n_nodes: int, directed: bool, num_conv_layers: int = 1, is_backward: bool = False):
         super().__init__()
-        self.edge_hidden_dim = 64
-        self.embedding_dim = 32
+        self.hidden_dim = self.embedding_dim = 64
 
         self.is_backward = is_backward
         self.n_nodes = n_nodes
         self.num_conv_layers = num_conv_layers
 
 
-        # Node embedding layer
-        self.embedding = nn.Embedding(n_nodes, embedding_dim)
+        # Node embedding layer.
+        self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
+        self.action_conv_blks = nn.ModuleList()
+        self.edge_conv_blks = nn.ModuleList()
 
-        # Multiple action type convolution layers
-        self.action_type_convs = nn.ModuleList()
-        for _ in range(num_conv_layers):
-            mlp = create_mlp(embedding_dim, embedding_dim, embedding_dim)
-            self.action_type_convs.append(GINConv(mlp))
+        if directed:
+            # Multiple action type convolution layers.
+            for i in range(num_conv_layers):
+                # mlp = create_mlp(self.embedding_dim, self.embedding_dim, self.embedding_dim)
+                self.action_conv_blks.extend([
+                    GCNConv(
+                        self.embedding_dim if i == 0 else self.hidden_dim,
+                        self.hidden_dim,
+                    ),
+                    nn.Linear(self.hidden_dim, self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Linear(self.hidden_dim, self.hidden_dim),
+                ])
 
-        # Multiple edge index convolution layers
-        self.edge_index_convs = nn.ModuleList()
-        for _ in range(num_conv_layers):
-            mlp = create_mlp(embedding_dim, embedding_dim, embedding_dim)
-            self.edge_index_convs.append(GINConv(mlp))
+            # Multiple edge index convolution layers.
+            for i in range(num_conv_layers):
+                # mlp = create_mlp(self.embedding_dim, self.embedding_dim, self.embedding_dim)
+                self.edge_conv_blks.extend([
+                    GCNConv(
+                        self.embedding_dim if i == 0 else self.hidden_dim,
+                        self.hidden_dim,
+                    ),
+                    nn.Linear(self.hidden_dim, self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Linear(self.hidden_dim, self.hidden_dim),
+                ])
+        else:  # Undirected case.
+            # Multiple action type convolution layers.
+            for _ in range(num_conv_layers):
+                self.action_conv_blks.extend([
+                    GINConv(create_mlp(self.embedding_dim, self.hidden_dim, self.hidden_dim)),
+                    nn.Linear(self.hidden_dim, self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Linear(self.hidden_dim, self.hidden_dim)
+                ])
+
+            # Multiple edge index convolution layers.
+            for _ in range(num_conv_layers):
+                self.edge_conv_blks.extend([
+                    GINConv(create_mlp(self.embedding_dim, self.hidden_dim, self.hidden_dim)),
+                    nn.Linear(self.hidden_dim, self.hidden_dim),
+                    nn.ReLU(),
+                    nn.Linear(self.hidden_dim, self.hidden_dim)
+                ])
 
         # Layer normalization for stability
-        self.action_norm = nn.LayerNorm(embedding_dim)
-        self.edge_norm = nn.LayerNorm(embedding_dim)
+        self.action_norm = nn.LayerNorm(self.hidden_dim)
+        self.edge_norm = nn.LayerNorm(self.hidden_dim)
 
     def _group_mean(
         self, tensor: torch.Tensor, batch_ptr: torch.Tensor
@@ -186,33 +282,49 @@ class RingPolicyEstimator(nn.Module):
             states_tensor["edge_index"].shape
         )  # (M, 2)
         # edge_attrs = states_tensor["edge_feature"]
-        action_type = x
 
         # Multiple action type convolutions with residual connections.
-        for conv in self.action_type_convs:
-            action_type_new = conv(action_type, edge_index.T)
-            action_type = action_type + action_type_new  # Residual connection
+        action_type = x
+        for i in range(0, len(self.action_conv_blks), 4):
+
+            # GIN/GCN conv.
+            action_type_new = self.action_conv_blks[i](action_type, edge_index.T)
+            # First linear.
+            action_type_new = self.action_conv_blks[i + 1](action_type_new)
+            # ReLU.
+            action_type_new = self.action_conv_blks[i + 2](action_type_new)
+            # Second linear.
+            action_type_new = self.action_conv_blks[i + 3](action_type_new)
+            # Residual connection with original input.
+            action_type = action_type_new + action_type
             action_type = self.action_norm(action_type)
-            action_type = F.relu(action_type)
 
         action_type = self._group_mean(
             torch.mean(action_type, dim=-1, keepdim=True), batch_ptr
         )
 
-        # Multiple edge index convolutions with residual connections
+        # Multiple action type convolutions with residual connections.
         edge_feature = x
-        for conv in self.edge_index_convs:
-            edge_feature_new = conv(edge_feature, edge_index.T)
-            edge_feature = edge_feature + edge_feature_new  # Residual connection
+        for i in range(0, len(self.edge_conv_blks), 4):
+
+            # GIN/GCN conv.
+            edge_feature_new = self.edge_conv_blks[i](edge_feature, edge_index.T)
+            # First linear.
+            edge_feature_new = self.edge_conv_blks[i + 1](edge_feature_new)
+            # ReLU.
+            edge_feature_new = self.edge_conv_blks[i + 2](edge_feature_new)
+            # Second linear.
+            edge_feature_new = self.edge_conv_blks[i + 3](edge_feature_new)
+            # Residual connection with original input.
+            edge_feature = edge_feature_new + edge_feature
             edge_feature = self.edge_norm(edge_feature)
-            edge_feature = F.relu(edge_feature)
+
+        # edge_feature = self._group_mean(
+        #     torch.mean(edge_feature, dim=-1, keepdim=True), batch_ptr
+        # )
 
         edge_feature = edge_feature.reshape(
-            *states_tensor["batch_shape"], self.n_nodes, self.edge_hidden_dim
-
-        edge_index = self.edge_index_conv(node_feature, edge_index.T)
-        edge_index = edge_index.reshape(
-            batch_size, self.n_nodes, self.embedding_dim
+            *states_tensor["batch_shape"], self.n_nodes, self.hidden_dim
         )
         edge_index = torch.einsum("bnf,bmf->bnm", edge_feature, edge_feature)
 
@@ -241,7 +353,7 @@ class RingGraphBuilding(GraphBuilding):
         n_nodes: The number of nodes in the graph.
     """
 
-    def __init__(self, n_nodes: int):
+    def __init__(self, n_nodes: int, state_evaluator: callable):
         self.n_nodes = n_nodes
         self.n_actions = 1 + n_nodes * (n_nodes - 1) // 2
         super().__init__(feature_dim=n_nodes, state_evaluator=state_evaluator)
@@ -384,7 +496,7 @@ class GraphPreprocessor(Preprocessor):
         return self.preprocess(states)
 
 
-def render_states(states: GraphStates):
+def render_states(states: GraphStates, state_evaluator: callable):
     """Render the states as a matplotlib plot.
 
     Args:
@@ -437,15 +549,17 @@ def render_states(states: GraphStates):
     plt.show()
 
 if __name__ == "__main__":
-    N_NODES = 4
-    N_ITERATIONS = 128
-    LR = 0.005
+    N_NODES = 3
+    N_ITERATIONS = 1000
+    LR = 0.05
     BATCH_SIZE = 128
+    DIRECTED = True
 
+    state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
-    env = RingGraphBuilding(n_nodes=N_NODES)
-    module_pf = RingPolicyEstimator(env.n_nodes)
-    module_pb = RingPolicyEstimator(env.n_nodes, is_backward=True)
+    env = RingGraphBuilding(n_nodes=N_NODES, state_evaluator=state_evaluator)
+    module_pf = RingPolicyModule(env.n_nodes, DIRECTED)
+    module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
     pf = DiscretePolicyEstimator(
         module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
     )
@@ -486,4 +600,4 @@ if __name__ == "__main__":
     print("Time:", t2 - t1)
     last_states = trajectories.last_states[:8]
     assert isinstance(last_states, GraphStates)
-    render_states(last_states)
+    render_states(last_states, state_evaluator)
