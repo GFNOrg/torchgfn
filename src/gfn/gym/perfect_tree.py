@@ -26,7 +26,7 @@ class PerfectBinaryTree(DiscreteEnv):
         self.reward_fn = reward_fn
         self.depth = depth
         self.branching_factor = 2
-        self.n_actions = branching_factor + 1
+        self.n_actions = self.branching_factor + 1
         self.n_nodes = 2 ** (self.depth + 1) - 1
 
         self.s0 = torch.zeros((1,), dtype=torch.long)
