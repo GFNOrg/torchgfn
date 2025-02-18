@@ -220,7 +220,7 @@ class Sampler:
                 new_states = env._step(states, actions)
             sink_states_mask = new_states.is_sink_state
 
-            # Increment the step, determine which trajectories are finisihed, and eval
+            # Increment the step, determine which trajectories are finished, and eval
             # rewards.
             step += 1
 
