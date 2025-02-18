@@ -40,7 +40,7 @@ git clone https://github.com/GFNOrg/torchgfn.git
 conda create -n gfn python=3.10
 conda activate gfn
 cd torchgfn
-pip install .
+pip install -e ".[all]"
 ```
 
 
@@ -102,7 +102,7 @@ optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-1})
 
 # 6 - We train the GFlowNet for 1000 iterations, with 16 trajectories per iteration
 for i in (pbar := tqdm(range(1000))):
-    trajectories = sampler.sample_trajectories(env=env, n=16)
+    trajectories = sampler.sample_trajectories(env=env, n=16, save_logprobs=True)  # The save_logprobs=True makes on-policy training faster
     optimizer.zero_grad()
     loss = gfn.loss(env, trajectories)
     loss.backward()
@@ -149,10 +149,10 @@ pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=Tru
 logF_estimator = ScalarEstimator(module=module_logF, preprocessor=env.preprocessor)
 
 # 4 - We define the GFlowNet.
-gfn = SubTBGFlowNet(pf=pf_estimator, pb=pb_estimator, logF=logF, lamda=0.9)
+gfn = SubTBGFlowNet(pf=pf_estimator, pb=pb_estimator, logF=logF_estimator, lamda=0.9)
 
 # 5 - We define the sampler and the optimizer.
-sampler = Sampler(estimator=pf_estimator)  # We use an on-policy sampler, based on the forward policy
+sampler = Sampler(estimator=pf_estimator) 
 
 # Different policy parameters can have their own LR.
 # Log F gets dedicated learning rate (typically higher).
@@ -161,7 +161,10 @@ optimizer.add_param_group({"params": gfn.logF_parameters(), "lr": 1e-2})
 
 # 6 - We train the GFlowNet for 1000 iterations, with 16 trajectories per iteration
 for i in (pbar := tqdm(range(1000))):
-    trajectories = sampler.sample_trajectories(env=env, n=16)
+    # We are going to sample trajectories off policy, by tempering the distribution. 
+    # We should not save the sampling logprobs, as we are not using them for training.
+    # We should save the estimator outputs to make training faster.
+    trajectories = sampler.sample_trajectories(env=env, n=16, save_logprobs=False, save_estimator_outputs=True, temperature=1.5)
     optimizer.zero_grad()
     loss = gfn.loss(env, trajectories)
     loss.backward()
@@ -251,12 +254,17 @@ For discrete environments, a `Tabular` module is provided, where a lookup table 
 
 ### Samplers
 
-A [Sampler](https://github.com/saleml/torchgfn/tree/master/src/gfn/samplers.py) object defines how actions are sampled (`sample_actions()`) at each state, and trajectories  (`sample_trajectories()`), which can sample a batch of trajectories starting from a given set of initial states or starting from $s_0$. It requires a `GFNModule` that implements the `to_probability_distribution` function. For off-policy sampling, the parameters of `to_probability_distribution` can be directly passed when initializing the `Sampler`.
+A [Sampler](https://github.com/saleml/torchgfn/tree/master/src/gfn/samplers.py) object defines how actions are sampled (`sample_actions()`) at each state, and trajectories  (`sample_trajectories()`), which can sample a batch of trajectories starting from a given set of initial states or starting from $s_0$. It requires a `GFNModule` that implements the `to_probability_distribution` function. For simple off-policy sampling (e.g., epsilon-noisy or tempering), you can pass appropriate `policy_kwargs` to the `Sampler` object, which will be used by the `GFNModule`. If you need more complex off-policy sampling, you can subclass the `Sampler` object, and override the `sample_actions` and `sample_trajectories` methods.
+
+Currently, the library provides two samplers:
+
+- Sampler
+- LocalSearchSampler (references: [EB-GFN](https://arxiv.org/abs/2202.01361), [LS-GFN](https://arxiv.org/abs/2310.02710))
 
 
 ### Losses
 
-GFlowNets can be trained with different losses, each of which requires a different parametrization, which we call in this library a `GFlowNet`. A `GFlowNet` is a `GFNModule` that includes one or multiple `GFNModule`s, at least one of which implements a `to_probability_distribution` function. They also need to implement a `loss` function, that takes as input either states, transitions, or trajectories, depending on the loss.
+GFlowNets can be trained with different losses, each of which requires a different parametrization, which we call in this library a `GFlowNet`. A `GFlowNet` includes one or multiple `GFNModule`s, at least one of which implements a `to_probability_distribution` function. They also need to implement a `loss` function, that takes as input either states, transitions, or trajectories, depending on the loss.
 
 Currently, the implemented losses are:
 

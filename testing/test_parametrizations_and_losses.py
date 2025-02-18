@@ -59,7 +59,7 @@ def test_FM(env_name: int, ndim: int, module_name: str):
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
     states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
-    loss = gflownet.loss(env, states_tuple)
+    loss = gflownet.loss(env, states_tuple)  # pyright: ignore
     assert loss >= 0
 
 
@@ -69,7 +69,11 @@ def test_get_pfs_and_pbs(env_name: str, preprocessor_name: str):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
-        env_name, preprocessor_name, delta=0.1, n_components=1, n_components_s0=1
+        env_name,
+        preprocessor_name,  # pyright: ignore
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,  # pyright: ignore
     )
     gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
@@ -86,7 +90,11 @@ def test_get_scores(env_name: str, preprocessor_name: str):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
-        env_name, preprocessor_name, delta=0.1, n_components=1, n_components_s0=1
+        env_name,
+        preprocessor_name,  # pyright: ignore
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,
     )
     gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
@@ -132,9 +140,13 @@ def PFBasedGFlowNet_with_return(
 
     if module_name == "Tabular":
         # Cannot be the Box environment
-        pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
-        pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
-        logF_module = Tabular(n_states=env.n_states, output_dim=1)
+        pf_module = Tabular(
+            n_states=env.n_states, output_dim=env.n_actions  # pyright: ignore
+        )  # pyright: ignore
+        pb_module = Tabular(
+            n_states=env.n_states, output_dim=env.n_actions - 1  # pyright: ignore
+        )  # pyright: ignore
+        logF_module = Tabular(n_states=env.n_states, output_dim=1)  # pyright: ignore
     else:
         if env_name == "Box":
             pf_module = BoxPFMLP(
@@ -146,7 +158,8 @@ def PFBasedGFlowNet_with_return(
 
         else:
             pf_module = MLP(
-                input_dim=env.preprocessor.output_dim, output_dim=env.n_actions
+                input_dim=env.preprocessor.output_dim,
+                output_dim=env.n_actions,  # pyright: ignore
             )
 
         if module_name == "MLP" and env_name == "Box":
@@ -158,10 +171,11 @@ def PFBasedGFlowNet_with_return(
             )
         elif module_name == "MLP" and env_name != "Box":
             pb_module = MLP(
-                input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
+                input_dim=env.preprocessor.output_dim,
+                output_dim=env.n_actions - 1,  # pyright: ignore
             )
         elif module_name == "Uniform" and env_name != "Box":
-            pb_module = DiscreteUniform(output_dim=env.n_actions - 1)
+            pb_module = DiscreteUniform(output_dim=env.n_actions - 1)  # pyright: ignore
         else:
             # Uniform with Box environment
             pb_module = BoxPBUniform()
@@ -171,20 +185,27 @@ def PFBasedGFlowNet_with_return(
             logF_module = MLP(input_dim=env.preprocessor.output_dim, output_dim=1)
 
     if env_name == "Box":
-        pf = BoxPFEstimator(env, pf_module, n_components_s0=ndim - 1, n_components=ndim)
+        pf = BoxPFEstimator(
+            env,  # pyright: ignore
+            pf_module,
+            n_components_s0=ndim - 1,
+            n_components=ndim,
+        )
         pb = BoxPBEstimator(
-            env,
+            env,  # pyright: ignore
             pb_module,
             n_components=ndim + 1 if module_name != "Uniform" else 1,
         )
     else:
         pf = DiscretePolicyEstimator(
-            pf_module, env.n_actions, preprocessor=env.preprocessor
+            pf_module, env.n_actions, preprocessor=env.preprocessor  # pyright: ignore
         )
         pb = DiscretePolicyEstimator(
-            pb_module, env.n_actions, preprocessor=env.preprocessor, is_backward=True
+            pb_module,
+            env.n_actions,  # pyright: ignore
+            preprocessor=env.preprocessor,
+            is_backward=True,  # pyright: ignore
         )
-
     logF = ScalarEstimator(module=logF_module, preprocessor=env.preprocessor)
 
     if gflownet_name == "DB":
@@ -203,7 +224,7 @@ def PFBasedGFlowNet_with_return(
     elif gflownet_name == "SubTB":
         gflownet = SubTBGFlowNet(
             logF=logF,
-            weighting=sub_tb_weighting,
+            weighting=sub_tb_weighting,  # pyright: ignore
             pf=pf,
             pb=pb,
         )
@@ -213,12 +234,12 @@ def PFBasedGFlowNet_with_return(
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
     training_objects = gflownet.to_training_samples(trajectories)
 
-    _ = gflownet.loss(env, training_objects)
+    _ = gflownet.loss(env, training_objects)  # pyright: ignore
 
     if gflownet_name == "TB":
         assert torch.all(
             torch.abs(
-                gflownet.get_pfs_and_pbs(training_objects)[0]
+                gflownet.get_pfs_and_pbs(training_objects)[0]  # pyright: ignore
                 - training_objects.log_probs
             )
             < 1e-5
@@ -308,7 +329,7 @@ def test_subTB_vs_TB(
     )
 
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    subtb_loss = gflownet.loss(env, trajectories)
+    subtb_loss = gflownet.loss(env, trajectories)  # pyright: ignore
 
     if weighting == "TB":
         tb_loss = TBGFlowNet(pf=pf, pb=pb).loss(

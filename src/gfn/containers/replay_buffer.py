@@ -65,40 +65,52 @@ class ReplayBuffer:
         terminating_states = None
         if isinstance(training_objects, tuple):
             assert self.objects_type == "states" and self.terminating_states is not None
-            training_objects, terminating_states = training_objects
+            training_objects, terminating_states = training_objects  # pyright: ignore
 
         to_add = len(training_objects)
 
         self._is_full |= len(self) + to_add >= self.capacity
 
-        self.training_objects.extend(training_objects)
-        self.training_objects = self.training_objects[-self.capacity :]
+        self.training_objects.extend(training_objects)  # pyright: ignore
+        self.training_objects = self.training_objects[
+            -self.capacity :
+        ]  # pyright: ignore
 
         if self.terminating_states is not None:
             assert terminating_states is not None
-            self.terminating_states.extend(terminating_states)
+            self.terminating_states.extend(terminating_states)  # pyright: ignore
             self.terminating_states = self.terminating_states[-self.capacity :]
 
     def sample(self, n_trajectories: int) -> Transitions | Trajectories | tuple[States]:
         """Samples `n_trajectories` training objects from the buffer."""
         if self.terminating_states is not None:
             return (
-                self.training_objects.sample(n_trajectories),
-                self.terminating_states.sample(n_trajectories),
+                self.training_objects.sample(n_trajectories),  # pyright: ignore
+                self.terminating_states.sample(n_trajectories),  # pyright: ignore
             )
-        return self.training_objects.sample(n_trajectories)
+        return self.training_objects.sample(n_trajectories)  # pyright: ignore
 
     def save(self, directory: str):
         """Saves the buffer to disk."""
-        self.training_objects.save(os.path.join(directory, "training_objects"))
+        if self.objects_type == "states":
+            raise ValueError("States cannot be saved")
+        self.training_objects.save(  # pyright: ignore
+            os.path.join(directory, "training_objects")
+        )
         if self.terminating_states is not None:
-            self.terminating_states.save(os.path.join(directory, "terminating_states"))
+            self.terminating_states.save(  # pyright: ignore
+                os.path.join(directory, "terminating_states")
+            )
 
     def load(self, directory: str):
         """Loads the buffer from disk."""
-        self.training_objects.load(os.path.join(directory, "training_objects"))
+        self.training_objects.load(  # pyright: ignore
+            os.path.join(directory, "training_objects")
+        )
         if self.terminating_states is not None:
-            self.terminating_states.load(os.path.join(directory, "terminating_states"))
+            self.terminating_states.load(  # pyright: ignore
+                os.path.join(directory, "terminating_states")
+            )
 
 
 class PrioritizedReplayBuffer(ReplayBuffer):
@@ -148,12 +160,14 @@ class PrioritizedReplayBuffer(ReplayBuffer):
     ):
         """Adds a training object to the buffer."""
         # Adds the objects to the buffer.
-        self.training_objects.extend(training_objects)
+        self.training_objects.extend(training_objects)  # pyright: ignore
 
         # Sort elements by logreward, capping the size at the defined capacity.
-        ix = torch.argsort(self.training_objects.log_rewards)
-        self.training_objects = self.training_objects[ix]
-        self.training_objects = self.training_objects[-self.capacity :]
+        ix = torch.argsort(self.training_objects.log_rewards)  # pyright: ignore
+        self.training_objects = self.training_objects[ix]  # pyright: ignore
+        self.training_objects = self.training_objects[
+            -self.capacity :
+        ]  # pyright: ignore
 
         # Add the terminating states to the buffer.
         if self.terminating_states is not None:
@@ -169,7 +183,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         terminating_states = None
         if isinstance(training_objects, tuple):
             assert self.objects_type == "states" and self.terminating_states is not None
-            training_objects, terminating_states = training_objects
+            training_objects, terminating_states = training_objects  # pyright: ignore
 
         to_add = len(training_objects)
         self._is_full |= len(self) + to_add >= self.capacity
@@ -182,18 +196,22 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         else:
             if (
                 self.training_objects.log_rewards is None
-                or training_objects.log_rewards is None
+                or training_objects.log_rewards is None  # pyright: ignore
             ):
                 raise ValueError("log_rewards must be defined for prioritized replay.")
 
             # Sort the incoming elements by their logrewards.
-            ix = torch.argsort(training_objects.log_rewards, descending=True)
-            training_objects = training_objects[ix]
+            ix = torch.argsort(
+                training_objects.log_rewards, descending=True  # pyright: ignore
+            )  # pyright: ignore
+            training_objects = training_objects[ix]  # pyright: ignore
 
             # Filter all batch logrewards lower than the smallest logreward in buffer.
             min_reward_in_buffer = self.training_objects.log_rewards.min()  # type: ignore  # FIXME
-            idx_bigger_rewards = training_objects.log_rewards >= min_reward_in_buffer
-            training_objects = training_objects[idx_bigger_rewards]
+            idx_bigger_rewards = (
+                training_objects.log_rewards >= min_reward_in_buffer  # pyright: ignore
+            )  # pyright: ignore
+            training_objects = training_objects[idx_bigger_rewards]  # pyright: ignore
 
             # TODO: Concatenate input with final state for conditional GFN.
             # if self.is_conditional:
@@ -206,10 +224,16 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             #         dim=-1,
             #     )
 
+            # If all trajectories were filtered, stop there.
+            if not len(training_objects):
+                return
+
             if self.cutoff_distance >= 0:
                 # Filter the batch for diverse final_states with high reward.
-                batch = training_objects.last_states.tensor.float()
-                batch_dim = training_objects.last_states.batch_shape[0]
+                batch = training_objects.last_states.tensor.float()  # pyright: ignore
+                batch_dim = training_objects.last_states.batch_shape[  # pyright: ignore
+                    0
+                ]  # pyright: ignore
                 batch_batch_dist = torch.cdist(
                     batch.view(batch_dim, -1).unsqueeze(0),
                     batch.view(batch_dim, -1).unsqueeze(0),
@@ -221,13 +245,18 @@ class PrioritizedReplayBuffer(ReplayBuffer):
                 batch_batch_dist[r, w] = torch.finfo(batch_batch_dist.dtype).max
                 batch_batch_dist = batch_batch_dist.min(-1)[0]
                 idx_batch_batch = batch_batch_dist > self.cutoff_distance
-                training_objects = training_objects[idx_batch_batch]
+                training_objects = training_objects[idx_batch_batch]  # pyright: ignore
 
                 # Compute all pairwise distances between the remaining batch & buffer.
-                batch = training_objects.last_states.tensor.float()
-                buffer = self.training_objects.last_states.tensor.float()
-                batch_dim = training_objects.last_states.batch_shape[0]
-                buffer_dim = self.training_objects.last_states.batch_shape[0]
+                batch = training_objects.last_states.tensor.float()  # pyright: ignore
+                buffer = (
+                    self.training_objects.last_states.tensor.float()  # pyright: ignore
+                )  # pyright: ignore
+                batch_dim = training_objects.last_states.batch_shape[  # pyright: ignore
+                    0
+                ]  # pyright: ignore
+                tmp = self.training_objects.last_states  # pyright: ignore
+                buffer_dim = tmp.batch_shape[0]  # pyright: ignore
                 batch_buffer_dist = (
                     torch.cdist(
                         batch.view(batch_dim, -1).unsqueeze(0),
@@ -240,7 +269,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
                 # Filter the batch for diverse final_states w.r.t the buffer.
                 idx_batch_buffer = batch_buffer_dist > self.cutoff_distance
-                training_objects = training_objects[idx_batch_buffer]
+                training_objects = training_objects[idx_batch_buffer]  # pyright: ignore
 
             # If any training object remain after filtering, add them.
             if len(training_objects):
