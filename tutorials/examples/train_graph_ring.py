@@ -1,4 +1,14 @@
-"""Write ane xamples where we want to create graphs that are rings."""
+"""Train a GFlowNet to generate ring graphs.
+
+This example demonstrates training a GFlowNet to generate graphs that are rings - where each vertex
+has exactly two neighbors and the edges form a single cycle containing all vertices. The environment
+supports both directed and undirected ring generation.
+
+Key components:
+- RingGraphBuilding: Environment for building ring graphs
+- RingPolicyModule: GNN-based policy network for predicting actions
+- directed_reward/undirected_reward: Reward functions for validating ring structures
+"""
 
 import math
 import time
@@ -50,7 +60,7 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
         adj_matrix = torch.zeros(n_nodes, n_nodes)
         adj_matrix[masked_edge_index[:, 0], masked_edge_index[:, 1]] = 1
 
-        if not torch.all(adj_matrix.sum(axis=1) == 1):
+        if not torch.all(adj_matrix.sum(dim=1) == 1):
             continue
 
         visited = []
