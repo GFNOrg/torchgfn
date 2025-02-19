@@ -27,6 +27,7 @@ from gfn.gym import GraphBuilding
 from gfn.modules import DiscretePolicyEstimator
 from gfn.preprocessors import Preprocessor
 from gfn.states import GraphStates
+from gfn.utils.modules import MLP
 
 
 def directed_reward(states: GraphStates) -> torch.Tensor:
@@ -161,38 +162,6 @@ def undirected_reward(states: GraphStates) -> torch.Tensor:
     return out.view(*states.batch_shape)
 
 
-def create_mlp(in_channels, hidden_channels, out_channels, num_layers=1):
-    """
-    Create a Multi-Layer Perceptron with configurable number of layers.
-
-    Args:
-        in_channels (int): Number of input features
-        hidden_channels (int): Number of hidden features per layer
-        out_channels (int): Number of output features
-        num_layers (int): Number of hidden layers (default: 2)
-
-    Returns:
-        nn.Sequential: MLP model
-    """
-    layers = []
-
-    # Input layer
-    layers.append(nn.Linear(in_channels, hidden_channels))
-    layers.append(nn.LayerNorm(hidden_channels))
-    layers.append(nn.ReLU())
-
-    # Hidden layers
-    for _ in range(num_layers - 1):
-        layers.append(nn.Linear(hidden_channels, hidden_channels))
-        layers.append(nn.LayerNorm(hidden_channels))
-        layers.append(nn.ReLU())
-
-    # Output layer
-    layers.append(nn.Linear(hidden_channels, out_channels))
-
-    return nn.Sequential(*layers)
-
-
 class RingPolicyModule(nn.Module):
     """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
 
@@ -222,7 +191,6 @@ class RingPolicyModule(nn.Module):
         if directed:
             # Multiple action type convolution layers.
             for i in range(num_conv_layers):
-                # mlp = create_mlp(self.embedding_dim, self.embedding_dim, self.embedding_dim)
                 self.action_conv_blks.extend(
                     [
                         GCNConv(
@@ -237,7 +205,6 @@ class RingPolicyModule(nn.Module):
 
             # Multiple edge index convolution layers.
             for i in range(num_conv_layers):
-                # mlp = create_mlp(self.embedding_dim, self.embedding_dim, self.embedding_dim)
                 self.edge_conv_blks.extend(
                     [
                         GCNConv(
@@ -255,9 +222,13 @@ class RingPolicyModule(nn.Module):
                 self.action_conv_blks.extend(
                     [
                         GINConv(
-                            create_mlp(
-                                self.embedding_dim, self.hidden_dim, self.hidden_dim
-                            )
+                            MLP(
+                                input_dim=self.embedding_dim,
+                                output_dim=self.hidden_dim,
+                                hidden_dim=self.hidden_dim,
+                                n_hidden_layers=1,
+                                add_layer_norm=True,
+                            ),
                         ),
                         nn.Linear(self.hidden_dim, self.hidden_dim),
                         nn.ReLU(),
@@ -270,9 +241,13 @@ class RingPolicyModule(nn.Module):
                 self.edge_conv_blks.extend(
                     [
                         GINConv(
-                            create_mlp(
-                                self.embedding_dim, self.hidden_dim, self.hidden_dim
-                            )
+                            MLP(
+                                input_dim=self.embedding_dim,
+                                output_dim=self.hidden_dim,
+                                hidden_dim=self.hidden_dim,
+                                n_hidden_layers=1,
+                                add_layer_norm=True,
+                            ),
                         ),
                         nn.Linear(self.hidden_dim, self.hidden_dim),
                         nn.ReLU(),
