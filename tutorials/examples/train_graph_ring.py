@@ -178,7 +178,7 @@ class RingPolicyModule(nn.Module):
     ):
         super().__init__()
         self.hidden_dim = self.embedding_dim = 64
-
+        self.is_directed = directed
         self.is_backward = is_backward
         self.n_nodes = n_nodes
         self.num_conv_layers = num_conv_layers
@@ -331,14 +331,32 @@ class RingPolicyModule(nn.Module):
         edge_feature = edge_feature.reshape(
             *states_tensor["batch_shape"], self.n_nodes, self.hidden_dim
         )
+
+        # This is n_nodes ** 2, for each graph.
         edge_index = torch.einsum("bnf,bmf->bnm", edge_feature, edge_feature)
 
-        i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+        # Undirected.
+        if self.is_directed:
+            i_up, j_up = torch.triu_indices(
+                self.n_nodes, self.n_nodes, offset=1
+            )  # Upper triangle.
+            i_lo, j_lo = torch.tril_indices(
+                self.n_nodes, self.n_nodes, offset=-1
+            )  # Lower triangle.
+
+            # Combine them
+            i0 = torch.cat([i_up, i_lo])
+            i1 = torch.cat([j_up, j_lo])
+            out_size = self.n_nodes**2 - self.n_nodes
+
+        else:
+            i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+            out_size = (self.n_nodes**2 - self.n_nodes) // 2
+
+        # Grab the needed elems from the adjacency matrix and reshape.
         batch_arange = torch.arange(batch_size)
         edge_actions = edge_index[batch_arange[:, None, None], i0, i1]
-        edge_actions = edge_actions.reshape(
-            *states_tensor["batch_shape"], self.n_nodes * (self.n_nodes - 1) // 2
-        )
+        edge_actions = edge_actions.reshape(*states_tensor["batch_shape"], out_size)
 
         if self.is_backward:
             return edge_actions
@@ -358,11 +376,17 @@ class RingGraphBuilding(GraphBuilding):
         n_nodes: The number of nodes in the graph.
     """
 
-    def __init__(self, n_nodes: int, state_evaluator: callable):
+    def __init__(self, n_nodes: int, state_evaluator: callable, directed: bool):
         self.n_nodes = n_nodes
-        self.n_actions = 1 + n_nodes * (n_nodes - 1) // 2
+        if directed:
+            # all off-diagonal edges + exit.
+            self.n_actions = (n_nodes**2 - n_nodes) + 1
+        else:
+            # bottom triangle + exit.
+            self.n_actions = ((n_nodes**2 - n_nodes) // 2) + 1
         super().__init__(feature_dim=n_nodes, state_evaluator=state_evaluator)
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
+        self.is_directed = directed
 
     def make_actions_class(self) -> type[Actions]:
         env = self
@@ -408,22 +432,54 @@ class RingGraphBuilding(GraphBuilding):
             def forward_masks(self):
                 # Allow all actions.
                 forward_masks = torch.ones(len(self), self.n_actions, dtype=torch.bool)
-                forward_masks[:, :: self.n_nodes + 1] = False  # Remove self-loops.
 
-                # Remove existing edges.s
+                if env.is_directed:
+                    i_up, j_up = torch.triu_indices(
+                        self.n_nodes, self.n_nodes, offset=1
+                    )  # Upper triangle.
+                    i_lo, j_lo = torch.tril_indices(
+                        self.n_nodes, self.n_nodes, offset=-1
+                    )  # Lower triangle.
+
+                    # Combine them
+                    ei0 = torch.cat([i_up, i_lo])
+                    ei1 = torch.cat([j_up, j_lo])
+                else:
+                    ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+
+                # # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
+                # ei0 = torch.cat((ei0, torch.IntTensor([-1, -2])), dim=0)
+                # ei1 = torch.cat((ei1, torch.IntTensor([-1, -2])), dim=0)
+
+                # Indexes either the second last element (exit) or la
+                # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
+                # ei0, ei1 = ei0[action_tensor], ei1[action_tensor]
+
+                # Remove existing edges.
                 for i in range(len(self)):
                     existing_edges = (
                         self[i].tensor["edge_index"]
                         - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
                     )
                     assert torch.all(existing_edges >= 0)  # TODO: convert to test.
-                    edge = (
-                        existing_edges[:, 0]
-                        * (2 * self.n_nodes - existing_edges[:, 0] - 1)
-                        // 2
-                    )
-                    edge += existing_edges[:, 1] - existing_edges[:, 0] - 1
-                    forward_masks[i, edge] = False
+
+                    if len(existing_edges) == 0:
+                        edge_idx = torch.zeros(0, dtype=torch.bool)
+                    else:
+                        edge_idx = torch.logical_and(
+                            existing_edges[:, 0] == ei0.unsqueeze(-1),
+                            existing_edges[:, 1] == ei1.unsqueeze(-1),
+                        )
+
+                        # Collapse across the edge dimension.
+                        if len(edge_idx.shape) == 2:
+                            edge_idx = edge_idx.sum(1).bool()
+
+                        # Adds an unmasked exit action.
+                        edge_idx = torch.cat((edge_idx, torch.BoolTensor([False])))
+                        forward_masks[i, edge_idx] = (
+                            False  # Disallow the addition of this edge.
+                        )
 
                 return forward_masks.view(*self.batch_shape, self.n_actions)
 
@@ -433,24 +489,47 @@ class RingGraphBuilding(GraphBuilding):
 
             @property
             def backward_masks(self):
+                # Disallow all actions.
                 backward_masks = torch.zeros(
                     len(self), self.n_actions - 1, dtype=torch.bool
                 )
+
                 for i in range(len(self)):
                     existing_edges = (
                         self[i].tensor["edge_index"]
                         - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
                     )
-                    edge = (
-                        existing_edges[:, 0]
-                        * (2 * self.n_nodes - existing_edges[:, 0] - 1)
-                        // 2
-                    )
-                    edge += existing_edges[:, 1] - existing_edges[:, 0] - 1
-                    backward_masks[
-                        i,
-                        edge,
-                    ] = True
+
+                    if env.is_directed:
+                        i_up, j_up = torch.triu_indices(
+                            self.n_nodes, self.n_nodes, offset=1
+                        )  # Upper triangle.
+                        i_lo, j_lo = torch.tril_indices(
+                            self.n_nodes, self.n_nodes, offset=-1
+                        )  # Lower triangle.
+
+                        # Combine them
+                        ei0 = torch.cat([i_up, i_lo])
+                        ei1 = torch.cat([j_up, j_lo])
+                    else:
+                        ei0, ei1 = torch.triu_indices(
+                            self.n_nodes, self.n_nodes, offset=1
+                        )
+
+                    if len(existing_edges) == 0:
+                        edge_idx = torch.zeros(0, dtype=torch.bool)
+                    else:
+                        edge_idx = torch.logical_and(
+                            existing_edges[:, 0] == ei0.unsqueeze(-1),
+                            existing_edges[:, 1] == ei1.unsqueeze(-1),
+                        )
+                        # Collapse across the edge dimension.
+                        if len(edge_idx.shape) == 2:
+                            edge_idx = edge_idx.sum(1).bool()
+
+                        backward_masks[i, edge_idx] = (
+                            True  # Allow the removal of this edge.
+                        )
 
                 return backward_masks.view(*self.batch_shape, self.n_actions - 1)
 
@@ -473,6 +552,7 @@ class RingGraphBuilding(GraphBuilding):
         return new_states
 
     def convert_actions(self, states: GraphStates, actions: Actions) -> GraphActions:
+        """Converts the action from discrete space to graph action space."""
         action_tensor = actions.tensor.squeeze(-1).clone()
         action_type = torch.where(
             action_tensor == self.n_actions - 1,
@@ -481,8 +561,31 @@ class RingGraphBuilding(GraphBuilding):
         )
         action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
 
-        ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
-        action_tensor[action_tensor >= (self.n_actions - 1)] = 0
+        # TODO: factor out into utility function.
+        if self.is_directed:
+            i_up, j_up = torch.triu_indices(
+                self.n_nodes, self.n_nodes, offset=1
+            )  # Upper triangle.
+            i_lo, j_lo = torch.tril_indices(
+                self.n_nodes, self.n_nodes, offset=-1
+            )  # Lower triangle.
+
+            # Combine them
+            ei0 = torch.cat([i_up, i_lo])
+            ei1 = torch.cat([j_up, j_lo])
+
+            # Potentially problematic (returns [0,0,0,1,1] instead of above which returns [1,1,1,0,0]).
+            # ei0 = (action_tensor) // (self.n_nodes)
+            # ei1 = (action_tensor) % (self.n_nodes)
+        else:
+            ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+
+        # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
+        ei0 = torch.cat((ei0, torch.IntTensor([-1, -2])), dim=0)
+        ei1 = torch.cat((ei1, torch.IntTensor([-1, -2])), dim=0)
+
+        # Indexes either the second last element (exit) or la
+        # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
         ei0, ei1 = ei0[action_tensor], ei1[action_tensor]
 
         offset = states.tensor["node_index"][states.tensor["batch_ptr"][:-1]]
@@ -512,7 +615,7 @@ class GraphPreprocessor(Preprocessor):
         return self.preprocess(states)
 
 
-def render_states(states: GraphStates, state_evaluator: callable):
+def render_states(states: GraphStates, state_evaluator: callable, directed: bool):
     """Render the states as a matplotlib plot.
 
     Args:
@@ -540,6 +643,7 @@ def render_states(states: GraphStates, state_evaluator: callable):
         edge_index = torch.where(
             edge_index[..., None] == states[i].tensor["node_index"]
         )[2].reshape(edge_index.shape)
+
         for edge in edge_index:
             start_x, start_y = xs[edge[0]], ys[edge[0]]
             end_x, end_y = xs[edge[1]], ys[edge[1]]
@@ -549,11 +653,28 @@ def render_states(states: GraphStates, state_evaluator: callable):
             dx, dy = dx / length, dy / length
 
             circle_radius = 0.5
+            head_thickness = 0.2
+
             start_x += dx * circle_radius
             start_y += dy * circle_radius
-            end_x -= dx * circle_radius
-            end_y -= dy * circle_radius
-            current_ax.plot([start_x, end_x], [start_y, end_y], color="black")
+            if directed:
+                end_x -= dx * circle_radius
+                end_y -= dy * circle_radius
+                current_ax.arrow(
+                    start_x,
+                    start_y,
+                    end_x - start_x,
+                    end_y - start_y,
+                    head_width=head_thickness,
+                    head_length=head_thickness,
+                    fc="black",
+                    ec="black",
+                )
+
+            else:
+                end_x -= dx * (circle_radius + head_thickness)
+                end_y -= dy * (circle_radius + head_thickness)
+                current_ax.plot([start_x, end_x], [start_y, end_y], color="black")
 
         current_ax.set_title(f"State {i}, $r={rewards[i]:.2f}$")
         current_ax.set_xlim(-(radius + 1), radius + 1)
@@ -567,14 +688,16 @@ def render_states(states: GraphStates, state_evaluator: callable):
 
 if __name__ == "__main__":
     N_NODES = 3
-    N_ITERATIONS = 1000
+    N_ITERATIONS = 500
     LR = 0.05
     BATCH_SIZE = 128
     DIRECTED = True
 
     state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
-    env = RingGraphBuilding(n_nodes=N_NODES, state_evaluator=state_evaluator)
+    env = RingGraphBuilding(
+        n_nodes=N_NODES, state_evaluator=state_evaluator, directed=DIRECTED
+    )
     module_pf = RingPolicyModule(env.n_nodes, DIRECTED)
     module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
     pf = DiscretePolicyEstimator(
@@ -617,4 +740,4 @@ if __name__ == "__main__":
     print("Time:", t2 - t1)
     last_states = trajectories.last_states[:8]
     assert isinstance(last_states, GraphStates)
-    render_states(last_states, state_evaluator)
+    render_states(last_states, state_evaluator, DIRECTED)
