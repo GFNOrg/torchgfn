@@ -240,23 +240,23 @@ class RingPolicyModule(nn.Module):
             #             nn.Linear(self.hidden_dim, self.hidden_dim),
             #         ]
             #     )
-            for _ in range(num_conv_layers):
-                self.conv_blks.extend(
-                    [
-                        GINConv(
-                            MLP(
-                                input_dim=self.embedding_dim,
-                                output_dim=self.hidden_dim,
-                                hidden_dim=self.hidden_dim,
-                                n_hidden_layers=1,
-                                add_layer_norm=True,
-                            ),
-                        ),
-                        nn.Linear(self.hidden_dim, self.hidden_dim),
-                        nn.ReLU(),
-                        nn.Linear(self.hidden_dim, self.hidden_dim),
-                    ]
-                )
+            # for _ in range(num_conv_layers):
+            #     self.conv_blks.extend(
+            #         [
+            #             GINConv(
+            #                 MLP(
+            #                     input_dim=self.embedding_dim,
+            #                     output_dim=self.hidden_dim,
+            #                     hidden_dim=self.hidden_dim,
+            #                     n_hidden_layers=1,
+            #                     add_layer_norm=True,
+            #                 ),
+            #             ),
+            #             nn.Linear(self.hidden_dim, self.hidden_dim),
+            #             nn.ReLU(),
+            #             nn.Linear(self.hidden_dim, self.hidden_dim),
+            #         ]
+            #     )
 
             # Multiple edge index convolution layers.
             for _ in range(num_conv_layers):
