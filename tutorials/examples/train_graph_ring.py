@@ -1,4 +1,14 @@
-"""Write ane xamples where we want to create graphs that are rings."""
+"""Train a GFlowNet to generate ring graphs.
+
+This example demonstrates training a GFlowNet to generate graphs that are rings - where each vertex
+has exactly two neighbors and the edges form a single cycle containing all vertices. The environment
+supports both directed and undirected ring generation.
+
+Key components:
+- RingGraphBuilding: Environment for building ring graphs
+- RingPolicyModule: GNN-based policy network for predicting actions
+- directed_reward/undirected_reward: Reward functions for validating ring structures
+"""
 
 import math
 import time
@@ -17,6 +27,7 @@ from gfn.gym import GraphBuilding
 from gfn.modules import DiscretePolicyEstimator
 from gfn.preprocessors import Preprocessor
 from gfn.states import GraphStates
+from gfn.utils.modules import MLP
 
 
 def directed_reward(states: GraphStates) -> torch.Tensor:
@@ -50,7 +61,7 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
         adj_matrix = torch.zeros(n_nodes, n_nodes)
         adj_matrix[masked_edge_index[:, 0], masked_edge_index[:, 1]] = 1
 
-        if not torch.all(adj_matrix.sum(axis=1) == 1):
+        if not torch.all(adj_matrix.sum(dim=1) == 1):
             continue
 
         visited = []
@@ -151,38 +162,6 @@ def undirected_reward(states: GraphStates) -> torch.Tensor:
     return out.view(*states.batch_shape)
 
 
-def create_mlp(in_channels, hidden_channels, out_channels, num_layers=1):
-    """
-    Create a Multi-Layer Perceptron with configurable number of layers.
-
-    Args:
-        in_channels (int): Number of input features
-        hidden_channels (int): Number of hidden features per layer
-        out_channels (int): Number of output features
-        num_layers (int): Number of hidden layers (default: 2)
-
-    Returns:
-        nn.Sequential: MLP model
-    """
-    layers = []
-
-    # Input layer
-    layers.append(nn.Linear(in_channels, hidden_channels))
-    layers.append(nn.LayerNorm(hidden_channels))
-    layers.append(nn.ReLU())
-
-    # Hidden layers
-    for _ in range(num_layers - 1):
-        layers.append(nn.Linear(hidden_channels, hidden_channels))
-        layers.append(nn.LayerNorm(hidden_channels))
-        layers.append(nn.ReLU())
-
-    # Output layer
-    layers.append(nn.Linear(hidden_channels, out_channels))
-
-    return nn.Sequential(*layers)
-
-
 class RingPolicyModule(nn.Module):
     """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
 
@@ -208,7 +187,13 @@ class RingPolicyModule(nn.Module):
         self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
         # self.action_conv_blks = nn.ModuleList()
         self.conv_blks = nn.ModuleList()
-        self.exit_mlp = create_mlp(self.hidden_dim, self.hidden_dim, 1)
+        self.exit_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=1,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
 
         if directed:
             # Multiple action type convolution layers.
@@ -255,15 +240,36 @@ class RingPolicyModule(nn.Module):
             #             nn.Linear(self.hidden_dim, self.hidden_dim),
             #         ]
             #     )
+            for _ in range(num_conv_layers):
+                self.conv_blks.extend(
+                    [
+                        GINConv(
+                            MLP(
+                                input_dim=self.embedding_dim,
+                                output_dim=self.hidden_dim,
+                                hidden_dim=self.hidden_dim,
+                                n_hidden_layers=1,
+                                add_layer_norm=True,
+                            ),
+                        ),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                        nn.ReLU(),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                    ]
+                )
 
             # Multiple edge index convolution layers.
             for _ in range(num_conv_layers):
                 self.conv_blks.extend(
                     [
                         GINConv(
-                            create_mlp(
-                                self.embedding_dim, self.hidden_dim, self.hidden_dim
-                            )
+                            MLP(
+                                input_dim=self.embedding_dim,
+                                output_dim=self.hidden_dim,
+                                hidden_dim=self.hidden_dim,
+                                n_hidden_layers=1,
+                                add_layer_norm=True,
+                            ),
                         ),
                         nn.Linear(self.hidden_dim, self.hidden_dim),
                         nn.ReLU(),
