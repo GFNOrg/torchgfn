@@ -75,6 +75,7 @@ class Sampler:
             with no_conditioning_exception_handler("estimator", self.estimator):
                 estimator_output = self.estimator(states)
 
+        print("estimator_output={}".format(estimator_output[-1]))
         dist = self.estimator.to_probability_distribution(
             states, estimator_output, **policy_kwargs
         )
