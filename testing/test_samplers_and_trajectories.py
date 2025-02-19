@@ -348,7 +348,7 @@ def test_replay_buffer(
         raise ValueError(f"Error while testing {env_name}") from e
 
 
-def test_create_and_add_trajectory_to_buffer():
+def test_states_actions_tns_to_traj():
     env = HyperGrid(2, 4)
     states = torch.tensor([[0, 0], [0, 1], [0, 2], [-1, -1]])
     actions = torch.tensor([1, 1, 2])
