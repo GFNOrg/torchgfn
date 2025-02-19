@@ -352,17 +352,21 @@ class RingPolicyModule(nn.Module):
 
         # Undirected.
         if self.is_directed:
-            i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)  # Upper triangle.
-            i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)  # Lower triangle.
+            i_up, j_up = torch.triu_indices(
+                self.n_nodes, self.n_nodes, offset=1
+            )  # Upper triangle.
+            i_lo, j_lo = torch.tril_indices(
+                self.n_nodes, self.n_nodes, offset=-1
+            )  # Lower triangle.
 
             # Combine them
             i0 = torch.cat([i_up, i_lo])
             i1 = torch.cat([j_up, j_lo])
-            out_size = self.n_nodes ** 2 - self.n_nodes
+            out_size = self.n_nodes**2 - self.n_nodes
 
         else:
             i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
-            out_size = (self.n_nodes ** 2 - self.n_nodes) // 2
+            out_size = (self.n_nodes**2 - self.n_nodes) // 2
 
         # Grab the needed elems from the adjacency matrix and reshape.
         batch_arange = torch.arange(batch_size)
@@ -391,10 +395,10 @@ class RingGraphBuilding(GraphBuilding):
         self.n_nodes = n_nodes
         if directed:
             # all off-diagonal edges + exit.
-            self.n_actions = (n_nodes ** 2 - n_nodes) + 1
+            self.n_actions = (n_nodes**2 - n_nodes) + 1
         else:
             # bottom triangle + exit.
-            self.n_actions = ((n_nodes ** 2 - n_nodes) // 2) + 1
+            self.n_actions = ((n_nodes**2 - n_nodes) // 2) + 1
         super().__init__(feature_dim=n_nodes, state_evaluator=state_evaluator)
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
         self.is_directed = directed
@@ -445,8 +449,12 @@ class RingGraphBuilding(GraphBuilding):
                 forward_masks = torch.ones(len(self), self.n_actions, dtype=torch.bool)
 
                 if env.is_directed:
-                    i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)  # Upper triangle.
-                    i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)  # Lower triangle.
+                    i_up, j_up = torch.triu_indices(
+                        self.n_nodes, self.n_nodes, offset=1
+                    )  # Upper triangle.
+                    i_lo, j_lo = torch.tril_indices(
+                        self.n_nodes, self.n_nodes, offset=-1
+                    )  # Lower triangle.
 
                     # Combine them
                     ei0 = torch.cat([i_up, i_lo])
@@ -484,7 +492,9 @@ class RingGraphBuilding(GraphBuilding):
 
                         # Adds an unmasked exit action.
                         edge_idx = torch.cat((edge_idx, torch.BoolTensor([False])))
-                        forward_masks[i, edge_idx] = False  # Disallow the addition of this edge.
+                        forward_masks[i, edge_idx] = (
+                            False  # Disallow the addition of this edge.
+                        )
 
                 return forward_masks.view(*self.batch_shape, self.n_actions)
 
@@ -506,14 +516,20 @@ class RingGraphBuilding(GraphBuilding):
                     )
 
                     if env.is_directed:
-                        i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)  # Upper triangle.
-                        i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)  # Lower triangle.
+                        i_up, j_up = torch.triu_indices(
+                            self.n_nodes, self.n_nodes, offset=1
+                        )  # Upper triangle.
+                        i_lo, j_lo = torch.tril_indices(
+                            self.n_nodes, self.n_nodes, offset=-1
+                        )  # Lower triangle.
 
                         # Combine them
                         ei0 = torch.cat([i_up, i_lo])
                         ei1 = torch.cat([j_up, j_lo])
                     else:
-                        ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+                        ei0, ei1 = torch.triu_indices(
+                            self.n_nodes, self.n_nodes, offset=1
+                        )
 
                     if len(existing_edges) == 0:
                         edge_idx = torch.zeros(0, dtype=torch.bool)
@@ -526,7 +542,9 @@ class RingGraphBuilding(GraphBuilding):
                         if len(edge_idx.shape) == 2:
                             edge_idx = edge_idx.sum(1).bool()
 
-                        backward_masks[i, edge_idx] = True  # Allow the removal of this edge.
+                        backward_masks[i, edge_idx] = (
+                            True  # Allow the removal of this edge.
+                        )
 
                 return backward_masks.view(*self.batch_shape, self.n_actions - 1)
 
@@ -560,8 +578,12 @@ class RingGraphBuilding(GraphBuilding):
 
         # TODO: factor out into utility function.
         if self.is_directed:
-            i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)  # Upper triangle.
-            i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)  # Lower triangle.
+            i_up, j_up = torch.triu_indices(
+                self.n_nodes, self.n_nodes, offset=1
+            )  # Upper triangle.
+            i_lo, j_lo = torch.tril_indices(
+                self.n_nodes, self.n_nodes, offset=-1
+            )  # Lower triangle.
 
             # Combine them
             ei0 = torch.cat([i_up, i_lo])
@@ -688,7 +710,9 @@ if __name__ == "__main__":
 
     state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
-    env = RingGraphBuilding(n_nodes=N_NODES, state_evaluator=state_evaluator, directed=DIRECTED)
+    env = RingGraphBuilding(
+        n_nodes=N_NODES, state_evaluator=state_evaluator, directed=DIRECTED
+    )
     module_pf = RingPolicyModule(env.n_nodes, DIRECTED)
     module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
     pf = DiscretePolicyEstimator(
