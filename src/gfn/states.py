@@ -49,8 +49,10 @@ class States(ABC):
     """
 
     state_shape: ClassVar[tuple[int, ...]]  # Shape of one state
-    s0: ClassVar[torch.Tensor]  # Source state of the DAG
-    sf: ClassVar[torch.Tensor]  # Dummy state, used to pad a batch of states
+    s0: ClassVar[torch.Tensor | TensorDict]  # Source state of the DAG
+    sf: ClassVar[
+        torch.Tensor | TensorDict
+    ]  # Dummy state, used to pad a batch of states
     make_random_states_tensor: Callable = lambda x: (_ for _ in ()).throw(
         NotImplementedError(
             "The environment does not support initialization of random states."
@@ -108,14 +110,24 @@ class States(ABC):
         """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
-        return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
+        if isinstance(cls.s0, torch.Tensor):
+            return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
+        else:
+            raise NotImplementedError(
+                "make_initial_states_tensor is not implemented by default for TensorDicts"
+            )
 
     @classmethod
     def make_sink_states_tensor(cls, batch_shape: tuple[int, ...]) -> torch.Tensor:
         """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
-        return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
+        if isinstance(cls.sf, torch.Tensor):
+            return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
+        else:
+            raise NotImplementedError(
+                "make_sink_states_tensor is not implemented by default for TensorDicts"
+            )
 
     def __len__(self):
         return prod(self.batch_shape)
@@ -139,7 +151,9 @@ class States(ABC):
         return out
 
     def __setitem__(
-        self, index: int | Sequence[int] | Sequence[bool], states: States
+        self,
+        index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor,
+        states: States,
     ) -> None:
         """Set particular states of the batch."""
         self.tensor[index] = states.tensor
@@ -209,7 +223,7 @@ class States(ABC):
         Args:
             required_first_dim: The size of the first batch dimension post-expansion.
         """
-        if len(self.batch_shape) == 2:
+        if len(self.batch_shape) == 2 and isinstance(self.__class__.sf, torch.Tensor):
             if self.batch_shape[0] >= required_first_dim:
                 return
             self.tensor = torch.cat(
@@ -224,7 +238,7 @@ class States(ABC):
             self.batch_shape = (required_first_dim, self.batch_shape[1])
         else:
             raise ValueError(
-                f"extend_with_sf is not implemented for batch shapes {self.batch_shape}"
+                f"extend_with_sf is not implemented for graph states nor for batch shapes {self.batch_shape}"
             )
 
     def compare(self, other: torch.Tensor) -> torch.Tensor:
@@ -248,22 +262,32 @@ class States(ABC):
     @property
     def is_initial_state(self) -> torch.Tensor:
         """Returns a tensor of shape `batch_shape` that is True for states that are $s_0$ of the DAG."""
-        source_states_tensor = self.__class__.s0.repeat(
-            *self.batch_shape, *((1,) * len(self.__class__.state_shape))
-        )
+        if isinstance(self.__class__.s0, torch.Tensor):
+            source_states_tensor = self.__class__.s0.repeat(
+                *self.batch_shape, *((1,) * len(self.__class__.state_shape))
+            )
+        else:
+            raise NotImplementedError(
+                "is_initial_state is not implemented by default for TensorDicts"
+            )
         return self.compare(source_states_tensor)
 
     @property
     def is_sink_state(self) -> torch.Tensor:
         """Returns a tensor of shape `batch_shape` that is True for states that are $s_f$ of the DAG."""
         # TODO: self.__class__.sf == self.tensor -- or something similar?
-        sink_states = self.__class__.sf.repeat(
-            *self.batch_shape, *((1,) * len(self.__class__.state_shape))
-        ).to(self.tensor.device)
+        if isinstance(self.__class__.sf, torch.Tensor):
+            sink_states = self.__class__.sf.repeat(
+                *self.batch_shape, *((1,) * len(self.__class__.state_shape))
+            ).to(self.tensor.device)
+        else:
+            raise NotImplementedError(
+                "is_sink_state is not implemented by default for TensorDicts"
+            )
         return self.compare(sink_states)
 
     @property
-    def log_rewards(self) -> torch.Tensor:
+    def log_rewards(self) -> torch.Tensor | None:
         """Returns the log rewards of the states as tensor of shape `batch_shape`."""
         return self._log_rewards
 
@@ -563,9 +587,11 @@ class GraphStates(States):
                 "node_index": GraphStates.unique_node_indices(nodes.shape[0]),
                 "edge_feature": cls.s0["edge_feature"].repeat(np.prod(batch_shape), 1),
                 "edge_index": cls.s0["edge_index"].repeat(np.prod(batch_shape), 1),
-                "batch_ptr": torch.arange(np.prod(batch_shape) + 1)
+                "batch_ptr": torch.arange(
+                    int(np.prod(batch_shape)) + 1, device=cls.s0.device
+                )
                 * cls.s0["node_feature"].shape[0],
-                "batch_shape": batch_shape,
+                "batch_shape": torch.tensor(batch_shape, device=cls.s0.device),
             }
         )
 
@@ -583,10 +609,10 @@ class GraphStates(States):
                 "edge_feature": cls.sf["edge_feature"].repeat(np.prod(batch_shape), 1),
                 "edge_index": cls.sf["edge_index"].repeat(np.prod(batch_shape), 1),
                 "batch_ptr": torch.arange(
-                    np.prod(batch_shape) + 1, device=cls.sf.device
+                    int(np.prod(batch_shape)) + 1, device=cls.sf.device
                 )
                 * cls.sf["node_feature"].shape[0],
-                "batch_shape": batch_shape,
+                "batch_shape": torch.tensor(batch_shape, device=cls.sf.device),
             }
         )
         return out
@@ -603,20 +629,26 @@ class GraphStates(States):
         return TensorDict(
             {
                 "node_feature": torch.rand(
-                    np.prod(batch_shape) * num_nodes, node_features_dim, device=device
+                    int(np.prod(batch_shape)) * num_nodes,
+                    node_features_dim,
+                    device=device,
                 ),
                 "node_index": GraphStates.unique_node_indices(
-                    np.prod(batch_shape) * num_nodes
+                    int(np.prod(batch_shape)) * num_nodes
                 ),
                 "edge_feature": torch.rand(
-                    np.prod(batch_shape) * num_edges, edge_features_dim, device=device
+                    int(np.prod(batch_shape)) * num_edges,
+                    edge_features_dim,
+                    device=device,
                 ),
                 "edge_index": torch.randint(
-                    num_nodes, size=(np.prod(batch_shape) * num_edges, 2), device=device
+                    num_nodes,
+                    size=(int(np.prod(batch_shape)) * num_edges, 2),
+                    device=device,
                 ),
-                "batch_ptr": torch.arange(np.prod(batch_shape) + 1, device=device)
+                "batch_ptr": torch.arange(int(np.prod(batch_shape)) + 1, device=device)
                 * num_nodes,
-                "batch_shape": batch_shape,
+                "batch_shape": torch.tensor(batch_shape),
             }
         )
 
@@ -671,8 +703,8 @@ class GraphStates(States):
                     "node_index": torch.cat(node_indices),
                     "edge_feature": torch.cat(edge_features),
                     "edge_index": torch.cat(edge_indices),
-                    "batch_ptr": torch.tensor(batch_ptr),
-                    "batch_shape": (len(idx),),
+                    "batch_ptr": torch.tensor(batch_ptr, device=self.tensor.device),
+                    "batch_shape": torch.tensor(len(idx), device=self.tensor.device),
                 }
             )
         )
@@ -820,7 +852,7 @@ class GraphStates(States):
             # This renumbers nodes across batch indices such that all nodes have
             # a unique ID.
             new_indices = GraphStates.unique_node_indices(
-                torch.sum(common_node_indices)
+                int(torch.sum(common_node_indices).item())
             )
 
             # find edge_index which contains other_node_index[common_node_indices]. this is
@@ -858,7 +890,7 @@ class GraphStates(States):
         ) + self.batch_shape[1:]
 
     @property
-    def log_rewards(self) -> torch.Tensor:
+    def log_rewards(self) -> torch.Tensor | None:
         return self._log_rewards
 
     @log_rewards.setter

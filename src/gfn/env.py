@@ -13,7 +13,7 @@ from gfn.utils.common import set_seed
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
 
 
-def get_device(device_str, default_device):
+def get_device(device_str, default_device) -> torch.device:
     return torch.device(device_str) if device_str is not None else default_device
 
 
@@ -23,12 +23,12 @@ class Env(ABC):
 
     def __init__(
         self,
-        s0: torch.Tensor,
+        s0: torch.Tensor | TensorDict,
         state_shape: Tuple,
         action_shape: Tuple,
         dummy_action: torch.Tensor,
         exit_action: torch.Tensor,
-        sf: Optional[torch.Tensor] = None,
+        sf: Optional[torch.Tensor | TensorDict] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -55,7 +55,7 @@ class Env(ABC):
         assert s0.shape == state_shape
         if sf is None:
             sf = torch.full(s0.shape, -float("inf")).to(self.device)
-        self.sf: torch.Tensor = sf
+        self.sf = sf
         assert self.sf.shape == state_shape
         self.state_shape = state_shape
         self.action_shape = action_shape
@@ -263,7 +263,9 @@ class Env(ABC):
 
         # Set to the sink state when the action is exit.
         new_sink_states_idx = actions.is_exit
-        sf_tensor = self.States.make_sink_states_tensor((new_sink_states_idx.sum(),))
+        sf_tensor = self.States.make_sink_states_tensor(
+            (int(new_sink_states_idx.sum().item()),)
+        )
         new_states[new_sink_states_idx] = self.States(sf_tensor)
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
         assert new_sink_states_idx.shape == states.batch_shape
@@ -360,6 +362,9 @@ class DiscreteEnv(Env, ABC):
     `DiscreteEnv` allows for  specifying the validity of actions (forward and backward),
     via mask tensors, that are directly attached to `States` objects.
     """
+
+    s0: torch.Tensor  # this tells the type checker that s0 is a torch.Tensor
+    sf: torch.Tensor  # this tells the type checker that sf is a torch.Tensor
 
     def __init__(
         self,
@@ -510,28 +515,14 @@ class DiscreteEnv(Env, ABC):
         return new_states
 
     def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Returns the indices of the states in the environment.
-
-        Args:
-            states: The batch of states.
-
-        Returns:
-            torch.Tensor: Tensor of shape "batch_shape" containing the indices of the states.
-        """
-        return NotImplementedError(
+        """Returns the indices of the states in the environment."""
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Returns the indices of the terminating states in the environment.
-
-        Args:
-            states: The batch of states.
-
-        Returns:
-            torch.Tensor: Tensor of shape "batch_shape" containing the indices of the terminating states.
-        """
-        return NotImplementedError(
+        """Returns the indices of the terminating states in the environment."""
+        raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
@@ -580,10 +571,12 @@ class DiscreteEnv(Env, ABC):
 class GraphEnv(Env):
     """Base class for graph-based environments."""
 
+    sf: TensorDict  # this tells the type checker that sf is a TensorDict
+
     def __init__(
         self,
         s0: TensorDict,
-        sf: Optional[TensorDict] = None,
+        sf: TensorDict,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -591,7 +584,7 @@ class GraphEnv(Env):
 
         Args:
             s0: The initial graph state.
-            sf: The final graph state.
+            sf: The sink graph state.
             device_str: 'cpu' or 'cuda'. Defaults to None, in which case the device is
                 inferred from s0.
             preprocessor: a Preprocessor object that converts raw graph states to a tensor

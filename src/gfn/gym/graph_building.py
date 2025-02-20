@@ -49,6 +49,7 @@ class GraphBuilding(GraphEnv):
         )
 
         self.state_evaluator = state_evaluator
+        self.feature_dim = feature_dim
 
         super().__init__(
             s0=s0,
