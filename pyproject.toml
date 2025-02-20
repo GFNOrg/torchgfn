@@ -26,6 +26,7 @@ einops = ">=0.6.1"
 numpy = ">=1.21.2"
 python = "^3.10"
 torch = ">=1.9.0"
+tensordict = ">=0.6.1"
 
 # dev dependencies.
 black = { version = "24.3", optional = true }
@@ -47,6 +48,7 @@ wandb = { version = "*", optional = true }
 scikit-learn = {version = "*", optional = true }
 scipy = { version = "*", optional = true }
 matplotlib = { version = "*", optional = true }
+torch_geometric = { version = ">=2.6.1", optional = true }
 
 [tool.poetry.extras]
 dev = [
@@ -62,6 +64,7 @@ dev = [
     "sphinx",
     "tox",
     "flake8",
+    "torch_geometric",
 ]
 
 scripts = ["tqdm", "wandb", "scikit-learn", "scipy", "matplotlib"]
@@ -83,6 +86,7 @@ all = [
     "tox",
     "tqdm",
     "wandb",
+    "torch_geometric",
 ]
 
 [tool.poetry.urls]

@@ -1,5 +1,7 @@
+from typing import Dict
+
 import torch
-from torch.distributions import Categorical
+from torch.distributions import Categorical, Distribution
 
 
 class UnsqueezedCategorical(Categorical):
@@ -39,3 +41,78 @@ class UnsqueezedCategorical(Categorical):
         """
         assert sample.shape[-1] == 1
         return super().log_prob(sample.squeeze(-1))
+
+
+class CompositeDistribution(
+    Distribution
+):  # TODO: may use CompositeDistribution in TensorDict
+    """A mixture distribution."""
+
+    def __init__(self, dists: Dict[str, Distribution]):
+        """Initializes the mixture distribution.
+
+        Args:
+            dists: A dictionary of distributions.
+        """
+        super().__init__()
+        self.dists = dists
+
+    def sample(self, sample_shape=torch.Size()) -> Dict[str, torch.Tensor]:
+        return {k: v.sample(sample_shape) for k, v in self.dists.items()}
+
+    def log_prob(self, sample: Dict[str, torch.Tensor]) -> torch.Tensor:
+        log_probs = [
+            v.log_prob(sample[k]).reshape(sample[k].shape[0], -1).sum(dim=-1)
+            for k, v in self.dists.items()
+        ]
+        # Note: this returns the sum of the log_probs over all the components
+        # as it is a uniform mixture distribution.
+        return sum(log_probs)
+
+
+class CategoricalIndexes(Categorical):
+    """Samples indexes from a categorical distribution."""
+
+    def __init__(self, probs: torch.Tensor, node_indexes: torch.Tensor):
+        """Initializes the distribution.
+
+        Args:
+            probs: The probabilities of the categorical distribution.
+            n: The number of nodes in the graph.
+        """
+        self.node_indexes = node_indexes
+        assert probs.shape == (
+            probs.shape[0],
+            node_indexes.shape[0] * node_indexes.shape[0],
+        )
+        super().__init__(probs)
+
+    def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
+        samples = super().sample(sample_shape)
+        out = torch.stack(
+            [
+                samples // self.node_indexes.shape[0],
+                samples % self.node_indexes.shape[0],
+            ],
+            dim=-1,
+        )
+        out = self.node_indexes.index_select(0, out.flatten()).reshape(*out.shape)
+        return out
+
+    def log_prob(self, value):
+        value = value[..., 0] * self.node_indexes.shape[0] + value[..., 1]
+        value = torch.bucketize(value, self.node_indexes)
+        return super().log_prob(value)
+
+
+class CategoricalActionType(Categorical):  # TODO: remove, just to sample 1 action_type
+    def __init__(self, probs: torch.Tensor):
+        self.batch_len = len(probs)
+        super().__init__(probs[0])
+
+    def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
+        samples = super().sample(sample_shape)
+        return samples.repeat(self.batch_len)
+
+    def log_prob(self, value):
+        return super().log_prob(value[0]).repeat(self.batch_len)
