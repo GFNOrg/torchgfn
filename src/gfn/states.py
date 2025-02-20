@@ -69,10 +69,18 @@ class States(ABC):
         assert tensor.shape[-len(self.state_shape) :] == self.state_shape
 
         self.tensor = tensor
-        self.batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
+        self._batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
         self._log_rewards = (
             None  # Useful attribute if we want to store the log-reward of the states
         )
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return self._batch_shape
+
+    @batch_shape.setter
+    def batch_shape(self, batch_shape: tuple[int, ...]) -> None:
+        self._batch_shape = batch_shape
 
     @classmethod
     def from_batch_shape(
