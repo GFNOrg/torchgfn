@@ -674,7 +674,9 @@ class GraphStates(States):
                     "edge_feature": torch.cat(edge_features),
                     "edge_index": torch.cat(edge_indices),
                     "batch_ptr": torch.tensor(batch_ptr),
-                    "batch_shape": (tuple(new_shape)),  # TODO: this shouldn't change from len(2) to len(1).
+                    "batch_shape": (
+                        tuple(new_shape)
+                    ),  # TODO: this shouldn't change from len(2) to len(1).
                 }
             )
         )
@@ -853,7 +855,7 @@ class GraphStates(States):
             dim=0,
         )
 
-        #self.tensor["batch_shape"] = self.tensor["batch_shape"] + other.tensor["batch_shape"]
+        # self.tensor["batch_shape"] = self.tensor["batch_shape"] + other.tensor["batch_shape"]
         # If self.tensor is a placeholder and all batch_dims are 0, this check won't pass.
         if not torch.all(self.tensor["batch_shape"] == 0):
             assert torch.all(
@@ -862,7 +864,9 @@ class GraphStates(States):
         # self.tensor["batch_shape"] = (
         #     self.tensor["batch_shape"][0] + other.tensor["batch_shape"][0],
         # ) + self.batch_shape[1:]
-        self.tensor["batch_shape"] = self.tensor["batch_shape"] + other.tensor["batch_shape"]
+        self.tensor["batch_shape"] = (
+            self.tensor["batch_shape"] + other.tensor["batch_shape"]
+        )
 
     @property
     def log_rewards(self) -> torch.Tensor:
