@@ -44,7 +44,7 @@ class States(ABC):
 
     Attributes:
         tensor: Tensor representing a batch of states.
-        batch_shape: Sizes of the batch dimensions.
+        _batch_shape: Sizes of the batch dimensions.
         _log_rewards: Stores the log rewards of each state.
     """
 
@@ -566,9 +566,8 @@ class GraphStates(States):
         self.edge_features_dim = tensor["edge_feature"].shape[-1]
         self._log_rewards: Optional[torch.Tensor] = None
 
-    # TODO: self.tensor["batch_shape"] is set wrong.
     @property
-    def batch_shape(self) -> tuple:
+    def batch_shape(self) -> tuple[int, ...]:
         return tuple(self.tensor["batch_shape"].tolist())
 
     @classmethod
@@ -714,9 +713,7 @@ class GraphStates(States):
                     "edge_feature": torch.cat(edge_features),
                     "edge_index": torch.cat(edge_indices),
                     "batch_ptr": torch.tensor(batch_ptr, device=self.tensor.device),
-                    "batch_shape": torch.tensor(
-                        len(idx), device=self.tensor.device
-                    ),  # TODO: this shouldn't change from len(2) to len(1).
+                    "batch_shape": torch.tensor(new_shape, device=self.tensor.device),
                 }
             )
         )
