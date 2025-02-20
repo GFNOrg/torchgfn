@@ -344,7 +344,7 @@ class RingPolicyModule(nn.Module):
         #     torch.mean(edge_feature, dim=-1, keepdim=True), batch_ptr
         # )
 
-        # TODO: MLP from here to exit_action.
+        # This MLP computes the exit action.
         edge_feature_means = self._group_mean(edge_feature, batch_ptr)
         exit_action = self.exit_mlp(edge_feature_means)
 
