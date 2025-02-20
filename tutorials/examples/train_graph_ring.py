@@ -350,7 +350,7 @@ class RingPolicyModule(nn.Module):
         exit_action = self.exit_mlp(edge_feature_means)
 
         edge_feature = edge_feature.reshape(
-            states_tensor["batch_shape"].item(), self.n_nodes, self.hidden_dim
+            *states_tensor["batch_shape"], self.n_nodes, self.hidden_dim
         )
 
         # This is n_nodes ** 2, for each graph.
@@ -379,7 +379,7 @@ class RingPolicyModule(nn.Module):
         batch_arange = torch.arange(batch_size)
         edge_actions = edge_index[batch_arange[:, None, None], i0, i1]
         edge_actions = edge_actions.reshape(
-            states_tensor["batch_shape"].item(), out_size
+            *states_tensor["batch_shape"], out_size
         )
 
         if self.is_backward:

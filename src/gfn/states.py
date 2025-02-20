@@ -850,7 +850,7 @@ class GraphStates(States):
         self.tensor["node_feature"] = torch.cat(
             [self.tensor["node_feature"], other.tensor["node_feature"]], dim=0
         )
-
+    
         # find if there are common node indices
         other_node_index = other.tensor["node_index"]
         other_edge_index = other.tensor["edge_index"]
@@ -873,37 +873,81 @@ class GraphStates(States):
             repeat_indices = new_indices[None, None].repeat(edge_mask.shape[0], 2, 1)
             other_edge_index[torch.any(edge_mask, dim=-1)] = repeat_indices[edge_mask]
             other_node_index[common_node_indices] = new_indices
+        if torch.prod(self.tensor["batch_shape"]) == 0:
+            # if self is empty, just copy other
+            self.tensor["batch_shape"] = other.tensor["batch_shape"]
+            self.tensor["node_index"] = other.tensor["node_index"]
+            self.tensor["edge_feature"] = other.tensor["edge_feature"]
+            self.tensor["edge_index"] = other.tensor["edge_index"]
+            self.tensor["batch_ptr"] = other.tensor["batch_ptr"]
 
-        self.tensor["node_index"] = torch.cat(
-            [self.tensor["node_index"], other_node_index], dim=0
-        )
-        self.tensor["edge_feature"] = torch.cat(
-            [self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=0
-        )
-        self.tensor["edge_index"] = torch.cat(
-            [self.tensor["edge_index"], other.tensor["edge_index"]],
-            dim=0,
-        )
-        self.tensor["batch_ptr"] = torch.cat(
-            [
-                self.tensor["batch_ptr"],
-                other.tensor["batch_ptr"][1:] + self.tensor["batch_ptr"][-1],
-            ],
-            dim=0,
-        )
-
-        # self.tensor["batch_shape"] = self.tensor["batch_shape"] + other.tensor["batch_shape"]
-        # If self.tensor is a placeholder and all batch_dims are 0, this check won't pass.
-        if not torch.all(self.tensor["batch_shape"] == 0):
-            assert torch.all(
-                self.tensor["batch_shape"][1:] == other.tensor["batch_shape"][1:]
+        elif len(self.tensor["batch_shape"]) == 1:
+            self.tensor["node_index"] = torch.cat(
+                [self.tensor["node_index"], other_node_index], dim=0
             )
-        # self.tensor["batch_shape"] = (
-        #     self.tensor["batch_shape"][0] + other.tensor["batch_shape"][0],
-        # ) + self.batch_shape[1:]
-        self.tensor["batch_shape"] = (
-            self.tensor["batch_shape"] + other.tensor["batch_shape"]
-        )
+            self.tensor["edge_feature"] = torch.cat(
+                [self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=0
+            )
+            self.tensor["edge_index"] = torch.cat(
+                [self.tensor["edge_index"], other.tensor["edge_index"]],
+                dim=0,
+            )
+            self.tensor["batch_ptr"] = torch.cat(
+                [
+                    self.tensor["batch_ptr"],
+                    other.tensor["batch_ptr"][1:] + self.tensor["batch_ptr"][-1],
+                ],
+                dim=0,
+            )
+            self.tensor["batch_shape"] = (
+                self.tensor["batch_shape"][0] + other.tensor["batch_shape"][0],
+            ) + self.batch_shape[1:]
+        else: 
+            # Here we handle the case where the batch shape is (T, B)
+            # and we want to concatenate along the batch dimension B.
+            assert len(self.tensor["batch_shape"]) == 2
+            max_len = max(self.tensor["batch_shape"][0], other.tensor["batch_shape"][0])
+
+            node_features = []
+            node_indices = []
+            edge_features = []
+            edge_indices = []
+            batch_ptr = [torch.tensor([0], device=self.tensor.device)]
+            for i in range(max_len):
+                # Following the logic of Base class, we want to extend with sink states
+                if i >= self.tensor["batch_shape"][0]:
+                    self_i = self.make_sink_states_tensor(self.tensor["batch_shape"][1:])
+                else:
+                    self_i = self[i].tensor
+                if i >= other.tensor["batch_shape"][0]:
+                    other_i = other.make_sink_states_tensor(other.tensor["batch_shape"][1:])
+                else:
+                    other_i = other[i].tensor
+
+                node_features.append(self_i["node_feature"])
+                node_indices.append(self_i["node_index"])
+                edge_features.append(self_i["edge_feature"])
+                edge_indices.append(self_i["edge_index"])
+                batch_ptr.append(self_i["batch_ptr"][1:] + batch_ptr[-1][-1])
+
+                node_features.append(other_i["node_feature"])
+                node_indices.append(other_i["node_index"])
+                edge_features.append(other_i["edge_feature"])
+                edge_indices.append(other_i["edge_index"])
+                batch_ptr.append(other_i["batch_ptr"][1:] + batch_ptr[-1][-1])
+
+            self.tensor["node_feature"] = torch.cat(node_features, dim=0)
+            self.tensor["node_index"] = torch.cat(node_indices, dim=0)
+            self.tensor["edge_feature"] = torch.cat(edge_features, dim=0)
+            self.tensor["edge_index"] = torch.cat(edge_indices, dim=0)
+            self.tensor["batch_ptr"] = torch.cat(batch_ptr, dim=0)
+
+            self.tensor["batch_shape"] = (
+                max_len,
+                self.tensor["batch_shape"][1] + other.tensor["batch_shape"][1],
+            )
+
+        assert torch.prod(self.tensor["batch_shape"]) == len(self.tensor["batch_ptr"]) - 1
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
