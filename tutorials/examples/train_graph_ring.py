@@ -28,7 +28,7 @@ from gfn.modules import DiscretePolicyEstimator
 from gfn.preprocessors import Preprocessor
 from gfn.states import GraphStates
 from gfn.utils.modules import MLP
-from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
+from gfn.containers import ReplayBuffer
 
 
 def directed_reward(states: GraphStates) -> torch.Tensor:
@@ -735,7 +735,9 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=LR)
 
     replay_buffer = ReplayBuffer(
-        env, objects_type="trajectories", capacity=1000,
+        env,
+        objects_type="trajectories",
+        capacity=1000,
     )
 
     losses = []
