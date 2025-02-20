@@ -28,6 +28,7 @@ from gfn.modules import DiscretePolicyEstimator
 from gfn.preprocessors import Preprocessor
 from gfn.states import GraphStates
 from gfn.utils.modules import MLP
+from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
 
 
 def directed_reward(states: GraphStates) -> torch.Tensor:
@@ -708,11 +709,11 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
 
 
 if __name__ == "__main__":
-    N_NODES = 3
+    N_NODES = 6
     N_ITERATIONS = 500
     LR = 0.05
     BATCH_SIZE = 128
-    DIRECTED = True
+    DIRECTED = False
 
     state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
@@ -733,6 +734,10 @@ if __name__ == "__main__":
     gflownet = TBGFlowNet(pf, pb)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=LR)
 
+    replay_buffer = ReplayBuffer(
+        env, objects_type="trajectories", capacity=1000,
+    )
+
     losses = []
 
     t1 = time.time()
@@ -742,16 +747,21 @@ if __name__ == "__main__":
         )
         last_states = trajectories.last_states
         assert isinstance(last_states, GraphStates)
-        rews = state_evaluator(last_states)
-        samples = gflownet.to_training_samples(trajectories)
+        rewards = state_evaluator(last_states)
+        training_samples = gflownet.to_training_samples(trajectories)
+
+        with torch.no_grad():
+            replay_buffer.add(training_samples)
+            training_objects = replay_buffer.sample(n_trajectories=BATCH_SIZE)
+
         optimizer.zero_grad()
-        loss = gflownet.loss(env, samples)  # pyright: ignore
+        loss = gflownet.loss(env, training_objects)  # pyright: ignore
         print(
             "Iteration",
             iteration,
             "Loss:",
             loss.item(),
-            f"rings: {torch.mean(rews > 0.1, dtype=torch.float) * 100:.0f}%",
+            f"rings: {torch.mean(rewards > 0.1, dtype=torch.float) * 100:.0f}%",
         )
         loss.backward()
         optimizer.step()
