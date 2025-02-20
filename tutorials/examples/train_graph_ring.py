@@ -354,6 +354,7 @@ class RingPolicyModule(nn.Module):
 
         # This is n_nodes ** 2, for each graph.
         edge_index = torch.einsum("bnf,bmf->bnm", edge_feature, edge_feature)
+        edge_index = edge_index / torch.sqrt(torch.tensor(self.hidden_dim))
 
         # Undirected.
         if self.is_directed:
