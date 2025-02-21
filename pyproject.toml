@@ -121,7 +121,6 @@ strict = [
 
 typeCheckingMode = "basic"
 pythonVersion = "3.10"
-typeshedPath = "typeshed"
 enableTypeIgnoreComments = true
 
 # This is required as the CI pre-commit does not download the module (i.e. numpy)
@@ -136,6 +135,7 @@ reportUntypedFunctionDecorator = "none"
 reportMissingTypeStubs = false
 reportUnboundVariable = "warning"
 reportGeneralTypeIssues = "none"
+reportOptionalMemberAccess = "error"
 
 [tool.pytest.ini_options]
 # Black-compatibility enforced.

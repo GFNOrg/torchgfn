@@ -32,20 +32,21 @@ repos:
     hooks:
       - id: flake8
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.392.post0
+    rev: v1.1.394
     hooks:
       - id: pyright
         name: pyright
         entry: pyright
-        args:
-          - --project=pyproject.toml
+        language: system
+        types: [python]
+        args: [--project=pyproject.toml]
   - repo: local
     hooks:
       - id: pytest-check
         name: pytest-check
         entry: pytest
         args: [testing/]
-        language: python
+        language: system
         pass_filenames: false
         types: [python]
         always_run: true
