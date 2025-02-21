@@ -209,7 +209,9 @@ class Sampler:
             actions[~dones] = valid_actions
             trajectories_actions.append(actions)
             if save_logprobs:
-                # When off_policy, actions_log_probs are None.
+                assert (
+                    actions_log_probs is not None
+                ), "actions_log_probs should not be None when save_logprobs is True"
                 log_probs[~dones] = actions_log_probs
                 trajectories_logprobs.append(log_probs)
 
@@ -565,7 +567,7 @@ class LocalSearchSampler(Sampler):
 
         new_trajectories_log_rewards = recon_trajectories.log_rewards  # Episodic reward
         new_trajectories_dones = n_prevs + n_recons
-        max_traj_len = new_trajectories_dones.max()
+        max_traj_len = int(new_trajectories_dones.max().item())
 
         # Create helper indices and masks
         idx = torch.arange(max_traj_len + 1).unsqueeze(1).expand(-1, bs).to(n_prevs)
