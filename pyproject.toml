@@ -136,6 +136,7 @@ reportMissingTypeStubs = false
 reportUnboundVariable = "warning"
 reportGeneralTypeIssues = "none"
 reportOptionalMemberAccess = "error"
+reportArgumentType = "error"
 
 [tool.pytest.ini_options]
 # Black-compatibility enforced.

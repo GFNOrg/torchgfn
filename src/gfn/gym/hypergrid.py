@@ -2,7 +2,7 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from typing import Literal, Tuple
+from typing import Literal, Tuple, TYPE_CHECKING
 
 import torch
 from einops import rearrange
@@ -11,7 +11,9 @@ from gfn.actions import Actions
 from gfn.env import DiscreteEnv
 from gfn.gym.helpers.preprocessors import KHotPreprocessor, OneHotPreprocessor
 from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
-from gfn.states import DiscreteStates
+
+if TYPE_CHECKING:
+    from gfn.states import DiscreteStates
 
 
 class HyperGrid(DiscreteEnv):

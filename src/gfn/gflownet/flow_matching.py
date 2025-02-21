@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Union
+from typing import Any, Tuple
 
 import torch
 
@@ -178,9 +178,8 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
     def loss(
         self,
         env: DiscreteEnv,
-        states_tuple: Union[
-            Tuple[DiscreteStates, DiscreteStates, torch.Tensor, torch.Tensor],
-            Tuple[DiscreteStates, DiscreteStates, None, None],
+        states_tuple: Tuple[
+            DiscreteStates, DiscreteStates, torch.Tensor | None, torch.Tensor | None
         ],
     ) -> torch.Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.

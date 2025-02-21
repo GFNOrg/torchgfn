@@ -3,6 +3,10 @@ from argparse import ArgumentParser
 import torch
 import wandb
 from tqdm import tqdm
+from typing import cast, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gfn.states import DiscreteStates
 
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
@@ -87,9 +91,15 @@ def main(args):
             save_estimator_outputs=False,
             save_logprobs=False,
         )
-        training_samples = gflownet.to_training_samples(trajectories)  # pyright: ignore
+        training_samples = gflownet.to_training_samples(trajectories)
+        training_samples = cast(
+            Tuple[
+                DiscreteStates, DiscreteStates, torch.Tensor | None, torch.Tensor | None
+            ],
+            training_samples,
+        )
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)  # pyright: ignore
+        loss = gflownet.loss(env, training_samples)
         loss.backward()
         optimizer.step()
 
