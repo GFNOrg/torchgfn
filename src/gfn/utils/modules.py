@@ -79,6 +79,14 @@ class MLP(nn.Module):
     def output_dim(self):
         return self._output_dim
 
+    @input_dim.setter
+    def input_dim(self, value: int):
+        self._input_dim = value
+
+    @output_dim.setter
+    def output_dim(self, value: int):
+        self._output_dim = value
+
 
 class Tabular(nn.Module):
     """Implements a tabular policy.

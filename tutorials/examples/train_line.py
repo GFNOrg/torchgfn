@@ -134,8 +134,8 @@ class GaussianStepMLP(MLP):
         assert policy_std_min < policy_std_max
         self.policy_std_min = policy_std_min
         self.policy_std_max = policy_std_max
-        self.input_dim = 2  # [x_pos, counter].  # pyright: ignore
-        self.output_dim = 2  # [mus, scales].  # pyright: ignore
+        self.input_dim = 2  # [x_pos, counter].
+        self.output_dim = 2  # [mus, scales].
 
         super().__init__(
             input_dim=self.input_dim,
