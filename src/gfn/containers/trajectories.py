@@ -396,10 +396,7 @@ class Trajectories(Container):
 
     def to_non_initial_intermediary_and_terminating_states(
         self,
-    ) -> Union[
-        Tuple[States, States, torch.Tensor, torch.Tensor],
-        Tuple[States, States, None, None],
-    ]:
+    ) -> Tuple[States, States, torch.Tensor | None, torch.Tensor | None]:
         """Returns all intermediate and terminating `States` from the trajectories.
 
         This is useful for the flow matching loss, that requires its inputs to be distinguished.
