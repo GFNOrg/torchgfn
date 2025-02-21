@@ -401,7 +401,7 @@ class QuarterCircleWithExit(Distribution):
             centers.device
         )
 
-    def sample(self, sample_shape=()) -> torch.Tensor:
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         """Samples from the distribution.
 
         Args:
@@ -484,7 +484,7 @@ class DistributionWrapper(Distribution):
                 epsilon=epsilon,
             )  # no sample_shape req as it is stored in centers.
 
-    def sample(self, sample_shape=()):
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         output = torch.zeros(sample_shape + self._output_shape).to(
             self.idx_is_initial.device
         )
@@ -493,7 +493,7 @@ class DistributionWrapper(Distribution):
         if n_disk_samples > 0:
             assert self.quarter_disk is not None
             sample_disk = self.quarter_disk.sample(
-                sample_shape=sample_shape + (n_disk_samples,)
+                sample_shape=torch.Size(sample_shape + (n_disk_samples,))
             )
             output[self.idx_is_initial] = sample_disk
         if len(self.idx_not_initial) > 0:
