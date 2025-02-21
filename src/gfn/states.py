@@ -264,7 +264,7 @@ class States(ABC):
         return self._log_rewards
 
     @log_rewards.setter
-    def log_rewards(self, log_rewards: torch.Tensor) -> None:
+    def log_rewards(self, log_rewards: torch.Tensor | None) -> None:
         """Sets the log rewards of the states.
 
         Args:
