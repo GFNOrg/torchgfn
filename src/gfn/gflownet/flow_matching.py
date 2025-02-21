@@ -157,7 +157,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         self,
         env: DiscreteEnv,
         terminating_states: DiscreteStates,
-        conditioning: torch.Tensor,
+        conditioning: torch.Tensor | None,
     ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
         del env  # Unused
@@ -203,11 +203,8 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         )
         return fm_loss + self.alpha * rm_loss
 
-    def to_training_samples(self, trajectories: Trajectories) -> Union[
-        Tuple[DiscreteStates, DiscreteStates, torch.Tensor, torch.Tensor],
-        Tuple[DiscreteStates, DiscreteStates, None, None],
-        Tuple[States, States, torch.Tensor, torch.Tensor],
-        Tuple[States, States, None, None],
-    ]:
+    def to_training_samples(
+        self, trajectories: Trajectories
+    ) -> Tuple[States, States, torch.Tensor | None, torch.Tensor | None]:
         """Converts a batch of trajectories into a batch of training samples."""
         return trajectories.to_non_initial_intermediary_and_terminating_states()
