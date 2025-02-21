@@ -34,6 +34,7 @@ class MLP(nn.Module):
         self._output_dim = output_dim
 
         if trunk is None:
+            hidden_dim = hidden_dim or 256
             assert (
                 n_hidden_layers is not None and n_hidden_layers >= 0
             ), "n_hidden_layers must be >= 0"
@@ -49,10 +50,14 @@ class MLP(nn.Module):
                 arch.append(nn.Linear(hidden_dim, hidden_dim))
                 arch.append(activation())
             self.trunk = nn.Sequential(*arch)
-            self.trunk.hidden_dim = hidden_dim
+            self._hidden_dim = hidden_dim
         else:
             self.trunk = trunk
-        self.last_layer = nn.Linear(self.trunk.hidden_dim, output_dim)
+            assert hasattr(
+                trunk, "hidden_dim"
+            ), "trunk must have a hidden_dim attribute"
+            self._hidden_dim = trunk.hidden_dim
+        self.last_layer = nn.Linear(self._hidden_dim, output_dim)
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the neural network.
