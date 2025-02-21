@@ -182,8 +182,8 @@ def warm_up(
             loss = gflownet.loss(
                 env,
                 training_trajs,
-                recalculate_all_logprobs=recalculate_all_logprobs,  # pyright: ignore
-            )  # pyright: ignore
+                recalculate_all_logprobs=recalculate_all_logprobs,
+            )
         else:
             loss = gflownet.loss(env, training_trajs)
 

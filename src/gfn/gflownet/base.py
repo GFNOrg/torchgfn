@@ -114,7 +114,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     @abstractmethod
     def loss(
         self, env: Env, training_objects: Any, recalculate_all_logprobs: bool = False
-    ):
+    ) -> torch.Tensor:
         """Computes the loss given the training objects.
 
         Args:
