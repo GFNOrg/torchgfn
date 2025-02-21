@@ -71,7 +71,9 @@ class Actions(ABC):
         return self.__class__(actions)
 
     def __setitem__(
-        self, index: int | Sequence[int] | Sequence[bool], actions: Actions
+        self,
+        index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor,
+        actions: Actions,
     ) -> None:
         """Set particular actions of the batch."""
         self.tensor[index] = actions.tensor
