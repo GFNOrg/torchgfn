@@ -163,7 +163,9 @@ class Trajectories(Container):
         except NotImplementedError:
             return torch.log(self.env.reward(self.last_states))
 
-    def __getitem__(self, index: int | Sequence[int]) -> Trajectories:
+    def __getitem__(
+        self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
+    ) -> Trajectories:
         """Returns a subset of the `n_trajectories` trajectories."""
         if isinstance(index, int):
             index = [index]

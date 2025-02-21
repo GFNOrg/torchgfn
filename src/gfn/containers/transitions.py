@@ -202,7 +202,9 @@ class Transitions(Container):
         )
         return log_rewards
 
-    def __getitem__(self, index: int | Sequence[int]) -> Transitions:
+    def __getitem__(
+        self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
+    ) -> Transitions:
         """Access particular transitions of the batch."""
         if isinstance(index, int):
             index = [index]
