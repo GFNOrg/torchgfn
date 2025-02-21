@@ -259,7 +259,7 @@ class States(ABC):
         return self.compare(sink_states)
 
     @property
-    def log_rewards(self) -> torch.Tensor:
+    def log_rewards(self) -> torch.Tensor | None:
         """Returns the log rewards of the states as tensor of shape `batch_shape`."""
         return self._log_rewards
 
@@ -270,7 +270,8 @@ class States(ABC):
         Args:
             log_rewards: Tensor of shape `batch_shape` representing the log rewards of the states.
         """
-        assert log_rewards.shape == self.batch_shape
+        if log_rewards is not None:
+            assert log_rewards.shape == self.batch_shape
         self._log_rewards = log_rewards
 
     def sample(self, n_samples: int) -> States:
