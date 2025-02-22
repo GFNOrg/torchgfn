@@ -9,7 +9,7 @@ from gfn.env import DiscreteEnv, Env
 from gfn.gflownet import GFlowNet, TBGFlowNet
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
-from gfn.states import States, DiscreteStates
+from gfn.states import DiscreteStates
 
 
 def get_terminating_state_dist_pmf(
