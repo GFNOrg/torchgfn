@@ -58,8 +58,8 @@ def test_FM(env_name: int, ndim: int, module_name: str):
 
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    states_tuple = trajectories.to_non_initial_intermediary_and_terminating_states()
-    loss = gflownet.loss(env, states_tuple)  # pyright: ignore
+    states_tuple = trajectories.to_state_pairs()
+    loss = gflownet.loss(env, states_tuple)
     assert loss >= 0
 
 

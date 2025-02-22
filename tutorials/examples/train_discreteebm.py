@@ -16,7 +16,7 @@ from argparse import ArgumentParser
 import torch
 import wandb
 from tqdm import tqdm, trange
-from typing import TYPE_CHECKING, cast, Tuple
+from typing import TYPE_CHECKING, cast
 
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
@@ -25,8 +25,7 @@ from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, Tabular
 from gfn.utils.training import validate
 
-if TYPE_CHECKING:
-    from gfn.states import DiscreteStates
+from gfn.states import DiscreteStates
 
 DEFAULT_SEED = 4444
 
@@ -77,18 +76,14 @@ def main(args):  # noqa: C901
             env, save_logprobs=True, n=args.batch_size
         )
         training_samples = gflownet.to_training_samples(trajectories)
-        training_samples = cast(
-            Tuple[
-                DiscreteStates, DiscreteStates, torch.Tensor | None, torch.Tensor | None
-            ],
-            training_samples,
-        )
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples)
         loss.backward()
         optimizer.step()
 
-        visited_terminating_states.extend(trajectories.last_states)
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.last_states)
+        )
 
         states_visited += len(trajectories)
 

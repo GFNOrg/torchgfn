@@ -92,12 +92,6 @@ def main(args):
             save_logprobs=False,
         )
         training_samples = gflownet.to_training_samples(trajectories)
-        training_samples = cast(
-            Tuple[
-                DiscreteStates, DiscreteStates, torch.Tensor | None, torch.Tensor | None
-            ],
-            training_samples,
-        )
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples)
         loss.backward()
