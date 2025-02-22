@@ -22,6 +22,7 @@ class ReplayBuffer:
         training_objects: the buffer of objects used for training.
         terminating_states: a States class representation of $s_f$.
         objects_type: the type of buffer (transitions, trajectories, or states).
+        prioritized: whether the buffer is prioritized by log_reward or not.
     """
 
     def __init__(
@@ -29,6 +30,7 @@ class ReplayBuffer:
         env: Env,
         objects_type: Literal["transitions", "trajectories", "states"],
         capacity: int = 1000,
+        prioritized: bool = False,
     ):
         """Instantiates a replay buffer.
         Args:
@@ -53,6 +55,7 @@ class ReplayBuffer:
             raise ValueError(f"Unknown objects_type: {objects_type}")
 
         self._is_full = False
+        self.prioritized = prioritized
 
     def __repr__(self):
         return f"ReplayBuffer(capacity={self.capacity}, containing {len(self)} {self.objects_type})"
@@ -60,26 +63,52 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.training_objects)
 
-    def add(self, training_objects: Transitions | Trajectories | tuple[States]):
+    def _add_objs(
+        self,
+        training_objects: Transitions | Trajectories | tuple[States],
+    ):
         """Adds a training object to the buffer."""
         terminating_states = None
         if isinstance(training_objects, tuple):
             assert self.objects_type == "states" and self.terminating_states is not None
             training_objects, terminating_states = training_objects  # pyright: ignore
-
+        
         to_add = len(training_objects)
-
         self._is_full |= len(self) + to_add >= self.capacity
 
+        # Adds the objects to the buffer.
         self.training_objects.extend(training_objects)  # pyright: ignore
+
+        # Sort elements by logreward, capping the size at the defined capacity.
+        if self.prioritized:
+
+            if (
+                self.training_objects.log_rewards is None
+                or training_objects.log_rewards is None  # pyright: ignore
+            ):
+                raise ValueError("log_rewards must be defined for prioritized replay.")
+
+            # Ascending sort.
+            ix = torch.argsort(self.training_objects.log_rewards)  # pyright: ignore
+            self.training_objects = self.training_objects[ix]  # pyright: ignore
         self.training_objects = self.training_objects[
-            -self.capacity :
+            -self.capacity :  # Ascending sort, so we retain the final elements.
         ]  # pyright: ignore
 
+        # Add the terminating states to the buffer.
         if self.terminating_states is not None:
             assert terminating_states is not None
-            self.terminating_states.extend(terminating_states)  # pyright: ignore
+            self.terminating_states.extend(terminating_states)
+
+            # Sort terminating states by logreward as well.
+            if self.prioritized:
+                self.terminating_states = self.terminating_states[ix]
+
             self.terminating_states = self.terminating_states[-self.capacity :]
+
+    def add(self, training_objects: Transitions | Trajectories | tuple[States]):
+        """Adds a training object to the buffer."""
+        self._add_objs(training_objects)
 
     def sample(self, n_trajectories: int) -> Transitions | Trajectories | tuple[States]:
         """Samples `n_trajectories` training objects from the buffer."""
@@ -113,8 +142,8 @@ class ReplayBuffer:
             )
 
 
-class PrioritizedReplayBuffer(ReplayBuffer):
-    """A replay buffer of trajectories or transitions.
+class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
+    """A replay buffer of trajectories or transitions with diverse trajectories.
 
     Attributes:
         env: the Environment instance.
@@ -152,53 +181,27 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         super().__init__(env, objects_type, capacity)
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
+        self._prioritized = True
 
-    def _add_objs(
-        self,
-        training_objects: Transitions | Trajectories | tuple[States],
-        terminating_states: States | None = None,
-    ):
-        """Adds a training object to the buffer."""
-        # Adds the objects to the buffer.
-        self.training_objects.extend(training_objects)  # pyright: ignore
-
-        # Sort elements by logreward, capping the size at the defined capacity.
-        ix = torch.argsort(self.training_objects.log_rewards)  # pyright: ignore
-        self.training_objects = self.training_objects[ix]  # pyright: ignore
-        self.training_objects = self.training_objects[
-            -self.capacity :
-        ]  # pyright: ignore
-
-        # Add the terminating states to the buffer.
-        if self.terminating_states is not None:
-            assert terminating_states is not None
-            self.terminating_states.extend(terminating_states)
-
-            # Sort terminating states by logreward as well.
-            self.terminating_states = self.terminating_states[ix]
-            self.terminating_states = self.terminating_states[-self.capacity :]
+    @property
+    def prioritized(self) -> bool:
+        return self._prioritized
 
     def add(self, training_objects: Transitions | Trajectories | tuple[States]):
         """Adds a training object to the buffer."""
-        terminating_states = None
-        if isinstance(training_objects, tuple):
-            assert self.objects_type == "states" and self.terminating_states is not None
-            training_objects, terminating_states = training_objects  # pyright: ignore
-
         to_add = len(training_objects)
         self._is_full |= len(self) + to_add >= self.capacity
 
         # The buffer isn't full yet.
         if len(self.training_objects) < self.capacity:
-            self._add_objs(training_objects, terminating_states)
+            self._add_objs(training_objects)
 
         # Our buffer is full and we will prioritize diverse, high reward additions.
         else:
-            if (
-                self.training_objects.log_rewards is None
-                or training_objects.log_rewards is None  # pyright: ignore
-            ):
-                raise ValueError("log_rewards must be defined for prioritized replay.")
+            terminating_states = None
+            if isinstance(training_objects, tuple):
+                assert self.objects_type == "states" and self.terminating_states is not None
+                training_objects, terminating_states = training_objects  # pyright: ignore
 
             # Sort the incoming elements by their logrewards.
             ix = torch.argsort(
