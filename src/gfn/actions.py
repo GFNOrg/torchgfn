@@ -2,7 +2,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 
 from abc import ABC
 from math import prod
-from typing import ClassVar, Sequence
+from typing import ClassVar, Sequence, List
 
 import torch
 
@@ -79,7 +79,7 @@ class Actions(ABC):
         self.tensor[index] = actions.tensor
 
     @classmethod
-    def stack(cls, actions_list: list[Actions]) -> Actions:
+    def stack(cls, actions_list: List[Actions]) -> Actions:
         """Stacks a list of Actions objects into a single Actions object.
 
         The individual actions need to have the same batch shape. An example application
