@@ -34,6 +34,7 @@ from gfn.gym.helpers.box_utils import (
 from gfn.modules import ScalarEstimator
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.common import set_seed
+from gfn.gflownet import TBGFlowNet
 
 DEFAULT_SEED = 4444
 
@@ -250,11 +251,8 @@ def main(args):  # noqa: C901
             env, save_logprobs=True, n=args.batch_size, **local_search_params
         )
 
-        training_samples = gflownet.to_training_samples(trajectories)
-
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
-
+        loss = gflownet.loss_from_trajectories(env, trajectories)
         loss.backward()
         for p in gflownet.parameters():
             if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.

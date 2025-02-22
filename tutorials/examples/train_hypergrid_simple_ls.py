@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import argparse
-
+from typing import cast
 import torch
 from tqdm import tqdm
 
@@ -11,6 +11,7 @@ from gfn.samplers import LocalSearchSampler
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP
 from gfn.utils.training import validate
+from gfn.states import DiscreteStates
 
 
 def main(args):
@@ -64,7 +65,9 @@ def main(args):
             back_ratio=args.back_ratio,
             use_metropolis_hastings=args.use_metropolis_hastings,
         )
-        visited_terminating_states.extend(trajectories.last_states)
+        last_states = trajectories.last_states
+        last_states = cast(DiscreteStates, last_states)
+        visited_terminating_states.extend(last_states)
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories)

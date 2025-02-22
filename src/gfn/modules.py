@@ -110,9 +110,9 @@ class GFNModule(ABC, nn.Module):
     def check_output_dim(self, module_output: torch.Tensor) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
         assert module_output.dtype == torch.float
-        if module_output.shape[-1] != self.expected_output_dim():  # pyright: ignore
+        if module_output.shape[-1] != self.expected_output_dim:
             raise ValueError(
-                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim()}"  # pyright: ignore
+                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim}"
                 + f" but is {module_output.shape[-1]}."
             )
 
@@ -192,6 +192,7 @@ class ScalarEstimator(GFNModule):
         )
         self.reduction_fxn = REDUCTION_FXNS[reduction]
 
+    @property
     def expected_output_dim(self) -> int:
         return 1
 
@@ -251,6 +252,7 @@ class DiscretePolicyEstimator(GFNModule):
         super().__init__(module, preprocessor, is_backward=is_backward)
         self.n_actions = n_actions
 
+    @property
     def expected_output_dim(self) -> int:
         if self.is_backward:
             return self.n_actions - 1
@@ -456,6 +458,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
 
         return out
 
+    @property
     def expected_output_dim(self) -> int:
         return 1
 

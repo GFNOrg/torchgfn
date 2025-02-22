@@ -812,6 +812,7 @@ class BoxPFEstimator(GFNModule):
         self.delta = env.delta
         self.epsilon = env.epsilon
 
+    @property
     def expected_output_dim(self) -> int:
         return 1 + 5 * self._n_comp_max
 
@@ -899,6 +900,7 @@ class BoxPBEstimator(GFNModule):
 
         self.delta = env.delta
 
+    @property
     def expected_output_dim(self) -> int:
         return 3 * self.n_components
 

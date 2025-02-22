@@ -2,7 +2,7 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from typing import Literal, Tuple, TYPE_CHECKING
+from typing import Literal, Tuple
 
 import torch
 from einops import rearrange
@@ -12,8 +12,7 @@ from gfn.env import DiscreteEnv
 from gfn.gym.helpers.preprocessors import KHotPreprocessor, OneHotPreprocessor
 from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
 
-if TYPE_CHECKING:
-    from gfn.states import DiscreteStates
+from gfn.states import DiscreteStates
 
 
 class HyperGrid(DiscreteEnv):
@@ -64,11 +63,11 @@ class HyperGrid(DiscreteEnv):
         elif preprocessor_name == "OneHot":
             preprocessor = OneHotPreprocessor(
                 n_states=self.n_states,
-                get_states_indices=self.get_states_indices,  # pyright: ignore
+                get_states_indices=self.get_states_indices,
             )
         elif preprocessor_name == "Enum":
             preprocessor = EnumPreprocessor(
-                get_states_indices=self.get_states_indices,  # pyright: ignore
+                get_states_indices=self.get_states_indices,
             )
         else:
             raise ValueError(f"Unknown preprocessor {preprocessor_name}")
