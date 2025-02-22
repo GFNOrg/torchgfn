@@ -345,9 +345,9 @@ def test_replay_buffer(
 
         # Add objects multiple times to test buffer behavior
         replay_buffer.add(training_objects_2)
-        replay_buffer.add(training_objects)
-        replay_buffer.add(training_objects)
-        replay_buffer.add(training_objects)
+        replay_buffer.add(training_objects_2)
+        replay_buffer.add(training_objects_2)
+        replay_buffer.add(training_objects_2)
 
         # Test that we can sample from the buffer
         sampled = replay_buffer.sample(5)

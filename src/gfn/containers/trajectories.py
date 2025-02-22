@@ -371,11 +371,13 @@ class Trajectories(Container):
                 dim=0,
             )
 
-        # FIXME: Transitions requires log_probs for initialization (see line 107 in transitions.py).
-        # Shouldn't we make sure that log_probs are always available?
-        log_probs = (
-            self.log_probs[~self.actions.is_dummy] if has_log_probs(self) else None
-        )
+        # Initialize log_probs as zeros if not available
+        if has_log_probs(self):
+            log_probs = self.log_probs[~self.actions.is_dummy]
+        else:
+            log_probs = torch.zeros(
+                actions.batch_shape[0], dtype=torch.float, device=actions.device
+            )
 
         return Transitions(
             env=self.env,
