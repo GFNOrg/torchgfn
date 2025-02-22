@@ -172,12 +172,14 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         assert scores.shape == (transitions.n_transitions,)
         return log_pf_actions, log_pb_actions, scores
 
-    def loss(self, env: Env, transitions: Transitions) -> torch.Tensor:
+    def loss(
+        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+    ) -> torch.Tensor:
         """Detailed balance loss.
 
         The detailed balance loss is described in section
         3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266)."""
-        _, _, scores = self.get_scores(env, transitions)
+        _, _, scores = self.get_scores(env, transitions, recalculate_all_logprobs)
         loss = torch.mean(scores**2)
 
         if torch.isnan(loss):
