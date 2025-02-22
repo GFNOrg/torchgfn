@@ -34,7 +34,6 @@ from gfn.gym.helpers.box_utils import (
 from gfn.modules import ScalarEstimator
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.common import set_seed
-from gfn.gflownet import TBGFlowNet
 
 DEFAULT_SEED = 4444
 
