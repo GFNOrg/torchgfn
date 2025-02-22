@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
     from gfn.env import Env
-    from gfn.states import States
+    from gfn.states import States, DiscreteStates
 
 import torch
 
 from gfn.containers.base import Container
 from gfn.containers.transitions import Transitions
 from gfn.utils.common import has_log_probs
+from gfn.containers.state_pairs import StatePairs
 
 
 # TODO: remove env from this class?
@@ -394,16 +395,17 @@ class Trajectories(Container):
         states = self.states.flatten()
         return states[~states.is_sink_state]
 
-    def to_non_initial_intermediary_and_terminating_states(
+    def to_state_pairs(
         self,
-    ) -> Tuple[States, States, torch.Tensor | None, torch.Tensor | None]:
-        """Returns all intermediate and terminating `States` from the trajectories.
+    ) -> StatePairs[DiscreteStates]:
+        """Returns all intermediate and terminating states from the trajectories.
 
-        This is useful for the flow matching loss, that requires its inputs to be distinguished.
+        This is useful for algorithms that need to process different types of states separately,
+        such as flow matching.
 
-        Returns: a tuple containing all the intermediary states in the trajectories
-            that are not s0, and all the terminating states in the trajectories that
-            are not s0.
+        Returns:
+            A StatePairs instance containing all the intermediary states in the trajectories
+            that are not s0, and all the terminating states in the trajectories that are not s0.
         """
         states = self.states
 
@@ -421,11 +423,15 @@ class Trajectories(Container):
         intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]
         terminating_states = self.last_states
         terminating_states.log_rewards = self.log_rewards
-        return (
-            intermediary_states,
-            terminating_states,
-            intermediary_conditioning,
-            conditioning,
+
+        assert isinstance(intermediary_states, DiscreteStates)
+        assert isinstance(terminating_states, DiscreteStates)
+        return StatePairs(
+            env=self.env,
+            intermediary_states=intermediary_states,
+            terminating_states=terminating_states,
+            intermediary_conditioning=intermediary_conditioning,
+            terminating_conditioning=conditioning,
         )
 
     def reverse_backward_trajectories(self, debug: bool = False) -> Trajectories:
@@ -443,20 +449,18 @@ class Trajectories(Container):
 
         # Compute sequence lengths and maximum length
         seq_lengths = self.when_is_done  # shape (n_trajectories,)
-        max_len = seq_lengths.max().item()
+        max_len = int(seq_lengths.max().item())
 
         # Get actions and states
         actions = self.actions.tensor  # shape (max_len, n_trajectories *action_dim)
         states = self.states.tensor  # shape (max_len + 1, n_trajectories, *state_dim)
 
         # Initialize new actions and states
-        new_actions = self.env.dummy_action.repeat(
-            max_len + 1, len(self), 1  # pyright: ignore
-        ).to(actions)
+        new_actions = self.env.dummy_action.repeat(max_len + 1, len(self), 1).to(
+            actions
+        )
         # shape (max_len + 1, n_trajectories, *action_dim)
-        new_states = self.env.sf.repeat(
-            max_len + 2, len(self), 1  # pyright: ignore
-        ).to(states)
+        new_states = self.env.sf.repeat(max_len + 2, len(self), 1).to(states)
         # shape (max_len + 2, n_trajectories, *state_dim)
 
         # Create helper indices and masks
@@ -512,14 +516,10 @@ class Trajectories(Container):
         # If `debug` is True (expected only when testing), compare the
         # vectorized approach's results (above) to the for-loop results (below).
         if debug:
-            _new_actions = self.env.dummy_action.repeat(
-                max_len + 1, len(self), 1  # pyright: ignore
-            ).to(
+            _new_actions = self.env.dummy_action.repeat(max_len + 1, len(self), 1).to(
                 actions
             )  # shape (max_len + 1, n_trajectories, *action_dim)
-            _new_states = self.env.sf.repeat(
-                max_len + 2, len(self), 1  # pyright: ignore
-            ).to(
+            _new_states = self.env.sf.repeat(max_len + 2, len(self), 1).to(
                 states
             )  # shape (max_len + 2, n_trajectories, *state_dim)
 
