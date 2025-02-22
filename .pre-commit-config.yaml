@@ -37,7 +37,6 @@ repos:
       - id: pyright
         name: pyright
         entry: pyright
-        language: system
         types: [python]
         args: [--project=pyproject.toml]
   - repo: local
