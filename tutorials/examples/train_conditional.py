@@ -217,10 +217,8 @@ def train(env, gflownet, seed):
             save_estimator_outputs=True,
             epsilon=exploration_rate,
         )
-        training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
-        # TODO: do not ignore the next ignore
-        loss = gflownet.loss(env, training_samples)  # pyright: ignore
+        loss = gflownet.loss_from_trajectories(env, trajectories)
         loss.backward()
         optimizer.step()
         pbar.set_postfix({"loss": loss.item()})
