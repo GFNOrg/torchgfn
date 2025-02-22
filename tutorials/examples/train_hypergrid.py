@@ -12,19 +12,21 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 """
 
 from argparse import ArgumentParser
-
+from typing import cast
 import torch
 import wandb
 from tqdm import tqdm, trange
 
 from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
+from gfn.states import DiscreteStates
 from gfn.gflownet import (
-    DBGFlowNet,
-    FMGFlowNet,
-    LogPartitionVarianceGFlowNet,
-    ModifiedDBGFlowNet,
-    SubTBGFlowNet,
+    GFlowNet,
     TBGFlowNet,
+    SubTBGFlowNet,
+    LogPartitionVarianceGFlowNet,
+    DBGFlowNet,
+    ModifiedDBGFlowNet,
+    FMGFlowNet,
 )
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
@@ -174,29 +176,20 @@ def main(args):  # noqa: C901
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
 
-    # Initialize the replay buffer ?
+    # Create replay buffer if needed
     replay_buffer = None
     if args.replay_buffer_size > 0:
-        if args.loss in ("TB", "SubTB", "ZVar"):
-            objects_type = "trajectories"
-        elif args.loss in ("DB", "ModifiedDB"):
-            objects_type = "transitions"
-        elif args.loss == "FM":
-            objects_type = "states"
-        else:
-            raise NotImplementedError(f"Unknown loss: {args.loss}")
-
         if args.replay_buffer_prioritized:
             replay_buffer = PrioritizedReplayBuffer(
                 env,
-                objects_type=objects_type,
                 capacity=args.replay_buffer_size,
-                p_norm_distance=1,  # Use L1-norm for diversity estimation.
-                cutoff_distance=0,  # -1 turns off diversity-based filtering.
+                cutoff_distance=args.cutoff_distance,
+                p_norm_distance=args.p_norm_distance,
             )
         else:
             replay_buffer = ReplayBuffer(
-                env, objects_type=objects_type, capacity=args.replay_buffer_size
+                env,
+                capacity=args.replay_capacity,
             )
 
     # Move the gflownet to the GPU.
@@ -245,11 +238,13 @@ def main(args):  # noqa: C901
             training_objects = training_samples
 
         optimizer.zero_grad()
+        gflownet = cast(GFlowNet, gflownet)
         loss = gflownet.loss(env, training_objects)
         loss.backward()
         optimizer.step()
-
-        visited_terminating_states.extend(trajectories.last_states)
+        last_states = trajectories.last_states
+        last_states = cast(DiscreteStates, last_states)
+        visited_terminating_states.extend(last_states)
 
         states_visited += len(trajectories)
 
