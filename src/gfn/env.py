@@ -421,6 +421,14 @@ class DiscreteEnv(Env, ABC):
         self.update_masks(states_instance)
         return states_instance
 
+    def states_from_batch_shape(
+        self, batch_shape: Tuple, random: bool = False, sink: bool = False
+    ) -> DiscreteStates:
+        """Returns a batch of s0 states with a given batch_shape."""
+        out = super().states_from_batch_shape(batch_shape, random, sink)
+        assert isinstance(out, DiscreteStates)
+        return out
+
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
