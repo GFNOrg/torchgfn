@@ -336,3 +336,26 @@ def test_subTB_vs_TB(
             env, trajectories
         )  # LogZ is default 0.0.
         assert (tb_loss - subtb_loss).abs() < 1e-4
+
+
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
+@pytest.mark.parametrize("ndim", [2, 3])
+def test_flow_matching_state_pairs(env_name: str, ndim: int):
+    """Test that flow matching correctly processes state pairs from trajectories."""
+    if env_name == "HyperGrid":
+        env = HyperGrid(ndim=ndim, preprocessor_name="KHot")
+    else:
+        env = DiscreteEBM(ndim=ndim, preprocessor_name="Identity")
+
+    module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
+    log_F_edge = DiscretePolicyEstimator(
+        module=module,
+        n_actions=env.n_actions,
+        preprocessor=env.preprocessor,
+    )
+
+    gflownet = FMGFlowNet(log_F_edge)
+    trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
+    states_pairs = trajectories.to_state_pairs()
+    loss = gflownet.loss(env, states_pairs)
+    assert loss >= 0
