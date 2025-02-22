@@ -336,13 +336,15 @@ def test_replay_buffer(
     try:
         if objects == "trajectories":
             # Filter out trajectories that are at max length
-            training_objects = training_objects[
+            training_objects_2 = training_objects[
                 training_objects.when_is_done != training_objects.max_length
             ]
+
         else:
-            training_objects = training_objects.to_transitions()
+            training_objects_2 = training_objects.to_transitions()
 
         # Add objects multiple times to test buffer behavior
+        replay_buffer.add(training_objects_2)
         replay_buffer.add(training_objects)
         replay_buffer.add(training_objects)
         replay_buffer.add(training_objects)

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from typing import Sequence
 
-if TYPE_CHECKING:
-    from gfn.actions import Actions
-    from gfn.env import Env
-    from gfn.states import States, DiscreteStates
+from gfn.actions import Actions
+from gfn.env import Env
+from gfn.states import States, DiscreteStates
 
 import torch
 
@@ -398,16 +397,14 @@ class Trajectories(Container):
     def to_state_pairs(
         self,
     ) -> StatePairs[DiscreteStates]:
-        """Returns all intermediate and terminating states from the trajectories.
-
-        This is useful for algorithms that need to process different types of states separately,
-        such as flow matching.
+        """Converts a batch of trajectories into a batch of training samples.
 
         Returns:
-            A StatePairs instance containing all the intermediary states in the trajectories
-            that are not s0, and all the terminating states in the trajectories that are not s0.
+            StatePairs: A StatePairs object containing intermediary and terminating states.
         """
-        states = self.states
+        states = self.to_states()
+        if not isinstance(states, DiscreteStates):
+            raise TypeError("to_state_pairs only works with DiscreteStates")
 
         if self.conditioning is not None:
             traj_len = self.states.batch_shape[0]
@@ -422,11 +419,18 @@ class Trajectories(Container):
 
         intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]
         terminating_states = self.last_states
+
+        # Ensure both states are DiscreteStates
+        if not isinstance(intermediary_states, DiscreteStates) or not isinstance(
+            terminating_states, DiscreteStates
+        ):
+            raise TypeError(
+                "Both intermediary and terminating states must be DiscreteStates"
+            )
+
         terminating_states.log_rewards = self.log_rewards
 
-        assert isinstance(intermediary_states, DiscreteStates)
-        assert isinstance(terminating_states, DiscreteStates)
-        return StatePairs(
+        return StatePairs[DiscreteStates](
             env=self.env,
             intermediary_states=intermediary_states,
             terminating_states=terminating_states,

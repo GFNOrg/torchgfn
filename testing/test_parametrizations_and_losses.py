@@ -30,7 +30,7 @@ N = 10  # Number of trajectories from sample_trajectories (changes tests globall
 )
 @pytest.mark.parametrize("ndim", [2, 3])
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
-def test_FM(env_name: int, ndim: int, module_name: str):
+def test_FM(env_name: str, ndim: int, module_name: str):
     if env_name == "HyperGrid":
         env = HyperGrid(
             ndim=ndim, preprocessor_name="Enum" if module_name == "Tabular" else "KHot"

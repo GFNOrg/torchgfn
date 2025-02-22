@@ -1,10 +1,11 @@
-from gfn.containers import Trajectories
+from gfn.containers import Trajectories, StatePairs
 from gfn.containers.base import Container
 from gfn.gflownet import FMGFlowNet, TBGFlowNet
-from gfn.gym import Box
+from gfn.gym import Box, HyperGrid
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator
-from gfn.states import States
+from gfn.states import DiscreteStates
+from gfn.utils.modules import MLP
 
 
 def test_trajectory_based_gflownet_generic():
@@ -37,28 +38,19 @@ def test_trajectory_based_gflownet_generic():
 
 
 def test_flow_matching_gflownet_generic():
-    env = Box()
-    module = BoxPFMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
-    )
+    env = HyperGrid(ndim=2, preprocessor_name="KHot")
+    module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
     estimator = DiscretePolicyEstimator(
-        module, n_actions=2, preprocessor=env.preprocessor
+        module, n_actions=env.n_actions, preprocessor=env.preprocessor
     )
     gflownet = FMGFlowNet(estimator)
     mock_trajectories = Trajectories(env)
-    states_tuple = gflownet.to_training_samples(mock_trajectories)
+    states_pairs = gflownet.to_training_samples(mock_trajectories)
 
-    # Assert that the result is a tuple of `States`
-    assert isinstance(
-        states_tuple, tuple
-    ), f"Expected type tuple, but got {type(states_tuple)}"
-
-    assert isinstance(
-        states_tuple[0], States
-    ), f"Expected type States for first element, but got {type(states_tuple[0])}"
-    assert isinstance(
-        states_tuple[1], States
-    ), f"Expected type States for second element, but got {type(states_tuple[1])}"
+    # Assert that the result is a StatePairs[DiscreteStates]
+    assert isinstance(states_pairs, StatePairs)
+    assert isinstance(states_pairs.intermediary_states, DiscreteStates)
+    assert isinstance(states_pairs.terminating_states, DiscreteStates)
 
 
 def test_pytorch_inheritance():

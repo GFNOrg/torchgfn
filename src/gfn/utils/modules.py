@@ -50,13 +50,14 @@ class MLP(nn.Module):
                 arch.append(nn.Linear(hidden_dim, hidden_dim))
                 arch.append(activation())
             self.trunk = nn.Sequential(*arch)
+            self.trunk.hidden_dim = torch.tensor(hidden_dim)
             self._hidden_dim = hidden_dim
         else:
             self.trunk = trunk
             assert hasattr(
                 trunk, "hidden_dim"
             ), "trunk must have a hidden_dim attribute"
-            self._hidden_dim = trunk.hidden_dim
+            self._hidden_dim = trunk.hidden_dim.item()
         self.last_layer = nn.Linear(self._hidden_dim, output_dim)
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
