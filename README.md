@@ -291,18 +291,24 @@ class MyGFlowNet(GFlowNet[Trajectories]):
 
 **Example: Flow Matching GFlowNet**
 
-Let's consider the example of the `FMGFlowNet` class, which is a subclass of `GFlowNet` that implements the Flow Matching GFlowNet. The training samples are tuples of discrete states, so the class references the type `Tuple[DiscreteStates, DiscreteStates]` when subclassing `GFlowNet`:
+Let's consider the example of the `FMGFlowNet` class, which is a subclass of `GFlowNet` that implements the Flow Matching GFlowNet. The training samples are pairs of discrete states, so the class references the type `StatePairs[DiscreteStates]` when subclassing `GFlowNet`:
 
 ```python
-class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
+class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
     ...
 
     def to_training_samples(
         self, trajectories: Trajectories
-    ) -> tuple[DiscreteStates, DiscreteStates]:
+    ) -> StatePairs[DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        return trajectories.to_non_initial_intermediary_and_terminating_states()
+        return trajectories.to_state_pairs()
+```
 
+This means that the `loss` method of `FMGFlowNet` will receive a `StatePairs[DiscreteStates]` object as its training samples argument:
+
+```python
+def loss(self, env: DiscreteEnv, states: StatePairs[DiscreteStates]) -> torch.Tensor:
+    ...
 ```
 
 **Adding New Training Sample Types**
@@ -312,28 +318,10 @@ If your GFlowNet returns a unique type of training samples, you'll need to expan
 In the earlier example, the `FMGFlowNet` used:
 
 ```python
-GFlowNet[Tuple[DiscreteStates, DiscreteStates]]
+GFlowNet[StatePairs[DiscreteStates]]
 ```
 
-This means the method `to_training_samples` should return a tuple of `DiscreteStates`.
-
-If the `to_training_sample` method of your new GFlowNet, for example, returns an `int`, you should expand the `TrainingSampleType` in `src/gfn/gflownet/base.py` to include this type in the `bound` of the `TypeVar`:
-
-Before:
-
-```python
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
-)
-```
-
-After:
-
-```python
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...], int]
-)
-```
+This means the method `to_training_samples` should return a `StatePairs[DiscreteStates]` object.
 
 **Implementing Class Methods**
 
