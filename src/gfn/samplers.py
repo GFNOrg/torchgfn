@@ -635,14 +635,14 @@ class LocalSearchSampler(Sampler):
             new_trajectories_log_pf = torch.full((bs, max_traj_len), 0.0).to(
                 device=device, dtype=torch.float
             )
-            new_trajectories_log_pf[prev_mask[:, :-1]] = prev_trajectories_log_pf[  # type: ignore
-                :, :max_n_prev
-            ][
-                prev_mask_truc
-            ]
-            new_trajectories_log_pf[action_recon_mask] = recon_trajectories_log_pf[  # type: ignore
-                action_recon_mask2
-            ]
+            if prev_trajectories_log_pf is not None:
+                new_trajectories_log_pf[prev_mask[:, :-1]] = prev_trajectories_log_pf[
+                    :, :max_n_prev
+                ][prev_mask_truc]
+            if recon_trajectories_log_pf is not None:
+                new_trajectories_log_pf[action_recon_mask] = recon_trajectories_log_pf[
+                    action_recon_mask2
+                ]
             new_trajectories_log_pf = new_trajectories_log_pf.transpose(0, 1)
         if (prev_trajectories_log_pb is not None) and (
             recon_trajectories_log_pb is not None
@@ -652,12 +652,10 @@ class LocalSearchSampler(Sampler):
             new_trajectories_log_pb = torch.full((bs, max_traj_len), 0.0).to(
                 device=device, dtype=torch.float
             )
-            new_trajectories_log_pb[prev_mask[:, :-1]] = prev_trajectories_log_pb[  # type: ignore
+            new_trajectories_log_pb[prev_mask[:, :-1]] = prev_trajectories_log_pb[
                 :, :max_n_prev
-            ][
-                prev_mask_truc
-            ]
-            new_trajectories_log_pb[action_recon_mask] = recon_trajectories_log_pb[  # type: ignore
+            ][prev_mask_truc]
+            new_trajectories_log_pb[action_recon_mask] = recon_trajectories_log_pb[
                 action_recon_mask2
             ]
             new_trajectories_log_pb = new_trajectories_log_pb.transpose(0, 1)
@@ -674,19 +672,27 @@ class LocalSearchSampler(Sampler):
             ).to(prev_trajectories.actions.tensor)
 
             if save_logprobs:
-                prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)  # type: ignore
-                recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(0, 1)  # type: ignore
                 _new_trajectories_log_pf = torch.full((max_traj_len, bs), 0.0).to(
                     device=device, dtype=torch.float
                 )
+                if prev_trajectories_log_pf is not None:
+                    prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)
+                if recon_trajectories_log_pf is not None:
+                    recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(
+                        0, 1
+                    )
             if use_metropolis_hastings := (prev_trajectories_log_pb is not None) and (
                 recon_trajectories_log_pb is not None
             ):
-                prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)  # type: ignore
-                recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(0, 1)  # type: ignore
                 _new_trajectories_log_pb = torch.full((max_traj_len, bs), 0.0).to(
                     device=device, dtype=torch.float
                 )
+                if prev_trajectories_log_pb is not None:
+                    prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)
+                if recon_trajectories_log_pb is not None:
+                    recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(
+                        0, 1
+                    )
 
             for i in range(bs):
                 _n_prev = n_prevs[i]
@@ -734,9 +740,9 @@ class LocalSearchSampler(Sampler):
                 _new_trajectories_actions_tsr == new_trajectories_actions_tsr
             )
             if save_logprobs:
-                assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)  # type: ignore
+                assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)
             if use_metropolis_hastings:
-                assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)  # type: ignore
+                assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
 
         new_trajectories = Trajectories(
             env=env,
