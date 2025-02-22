@@ -74,6 +74,27 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
     def loss(self, env: Env, training_objects: Any) -> torch.Tensor:
         """Computes the loss given the training objects."""
 
+    def loss_from_trajectories(
+        self, env: Env, trajectories: Trajectories
+    ) -> torch.Tensor:
+        """Helper method to compute loss directly from trajectories.
+
+        This method handles converting trajectories to the appropriate training samples
+        and computing the loss with the correct arguments based on the GFlowNet type.
+
+        Args:
+            env: The environment to compute the loss for
+            trajectories: The trajectories to compute the loss from
+
+        Returns:
+            torch.Tensor: The computed loss
+        """
+        training_samples = self.to_training_samples(trajectories)
+        if isinstance(self, PFBasedGFlowNet):
+            # We know this is safe because PFBasedGFlowNet's loss accepts these arguments
+            return self.loss(env, training_samples, recalculate_all_logprobs=True)
+        return self.loss(env, training_samples)
+
 
 class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     """A GFlowNet that uses forward (PF) and backward (PB) policy networks."""
