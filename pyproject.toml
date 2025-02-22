@@ -108,6 +108,8 @@ commands = pytest -s
 [tool.pyright]
 include = [
     "src/gfn/**",
+    "tutorials/examples/**",
+    "testing/**",
 ]
 
 exclude = [
