@@ -1,0 +1,27 @@
+{
+    "include": [
+        "src/gfn/**",
+        "tutorials/examples/**",
+        "testing/**"
+    ],
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__"
+    ],
+    "strict": [],
+    "typeCheckingMode": "basic",
+    "pythonVersion": "3.10",
+    "enableTypeIgnoreComments": true,
+    "reportMissingImports": "none",
+    "reportUnknownMemberType": "none",
+    "reportUnknownParameterType": "none",
+    "reportUnknownVariableType": "none",
+    "reportUnknownArgumentType": "none",
+    "reportPrivateUsage": "warning",
+    "reportUntypedFunctionDecorator": "none",
+    "reportMissingTypeStubs": false,
+    "reportUnboundVariable": "warning",
+    "reportGeneralTypeIssues": "none",
+    "reportOptionalMemberAccess": "error",
+    "reportArgumentType": "error"
+} 
