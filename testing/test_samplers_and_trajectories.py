@@ -326,7 +326,7 @@ def test_replay_buffer(
         raise ValueError("Unknown environment name")
 
     replay_buffer = ReplayBuffer(env, capacity=10)
-    training_objects, *_ = trajectory_sampling_with_return(
+    trajectories, *_ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="Identity",
         delta=0.1,
@@ -336,18 +336,20 @@ def test_replay_buffer(
     try:
         if objects == "trajectories":
             # Filter out trajectories that are at max length
-            training_objects_2 = training_objects[
-                training_objects.when_is_done != training_objects.max_length
+            training_objects = trajectories
+            training_objects_2 = trajectories[
+                trajectories.when_is_done != trajectories.max_length
             ]
+            replay_buffer.add(training_objects_2)
 
         else:
-            training_objects_2 = training_objects.to_transitions()
+            training_objects = trajectories.to_transitions()
 
         # Add objects multiple times to test buffer behavior
-        replay_buffer.add(training_objects_2)
-        replay_buffer.add(training_objects_2)
-        replay_buffer.add(training_objects_2)
-        replay_buffer.add(training_objects_2)
+        replay_buffer.add(training_objects)
+        replay_buffer.add(training_objects)
+        replay_buffer.add(training_objects)
+        replay_buffer.add(training_objects)
 
         # Test that we can sample from the buffer
         sampled = replay_buffer.sample(5)
