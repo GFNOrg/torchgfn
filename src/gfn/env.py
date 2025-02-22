@@ -205,7 +205,7 @@ class Env(ABC):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int]]] = None,
+        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
@@ -432,7 +432,7 @@ class DiscreteEnv(Env, ABC):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int]]] = None,
+        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
