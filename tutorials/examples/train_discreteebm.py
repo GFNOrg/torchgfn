@@ -16,7 +16,7 @@ from argparse import ArgumentParser
 import torch
 import wandb
 from tqdm import tqdm, trange
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM

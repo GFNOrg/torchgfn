@@ -3,10 +3,7 @@ from argparse import ArgumentParser
 import torch
 import wandb
 from tqdm import tqdm
-from typing import cast, Tuple, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from gfn.states import DiscreteStates
 
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
