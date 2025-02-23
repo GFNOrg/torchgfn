@@ -24,6 +24,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install .[all]  # Install all dependencies, including dev
+      
+      - name: Print PyTorch Version (Temporary)
+        run: python -c "import torch; print(torch.__version__)"
 
       - name: Run pre-commit
         run: pre-commit run --all-files
