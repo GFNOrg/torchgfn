@@ -9,6 +9,7 @@ from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator, GFNModule
 from gfn.samplers import LocalSearchSampler, Sampler
+from gfn.utils.modules import MLP
 from gfn.utils.prob_calculations import get_trajectory_pfs
 from gfn.utils.modules import MLP
 from gfn.utils.training import states_actions_tns_to_traj
@@ -122,12 +123,7 @@ def test_trajectory_sampling(
     else:
         raise ValueError("Unknown environment name")
 
-    (
-        trajectories,
-        bw_trajectories,
-        pf_estimator,
-        pb_estimator,
-    ) = trajectory_sampling_with_return(
+    _ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name,
         delta,
@@ -139,7 +135,7 @@ def test_trajectory_sampling(
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_trajectories_getitem(env_name: str):
     try:
-        trajectories, *_ = trajectory_sampling_with_return(
+        _ = trajectory_sampling_with_return(
             env_name,
             preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
             delta=0.1,
@@ -269,7 +265,7 @@ def test_local_search_for_loop_equivalence(env_name):
     # to the vectorized logic.
     # If there's any mismatch, local_search() will raise AssertionError
     try:
-        new_trajectories, is_updated = sampler.local_search(
+        _ = sampler.local_search(
             env,
             trajectories,
             save_logprobs=True,
