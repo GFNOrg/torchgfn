@@ -3,6 +3,7 @@ from typing import Any
 import torch
 
 from gfn.containers import Trajectories
+from gfn.containers.state_pairs import StatePairs
 from gfn.env import DiscreteEnv
 from gfn.gflownet.base import GFlowNet
 from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
@@ -12,7 +13,6 @@ from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
 )
-from gfn.containers.state_pairs import StatePairs
 
 
 class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):

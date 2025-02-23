@@ -337,9 +337,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         self.conditioning_module = conditioning_module
         self.final_module = final_module
 
-    def _forward_trunk(
-        self, states: States, conditioning: torch.Tensor
-    ) -> torch.Tensor:
+    def _forward_trunk(self, states: States, conditioning: torch.Tensor) -> torch.Tensor:
         """Forward pass of the trunk of the module.
 
         Args:

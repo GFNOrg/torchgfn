@@ -1,12 +1,13 @@
+from typing import Literal, cast
+
 import pytest
 import torch
 from test_samplers_and_trajectories import trajectory_sampling_with_return
-from typing import Literal, cast
 
 from gfn.gflownet import (
-    GFlowNet,
     DBGFlowNet,
     FMGFlowNet,
+    GFlowNet,
     LogPartitionVarianceGFlowNet,
     ModifiedDBGFlowNet,
     SubTBGFlowNet,
@@ -82,10 +83,8 @@ def test_get_pfs_and_pbs(
     gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
 
-    log_pfs_on, log_pbs_on = gflownet_on.get_pfs_and_pbs(trajectories)
-    log_pfs_off, log_pbs_off = gflownet_off.get_pfs_and_pbs(
-        trajectories, recalculate_all_logprobs=True
-    )
+    _ = gflownet_on.get_pfs_and_pbs(trajectories)
+    _ = gflownet_off.get_pfs_and_pbs(trajectories, recalculate_all_logprobs=True)
 
 
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
@@ -306,15 +305,17 @@ def test_PFBasedGFlowNet(
     if env_name != "HyperGrid" and gflownet_name == "ModifiedDB":
         pytest.skip("ModifiedDB not implemented for DiscreteEBM or Box")
 
-    env, pf, pb, logF, gflownet = PFBasedGFlowNet_with_return(
-        env_name,
-        ndim,
-        module_name,
-        tie_pb_to_pf,
-        gflownet_name,
-        sub_tb_weighting,
-        forward_looking,
-        zero_logF,
+    # Test that function can be called without errors
+    # Variables not used as we're only testing initialization
+    _ = PFBasedGFlowNet_with_return(
+        env_name=env_name,
+        ndim=ndim,
+        module_name=module_name,
+        tie_pb_to_pf=tie_pb_to_pf,
+        gflownet_name=gflownet_name,
+        sub_tb_weighting=sub_tb_weighting,
+        forward_looking=forward_looking,
+        zero_logF=zero_logF,
     )
 
 
@@ -338,7 +339,7 @@ def test_subTB_vs_TB(
 ):
     if env_name == "Box" and module_name == "Tabular":
         pytest.skip("Tabular module impossible for Box")
-    env, pf, pb, logF, gflownet = PFBasedGFlowNet_with_return(
+    env, pf, pb, _, gflownet = PFBasedGFlowNet_with_return(
         env_name=env_name,
         ndim=ndim,
         module_name=module_name,

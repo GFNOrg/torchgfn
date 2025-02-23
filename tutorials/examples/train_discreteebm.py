@@ -12,20 +12,19 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 """
 
 from argparse import ArgumentParser
+from typing import cast
 
 import torch
 import wandb
 from tqdm import tqdm, trange
-from typing import cast
 
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.modules import DiscretePolicyEstimator
+from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, Tabular
 from gfn.utils.training import validate
-
-from gfn.states import DiscreteStates
 
 DEFAULT_SEED = 4444
 
@@ -81,9 +80,7 @@ def main(args):  # noqa: C901
         loss.backward()
         optimizer.step()
 
-        visited_terminating_states.extend(
-            cast(DiscreteStates, trajectories.last_states)
-        )
+        visited_terminating_states.extend(cast(DiscreteStates, trajectories.last_states))
 
         states_visited += len(trajectories)
 

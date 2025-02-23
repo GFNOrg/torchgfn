@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import os
-from typing import cast, TypeVar, Generic
+from typing import Generic, TypeVar, cast
 
 import torch
 
+from gfn.containers.state_pairs import StatePairs
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
-from gfn.containers.state_pairs import StatePairs
-from gfn.states import DiscreteStates
-
 from gfn.env import Env
+from gfn.states import DiscreteStates
 
 ContainerType = TypeVar(
     "ContainerType", Trajectories, Transitions, StatePairs[DiscreteStates]

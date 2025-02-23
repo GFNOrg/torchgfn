@@ -504,9 +504,7 @@ class DiscreteEnv(Env, ABC):
         self.update_masks(new_states)
         return new_states
 
-    def _backward_step(
-        self, states: DiscreteStates, actions: Actions
-    ) -> DiscreteStates:
+    def _backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Calls the core self._backward_step method of the parent class, and updates masks."""
         new_states = super()._backward_step(states, actions)
         new_states = cast(DiscreteStates, new_states)

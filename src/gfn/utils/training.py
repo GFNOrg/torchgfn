@@ -123,9 +123,7 @@ def states_actions_tns_to_traj(
         )
 
     states = [env.states_from_tensor(s.unsqueeze(0)) for s in states_tns]
-    actions = [
-        env.actions_from_tensor(a.unsqueeze(0).unsqueeze(0)) for a in actions_tns
-    ]
+    actions = [env.actions_from_tensor(a.unsqueeze(0).unsqueeze(0)) for a in actions_tns]
 
     # stack is a class method, so actions[0] is just to access a class instance and is not particularly relevant
     actions = actions[0].stack(actions)

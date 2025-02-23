@@ -3,7 +3,7 @@ from typing import Callable
 
 import torch
 
-from gfn.states import States, DiscreteStates
+from gfn.states import DiscreteStates, States
 
 
 class Preprocessor(ABC):

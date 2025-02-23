@@ -4,7 +4,6 @@ import torch
 import wandb
 from tqdm import tqdm
 
-
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.gym.discrete_ebm import IsingModel

@@ -2,7 +2,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 
 from abc import ABC
 from math import prod
-from typing import ClassVar, Sequence, List
+from typing import ClassVar, List, Sequence
 
 import torch
 
@@ -88,9 +88,7 @@ class Actions(ABC):
         and the resulting Actions object would have batch_shape (n_steps,
         n_trajectories).
         """
-        actions_tensor = torch.stack(
-            [actions.tensor for actions in actions_list], dim=0
-        )
+        actions_tensor = torch.stack([actions.tensor for actions in actions_list], dim=0)
         return cls(actions_tensor)
 
     def extend(self, other: Actions) -> None:

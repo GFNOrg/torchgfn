@@ -1,4 +1,4 @@
-from gfn.containers import Trajectories, StatePairs
+from gfn.containers import StatePairs, Trajectories
 from gfn.containers.base import Container
 from gfn.gflownet import FMGFlowNet, TBGFlowNet
 from gfn.gym import Box, HyperGrid

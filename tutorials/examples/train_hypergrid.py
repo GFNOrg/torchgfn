@@ -13,23 +13,24 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 
 from argparse import ArgumentParser
 from typing import cast
+
 import torch
 import wandb
 from tqdm import tqdm, trange
 
 from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
-from gfn.states import DiscreteStates
 from gfn.gflownet import (
-    GFlowNet,
-    TBGFlowNet,
-    SubTBGFlowNet,
-    LogPartitionVarianceGFlowNet,
     DBGFlowNet,
-    ModifiedDBGFlowNet,
     FMGFlowNet,
+    GFlowNet,
+    LogPartitionVarianceGFlowNet,
+    ModifiedDBGFlowNet,
+    SubTBGFlowNet,
+    TBGFlowNet,
 )
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate

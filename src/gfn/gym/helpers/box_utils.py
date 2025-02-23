@@ -507,9 +507,7 @@ class DistributionWrapper(Distribution):
         return output
 
     def log_prob(self, sampled_actions):
-        log_prob = torch.zeros(sampled_actions.shape[:-1]).to(
-            self.idx_is_initial.device
-        )
+        log_prob = torch.zeros(sampled_actions.shape[:-1]).to(self.idx_is_initial.device)
         n_disk_samples = len(self.idx_is_initial)
         if n_disk_samples > 0:
             assert self.quarter_disk is not None
@@ -622,8 +620,7 @@ class BoxPFMLP(MLP):
         # 2nd, for the states s, t>0, we use the network outputs
         # Remember, out is of shape [B, 1 + 3 * n_components]
         indices_to_override2 = (
-            torch.arange(3 * self._n_comp_max).fmod(self._n_comp_max)
-            < self.n_components
+            torch.arange(3 * self._n_comp_max).fmod(self._n_comp_max) < self.n_components
         )
         indices_to_override2 = torch.cat(
             (

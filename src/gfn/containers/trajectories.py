@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from gfn.actions import Actions
-from gfn.env import Env
-from gfn.states import States, DiscreteStates
-
 import torch
 
+from gfn.actions import Actions
 from gfn.containers.base import Container
-from gfn.containers.transitions import Transitions
-from gfn.utils.common import has_log_probs
 from gfn.containers.state_pairs import StatePairs
+from gfn.containers.transitions import Transitions
+from gfn.env import Env
+from gfn.states import DiscreteStates, States
+from gfn.utils.common import has_log_probs
 
 
 # TODO: remove env from this class?
@@ -180,9 +179,7 @@ class Trajectories(Container):
             log_probs = log_probs[:new_max_length]
         else:
             log_probs = self.log_probs
-        log_rewards = (
-            self._log_rewards[index] if self._log_rewards is not None else None
-        )
+        log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
         if self.estimator_outputs is not None:
             # TODO: Is there a safer way to index self.estimator_outputs for
             #       for n-dimensional estimator outputs?
@@ -462,9 +459,7 @@ class Trajectories(Container):
         states = self.states.tensor  # shape (max_len + 1, n_trajectories, *state_dim)
 
         # Initialize new actions and states
-        new_actions = self.env.dummy_action.repeat(max_len + 1, len(self), 1).to(
-            actions
-        )
+        new_actions = self.env.dummy_action.repeat(max_len + 1, len(self), 1).to(actions)
         # shape (max_len + 1, n_trajectories, *action_dim)
         new_states = self.env.sf.repeat(max_len + 2, len(self), 1).to(states)
         # shape (max_len + 2, n_trajectories, *state_dim)
