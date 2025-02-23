@@ -74,6 +74,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         else:
             logZ = self.logZ
 
+        assert isinstance(logZ, torch.Tensor)
         loss = (scores + logZ.squeeze()).pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("loss is nan")

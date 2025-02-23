@@ -136,7 +136,7 @@ def main(args):  # noqa: C901
                 pb_estimator is not None
             ), f"pb_estimator is None. Command-line arguments: {args}"
 
-            if args.tabular:
+            if isinstance(pf_module, Tabular):
                 module = Tabular(n_states=env.n_states, output_dim=1)
             else:
                 module = MLP(

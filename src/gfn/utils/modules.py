@@ -54,8 +54,10 @@ class MLP(nn.Module):
             self._hidden_dim = hidden_dim
         else:
             self.trunk = trunk
-            assert hasattr(trunk, "hidden_dim"), "trunk must have a hidden_dim attribute"
-            self._hidden_dim = trunk.hidden_dim.item()
+            assert hasattr(trunk, "hidden_dim") and isinstance(
+                trunk.hidden_dim, torch.Tensor
+            ), "trunk must have a hidden_dim attribute"
+            self._hidden_dim = int(trunk.hidden_dim.item())
         self.last_layer = nn.Linear(self._hidden_dim, output_dim)
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:

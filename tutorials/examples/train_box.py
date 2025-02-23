@@ -199,6 +199,7 @@ def main(args):  # noqa: C901
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
     if not args.uniform_pb:
+        assert isinstance(pb_module.last_layer, torch.nn.Module)
         optimizer.add_param_group(
             {
                 "params": (

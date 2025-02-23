@@ -4,6 +4,7 @@ import pytest
 import torch
 from test_samplers_and_trajectories import trajectory_sampling_with_return
 
+from gfn.containers import Trajectories
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -246,7 +247,8 @@ def PFBasedGFlowNet_with_return(
     gflownet = cast(GFlowNet, gflownet)
     _ = gflownet.loss(env, training_objects)
 
-    if gflownet_name == "TB":
+    if isinstance(gflownet, TBGFlowNet):
+        assert isinstance(training_objects, Trajectories)
         assert torch.all(
             torch.abs(
                 gflownet.get_pfs_and_pbs(training_objects)[0]

@@ -424,6 +424,7 @@ class LocalSearchSampler(Sampler):
                 and new_trajectories_log_pf is not None
                 and new_trajectories_log_pb is not None
                 and prev_trajectories_log_pf is not None
+                and new_trajectories.log_rewards is not None
             )
 
             # The acceptance ratio is: min(1, R(x')p(x->s'->x') / R(x)p(x'->s'-> x))
@@ -445,6 +446,8 @@ class LocalSearchSampler(Sampler):
                 new_trajectories.n_trajectories, device=log_accept_ratio.device
             ) < torch.exp(log_accept_ratio)
         else:
+            assert prev_trajectories.log_rewards is not None
+            assert new_trajectories.log_rewards is not None
             is_updated = prev_trajectories.log_rewards <= new_trajectories.log_rewards
 
         return new_trajectories, is_updated

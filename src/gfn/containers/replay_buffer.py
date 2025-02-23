@@ -173,6 +173,7 @@ class PrioritizedReplayBuffer(ReplayBuffer[ContainerType]):
             assert (
                 self.training_objects is not None
                 and self.training_objects.log_rewards is not None
+                and training_objects.log_rewards is not None
             )
             min_reward_in_buffer = self.training_objects.log_rewards.min()
             idx_bigger_rewards = training_objects.log_rewards >= min_reward_in_buffer

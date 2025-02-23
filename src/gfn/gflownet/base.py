@@ -219,6 +219,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
 
         assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
         assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
+        assert log_rewards is not None
         return (
             total_log_pf_trajectories,
             total_log_pb_trajectories,

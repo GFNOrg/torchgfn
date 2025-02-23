@@ -68,6 +68,7 @@ def validate(
 
     logZ = None
     if isinstance(gflownet, TBGFlowNet):
+        assert isinstance(gflownet.logZ, torch.Tensor)
         logZ = gflownet.logZ.item()
     if visited_terminating_states is None:
         terminating_states = gflownet.sample_terminating_states(

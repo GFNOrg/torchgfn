@@ -71,7 +71,7 @@ class GFNModule(ABC, nn.Module):
         nn.Module.__init__(self)
         self.module = module
         if preprocessor is None:
-            assert hasattr(module, "input_dim"), (
+            assert hasattr(module, "input_dim") and isinstance(module.input_dim, int), (
                 "Module needs to have an attribute `input_dim` specifying the input "
                 + "dimension, in order to use the default IdentityPreprocessor."
             )
