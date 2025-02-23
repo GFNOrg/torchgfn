@@ -30,6 +30,7 @@ torch = ">=1.9.0"
 # dev dependencies.
 black = { version = "24.3", optional = true }
 flake8 = { version = "*", optional = true }
+pyright = {version = "*", optional = true}
 gitmopy = { version = "*", optional = true }
 myst-parser = { version = "*", optional = true }
 pre-commit = { version = "*", optional = true }
@@ -51,6 +52,7 @@ matplotlib = { version = "*", optional = true }
 [tool.poetry.extras]
 dev = [
     "black",
+    "pyright",
     "gitmopy",
     "myst-parser",
     "pre-commit",
@@ -69,6 +71,7 @@ scripts = ["tqdm", "wandb", "scikit-learn", "scipy", "matplotlib"]
 all = [
     "black",
     "flake8",
+    "pyright",
     "matplotlib",
     "myst-parser",
     "pre-commit",
@@ -91,8 +94,47 @@ all = [
 
 [tool.black]
 target_version = ["py310"]
+line_length = 89
 include = '\.pyi?$'
 extend-exclude = '''/(\.git|\.hg|\.mypy_cache|\.ipynb|\.tox|\.venv|build)/g'''
+
+[tool.pyright]
+include = ["src/gfn", "tutorials/examples", "testing"]  # Removed ** globstars
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*", # Exclude dot files and folders
+]
+
+# Removed "strict": [], as it's redundant with typeCheckingMode
+
+typeCheckingMode = "basic"
+pythonVersion = "3.10"
+
+# Removed enableTypeIgnoreComments, not available in pyproject.toml, and bad practice.
+
+# Mapping report* settings:
+reportMissingImports = "none"
+reportUnknownMemberType = "none"
+reportUnknownParameterType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+reportPrivateUsage = "warning"
+reportUntypedFunctionDecorator = "none"
+reportMissingTypeStubs = false
+reportUnboundVariable = "warning"
+reportGeneralTypeIssues = "none"
+reportOptionalMemberAccess = "error"
+reportArgumentType = "error" #This setting doesn't exist, removed.
+
+# Add some useful, commonly used settings.
+reportUnusedImport = true
+reportUnusedVariable = true
+reportOptionalSubscript = true
+reportOptionalCall = true
+reportOptionalIterable = true
+reportOptionalContextManager = true
+reportOptionalOperand = true
 
 [tool.tox]
 legacy_tox_ini = '''
@@ -107,6 +149,7 @@ commands = pytest -s
 
 # Black-compatibility enforced.
 [tool.isort]
+profile = "black"
 line_length = 89
 multi_line_output = 3
 include_trailing_comma = true
