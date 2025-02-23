@@ -11,7 +11,6 @@ from gfn.modules import DiscretePolicyEstimator, GFNModule
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.modules import MLP
 from gfn.utils.prob_calculations import get_trajectory_pfs
-from gfn.utils.modules import MLP
 from gfn.utils.training import states_actions_tns_to_traj
 
 
