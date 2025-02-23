@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import torch
 from tensordict import TensorDict
 from torch import nn
-from torch_geometric.nn import GINConv, GCNConv
+from torch_geometric.nn import GINConv, GCNConv, DirGNNConv
 
 from gfn.actions import Actions, GraphActions, GraphActionType
 from gfn.gflownet.trajectory_balance import TBGFlowNet
@@ -30,6 +30,9 @@ from gfn.states import GraphStates
 from gfn.utils.modules import MLP
 from gfn.containers import ReplayBuffer
 
+
+REW_VAL = 100.0
+EPS_VAL = 1e-6
 
 def directed_reward(states: GraphStates) -> torch.Tensor:
     """Compute the reward of a graph.
@@ -42,11 +45,10 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
     Returns:
         A tensor of rewards.
     """
-    eps = 1e-6
     if states.tensor["edge_index"].shape[0] == 0:
-        return torch.full(states.batch_shape, eps)
+        return torch.full(states.batch_shape, EPS_VAL)
 
-    out = torch.full((len(states),), eps)  # Default reward.
+    out = torch.full((len(states),), EPS_VAL)  # Default reward.
 
     for i in range(len(states)):
         start, end = states.tensor["batch_ptr"][i], states.tensor["batch_ptr"][i + 1]
@@ -65,8 +67,7 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
         if not torch.all(adj_matrix.sum(dim=1) == 1):
             continue
 
-        visited = []
-        current = 0
+        visited, current = [], 0
         while current not in visited:
             visited.append(current)
 
@@ -78,7 +79,7 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
             neighbors = torch.where(adj_matrix[current] == 1)[0]
             valid_neighbours = set_diff(neighbors, torch.tensor(visited))
 
-            # Visit the fir
+            # Visit the first valid neighbor.
             if len(valid_neighbours) == 1:
                 current = valid_neighbours[0]
             elif len(valid_neighbours) == 0:
@@ -88,7 +89,7 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
 
         # Check if we visited all vertices and the last vertex connects back to start.
         if len(visited) == n_nodes and adj_matrix[current][0] == 1:
-            out[i] = 1.0
+            out[i] = REW_VAL
 
     return out.view(*states.batch_shape)
 
@@ -104,11 +105,10 @@ def undirected_reward(states: GraphStates) -> torch.Tensor:
     Returns:
         A tensor of rewards.
     """
-    eps = 1e-4
     if states.tensor["edge_index"].shape[0] == 0:
-        return torch.full(states.batch_shape, eps)
+        return torch.full(states.batch_shape, EPS_VAL)
 
-    out = torch.full((len(states),), eps)  # Default reward.
+    out = torch.full((len(states),), EPS_VAL)  # Default reward.
 
     for i in range(len(states)):
         start, end = states.tensor["batch_ptr"][i], states.tensor["batch_ptr"][i + 1]
@@ -158,7 +158,7 @@ def undirected_reward(states: GraphStates) -> torch.Tensor:
             prev, current = current, next_node
 
         if current == start_vertex and len(visited) == n_nodes:
-            out[i] = 100.0
+            out[i] = REW_VAL
 
     return out.view(*states.batch_shape)
 
@@ -175,10 +175,11 @@ class RingPolicyModule(nn.Module):
         n_nodes: int,
         directed: bool,
         num_conv_layers: int = 1,
+        embedding_dim: int = 128,
         is_backward: bool = False,
     ):
         super().__init__()
-        self.hidden_dim = self.embedding_dim = 64
+        self.hidden_dim = self.embedding_dim = embedding_dim
         self.is_directed = directed
         self.is_backward = is_backward
         self.n_nodes = n_nodes
@@ -186,7 +187,6 @@ class RingPolicyModule(nn.Module):
 
         # Node embedding layer.
         self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
-        # self.action_conv_blks = nn.ModuleList()
         self.conv_blks = nn.ModuleList()
         self.exit_mlp = MLP(
             input_dim=self.hidden_dim,
@@ -197,69 +197,27 @@ class RingPolicyModule(nn.Module):
         )
 
         if directed:
-            # Multiple action type convolution layers.
-            # for i in range(num_conv_layers):
-            #     mlp = create_mlp(self.embedding_dim, self.embedding_dim, self.embedding_dim)
-            #     self.action_conv_blks.extend(
-            #         [
-            #             GCNConv(
-            #                 self.embedding_dim if i == 0 else self.hidden_dim,
-            #                 self.hidden_dim,
-            #             ),
-            #             nn.Linear(self.hidden_dim, self.hidden_dim),
-            #             nn.ReLU(),
-            #             nn.Linear(self.hidden_dim, self.hidden_dim),
-            #         ]
-            #     )
-
-            # Multiple edge index convolution layers.
             for i in range(num_conv_layers):
-                # mlp = create_mlp(self.embedding_dim, self.embedding_dim, self.embedding_dim)
                 self.conv_blks.extend(
                     [
-                        GCNConv(
-                            self.embedding_dim if i == 0 else self.hidden_dim,
-                            self.hidden_dim,
+                        DirGNNConv(
+                            GCNConv(
+                                self.embedding_dim if i == 0 else self.hidden_dim, 
+                                self.hidden_dim,
+                            ),
+                            alpha=0.5,
+                            root_weight=True,
                         ),
-                        nn.Linear(self.hidden_dim, self.hidden_dim),
-                        nn.ReLU(),
-                        nn.Linear(self.hidden_dim, self.hidden_dim),
-                    ]
-                )
+                        # Process in/out components separately
+                        nn.ModuleList([
+                            nn.Sequential(
+                                nn.Linear(self.hidden_dim//2, self.hidden_dim//2),
+                                nn.ReLU(),
+                                nn.Linear(self.hidden_dim//2, self.hidden_dim//2)
+                            ) for _ in range(2)  # One for in-features, one for out-features.
+                        ])
+                    ])
         else:  # Undirected case.
-            # Multiple action type convolution layers.
-            # for _ in range(num_conv_layers):
-            #     self.action_conv_blks.extend(
-            #         [
-            #             GINConv(
-            #                 create_mlp(
-            #                     self.embedding_dim, self.hidden_dim, self.hidden_dim
-            #                 )
-            #             ),
-            #             nn.Linear(self.hidden_dim, self.hidden_dim),
-            #             nn.ReLU(),
-            #             nn.Linear(self.hidden_dim, self.hidden_dim),
-            #         ]
-            #     )
-            # for _ in range(num_conv_layers):
-            #     self.conv_blks.extend(
-            #         [
-            #             GINConv(
-            #                 MLP(
-            #                     input_dim=self.embedding_dim,
-            #                     output_dim=self.hidden_dim,
-            #                     hidden_dim=self.hidden_dim,
-            #                     n_hidden_layers=1,
-            #                     add_layer_norm=True,
-            #                 ),
-            #             ),
-            #             nn.Linear(self.hidden_dim, self.hidden_dim),
-            #             nn.ReLU(),
-            #             nn.Linear(self.hidden_dim, self.hidden_dim),
-            #         ]
-            #     )
-
-            # Multiple edge index convolution layers.
             for _ in range(num_conv_layers):
                 self.conv_blks.extend(
                     [
@@ -272,15 +230,15 @@ class RingPolicyModule(nn.Module):
                                 add_layer_norm=True,
                             ),
                         ),
-                        nn.Linear(self.hidden_dim, self.hidden_dim),
-                        nn.ReLU(),
-                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                        nn.Sequential(
+                            nn.Linear(self.hidden_dim, self.hidden_dim),
+                            nn.ReLU(),
+                            nn.Linear(self.hidden_dim, self.hidden_dim),
+                        ),
                     ]
                 )
 
-        # Layer normalization for stability
-        # self.action_norm = nn.LayerNorm(self.hidden_dim)
-        self.edge_norm = nn.LayerNorm(self.hidden_dim)
+        self.norm = nn.LayerNorm(self.hidden_dim)
 
     def _group_mean(
         self, tensor: torch.Tensor, batch_ptr: torch.Tensor
@@ -308,79 +266,57 @@ class RingPolicyModule(nn.Module):
         )[2].reshape(
             states_tensor["edge_index"].shape
         )  # (M, 2)
-        # edge_attrs = states_tensor["edge_feature"]
 
         # Multiple action type convolutions with residual connections.
-        # for i in range(0, len(self.action_conv_blks), 4):
+        x = self.embedding(node_features.squeeze().int())
+        for i in range(0, len(self.conv_blks), 2):
+            x_new = self.conv_blks[i](x, edge_index.T)  # GIN/GCN conv.
+            if self.is_directed:
+                x_in, x_out = torch.chunk(x_new, 2, dim=-1)
+                # Process each component separately through its own MLP
+                x_in = self.conv_blks[i + 1][0](x_in)  # First MLP in ModuleList.
+                x_out = self.conv_blks[i + 1][1](x_out)  # Second MLP in ModuleList.
+                x_new = torch.cat([x_in, x_out], dim=-1)
+            else:
+                x_new = self.conv_blks[i + 1](x_new)  # Linear -> ReLU -> Linear.
 
-        #     # GIN/GCN conv.
-        #     action_type_new = self.action_conv_blks[i](action_type, edge_index.T)
-        #     # First linear.
-        #     action_type_new = self.action_conv_blks[i + 1](action_type_new)
-        #     # ReLU.
-        #     action_type_new = self.action_conv_blks[i + 2](action_type_new)
-        #     # Second linear.
-        #     action_type_new = self.action_conv_blks[i + 3](action_type_new)
-        #     # Residual connection with original input.
-        #     action_type = action_type_new + action_type
-        #     action_type = self.action_norm(action_type)
-
-        # Multiple action type convolutions with residual connections.
-        node_features = self.embedding(node_features.squeeze().int())
-        for i in range(0, len(self.conv_blks), 4):
-
-            # GIN/GCN conv.
-            node_feature_new = self.conv_blks[i](node_features, edge_index.T)
-            # First linear.
-            node_feature_new = self.conv_blks[i + 1](node_feature_new)
-            # ReLU.
-            node_feature_new = self.conv_blks[i + 2](node_feature_new)
-            # Second linear.
-            node_feature_new = self.conv_blks[i + 3](node_feature_new)
-            # Residual connection with original input.
-            edge_feature = node_feature_new + node_features
-            edge_feature = self.edge_norm(edge_feature)
-
-        # edge_feature = self._group_mean(
-        #     torch.mean(edge_feature, dim=-1, keepdim=True), batch_ptr
-        # )
+            x = x_new + x if i > 0 else x_new  # Residual connection.
+            x = self.norm(x)  # Layernorm.
 
         # This MLP computes the exit action.
-        edge_feature_means = self._group_mean(edge_feature, batch_ptr)
-        exit_action = self.exit_mlp(edge_feature_means)
+        node_feature_means = self._group_mean(x, batch_ptr)
+        exit_action = self.exit_mlp(node_feature_means)
 
-        edge_feature = edge_feature.reshape(
-            *states_tensor["batch_shape"], self.n_nodes, self.hidden_dim
-        )
-
-        # This is n_nodes ** 2, for each graph.
-        edge_index = torch.einsum("bnf,bmf->bnm", edge_feature, edge_feature)
-        edge_index = edge_index / torch.sqrt(torch.tensor(self.hidden_dim))
+        x = x.reshape(*states_tensor["batch_shape"], self.n_nodes, self.hidden_dim)
 
         # Undirected.
         if self.is_directed:
-            i_up, j_up = torch.triu_indices(
-                self.n_nodes, self.n_nodes, offset=1
-            )  # Upper triangle.
-            i_lo, j_lo = torch.tril_indices(
-                self.n_nodes, self.n_nodes, offset=-1
-            )  # Lower triangle.
+            feature_dim = self.hidden_dim // 2
+            source_features = x[..., :feature_dim]
+            target_features = x[..., feature_dim:]
 
-            # Combine them
+            # Dot product between source and target features (asymmetric).
+            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", source_features, target_features)
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(feature_dim))
+
+            i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+            i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)
+
+            # Combine them.
             i0 = torch.cat([i_up, i_lo])
             i1 = torch.cat([j_up, j_lo])
             out_size = self.n_nodes**2 - self.n_nodes
 
         else:
+            # Dot product between all node features (symmetric).
+            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x, x)
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(self.hidden_dim))
             i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
             out_size = (self.n_nodes**2 - self.n_nodes) // 2
 
         # Grab the needed elems from the adjacency matrix and reshape.
-        batch_arange = torch.arange(batch_size)
-        edge_actions = edge_index[batch_arange[:, None, None], i0, i1]
-        edge_actions = edge_actions.reshape(
-            *states_tensor["batch_shape"], out_size
-        )
+        edge_actions = x[torch.arange(batch_size)[:, None, None], i0, i1]
+        edge_actions = edge_actions.reshape(*states_tensor["batch_shape"], out_size)
 
         if self.is_backward:
             return edge_actions
@@ -470,14 +406,6 @@ class RingGraphBuilding(GraphBuilding):
                     ei1 = torch.cat([j_up, j_lo])
                 else:
                     ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
-
-                # # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
-                # ei0 = torch.cat((ei0, torch.IntTensor([-1, -2])), dim=0)
-                # ei1 = torch.cat((ei1, torch.IntTensor([-1, -2])), dim=0)
-
-                # Indexes either the second last element (exit) or la
-                # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
-                # ei0, ei1 = ei0[action_tensor], ei1[action_tensor]
 
                 # Remove existing edges.
                 for i in range(len(self)):
@@ -598,9 +526,6 @@ class RingGraphBuilding(GraphBuilding):
             ei0 = torch.cat([i_up, i_lo])
             ei1 = torch.cat([j_up, j_lo])
 
-            # Potentially problematic (returns [0,0,0,1,1] instead of above which returns [1,1,1,0,0]).
-            # ei0 = (action_tensor) // (self.n_nodes)
-            # ei1 = (action_tensor) % (self.n_nodes)
         else:
             ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
 
@@ -711,11 +636,12 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
 
 
 if __name__ == "__main__":
-    N_NODES = 6
-    N_ITERATIONS = 500
-    LR = 0.05
+    N_NODES = 4
+    N_ITERATIONS = 1000
+    LR = 0.001
     BATCH_SIZE = 128
-    DIRECTED = False
+    DIRECTED = True
+    USE_BUFFER = False
 
     state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
@@ -739,7 +665,8 @@ if __name__ == "__main__":
     replay_buffer = ReplayBuffer(
         env,
         objects_type="trajectories",
-        capacity=1000,
+        capacity=BATCH_SIZE,
+        prioritized=True,
     )
 
     losses = []
@@ -747,25 +674,31 @@ if __name__ == "__main__":
     t1 = time.time()
     for iteration in range(N_ITERATIONS):
         trajectories = gflownet.sample_trajectories(
-            env, n=BATCH_SIZE  # pyright: ignore
+            env, n=BATCH_SIZE, save_logprobs=True,  # pyright: ignore
         )
-        last_states = trajectories.last_states
-        assert isinstance(last_states, GraphStates)
-        rewards = state_evaluator(last_states)
         training_samples = gflownet.to_training_samples(trajectories)
 
-        with torch.no_grad():
-            replay_buffer.add(training_samples)
-            training_objects = replay_buffer.sample(n_trajectories=BATCH_SIZE)
+        # Collect rewards for reporting.
+        if isinstance(training_samples, tuple):
+            last_states = training_samples[1]
+        else:
+            last_states = training_samples.last_states
+        assert isinstance(last_states, GraphStates)
+        rewards = state_evaluator(last_states)
+
+        if USE_BUFFER:
+            with torch.no_grad():
+                replay_buffer.add(training_samples)
+                if iteration > 20:
+                    training_samples = training_samples[:BATCH_SIZE // 2]
+                    buffer_samples = replay_buffer.sample(n_trajectories=BATCH_SIZE // 2)
+                    training_samples.extend(buffer_samples)
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_objects)  # pyright: ignore
-        print(
-            "Iteration",
-            iteration,
-            "Loss:",
-            loss.item(),
-            f"rings: {torch.mean(rewards > 0.1, dtype=torch.float) * 100:.0f}%",
+        loss = gflownet.loss(env, training_samples)  # pyright: ignore
+        pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
+        print("Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(
+            iteration, loss.item(), pct_rings)
         )
         loss.backward()
         optimizer.step()
@@ -773,6 +706,8 @@ if __name__ == "__main__":
 
     t2 = time.time()
     print("Time:", t2 - t1)
+    
+    # This comes from the gflownet, not the buffer.
     last_states = trajectories.last_states[:8]
     assert isinstance(last_states, GraphStates)
     render_states(last_states, state_evaluator, DIRECTED)

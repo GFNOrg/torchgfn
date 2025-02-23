@@ -1,3 +1,3 @@
-from .replay_buffer import PrioritizedReplayBuffer, ReplayBuffer
+from .replay_buffer import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from .trajectories import Trajectories
 from .transitions import Transitions
