@@ -588,16 +588,12 @@ class LocalSearchSampler(Sampler):
 
         # Prepare the new states and actions
         # Note that these are initialized in transposed shapes
-        new_trajectories_states_tsr = env.sf.repeat(max_traj_len + 1, bs, 1).to(
+        new_trajectories_states_tsr = env.sf.repeat(bs, max_traj_len + 1, 1).to(
             prev_trajectories.states.tensor
         )
-        new_trajectories_actions_tsr = env.dummy_action.repeat(max_traj_len, bs, 1).to(
+        new_trajectories_actions_tsr = env.dummy_action.repeat(bs, max_traj_len, 1).to(
             prev_trajectories.actions.tensor
         )
-
-        # Transpose for easier indexing
-        new_trajectories_states_tsr = new_trajectories_states_tsr.transpose(0, 1)
-        new_trajectories_actions_tsr = new_trajectories_actions_tsr.transpose(0, 1)
 
         # Assign the first part (backtracked from backward policy) of the trajectory
         prev_mask_truc = prev_mask[:, :max_n_prev]
@@ -735,24 +731,22 @@ class LocalSearchSampler(Sampler):
                         recon_trajectories_log_pb[:_len_recon, i]
                     )
 
-                assert torch.all(
-                    _new_trajectories_states_tsr == new_trajectories_states_tsr
-                )
-                assert torch.all(
-                    _new_trajectories_actions_tsr == new_trajectories_actions_tsr
-                )
-                if (
-                    save_logprobs
-                    and prev_trajectories_log_pf is not None
-                    and recon_trajectories_log_pf is not None
-                ):
-                    assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)
-                if (
-                    use_metropolis_hastings
-                    and prev_trajectories_log_pb is not None
-                    and recon_trajectories_log_pb is not None
-                ):
-                    assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
+            assert torch.all(_new_trajectories_states_tsr == new_trajectories_states_tsr)
+            assert torch.all(
+                _new_trajectories_actions_tsr == new_trajectories_actions_tsr
+            )
+            if (
+                save_logprobs
+                and prev_trajectories_log_pf is not None
+                and recon_trajectories_log_pf is not None
+            ):
+                assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)
+            if (
+                use_metropolis_hastings
+                and prev_trajectories_log_pb is not None
+                and recon_trajectories_log_pb is not None
+            ):
+                assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
 
         new_trajectories = Trajectories(
             env=env,
