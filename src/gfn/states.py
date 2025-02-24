@@ -847,41 +847,33 @@ class GraphStates(States):
 
     def extend(self, other: GraphStates):
         """Concatenates to another GraphStates object along the batch dimension"""
-        self.tensor["node_feature"] = torch.cat(
-            [self.tensor["node_feature"], other.tensor["node_feature"]], dim=0
-        )
-    
         # find if there are common node indices
-        other_node_index = other.tensor["node_index"]
-        other_edge_index = other.tensor["edge_index"]
-        common_node_indices = torch.any(
-            self.tensor["node_index"][:, None] == other_node_index[None, :], dim=0
-        )
-        if torch.any(common_node_indices):
-            # This renumbers nodes across batch indices such that all nodes have
-            # a unique ID.
-            new_indices = GraphStates.unique_node_indices(
-                int(torch.sum(common_node_indices).item())
-            )
+        other_node_index = other.tensor["node_index"].clone()  # Clone to avoid modifying original
+        other_edge_index = other.tensor["edge_index"].clone()  # Clone to avoid modifying original
+        
+        # Always generate new indices for the other state to ensure uniqueness
+        new_indices = GraphStates.unique_node_indices(len(other_node_index))
+        
+        # Update edge indices to match new node indices
+        for i, old_idx in enumerate(other_node_index):
+            other_edge_index[other_edge_index == old_idx] = new_indices[i]
+        
+        # Update node indices
+        other_node_index = new_indices
 
-            # find edge_index which contains other_node_index[common_node_indices]. this is
-            # because all new edges must be to new nodes (unique).
-            edge_mask = (
-                other_edge_index[:, :, None]
-                == other_node_index[None, common_node_indices]
-            )
-            repeat_indices = new_indices[None, None].repeat(edge_mask.shape[0], 2, 1)
-            other_edge_index[torch.any(edge_mask, dim=-1)] = repeat_indices[edge_mask]
-            other_node_index[common_node_indices] = new_indices
         if torch.prod(self.tensor["batch_shape"]) == 0:
             # if self is empty, just copy other
+            self.tensor["node_feature"] = other.tensor["node_feature"]
             self.tensor["batch_shape"] = other.tensor["batch_shape"]
-            self.tensor["node_index"] = other.tensor["node_index"]
+            self.tensor["node_index"] = other_node_index
             self.tensor["edge_feature"] = other.tensor["edge_feature"]
-            self.tensor["edge_index"] = other.tensor["edge_index"]
+            self.tensor["edge_index"] = other_edge_index
             self.tensor["batch_ptr"] = other.tensor["batch_ptr"]
 
         elif len(self.tensor["batch_shape"]) == 1:
+            self.tensor["node_feature"] = torch.cat(
+                [self.tensor["node_feature"], other.tensor["node_feature"]], dim=0
+            )
             self.tensor["node_index"] = torch.cat(
                 [self.tensor["node_index"], other_node_index], dim=0
             )
@@ -889,7 +881,7 @@ class GraphStates(States):
                 [self.tensor["edge_feature"], other.tensor["edge_feature"]], dim=0
             )
             self.tensor["edge_index"] = torch.cat(
-                [self.tensor["edge_index"], other.tensor["edge_index"]],
+                [self.tensor["edge_index"], other_edge_index],
                 dim=0,
             )
             self.tensor["batch_ptr"] = torch.cat(
@@ -912,7 +904,10 @@ class GraphStates(States):
             node_indices = []
             edge_features = []
             edge_indices = []
-            batch_ptr = [torch.tensor([0], device=self.tensor.device)]
+            # Get device from one of the tensors
+            device = self.tensor["node_feature"].device
+            batch_ptr = [torch.tensor([0], device=device)]
+            
             for i in range(max_len):
                 # Following the logic of Base class, we want to extend with sink states
                 if i >= self.tensor["batch_shape"][0]:
@@ -923,17 +918,33 @@ class GraphStates(States):
                     other_i = other.make_sink_states_tensor(other.tensor["batch_shape"][1:])
                 else:
                     other_i = other[i].tensor
+                
+                # Generate new unique indices for both self_i and other_i
+                new_self_indices = GraphStates.unique_node_indices(len(self_i["node_index"]))
+                new_other_indices = GraphStates.unique_node_indices(len(other_i["node_index"]))
+
+                # Update self_i edge indices
+                self_edge_index = self_i["edge_index"].clone()
+                for old_idx, new_idx in zip(self_i["node_index"], new_self_indices):
+                    mask = (self_edge_index == old_idx)
+                    self_edge_index[mask] = new_idx
+
+                # Update other_i edge indices
+                other_edge_index = other_i["edge_index"].clone()
+                for old_idx, new_idx in zip(other_i["node_index"], new_other_indices):
+                    mask = (other_edge_index == old_idx)
+                    other_edge_index[mask] = new_idx
 
                 node_features.append(self_i["node_feature"])
-                node_indices.append(self_i["node_index"])
+                node_indices.append(new_self_indices)  # Use new indices
                 edge_features.append(self_i["edge_feature"])
-                edge_indices.append(self_i["edge_index"])
+                edge_indices.append(self_edge_index)  # Use updated edge indices
                 batch_ptr.append(self_i["batch_ptr"][1:] + batch_ptr[-1][-1])
 
                 node_features.append(other_i["node_feature"])
-                node_indices.append(other_i["node_index"])
+                node_indices.append(new_other_indices)  # Use new indices
                 edge_features.append(other_i["edge_feature"])
-                edge_indices.append(other_i["edge_index"])
+                edge_indices.append(other_edge_index)  # Use updated edge indices
                 batch_ptr.append(other_i["batch_ptr"][1:] + batch_ptr[-1][-1])
 
             self.tensor["node_feature"] = torch.cat(node_features, dim=0)
@@ -947,7 +958,10 @@ class GraphStates(States):
                 self.tensor["batch_shape"][1] + other.tensor["batch_shape"][1],
             )
 
-        assert torch.prod(self.tensor["batch_shape"]) == len(self.tensor["batch_ptr"]) - 1
+        assert self.tensor["node_index"].unique().numel() == len(
+            self.tensor["node_index"]
+        )
+        assert torch.prod(torch.tensor(self.tensor["batch_shape"])) == len(self.tensor["batch_ptr"]) - 1
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
@@ -995,6 +1009,7 @@ class GraphStates(States):
         """Given a list of states, stacks them along a new dimension (0)."""
         stacked_states = cls.from_batch_shape(0)
         state_batch_shape = states[0].batch_shape
+        assert len(state_batch_shape) == 1
         for state in states:
             assert state.batch_shape == state_batch_shape
             stacked_states.extend(state)
