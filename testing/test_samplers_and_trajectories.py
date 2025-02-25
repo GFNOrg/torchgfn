@@ -1,6 +1,5 @@
 from typing import Literal, Tuple
 
-from gfn.utils.prob_calculations import get_trajectory_pfs
 import pytest
 import torch
 from tensordict import TensorDict
@@ -17,6 +16,8 @@ from gfn.modules import DiscretePolicyEstimator, GFNModule, GraphActionPolicyEst
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.states import GraphStates
 from gfn.utils.modules import MLP
+from gfn.utils.prob_calculations import get_trajectory_pfs
+from gfn.utils.training import states_actions_tns_to_traj
 
 
 def trajectory_sampling_with_return(
@@ -351,6 +352,16 @@ def test_replay_buffer(
         replay_buffer.add(training_objects)
     except Exception as e:
         raise ValueError(f"Error while testing {env_name}") from e
+
+
+def test_states_actions_tns_to_traj():
+    env = HyperGrid(2, 4)
+    states = torch.tensor([[0, 0], [0, 1], [0, 2], [-1, -1]])
+    actions = torch.tensor([1, 1, 2])
+    replay_buffer = ReplayBuffer(env, "trajectories")
+    trajs = states_actions_tns_to_traj(states, actions, env)
+
+    replay_buffer.add(trajs)
 
 
 # ------ GRAPH TESTS ------

@@ -149,7 +149,7 @@ pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=Tru
 logF_estimator = ScalarEstimator(module=module_logF, preprocessor=env.preprocessor)
 
 # 4 - We define the GFlowNet.
-gfn = SubTBGFlowNet(pf=pf_estimator, pb=pb_estimator, logF=logF, lamda=0.9)
+gfn = SubTBGFlowNet(pf=pf_estimator, pb=pb_estimator, logF=logF_estimator, lamda=0.9)
 
 # 5 - We define the sampler and the optimizer.
 sampler = Sampler(estimator=pf_estimator) 

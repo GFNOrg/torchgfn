@@ -34,17 +34,31 @@ from gfn.containers import ReplayBuffer
 REW_VAL = 100.0
 EPS_VAL = 1e-6
 
+<<<<<<< HEAD
 
 def directed_reward(states: GraphStates) -> torch.Tensor:
     """Compute the reward of a graph.
+=======
+>>>>>>> e43c937d2dbad80b73336f28fb0f26a8b7516bdc
 
-    Specifically, the reward is 1 if the graph is a ring, 1e-6 otherwise.
+def directed_reward(states: GraphStates) -> torch.Tensor:
+    """Compute reward for directed ring graphs.
+
+    This function evaluates if a graph forms a valid directed ring (directed cycle).
+    A valid directed ring must satisfy these conditions:
+    1. Each node must have exactly one outgoing edge (row sum = 1 in adjacency matrix)
+    2. Each node must have exactly one incoming edge (column sum = 1 in adjacency matrix)
+    3. Following the edges must form a single cycle that includes all nodes
+
+    The reward is binary:
+    - REW_VAL (100.0) for valid directed rings
+    - EPS_VAL (1e-6) for invalid structures
 
     Args:
-        states: A batch of graphs.
+        states: A batch of graph states to evaluate
 
     Returns:
-        A tensor of rewards.
+        A tensor of rewards with the same batch shape as states
     """
     if states.tensor["edge_index"].shape[0] == 0:
         return torch.full(states.batch_shape, EPS_VAL)
@@ -65,46 +79,55 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
         adj_matrix = torch.zeros(n_nodes, n_nodes)
         adj_matrix[masked_edge_index[:, 0], masked_edge_index[:, 1]] = 1
 
+        # Check if each node has exactly one outgoing edge (row sum = 1)
         if not torch.all(adj_matrix.sum(dim=1) == 1):
             continue
 
-        visited, current = [], 0
+        # Check that each node has exactly one incoming edge (column sum = 1)
+        if not torch.all(adj_matrix.sum(dim=0) == 1):
+            continue
+
+        # Starting from node 0, follow edges and see if we visit all nodes
+        # and return to the start
+        visited = []
+        current = 0  # Start from node 0
+
         while current not in visited:
             visited.append(current)
 
-            def set_diff(tensor1, tensor2):
-                mask = ~torch.isin(tensor1, tensor2)
-                return tensor1[mask]
+            # Get the outgoing neighbor
+            current = torch.where(adj_matrix[current] == 1)[0].item()
 
-            # Find an unvisited neighbor
-            neighbors = torch.where(adj_matrix[current] == 1)[0]
-            valid_neighbours = set_diff(neighbors, torch.tensor(visited))
-
-            # Visit the first valid neighbor.
-            if len(valid_neighbours) == 1:
-                current = valid_neighbours[0]
-            elif len(valid_neighbours) == 0:
+            # If we've visited all nodes and returned to 0, it's a valid ring
+            if len(visited) == n_nodes and current == 0:
+                out[i] = REW_VAL
                 break
-            else:
-                break  # TODO: This actually should never happen, should be caught on line 45.
-
-        # Check if we visited all vertices and the last vertex connects back to start.
-        if len(visited) == n_nodes and adj_matrix[current][0] == 1:
-            out[i] = REW_VAL
 
     return out.view(*states.batch_shape)
 
 
 def undirected_reward(states: GraphStates) -> torch.Tensor:
-    """Compute the reward of a graph.
+    """Compute reward for undirected ring graphs.
 
-    Specifically, the reward is 1 if the graph is an undirected ring, 1e-6 otherwise.
+    This function evaluates if a graph forms a valid undirected ring (cycle).
+    A valid undirected ring must satisfy these conditions:
+    1. Each node must have exactly two neighbors (degree = 2)
+    2. The graph must form a single connected cycle including all nodes
+
+    The reward is binary:
+    - REW_VAL (100.0) for valid undirected rings
+    - EPS_VAL (1e-6) for invalid structures
+
+    The algorithm:
+    1. Checks that all nodes have degree 2
+    2. Performs a traversal starting from node 0, following edges
+    3. Checks if the traversal visits all nodes and returns to start
 
     Args:
-        states: A batch of graphs.
+        states: A batch of graph states to evaluate
 
     Returns:
-        A tensor of rewards.
+        A tensor of rewards with the same batch shape as states
     """
     if states.tensor["edge_index"].shape[0] == 0:
         return torch.full(states.batch_shape, EPS_VAL)
@@ -334,7 +357,9 @@ class RingPolicyModule(nn.Module):
             out_size = (self.n_nodes**2 - self.n_nodes) // 2
 
         # Grab the needed elems from the adjacency matrix and reshape.
-        edge_actions = x[torch.arange(batch_size)[:, None, None], i0, i1]
+        edge_actions = edgewise_dot_prod[
+            torch.arange(batch_size)[:, None, None], i0, i1
+        ]
         edge_actions = edge_actions.reshape(*states_tensor["batch_shape"], out_size)
 
         if self.is_backward:
@@ -344,15 +369,24 @@ class RingPolicyModule(nn.Module):
 
 
 class RingGraphBuilding(GraphBuilding):
-    """Override the GraphBuilding class to create have discrete actions.
+    """Environment for building ring graphs with discrete action space.
 
-    Specifically, at initialization, we have n nodes.
-    The policy can only add edges between existing nodes or use the exit action.
-    The action space is thus discrete and of size n^2 + 1, where the last action is the exit action,
-    and the first n^2 actions are the possible edges.
+    This environment is specialized for creating ring graphs where each node has
+    exactly two neighbors and the edges form a single cycle. The environment supports
+    both directed and undirected graphs.
+
+    In each state, the policy can:
+    1. Add an edge between existing nodes
+    2. Use the exit action to terminate graph building
+
+    The action space is discrete, with size:
+    - For directed graphs: n_nodes^2 - n_nodes + 1 (all possible directed edges + exit)
+    - For undirected graphs: (n_nodes^2 - n_nodes)/2 + 1 (upper triangle + exit)
 
     Args:
         n_nodes: The number of nodes in the graph.
+        state_evaluator: A function that evaluates a state and returns a reward.
+        directed: Whether the graph should be directed.
     """
 
     def __init__(self, n_nodes: int, state_evaluator: callable, directed: bool):
@@ -371,6 +405,14 @@ class RingGraphBuilding(GraphBuilding):
         env = self
 
         class RingActions(Actions):
+            """Actions for building ring graphs.
+
+            Actions are represented as discrete indices where:
+            - 0 to n_actions-2: Adding an edge between specific nodes
+            - n_actions-1: EXIT action to terminate the trajectory
+            - n_actions: DUMMY action (used for padding)
+            """
+
             action_shape = (1,)
             dummy_action = torch.tensor([env.n_actions])
             exit_action = torch.tensor([env.n_actions - 1])
@@ -381,6 +423,25 @@ class RingGraphBuilding(GraphBuilding):
         env = self
 
         class RingStates(GraphStates):
+            """Represents the state of a ring graph building process.
+
+            This class extends GraphStates to specifically handle ring graph states.
+            Each state represents a graph with a fixed number of nodes where edges
+            are being added incrementally to form a ring structure.
+
+            The state representation consists of:
+            - node_feature: Node IDs for each node in the graph (shape: [n_nodes, 1])
+            - edge_feature: Features for each edge (shape: [n_edges, 1])
+            - edge_index: Indices representing the source and target nodes for each edge (shape: [n_edges, 2])
+
+            Special states:
+            - s0: Initial state with n_nodes and no edges
+            - sf: Terminal state (used as a placeholder)
+
+            The class provides masks for both forward and backward actions to determine
+            which actions are valid from the current state.
+            """
+
             s0 = TensorDict(
                 {
                     "node_feature": torch.arange(env.n_nodes)[:, None],
@@ -409,6 +470,20 @@ class RingGraphBuilding(GraphBuilding):
 
             @property
             def forward_masks(self):
+                """Compute masks for valid forward actions from the current state.
+
+                A forward action is valid if:
+                1. The edge doesn't already exist in the graph
+                2. The edge connects two distinct nodes
+
+                For directed graphs, all possible src->dst edges are considered.
+                For undirected graphs, only the upper triangular portion of the adjacency matrix is used.
+
+                The last action is always the EXIT action, which is always valid.
+
+                Returns:
+                    Tensor: Boolean mask of shape [batch_size, n_actions] where True indicates valid actions
+                """
                 # Allow all actions.
                 forward_masks = torch.ones(len(self), self.n_actions, dtype=torch.bool)
 
@@ -460,6 +535,19 @@ class RingGraphBuilding(GraphBuilding):
 
             @property
             def backward_masks(self):
+                """Compute masks for valid backward actions from the current state.
+
+                A backward action is valid if:
+                1. The edge exists in the current graph (i.e., can be removed)
+
+                For directed graphs, all existing edges are considered for removal.
+                For undirected graphs, only the upper triangular edges are considered.
+
+                The EXIT action is not included in backward masks.
+
+                Returns:
+                    Tensor: Boolean mask of shape [batch_size, n_actions-1] where True indicates valid actions
+                """
                 # Disallow all actions.
                 backward_masks = torch.zeros(
                     len(self), self.n_actions - 1, dtype=torch.bool
@@ -511,19 +599,51 @@ class RingGraphBuilding(GraphBuilding):
         return RingStates
 
     def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Take a step in the environment by applying actions to states.
+
+        Args:
+            states: Current states batch
+            actions: Actions to apply
+
+        Returns:
+            New states after applying the actions
+        """
         actions = self.convert_actions(states, actions)
         new_states = super()._step(states, actions)
         assert isinstance(new_states, GraphStates)
         return new_states
 
     def _backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Take a backward step in the environment.
+
+        Args:
+            states: Current states batch
+            actions: Actions to apply in reverse
+
+        Returns:
+            New states after applying the backward actions
+        """
         actions = self.convert_actions(states, actions)
         new_states = super()._backward_step(states, actions)
         assert isinstance(new_states, GraphStates)
         return new_states
 
     def convert_actions(self, states: GraphStates, actions: Actions) -> GraphActions:
-        """Converts the action from discrete space to graph action space."""
+        """Converts the action from discrete space to graph action space.
+
+        This method maps discrete action indices to specific graph operations:
+        - GraphActionType.ADD_EDGE: Add an edge between specific nodes
+        - GraphActionType.EXIT: Terminate trajectory
+        - GraphActionType.DUMMY: No-op action (for padding)
+
+        Args:
+            states: Current states batch
+            actions: Discrete actions to convert
+
+        Returns:
+            Equivalent actions in the GraphActions format
+        """
+        # TODO: factor out into utility function.
         action_tensor = actions.tensor.squeeze(-1).clone()
         action_type = torch.where(
             action_tensor == self.n_actions - 1,
@@ -532,6 +652,7 @@ class RingGraphBuilding(GraphBuilding):
         )
         action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
 
+        # Convert action indices to source-target node pairs
         # TODO: factor out into utility function.
         if self.is_directed:
             i_up, j_up = torch.triu_indices(
@@ -571,7 +692,15 @@ class RingGraphBuilding(GraphBuilding):
 
 
 class GraphPreprocessor(Preprocessor):
-    """Extract the tensor from the states."""
+    """Preprocessor for graph states to extract the tensor representation.
+
+    This simple preprocessor extracts the TensorDict from GraphStates to make
+    it compatible with the policy networks. It doesn't perform any complex
+    transformations, just ensuring the tensors are accessible in the right format.
+
+    Args:
+        feature_dim: The dimension of features in the graph (default: 1)
+    """
 
     def __init__(self, feature_dim: int = 1):
         super().__init__(output_dim=feature_dim)
@@ -579,15 +708,26 @@ class GraphPreprocessor(Preprocessor):
     def preprocess(self, states: GraphStates) -> TensorDict:
         return states.tensor
 
-    def __call__(self, states: GraphStates) -> torch.Tensor:
+    def __call__(self, states: GraphStates) -> TensorDict:
         return self.preprocess(states)
 
 
 def render_states(states: GraphStates, state_evaluator: callable, directed: bool):
-    """Render the states as a matplotlib plot.
+    """Visualize a batch of graph states as ring structures.
+
+    This function creates a matplotlib visualization of graph states, rendering them
+    as circular layouts with nodes positioned evenly around a circle. For directed
+    graphs, edges are shown as arrows; for undirected graphs, edges are shown as lines.
+
+    The visualization includes:
+    - Circular positioning of nodes
+    - Drawing edges between connected nodes
+    - Displaying the reward value for each graph
 
     Args:
-        states: A batch of graphs.
+        states: A batch of graphs to visualize
+        state_evaluator: Function to compute rewards for each graph
+        directed: Whether to render directed or undirected edges
     """
     rewards = state_evaluator(states)
     fig, ax = plt.subplots(2, 4, figsize=(15, 7))
@@ -654,23 +794,190 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
     plt.show()
 
 
+class AdjacencyPolicyModule(nn.Module):
+    """Policy network that processes flattened adjacency matrices to predict graph actions.
+
+    Unlike the GNN-based RingPolicyModule, this module uses standard MLPs to process
+    the entire adjacency matrix as a flattened vector. This approach:
+
+    1. Can directly process global graph structure without message passing
+    2. May be more effective for small graphs where global patterns are important
+    3. Does not require complex graph neural network operations
+
+    The module architecture consists of:
+    - An MLP to process the flattened adjacency matrix into an embedding
+    - An edge MLP that predicts logits for each possible edge action
+    - An exit MLP that predicts a logit for the exit action
+
+    Args:
+        n_nodes: Number of nodes in the graph
+        directed: Whether the graph is directed or undirected
+        embedding_dim: Dimension of internal embeddings (default: 128)
+        is_backward: Whether this is a backward policy (default: False)
+    """
+
+    def __init__(
+        self,
+        n_nodes: int,
+        directed: bool,
+        embedding_dim: int = 128,
+        is_backward: bool = False,
+    ):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.is_directed = directed
+        self.is_backward = is_backward
+        self.hidden_dim = embedding_dim
+
+        # MLP for processing the flattened adjacency matrix
+        self.mlp = MLP(
+            input_dim=n_nodes * n_nodes,  # Flattened adjacency matrix
+            output_dim=embedding_dim,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=2,
+            add_layer_norm=True,
+        )
+
+        # Exit action MLP
+        self.exit_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=1,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+        # Edge prediction MLP
+        if directed:
+            # For directed graphs: all off-diagonal elements
+            out_size = n_nodes**2 - n_nodes
+        else:
+            # For undirected graphs: upper triangle without diagonal
+            out_size = (n_nodes**2 - n_nodes) // 2
+
+        self.edge_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=out_size,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+    def forward(self, states_tensor: TensorDict) -> torch.Tensor:
+        """Forward pass to compute action logits from graph states.
+
+        Process:
+        1. Convert the graph representation to adjacency matrices
+        2. Process the flattened adjacency matrices through the main MLP
+        3. Predict logits for edge actions and exit action
+
+        Args:
+            states_tensor: A TensorDict containing graph state information
+
+        Returns:
+            A tensor of logits for all possible actions
+        """
+        # Convert the graph to adjacency matrix
+        batch_size = int(torch.prod(torch.tensor(states_tensor["batch_shape"])))
+        adj_matrices = torch.zeros(
+            (batch_size, self.n_nodes, self.n_nodes),
+            device=states_tensor["node_feature"].device,
+        )
+
+        # Fill the adjacency matrices from edge indices
+        for i in range(batch_size):
+            start, end = (
+                states_tensor["batch_ptr"][i],
+                states_tensor["batch_ptr"][i + 1],
+            )
+            nodes_index_range = states_tensor["node_index"][start:end]
+
+            # Skip if no edges
+            if states_tensor["edge_index"].shape[0] == 0:
+                continue
+
+            # Find edges that belong to this graph
+            edge_index_mask = torch.all(
+                states_tensor["edge_index"] >= nodes_index_range[0], dim=-1
+            ) & torch.all(states_tensor["edge_index"] <= nodes_index_range[-1], dim=-1)
+
+            if torch.any(edge_index_mask):
+                # Get the edge indices relative to this graph's node indices
+                masked_edge_index = (
+                    states_tensor["edge_index"][edge_index_mask] - nodes_index_range[0]
+                )
+                # Fill the adjacency matrix
+                if len(masked_edge_index) > 0:
+                    adj_matrices[
+                        i, masked_edge_index[:, 0], masked_edge_index[:, 1]
+                    ] = 1
+
+        # Flatten the adjacency matrices for the MLP
+        adj_matrices_flat = adj_matrices.view(batch_size, -1)
+
+        # Process with MLP
+        embedding = self.mlp(adj_matrices_flat)
+
+        # Generate edge and exit actions
+        edge_actions = self.edge_mlp(embedding)
+        exit_action = self.exit_mlp(embedding)
+
+        if self.is_backward:
+            return edge_actions
+        else:
+            return torch.cat([edge_actions, exit_action], dim=-1)
+
+
 if __name__ == "__main__":
+    """
+    Main execution for training a GFlowNet to generate ring graphs.
+
+    This script demonstrates the complete workflow of training a GFlowNet
+    to generate valid ring structures in both directed and undirected settings.
+
+    Configurable parameters:
+    - N_NODES: Number of nodes in the graph (default: 5)
+    - N_ITERATIONS: Number of training iterations (default: 1000)
+    - LR: Learning rate for optimizer (default: 0.001)
+    - BATCH_SIZE: Batch size for training (default: 128)
+    - DIRECTED: Whether to generate directed rings (default: True)
+    - USE_BUFFER: Whether to use a replay buffer (default: False)
+    - USE_GNN: Whether to use GNN-based policy (True) or MLP-based policy (False)
+
+    The script performs the following steps:
+    1. Initialize the environment and policy networks
+    2. Train the GFlowNet using trajectory balance
+    3. Visualize sample generated graphs
+    """
     N_NODES = 4
     N_ITERATIONS = 1000
     LR = 0.001
     BATCH_SIZE = 128
     DIRECTED = True
     USE_BUFFER = False
+    USE_GNN = False  # Set to False to use MLP with adjacency matrices instead of GNN
 
     state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
     env = RingGraphBuilding(
         n_nodes=N_NODES, state_evaluator=state_evaluator, directed=DIRECTED
     )
+<<<<<<< HEAD
     module_pf = RingPolicyModule(env.n_nodes, DIRECTED, num_conv_layers=2)
     module_pb = RingPolicyModule(
         env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=2
     )
+=======
+
+    # Choose model type based on USE_GNN flag
+    if USE_GNN:
+        module_pf = RingPolicyModule(env.n_nodes, DIRECTED)
+        module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
+    else:
+        module_pf = AdjacencyPolicyModule(env.n_nodes, DIRECTED)
+        module_pb = AdjacencyPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
+
+>>>>>>> e43c937d2dbad80b73336f28fb0f26a8b7516bdc
     pf = DiscretePolicyEstimator(
         module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
     )
