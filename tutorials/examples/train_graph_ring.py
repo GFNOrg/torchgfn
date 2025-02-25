@@ -34,6 +34,7 @@ from gfn.containers import ReplayBuffer
 REW_VAL = 100.0
 EPS_VAL = 1e-6
 
+
 def directed_reward(states: GraphStates) -> torch.Tensor:
     """Compute the reward of a graph.
 
@@ -202,21 +203,31 @@ class RingPolicyModule(nn.Module):
                     [
                         DirGNNConv(
                             GCNConv(
-                                self.embedding_dim if i == 0 else self.hidden_dim, 
+                                self.embedding_dim if i == 0 else self.hidden_dim,
                                 self.hidden_dim,
                             ),
                             alpha=0.5,
                             root_weight=True,
                         ),
                         # Process in/out components separately
-                        nn.ModuleList([
-                            nn.Sequential(
-                                nn.Linear(self.hidden_dim//2, self.hidden_dim//2),
-                                nn.ReLU(),
-                                nn.Linear(self.hidden_dim//2, self.hidden_dim//2)
-                            ) for _ in range(2)  # One for in-features, one for out-features.
-                        ])
-                    ])
+                        nn.ModuleList(
+                            [
+                                nn.Sequential(
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
+                                    nn.ReLU(),
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
+                                )
+                                for _ in range(
+                                    2
+                                )  # One for in-features, one for out-features.
+                            ]
+                        ),
+                    ]
+                )
         else:  # Undirected case.
             for _ in range(num_conv_layers):
                 self.conv_blks.extend(
@@ -296,8 +307,12 @@ class RingPolicyModule(nn.Module):
             target_features = x[..., feature_dim:]
 
             # Dot product between source and target features (asymmetric).
-            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", source_features, target_features)
-            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(feature_dim))
+            edgewise_dot_prod = torch.einsum(
+                "bnf,bmf->bnm", source_features, target_features
+            )
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
+                torch.tensor(feature_dim)
+            )
 
             i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
             i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)
@@ -310,7 +325,9 @@ class RingPolicyModule(nn.Module):
         else:
             # Dot product between all node features (symmetric).
             edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x, x)
-            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(self.hidden_dim))
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
+                torch.tensor(self.hidden_dim)
+            )
             i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
             out_size = (self.n_nodes**2 - self.n_nodes) // 2
 
@@ -635,6 +652,115 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
     plt.show()
 
 
+class AdjacencyPolicyModule(nn.Module):
+    """Simple MLP that processes flattened adjacency matrices instead of using GNN.
+
+    Args:
+        n_nodes: The number of nodes in the graph.
+        directed: Whether the graph is directed.
+        embedding_dim: Dimension of embeddings.
+        is_backward: Whether this is a backward policy.
+    """
+
+    def __init__(
+        self,
+        n_nodes: int,
+        directed: bool,
+        embedding_dim: int = 128,
+        is_backward: bool = False,
+    ):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.is_directed = directed
+        self.is_backward = is_backward
+        self.hidden_dim = embedding_dim
+
+        # MLP for processing the flattened adjacency matrix
+        self.mlp = MLP(
+            input_dim=n_nodes * n_nodes,  # Flattened adjacency matrix
+            output_dim=embedding_dim,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=2,
+            add_layer_norm=True,
+        )
+
+        # Exit action MLP
+        self.exit_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=1,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+        # Edge prediction MLP
+        if directed:
+            # For directed graphs: all off-diagonal elements
+            out_size = n_nodes**2 - n_nodes
+        else:
+            # For undirected graphs: upper triangle without diagonal
+            out_size = (n_nodes**2 - n_nodes) // 2
+
+        self.edge_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=out_size,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+    def forward(self, states_tensor: TensorDict) -> torch.Tensor:
+        # Convert the graph to adjacency matrix
+        batch_size = int(torch.prod(torch.tensor(states_tensor["batch_shape"])))
+        adj_matrices = torch.zeros(
+            (batch_size, self.n_nodes, self.n_nodes),
+            device=states_tensor["node_feature"].device,
+        )
+
+        # Fill the adjacency matrices from edge indices
+        for i in range(batch_size):
+            start, end = (
+                states_tensor["batch_ptr"][i],
+                states_tensor["batch_ptr"][i + 1],
+            )
+            nodes_index_range = states_tensor["node_index"][start:end]
+
+            # Skip if no edges
+            if states_tensor["edge_index"].shape[0] == 0:
+                continue
+
+            # Find edges that belong to this graph
+            edge_index_mask = torch.all(
+                states_tensor["edge_index"] >= nodes_index_range[0], dim=-1
+            ) & torch.all(states_tensor["edge_index"] <= nodes_index_range[-1], dim=-1)
+
+            if torch.any(edge_index_mask):
+                # Get the edge indices relative to this graph's node indices
+                masked_edge_index = (
+                    states_tensor["edge_index"][edge_index_mask] - nodes_index_range[0]
+                )
+                # Fill the adjacency matrix
+                if len(masked_edge_index) > 0:
+                    adj_matrices[
+                        i, masked_edge_index[:, 0], masked_edge_index[:, 1]
+                    ] = 1
+
+        # Flatten the adjacency matrices for the MLP
+        adj_matrices_flat = adj_matrices.view(batch_size, -1)
+
+        # Process with MLP
+        embedding = self.mlp(adj_matrices_flat)
+
+        # Generate edge and exit actions
+        edge_actions = self.edge_mlp(embedding)
+        exit_action = self.exit_mlp(embedding)
+
+        if self.is_backward:
+            return edge_actions
+        else:
+            return torch.cat([edge_actions, exit_action], dim=-1)
+
+
 if __name__ == "__main__":
     N_NODES = 4
     N_ITERATIONS = 1000
@@ -642,14 +768,22 @@ if __name__ == "__main__":
     BATCH_SIZE = 128
     DIRECTED = True
     USE_BUFFER = False
+    USE_GNN = False  # Set to False to use MLP with adjacency matrices instead of GNN
 
     state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
     env = RingGraphBuilding(
         n_nodes=N_NODES, state_evaluator=state_evaluator, directed=DIRECTED
     )
-    module_pf = RingPolicyModule(env.n_nodes, DIRECTED)
-    module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
+
+    # Choose model type based on USE_GNN flag
+    if USE_GNN:
+        module_pf = RingPolicyModule(env.n_nodes, DIRECTED)
+        module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
+    else:
+        module_pf = AdjacencyPolicyModule(env.n_nodes, DIRECTED)
+        module_pb = AdjacencyPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
+
     pf = DiscretePolicyEstimator(
         module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
     )
@@ -674,7 +808,9 @@ if __name__ == "__main__":
     t1 = time.time()
     for iteration in range(N_ITERATIONS):
         trajectories = gflownet.sample_trajectories(
-            env, n=BATCH_SIZE, save_logprobs=True,  # pyright: ignore
+            env,
+            n=BATCH_SIZE,
+            save_logprobs=True,  # pyright: ignore
         )
         training_samples = gflownet.to_training_samples(trajectories)
 
@@ -690,15 +826,19 @@ if __name__ == "__main__":
             with torch.no_grad():
                 replay_buffer.add(training_samples)
                 if iteration > 20:
-                    training_samples = training_samples[:BATCH_SIZE // 2]
-                    buffer_samples = replay_buffer.sample(n_trajectories=BATCH_SIZE // 2)
+                    training_samples = training_samples[: BATCH_SIZE // 2]
+                    buffer_samples = replay_buffer.sample(
+                        n_trajectories=BATCH_SIZE // 2
+                    )
                     training_samples.extend(buffer_samples)
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples)  # pyright: ignore
         pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
-        print("Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(
-            iteration, loss.item(), pct_rings)
+        print(
+            "Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(
+                iteration, loss.item(), pct_rings
+            )
         )
         loss.backward()
         optimizer.step()
@@ -706,7 +846,7 @@ if __name__ == "__main__":
 
     t2 = time.time()
     print("Time:", t2 - t1)
-    
+
     # This comes from the gflownet, not the buffer.
     last_states = trajectories.last_states[:8]
     assert isinstance(last_states, GraphStates)
