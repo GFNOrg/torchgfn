@@ -1,7 +1,7 @@
 import math
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Tuple, TypeVar, Union
+from typing import Any, Generic, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
@@ -14,9 +14,7 @@ from gfn.states import States
 from gfn.utils.common import has_log_probs
 from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
 
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
-)
+TrainingSampleType = TypeVar("TrainingSampleType", bound=Container)
 
 
 class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
