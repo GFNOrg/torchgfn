@@ -368,13 +368,11 @@ class Trajectories(Container):
                 dim=0,
             )
 
-        # Initialize log_probs as zeros if not available
+        # Initialize log_probs None if not available
         if has_log_probs(self):
             log_probs = self.log_probs[~self.actions.is_dummy]
         else:
-            log_probs = torch.zeros(
-                actions.batch_shape[0], dtype=torch.float, device=actions.device
-            )
+            log_probs = None
 
         return Transitions(
             env=self.env,
@@ -393,9 +391,7 @@ class Trajectories(Container):
         states = self.states.flatten()
         return states[~states.is_sink_state]
 
-    def to_state_pairs(
-        self,
-    ) -> StatePairs[DiscreteStates]:
+    def to_state_pairs(self) -> StatePairs[DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples.
 
         Returns:

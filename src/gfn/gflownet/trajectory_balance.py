@@ -3,6 +3,8 @@ Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.1325
 and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
+from typing import cast
+
 import torch
 import torch.nn as nn
 
@@ -74,7 +76,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         else:
             logZ = self.logZ
 
-        assert isinstance(logZ, torch.Tensor)
+        logZ = cast(torch.Tensor, logZ)
         loss = (scores + logZ.squeeze()).pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("loss is nan")

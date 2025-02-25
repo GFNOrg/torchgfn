@@ -1,3 +1,4 @@
+from .base import Container
 from .replay_buffer import PrioritizedReplayBuffer, ReplayBuffer
 from .state_pairs import StatePairs
 from .trajectories import Trajectories
@@ -9,4 +10,5 @@ __all__ = [
     "StatePairs",
     "Trajectories",
     "Transitions",
+    "Container",
 ]

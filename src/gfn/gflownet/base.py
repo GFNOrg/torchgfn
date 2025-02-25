@@ -1,16 +1,17 @@
 import math
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
 
-from gfn.containers import Trajectories
-from gfn.containers.base import Container
+from gfn.containers import Container, Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
+from gfn.utils.common import has_log_probs
 from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
 
 TrainingSampleType = TypeVar(
@@ -91,6 +92,14 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         """
         training_samples = self.to_training_samples(trajectories)
         if isinstance(self, PFBasedGFlowNet):
+            # Check if trajectories already have log_probs
+            if has_log_probs(trajectories):
+                warnings.warn(
+                    "Recalculating logprobs for trajectories that already have them. "
+                    "This may be inefficient for on-policy trajectories. "
+                    "To avoid this warning, call loss() directly with recalculate_all_logprobs=False."
+                )
+
             # We know this is safe because PFBasedGFlowNet's loss accepts these arguments
             return self.loss(env, training_samples, recalculate_all_logprobs=True)
         return self.loss(env, training_samples)

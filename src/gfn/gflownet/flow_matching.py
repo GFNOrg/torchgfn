@@ -2,8 +2,7 @@ from typing import Any
 
 import torch
 
-from gfn.containers import Trajectories
-from gfn.containers.state_pairs import StatePairs
+from gfn.containers import StatePairs, Trajectories
 from gfn.env import DiscreteEnv
 from gfn.gflownet.base import GFlowNet
 from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
@@ -179,20 +178,20 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
     def loss(
         self,
         env: DiscreteEnv,
-        states: StatePairs[DiscreteStates],
+        state_pairs: StatePairs[DiscreteStates],
     ) -> torch.Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
         Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
         StatePairs container that holds both the internal states of the trajectories
         (i.e. non-terminal states) and the terminal states."""
-        assert isinstance(states.intermediary_states, DiscreteStates)
-        assert isinstance(states.terminating_states, DiscreteStates)
+        assert isinstance(state_pairs.intermediary_states, DiscreteStates)
+        assert isinstance(state_pairs.terminating_states, DiscreteStates)
         fm_loss = self.flow_matching_loss(
-            env, states.intermediary_states, states.intermediary_conditioning
+            env, state_pairs.intermediary_states, state_pairs.intermediary_conditioning
         )
         rm_loss = self.reward_matching_loss(
-            env, states.terminating_states, states.terminating_conditioning
+            env, state_pairs.terminating_states, state_pairs.terminating_conditioning
         )
         return fm_loss + self.alpha * rm_loss
 

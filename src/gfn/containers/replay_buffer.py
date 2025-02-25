@@ -66,7 +66,7 @@ class ReplayBuffer(Generic[ContainerType]):
                 raise ValueError(f"Unsupported type: {type(training_objects)}")
 
     def add(self, training_objects: ContainerType) -> None:
-        """Adds a training object to the buffer."""
+        """Adds a batch of training objects to the buffer."""
         self.initialize(training_objects)
         assert self.training_objects is not None
 
@@ -150,7 +150,7 @@ class PrioritizedReplayBuffer(ReplayBuffer[ContainerType]):
         self,
         training_objects: ContainerType,
     ):
-        """Adds a training object to the buffer."""
+        """Adds a batch of training objects to the buffer."""
         to_add = len(training_objects)
         self._is_full |= len(self) + to_add >= self.capacity
 
