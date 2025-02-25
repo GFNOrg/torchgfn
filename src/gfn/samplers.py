@@ -548,10 +548,6 @@ class LocalSearchSampler(Sampler):
         to generate `prev_trajectories` and `recon_trajectories`.
         """
 
-        save_logprobs = (prev_trajectories_log_pf is not None) and (
-            recon_trajectories_log_pf is not None
-        )
-
         new_trajectories_log_pf = None
         new_trajectories_log_pb = None
 
@@ -620,31 +616,25 @@ class LocalSearchSampler(Sampler):
         new_trajectories_actions_tsr = new_trajectories_actions_tsr.transpose(0, 1)
 
         # Similarly, combine log_pf and log_pb if needed
-        if save_logprobs:
-            prev_trajectories_log_pf = (
-                prev_trajectories_log_pf.transpose(0, 1)
-                if prev_trajectories_log_pf is not None
-                else None
-            )
-            recon_trajectories_log_pf = (
-                recon_trajectories_log_pf.transpose(0, 1)
-                if recon_trajectories_log_pf is not None
-                else None
-            )
+        if (
+            prev_trajectories_log_pf is not None
+            and recon_trajectories_log_pf is not None
+        ):
+            prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)
+            recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(0, 1)
             new_trajectories_log_pf = torch.full((bs, max_traj_len), 0.0).to(
                 device=device, dtype=torch.float
             )
-            if prev_trajectories_log_pf is not None:
-                new_trajectories_log_pf[prev_mask[:, :-1]] = prev_trajectories_log_pf[
-                    :, :max_n_prev
-                ][prev_mask_truc]
-            if recon_trajectories_log_pf is not None:
-                new_trajectories_log_pf[action_recon_mask] = recon_trajectories_log_pf[
-                    action_recon_mask2
-                ]
+            new_trajectories_log_pf[prev_mask[:, :-1]] = prev_trajectories_log_pf[
+                :, :max_n_prev
+            ][prev_mask_truc]
+            new_trajectories_log_pf[action_recon_mask] = recon_trajectories_log_pf[
+                action_recon_mask2
+            ]
             new_trajectories_log_pf = new_trajectories_log_pf.transpose(0, 1)
-        if (prev_trajectories_log_pb is not None) and (
-            recon_trajectories_log_pb is not None
+        if (
+            prev_trajectories_log_pb is not None
+            and recon_trajectories_log_pb is not None
         ):
             prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)
             recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(0, 1)
@@ -670,25 +660,25 @@ class LocalSearchSampler(Sampler):
                 max_traj_len, bs, 1
             ).to(prev_trajectories.actions.tensor)
 
-            if save_logprobs:
+            if (
+                prev_trajectories_log_pf is not None
+                and recon_trajectories_log_pf is not None
+            ):
                 _new_trajectories_log_pf = torch.full((max_traj_len, bs), 0.0).to(
                     device=device, dtype=torch.float
                 )
-                if prev_trajectories_log_pf is not None:
-                    prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)
-                if recon_trajectories_log_pf is not None:
-                    recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(0, 1)
+                prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)
+                recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(0, 1)
 
-            if use_metropolis_hastings := (prev_trajectories_log_pb is not None) and (
-                recon_trajectories_log_pb is not None
+            if (
+                prev_trajectories_log_pb is not None
+                and recon_trajectories_log_pb is not None
             ):
                 _new_trajectories_log_pb = torch.full((max_traj_len, bs), 0.0).to(
                     device=device, dtype=torch.float
                 )
-                if prev_trajectories_log_pb is not None:
-                    prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)
-                if recon_trajectories_log_pb is not None:
-                    recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(0, 1)
+                prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)
+                recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(0, 1)
 
             for i in range(bs):
                 _n_prev = n_prevs[i]
@@ -711,8 +701,7 @@ class LocalSearchSampler(Sampler):
                 )
 
                 if (
-                    save_logprobs
-                    and prev_trajectories_log_pf is not None
+                    prev_trajectories_log_pf is not None
                     and recon_trajectories_log_pf is not None
                 ):
                     _new_trajectories_log_pf[:_n_prev, i] = prev_trajectories_log_pf[
@@ -721,10 +710,8 @@ class LocalSearchSampler(Sampler):
                     _new_trajectories_log_pf[_n_prev : _n_prev + _len_recon, i] = (
                         recon_trajectories_log_pf[:_len_recon, i]
                     )
-
                 if (
-                    use_metropolis_hastings
-                    and prev_trajectories_log_pb is not None
+                    prev_trajectories_log_pb is not None
                     and recon_trajectories_log_pb is not None
                 ):
                     _new_trajectories_log_pb[:_n_prev, i] = prev_trajectories_log_pb[
@@ -739,14 +726,12 @@ class LocalSearchSampler(Sampler):
                 _new_trajectories_actions_tsr == new_trajectories_actions_tsr
             )
             if (
-                save_logprobs
-                and prev_trajectories_log_pf is not None
+                prev_trajectories_log_pf is not None
                 and recon_trajectories_log_pf is not None
             ):
                 assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)
             if (
-                use_metropolis_hastings
-                and prev_trajectories_log_pb is not None
+                prev_trajectories_log_pb is not None
                 and recon_trajectories_log_pb is not None
             ):
                 assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
@@ -759,7 +744,7 @@ class LocalSearchSampler(Sampler):
             when_is_done=new_trajectories_dones,
             is_backward=False,
             log_rewards=new_trajectories_log_rewards,
-            log_probs=new_trajectories_log_pf if save_logprobs else None,
+            log_probs=new_trajectories_log_pf,
         )
 
         return new_trajectories, new_trajectories_log_pf, new_trajectories_log_pb
