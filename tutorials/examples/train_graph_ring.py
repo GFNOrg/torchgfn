@@ -39,6 +39,7 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
     """Compute the reward of a graph.
 
     Specifically, the reward is 1 if the graph is a ring, 1e-6 otherwise.
+    A ring is a directed cycle where each node has exactly one outgoing and one incoming edge.
 
     Args:
         states: A batch of graphs.
@@ -65,32 +66,29 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
         adj_matrix = torch.zeros(n_nodes, n_nodes)
         adj_matrix[masked_edge_index[:, 0], masked_edge_index[:, 1]] = 1
 
+        # Check if each node has exactly one outgoing edge (row sum = 1)
         if not torch.all(adj_matrix.sum(dim=1) == 1):
             continue
 
-        visited, current = [], 0
+        # Check that each node has exactly one incoming edge (column sum = 1)
+        if not torch.all(adj_matrix.sum(dim=0) == 1):
+            continue
+
+        # Starting from node 0, follow edges and see if we visit all nodes
+        # and return to the start
+        visited = []
+        current = 0  # Start from node 0
+
         while current not in visited:
             visited.append(current)
 
-            def set_diff(tensor1, tensor2):
-                mask = ~torch.isin(tensor1, tensor2)
-                return tensor1[mask]
+            # Get the outgoing neighbor
+            current = torch.where(adj_matrix[current] == 1)[0].item()
 
-            # Find an unvisited neighbor
-            neighbors = torch.where(adj_matrix[current] == 1)[0]
-            valid_neighbours = set_diff(neighbors, torch.tensor(visited))
-
-            # Visit the first valid neighbor.
-            if len(valid_neighbours) == 1:
-                current = valid_neighbours[0]
-            elif len(valid_neighbours) == 0:
+            # If we've visited all nodes and returned to 0, it's a valid ring
+            if len(visited) == n_nodes and current == 0:
+                out[i] = REW_VAL
                 break
-            else:
-                break  # TODO: This actually should never happen, should be caught on line 45.
-
-        # Check if we visited all vertices and the last vertex connects back to start.
-        if len(visited) == n_nodes and adj_matrix[current][0] == 1:
-            out[i] = REW_VAL
 
     return out.view(*states.batch_shape)
 
@@ -762,7 +760,7 @@ class AdjacencyPolicyModule(nn.Module):
 
 
 if __name__ == "__main__":
-    N_NODES = 4
+    N_NODES = 3
     N_ITERATIONS = 1000
     LR = 0.001
     BATCH_SIZE = 128
