@@ -202,7 +202,7 @@ class RingPolicyModule(nn.Module):
                     [
                         DirGNNConv(
                             GCNConv(
-                                self.embedding_dim if i == 0 else self.hidden_dim, 
+                                self.embedding_dim if i == 0 else self.hidden_dim,
                                 self.hidden_dim,
                             ),
                             alpha=0.5,
@@ -223,7 +223,7 @@ class RingPolicyModule(nn.Module):
                     [
                         GINConv(
                             MLP(
-                                input_dim=self.embedding_dim,
+                                input_dim=self.embedding_dim if i == 0 else self.hidden_dim,
                                 output_dim=self.hidden_dim,
                                 hidden_dim=self.hidden_dim,
                                 n_hidden_layers=1,
@@ -648,8 +648,8 @@ if __name__ == "__main__":
     env = RingGraphBuilding(
         n_nodes=N_NODES, state_evaluator=state_evaluator, directed=DIRECTED
     )
-    module_pf = RingPolicyModule(env.n_nodes, DIRECTED)
-    module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
+    module_pf = RingPolicyModule(env.n_nodes, DIRECTED, num_conv_layers=2)
+    module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=2)
     pf = DiscretePolicyEstimator(
         module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
     )
@@ -706,7 +706,7 @@ if __name__ == "__main__":
 
     t2 = time.time()
     print("Time:", t2 - t1)
-    
+
     # This comes from the gflownet, not the buffer.
     last_states = trajectories.last_states[:8]
     assert isinstance(last_states, GraphStates)
