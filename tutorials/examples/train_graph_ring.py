@@ -34,6 +34,7 @@ from gfn.containers import ReplayBuffer
 REW_VAL = 100.0
 EPS_VAL = 1e-6
 
+
 def directed_reward(states: GraphStates) -> torch.Tensor:
     """Compute the reward of a graph.
 
@@ -209,21 +210,33 @@ class RingPolicyModule(nn.Module):
                             root_weight=True,
                         ),
                         # Process in/out components separately
-                        nn.ModuleList([
-                            nn.Sequential(
-                                nn.Linear(self.hidden_dim//2, self.hidden_dim//2),
-                                nn.ReLU(),
-                                nn.Linear(self.hidden_dim//2, self.hidden_dim//2)
-                            ) for _ in range(2)  # One for in-features, one for out-features.
-                        ])
-                    ])
+                        nn.ModuleList(
+                            [
+                                nn.Sequential(
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
+                                    nn.ReLU(),
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
+                                )
+                                for _ in range(
+                                    2
+                                )  # One for in-features, one for out-features.
+                            ]
+                        ),
+                    ]
+                )
         else:  # Undirected case.
             for _ in range(num_conv_layers):
                 self.conv_blks.extend(
                     [
                         GINConv(
                             MLP(
-                                input_dim=self.embedding_dim if i == 0 else self.hidden_dim,
+                                input_dim=(
+                                    self.embedding_dim if i == 0 else self.hidden_dim
+                                ),
                                 output_dim=self.hidden_dim,
                                 hidden_dim=self.hidden_dim,
                                 n_hidden_layers=1,
@@ -296,8 +309,12 @@ class RingPolicyModule(nn.Module):
             target_features = x[..., feature_dim:]
 
             # Dot product between source and target features (asymmetric).
-            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", source_features, target_features)
-            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(feature_dim))
+            edgewise_dot_prod = torch.einsum(
+                "bnf,bmf->bnm", source_features, target_features
+            )
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
+                torch.tensor(feature_dim)
+            )
 
             i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
             i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)
@@ -310,7 +327,9 @@ class RingPolicyModule(nn.Module):
         else:
             # Dot product between all node features (symmetric).
             edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x, x)
-            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(self.hidden_dim))
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
+                torch.tensor(self.hidden_dim)
+            )
             i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
             out_size = (self.n_nodes**2 - self.n_nodes) // 2
 
@@ -649,7 +668,9 @@ if __name__ == "__main__":
         n_nodes=N_NODES, state_evaluator=state_evaluator, directed=DIRECTED
     )
     module_pf = RingPolicyModule(env.n_nodes, DIRECTED, num_conv_layers=2)
-    module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=2)
+    module_pb = RingPolicyModule(
+        env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=2
+    )
     pf = DiscretePolicyEstimator(
         module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
     )
@@ -674,7 +695,9 @@ if __name__ == "__main__":
     t1 = time.time()
     for iteration in range(N_ITERATIONS):
         trajectories = gflownet.sample_trajectories(
-            env, n=BATCH_SIZE, save_logprobs=True,  # pyright: ignore
+            env,
+            n=BATCH_SIZE,
+            save_logprobs=True,  # pyright: ignore
         )
         training_samples = gflownet.to_training_samples(trajectories)
 
@@ -690,15 +713,19 @@ if __name__ == "__main__":
             with torch.no_grad():
                 replay_buffer.add(training_samples)
                 if iteration > 20:
-                    training_samples = training_samples[:BATCH_SIZE // 2]
-                    buffer_samples = replay_buffer.sample(n_trajectories=BATCH_SIZE // 2)
+                    training_samples = training_samples[: BATCH_SIZE // 2]
+                    buffer_samples = replay_buffer.sample(
+                        n_trajectories=BATCH_SIZE // 2
+                    )
                     training_samples.extend(buffer_samples)
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples)  # pyright: ignore
         pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
-        print("Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(
-            iteration, loss.item(), pct_rings)
+        print(
+            "Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(
+                iteration, loss.item(), pct_rings
+            )
         )
         loss.backward()
         optimizer.step()
