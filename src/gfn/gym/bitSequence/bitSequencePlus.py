@@ -1,9 +1,9 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
 import torch
-from typing import Optional, Union, Tuple
+from typing import Optional
 
-from gfn.env import DiscreteEnv, Env
+from gfn.env import DiscreteEnv
 from gfn.preprocessors import Preprocessor
 from gfn.actions import Actions
 from gfn.containers import Trajectories
@@ -16,6 +16,7 @@ class BitSequencePlus(BitSequence):
     """
     Prepend-Append version of BitSequence env.
     """
+
     def __init__(
         self,
         word_size: int = 4,
@@ -86,9 +87,9 @@ class BitSequencePlus(BitSequence):
         old_tensor = states.tensor.clone()
         append_mask = (actions.tensor < (self.n_actions - 1) // 2).squeeze()
         prepend_mask = ~append_mask
-        old_tensor[append_mask & ~is_exit, states.length[append_mask & ~is_exit]] = # pyright:ignore
-        ( 
-            actions.tensor[append_mask & ~is_exit].squeeze()  
+        assert states.length
+        old_tensor[append_mask & ~is_exit, states.length[append_mask & ~is_exit]] = (
+            actions.tensor[append_mask & ~is_exit].squeeze()  # pyright:ignore
         )
 
         old_tensor[prepend_mask & ~is_exit, 1:] = old_tensor[
@@ -113,7 +114,8 @@ class BitSequencePlus(BitSequence):
         old_tensor = states.tensor.clone()
         remove_end_mask = (actions.tensor < (self.n_actions - 1) // 2).squeeze()
         remove_front_mask = ~remove_end_mask
-        old_tensor[remove_end_mask, states.length[remove_end_mask] - 1] = (-1)  # pyright:ignore
+        assert states.length
+        old_tensor[remove_end_mask, states.length[remove_end_mask] - 1] = -1
 
         old_tensor[remove_front_mask, :-1] = old_tensor[remove_front_mask, 1:]
 
