@@ -60,7 +60,7 @@ class StatePairs(Container, Generic[StateType]):
         self.terminating_conditioning = terminating_conditioning
 
     def __len__(self) -> int:
-        return len(self.intermediary_states) + len(self.terminating_states)
+        return min(len(self.intermediary_states), len(self.terminating_states))
 
     def __repr__(self) -> str:
         return (
