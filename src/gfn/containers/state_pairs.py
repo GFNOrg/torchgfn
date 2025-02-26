@@ -102,7 +102,11 @@ class StatePairs(Container, Generic[StateType]):
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> StatePairs[StateType]:
-        """Returns a subset of the states."""
+        """Returns a subset of the states along the batch dimension.
+
+        Note:
+            The intermediary_states and terminating_states can have different batch shapes.
+        """
         if isinstance(index, int):
             index = [index]
 
