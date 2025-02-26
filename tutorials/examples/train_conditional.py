@@ -188,14 +188,10 @@ def train(env, gflownet, seed):
     # Policy parameters and logZ/logF get independent LRs (logF/Z typically higher).
     if type(gflownet) is TBGFlowNet:
         optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
-        optimizer.add_param_group(
-            {"params": gflownet.logz_parameters(), "lr": lr * 100}
-        )
+        optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": lr * 100})
     elif type(gflownet) is DBGFlowNet or type(gflownet) is SubTBGFlowNet:
         optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
-        optimizer.add_param_group(
-            {"params": gflownet.logF_parameters(), "lr": lr * 100}
-        )
+        optimizer.add_param_group({"params": gflownet.logF_parameters(), "lr": lr * 100})
     elif type(gflownet) is FMGFlowNet or type(gflownet) is ModifiedDBGFlowNet:
         optimizer = Adam(gflownet.parameters(), lr=lr)
     else:
