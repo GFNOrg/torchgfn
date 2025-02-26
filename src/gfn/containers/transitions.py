@@ -104,10 +104,6 @@ class Transitions(Container):
             and self._log_rewards.dtype == torch.float
         )
         self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
-        assert (
-            self.log_probs.shape == (self.n_transitions,)
-            and self.log_probs.dtype == torch.float
-        )
 
     @property
     def n_transitions(self) -> int:
