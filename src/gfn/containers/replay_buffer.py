@@ -54,20 +54,21 @@ class ReplayBuffer(Generic[ContainerType]):
 
     def initialize(self, training_objects: ContainerType) -> None:
         """Initializes the buffer with a training object."""
-        if self.training_objects is None:
-            # Initialize with the same type as first added objects
-            if isinstance(training_objects, Trajectories):
-                self.training_objects = cast(ContainerType, Trajectories(self.env))
-            elif isinstance(training_objects, Transitions):
-                self.training_objects = cast(ContainerType, Transitions(self.env))
-            elif isinstance(training_objects, StatePairs):
-                self.training_objects = cast(ContainerType, StatePairs(self.env))
-            else:
-                raise ValueError(f"Unsupported type: {type(training_objects)}")
+
+        # Initialize with the same type as first added objects
+        if isinstance(training_objects, Trajectories):
+            self.training_objects = cast(ContainerType, Trajectories(self.env))
+        elif isinstance(training_objects, Transitions):
+            self.training_objects = cast(ContainerType, Transitions(self.env))
+        elif isinstance(training_objects, StatePairs):
+            self.training_objects = cast(ContainerType, StatePairs(self.env))
+        else:
+            raise ValueError(f"Unsupported type: {type(training_objects)}")
 
     def add(self, training_objects: ContainerType) -> None:
         """Adds a batch of training objects to the buffer."""
-        self.initialize(training_objects)
+        if self.training_objects is None:
+            self.initialize(training_objects)
         assert self.training_objects is not None
 
         to_add = len(training_objects)
