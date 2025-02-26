@@ -190,7 +190,7 @@ def main(args):  # noqa: C901
         else:
             replay_buffer = ReplayBuffer(
                 env,
-                capacity=args.replay_capacity,
+                capacity=args.replay_buffer_size,
             )
 
     # Move the gflownet to the GPU.
