@@ -359,7 +359,7 @@ class Trajectories(Container):
                 dtype=torch.float,
                 device=actions.device,
             )
-            # Can we vectorize this?
+            # TODO: Can we vectorize this?
             log_rewards[is_done] = torch.cat(
                 [
                     self._log_rewards[self.when_is_done == i]
@@ -423,14 +423,13 @@ class Trajectories(Container):
                 "Both intermediary and terminating states must be DiscreteStates"
             )
 
-        terminating_states.log_rewards = self.log_rewards
-
         return StatePairs[DiscreteStates](
             env=self.env,
             intermediary_states=intermediary_states,
             terminating_states=terminating_states,
             intermediary_conditioning=intermediary_conditioning,
             terminating_conditioning=conditioning,
+            log_rewards=self.log_rewards,
         )
 
     def reverse_backward_trajectories(self, debug: bool = False) -> Trajectories:

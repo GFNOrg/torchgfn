@@ -158,10 +158,10 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
         env: DiscreteEnv,
         terminating_states: DiscreteStates,
         conditioning: torch.Tensor | None,
+        log_rewards: torch.Tensor | None,
     ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
         del env  # Unused
-        assert terminating_states.log_rewards is not None
 
         if conditioning is not None:
             with has_conditioning_exception_handler("logF", self.logF):
@@ -172,7 +172,6 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
 
         # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
         terminating_log_edge_flows = log_edge_flows[:, -1]
-        log_rewards = terminating_states.log_rewards
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
     def loss(
@@ -191,7 +190,10 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
             env, state_pairs.intermediary_states, state_pairs.intermediary_conditioning
         )
         rm_loss = self.reward_matching_loss(
-            env, state_pairs.terminating_states, state_pairs.terminating_conditioning
+            env,
+            state_pairs.terminating_states,
+            state_pairs.terminating_conditioning,
+            state_pairs.log_rewards,
         )
         return fm_loss + self.alpha * rm_loss
 

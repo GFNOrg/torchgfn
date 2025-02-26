@@ -297,7 +297,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=0,
+        default=10,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
     )
     parser.add_argument(
@@ -310,7 +310,7 @@ if __name__ == "__main__":
         "--loss",
         type=str,
         choices=["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"],
-        default="TB",
+        default="FM",
         help="Loss function to use",
     )
     parser.add_argument(

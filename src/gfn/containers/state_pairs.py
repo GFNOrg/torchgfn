@@ -35,6 +35,7 @@ class StatePairs(Container, Generic[StateType]):
         terminating_states: StateType | None = None,
         intermediary_conditioning: torch.Tensor | None = None,
         terminating_conditioning: torch.Tensor | None = None,
+        log_rewards: torch.Tensor | None = None,
     ):
         """Initialize a StatePairs container.
 
@@ -59,6 +60,19 @@ class StatePairs(Container, Generic[StateType]):
         self.intermediary_conditioning = intermediary_conditioning
         self.terminating_conditioning = terminating_conditioning
 
+        if terminating_states is not None:
+            assert (
+                log_rewards is not None
+                and log_rewards.shape == terminating_states.batch_shape
+            )
+            self.log_rewards = log_rewards
+        else:
+            self.log_rewards = torch.zeros(
+                (len(self.terminating_states),),
+                dtype=torch.float,
+                device=self.terminating_states.device,
+            )
+
     def __len__(self) -> int:
         return min(len(self.intermediary_states), len(self.terminating_states))
 
@@ -67,12 +81,6 @@ class StatePairs(Container, Generic[StateType]):
             f"StatePairs(n_intermediary={len(self.intermediary_states)}, "
             f"n_terminating={len(self.terminating_states)})"
         )
-
-    @property
-    def log_rewards(self) -> torch.Tensor | None:
-        """Return the log rewards of the terminating states."""
-        # TODO: Eventually, there would be no need to store a log_reward in terminating_states.
-        return self.terminating_states.log_rewards
 
     @property
     def last_states(self) -> StateType:
@@ -98,6 +106,7 @@ class StatePairs(Container, Generic[StateType]):
             self.terminating_conditioning = torch.cat(
                 (self.terminating_conditioning, other.terminating_conditioning), dim=0
             )
+        self.log_rewards = torch.cat((self.log_rewards, other.log_rewards), dim=0)
 
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
@@ -125,6 +134,8 @@ class StatePairs(Container, Generic[StateType]):
             else None
         )
 
+        log_rewards = self.log_rewards[index]
+
         # We can construct a new StatePairs with the same StateType
         return StatePairs[StateType](
             env=self.env,
@@ -132,4 +143,5 @@ class StatePairs(Container, Generic[StateType]):
             terminating_states=terminating_states,
             intermediary_conditioning=intermediary_conditioning,
             terminating_conditioning=terminating_conditioning,
+            log_rewards=log_rewards,
         )

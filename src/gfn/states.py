@@ -64,9 +64,6 @@ class States(ABC):
 
         self.tensor = tensor
         self.batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
-        self._log_rewards = (
-            None  # Useful attribute if we want to store the log-reward of the states
-        )
 
     @classmethod
     def from_batch_shape(
@@ -130,8 +127,6 @@ class States(ABC):
         out = self.__class__(
             self.tensor[index]
         )  # TODO: Inefficient - this might make a copy of the tensor!
-        if self._log_rewards is not None:
-            out.log_rewards = self._log_rewards[index]
         return out
 
     def __setitem__(
@@ -170,11 +165,6 @@ class States(ABC):
             # This corresponds to adding a state to a trajectory
             self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
-            if self._log_rewards is not None:
-                assert other._log_rewards is not None
-                self._log_rewards = torch.cat(
-                    (self._log_rewards, other._log_rewards), dim=0
-                )
 
         elif len(other_batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
@@ -258,22 +248,6 @@ class States(ABC):
         ).to(self.tensor.device)
         return self.compare(sink_states)
 
-    @property
-    def log_rewards(self) -> torch.Tensor | None:
-        """Returns the log rewards of the states as tensor of shape `batch_shape`."""
-        return self._log_rewards
-
-    @log_rewards.setter
-    def log_rewards(self, log_rewards: torch.Tensor | None) -> None:
-        """Sets the log rewards of the states.
-
-        Args:
-            log_rewards: Tensor of shape `batch_shape` representing the log rewards of the states.
-        """
-        if log_rewards is not None:
-            assert log_rewards.shape == self.batch_shape
-        self._log_rewards = log_rewards
-
     def sample(self, n_samples: int) -> States:
         """Samples a subset of the States object."""
         return self[torch.randperm(len(self))[:n_samples]]
@@ -285,14 +259,6 @@ class States(ABC):
 
         stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
         stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
-        if state_example._log_rewards is not None and all(
-            s._log_rewards is not None for s in states
-        ):
-            log_rewards = [s._log_rewards for s in states if s._log_rewards is not None]
-            if len(log_rewards) == len(states):  # Verify we have all rewards
-                stacked_states._log_rewards = torch.stack(log_rewards, dim=0)
-        else:
-            stacked_states._log_rewards = None
 
         # Adds the trajectory dimension.
         stacked_states.batch_shape = (
@@ -374,9 +340,6 @@ class DiscreteStates(States, ABC):
         forward_masks = self.forward_masks[index]
         backward_masks = self.backward_masks[index]
         out = self.__class__(states, forward_masks, backward_masks)
-        if self._log_rewards is not None:
-            log_rewards = self._log_rewards[index]
-            out.log_rewards = log_rewards
         return out
 
     def __setitem__(
