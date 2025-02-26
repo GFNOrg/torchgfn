@@ -376,24 +376,21 @@ class GraphActionNet(nn.Module):
         self.edge_index_conv = GCNConv(feature_dim, 8)
 
     def forward(self, states: GraphStates) -> TensorDict:
-        node_feature = states.tensor["node_feature"].reshape(-1, self.feature_dim)
-        edge_index = torch.where(
-            states.tensor["edge_index"][..., None] == states.tensor["node_index"]
-        )[2].reshape(states.tensor["edge_index"].shape)
+        node_feature = states.tensor.x.reshape(-1, self.feature_dim)
 
-        if states.tensor["node_feature"].shape[0] == 0:
+        if states.tensor.x.shape[0] == 0:
             action_type = torch.zeros((len(states), 3))
             action_type[:, GraphActionType.ADD_NODE] = 1
             features = torch.zeros((len(states), self.feature_dim))
         else:
-            action_type = self.action_type_conv(node_feature, edge_index.T)
+            action_type = self.action_type_conv(node_feature, states.tensor.edge_index)
             action_type = action_type.reshape(
                 len(states), -1, action_type.shape[-1]
             ).mean(dim=1)
-            features = self.features_conv(node_feature, edge_index.T)
+            features = self.features_conv(node_feature, states.tensor.edge_index)
             features = features.reshape(len(states), -1, features.shape[-1]).mean(dim=1)
 
-        edge_index = self.edge_index_conv(node_feature, edge_index.T)
+        edge_index = self.edge_index_conv(node_feature, states.tensor.edge_index)
         edge_index = torch.einsum("nf,mf->nm", edge_index, edge_index)
         edge_index = edge_index[None].repeat(len(states), 1, 1)
 

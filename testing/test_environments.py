@@ -379,17 +379,17 @@ def test_graph_env():
         states = env.step(states, actions)
         states = env.States(states)
 
-    assert states.tensor["node_feature"].shape == (BATCH_SIZE * NUM_NODES, FEATURE_DIM)
+    assert states.tensor.x.shape == (BATCH_SIZE * NUM_NODES, FEATURE_DIM)
 
     with pytest.raises(NonValidActionsError):
         first_node_mask = (
-            torch.arange(len(states.tensor["node_feature"])) // BATCH_SIZE == 0
+            torch.arange(len(states.tensor.x)) // BATCH_SIZE == 0
         )
         actions = action_cls(
             TensorDict(
                 {
                     "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "features": states.tensor["node_feature"][first_node_mask],
+                    "features": states.tensor.x[first_node_mask],
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -411,14 +411,14 @@ def test_graph_env():
         states = env.step(states, actions)
 
     for i in range(NUM_NODES - 1):
-        node_is = torch.arange(BATCH_SIZE) * NUM_NODES + i
-        node_js = torch.arange(BATCH_SIZE) * NUM_NODES + i + 1
+        # node_is = torch.arange(BATCH_SIZE) * NUM_NODES + i
+        # node_js = torch.arange(BATCH_SIZE) * NUM_NODES + i + 1
         actions = action_cls(
             TensorDict(
                 {
                     "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
                     "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
-                    "edge_index": torch.stack([node_is, node_js], dim=1),
+                    "edge_index": torch.tensor([[i, i + 1]] * BATCH_SIZE),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -442,15 +442,15 @@ def test_graph_env():
     assert torch.all(sf_states.is_sink_state)
     env.reward(sf_states)
 
-    num_edges_per_batch = len(states.tensor["edge_feature"]) // BATCH_SIZE
+    num_edges_per_batch = len(states.tensor.edge_attr) // BATCH_SIZE
     for i in reversed(range(num_edges_per_batch)):
-        edge_idx = torch.arange(i * BATCH_SIZE, (i + 1) * BATCH_SIZE)
+        edge_idx = torch.arange(i, (i + 1) * BATCH_SIZE, i + 1)
         actions = action_cls(
             TensorDict(
                 {
                     "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "features": states.tensor["edge_feature"][edge_idx],
-                    "edge_index": states.tensor["edge_index"][edge_idx],
+                    "features": states.tensor.edge_attr[edge_idx],
+                    "edge_index": states.tensor.edge_index[:, edge_idx].T - states.tensor.ptr[:-1, None],
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -479,7 +479,7 @@ def test_graph_env():
             TensorDict(
                 {
                     "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "features": states.tensor["node_feature"][edge_idx],
+                    "features": states.tensor.x[edge_idx],
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -487,7 +487,7 @@ def test_graph_env():
         states = env.backward_step(states, actions)
         states = env.States(states)
 
-    assert states.tensor["node_feature"].shape == (0, FEATURE_DIM)
+    assert states.tensor.x.shape == (0, FEATURE_DIM)
 
     with pytest.raises(NonValidActionsError):
         actions = action_cls(

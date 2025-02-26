@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Union
 
 import torch
-from tensordict import TensorDict
+from torch_geometric.data import Batch, Data
 
 from gfn.actions import Actions, GraphActions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
@@ -23,12 +23,12 @@ class Env(ABC):
 
     def __init__(
         self,
-        s0: torch.Tensor | TensorDict,
+        s0: torch.Tensor | Data,
         state_shape: Tuple,
         action_shape: Tuple,
         dummy_action: torch.Tensor,
         exit_action: torch.Tensor,
-        sf: Optional[torch.Tensor | TensorDict] = None,
+        sf: Optional[torch.Tensor | Data] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -275,7 +275,7 @@ class Env(ABC):
 
         new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
 
-        if not isinstance(new_not_done_states_tensor, (torch.Tensor, TensorDict)):
+        if not isinstance(new_not_done_states_tensor, (torch.Tensor, Batch)):
             raise Exception(
                 "User implemented env.step function *must* return a torch.Tensor!"
             )
@@ -571,12 +571,12 @@ class DiscreteEnv(Env, ABC):
 class GraphEnv(Env):
     """Base class for graph-based environments."""
 
-    sf: TensorDict  # this tells the type checker that sf is a TensorDict
+    sf: Data  # this tells the type checker that sf is a Data
 
     def __init__(
         self,
-        s0: TensorDict,
-        sf: TensorDict,
+        s0: Data,
+        sf: Data,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -592,7 +592,7 @@ class GraphEnv(Env):
                 the IdentityPreprocessor is used.
         """
         self.s0 = s0.to(device_str)
-        self.features_dim = s0["node_feature"].shape[-1]
+        self.features_dim = s0.x.shape[-1]
         self.sf = sf
 
         self.States = self.make_states_class()
