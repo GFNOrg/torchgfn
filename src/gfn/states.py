@@ -601,6 +601,13 @@ class GraphStates(States):
         
         # Create a list of Data objects by copying s0
         data_list = [cls.s0.clone() for _ in range(num_graphs)]
+
+        if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
+            data_list = [Data(
+                x=torch.zeros(0, cls.s0.x.size(1)),
+                edge_index=torch.zeros(2, 0, dtype=torch.long),
+                edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1))
+            )]
         
         # Create a batch from the list
         batch = Batch.from_data_list(data_list)
@@ -685,6 +692,13 @@ class GraphStates(States):
                            edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1), device=device))
             
             data_list.append(data)
+        
+        if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
+            data_list = [Data(
+                x=torch.zeros(0, cls.s0.x.size(1)),
+                edge_index=torch.zeros(2, 0, dtype=torch.long),
+                edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1))
+            )]
         
         # Create a batch from the list
         batch = Batch.from_data_list(data_list)

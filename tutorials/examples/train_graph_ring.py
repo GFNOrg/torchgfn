@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import torch
 from tensordict import TensorDict
 from torch import nn
+from torch_geometric.data import Data
 from torch_geometric.nn import GINConv, GCNConv, DirGNNConv
 
 from gfn.actions import Actions, GraphActions, GraphActionType
@@ -47,24 +48,15 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
     Returns:
         A tensor of rewards.
     """
-    if states.tensor["edge_index"].shape[0] == 0:
+    if states.tensor.edge_index.numel() == 0:
         return torch.full(states.batch_shape, EPS_VAL)
 
     out = torch.full((len(states),), EPS_VAL)  # Default reward.
 
     for i in range(len(states)):
-        start, end = states.tensor["batch_ptr"][i], states.tensor["batch_ptr"][i + 1]
-        nodes_index_range = states.tensor["node_index"][start:end]
-        edge_index_mask = torch.all(
-            states.tensor["edge_index"] >= nodes_index_range[0], dim=-1
-        ) & torch.all(states.tensor["edge_index"] <= nodes_index_range[-1], dim=-1)
-        masked_edge_index = (
-            states.tensor["edge_index"][edge_index_mask] - nodes_index_range[0]
-        )
-
-        n_nodes = nodes_index_range.shape[0]
-        adj_matrix = torch.zeros(n_nodes, n_nodes)
-        adj_matrix[masked_edge_index[:, 0], masked_edge_index[:, 1]] = 1
+        graph = states[i]
+        adj_matrix = torch.zeros(graph.tensor.num_nodes, graph.tensor.num_nodes)
+        adj_matrix[graph.tensor.edge_index[0], graph.tensor.edge_index[1]] = 1
 
         # Check if each node has exactly one outgoing edge (row sum = 1)
         if not torch.all(adj_matrix.sum(dim=1) == 1):
@@ -86,7 +78,7 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
             current = torch.where(adj_matrix[current] == 1)[0].item()
 
             # If we've visited all nodes and returned to 0, it's a valid ring
-            if len(visited) == n_nodes and current == 0:
+            if len(visited) == graph.tensor.num_nodes and current == 0:
                 out[i] = REW_VAL
                 break
 
@@ -104,30 +96,18 @@ def undirected_reward(states: GraphStates) -> torch.Tensor:
     Returns:
         A tensor of rewards.
     """
-    if states.tensor["edge_index"].shape[0] == 0:
+    if states.tensor.edge_index.numel() == 0:
         return torch.full(states.batch_shape, EPS_VAL)
 
     out = torch.full((len(states),), EPS_VAL)  # Default reward.
 
     for i in range(len(states)):
-        start, end = states.tensor["batch_ptr"][i], states.tensor["batch_ptr"][i + 1]
-        nodes_index_range = states.tensor["node_index"][start:end]
-        edge_index_mask = torch.all(
-            states.tensor["edge_index"] >= nodes_index_range[0], dim=-1
-        ) & torch.all(states.tensor["edge_index"] <= nodes_index_range[-1], dim=-1)
-        masked_edge_index = (
-            states.tensor["edge_index"][edge_index_mask] - nodes_index_range[0]
-        )
-
-        n_nodes = nodes_index_range.shape[0]
-        if n_nodes == 0:
+        graph = states[i]
+        if graph.tensor.num_nodes == 0:
             continue
-
-        # Construct a symmetric adjacency matrix for the undirected graph.
-        adj_matrix = torch.zeros(n_nodes, n_nodes)
-        if masked_edge_index.shape[0] > 0:
-            adj_matrix[masked_edge_index[:, 0], masked_edge_index[:, 1]] = 1
-            adj_matrix[masked_edge_index[:, 1], masked_edge_index[:, 0]] = 1
+        adj_matrix = torch.zeros(graph.tensor.num_nodes, graph.tensor.num_nodes)
+        adj_matrix[graph.tensor.edge_index[0], graph.tensor.edge_index[1]] = 1
+        adj_matrix[graph.tensor.edge_index[1], graph.tensor.edge_index[0]] = 1
 
         # In an undirected ring, every vertex should have degree 2.
         if not torch.all(adj_matrix.sum(dim=1) == 2):
@@ -156,7 +136,7 @@ def undirected_reward(states: GraphStates) -> torch.Tensor:
             next_node = possible[0]
             prev, current = current, next_node
 
-        if current == start_vertex and len(visited) == n_nodes:
+        if current == start_vertex and len(visited) == graph.tensor.num_nodes:
             out[i] = REW_VAL
 
     return out.view(*states.batch_shape)
@@ -265,21 +245,15 @@ class RingPolicyModule(nn.Module):
 
     def forward(self, states_tensor: TensorDict) -> torch.Tensor:
         node_features, batch_ptr = (
-            states_tensor["node_feature"],
-            states_tensor["batch_ptr"],
+            states_tensor.x,
+            states_tensor.ptr,
         )
-        batch_size = int(torch.prod(states_tensor["batch_shape"]))
-
-        edge_index = torch.where(
-            states_tensor["edge_index"][..., None] == states_tensor["node_index"]
-        )[2].reshape(
-            states_tensor["edge_index"].shape
-        )  # (M, 2)
+        batch_size = int(torch.prod(states_tensor.batch_shape))
 
         # Multiple action type convolutions with residual connections.
         x = self.embedding(node_features.squeeze().int())
         for i in range(0, len(self.conv_blks), 2):
-            x_new = self.conv_blks[i](x, edge_index.T)  # GIN/GCN conv.
+            x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
             if self.is_directed:
                 x_in, x_out = torch.chunk(x_new, 2, dim=-1)
                 # Process each component separately through its own MLP
@@ -296,7 +270,7 @@ class RingPolicyModule(nn.Module):
         node_feature_means = self._group_mean(x, batch_ptr)
         exit_action = self.exit_mlp(node_feature_means)
 
-        x = x.reshape(*states_tensor["batch_shape"], self.n_nodes, self.hidden_dim)
+        x = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
 
         # Undirected.
         if self.is_directed:
@@ -331,7 +305,7 @@ class RingPolicyModule(nn.Module):
 
         # Grab the needed elems from the adjacency matrix and reshape.
         edge_actions = x[torch.arange(batch_size)[:, None, None], i0, i1]
-        edge_actions = edge_actions.reshape(*states_tensor["batch_shape"], out_size)
+        edge_actions = edge_actions.reshape(*states_tensor.batch_shape, out_size)
 
         if self.is_backward:
             return edge_actions
@@ -377,27 +351,21 @@ class RingGraphBuilding(GraphBuilding):
         env = self
 
         class RingStates(GraphStates):
-            s0 = TensorDict(
-                {
-                    "node_feature": torch.arange(env.n_nodes)[:, None],
-                    "edge_feature": torch.ones((0, 1)),
-                    "edge_index": torch.ones((0, 2), dtype=torch.long),
-                },
-                batch_size=(),
+            s0 = Data(
+                x=torch.arange(env.n_nodes)[:, None],
+                edge_attr=torch.ones((0, 1)),
+                edge_index=torch.ones((2, 0), dtype=torch.long),
             )
-            sf = TensorDict(
-                {
-                    "node_feature": -torch.ones(env.n_nodes)[:, None],
-                    "edge_feature": torch.zeros((0, 1)),
-                    "edge_index": torch.zeros((0, 2), dtype=torch.long),
-                },
-                batch_size=(),
+            sf = Data(
+                x=-torch.ones(env.n_nodes)[:, None],
+                edge_attr=torch.zeros((0, 1)),
+                edge_index=torch.zeros((2, 0), dtype=torch.long),
             )
 
             def __init__(self, tensor: TensorDict):
                 self.tensor = tensor
-                self.node_features_dim = tensor["node_feature"].shape[-1]
-                self.edge_features_dim = tensor["edge_feature"].shape[-1]
+                self.node_features_dim = tensor.x.shape[-1]
+                self.edge_features_dim = tensor.edge_attr.shape[-1]
                 self._log_rewards: Optional[float] = None
 
                 self.n_nodes = env.n_nodes
@@ -424,23 +392,20 @@ class RingGraphBuilding(GraphBuilding):
 
                 # Remove existing edges.
                 for i in range(len(self)):
-                    existing_edges = (
-                        self[i].tensor["edge_index"]
-                        - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
-                    )
+                    existing_edges = self[i].tensor.edge_index
                     assert torch.all(existing_edges >= 0)  # TODO: convert to test.
 
-                    if len(existing_edges) == 0:
+                    if existing_edges.numel() == 0:
                         edge_idx = torch.zeros(0, dtype=torch.bool)
                     else:
                         edge_idx = torch.logical_and(
-                            existing_edges[:, 0] == ei0.unsqueeze(-1),
-                            existing_edges[:, 1] == ei1.unsqueeze(-1),
+                            existing_edges[0] == ei0,
+                            existing_edges[1] == ei1,
                         )
 
                         # Collapse across the edge dimension.
                         if len(edge_idx.shape) == 2:
-                            edge_idx = edge_idx.sum(1).bool()
+                            edge_idx = edge_idx.sum(0).bool()
 
                         # Adds an unmasked exit action.
                         edge_idx = torch.cat((edge_idx, torch.BoolTensor([False])))
@@ -463,8 +428,8 @@ class RingGraphBuilding(GraphBuilding):
 
                 for i in range(len(self)):
                     existing_edges = (
-                        self[i].tensor["edge_index"]
-                        - self.tensor["node_index"][self.tensor["batch_ptr"][i]]
+                        self[i].tensor.edge_index
+                        - self.tensor.node_index[self.tensor.batch_ptr[i]]
                     )
 
                     if env.is_directed:
@@ -552,13 +517,12 @@ class RingGraphBuilding(GraphBuilding):
         # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
         ei0, ei1 = ei0[action_tensor], ei1[action_tensor]
 
-        offset = states.tensor["node_index"][states.tensor["batch_ptr"][:-1]]
         out = GraphActions(
             TensorDict(
                 {
                     "action_type": action_type,
                     "features": torch.ones(action_tensor.shape + (1,)),
-                    "edge_index": torch.stack([ei0, ei1], dim=-1) + offset[:, None],
+                    "edge_index": torch.stack([ei0, ei1], dim=-1),
                 },
                 batch_size=action_tensor.shape,
             )
@@ -590,7 +554,7 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
     for i in range(8):
         current_ax = ax[i // 4, i % 4]
         state = states[i]
-        n_circles = state.tensor["node_feature"].shape[0]
+        n_circles = state.tensor.x.shape[0]
         radius = 5
         xs, ys = [], []
         for j in range(n_circles):
@@ -603,7 +567,7 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
                 patches.Circle((x, y), 0.5, facecolor="none", edgecolor="black")
             )
 
-        edge_index = states[i].tensor["edge_index"]
+        edge_index = states[i].tensor.edge_index
         edge_index = torch.where(
             edge_index[..., None] == states[i].tensor["node_index"]
         )[2].reshape(edge_index.shape)
@@ -709,39 +673,19 @@ class AdjacencyPolicyModule(nn.Module):
 
     def forward(self, states_tensor: TensorDict) -> torch.Tensor:
         # Convert the graph to adjacency matrix
-        batch_size = int(torch.prod(torch.tensor(states_tensor["batch_shape"])))
+        batch_size = int(states_tensor.batch_size)
         adj_matrices = torch.zeros(
             (batch_size, self.n_nodes, self.n_nodes),
-            device=states_tensor["node_feature"].device,
+            device=states_tensor.x.device,
         )
 
         # Fill the adjacency matrices from edge indices
-        for i in range(batch_size):
-            start, end = (
-                states_tensor["batch_ptr"][i],
-                states_tensor["batch_ptr"][i + 1],
-            )
-            nodes_index_range = states_tensor["node_index"][start:end]
-
-            # Skip if no edges
-            if states_tensor["edge_index"].shape[0] == 0:
-                continue
-
-            # Find edges that belong to this graph
-            edge_index_mask = torch.all(
-                states_tensor["edge_index"] >= nodes_index_range[0], dim=-1
-            ) & torch.all(states_tensor["edge_index"] <= nodes_index_range[-1], dim=-1)
-
-            if torch.any(edge_index_mask):
-                # Get the edge indices relative to this graph's node indices
-                masked_edge_index = (
-                    states_tensor["edge_index"][edge_index_mask] - nodes_index_range[0]
-                )
-                # Fill the adjacency matrix
-                if len(masked_edge_index) > 0:
-                    adj_matrices[
-                        i, masked_edge_index[:, 0], masked_edge_index[:, 1]
-                    ] = 1
+        if states_tensor.edge_index.numel() > 0:
+            adj_matrices[
+                torch.arange(batch_size)[:, None, None],
+                states_tensor.edge_index[0] - states_tensor.ptr[:-1],
+                states_tensor.edge_index[1] - states_tensor.ptr[:-1],
+            ] = 1
 
         # Flatten the adjacency matrices for the MLP
         adj_matrices_flat = adj_matrices.view(batch_size, -1)
@@ -766,7 +710,7 @@ if __name__ == "__main__":
     BATCH_SIZE = 128
     DIRECTED = True
     USE_BUFFER = False
-    USE_GNN = False  # Set to False to use MLP with adjacency matrices instead of GNN
+    USE_GNN = True  # Set to False to use MLP with adjacency matrices instead of GNN
 
     state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
