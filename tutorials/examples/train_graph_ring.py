@@ -551,7 +551,7 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
     for i in range(8):
         current_ax = ax[i // 4, i % 4]
         state = states[i]
-        n_circles = state.tensor.x.shape[0]
+        n_circles = state.tensor.num_nodes
         radius = 5
         xs, ys = [], []
         for j in range(n_circles):
@@ -565,11 +565,8 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
             )
 
         edge_index = states[i].tensor.edge_index
-        edge_index = torch.where(
-            edge_index[..., None] == states[i].tensor["node_index"]
-        )[2].reshape(edge_index.shape)
 
-        for edge in edge_index:
+        for edge in edge_index.T:
             start_x, start_y = xs[edge[0]], ys[edge[0]]
             end_x, end_y = xs[edge[1]], ys[edge[1]]
             dx = end_x - start_x

@@ -543,8 +543,6 @@ class GraphStates(States):
     s0: ClassVar[Data]  
     sf: ClassVar[Data]  
 
-    _next_node_index = 0
-
     def __init__(self, tensor: Batch):
         """Initialize the GraphStates with a PyG Batch object.
         
@@ -1113,25 +1111,3 @@ class GraphStates(States):
             "features": features_mask,
             "edge_index": edge_index_masks
         }
-
-    @staticmethod
-    def unique_node_indices(num_nodes: int) -> torch.Tensor:
-        """Generate unique node indices for new nodes.
-        
-        Args:
-            num_nodes: Number of new nodes to generate indices for.
-            
-        Returns:
-            A tensor of unique node indices.
-        """
-        # Generate sequential indices starting from the next available index
-        indices = torch.arange(
-            GraphStates._next_node_index, 
-            GraphStates._next_node_index + num_nodes, 
-            dtype=torch.long
-        )
-        
-        # Update the next available index
-        GraphStates._next_node_index += num_nodes
-        
-        return indices
