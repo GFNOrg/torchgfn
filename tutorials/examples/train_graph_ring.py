@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import torch
 from tensordict import TensorDict
 from torch import nn
-from torch_geometric.data import Data
+from torch_geometric.data import Batch, Data
 from torch_geometric.nn import GINConv, GCNConv, DirGNNConv
 
 from gfn.actions import Actions, GraphActions, GraphActionType
@@ -399,8 +399,8 @@ class RingGraphBuilding(GraphBuilding):
                         edge_idx = torch.zeros(0, dtype=torch.bool)
                     else:
                         edge_idx = torch.logical_and(
-                            existing_edges[0] == ei0,
-                            existing_edges[1] == ei1,
+                            existing_edges[0][..., None] == ei0[None],
+                            existing_edges[1][..., None] == ei1[None],
                         )
 
                         # Collapse across the edge dimension.
@@ -427,10 +427,7 @@ class RingGraphBuilding(GraphBuilding):
                 )
 
                 for i in range(len(self)):
-                    existing_edges = (
-                        self[i].tensor.edge_index
-                        - self.tensor.node_index[self.tensor.batch_ptr[i]]
-                    )
+                    existing_edges = self[i].tensor.edge_index
 
                     if env.is_directed:
                         i_up, j_up = torch.triu_indices(
@@ -452,12 +449,12 @@ class RingGraphBuilding(GraphBuilding):
                         edge_idx = torch.zeros(0, dtype=torch.bool)
                     else:
                         edge_idx = torch.logical_and(
-                            existing_edges[:, 0] == ei0.unsqueeze(-1),
-                            existing_edges[:, 1] == ei1.unsqueeze(-1),
+                            existing_edges[0][..., None] == ei0[None],
+                            existing_edges[1][..., None] == ei1[None],
                         )
                         # Collapse across the edge dimension.
                         if len(edge_idx.shape) == 2:
-                            edge_idx = edge_idx.sum(1).bool()
+                            edge_idx = edge_idx.sum(0).bool()
 
                         backward_masks[i, edge_idx] = (
                             True  # Allow the removal of this edge.
@@ -671,7 +668,7 @@ class AdjacencyPolicyModule(nn.Module):
             add_layer_norm=True,
         )
 
-    def forward(self, states_tensor: TensorDict) -> torch.Tensor:
+    def forward(self, states_tensor: Batch) -> torch.Tensor:
         # Convert the graph to adjacency matrix
         batch_size = int(states_tensor.batch_size)
         adj_matrices = torch.zeros(
@@ -681,11 +678,9 @@ class AdjacencyPolicyModule(nn.Module):
 
         # Fill the adjacency matrices from edge indices
         if states_tensor.edge_index.numel() > 0:
-            adj_matrices[
-                torch.arange(batch_size)[:, None, None],
-                states_tensor.edge_index[0] - states_tensor.ptr[:-1],
-                states_tensor.edge_index[1] - states_tensor.ptr[:-1],
-            ] = 1
+            for i in range(batch_size):
+                eis = states_tensor[i].edge_index
+                adj_matrices[i, eis[0], eis[1]] = 1
 
         # Flatten the adjacency matrices for the MLP
         adj_matrices_flat = adj_matrices.view(batch_size, -1)

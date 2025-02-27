@@ -68,9 +68,11 @@ class GraphBuilding(GraphEnv):
         """
         if not self.is_action_valid(states, actions):
             raise NonValidActionsError("Invalid action.")
+        if len(actions) == 0:
+            return states.tensor
 
         action_type = actions.action_type[0]
-        assert torch.all(actions.action_type == action_type)
+        assert torch.all(actions.action_type == action_type)  # TODO: allow different action types
         if action_type == GraphActionType.EXIT:
             return self.States.make_sink_states_tensor(states.batch_shape)
 
@@ -185,39 +187,39 @@ class GraphBuilding(GraphEnv):
         # Get the data list from the batch
         data_list = states.tensor.to_data_list()
         
-        for i, features in enumerate(actions.features[actions.action_type == GraphActionType.ADD_NODE]):
+        for i in range(len(actions)):
             graph = data_list[i]
-            
-            # Check if a node with these features already exists
-            equal_nodes = torch.all(graph.x == features.unsqueeze(0), dim=1)
-            
-            if backward:
-                # For backward actions, we need at least one matching node
-                if not torch.any(equal_nodes):
-                    return False
-            else:
-                # For forward actions, we should not have any matching nodes
-                if torch.any(equal_nodes):
-                    return False
+            if actions.action_type[i] == GraphActionType.ADD_NODE:
+                # Check if a node with these features already exists
+                equal_nodes = torch.all(graph.x == actions.features[i].unsqueeze(0), dim=1)
+                
+                if backward:
+                    # For backward actions, we need at least one matching node
+                    if not torch.any(equal_nodes):
+                        return False
+                else:
+                    # For forward actions, we should not have any matching nodes
+                    if torch.any(equal_nodes):
+                        return False
 
-        for i, (src, dst) in enumerate(actions.edge_index[actions.action_type == GraphActionType.ADD_EDGE]):
-            graph = data_list[i]
-            
-            # Check if src and dst are valid node indices
-            if src >= graph.num_nodes or dst >= graph.num_nodes or src == dst:
-                return False
-            
-            # Check if the edge already exists
-            edge_exists = torch.any((graph.edge_index[0] == src) & (graph.edge_index[1] == dst))
-            
-            if backward:
-                # For backward actions, the edge must exist
-                if not edge_exists:
+            elif actions.action_type[i] == GraphActionType.ADD_EDGE:
+                src, dst = actions.edge_index[i]
+    
+                # Check if src and dst are valid node indices
+                if src >= graph.num_nodes or dst >= graph.num_nodes or src == dst:
                     return False
-            else:
-                # For forward actions, the edge must not exist
-                if edge_exists:
-                    return False
+                
+                # Check if the edge already exists
+                edge_exists = torch.any((graph.edge_index[0] == src) & (graph.edge_index[1] == dst))
+                
+                if backward:
+                    # For backward actions, the edge must exist
+                    if not edge_exists:
+                        return False
+                else:
+                    # For forward actions, the edge must not exist
+                    if edge_exists:
+                        return False
 
         return True
 
