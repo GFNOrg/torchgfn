@@ -877,9 +877,9 @@ if __name__ == "__main__":
     3. Visualize sample generated graphs
     """
     N_NODES = 4
-    N_ITERATIONS = 1000
+    N_ITERATIONS = 200
     LR = 0.001
-    BATCH_SIZE = 128
+    BATCH_SIZE = 1024
     DIRECTED = True
     USE_BUFFER = False
     USE_GNN = True  # Set to False to use MLP with adjacency matrices instead of GNN
@@ -909,6 +909,7 @@ if __name__ == "__main__":
     )
     gflownet = TBGFlowNet(pf, pb)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=LR)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
 
     replay_buffer = ReplayBuffer(
         env,
@@ -925,6 +926,7 @@ if __name__ == "__main__":
             env,
             n=BATCH_SIZE,
             save_logprobs=True,  # pyright: ignore
+            epsilon=0.2 * (1 - iteration / N_ITERATIONS),
         )
         training_samples = gflownet.to_training_samples(trajectories)
 
@@ -956,6 +958,7 @@ if __name__ == "__main__":
         )
         loss.backward()
         optimizer.step()
+        scheduler.step()
         losses.append(loss.item())
 
     t2 = time.time()
