@@ -121,7 +121,7 @@ class States(ABC):
             return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
         else:
             raise NotImplementedError(
-                "make_initial_states_tensor is not implemented by default for TensorDicts"
+                f"make_initial_states_tensor is not implemented by default for {cls.__name__}"
             )
 
     @classmethod
@@ -133,7 +133,7 @@ class States(ABC):
             return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
         else:
             raise NotImplementedError(
-                "make_sink_states_tensor is not implemented by default for TensorDicts"
+                f"make_sink_states_tensor is not implemented by default for {cls.__name__}"
             )
 
     def __len__(self):
@@ -275,7 +275,7 @@ class States(ABC):
             )
         else:
             raise NotImplementedError(
-                "is_initial_state is not implemented by default for TensorDicts"
+                f"is_initial_state is not implemented by default for {self.__class__.__name__}"
             )
         return self.compare(source_states_tensor)
 
@@ -289,7 +289,7 @@ class States(ABC):
             ).to(self.tensor.device)
         else:
             raise NotImplementedError(
-                "is_sink_state is not implemented by default for TensorDicts"
+                f"is_sink_state is not implemented by default for {self.__class__.__name__}"
             )
         return self.compare(sink_states)
 

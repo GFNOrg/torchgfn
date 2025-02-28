@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Callable
 
 import torch
-from tensordict import TensorDict
+from torch_geometric.data import Batch
 
 from gfn.states import GraphStates, States
 
@@ -79,5 +79,5 @@ class GraphPreprocessor(Preprocessor):
     def __init__(self) -> None:
         super().__init__(-1)  # TODO: review output_dim API
 
-    def preprocess(self, states: GraphStates) -> TensorDict:
+    def preprocess(self, states: GraphStates) -> Batch:
         return states.tensor

@@ -262,7 +262,7 @@ class RingPolicyModule(nn.Module):
         size = batch_ptr[1:] - batch_ptr[:-1]
         return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
 
-    def forward(self, states_tensor: TensorDict) -> torch.Tensor:
+    def forward(self, states_tensor: Batch) -> torch.Tensor:
         node_features, batch_ptr = (
             states_tensor.x,
             states_tensor.ptr,
@@ -418,7 +418,7 @@ class RingGraphBuilding(GraphBuilding):
                 edge_index=torch.zeros((2, 0), dtype=torch.long),
             )
 
-            def __init__(self, tensor: TensorDict):
+            def __init__(self, tensor: Batch):
                 self.tensor = tensor
                 self.node_features_dim = tensor.x.shape[-1]
                 self.edge_features_dim = tensor.edge_attr.shape[-1]
@@ -646,7 +646,7 @@ class RingGraphBuilding(GraphBuilding):
 class GraphPreprocessor(Preprocessor):
     """Preprocessor for graph states to extract the tensor representation.
 
-    This simple preprocessor extracts the TensorDict from GraphStates to make
+    This simple preprocessor extracts the torch_geometric Batch from GraphStates to make
     it compatible with the policy networks. It doesn't perform any complex
     transformations, just ensuring the tensors are accessible in the right format.
 
@@ -657,10 +657,10 @@ class GraphPreprocessor(Preprocessor):
     def __init__(self, feature_dim: int = 1):
         super().__init__(output_dim=feature_dim)
 
-    def preprocess(self, states: GraphStates) -> TensorDict:
+    def preprocess(self, states: GraphStates) -> Batch:
         return states.tensor
 
-    def __call__(self, states: GraphStates) -> TensorDict:
+    def __call__(self, states: GraphStates) -> Batch:
         return self.preprocess(states)
 
 
@@ -821,7 +821,7 @@ class AdjacencyPolicyModule(nn.Module):
         3. Predict logits for edge actions and exit action
 
         Args:
-            states_tensor: A TensorDict containing graph state information
+            states_tensor: A torch_geometric Batch containing graph state information
 
         Returns:
             A tensor of logits for all possible actions
