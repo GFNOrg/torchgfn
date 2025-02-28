@@ -95,7 +95,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
                 warnings.warn(
                     "Recalculating logprobs for trajectories that already have them. "
                     "This may be inefficient for on-policy trajectories. "
-                    "To avoid this warning, call loss() directly with recalculate_all_logprobs=False."
+                    "If the training is done on-policy, you should call loss() directly with recalculate_all_logprobs=False instead of loss_from_trajectories()."
                 )
 
             # We know this is safe because PFBasedGFlowNet's loss accepts these arguments

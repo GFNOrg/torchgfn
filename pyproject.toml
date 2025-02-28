@@ -25,12 +25,12 @@ classifiers = [
 einops = ">=0.6.1"
 numpy = ">=1.21.2"
 python = "^3.10"
-torch = "==2.6.0"
+torch = ">=2.6.0"
 
 # dev dependencies.
 black = { version = "24.3", optional = true }
 flake8 = { version = "*", optional = true }
-pyright = {version = "*", optional = true}
+pyright = {version = "1.1.395", optional = true}
 gitmopy = { version = "*", optional = true }
 myst-parser = { version = "*", optional = true }
 pre-commit = { version = "*", optional = true }

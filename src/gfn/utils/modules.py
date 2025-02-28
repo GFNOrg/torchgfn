@@ -34,7 +34,7 @@ class MLP(nn.Module):
         self._output_dim = output_dim
 
         if trunk is None:
-            hidden_dim = hidden_dim or 256
+            assert hidden_dim is not None, "hidden_dim must be provided"
             assert (
                 n_hidden_layers is not None and n_hidden_layers >= 0
             ), "n_hidden_layers must be >= 0"
