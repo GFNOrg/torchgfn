@@ -12,6 +12,7 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 """
 
 from argparse import ArgumentParser
+from typing import cast
 
 import torch
 import wandb
@@ -21,6 +22,7 @@ from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
+    GFlowNet,
     LogPartitionVarianceGFlowNet,
     ModifiedDBGFlowNet,
     SubTBGFlowNet,
@@ -28,6 +30,7 @@ from gfn.gflownet import (
 )
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
@@ -133,7 +136,7 @@ def main(args):  # noqa: C901
                 pb_estimator is not None
             ), f"pb_estimator is None. Command-line arguments: {args}"
 
-            if args.tabular:
+            if isinstance(pf_module, Tabular):
                 module = Tabular(n_states=env.n_states, output_dim=1)
             else:
                 module = MLP(
@@ -174,29 +177,20 @@ def main(args):  # noqa: C901
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
 
-    # Initialize the replay buffer ?
+    # Create replay buffer if needed
     replay_buffer = None
     if args.replay_buffer_size > 0:
-        if args.loss in ("TB", "SubTB", "ZVar"):
-            objects_type = "trajectories"
-        elif args.loss in ("DB", "ModifiedDB"):
-            objects_type = "transitions"
-        elif args.loss == "FM":
-            objects_type = "states"
-        else:
-            raise NotImplementedError(f"Unknown loss: {args.loss}")
-
         if args.replay_buffer_prioritized:
             replay_buffer = PrioritizedReplayBuffer(
                 env,
-                objects_type=objects_type,
                 capacity=args.replay_buffer_size,
-                p_norm_distance=1,  # Use L1-norm for diversity estimation.
-                cutoff_distance=0,  # -1 turns off diversity-based filtering.
+                cutoff_distance=args.cutoff_distance,
+                p_norm_distance=args.p_norm_distance,
             )
         else:
             replay_buffer = ReplayBuffer(
-                env, objects_type=objects_type, capacity=args.replay_buffer_size
+                env,
+                capacity=args.replay_buffer_size,
             )
 
     # Move the gflownet to the GPU.
@@ -245,11 +239,13 @@ def main(args):  # noqa: C901
             training_objects = training_samples
 
         optimizer.zero_grad()
+        gflownet = cast(GFlowNet, gflownet)
         loss = gflownet.loss(env, training_objects)
         loss.backward()
         optimizer.step()
-
-        visited_terminating_states.extend(trajectories.last_states)
+        last_states = trajectories.last_states
+        last_states = cast(DiscreteStates, last_states)
+        visited_terminating_states.extend(last_states)
 
         states_visited += len(trajectories)
 
@@ -301,7 +297,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=0,
+        default=10,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
     )
     parser.add_argument(
@@ -314,7 +310,7 @@ if __name__ == "__main__":
         "--loss",
         type=str,
         choices=["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"],
-        default="TB",
+        default="FM",
         help="Loss function to use",
     )
     parser.add_argument(

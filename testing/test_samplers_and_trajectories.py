@@ -3,7 +3,7 @@ from typing import Literal, Tuple
 import pytest
 import torch
 
-from gfn.containers import Trajectories
+from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
@@ -122,12 +122,7 @@ def test_trajectory_sampling(
     else:
         raise ValueError("Unknown environment name")
 
-    (
-        trajectories,
-        bw_trajectories,
-        pf_estimator,
-        pb_estimator,
-    ) = trajectory_sampling_with_return(
+    _ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name,
         delta,
@@ -139,7 +134,7 @@ def test_trajectory_sampling(
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_trajectories_getitem(env_name: str):
     try:
-        trajectories, *_ = trajectory_sampling_with_return(
+        _ = trajectory_sampling_with_return(
             env_name,
             preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
             delta=0.1,
@@ -267,9 +262,9 @@ def test_local_search_for_loop_equivalence(env_name):
 
     # Now run local_search in debug mode so that for-loop logic is compared
     # to the vectorized logic.
-    # If there’s any mismatch, local_search() will raise AssertionError
+    # If there's any mismatch, local_search() will raise AssertionError
     try:
-        new_trajectories, is_updated = sampler.local_search(
+        _ = sampler.local_search(
             env,
             trajectories,
             save_logprobs=True,
@@ -315,6 +310,7 @@ def test_replay_buffer(
     env_name: str,
     objects: Literal["trajectories", "transitions"],
 ):
+    """Test that the replay buffer works correctly with different types of objects."""
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=2, height=4)
     elif env_name == "DiscreteEBM":
@@ -323,8 +319,9 @@ def test_replay_buffer(
         env = Box(delta=0.1)
     else:
         raise ValueError("Unknown environment name")
-    replay_buffer = ReplayBuffer(env, capacity=10, objects_type=objects)
-    training_objects, *_ = trajectory_sampling_with_return(
+
+    replay_buffer = ReplayBuffer(env, capacity=10)
+    trajectories, *_ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="Identity",
         delta=0.1,
@@ -333,17 +330,30 @@ def test_replay_buffer(
     )
     try:
         if objects == "trajectories":
-            replay_buffer.add(
-                training_objects[
-                    training_objects.when_is_done != training_objects.max_length
-                ]
-            )
-        else:
-            training_objects = training_objects.to_transitions()
-            replay_buffer.add(training_objects)
+            # Filter out trajectories that are at max length
+            training_objects = trajectories
+            training_objects_2 = trajectories[
+                trajectories.when_is_done != trajectories.max_length
+            ]
+            replay_buffer.add(training_objects_2)
 
+        else:
+            training_objects = trajectories.to_transitions()
+
+        # Add objects multiple times to test buffer behavior
         replay_buffer.add(training_objects)
         replay_buffer.add(training_objects)
+        replay_buffer.add(training_objects)
+        replay_buffer.add(training_objects)
+
+        # Test that we can sample from the buffer
+        sampled = replay_buffer.sample(5)
+        assert len(sampled) == 5
+        if objects == "trajectories":
+            assert isinstance(sampled, Trajectories)
+        else:
+            assert isinstance(sampled, Transitions)
+
     except Exception as e:
         raise ValueError(f"Error while testing {env_name}") from e
 
@@ -352,7 +362,10 @@ def test_states_actions_tns_to_traj():
     env = HyperGrid(2, 4)
     states = torch.tensor([[0, 0], [0, 1], [0, 2], [-1, -1]])
     actions = torch.tensor([1, 1, 2])
-    replay_buffer = ReplayBuffer(env, "trajectories")
     trajs = states_actions_tns_to_traj(states, actions, env)
 
+    # Test that we can add the trajectories to a replay buffer
+    replay_buffer = ReplayBuffer(env, capacity=10)
     replay_buffer.add(trajs)
+    assert len(replay_buffer) > 0
+    assert isinstance(replay_buffer.training_objects, Trajectories)

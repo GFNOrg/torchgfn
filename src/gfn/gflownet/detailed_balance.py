@@ -172,12 +172,14 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         assert scores.shape == (transitions.n_transitions,)
         return log_pf_actions, log_pb_actions, scores
 
-    def loss(self, env: Env, transitions: Transitions) -> torch.Tensor:
+    def loss(
+        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+    ) -> torch.Tensor:
         """Detailed balance loss.
 
         The detailed balance loss is described in section
         3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266)."""
-        _, _, scores = self.get_scores(env, transitions)
+        _, _, scores = self.get_scores(env, transitions, recalculate_all_logprobs)
         loss = torch.mean(scores**2)
 
         if torch.isnan(loss):
@@ -238,7 +240,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             # Evaluate the log PF of the actions sampled off policy.
             valid_log_pf_actions = pf_dist.log_prob(actions.tensor)
         valid_log_pf_s_exit = pf_dist.log_prob(
-            torch.full_like(actions.tensor, actions.__class__.exit_action[0])
+            torch.full_like(actions.tensor, actions.__class__.exit_action[0].item())
         )
 
         # The following two lines are slightly inefficient, given that most
@@ -254,7 +256,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         valid_log_pf_s_prime_exit = self.pf.to_probability_distribution(
             valid_next_states, module_output
-        ).log_prob(torch.full_like(actions.tensor, actions.__class__.exit_action[0]))
+        ).log_prob(
+            torch.full_like(actions.tensor, actions.__class__.exit_action[0].item())
+        )
 
         non_exit_actions = actions[~actions.is_exit]
 

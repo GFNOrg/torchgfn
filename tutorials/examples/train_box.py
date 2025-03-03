@@ -199,6 +199,7 @@ def main(args):  # noqa: C901
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
     if not args.uniform_pb:
+        assert isinstance(pb_module.last_layer, torch.nn.Module)
         optimizer.add_param_group(
             {
                 "params": (
@@ -250,11 +251,8 @@ def main(args):  # noqa: C901
             env, save_logprobs=True, n=args.batch_size, **local_search_params
         )
 
-        training_samples = gflownet.to_training_samples(trajectories)
-
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
-
+        loss = gflownet.loss_from_trajectories(env, trajectories)
         loss.backward()
         for p in gflownet.parameters():
             if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.

@@ -231,17 +231,18 @@ def get_transition_pbs(pb: GFNModule, transitions: Transitions) -> torch.Tensor:
     )
     estimator_outputs = check_cond_forward(pb, "pb", valid_next_states, masked_cond)
 
-    valid_log_pb_actions = pb.to_probability_distribution(
-        valid_next_states, estimator_outputs
-    ).log_prob(non_exit_actions.tensor)
-
     # Evaluate the log PB of the actions.
     log_pb_actions = torch.zeros(
         (transitions.n_transitions,),
         dtype=torch.float,
-        device=valid_log_pb_actions.device,
+        device=transitions.states.device,
     )
 
-    log_pb_actions[~transitions.is_done] = valid_log_pb_actions
+    if len(valid_next_states) != 0:
+        valid_log_pb_actions = pb.to_probability_distribution(
+            valid_next_states, estimator_outputs
+        ).log_prob(non_exit_actions.tensor)
+
+        log_pb_actions[~transitions.is_done] = valid_log_pb_actions
 
     return log_pb_actions

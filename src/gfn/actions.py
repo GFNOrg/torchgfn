@@ -2,7 +2,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 
 from abc import ABC
 from math import prod
-from typing import ClassVar, Sequence
+from typing import ClassVar, List, Sequence
 
 import torch
 
@@ -71,13 +71,15 @@ class Actions(ABC):
         return self.__class__(actions)
 
     def __setitem__(
-        self, index: int | Sequence[int] | Sequence[bool], actions: Actions
+        self,
+        index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor,
+        actions: Actions,
     ) -> None:
         """Set particular actions of the batch."""
         self.tensor[index] = actions.tensor
 
     @classmethod
-    def stack(cls, actions_list: list[Actions]) -> Actions:
+    def stack(cls, actions_list: List[Actions]) -> Actions:
         """Stacks a list of Actions objects into a single Actions object.
 
         The individual actions need to have the same batch shape. An example application
@@ -86,9 +88,7 @@ class Actions(ABC):
         and the resulting Actions object would have batch_shape (n_steps,
         n_trajectories).
         """
-        actions_tensor = torch.stack(
-            [actions.tensor for actions in actions_list], dim=0
-        )
+        actions_tensor = torch.stack([actions.tensor for actions in actions_list], dim=0)
         return cls(actions_tensor)
 
     def extend(self, other: Actions) -> None:
