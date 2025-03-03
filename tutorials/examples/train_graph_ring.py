@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt
 import torch
 from tensordict import TensorDict
 from torch import nn
-from torch_geometric.data import Batch, Data
+from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.data import Data as GeometricData
 from torch_geometric.nn import GINConv, GCNConv, DirGNNConv
 
 from gfn.actions import Actions, GraphActions, GraphActionType
@@ -262,7 +263,7 @@ class RingPolicyModule(nn.Module):
         size = batch_ptr[1:] - batch_ptr[:-1]
         return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
 
-    def forward(self, states_tensor: Batch) -> torch.Tensor:
+    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
         node_features, batch_ptr = (
             states_tensor.x,
             states_tensor.ptr,
@@ -407,18 +408,18 @@ class RingGraphBuilding(GraphBuilding):
             The class provides masks for both forward and backward actions to determine
             which actions are valid from the current state.
             """
-            s0 = Data(
+            s0 = GeometricData(
                 x=torch.arange(env.n_nodes)[:, None],
                 edge_attr=torch.ones((0, 1)),
                 edge_index=torch.ones((2, 0), dtype=torch.long),
             )
-            sf = Data(
+            sf = GeometricData(
                 x=-torch.ones(env.n_nodes)[:, None],
                 edge_attr=torch.zeros((0, 1)),
                 edge_index=torch.zeros((2, 0), dtype=torch.long),
             )
 
-            def __init__(self, tensor: Batch):
+            def __init__(self, tensor: GeometricBatch):
                 self.tensor = tensor
                 self.node_features_dim = tensor.x.shape[-1]
                 self.edge_features_dim = tensor.edge_attr.shape[-1]
@@ -646,7 +647,7 @@ class RingGraphBuilding(GraphBuilding):
 class GraphPreprocessor(Preprocessor):
     """Preprocessor for graph states to extract the tensor representation.
 
-    This simple preprocessor extracts the torch_geometric Batch from GraphStates to make
+    This simple preprocessor extracts the GeometricBatch from GraphStates to make
     it compatible with the policy networks. It doesn't perform any complex
     transformations, just ensuring the tensors are accessible in the right format.
 
@@ -657,10 +658,10 @@ class GraphPreprocessor(Preprocessor):
     def __init__(self, feature_dim: int = 1):
         super().__init__(output_dim=feature_dim)
 
-    def preprocess(self, states: GraphStates) -> Batch:
+    def preprocess(self, states: GraphStates) -> GeometricBatch:
         return states.tensor
 
-    def __call__(self, states: GraphStates) -> Batch:
+    def __call__(self, states: GraphStates) -> GeometricBatch:
         return self.preprocess(states)
 
 
@@ -812,7 +813,7 @@ class AdjacencyPolicyModule(nn.Module):
             add_layer_norm=True,
         )
 
-    def forward(self, states_tensor: Batch) -> torch.Tensor:
+    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
         """Forward pass to compute action logits from graph states.
 
         Process:
@@ -821,7 +822,7 @@ class AdjacencyPolicyModule(nn.Module):
         3. Predict logits for edge actions and exit action
 
         Args:
-            states_tensor: A torch_geometric Batch containing graph state information
+            states_tensor: A GeometricBatch containing graph state information
 
         Returns:
             A tensor of logits for all possible actions
