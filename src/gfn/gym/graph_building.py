@@ -73,7 +73,9 @@ class GraphBuilding(GraphEnv):
             return states.tensor
 
         action_type = actions.action_type[0]
-        assert torch.all(actions.action_type == action_type)  # TODO: allow different action types
+        assert torch.all(
+            actions.action_type == action_type
+        )  # TODO: allow different action types
         if action_type == GraphActionType.EXIT:
             return self.States.make_sink_states_tensor(states.batch_shape)
 
@@ -95,16 +97,18 @@ class GraphBuilding(GraphEnv):
                 graph = data_list[i]
 
                 # Add the new edge
-                graph.edge_index = torch.cat([
-                    graph.edge_index,
-                    torch.tensor([[src], [dst]], device=graph.edge_index.device)
-                ], dim=1)
+                graph.edge_index = torch.cat(
+                    [
+                        graph.edge_index,
+                        torch.tensor([[src], [dst]], device=graph.edge_index.device),
+                    ],
+                    dim=1,
+                )
 
                 # Add the edge feature
-                graph.edge_attr = torch.cat([
-                    graph.edge_attr,
-                    actions.features[i].unsqueeze(0)
-                ], dim=0)
+                graph.edge_attr = torch.cat(
+                    [graph.edge_attr, actions.features[i].unsqueeze(0)], dim=0
+                )
 
             # Create a new batch from the updated data list
             new_tensor = GeometricBatch.from_data_list(data_list)
@@ -113,7 +117,9 @@ class GraphBuilding(GraphEnv):
 
         return states.tensor
 
-    def backward_step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
+    def backward_step(
+        self, states: GraphStates, actions: GraphActions
+    ) -> GeometricBatch:
         """Backward step function for the GraphBuilding environment.
 
         Args:
@@ -146,7 +152,9 @@ class GraphBuilding(GraphEnv):
                     node_idx = torch.where(is_equal)[0][0].item()
 
                     # Remove the node
-                    mask = torch.ones(graph.num_nodes, dtype=torch.bool, device=graph.x.device)
+                    mask = torch.ones(
+                        graph.num_nodes, dtype=torch.bool, device=graph.x.device
+                    )
                     mask[node_idx] = False
 
                     # Update node features
@@ -158,7 +166,9 @@ class GraphBuilding(GraphEnv):
                 graph = data_list[i]
 
                 # Find the edge to remove
-                edge_mask = ~((graph.edge_index[0] == src) & (graph.edge_index[1] == dst))
+                edge_mask = ~(
+                    (graph.edge_index[0] == src) & (graph.edge_index[1] == dst)
+                )
 
                 # Remove the edge
                 graph.edge_index = graph.edge_index[:, edge_mask]
@@ -168,7 +178,9 @@ class GraphBuilding(GraphEnv):
         new_batch = GeometricBatch.from_data_list(data_list)
 
         # Preserve the batch shape
-        new_batch.batch_shape = torch.tensor(states.batch_shape, device=states.tensor.x.device)
+        new_batch.batch_shape = torch.tensor(
+            states.batch_shape, device=states.tensor.x.device
+        )
 
         return new_batch
 
@@ -192,7 +204,9 @@ class GraphBuilding(GraphEnv):
             graph = data_list[i]
             if actions.action_type[i] == GraphActionType.ADD_NODE:
                 # Check if a node with these features already exists
-                equal_nodes = torch.all(graph.x == actions.features[i].unsqueeze(0), dim=1)
+                equal_nodes = torch.all(
+                    graph.x == actions.features[i].unsqueeze(0), dim=1
+                )
 
                 if backward:
                     # For backward actions, we need at least one matching node
@@ -211,7 +225,9 @@ class GraphBuilding(GraphEnv):
                     return False
 
                 # Check if the edge already exists
-                edge_exists = torch.any((graph.edge_index[0] == src) & (graph.edge_index[1] == dst))
+                edge_exists = torch.any(
+                    (graph.edge_index[0] == src) & (graph.edge_index[1] == dst)
+                )
 
                 if backward:
                     # For backward actions, the edge must exist
@@ -259,7 +275,9 @@ class GraphBuilding(GraphEnv):
 
             # Check feature dimension
             if new_nodes.shape[1] != graph.x.shape[1]:
-                raise ValueError(f"Node features must have dimension {graph.x.shape[1]}")
+                raise ValueError(
+                    f"Node features must have dimension {graph.x.shape[1]}"
+                )
 
             # Generate unique indices for new nodes
             num_new_nodes = new_nodes.shape[0]
@@ -273,10 +291,15 @@ class GraphBuilding(GraphEnv):
                 graph.node_index = torch.cat([graph.node_index, new_indices], dim=0)
             else:
                 # If node_index doesn't exist, create it
-                graph.node_index = torch.cat([
-                    torch.arange(graph.num_nodes - num_new_nodes, device=graph.x.device),
-                    new_indices
-                ], dim=0)
+                graph.node_index = torch.cat(
+                    [
+                        torch.arange(
+                            graph.num_nodes - num_new_nodes, device=graph.x.device
+                        ),
+                        new_indices,
+                    ],
+                    dim=0,
+                )
 
         # Create a new batch from the updated data list
         new_batch = GeometricBatch.from_data_list(data_list)

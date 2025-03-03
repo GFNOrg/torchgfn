@@ -408,6 +408,7 @@ class RingGraphBuilding(GraphBuilding):
             The class provides masks for both forward and backward actions to determine
             which actions are valid from the current state.
             """
+
             s0 = GeometricData(
                 x=torch.arange(env.n_nodes)[:, None],
                 edge_attr=torch.ones((0, 1)),

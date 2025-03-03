@@ -551,7 +551,7 @@ class GraphStates(States):
             tensor: A PyG Batch object representing a batch of graphs.
         """
         self.tensor = tensor
-        if not hasattr(self.tensor, 'batch_shape'):
+        if not hasattr(self.tensor, "batch_shape"):
             self.tensor.batch_shape = self.tensor.batch_size
         self._log_rewards: Optional[torch.Tensor] = None
 
@@ -559,7 +559,6 @@ class GraphStates(States):
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
         return tuple(self.tensor.batch_shape.tolist())
-
 
     @classmethod
     def from_batch_shape(
@@ -602,11 +601,13 @@ class GraphStates(States):
         data_list = [cls.s0.clone() for _ in range(num_graphs)]
 
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [GeometricData(
-                x=torch.zeros(0, cls.s0.x.size(1)),
-                edge_index=torch.zeros(2, 0, dtype=torch.long),
-                edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1))
-            )]
+            data_list = [
+                GeometricData(
+                    x=torch.zeros(0, cls.s0.x.size(1)),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long),
+                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1)),
+                )
+            ]
 
         # Create a batch from the list
         batch = GeometricBatch.from_data_list(data_list)
@@ -635,11 +636,13 @@ class GraphStates(States):
         # Create a list of Data objects by copying sf
         data_list = [cls.sf.clone() for _ in range(num_graphs)]
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [GeometricData(
-                x=torch.zeros(0, cls.sf.x.size(1)),
-                edge_index=torch.zeros(2, 0, dtype=torch.long),
-                edge_attr=torch.zeros(0, cls.sf.edge_attr.size(1))
-            )]
+            data_list = [
+                GeometricData(
+                    x=torch.zeros(0, cls.sf.x.size(1)),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long),
+                    edge_attr=torch.zeros(0, cls.sf.edge_attr.size(1)),
+                )
+            ]
 
         # Create a batch from the list
         batch = GeometricBatch.from_data_list(data_list)
@@ -682,22 +685,29 @@ class GraphStates(States):
                     edge_index[1, i] = dst
 
                 # Create random edge features
-                edge_attr = torch.rand(num_edges, cls.s0.edge_attr.size(1), device=device)
+                edge_attr = torch.rand(
+                    num_edges, cls.s0.edge_attr.size(1), device=device
+                )
 
                 data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
             else:
                 # No edges
-                data = GeometricData(x=x, edge_index=torch.zeros(2, 0, dtype=torch.long, device=device),
-                           edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1), device=device))
+                data = GeometricData(
+                    x=x,
+                    edge_index=torch.zeros(2, 0, dtype=torch.long, device=device),
+                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1), device=device),
+                )
 
             data_list.append(data)
 
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [GeometricData(
-                x=torch.zeros(0, cls.s0.x.size(1)),
-                edge_index=torch.zeros(2, 0, dtype=torch.long),
-                edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1))
-            )]
+            data_list = [
+                GeometricData(
+                    x=torch.zeros(0, cls.s0.x.size(1)),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long),
+                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1)),
+                )
+            ]
 
         # Create a batch from the list
         batch = GeometricBatch.from_data_list(data_list)
@@ -741,15 +751,19 @@ class GraphStates(States):
         selected_graphs = self.tensor.index_select(indices)
         if len(selected_graphs) == 0:
             assert np.prod(new_shape) == 0
-            selected_graphs = [GeometricData(
-                x=torch.zeros(0, self.tensor.x.size(1)),
-                edge_index=torch.zeros(2, 0, dtype=torch.long),
-                edge_attr=torch.zeros(0, self.tensor.edge_attr.size(1))
-            )]
+            selected_graphs = [
+                GeometricData(
+                    x=torch.zeros(0, self.tensor.x.size(1)),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long),
+                    edge_attr=torch.zeros(0, self.tensor.edge_attr.size(1)),
+                )
+            ]
 
         # Create a new batch from the selected graphs
         new_batch = GeometricBatch.from_data_list(selected_graphs)
-        new_batch.batch_shape = torch.tensor(new_shape, device=self.tensor.batch_shape.device)
+        new_batch.batch_shape = torch.tensor(
+            new_shape, device=self.tensor.batch_shape.device
+        )
 
         # Create a new GraphStates object
         out = self.__class__(new_batch)
@@ -852,8 +866,12 @@ class GraphStates(States):
         if len(self.batch_shape) == 1:
             # Create a new batch
             new_batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
-            self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
-            self.tensor.batch_shape = torch.tensor(new_batch_shape, device=self.tensor.x.device)
+            self.tensor = GeometricBatch.from_data_list(
+                self_data_list + other_data_list
+            )
+            self.tensor.batch_shape = torch.tensor(
+                new_batch_shape, device=self.tensor.x.device
+            )
         else:
             # Handle the case where batch_shape is (T, B)
             # and we want to concatenate along the B dimension
@@ -875,12 +893,18 @@ class GraphStates(States):
 
             # Now both have the same length T, we can concatenate along B
             batch_shape = (max_len, self.batch_shape[1] + other.batch_shape[1])
-            self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
-            self.tensor.batch_shape = torch.tensor(batch_shape, device=self.tensor.x.device)
+            self.tensor = GeometricBatch.from_data_list(
+                self_data_list + other_data_list
+            )
+            self.tensor.batch_shape = torch.tensor(
+                batch_shape, device=self.tensor.x.device
+            )
 
         # Combine log rewards if they exist
         if self._log_rewards is not None and other._log_rewards is not None:
-            self._log_rewards = torch.cat([self._log_rewards, other._log_rewards], dim=0)
+            self._log_rewards = torch.cat(
+                [self._log_rewards, other._log_rewards], dim=0
+            )
         elif other._log_rewards is not None:
             self._log_rewards = other._log_rewards.clone()
 
@@ -936,8 +960,14 @@ class GraphStates(States):
                 continue
 
             # Check if edge attributes are the same (after sorting)
-            data_edge_attr = data.edge_attr[torch.argsort(data.edge_index[0] * data.num_nodes + data.edge_index[1])]
-            other_edge_attr = other.edge_attr[torch.argsort(other.edge_index[0] * other.num_nodes + other.edge_index[1])]
+            data_edge_attr = data.edge_attr[
+                torch.argsort(data.edge_index[0] * data.num_nodes + data.edge_index[1])
+            ]
+            other_edge_attr = other.edge_attr[
+                torch.argsort(
+                    other.edge_index[0] * other.num_nodes + other.edge_index[1]
+                )
+            ]
             if not torch.all(data_edge_attr == other_edge_attr):
                 continue
 
@@ -981,8 +1011,7 @@ class GraphStates(States):
 
         # Set the batch shape
         batch.batch_shape = torch.tensor(
-            (len(states),) + state_batch_shape,
-            device=states[0].device
+            (len(states),) + state_batch_shape, device=states[0].device
         )
 
         # Create a new GraphStates object
@@ -990,7 +1019,9 @@ class GraphStates(States):
 
         # Stack log rewards if they exist
         if all(state._log_rewards is not None for state in states):
-            out._log_rewards = torch.stack([state._log_rewards for state in states], dim=0)
+            out._log_rewards = torch.stack(
+                [state._log_rewards for state in states], dim=0
+            )
 
         return out
 
@@ -1006,14 +1037,17 @@ class GraphStates(States):
         N = self.tensor.x.size(0)
 
         # Initialize masks
-        action_type_mask = torch.ones(self.batch_shape + (3,), dtype=torch.bool, device=self.device)
+        action_type_mask = torch.ones(
+            self.batch_shape + (3,), dtype=torch.bool, device=self.device
+        )
         features_mask = torch.ones(
             self.batch_shape + (self.tensor.x.size(1),),
             dtype=torch.bool,
-            device=self.device
+            device=self.device,
         )
-        edge_index_masks = torch.ones((len(data_list), N, N), dtype=torch.bool, device=self.device)
-
+        edge_index_masks = torch.ones(
+            (len(data_list), N, N), dtype=torch.bool, device=self.device
+        )
 
         # For each graph in the batch
         for i, data in enumerate(data_list):
@@ -1045,7 +1079,9 @@ class GraphStates(States):
                     src, dst = data.edge_index[0, j], data.edge_index[1, j]
                     edge_mask[src, dst] = False
 
-            edge_index_masks[i, start_n:(start_n + n), start_n:(start_n + n)] = edge_mask
+            edge_index_masks[i, start_n : (start_n + n), start_n : (start_n + n)] = (
+                edge_mask
+            )
             start_n += n
 
             # Update ADD_EDGE mask based on whether there are valid edges to add
@@ -1054,7 +1090,7 @@ class GraphStates(States):
         return {
             "action_type": action_type_mask,
             "features": features_mask,
-            "edge_index": edge_index_masks
+            "edge_index": edge_index_masks,
         }
 
     @property
@@ -1069,13 +1105,17 @@ class GraphStates(States):
         N = self.tensor.x.size(0)
 
         # Initialize masks
-        action_type_mask = torch.ones(self.batch_shape + (3,), dtype=torch.bool, device=self.device)
+        action_type_mask = torch.ones(
+            self.batch_shape + (3,), dtype=torch.bool, device=self.device
+        )
         features_mask = torch.ones(
             self.batch_shape + (self.tensor.x.size(1),),
             dtype=torch.bool,
-            device=self.device
+            device=self.device,
         )
-        edge_index_masks = torch.zeros((len(data_list), N, N), dtype=torch.bool, device=self.device)
+        edge_index_masks = torch.zeros(
+            (len(data_list), N, N), dtype=torch.bool, device=self.device
+        )
 
         # For each graph in the batch
         for i, data in enumerate(data_list):
@@ -1086,7 +1126,9 @@ class GraphStates(States):
             action_type_mask[flat_idx, GraphActionType.ADD_NODE] = data.num_nodes >= 1
 
             # ADD_EDGE is allowed if there's at least one edge (can remove an edge)
-            action_type_mask[flat_idx, GraphActionType.ADD_EDGE] = data.edge_index.size(1) > 0
+            action_type_mask[flat_idx, GraphActionType.ADD_EDGE] = (
+                data.edge_index.size(1) > 0
+            )
 
             # EXIT is allowed if there's at least one node
             action_type_mask[flat_idx, GraphActionType.EXIT] = data.num_nodes >= 1
@@ -1101,14 +1143,19 @@ class GraphStates(States):
             # Include only existing edges
             if data.edge_index.size(1) > 0:
                 for j in range(data.edge_index.size(1)):
-                    src, dst = data.edge_index[0, j].item(), data.edge_index[1, j].item()
+                    src, dst = (
+                        data.edge_index[0, j].item(),
+                        data.edge_index[1, j].item(),
+                    )
                     edge_mask[src, dst] = True
 
-            edge_index_masks[i, start_n:(start_n + n), start_n:(start_n + n)] = edge_mask
+            edge_index_masks[i, start_n : (start_n + n), start_n : (start_n + n)] = (
+                edge_mask
+            )
             start_n += n
 
         return {
             "action_type": action_type_mask,
             "features": features_mask,
-            "edge_index": edge_index_masks
+            "edge_index": edge_index_masks,
         }
