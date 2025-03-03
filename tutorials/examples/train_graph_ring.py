@@ -34,12 +34,6 @@ from gfn.containers import ReplayBuffer
 REW_VAL = 100.0
 EPS_VAL = 1e-6
 
-<<<<<<< HEAD
-
-def directed_reward(states: GraphStates) -> torch.Tensor:
-    """Compute the reward of a graph.
-=======
->>>>>>> e43c937d2dbad80b73336f28fb0f26a8b7516bdc
 
 def directed_reward(states: GraphStates) -> torch.Tensor:
     """Compute reward for directed ring graphs.
@@ -949,35 +943,29 @@ if __name__ == "__main__":
     2. Train the GFlowNet using trajectory balance
     3. Visualize sample generated graphs
     """
-    N_NODES = 4
-    N_ITERATIONS = 1000
+    N_NODES = 5
+    N_ITERATIONS = 2000
     LR = 0.001
     BATCH_SIZE = 128
     DIRECTED = True
-    USE_BUFFER = False
-    USE_GNN = False  # Set to False to use MLP with adjacency matrices instead of GNN
+    USE_BUFFER = True
+    USE_GNN = True  # Set to False to use MLP with adjacency matrices instead of GNN
+    NUM_CONV_LAYERS = 2
 
     state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
     env = RingGraphBuilding(
         n_nodes=N_NODES, state_evaluator=state_evaluator, directed=DIRECTED
     )
-<<<<<<< HEAD
-    module_pf = RingPolicyModule(env.n_nodes, DIRECTED, num_conv_layers=2)
-    module_pb = RingPolicyModule(
-        env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=2
-    )
-=======
 
     # Choose model type based on USE_GNN flag
     if USE_GNN:
-        module_pf = RingPolicyModule(env.n_nodes, DIRECTED)
-        module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
+        module_pf = RingPolicyModule(env.n_nodes, DIRECTED, num_conv_layers=NUM_CONV_LAYERS)
+        module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=NUM_CONV_LAYERS)
     else:
         module_pf = AdjacencyPolicyModule(env.n_nodes, DIRECTED)
         module_pb = AdjacencyPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
 
->>>>>>> e43c937d2dbad80b73336f28fb0f26a8b7516bdc
     pf = DiscretePolicyEstimator(
         module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
     )
