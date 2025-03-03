@@ -960,8 +960,12 @@ if __name__ == "__main__":
 
     # Choose model type based on USE_GNN flag
     if USE_GNN:
-        module_pf = RingPolicyModule(env.n_nodes, DIRECTED, num_conv_layers=NUM_CONV_LAYERS)
-        module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=NUM_CONV_LAYERS)
+        module_pf = RingPolicyModule(
+            env.n_nodes, DIRECTED, num_conv_layers=NUM_CONV_LAYERS
+        )
+        module_pb = RingPolicyModule(
+            env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=NUM_CONV_LAYERS
+        )
     else:
         module_pf = AdjacencyPolicyModule(env.n_nodes, DIRECTED)
         module_pb = AdjacencyPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
