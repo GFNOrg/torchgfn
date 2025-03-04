@@ -84,8 +84,8 @@ class States(ABC):
 
     @classmethod
     def from_batch_shape(
-        cls, batch_shape: tuple[int, ...], random: bool = False, sink: bool = False
-    ) -> States:
+        cls, batch_shape: int | tuple[int, ...], random: bool = False, sink: bool = False
+    ) -> States | GraphStates:
         """Create a States object with the given batch shape.
 
         By default, all states are initialized to $s_0$, the initial state. Optionally,
@@ -102,6 +102,9 @@ class States(ABC):
         Raises:
             ValueError: If both Random and Sink are True.
         """
+        if isinstance(batch_shape, int):
+            batch_shape = (batch_shape,)
+
         if random and sink:
             raise ValueError("Only one of `random` and `sink` should be True.")
 
@@ -571,22 +574,7 @@ class GraphStates(States):
         return tuple(self.tensor["batch_shape"].tolist())
 
     @classmethod
-    def from_batch_shape(
-        cls, batch_shape: int | Tuple, random: bool = False, sink: bool = False
-    ) -> GraphStates:
-        if random and sink:
-            raise ValueError("Only one of `random` and `sink` should be True.")
-        if random:
-            tensor = cls.make_random_states_tensor(batch_shape)
-        elif sink:
-            tensor = cls.make_sink_states_tensor(batch_shape)
-        else:
-            tensor = cls.make_initial_states_tensor(batch_shape)
-        return cls(tensor)
-
-    @classmethod
-    def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> TensorDict:
-        batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
+    def make_initial_states_tensor(cls, batch_shape: Tuple) -> TensorDict:
         nodes = cls.s0["node_feature"].repeat(np.prod(batch_shape), 1)
 
         return TensorDict(
@@ -850,14 +838,14 @@ class GraphStates(States):
         # find if there are common node indices
         other_node_index = other.tensor["node_index"].clone()  # Clone to avoid modifying original
         other_edge_index = other.tensor["edge_index"].clone()  # Clone to avoid modifying original
-        
+
         # Always generate new indices for the other state to ensure uniqueness
         new_indices = GraphStates.unique_node_indices(len(other_node_index))
-        
+
         # Update edge indices to match new node indices
         for i, old_idx in enumerate(other_node_index):
             other_edge_index[other_edge_index == old_idx] = new_indices[i]
-        
+
         # Update node indices
         other_node_index = new_indices
 
@@ -894,7 +882,7 @@ class GraphStates(States):
             self.tensor["batch_shape"] = (
                 self.tensor["batch_shape"][0] + other.tensor["batch_shape"][0],
             ) + self.batch_shape[1:]
-        else: 
+        else:
             # Here we handle the case where the batch shape is (T, B)
             # and we want to concatenate along the batch dimension B.
             assert len(self.tensor["batch_shape"]) == 2
@@ -907,7 +895,7 @@ class GraphStates(States):
             # Get device from one of the tensors
             device = self.tensor["node_feature"].device
             batch_ptr = [torch.tensor([0], device=device)]
-            
+
             for i in range(max_len):
                 # Following the logic of Base class, we want to extend with sink states
                 if i >= self.tensor["batch_shape"][0]:
@@ -918,7 +906,7 @@ class GraphStates(States):
                     other_i = other.make_sink_states_tensor(other.tensor["batch_shape"][1:])
                 else:
                     other_i = other[i].tensor
-                
+
                 # Generate new unique indices for both self_i and other_i
                 new_self_indices = GraphStates.unique_node_indices(len(self_i["node_index"]))
                 new_other_indices = GraphStates.unique_node_indices(len(other_i["node_index"]))
