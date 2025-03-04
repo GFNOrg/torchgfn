@@ -454,7 +454,7 @@ class RingGraphBuilding(GraphBuilding):
             )
 
             def __init__(self, tensor: TensorDict):
-                self.tensor = tensor
+                super().__init__(tensor)
                 self.node_features_dim = tensor["node_feature"].shape[-1]
                 self.edge_features_dim = tensor["edge_feature"].shape[-1]
                 self._log_rewards: Optional[float] = None
