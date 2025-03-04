@@ -188,14 +188,10 @@ def train(env, gflownet, seed):
     # Policy parameters and logZ/logF get independent LRs (logF/Z typically higher).
     if type(gflownet) is TBGFlowNet:
         optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
-        optimizer.add_param_group(
-            {"params": gflownet.logz_parameters(), "lr": lr * 100}
-        )
+        optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": lr * 100})
     elif type(gflownet) is DBGFlowNet or type(gflownet) is SubTBGFlowNet:
         optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
-        optimizer.add_param_group(
-            {"params": gflownet.logF_parameters(), "lr": lr * 100}
-        )
+        optimizer.add_param_group({"params": gflownet.logF_parameters(), "lr": lr * 100})
     elif type(gflownet) is FMGFlowNet or type(gflownet) is ModifiedDBGFlowNet:
         optimizer = Adam(gflownet.parameters(), lr=lr)
     else:
@@ -205,7 +201,7 @@ def train(env, gflownet, seed):
     batch_size = int(1e4)
 
     print("+ Training Conditional {}!".format(type(gflownet)))
-    for i in (pbar := tqdm(range(n_iterations))):
+    for _ in (pbar := tqdm(range(n_iterations))):
         conditioning = torch.rand((batch_size, 1))
         conditioning = (conditioning > 0.5).to(torch.float)  # Randomly 1 and zero.
 
@@ -217,10 +213,8 @@ def train(env, gflownet, seed):
             save_estimator_outputs=True,
             epsilon=exploration_rate,
         )
-        training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
-        # TODO: do not ignore the next ignore
-        loss = gflownet.loss(env, training_samples)  # pyright: ignore
+        loss = gflownet.loss_from_trajectories(env, trajectories)
         loss.backward()
         optimizer.step()
         pbar.set_postfix({"loss": loss.item()})

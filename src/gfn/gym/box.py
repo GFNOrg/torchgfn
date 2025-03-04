@@ -128,9 +128,7 @@ class Box(Env):
         """
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states.tensor - 0.5)
-        reward = (
-            R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
-        )
+        reward = R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
 
         assert reward.shape == final_states.batch_shape
         return reward

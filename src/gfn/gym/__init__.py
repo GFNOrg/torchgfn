@@ -1,5 +1,14 @@
-from gfn.gym.box import Box
-from gfn.gym.discrete_ebm import DiscreteEBM
-from gfn.gym.hypergrid import HyperGrid
-from gfn.gym.bitSequence.bitSequence import BitSequence
-from gfn.gym.bitSequence.bitSequencePlus import BitSequencePlus
+from .bitSequence import BitSequence, BitSequencePlus
+from .box import Box
+from .discrete_ebm import DiscreteEBM
+from .hypergrid import HyperGrid
+from .line import Line
+
+__all__ = [
+    "Box",
+    "DiscreteEBM",
+    "HyperGrid",
+    "Line",
+    "BitSequence",
+    "BitSequencePlus",
+]

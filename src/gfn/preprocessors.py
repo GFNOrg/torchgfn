@@ -3,7 +3,7 @@ from typing import Callable
 
 import torch
 
-from gfn.states import States
+from gfn.states import DiscreteStates, States
 
 
 class Preprocessor(ABC):
@@ -51,19 +51,19 @@ class EnumPreprocessor(Preprocessor):
 
     def __init__(
         self,
-        get_states_indices: Callable[[States], torch.Tensor],
+        get_states_indices: Callable[[DiscreteStates], torch.Tensor],
     ) -> None:
         """Preprocessor for environments with enumerable states (finite number of states).
         Each state is represented by a unique integer (>= 0) index.
 
         Args:
-            get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
+            get_states_indices (Callable[[DiscreteStates], BatchOutputTensor]): function that returns the unique indices of the states.
                 BatchOutputTensor is a tensor of shape (*batch_shape, 1).
         """
         super().__init__(output_dim=1)
         self.get_states_indices = get_states_indices
 
-    def preprocess(self, states) -> torch.Tensor:
+    def preprocess(self, states: DiscreteStates) -> torch.Tensor:
         """Preprocess the states by returning their unique indices.
 
         Args:

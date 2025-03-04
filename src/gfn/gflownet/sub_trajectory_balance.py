@@ -1,4 +1,3 @@
-# type: ignore
 import math
 from typing import List, Literal, Tuple
 
