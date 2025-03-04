@@ -28,8 +28,8 @@ class Line(Env):
         self.mixture = [Normal(m, s) for m, s in zip(self.mus, self.sigmas)]
 
         self.init_value = init_value  # Used in s0.
-        self.lb = min(self.mus) - self.n_sd * max(self.sigmas)  # Convienience only.
-        self.ub = max(self.mus) + self.n_sd * max(self.sigmas)  # Convienience only.
+        self.lb = min(self.mus) - self.n_sd * max(self.sigmas)  # pyright: ignore
+        self.ub = max(self.mus) + self.n_sd * max(self.sigmas)  # pyright: ignore
         assert self.lb < self.init_value < self.ub
 
         s0 = torch.tensor([self.init_value, 0.0], device=torch.device(device_str))
@@ -102,6 +102,6 @@ class Line(Env):
         return log_rewards
 
     @property
-    def log_partition(self) -> float:
+    def log_partition(self) -> torch.Tensor:
         """Log Partition log of the number of gaussians."""
         return torch.tensor(len(self.mus)).log()

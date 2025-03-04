@@ -71,7 +71,7 @@ def validate(
 
     logZ = None
     if isinstance(gflownet, TBGFlowNet):
-        logZ = gflownet.logZ.item()
+        logZ = gflownet.logZ.item()   # pyright: ignore
     if visited_terminating_states is None:
         terminating_states = gflownet.sample_terminating_states(
             n_validation_samples
@@ -170,7 +170,8 @@ def warm_up(
         env: The environment instance
         n_epochs: Number of epochs for warmup
         batch_size: Number of trajectories to sample from replay buffer
-        recalculate_all_logprobs: For PFBasedGFlowNets only, force recalculating all log probs. Useful trajectories do not already have log probs.
+        recalculate_all_logprobs: For PFBasedGFlowNets only, force recalculating all log probs.
+            Useful trajectories do not already have log probs.
     Returns:
         GFlowNet: A trained GFlowNet
     """
@@ -187,7 +188,7 @@ def warm_up(
         else:
             loss = gflownet.loss(env, training_trajs)
 
-        loss.backward()
+        loss.backward()   # pyright: ignore
         optimizer.step()
         t.set_description(f"{epoch=}, {loss=}")
 

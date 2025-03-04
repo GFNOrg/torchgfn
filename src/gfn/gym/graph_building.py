@@ -151,9 +151,11 @@ class GraphBuilding(GraphEnv):
 
                     # Remove the node
                     mask = torch.ones(
-                        graph.num_nodes, dtype=torch.bool, device=graph.x.device
+                        size=graph.num_nodes,  # pyright: ignore
+                        dtype=torch.bool,
+                        device=graph.x.device,
                     )
-                    mask[node_idx] = False
+                    mask[node_idx] = False  # pyright: ignore
 
                     # Update node features
                     graph.x = graph.x[mask]
@@ -217,7 +219,7 @@ class GraphBuilding(GraphEnv):
                 src, dst = actions.edge_index[i]
 
                 # Check if src and dst are valid node indices
-                if src >= graph.num_nodes or dst >= graph.num_nodes or src == dst:
+                if src >= graph.num_nodes or dst >= graph.num_nodes or src == dst:  # pyright: ignore
                     return False
 
                 # Check if the edge already exists
@@ -303,4 +305,4 @@ class GraphBuilding(GraphEnv):
 
     def make_random_states_tensor(self, batch_shape: Tuple) -> GraphStates:
         """Generates random states tensor of shape (*batch_shape, feature_dim)."""
-        return self.States.from_batch_shape(batch_shape)
+        return self.States.from_batch_shape(batch_shape)  # pyright: ignore

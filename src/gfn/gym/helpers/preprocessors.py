@@ -18,8 +18,9 @@ class OneHotPreprocessor(Preprocessor):
 
         Args:
             n_states (int): The total number of states in the environment (not including s_f).
-            get_states_indices (Callable[[States], BatchOutputTensor]): function that returns the unique indices of the states.
-                BatchOutputTensor is a tensor of shape (*batch_shape, input_dim).
+            get_states_indices (Callable[[States], BatchOutputTensor]): function that returns
+                the unique indices of the states.
+            BatchOutputTensor is a tensor of shape (*batch_shape, input_dim).
         """
         super().__init__(output_dim=n_states)
         self.get_states_indices = get_states_indices

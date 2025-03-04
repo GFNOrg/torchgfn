@@ -138,6 +138,7 @@ reportUntypedFunctionDecorator = "none"
 reportMissingTypeStubs = false
 reportUnboundVariable = "warning"
 reportGeneralTypeIssues = "none"
+reportAttributeAccessIssue = false
 
 [tool.pytest.ini_options]
 # Black-compatibility enforced.

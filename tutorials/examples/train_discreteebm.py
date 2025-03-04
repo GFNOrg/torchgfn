@@ -79,7 +79,7 @@ def main(args):  # noqa: C901
         loss.backward()
         optimizer.step()
 
-        visited_terminating_states.extend(trajectories.last_states)
+        visited_terminating_states.extend(trajectories.last_states)  # pyright: ignore
 
         states_visited += len(trajectories)
 

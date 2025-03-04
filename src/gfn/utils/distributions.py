@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Literal
 
 import torch
 from torch.distributions import Categorical, Distribution
@@ -60,7 +60,7 @@ class CompositeDistribution(
     def sample(self, sample_shape=torch.Size()) -> Dict[str, torch.Tensor]:
         return {k: v.sample(sample_shape) for k, v in self.dists.items()}
 
-    def log_prob(self, sample: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def log_prob(self, sample: Dict[str, torch.Tensor]) -> torch.Tensor | Literal[0]:
         log_probs = [
             v.log_prob(sample[k]).reshape(sample[k].shape[0], -1).sum(dim=-1)
             for k, v in self.dists.items()

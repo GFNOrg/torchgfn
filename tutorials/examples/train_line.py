@@ -55,7 +55,7 @@ def render(env, validation_samples=None):
     for i, mu in enumerate(env.mus):
         idx = abs(x - mu.numpy()) == min(abs(x - mu.numpy()))
         ax1.plot([x[idx]], [d[idx]], "bo")
-        ax1.text(x[idx] + 0.1, d[idx], "Mode {}".format(i + 1), rotation=0)
+        ax1.text(x[idx] + 0.1, d[idx], "Mode {}".format(i + 1), rotation=0)  # pyright: ignore
 
     ax1.spines[["right", "top"]].set_visible(False)
     ax1.set_ylabel("Reward Value")
@@ -197,7 +197,7 @@ class StepEstimator(GFNModule):
         locs, scales = torch.split(module_output, [1, 1], dim=-1)
 
         return ScaledGaussianWithOptionalExit(
-            states,
+            states,  # pyright: ignore
             locs,
             scales + scale_factor,  # Increase this value to induce exploration.
             backward=self.backward,

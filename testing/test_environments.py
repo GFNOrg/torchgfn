@@ -438,7 +438,7 @@ def test_graph_env():
 
     sf_states = env._step(states, actions)
     assert torch.all(sf_states.is_sink_state)
-    env.reward(sf_states)
+    env.reward(sf_states)  # pyright: ignore
 
     num_edges_per_batch = len(states.tensor.edge_attr) // BATCH_SIZE
     # Remove edges.

@@ -341,7 +341,7 @@ def test_replay_buffer(
         if objects == "trajectories":
             replay_buffer.add(
                 training_objects[
-                    training_objects.when_is_done != training_objects.max_length
+                    training_objects.when_is_done != training_objects.max_length  # pyright: ignore
                 ]
             )
         else:

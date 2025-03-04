@@ -13,7 +13,7 @@ class MLP(nn.Module):
         self,
         input_dim: int,
         output_dim: int,
-        hidden_dim: Optional[int] = 256,
+        hidden_dim: int = 256,
         n_hidden_layers: Optional[int] = 2,
         activation_fn: Optional[Literal["relu", "tanh", "elu"]] = "relu",
         trunk: Optional[nn.Module] = None,
@@ -61,10 +61,10 @@ class MLP(nn.Module):
                     arch.append(nn.LayerNorm(hidden_dim))
                 arch.append(activation())
             self.trunk = nn.Sequential(*arch)
-            self.trunk.hidden_dim = hidden_dim
+            self.trunk.hidden_dim = hidden_dim  # pyright: ignore
         else:
             self.trunk = trunk
-        self.last_layer = nn.Linear(self.trunk.hidden_dim, output_dim)
+        self.last_layer = nn.Linear(self.trunk.hidden_dim, output_dim)  # pyright: ignore
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the neural network.

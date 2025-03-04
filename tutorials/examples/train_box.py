@@ -52,7 +52,7 @@ def sample_from_reward(env: Box, n_samples: int):
         rand_n = torch.rand(n_samples).to(env.device)
         mask = rand_n * (env.R0 + max(env.R1, env.R2)) < rewards
         true_samples = sample[mask]
-        samples.extend(true_samples[-(n_samples - len(samples)) :].tensor.cpu().numpy())
+        samples.extend(true_samples[-(n_samples - len(samples)):].tensor.cpu().numpy())
     return np.array(samples)
 
 
@@ -253,7 +253,7 @@ def main(args):  # noqa: C901
         training_samples = gflownet.to_training_samples(trajectories)
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
+        loss = gflownet.loss(env, training_samples)  # pyright: ignore
 
         loss.backward()
         for p in gflownet.parameters():
@@ -274,7 +274,9 @@ def main(args):  # noqa: C901
             wandb.log(to_log, step=iteration)
         if iteration % (args.validation_interval // 5) == 0:
             tqdm.write(
-                f"States: {states_visited}, Loss: {loss.item():.3f}, {logZ_info}true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
+                f"States: {states_visited}, "
+                f"Loss: {loss.item():.3f}, {logZ_info}"
+                f"true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
             )
 
         if iteration % args.validation_interval == 0:

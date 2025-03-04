@@ -204,8 +204,9 @@ class GraphActions(Actions):
 
         Args:
             action: a GraphActionType indicating the type of action.
-            features: a tensor of shape (batch_shape, feature_shape) representing the features of the nodes or of the edges, depending on the action type.
-                In case of EXIT action, this can be None.
+            features: a tensor of shape (batch_shape, feature_shape) representing the features
+                of the nodes or of the edges, depending on the action type. In case of EXIT
+                action, this can be None.
             edge_index: an tensor of shape (batch_shape, 2) representing the edge to add.
                 This must defined if and only if the action type is GraphActionType.AddEdge.
         """

@@ -61,7 +61,7 @@ def main(args):
             save_estimator_outputs=False,
             epsilon=args.epsilon,
         )
-        visited_terminating_states.extend(trajectories.last_states)
+        visited_terminating_states.extend(trajectories.last_states)  # pyright: ignore
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories)

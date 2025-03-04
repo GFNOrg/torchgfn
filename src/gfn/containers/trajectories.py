@@ -34,7 +34,8 @@ class Trajectories(Container):
         when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
         is_backward: Whether the trajectories are backward or forward.
         log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
-        log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the trajectories' actions.
+        log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the
+            trajectories' actions.
 
     """
 
@@ -58,7 +59,8 @@ class Trajectories(Container):
             when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
             is_backward: Whether the trajectories are backward or forward.
             log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
-            log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the trajectories' actions.
+            log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of
+                the trajectories' actions.
             estimator_outputs: Tensor of shape (batch_shape, output_dim).
                 When forward sampling off-policy for an n-step trajectory,
                 n forward passes will be made on some function approximator,
@@ -104,14 +106,17 @@ class Trajectories(Container):
             assert (
                 log_probs.shape == (self.max_length, self.n_trajectories)
                 and log_probs.dtype == torch.float
-            ), f"log_probs.shape={log_probs.shape}, self.max_length={self.max_length}, self.n_trajectories={self.n_trajectories}"
+            ), f"log_probs.shape={log_probs.shape}, "
+            f"self.max_length={self.max_length}, "
+            f"self.n_trajectories={self.n_trajectories}"
         else:
             log_probs = torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
         self.log_probs: torch.Tensor = log_probs
 
         self.estimator_outputs = estimator_outputs
         if self.estimator_outputs is not None:
-            # assert self.estimator_outputs.shape[:len(self.states.batch_shape)] == self.states.batch_shape TODO: check why fails
+            #  TODO: check why this fails.
+            # assert self.estimator_outputs.shape[:len(self.states.batch_shape)] == self.states.batch_shape
             assert self.estimator_outputs.dtype == torch.float
 
     def __repr__(self) -> str:

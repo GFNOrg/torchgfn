@@ -64,7 +64,7 @@ def main(args):
             back_ratio=args.back_ratio,
             use_metropolis_hastings=args.use_metropolis_hastings,
         )
-        visited_terminating_states.extend(trajectories.last_states)
+        visited_terminating_states.extend(trajectories.last_states)  # pyright: ignore
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories)
