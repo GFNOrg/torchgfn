@@ -232,7 +232,9 @@ class RingPolicyModule(nn.Module):
                     [
                         GINConv(
                             MLP(
-                                input_dim=self.embedding_dim,
+                                input_dim=(
+                                    self.embedding_dim if i == 0 else self.hidden_dim
+                                ),
                                 output_dim=self.hidden_dim,
                                 hidden_dim=self.hidden_dim,
                                 n_hidden_layers=1,
@@ -894,8 +896,12 @@ if __name__ == "__main__":
 
     # Choose model type based on USE_GNN flag
     if USE_GNN:
-        module_pf = RingPolicyModule(env.n_nodes, DIRECTED)
-        module_pb = RingPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
+        module_pf = RingPolicyModule(
+            env.n_nodes, DIRECTED, num_conv_layers=NUM_CONV_LAYERS
+        )
+        module_pb = RingPolicyModule(
+            env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=NUM_CONV_LAYERS
+        )
     else:
         module_pf = AdjacencyPolicyModule(env.n_nodes, DIRECTED)
         module_pb = AdjacencyPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
