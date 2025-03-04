@@ -413,8 +413,6 @@ def test_graph_env():
 
     # Add edges.
     for i in range(NUM_NODES - 1):
-        # node_is = torch.arange(BATCH_SIZE) * NUM_NODES + i
-        # node_js = torch.arange(BATCH_SIZE) * NUM_NODES + i + 1
         actions = action_cls(
             TensorDict(
                 {
