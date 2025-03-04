@@ -601,11 +601,13 @@ class GraphStates(States):
         data_list = [cls.s0.clone() for _ in range(num_graphs)]
 
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [GeometricData(
-                x=torch.zeros(0, cls.s0.x.size(1)),
-                edge_index=torch.zeros(2, 0, dtype=torch.long),
-                edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1))
-            )]
+            data_list = [
+                GeometricData(
+                    x=torch.zeros(0, cls.s0.x.size(1)),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long),
+                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1)),
+                )
+            ]
 
         # Create a batch from the list
         batch = GeometricBatch.from_data_list(data_list)
@@ -634,11 +636,13 @@ class GraphStates(States):
         # Create a list of Data objects by copying sf
         data_list = [cls.sf.clone() for _ in range(num_graphs)]
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [GeometricData(
-                x=torch.zeros(0, cls.sf.x.size(1)),
-                edge_index=torch.zeros(2, 0, dtype=torch.long),
-                edge_attr=torch.zeros(0, cls.sf.edge_attr.size(1))
-            )]
+            data_list = [
+                GeometricData(
+                    x=torch.zeros(0, cls.sf.x.size(1)),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long),
+                    edge_attr=torch.zeros(0, cls.sf.edge_attr.size(1)),
+                )
+            ]
 
         # Create a batch from the list
         batch = GeometricBatch.from_data_list(data_list)
@@ -747,11 +751,13 @@ class GraphStates(States):
         selected_graphs = self.tensor.index_select(indices)
         if len(selected_graphs) == 0:
             assert np.prod(new_shape) == 0
-            selected_graphs = [GeometricData(
-                x=torch.zeros(0, self.tensor.x.size(1)),
-                edge_index=torch.zeros(2, 0, dtype=torch.long),
-                edge_attr=torch.zeros(0, self.tensor.edge_attr.size(1))
-            )]
+            selected_graphs = [
+                GeometricData(
+                    x=torch.zeros(0, self.tensor.x.size(1)),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long),
+                    edge_attr=torch.zeros(0, self.tensor.edge_attr.size(1)),
+                )
+            ]
 
         # Create a new batch from the selected graphs
         new_batch = GeometricBatch.from_data_list(selected_graphs)
@@ -820,10 +826,10 @@ class GraphStates(States):
     @staticmethod
     def clone_batch(batch: GeometricBatch) -> GeometricBatch:
         """Clones a PyG Batch object.
-        
+
         Args:
             batch: The Batch object to clone.
-            
+
         Returns:
             A new Batch object with the same data.
         """
@@ -897,7 +903,7 @@ class GraphStates(States):
             batch_shape = (max_len, self.batch_shape[1] + other.batch_shape[1])
             self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
             self.tensor.batch_shape = batch_shape
-        
+
         # Combine log rewards if they exist
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat(
@@ -1009,7 +1015,7 @@ class GraphStates(States):
 
         # Set the batch shape
         batch.batch_shape = (len(states),) + state_batch_shape
-        
+
         # Create a new GraphStates object
         out = cls(batch)
 

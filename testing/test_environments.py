@@ -384,9 +384,7 @@ def test_graph_env():
 
     # We can't add a node with the same features.
     with pytest.raises(NonValidActionsError):
-        first_node_mask = (
-            torch.arange(len(states.tensor.x)) // BATCH_SIZE == 0
-        )
+        first_node_mask = torch.arange(len(states.tensor.x)) // BATCH_SIZE == 0
         actions = action_cls(
             TensorDict(
                 {
@@ -451,7 +449,8 @@ def test_graph_env():
                 {
                     "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
                     "features": states.tensor.edge_attr[edge_idx],
-                    "edge_index": states.tensor.edge_index[:, edge_idx].T - states.tensor.ptr[:-1, None],
+                    "edge_index": states.tensor.edge_index[:, edge_idx].T
+                    - states.tensor.ptr[:-1, None],
                 },
                 batch_size=BATCH_SIZE,
             )

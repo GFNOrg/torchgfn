@@ -230,7 +230,7 @@ class Env(ABC):
             batch_shape=batch_shape, random=random, sink=sink
         )
 
-    def _step(self, states: States, actions: Actions,) -> States:
+    def _step(self, states: States, actions: Actions) -> States:
         """Core step function. Calls the user-defined self.step() function.
 
         Function that takes a batch of states and actions and returns a batch of next

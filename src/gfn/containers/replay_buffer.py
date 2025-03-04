@@ -72,7 +72,7 @@ class ReplayBuffer:
         if isinstance(training_objects, tuple):
             assert self.objects_type == "states" and self.terminating_states is not None
             training_objects, terminating_states = training_objects  # pyright: ignore
-        
+
         to_add = len(training_objects)
         self._is_full |= len(self) + to_add >= self.capacity
 
@@ -200,8 +200,13 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         else:
             terminating_states = None
             if isinstance(training_objects, tuple):
-                assert self.objects_type == "states" and self.terminating_states is not None
-                training_objects, terminating_states = training_objects  # pyright: ignore
+                assert (
+                    self.objects_type == "states"
+                    and self.terminating_states is not None
+                )
+                training_objects, terminating_states = (
+                    training_objects  # pyright: ignore
+                )
 
             # Sort the incoming elements by their logrewards.
             ix = torch.argsort(

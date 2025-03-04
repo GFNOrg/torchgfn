@@ -128,8 +128,6 @@ class GraphBuilding(GraphEnv):
 
         Returns the previous graph as a new GraphStates.
         """
-        if not self.is_action_valid(states, actions, backward=True):
-            raise NonValidActionsError("Invalid action.")
         if len(actions) == 0:
             return states.tensor
 
@@ -254,7 +252,11 @@ class GraphBuilding(GraphEnv):
         Returns:
             Updated batch of graphs.
         """
-        batch_indices = torch.tensor(batch_indices) if isinstance(batch_indices, list) else batch_indices
+        batch_indices = (
+            torch.tensor(batch_indices)
+            if isinstance(batch_indices, list)
+            else batch_indices
+        )
         if len(batch_indices) != len(nodes_to_add):
             raise ValueError(
                 "Number of batch indices must match number of node feature lists"
@@ -273,11 +275,13 @@ class GraphBuilding(GraphEnv):
 
             # Check feature dimension
             if new_nodes.shape[1] != graph.x.shape[1]:
-                raise ValueError(f"Node features must have dimension {graph.x.shape[1]}")
+                raise ValueError(
+                    f"Node features must have dimension {graph.x.shape[1]}"
+                )
 
             # Add new nodes to the graph
             graph.x = torch.cat([graph.x, new_nodes], dim=0)
-        
+
         # Create a new batch from the updated data list
         new_batch = GeometricBatch.from_data_list(data_list)
 
