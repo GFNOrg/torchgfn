@@ -536,9 +536,9 @@ class DiscreteStates(States, ABC):
 
 class GraphStates(States):
     """
-    Base class for Graph as a state representation. The `GraphStates` object is a batched collection of
-    multiple graph objects. The `GeometricBatch` object from PyTorch Geometric is used to represent the batch of
-    graph objects as states.
+    Base class for Graph as a state representation. The `GraphStates` object is a batched
+    collection of multiple graph objects. The `GeometricBatch` object is used to
+    represent the batch of graph objects as states.
     """
 
     s0: ClassVar[GeometricData]
