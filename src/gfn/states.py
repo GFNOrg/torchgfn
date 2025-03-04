@@ -84,8 +84,8 @@ class States(ABC):
 
     @classmethod
     def from_batch_shape(
-        cls, batch_shape: tuple[int, ...], random: bool = False, sink: bool = False
-    ) -> States:
+        cls, batch_shape: int | tuple[int, ...], random: bool = False, sink: bool = False
+    ) -> States | GraphStates:
         """Create a States object with the given batch shape.
 
         By default, all states are initialized to $s_0$, the initial state. Optionally,
@@ -102,6 +102,9 @@ class States(ABC):
         Raises:
             ValueError: If both Random and Sink are True.
         """
+        if isinstance(batch_shape, int):
+            batch_shape = (batch_shape,)
+
         if random and sink:
             raise ValueError("Only one of `random` and `sink` should be True.")
 
@@ -559,30 +562,6 @@ class GraphStates(States):
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
         return tuple(self.tensor.batch_shape)
-
-    @classmethod
-    def from_batch_shape(
-        cls, batch_shape: int | Tuple, random: bool = False, sink: bool = False
-    ) -> GraphStates:
-        """Create a GraphStates object with the given batch shape.
-
-        Args:
-            batch_shape: Shape of the batch dimensions.
-            random: Initialize states randomly.
-            sink: States initialized with s_f (the sink state).
-
-        Returns:
-            A GraphStates object with the specified batch shape.
-        """
-        if random and sink:
-            raise ValueError("Only one of `random` and `sink` should be True.")
-        if random:
-            tensor = cls.make_random_states_tensor(batch_shape)
-        elif sink:
-            tensor = cls.make_sink_states_tensor(batch_shape)
-        else:
-            tensor = cls.make_initial_states_tensor(batch_shape)
-        return cls(tensor)
 
     @classmethod
     def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> GeometricBatch:

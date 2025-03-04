@@ -583,7 +583,6 @@ class GraphEnv(Env):
         self.Actions = self.make_actions_class()
 
         self.preprocessor = preprocessor
-        self.is_discrete = False
 
     def make_states_class(self) -> type[GraphStates]:
         env = self
