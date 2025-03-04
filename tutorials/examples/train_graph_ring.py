@@ -266,11 +266,8 @@ class RingPolicyModule(nn.Module):
         return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
 
     def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
-        node_features, batch_ptr = (
-            states_tensor.x,
-            states_tensor.ptr,
-        )
-        batch_size = int(torch.prod(states_tensor.batch_shape))
+        node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
+        batch_size = int(math.prod(states_tensor.batch_shape))
 
         # Multiple action type convolutions with residual connections.
         x = self.embedding(node_features.squeeze().int())
@@ -887,6 +884,7 @@ if __name__ == "__main__":
     DIRECTED = True
     USE_BUFFER = False
     USE_GNN = True  # Set to False to use MLP with adjacency matrices instead of GNN
+    NUM_CONV_LAYERS = 1
 
     state_evaluator = undirected_reward if not DIRECTED else directed_reward
     torch.random.manual_seed(7)
