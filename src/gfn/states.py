@@ -878,7 +878,9 @@ class GraphStates(States):
         if len(self.batch_shape) == 1:
             # Create a new batch
             new_batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
-            self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
+            self.tensor = GeometricBatch.from_data_list(
+                self_data_list + other_data_list
+            )
             self.tensor.batch_shape = new_batch_shape
         else:
             # Handle the case where batch_shape is (T, B)
@@ -901,7 +903,9 @@ class GraphStates(States):
 
             # Now both have the same length T, we can concatenate along B
             batch_shape = (max_len, self.batch_shape[1] + other.batch_shape[1])
-            self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
+            self.tensor = GeometricBatch.from_data_list(
+                self_data_list + other_data_list
+            )
             self.tensor.batch_shape = batch_shape
 
         # Combine log rewards if they exist
