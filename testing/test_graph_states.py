@@ -222,8 +222,8 @@ def test_is_initial_state():
 
     # Check is_initial_state
     is_initial = states.is_initial_state
-    assert is_initial[0] == True
-    assert is_initial[1] == False
+    assert is_initial[0].item()
+    assert not is_initial[1].item()
 
 
 def test_is_sink_state():
@@ -241,8 +241,8 @@ def test_is_sink_state():
 
     # Check is_sink_state
     is_sink = states.is_sink_state
-    assert is_sink[0] == True
-    assert is_sink[1] == False
+    assert is_sink[0].item()
+    assert not is_sink[1].item()
 
 
 def test_from_batch_shape():
@@ -283,15 +283,15 @@ def test_forward_masks():
 
     # Check action type mask
     assert masks["action_type"].shape == (1, 3)
-    assert masks["action_type"][0, GraphActionType.ADD_NODE] == True  # Can add node
+    assert masks["action_type"][0, GraphActionType.ADD_NODE].item()  # Can add node
     assert (
-        masks["action_type"][0, GraphActionType.ADD_EDGE] == True
-    )  # Can add edge (2 nodes)
-    assert masks["action_type"][0, GraphActionType.EXIT] == True  # Can exit
+        masks["action_type"][0, GraphActionType.ADD_EDGE]
+    ).item()  # Can add edge (2 nodes)
+    assert masks["action_type"][0, GraphActionType.EXIT].item()  # Can exit
 
     # Check features mask
     assert masks["features"].shape == (1, 1)  # 1 feature dimension
-    assert masks["features"][0, 0] == True  # All features allowed
+    assert masks["features"][0, 0].item()  # All features allowed
 
     # Check edge_index masks
     assert len(masks["edge_index"]) == 1  # 1 graph
@@ -317,13 +317,13 @@ def test_backward_masks():
 
     # Check action type mask
     assert masks["action_type"].shape == (1, 3)
-    assert masks["action_type"][0, GraphActionType.ADD_NODE] == True  # Can remove node
-    assert masks["action_type"][0, GraphActionType.ADD_EDGE] == True  # Can remove edge
-    assert masks["action_type"][0, GraphActionType.EXIT] == True  # Can exit
+    assert masks["action_type"][0, GraphActionType.ADD_NODE].item()  # Can remove node
+    assert masks["action_type"][0, GraphActionType.ADD_EDGE].item()  # Can remove edge
+    assert masks["action_type"][0, GraphActionType.EXIT].item()  # Can exit
 
     # Check features mask
     assert masks["features"].shape == (1, 1)  # 1 feature dimension
-    assert masks["features"][0, 0] == True  # All features allowed
+    assert masks["features"][0, 0].item()  # All features allowed
 
     # Check edge_index masks
     assert len(masks["edge_index"]) == 1  # 1 graph
