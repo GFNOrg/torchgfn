@@ -151,7 +151,7 @@ class GraphBuilding(GraphEnv):
 
                     # Remove the node
                     mask = torch.ones(
-                        size=graph.num_nodes,  # pyright: ignore
+                        graph.num_nodes,  # pyright: ignore
                         dtype=torch.bool,
                         device=graph.x.device,
                     )
@@ -219,7 +219,11 @@ class GraphBuilding(GraphEnv):
                 src, dst = actions.edge_index[i]
 
                 # Check if src and dst are valid node indices
-                if src >= graph.num_nodes or dst >= graph.num_nodes or src == dst:  # pyright: ignore
+                if (
+                    src >= graph.num_nodes  # pyright: ignore
+                    or dst >= graph.num_nodes  # pyright: ignore
+                    or src == dst
+                ):
                     return False
 
                 # Check if the edge already exists

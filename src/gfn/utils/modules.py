@@ -64,7 +64,9 @@ class MLP(nn.Module):
             self.trunk.hidden_dim = hidden_dim  # pyright: ignore
         else:
             self.trunk = trunk
-        self.last_layer = nn.Linear(self.trunk.hidden_dim, output_dim)  # pyright: ignore
+        self.last_layer = nn.Linear(
+            self.trunk.hidden_dim, output_dim
+        )  # pyright: ignore
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the neural network.
