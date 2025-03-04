@@ -558,7 +558,7 @@ class GraphStates(States):
     @property
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
-        return tuple(self.tensor.batch_shape.tolist())
+        return tuple(self.tensor.batch_shape)
 
     @classmethod
     def from_batch_shape(
@@ -601,19 +601,17 @@ class GraphStates(States):
         data_list = [cls.s0.clone() for _ in range(num_graphs)]
 
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [
-                GeometricData(
-                    x=torch.zeros(0, cls.s0.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1)),
-                )
-            ]
+            data_list = [GeometricData(
+                x=torch.zeros(0, cls.s0.x.size(1)),
+                edge_index=torch.zeros(2, 0, dtype=torch.long),
+                edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1))
+            )]
 
         # Create a batch from the list
         batch = GeometricBatch.from_data_list(data_list)
 
         # Store the batch shape for later reference
-        batch.batch_shape = torch.tensor(batch_shape, device=cls.s0.x.device)
+        batch.batch_shape = tuple(batch_shape)
 
         return batch
 
@@ -636,19 +634,17 @@ class GraphStates(States):
         # Create a list of Data objects by copying sf
         data_list = [cls.sf.clone() for _ in range(num_graphs)]
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [
-                GeometricData(
-                    x=torch.zeros(0, cls.sf.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, cls.sf.edge_attr.size(1)),
-                )
-            ]
+            data_list = [GeometricData(
+                x=torch.zeros(0, cls.sf.x.size(1)),
+                edge_index=torch.zeros(2, 0, dtype=torch.long),
+                edge_attr=torch.zeros(0, cls.sf.edge_attr.size(1))
+            )]
 
         # Create a batch from the list
         batch = GeometricBatch.from_data_list(data_list)
 
         # Store the batch shape for later reference
-        batch.batch_shape = torch.tensor(batch_shape, device=cls.sf.x.device)
+        batch.batch_shape = batch_shape
 
         return batch
 
@@ -713,7 +709,7 @@ class GraphStates(States):
         batch = GeometricBatch.from_data_list(data_list)
 
         # Store the batch shape for later reference
-        batch.batch_shape = torch.tensor(batch_shape, device=device)
+        batch.batch_shape = batch_shape
 
         return batch
 
@@ -751,19 +747,15 @@ class GraphStates(States):
         selected_graphs = self.tensor.index_select(indices)
         if len(selected_graphs) == 0:
             assert np.prod(new_shape) == 0
-            selected_graphs = [
-                GeometricData(
-                    x=torch.zeros(0, self.tensor.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, self.tensor.edge_attr.size(1)),
-                )
-            ]
+            selected_graphs = [GeometricData(
+                x=torch.zeros(0, self.tensor.x.size(1)),
+                edge_index=torch.zeros(2, 0, dtype=torch.long),
+                edge_attr=torch.zeros(0, self.tensor.edge_attr.size(1))
+            )]
 
         # Create a new batch from the selected graphs
         new_batch = GeometricBatch.from_data_list(selected_graphs)
-        new_batch.batch_shape = torch.tensor(
-            new_shape, device=self.tensor.batch_shape.device
-        )
+        new_batch.batch_shape = new_shape
 
         # Create a new GraphStates object
         out = self.__class__(new_batch)
@@ -804,7 +796,7 @@ class GraphStates(States):
         self.tensor = GeometricBatch.from_data_list(data_list)
 
         # Preserve the batch shape
-        self.tensor.batch_shape = torch.tensor(batch_shape, device=self.tensor.x.device)
+        self.tensor.batch_shape = batch_shape
 
     @property
     def device(self) -> torch.device:
@@ -825,6 +817,22 @@ class GraphStates(States):
             self._log_rewards = self._log_rewards.to(device)
         return self
 
+    @staticmethod
+    def clone_batch(batch: GeometricBatch) -> GeometricBatch:
+        """Clones a PyG Batch object.
+        
+        Args:
+            batch: The Batch object to clone.
+            
+        Returns:
+            A new Batch object with the same data.
+        """
+        new_batch = batch.clone()
+        # The Batch.clone() changes the type of the batch shape to a list
+        # We need to set it back to a tuple
+        new_batch.batch_shape = batch.batch_shape
+        return new_batch
+
     def clone(self) -> GraphStates:
         """Returns a detached clone of the current instance.
 
@@ -832,9 +840,7 @@ class GraphStates(States):
             A new GraphStates object with the same data.
         """
         # Create a deep copy of the batch
-        data_list = [data.clone() for data in self.tensor.to_data_list()]
-        new_batch = GeometricBatch.from_data_list(data_list)
-        new_batch.batch_shape = self.tensor.batch_shape.clone()
+        new_batch = self.clone_batch(self.tensor)
 
         # Create a new GraphStates object
         out = self.__class__(new_batch)
@@ -853,7 +859,7 @@ class GraphStates(States):
         """
         if len(self) == 0:
             # If self is empty, just copy other
-            self.tensor = other.tensor.clone()
+            self.tensor = self.clone_batch(other.tensor)
             if other._log_rewards is not None:
                 self._log_rewards = other._log_rewards.clone()
             return
@@ -866,12 +872,8 @@ class GraphStates(States):
         if len(self.batch_shape) == 1:
             # Create a new batch
             new_batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
-            self.tensor = GeometricBatch.from_data_list(
-                self_data_list + other_data_list
-            )
-            self.tensor.batch_shape = torch.tensor(
-                new_batch_shape, device=self.tensor.x.device
-            )
+            self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
+            self.tensor.batch_shape = new_batch_shape
         else:
             # Handle the case where batch_shape is (T, B)
             # and we want to concatenate along the B dimension
@@ -893,13 +895,9 @@ class GraphStates(States):
 
             # Now both have the same length T, we can concatenate along B
             batch_shape = (max_len, self.batch_shape[1] + other.batch_shape[1])
-            self.tensor = GeometricBatch.from_data_list(
-                self_data_list + other_data_list
-            )
-            self.tensor.batch_shape = torch.tensor(
-                batch_shape, device=self.tensor.x.device
-            )
-
+            self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
+            self.tensor.batch_shape = batch_shape
+        
         # Combine log rewards if they exist
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat(
@@ -1010,10 +1008,8 @@ class GraphStates(States):
         batch = GeometricBatch.from_data_list(flat_data_list)
 
         # Set the batch shape
-        batch.batch_shape = torch.tensor(
-            (len(states),) + state_batch_shape, device=states[0].device
-        )
-
+        batch.batch_shape = (len(states),) + state_batch_shape
+        
         # Create a new GraphStates object
         out = cls(batch)
 

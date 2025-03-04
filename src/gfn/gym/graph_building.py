@@ -178,9 +178,7 @@ class GraphBuilding(GraphEnv):
         new_batch = GeometricBatch.from_data_list(data_list)
 
         # Preserve the batch shape
-        new_batch.batch_shape = torch.tensor(
-            states.batch_shape, device=states.tensor.x.device
-        )
+        new_batch.batch_shape = states.batch_shape
 
         return new_batch
 
@@ -243,7 +241,7 @@ class GraphBuilding(GraphEnv):
     def _add_node(
         self,
         tensor: GeometricBatch,
-        batch_indices: torch.Tensor,
+        batch_indices: torch.Tensor | list[int],
         nodes_to_add: torch.Tensor,
     ) -> GeometricBatch:
         """Add nodes to graphs in a batch.
@@ -256,12 +254,12 @@ class GraphBuilding(GraphEnv):
         Returns:
             Updated batch of graphs.
         """
-        if isinstance(batch_indices, list):
-            batch_indices = torch.tensor(batch_indices)
+        batch_indices = torch.tensor(batch_indices) if isinstance(batch_indices, list) else batch_indices
         if len(batch_indices) != len(nodes_to_add):
             raise ValueError(
                 "Number of batch indices must match number of node feature lists"
             )
+
         # Get the data list from the batch
         data_list = tensor.to_data_list()
 
@@ -275,32 +273,11 @@ class GraphBuilding(GraphEnv):
 
             # Check feature dimension
             if new_nodes.shape[1] != graph.x.shape[1]:
-                raise ValueError(
-                    f"Node features must have dimension {graph.x.shape[1]}"
-                )
-
-            # Generate unique indices for new nodes
-            num_new_nodes = new_nodes.shape[0]
-            new_indices = GraphStates.unique_node_indices(num_new_nodes)
+                raise ValueError(f"Node features must have dimension {graph.x.shape[1]}")
 
             # Add new nodes to the graph
             graph.x = torch.cat([graph.x, new_nodes], dim=0)
-
-            # Add node indices if they exist
-            if hasattr(graph, "node_index"):
-                graph.node_index = torch.cat([graph.node_index, new_indices], dim=0)
-            else:
-                # If node_index doesn't exist, create it
-                graph.node_index = torch.cat(
-                    [
-                        torch.arange(
-                            graph.num_nodes - num_new_nodes, device=graph.x.device
-                        ),
-                        new_indices,
-                    ],
-                    dim=0,
-                )
-
+        
         # Create a new batch from the updated data list
         new_batch = GeometricBatch.from_data_list(data_list)
 

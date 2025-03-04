@@ -80,10 +80,8 @@ class CategoricalIndexes(Categorical):
             probs: The probabilities of the categorical distribution.
             n: The number of nodes in the graph.
         """
-        assert probs.shape == (
-            probs.shape[0],
-            n_nodes * n_nodes,
-        )
+        assert probs.shape == (probs.shape[0], n_nodes * n_nodes)
+        self.n_nodes = n_nodes
         super().__init__(probs)
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:

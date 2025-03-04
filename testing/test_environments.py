@@ -351,6 +351,7 @@ def test_graph_env():
     assert states.batch_shape == (BATCH_SIZE,)
     action_cls = env.make_actions_class()
 
+    # We can't add an edge without nodes.
     with pytest.raises(NonValidActionsError):
         actions = action_cls(
             TensorDict(
@@ -364,8 +365,9 @@ def test_graph_env():
                 batch_size=BATCH_SIZE,
             )
         )
-        states = env.step(states, actions)
+        states = env._step(states, actions)
 
+    # Add nodes.
     for _ in range(NUM_NODES):
         actions = action_cls(
             TensorDict(
@@ -376,11 +378,11 @@ def test_graph_env():
                 batch_size=BATCH_SIZE,
             )
         )
-        states = env.step(states, actions)
-        states = env.States(states)
+        states = env._step(states, actions)
 
     assert states.tensor.x.shape == (BATCH_SIZE * NUM_NODES, FEATURE_DIM)
 
+    # We can't add a node with the same features.
     with pytest.raises(NonValidActionsError):
         first_node_mask = (
             torch.arange(len(states.tensor.x)) // BATCH_SIZE == 0
@@ -394,8 +396,9 @@ def test_graph_env():
                 batch_size=BATCH_SIZE,
             )
         )
-        states = env.step(states, actions)
+        states = env._step(states, actions)
 
+    # We can't add a self-loop edge for GraphBuilding env.
     with pytest.raises(NonValidActionsError):
         edge_index = torch.randint(0, 3, (BATCH_SIZE,), dtype=torch.long)
         actions = action_cls(
@@ -408,8 +411,9 @@ def test_graph_env():
                 batch_size=BATCH_SIZE,
             )
         )
-        states = env.step(states, actions)
+        states = env._step(states, actions)
 
+    # Add edges.
     for i in range(NUM_NODES - 1):
         # node_is = torch.arange(BATCH_SIZE) * NUM_NODES + i
         # node_js = torch.arange(BATCH_SIZE) * NUM_NODES + i + 1
@@ -423,8 +427,7 @@ def test_graph_env():
                 batch_size=BATCH_SIZE,
             )
         )
-        states = env.step(states, actions)
-        states = env.States(states)
+        states = env._step(states, actions)
 
     actions = action_cls(
         TensorDict(
@@ -435,14 +438,12 @@ def test_graph_env():
         )
     )
 
-    states.forward_masks
-    states.backward_masks
-    sf_states = env.step(states, actions)
-    sf_states = env.States(sf_states)
+    sf_states = env._step(states, actions)
     assert torch.all(sf_states.is_sink_state)
     env.reward(sf_states)
 
     num_edges_per_batch = len(states.tensor.edge_attr) // BATCH_SIZE
+    # Remove edges.
     for i in reversed(range(num_edges_per_batch)):
         edge_idx = torch.arange(i, (i + 1) * BATCH_SIZE, i + 1)
         actions = action_cls(
@@ -455,9 +456,9 @@ def test_graph_env():
                 batch_size=BATCH_SIZE,
             )
         )
-        states = env.backward_step(states, actions)
-        states = env.States(states)
+        states = env._backward_step(states, actions)
 
+    # We can't remove edges that don't exist.
     with pytest.raises(NonValidActionsError):
         actions = action_cls(
             TensorDict(
@@ -471,8 +472,9 @@ def test_graph_env():
                 batch_size=BATCH_SIZE,
             )
         )
-        states = env.backward_step(states, actions)
+        states = env._backward_step(states, actions)
 
+    # Remove nodes.
     for i in reversed(range(1, NUM_NODES + 1)):
         edge_idx = torch.arange(BATCH_SIZE) * i
         actions = action_cls(
@@ -484,19 +486,45 @@ def test_graph_env():
                 batch_size=BATCH_SIZE,
             )
         )
-        states = env.backward_step(states, actions)
-        states = env.States(states)
+        states = env._backward_step(states, actions)
 
     assert states.tensor.x.shape == (0, FEATURE_DIM)
 
+    # Add one random node again
+    features = torch.rand((BATCH_SIZE, FEATURE_DIM))
+    actions = action_cls(
+        TensorDict(
+            {
+                "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
+                "features": features,
+            },
+            batch_size=BATCH_SIZE,
+        )
+    )
+    states = env._step(states, actions)
+
+    # We can't remove nodes that don't exist.
     with pytest.raises(NonValidActionsError):
         actions = action_cls(
             TensorDict(
                 {
                     "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
+                    "features": features + 1e-5,
                 },
                 batch_size=BATCH_SIZE,
             )
         )
-        states = env.backward_step(states, actions)
+        states = env._backward_step(states, actions)
+
+    # Remove the node.
+    actions = action_cls(
+        TensorDict(
+            {
+                "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
+                "features": features,
+            },
+            batch_size=BATCH_SIZE,
+        )
+    )
+    states = env._backward_step(states, actions)
+    assert states.tensor.x.shape == (0, FEATURE_DIM)
