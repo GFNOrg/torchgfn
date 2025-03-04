@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 from typing import Any
 
 import torch
@@ -77,7 +77,7 @@ class GFNModule(ABC, nn.Module):
         nn.Module.__init__(self)
         self.module = module
         if preprocessor is None:
-            assert hasattr(module, "input_dim"), (
+            assert hasattr(module, "input_dim") and isinstance(module.input_dim, int), (
                 "Module needs to have an attribute `input_dim` specifying the input "
                 + "dimension, in order to use the default IdentityPreprocessor."
             )
@@ -99,6 +99,20 @@ class GFNModule(ABC, nn.Module):
 
     def __repr__(self):
         return f"{self.__class__.__name__} module"
+
+    @property
+    @abstractmethod
+    def expected_output_dim(self) -> int:
+        """Expected output dimension of the module."""
+
+    def check_output_dim(self, module_output: torch.Tensor) -> None:
+        """Check that the output of the module has the correct shape. Raises an error if not."""
+        assert module_output.dtype == torch.float
+        if module_output.shape[-1] != self.expected_output_dim:
+            raise ValueError(
+                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim}"
+                + f" but is {module_output.shape[-1]}."
+            )
 
     def to_probability_distribution(
         self,
@@ -176,6 +190,10 @@ class ScalarEstimator(GFNModule):
         )
         self.reduction_fxn = REDUCTION_FXNS[reduction]
 
+    @property
+    def expected_output_dim(self) -> int:
+        return 1
+
     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
         """Forward pass of the module.
 
@@ -228,21 +246,13 @@ class DiscretePolicyEstimator(GFNModule):
         """
         super().__init__(module, preprocessor, is_backward=is_backward)
         self.n_actions = n_actions
-        self.expected_output_dim = self.n_actions - int(self.is_backward)
 
-    def forward(self, states: DiscreteStates) -> torch.Tensor:
-        """Forward pass of the module.
-
-        Args:
-            states: The input states.
-
-        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
-        """
-        out = super().forward(states)
-        assert (
-            out.shape[-1] == self.expected_output_dim
-        ), f"Expected output dim: {self.expected_output_dim}, got: {out.shape[-1]}"
-        return out
+    @property
+    def expected_output_dim(self) -> int:
+        if self.is_backward:
+            return self.n_actions - 1
+        else:
+            return self.n_actions
 
     def to_probability_distribution(
         self,
@@ -322,9 +332,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         self.conditioning_module = conditioning_module
         self.final_module = final_module
 
-    def _forward_trunk(
-        self, states: States, conditioning: torch.Tensor
-    ) -> torch.Tensor:
+    def _forward_trunk(self, states: States, conditioning: torch.Tensor) -> torch.Tensor:
         """Forward pass of the trunk of the module.
 
         Args:
@@ -435,6 +443,10 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
 
         assert out.shape[-1] == 1
         return out
+
+    @property
+    def expected_output_dim(self) -> int:
+        return 1
 
     def to_probability_distribution(
         self,

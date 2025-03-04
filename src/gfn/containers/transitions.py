@@ -105,9 +105,8 @@ class Transitions(Container):
         )
         self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
         assert (
-            self.log_probs.shape == (self.n_transitions,)
-            and self.log_probs.dtype == torch.float
-        )
+            self.log_probs.shape == (self.n_transitions,) or len(self.log_probs) == 0
+        ) and self.log_probs.dtype == torch.float
 
     @property
     def n_transitions(self) -> int:
@@ -202,7 +201,9 @@ class Transitions(Container):
         )
         return log_rewards
 
-    def __getitem__(self, index: int | Sequence[int]) -> Transitions:
+    def __getitem__(
+        self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
+    ) -> Transitions:
         """Access particular transitions of the batch."""
         if isinstance(index, int):
             index = [index]
@@ -210,9 +211,7 @@ class Transitions(Container):
         actions = self.actions[index]
         is_done = self.is_done[index]
         next_states = self.next_states[index]
-        log_rewards = (
-            self._log_rewards[index] if self._log_rewards is not None else None
-        )
+        log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
 
         # Only return logprobs if they exist.
         log_probs = self.log_probs[index] if has_log_probs(self) else None
@@ -237,9 +236,7 @@ class Transitions(Container):
 
         # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
-            self._log_rewards = torch.cat(
-                (self._log_rewards, other._log_rewards), dim=0
-            )
+            self._log_rewards = torch.cat((self._log_rewards, other._log_rewards), dim=0)
         # Will not be None if object is initialized as empty.
         else:
             self._log_rewards = None

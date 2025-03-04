@@ -50,9 +50,7 @@ class States(ABC):
 
     state_shape: ClassVar[tuple[int, ...]]  # Shape of one state
     s0: ClassVar[torch.Tensor | TensorDict]  # Source state of the DAG
-    sf: ClassVar[
-        torch.Tensor | TensorDict
-    ]  # Dummy state, used to pad a batch of states
+    sf: ClassVar[torch.Tensor | TensorDict]  # Dummy state, used to pad a batch of states
     make_random_states_tensor: Callable = lambda x: (_ for _ in ()).throw(
         NotImplementedError(
             "The environment does not support initialization of random states."
@@ -157,8 +155,6 @@ class States(ABC):
         out = self.__class__(
             self.tensor[index]
         )  # TODO: Inefficient - this might make a copy of the tensor!
-        if self._log_rewards is not None:
-            out.log_rewards = self._log_rewards[index]
         return out
 
     def __setitem__(
@@ -199,11 +195,6 @@ class States(ABC):
             # This corresponds to adding a state to a trajectory
             self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
-            if self._log_rewards is not None:
-                assert other._log_rewards is not None
-                self._log_rewards = torch.cat(
-                    (self._log_rewards, other._log_rewards), dim=0
-                )
 
         elif len(other_batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
@@ -414,9 +405,6 @@ class DiscreteStates(States, ABC):
         forward_masks = self.forward_masks[index]
         backward_masks = self.backward_masks[index]
         out = self.__class__(states, forward_masks, backward_masks)
-        if self._log_rewards is not None:
-            log_rewards = self._log_rewards[index]
-            out.log_rewards = log_rewards
         return out
 
     def __setitem__(
@@ -503,14 +491,13 @@ class DiscreteStates(States, ABC):
             batch_idx: A Boolean index along the batch dimension, along which to
                 enforce exits.
         """
-        # TODO: do not ignore the next three ignores
         self.forward_masks[batch_idx, :] = torch.cat(
             [
-                torch.zeros((torch.sum(batch_idx),) + self.s0.shape),  # pyright: ignore
-                torch.ones((torch.sum(batch_idx),) + (1,)),  # pyright: ignore
+                torch.zeros([int(torch.sum(batch_idx).item()), *self.s0.shape]),
+                torch.ones([int(torch.sum(batch_idx).item()), 1]),
             ],
             dim=-1,
-        ).bool()  # pyright: ignore
+        ).bool()
 
     def init_forward_masks(self, set_ones: bool = True):
         """Initalizes forward masks.
@@ -687,8 +674,7 @@ class GraphStates(States):
                 edge_mask = (
                     self.tensor["edge_index"][:, 0] >= self.tensor["node_index"][start]
                 ) & (
-                    self.tensor["edge_index"][:, 0]
-                    <= self.tensor["node_index"][end - 1]
+                    self.tensor["edge_index"][:, 0] <= self.tensor["node_index"][end - 1]
                 )
                 edge_features.append(self.tensor["edge_feature"][edge_mask])
                 edge_indices.append(self.tensor["edge_index"][edge_mask])
@@ -709,9 +695,7 @@ class GraphStates(States):
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards[idx]
 
-        assert out.tensor["node_index"].unique().numel() == len(
-            out.tensor["node_index"]
-        )
+        assert out.tensor["node_index"].unique().numel() == len(out.tensor["node_index"])
 
         return out
 
@@ -836,8 +820,12 @@ class GraphStates(States):
     def extend(self, other: GraphStates):
         """Concatenates to another GraphStates object along the batch dimension"""
         # find if there are common node indices
-        other_node_index = other.tensor["node_index"].clone()  # Clone to avoid modifying original
-        other_edge_index = other.tensor["edge_index"].clone()  # Clone to avoid modifying original
+        other_node_index = other.tensor[
+            "node_index"
+        ].clone()  # Clone to avoid modifying original
+        other_edge_index = other.tensor[
+            "edge_index"
+        ].clone()  # Clone to avoid modifying original
 
         # Always generate new indices for the other state to ensure uniqueness
         new_indices = GraphStates.unique_node_indices(len(other_node_index))
@@ -903,24 +891,30 @@ class GraphStates(States):
                 else:
                     self_i = self[i].tensor
                 if i >= other.tensor["batch_shape"][0]:
-                    other_i = other.make_sink_states_tensor(other.tensor["batch_shape"][1:])
+                    other_i = other.make_sink_states_tensor(
+                        other.tensor["batch_shape"][1:]
+                    )
                 else:
                     other_i = other[i].tensor
 
                 # Generate new unique indices for both self_i and other_i
-                new_self_indices = GraphStates.unique_node_indices(len(self_i["node_index"]))
-                new_other_indices = GraphStates.unique_node_indices(len(other_i["node_index"]))
+                new_self_indices = GraphStates.unique_node_indices(
+                    len(self_i["node_index"])
+                )
+                new_other_indices = GraphStates.unique_node_indices(
+                    len(other_i["node_index"])
+                )
 
                 # Update self_i edge indices
                 self_edge_index = self_i["edge_index"].clone()
                 for old_idx, new_idx in zip(self_i["node_index"], new_self_indices):
-                    mask = (self_edge_index == old_idx)
+                    mask = self_edge_index == old_idx
                     self_edge_index[mask] = new_idx
 
                 # Update other_i edge indices
                 other_edge_index = other_i["edge_index"].clone()
                 for old_idx, new_idx in zip(other_i["node_index"], new_other_indices):
-                    mask = (other_edge_index == old_idx)
+                    mask = other_edge_index == old_idx
                     other_edge_index[mask] = new_idx
 
                 node_features.append(self_i["node_feature"])
@@ -949,7 +943,10 @@ class GraphStates(States):
         assert self.tensor["node_index"].unique().numel() == len(
             self.tensor["node_index"]
         )
-        assert torch.prod(torch.tensor(self.tensor["batch_shape"])) == len(self.tensor["batch_ptr"]) - 1
+        assert (
+            torch.prod(torch.tensor(self.tensor["batch_shape"]))
+            == len(self.tensor["batch_ptr"]) - 1
+        )
 
     @property
     def log_rewards(self) -> torch.Tensor | None:

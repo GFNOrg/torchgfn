@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, cast
 
 import torch
 from tensordict import TensorDict
@@ -77,7 +77,7 @@ class Env(ABC):
         self.preprocessor = preprocessor
         self.is_discrete = False
 
-    def states_from_tensor(self, tensor: torch.Tensor):
+    def states_from_tensor(self, tensor: torch.Tensor) -> States:
         """Wraps the supplied Tensor in a States instance.
 
         Args:
@@ -90,7 +90,7 @@ class Env(ABC):
 
     def states_from_batch_shape(
         self, batch_shape: Tuple, random: bool = False, sink: bool = False
-    ):
+    ) -> States:
         """Returns a batch of s0 states with a given batch_shape.
 
         Args:
@@ -103,7 +103,7 @@ class Env(ABC):
         """
         return self.States.from_batch_shape(batch_shape, random=random, sink=sink)
 
-    def actions_from_tensor(self, tensor: torch.Tensor):
+    def actions_from_tensor(self, tensor: torch.Tensor) -> Actions:
         """Wraps the supplied Tensor an an Actions instance.
 
         Args:
@@ -114,7 +114,7 @@ class Env(ABC):
         """
         return self.Actions(tensor)
 
-    def actions_from_batch_shape(self, batch_shape: Tuple):
+    def actions_from_batch_shape(self, batch_shape: Tuple) -> Actions:
         """Returns a batch of dummy actions with the supplied batch_shape.
 
         Args:
@@ -206,10 +206,10 @@ class Env(ABC):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int]]] = None,
+        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
         random: bool = False,
         sink: bool = False,
-        seed: int = None,  # pyright: ignore
+        seed: Optional[int] = None,
     ) -> States:
         """
         Instantiates a batch of initial states. random and sink cannot be both True.
@@ -310,9 +310,6 @@ class Env(ABC):
         new_not_done_states_tensor = self.backward_step(valid_states, valid_actions)
         new_states[valid_states_idx] = self.States(new_not_done_states_tensor)
 
-        if isinstance(new_states, DiscreteStates):
-            self.update_masks(new_states)  # pyright: ignore
-
         return new_states
 
     def reward(self, final_states: States) -> torch.Tensor:
@@ -372,8 +369,8 @@ class DiscreteEnv(Env, ABC):
         s0: torch.Tensor,
         state_shape: Tuple,
         action_shape: Tuple = (1,),
-        dummy_action: Optional[torch.Tensor] = None,  # pyright: ignore
-        exit_action: Optional[torch.Tensor] = None,  # pyright: ignore
+        dummy_action: Optional[torch.Tensor] = None,
+        exit_action: Optional[torch.Tensor] = None,
         sf: Optional[torch.Tensor] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
@@ -395,11 +392,11 @@ class DiscreteEnv(Env, ABC):
 
         # The default dummy action is -1.
         if dummy_action is None:
-            dummy_action: torch.Tensor = torch.tensor([-1], device=device)
+            dummy_action = torch.tensor([-1], device=device)
 
         # The default exit action index is the final element of the action space.
         if exit_action is None:
-            exit_action: torch.Tensor = torch.tensor([n_actions - 1], device=device)
+            exit_action = torch.tensor([n_actions - 1], device=device)
 
         assert s0.shape == state_shape
         assert dummy_action.shape == action_shape
@@ -419,7 +416,7 @@ class DiscreteEnv(Env, ABC):
 
         self.is_discrete = True  # After init, else it will be overwritten.
 
-    def states_from_tensor(self, tensor: torch.Tensor):
+    def states_from_tensor(self, tensor: torch.Tensor) -> DiscreteStates:
         """Wraps the supplied Tensor in a States instance & updates masks.
 
         Args:
@@ -432,14 +429,22 @@ class DiscreteEnv(Env, ABC):
         self.update_masks(states_instance)
         return states_instance
 
+    def states_from_batch_shape(
+        self, batch_shape: Tuple, random: bool = False, sink: bool = False
+    ) -> DiscreteStates:
+        """Returns a batch of s0 states with a given batch_shape."""
+        out = super().states_from_batch_shape(batch_shape, random, sink)
+        assert isinstance(out, DiscreteStates)
+        return out
+
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int]]] = None,
+        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
         random: bool = False,
         sink: bool = False,
-        seed: int = None,  # pyright: ignore
-    ) -> States:
+        seed: Optional[int] = None,
+    ) -> DiscreteStates:
         """Instantiates a batch of initial states.
 
         `random` and `sink` cannot be both True. When `random` is `True` and `seed` is
@@ -458,12 +463,13 @@ class DiscreteEnv(Env, ABC):
         states = self.states_from_batch_shape(
             batch_shape=batch_shape, random=random, sink=sink
         )
+        states = cast(DiscreteStates, states)
         self.update_masks(states)
 
         return states
 
     @abstractmethod
-    def update_masks(self, states: States) -> None:
+    def update_masks(self, states: DiscreteStates) -> None:
         """Updates the masks in States.
 
         Called automatically after each step for discrete environments.
@@ -493,35 +499,48 @@ class DiscreteEnv(Env, ABC):
         return DiscreteEnvActions
 
     def is_action_valid(
-        self, states: States, actions: Actions, backward: bool = False
+        self, states: DiscreteStates, actions: Actions, backward: bool = False
     ) -> bool:
-        assert (
-            states.forward_masks is not None  # pyright: ignore
-            and states.backward_masks is not None  # pyright: ignore
-        )
-        masks_tensor = (
-            states.backward_masks  # pyright: ignore
-            if backward
-            else states.forward_masks  # pyright: ignore
-        )
-        return torch.gather(masks_tensor, 1, actions.tensor).all()  # pyright: ignore
+        assert states.forward_masks is not None and states.backward_masks is not None
+        masks_tensor = states.backward_masks if backward else states.forward_masks
+        return bool(torch.gather(masks_tensor, 1, actions.tensor).all().item())
 
-    def _step(self, states: DiscreteStates, actions: Actions) -> States:
+    def _step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Calls the core self._step method of the parent class, and updates masks."""
         new_states = super()._step(states, actions)
-        self.update_masks(
-            new_states
-        )  # TODO: update_masks is owned by the env, not the states!!
+        new_states = cast(DiscreteStates, new_states)
+        self.update_masks(new_states)
+        return new_states
+
+    def _backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
+        """Calls the core self._backward_step method of the parent class, and updates masks."""
+        new_states = super()._backward_step(states, actions)
+        new_states = cast(DiscreteStates, new_states)
+        self.update_masks(new_states)
         return new_states
 
     def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Returns the indices of the states in the environment."""
+        """Returns the indices of the states in the environment.
+
+        Args:
+            states: The batch of states.
+
+        Returns:
+            torch.Tensor: Tensor of shape "batch_shape" containing the indices of the states.
+        """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Returns the indices of the terminating states in the environment."""
+        """Returns the indices of the terminating states in the environment.
+
+        Args:
+            states: The batch of states.
+
+        Returns:
+            torch.Tensor: Tensor of shape "batch_shape" containing the indices of the terminating states.
+        """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )

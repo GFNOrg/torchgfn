@@ -185,7 +185,13 @@ pre-commit run --all-files
 ```
 
 Run `pre-commit` after staging, and before committing. Make sure all the tests pass (By running `pytest`). Note that the `pytest` hook of `pre-commit` only runs the tests in the `testing/` folder. To run all the tests, which take longer, run `pytest` manually.
-The codebase uses `black` formatter.
+
+The codebase uses:
+- `black` formatter for code style
+- `flake8` for linting
+- `pyright` for static type checking
+
+The pre-commit hooks ensure code quality and type safety across the project. The pyright configuration includes all project directories including tutorials/examples and testing.
 
 To make the docs locally:
 
@@ -226,16 +232,22 @@ Additionally, each subclass needs to define two more class variable tensors:
 
 ### Containers
 
-Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Two containers are available:
+Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Three containers are available:
 
 - [Transitions](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/transitions.py), representing a batch of transitions $s \rightarrow s'$.
 - [Trajectories](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
+- [StatePairs](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/state_pairs.py), representing pairs of states with optional conditioning, particularly useful for flow matching algorithms.
 
 These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of the [ReplayBuffer](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/replay_buffer.py) class.
 
 They inherit from the base `Container` [class](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/base.py), indicating some helpful methods.
 
-In most cases, one needs to sample complete trajectories. From a batch of trajectories, a batch of states and batch of transitions can be defined using `Trajectories.to_transitions()` and `Trajectories.to_states()`, in order to train GFlowNets with losses that are edge-decomposable or state-decomposable.  These exclude meaningless transitions and dummy states that were added to the batch of trajectories to allow for efficient batching.
+In most cases, one needs to sample complete trajectories. From a batch of trajectories, various training samples can be generated:
+- Use `Trajectories.to_transitions()` and `Trajectories.to_states()` for edge-decomposable or state-decomposable losses
+- Use `Trajectories.to_state_pairs()` for flow matching losses
+- Use `GFlowNet.loss_from_trajectories()` as a convenience method that handles the conversion internally
+
+These methods exclude meaningless transitions and dummy states that were added to the batch of trajectories to allow for efficient batching.
 
 ### Modules
 
@@ -291,49 +303,29 @@ class MyGFlowNet(GFlowNet[Trajectories]):
 
 **Example: Flow Matching GFlowNet**
 
-Let's consider the example of the `FMGFlowNet` class, which is a subclass of `GFlowNet` that implements the Flow Matching GFlowNet. The training samples are tuples of discrete states, so the class references the type `Tuple[DiscreteStates, DiscreteStates]` when subclassing `GFlowNet`:
+Let's consider the example of the `FMGFlowNet` class, which is a subclass of `GFlowNet` that implements the Flow Matching GFlowNet. The training samples are pairs of states managed by the `StatePairs` container:
 
 ```python
-class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
+class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
     ...
 
     def to_training_samples(
         self, trajectories: Trajectories
-    ) -> tuple[DiscreteStates, DiscreteStates]:
+    ) -> StatePairs[DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        return trajectories.to_non_initial_intermediary_and_terminating_states()
+        return trajectories.to_state_pairs()
+```
 
+This means that the `loss` method of `FMGFlowNet` will receive a `StatePairs[DiscreteStates]` object as its training samples argument:
+
+```python
+def loss(self, env: DiscreteEnv, states: StatePairs[DiscreteStates]) -> torch.Tensor:
+    ...
 ```
 
 **Adding New Training Sample Types**
 
 If your GFlowNet returns a unique type of training samples, you'll need to expand the `TrainingSampleType` bound. This ensures type-safety and better code clarity.
-
-In the earlier example, the `FMGFlowNet` used:
-
-```python
-GFlowNet[Tuple[DiscreteStates, DiscreteStates]]
-```
-
-This means the method `to_training_samples` should return a tuple of `DiscreteStates`.
-
-If the `to_training_sample` method of your new GFlowNet, for example, returns an `int`, you should expand the `TrainingSampleType` in `src/gfn/gflownet/base.py` to include this type in the `bound` of the `TypeVar`:
-
-Before:
-
-```python
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
-)
-```
-
-After:
-
-```python
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...], int]
-)
-```
 
 **Implementing Class Methods**
 

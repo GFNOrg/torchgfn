@@ -20,32 +20,29 @@ repos:
     rev: 5.13.2
     hooks:
       - id: isort
-        files: \\.py$
-        args: [--settings-path=pyproject.toml]
   - repo: https://github.com/python/black
     rev: 24.10.0
     hooks:
       - id: black
-        language_version: python3
   - repo: https://github.com/PyCQA/flake8
-    rev: 7.1.1
+    rev: 7.1.1 
     hooks:
       - id: flake8
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.392.post0
+    rev: v1.1.394  # REPLACE WITH YOUR SYSTEM PYRIGHT VERSION!!!
     hooks:
       - id: pyright
-        name: pyright
-        entry: pyright
-        args:
-          - --project=pyproject.toml
+        language: system  # Use the system's shell and Python
+        entry: pyright  # Simply call 'pyright'
+        pass_filenames: false
+        always_run: true
   - repo: local
     hooks:
       - id: pytest-check
         name: pytest-check
         entry: pytest
         args: [testing/]
-        language: python
+        language: system
         pass_filenames: false
         types: [python]
         always_run: true
