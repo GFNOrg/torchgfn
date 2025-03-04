@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence, Tuple, Union
-
-if TYPE_CHECKING:
-    from gfn.actions import Actions
-    from gfn.env import Env
-    from gfn.states import States
+from typing import Sequence
 
 import torch
 
+from gfn.actions import Actions
 from gfn.containers.base import Container
+from gfn.containers.state_pairs import StatePairs
 from gfn.containers.transitions import Transitions
+from gfn.env import Env
+from gfn.states import DiscreteStates, States
 from gfn.utils.common import has_log_probs
 
 
@@ -123,11 +122,20 @@ class Trajectories(Container):
         states = self.states.tensor.transpose(0, 1)
         assert states.ndim == 3
         trajectories_representation = ""
+        assert isinstance(
+            self.env.s0, torch.Tensor
+        ), "not supported for Graph trajectories."
+        assert isinstance(
+            self.env.sf, torch.Tensor
+        ), "not supported for Graph trajectories."
+
         for traj in states[:10]:
             one_traj_repr = []
             for step in traj:
                 one_traj_repr.append(str(step.cpu().numpy()))
-                if step.equal(self.env.s0 if self.is_backward else self.env.sf):
+                if self.is_backward and step.equal(self.env.s0):
+                    break
+                elif not self.is_backward and step.equal(self.env.sf):
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
@@ -168,7 +176,9 @@ class Trajectories(Container):
         except NotImplementedError:
             return torch.log(self.env.reward(self.last_states))
 
-    def __getitem__(self, index: int | Sequence[int]) -> Trajectories:
+    def __getitem__(
+        self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
+    ) -> Trajectories:
         """Returns a subset of the `n_trajectories` trajectories."""
         if isinstance(index, int):
             index = [index]
@@ -183,9 +193,7 @@ class Trajectories(Container):
             log_probs = log_probs[:new_max_length]
         else:
             log_probs = self.log_probs
-        log_rewards = (
-            self._log_rewards[index] if self._log_rewards is not None else None
-        )
+        log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
         if self.estimator_outputs is not None:
             # TODO: Is there a safer way to index self.estimator_outputs for
             #       for n-dimensional estimator outputs?
@@ -365,7 +373,7 @@ class Trajectories(Container):
                 dtype=torch.float,
                 device=actions.device,
             )
-            # Can we vectorize this?
+            # TODO: Can we vectorize this?
             log_rewards[is_done] = torch.cat(
                 [
                     self._log_rewards[self.when_is_done == i]
@@ -374,11 +382,11 @@ class Trajectories(Container):
                 dim=0,
             )
 
-        # FIXME: Transitions requires log_probs for initialization (see line 107 in transitions.py).
-        # Shouldn't we make sure that log_probs are always available?
-        log_probs = (
-            self.log_probs[~self.actions.is_dummy] if has_log_probs(self) else None
-        )
+        # Initialize log_probs None if not available
+        if has_log_probs(self):
+            log_probs = self.log_probs[~self.actions.is_dummy]
+        else:
+            log_probs = None
 
         return Transitions(
             env=self.env,
@@ -397,21 +405,15 @@ class Trajectories(Container):
         states = self.states.flatten()
         return states[~states.is_sink_state]
 
-    def to_non_initial_intermediary_and_terminating_states(
-        self,
-    ) -> Union[
-        Tuple[States, States, torch.Tensor, torch.Tensor],
-        Tuple[States, States, None, None],
-    ]:
-        """Returns all intermediate and terminating `States` from the trajectories.
+    def to_state_pairs(self) -> StatePairs[DiscreteStates]:
+        """Converts a batch of trajectories into a batch of training samples.
 
-        This is useful for the flow matching loss, that requires its inputs to be distinguished.
-
-        Returns: a tuple containing all the intermediary states in the trajectories
-            that are not s0, and all the terminating states in the trajectories that
-            are not s0.
+        Returns:
+            StatePairs: A StatePairs object containing intermediary and terminating states.
         """
-        states = self.states
+        states = self.to_states()
+        if not isinstance(states, DiscreteStates):
+            raise TypeError("to_state_pairs only works with DiscreteStates")
 
         if self.conditioning is not None:
             traj_len = self.states.batch_shape[0]
@@ -426,12 +428,22 @@ class Trajectories(Container):
 
         intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]
         terminating_states = self.last_states
-        terminating_states.log_rewards = self.log_rewards
-        return (
-            intermediary_states,
-            terminating_states,
-            intermediary_conditioning,
-            conditioning,
+
+        # Ensure both states are DiscreteStates
+        if not isinstance(intermediary_states, DiscreteStates) or not isinstance(
+            terminating_states, DiscreteStates
+        ):
+            raise TypeError(
+                "Both intermediary and terminating states must be DiscreteStates"
+            )
+
+        return StatePairs[DiscreteStates](
+            env=self.env,
+            intermediary_states=intermediary_states,
+            terminating_states=terminating_states,
+            intermediary_conditioning=intermediary_conditioning,
+            terminating_conditioning=conditioning,
+            log_rewards=self.log_rewards,
         )
 
     def reverse_backward_trajectories(self, debug: bool = False) -> Trajectories:
@@ -449,20 +461,16 @@ class Trajectories(Container):
 
         # Compute sequence lengths and maximum length
         seq_lengths = self.when_is_done  # shape (n_trajectories,)
-        max_len = seq_lengths.max().item()
+        max_len = int(seq_lengths.max().item())
 
         # Get actions and states
         actions = self.actions.tensor  # shape (max_len, n_trajectories *action_dim)
         states = self.states.tensor  # shape (max_len + 1, n_trajectories, *state_dim)
 
         # Initialize new actions and states
-        new_actions = self.env.dummy_action.repeat(
-            max_len + 1, len(self), 1  # pyright: ignore
-        ).to(actions)
+        new_actions = self.env.dummy_action.repeat(max_len + 1, len(self), 1).to(actions)
         # shape (max_len + 1, n_trajectories, *action_dim)
-        new_states = self.env.sf.repeat(
-            max_len + 2, len(self), 1  # pyright: ignore
-        ).to(states)
+        new_states = self.env.sf.repeat(max_len + 2, len(self), 1).to(states)
         # shape (max_len + 2, n_trajectories, *state_dim)
 
         # Create helper indices and masks
@@ -488,6 +496,10 @@ class Trajectories(Container):
         new_actions[torch.arange(len(self)), seq_lengths] = self.env.exit_action
 
         # Assign reversed states to new_states
+        assert isinstance(states[:, -1], torch.Tensor)
+        assert isinstance(
+            self.env.s0, torch.Tensor
+        ), "reverse_backward_trajectories not supported for Graph trajectories"
         assert torch.all(states[:, -1] == self.env.s0), "Last state must be s0"
         new_states[:, 0] = self.env.s0
         new_states[:, 1:-1][mask] = states[:, :-1][mask][rev_idx[mask]]
@@ -518,14 +530,10 @@ class Trajectories(Container):
         # If `debug` is True (expected only when testing), compare the
         # vectorized approach's results (above) to the for-loop results (below).
         if debug:
-            _new_actions = self.env.dummy_action.repeat(
-                max_len + 1, len(self), 1  # pyright: ignore
-            ).to(
+            _new_actions = self.env.dummy_action.repeat(max_len + 1, len(self), 1).to(
                 actions
             )  # shape (max_len + 1, n_trajectories, *action_dim)
-            _new_states = self.env.sf.repeat(
-                max_len + 2, len(self), 1  # pyright: ignore
-            ).to(
+            _new_states = self.env.sf.repeat(max_len + 2, len(self), 1).to(
                 states
             )  # shape (max_len + 2, n_trajectories, *state_dim)
 
@@ -546,7 +554,7 @@ class Trajectories(Container):
 
 
 def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:
-    """Pads tensor a to match the dimention of b."""
+    """Pads tensor a to match the dimension of b."""
     assert a.shape[0] < target_dim0, "a is already larger than target_dim0!"
     pad_dim = target_dim0 - a.shape[0]
     pad_dim_full = (pad_dim,) + tuple(a.shape[1:])

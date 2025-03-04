@@ -1,4 +1,13 @@
-from gfn.gym.box import Box  # noqa: F401
-from gfn.gym.discrete_ebm import DiscreteEBM  # noqa: F401
-from gfn.gym.graph_building import GraphBuilding  # noqa: F401
-from gfn.gym.hypergrid import HyperGrid  # noqa: F401
+from .box import Box
+from .discrete_ebm import DiscreteEBM
+from .graph_building import GraphBuilding
+from .hypergrid import HyperGrid
+from .line import Line
+
+__all__ = [
+    "Box",
+    "DiscreteEBM",
+    "HyperGrid",
+    "Line",
+    "GraphBuilding",
+]

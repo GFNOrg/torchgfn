@@ -408,7 +408,7 @@ class QuarterCircleWithExit(Distribution):
             centers.device
         )
 
-    def sample(self, sample_shape=()) -> torch.Tensor:
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         """Samples from the distribution.
 
         Args:
@@ -491,7 +491,7 @@ class DistributionWrapper(Distribution):
                 epsilon=epsilon,
             )  # no sample_shape req as it is stored in centers.
 
-    def sample(self, sample_shape=()):
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         output = torch.zeros(sample_shape + self._output_shape).to(
             self.idx_is_initial.device
         )
@@ -500,7 +500,7 @@ class DistributionWrapper(Distribution):
         if n_disk_samples > 0:
             assert self.quarter_disk is not None
             sample_disk = self.quarter_disk.sample(
-                sample_shape=sample_shape + (n_disk_samples,)
+                sample_shape=torch.Size(sample_shape + (n_disk_samples,))
             )
             output[self.idx_is_initial] = sample_disk
         if len(self.idx_not_initial) > 0:
@@ -514,9 +514,7 @@ class DistributionWrapper(Distribution):
         return output
 
     def log_prob(self, sampled_actions):
-        log_prob = torch.zeros(sampled_actions.shape[:-1]).to(
-            self.idx_is_initial.device
-        )
+        log_prob = torch.zeros(sampled_actions.shape[:-1]).to(self.idx_is_initial.device)
         n_disk_samples = len(self.idx_is_initial)
         if n_disk_samples > 0:
             assert self.quarter_disk is not None
@@ -631,8 +629,7 @@ class BoxPFMLP(MLP):
         # 2nd, for the states s, t>0, we use the network outputs
         # Remember, out is of shape [B, 1 + 3 * n_components]
         indices_to_override2 = (
-            torch.arange(3 * self._n_comp_max).fmod(self._n_comp_max)
-            < self.n_components
+            torch.arange(3 * self._n_comp_max).fmod(self._n_comp_max) < self.n_components
         )
         indices_to_override2 = torch.cat(
             (
@@ -827,6 +824,7 @@ class BoxPFEstimator(GFNModule):
         self.delta = env.delta
         self.epsilon = env.epsilon
 
+    @property
     def expected_output_dim(self) -> int:
         return 1 + 5 * self._n_comp_max
 
@@ -914,6 +912,7 @@ class BoxPBEstimator(GFNModule):
 
         self.delta = env.delta
 
+    @property
     def expected_output_dim(self) -> int:
         return 3 * self.n_components
 

@@ -37,6 +37,7 @@ class MLP(nn.Module):
         self._output_dim = output_dim
 
         if trunk is None:
+            assert hidden_dim is not None, "hidden_dim must be provided"
             assert (
                 n_hidden_layers is not None and n_hidden_layers >= 0
             ), "n_hidden_layers must be >= 0"
@@ -61,12 +62,15 @@ class MLP(nn.Module):
                     arch.append(nn.LayerNorm(hidden_dim))
                 arch.append(activation())
             self.trunk = nn.Sequential(*arch)
-            self.trunk.hidden_dim = hidden_dim  # pyright: ignore
+            self.trunk.hidden_dim = torch.tensor(hidden_dim)
+            self._hidden_dim = hidden_dim
         else:
             self.trunk = trunk
-        self.last_layer = nn.Linear(
-            self.trunk.hidden_dim, output_dim
-        )  # pyright: ignore
+            assert hasattr(trunk, "hidden_dim") and isinstance(
+                trunk.hidden_dim, torch.Tensor
+            ), "trunk must have a hidden_dim attribute"
+            self._hidden_dim = int(trunk.hidden_dim.item())
+        self.last_layer = nn.Linear(self._hidden_dim, output_dim)
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the neural network.
@@ -87,6 +91,14 @@ class MLP(nn.Module):
     @property
     def output_dim(self):
         return self._output_dim
+
+    @input_dim.setter
+    def input_dim(self, value: int):
+        self._input_dim = value
+
+    @output_dim.setter
+    def output_dim(self, value: int):
+        self._output_dim = value
 
 
 class Tabular(nn.Module):

@@ -52,7 +52,7 @@ def sample_from_reward(env: Box, n_samples: int):
         rand_n = torch.rand(n_samples).to(env.device)
         mask = rand_n * (env.R0 + max(env.R1, env.R2)) < rewards
         true_samples = sample[mask]
-        samples.extend(true_samples[-(n_samples - len(samples)):].tensor.cpu().numpy())
+        samples.extend(true_samples[-(n_samples - len(samples)) :].tensor.cpu().numpy())
     return np.array(samples)
 
 
@@ -199,6 +199,7 @@ def main(args):  # noqa: C901
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
     if not args.uniform_pb:
+        assert isinstance(pb_module.last_layer, torch.nn.Module)
         optimizer.add_param_group(
             {
                 "params": (
@@ -250,11 +251,8 @@ def main(args):  # noqa: C901
             env, save_logprobs=True, n=args.batch_size, **local_search_params
         )
 
-        training_samples = gflownet.to_training_samples(trajectories)
-
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)  # pyright: ignore
-
+        loss = gflownet.loss_from_trajectories(env, trajectories)
         loss.backward()
         for p in gflownet.parameters():
             if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.

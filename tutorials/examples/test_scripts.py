@@ -33,6 +33,9 @@ class CommonArgs:
     validation_interval: int = 100
     validation_samples: int = 200000
     wandb_project: str = ""
+    replay_buffer_prioritized: bool = False
+    cutoff_distance: float = 0.1
+    p_norm_distance: float = 2.0
 
 
 @dataclass
@@ -48,6 +51,8 @@ class HypergridArgs(CommonArgs):
     R0: float = 0.1
     R1: float = 0.5
     R2: float = 2.0
+    loss: str = "TB"
+    replay_buffer_size: int = 0
 
 
 @dataclass
@@ -77,6 +82,22 @@ def test_hypergrid(ndim: int, height: int):
         assert np.isclose(final_l1_dist, 1.6e-4, atol=1e-3)
     elif ndim == 4 and height == 16:
         assert np.isclose(final_l1_dist, 6.89e-6, atol=1e-5)
+
+
+@pytest.mark.parametrize("loss", ["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"])
+@pytest.mark.parametrize("replay_buffer_size", [0, 10, 100])
+def test_hypergrid_losses_and_replay_buffer(loss: str, replay_buffer_size: int):
+    n_trajectories = 1000
+    args = HypergridArgs(
+        ndim=2,
+        height=8,
+        n_trajectories=n_trajectories,
+        loss=loss,
+        replay_buffer_size=replay_buffer_size,
+    )
+    final_l1_dist = train_hypergrid_main(args)
+    if loss == "TB" and replay_buffer_size == 0:
+        assert final_l1_dist > 0  # This is a sanity check that the script is running
 
 
 @pytest.mark.parametrize("ndim", [2, 4])

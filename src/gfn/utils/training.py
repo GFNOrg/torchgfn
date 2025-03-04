@@ -9,10 +9,12 @@ from gfn.env import DiscreteEnv, Env
 from gfn.gflownet import GFlowNet, TBGFlowNet
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
-from gfn.states import States
+from gfn.states import DiscreteStates
 
 
-def get_terminating_state_dist_pmf(env: Env, states: States) -> torch.Tensor:
+def get_terminating_state_dist_pmf(
+    env: DiscreteEnv, states: DiscreteStates
+) -> torch.Tensor:
     """Computes the empirical distribution of the terminating states.
 
     Args:
@@ -21,26 +23,21 @@ def get_terminating_state_dist_pmf(env: Env, states: States) -> torch.Tensor:
 
     Returns the empirical distribution of the terminating states as a tensor of shape (n_terminating_states,).
     """
-    states_indices = (
-        env.get_terminating_states_indices(states)  # pyright: ignore
-        .cpu()
-        .numpy()
-        .tolist()
-    )
-    counter = Counter(states_indices)
+    states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
+    counter = Counter(str(idx) for idx in states_indices)
     counter_list = [
-        counter[state_idx] if state_idx in counter else 0
-        for state_idx in range(env.n_terminating_states)  # pyright: ignore
+        counter[str(state_idx)] if str(state_idx) in counter else 0
+        for state_idx in range(env.n_terminating_states)
     ]
 
     return torch.tensor(counter_list, dtype=torch.float) / len(states_indices)
 
 
 def validate(
-    env: Env,
+    env: DiscreteEnv,
     gflownet: GFlowNet,
     n_validation_samples: int = 1000,
-    visited_terminating_states: Optional[States] = None,
+    visited_terminating_states: Optional[DiscreteStates] = None,
 ) -> Dict[str, float]:
     """Evaluates the current gflownet on the given environment.
 
@@ -71,11 +68,13 @@ def validate(
 
     logZ = None
     if isinstance(gflownet, TBGFlowNet):
-        logZ = gflownet.logZ.item()  # pyright: ignore
+        assert isinstance(gflownet.logZ, torch.Tensor)
+        logZ = gflownet.logZ.item()
     if visited_terminating_states is None:
         terminating_states = gflownet.sample_terminating_states(
-            n_validation_samples
-        )  # pyright: ignore
+            env, n_validation_samples
+        )
+        assert isinstance(terminating_states, DiscreteStates)
     else:
         terminating_states = visited_terminating_states[-n_validation_samples:]
 
@@ -125,9 +124,7 @@ def states_actions_tns_to_traj(
         )
 
     states = [env.states_from_tensor(s.unsqueeze(0)) for s in states_tns]
-    actions = [
-        env.actions_from_tensor(a.unsqueeze(0).unsqueeze(0)) for a in actions_tns
-    ]
+    actions = [env.actions_from_tensor(a.unsqueeze(0).unsqueeze(0)) for a in actions_tns]
 
     # stack is a class method, so actions[0] is just to access a class instance and is not particularly relevant
     actions = actions[0].stack(actions)
@@ -183,8 +180,8 @@ def warm_up(
             loss = gflownet.loss(
                 env,
                 training_trajs,
-                recalculate_all_logprobs=recalculate_all_logprobs,  # pyright: ignore
-            )  # pyright: ignore
+                recalculate_all_logprobs=recalculate_all_logprobs,
+            )
         else:
             loss = gflownet.loss(env, training_trajs)
 

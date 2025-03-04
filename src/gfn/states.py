@@ -3,12 +3,13 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, List, Optional, Sequence, Tuple
+from typing import Callable, ClassVar, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
-from torch_geometric.data import Data as GeometricData
 from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.data import Data as GeometricData
+from torch_geometric.data.data import BaseData
 
 from gfn.actions import GraphActionType
 
@@ -50,8 +51,8 @@ class States(ABC):
     """
 
     state_shape: ClassVar[tuple[int, ...]]
-    s0: ClassVar[torch.Tensor]
-    sf: ClassVar[torch.Tensor]
+    s0: ClassVar[torch.Tensor | GeometricData]
+    sf: ClassVar[torch.Tensor | GeometricData]
 
     make_random_states_tensor: Callable = lambda x: (_ for _ in ()).throw(
         NotImplementedError(
@@ -160,8 +161,6 @@ class States(ABC):
         out = self.__class__(
             self.tensor[index]
         )  # TODO: Inefficient - this might make a copy of the tensor!
-        if self._log_rewards is not None:
-            out.log_rewards = self._log_rewards[index]
         return out
 
     def __setitem__(
@@ -202,11 +201,6 @@ class States(ABC):
             # This corresponds to adding a state to a trajectory
             self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
-            if self._log_rewards is not None:
-                assert other._log_rewards is not None
-                self._log_rewards = torch.cat(
-                    (self._log_rewards, other._log_rewards), dim=0
-                )
 
         elif len(other_batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
@@ -417,9 +411,6 @@ class DiscreteStates(States, ABC):
         forward_masks = self.forward_masks[index]
         backward_masks = self.backward_masks[index]
         out = self.__class__(states, forward_masks, backward_masks)
-        if self._log_rewards is not None:
-            log_rewards = self._log_rewards[index]
-            out.log_rewards = log_rewards
         return out
 
     def __setitem__(
@@ -506,14 +497,13 @@ class DiscreteStates(States, ABC):
             batch_idx: A Boolean index along the batch dimension, along which to
                 enforce exits.
         """
-        # TODO: do not ignore the next three ignores
         self.forward_masks[batch_idx, :] = torch.cat(
             [
-                torch.zeros((torch.sum(batch_idx),) + self.s0.shape),  # pyright: ignore
-                torch.ones((torch.sum(batch_idx),) + (1,)),  # pyright: ignore
+                torch.zeros([int(torch.sum(batch_idx).item()), *self.s0.shape]),
+                torch.ones([int(torch.sum(batch_idx).item()), 1]),
             ],
             dim=-1,
-        ).bool()  # pyright: ignore
+        ).bool()
 
     def init_forward_masks(self, set_ones: bool = True):
         """Initalizes forward masks.
@@ -576,6 +566,9 @@ class GraphStates(States):
         Returns:
             A PyG Batch object containing copies of the initial state.
         """
+        assert cls.s0.edge_attr is not None
+        assert cls.s0.x is not None
+
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = int(np.prod(batch_shape))
 
@@ -592,7 +585,7 @@ class GraphStates(States):
             ]
 
         # Create a batch from the list
-        batch = GeometricBatch.from_data_list(data_list)
+        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
 
         # Store the batch shape for later reference
         batch.batch_shape = tuple(batch_shape)
@@ -609,6 +602,8 @@ class GraphStates(States):
         Returns:
             A PyG Batch object containing copies of the sink state.
         """
+        assert cls.sf.edge_attr is not None
+        assert cls.sf.x is not None
         if cls.sf is None:
             raise NotImplementedError("Sink state is not defined")
 
@@ -627,7 +622,7 @@ class GraphStates(States):
             ]
 
         # Create a batch from the list
-        batch = GeometricBatch.from_data_list(data_list)
+        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
 
         # Store the batch shape for later reference
         batch.batch_shape = batch_shape
@@ -644,6 +639,9 @@ class GraphStates(States):
         Returns:
             A PyG Batch object containing random graph states.
         """
+        assert cls.s0.edge_attr is not None
+        assert cls.s0.x is not None
+
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = int(np.prod(batch_shape))
         device = cls.s0.x.device
@@ -692,7 +690,7 @@ class GraphStates(States):
             ]
 
         # Create a batch from the list
-        batch = GeometricBatch.from_data_list(data_list)
+        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
 
         # Store the batch shape for later reference
         batch.batch_shape = batch_shape
@@ -742,7 +740,7 @@ class GraphStates(States):
             ]
 
         # Create a new batch from the selected graphs
-        new_batch = GeometricBatch.from_data_list(selected_graphs)
+        new_batch = GeometricBatch.from_data_list(cast(List[BaseData], selected_graphs))
         new_batch.batch_shape = new_shape
 
         # Create a new GraphStates object
@@ -860,9 +858,7 @@ class GraphStates(States):
         if len(self.batch_shape) == 1:
             # Create a new batch
             new_batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
-            self.tensor = GeometricBatch.from_data_list(
-                self_data_list + other_data_list
-            )
+            self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
             self.tensor.batch_shape = new_batch_shape
         else:
             # Handle the case where batch_shape is (T, B)
@@ -885,16 +881,12 @@ class GraphStates(States):
 
             # Now both have the same length T, we can concatenate along B
             batch_shape = (max_len, self.batch_shape[1] + other.batch_shape[1])
-            self.tensor = GeometricBatch.from_data_list(
-                self_data_list + other_data_list
-            )
+            self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
             self.tensor.batch_shape = batch_shape
 
         # Combine log rewards if they exist
         if self._log_rewards is not None and other._log_rewards is not None:
-            self._log_rewards = torch.cat(
-                [self._log_rewards, other._log_rewards], dim=0
-            )
+            self._log_rewards = torch.cat([self._log_rewards, other._log_rewards], dim=0)
         elif other._log_rewards is not None:
             self._log_rewards = other._log_rewards.clone()
 
@@ -926,6 +918,10 @@ class GraphStates(States):
 
         # Get the data list from the batch
         data_list = self.tensor.to_data_list()
+
+        assert other.edge_index is not None  # TODO: is allowing None here a good idea?
+        assert other.edge_attr is not None  #
+        assert other.num_nodes is not None  #
 
         for i, data in enumerate(data_list):
             # Check if the number of nodes is the same
@@ -1007,9 +1003,10 @@ class GraphStates(States):
 
         # Stack log rewards if they exist
         if all(state._log_rewards is not None for state in states):
-            out._log_rewards = torch.stack(
-                [state._log_rewards for state in states], dim=0
-            )
+            log_rewards = []
+            for state in states:
+                log_rewards.append(state._log_rewards)
+            out._log_rewards = torch.stack(log_rewards)
 
         return out
 
@@ -1046,6 +1043,7 @@ class GraphStates(States):
             action_type_mask[flat_idx, GraphActionType.ADD_NODE] = True
 
             # ADD_EDGE is allowed only if there are at least 2 nodes
+            assert data.num_nodes is not None
             action_type_mask[flat_idx, GraphActionType.ADD_EDGE] = data.num_nodes > 1
 
             # EXIT is always allowed
@@ -1056,7 +1054,7 @@ class GraphStates(States):
         for i, data in enumerate(data_list):
             # For each graph, create a dense mask for potential edges
             n = data.num_nodes
-
+            assert n is not None
             edge_mask = torch.ones((n, n), dtype=torch.bool, device=self.device)
             # Remove self-loops by setting diagonal to False
             edge_mask.fill_diagonal_(False)
@@ -1107,6 +1105,8 @@ class GraphStates(States):
 
         # For each graph in the batch
         for i, data in enumerate(data_list):
+            assert data.num_nodes is not None
+
             # Flatten the batch index
             flat_idx = i
 
@@ -1126,6 +1126,7 @@ class GraphStates(States):
         for i, data in enumerate(data_list):
             # For backward actions, we can only remove existing edges
             n = data.num_nodes
+            assert n is not None
             edge_mask = torch.zeros((n, n), dtype=torch.bool, device=self.device)
 
             # Include only existing edges

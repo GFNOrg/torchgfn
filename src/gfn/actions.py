@@ -3,7 +3,7 @@ from __future__ import annotations  # This allows to use the class name in type 
 import enum
 from abc import ABC
 from math import prod
-from typing import ClassVar, Sequence
+from typing import ClassVar, List, Sequence
 
 import torch
 from tensordict import TensorDict
@@ -73,13 +73,15 @@ class Actions(ABC):
         return self.__class__(actions)
 
     def __setitem__(
-        self, index: int | Sequence[int] | Sequence[bool], actions: Actions
+        self,
+        index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor,
+        actions: Actions,
     ) -> None:
         """Set particular actions of the batch."""
         self.tensor[index] = actions.tensor
 
     @classmethod
-    def stack(cls, actions_list: list[Actions]) -> Actions:
+    def stack(cls, actions_list: List[Actions]) -> Actions:
         """Stacks a list of Actions objects into a single Actions object.
 
         The individual actions need to have the same batch shape. An example application
@@ -88,9 +90,7 @@ class Actions(ABC):
         and the resulting Actions object would have batch_shape (n_steps,
         n_trajectories).
         """
-        actions_tensor = torch.stack(
-            [actions.tensor for actions in actions_list], dim=0
-        )
+        actions_tensor = torch.stack([actions.tensor for actions in actions_list], dim=0)
         return cls(actions_tensor)
 
     def extend(self, other: Actions) -> None:
@@ -246,12 +246,16 @@ class GraphActions(Actions):
         """Returns the number of actions in the batch."""
         return int(prod(self.batch_shape))
 
-    def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> GraphActions:
+    def __getitem__(
+        self, index: int | List[int] | List[bool] | slice | torch.Tensor
+    ) -> GraphActions:
         """Get particular actions of the batch."""
         return GraphActions(self.tensor[index])
 
     def __setitem__(
-        self, index: int | Sequence[int] | Sequence[bool], action: GraphActions
+        self,
+        index: int | List[int] | List[bool] | slice | torch.Tensor,
+        action: GraphActions,
     ) -> None:
         """Set particular actions of the batch."""
         self.tensor[index] = action.tensor
@@ -264,15 +268,18 @@ class GraphActions(Actions):
 
         Returns: boolean tensor of shape batch_shape indicating whether the actions are equal.
         """
-        compare = torch.all(self.tensor == other.tensor, dim=-1)
-        return (
-            compare["action_type"]
-            & (compare["action_type"] == GraphActionType.EXIT | compare["features"])
-            & (
-                compare["action_type"]
-                != GraphActionType.ADD_EDGE | compare["edge_index"]
-            )
+        action_compare = torch.all(
+            self.tensor["action_type"] == other.tensor["action_type"]
         )
+        exit_compare = (
+            torch.all(self.tensor["features"] == other.tensor["features"])
+            | action_compare
+            == GraphActionType.EXIT
+        )
+        edge_compare = (action_compare != GraphActionType.ADD_EDGE) | (
+            torch.all(self.tensor["edge_index"] == other.tensor["edge_index"])
+        )
+        return action_compare & exit_compare & edge_compare
 
     @property
     def is_exit(self) -> torch.Tensor:

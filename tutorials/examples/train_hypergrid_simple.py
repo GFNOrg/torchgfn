@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+from typing import cast
 
 import torch
 from tqdm import tqdm
@@ -8,6 +9,7 @@ from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import Sampler
+from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP
 from gfn.utils.training import validate
@@ -47,9 +49,7 @@ def main(args):
     # Policy parameters have their own LR. Log Z gets dedicated learning rate
     # (typically higher).
     optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=args.lr)
-    optimizer.add_param_group(
-        {"params": gflownet.logz_parameters(), "lr": args.lr_logz}
-    )
+    optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": args.lr_logz})
 
     validation_info = {"l1_dist": float("inf")}
     visited_terminating_states = env.states_from_batch_shape((0,))
@@ -61,7 +61,7 @@ def main(args):
             save_estimator_outputs=False,
             epsilon=args.epsilon,
         )
-        visited_terminating_states.extend(trajectories.last_states)  # pyright: ignore
+        visited_terminating_states.extend(cast(DiscreteStates, trajectories.last_states))
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories)

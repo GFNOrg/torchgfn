@@ -14,24 +14,23 @@ import math
 import time
 from typing import Optional
 
-from matplotlib import patches
 import matplotlib.pyplot as plt
 import torch
+from matplotlib import patches
 from tensordict import TensorDict
 from torch import nn
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
-from torch_geometric.nn import GINConv, GCNConv, DirGNNConv
+from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 from gfn.actions import Actions, GraphActions, GraphActionType
+from gfn.containers import ReplayBuffer
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym import GraphBuilding
 from gfn.modules import DiscretePolicyEstimator
 from gfn.preprocessors import Preprocessor
 from gfn.states import GraphStates
 from gfn.utils.modules import MLP
-from gfn.containers import ReplayBuffer
-
 
 REW_VAL = 100.0
 EPS_VAL = 1e-6
@@ -146,8 +145,8 @@ def undirected_reward(states: GraphStates) -> torch.Tensor:
         while True:
             if current == start_vertex:
                 break
-            visited.append(current)  # pyright: ignore
-            current_neighbors = torch.where(adj_matrix[current] == 1)[0]  # pyright: ignore
+            visited.append(int(current))
+            current_neighbors = torch.where(adj_matrix[int(current)] == 1)[0]
             # Exclude the neighbor we just came from.
             current_neighbors_list = [n.item() for n in current_neighbors]
             possible = [n for n in current_neighbors_list if n != prev]
@@ -251,9 +250,7 @@ class RingPolicyModule(nn.Module):
 
         self.norm = nn.LayerNorm(self.hidden_dim)
 
-    def _group_mean(
-        self, tensor: torch.Tensor, batch_ptr: torch.Tensor
-    ) -> torch.Tensor:
+    def _group_mean(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
         cumsum = torch.zeros(
             (len(tensor) + 1, *tensor.shape[1:]),
             dtype=tensor.dtype,
@@ -301,9 +298,7 @@ class RingPolicyModule(nn.Module):
             edgewise_dot_prod = torch.einsum(
                 "bnf,bmf->bnm", source_features, target_features
             )
-            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
-                torch.tensor(feature_dim)
-            )
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(feature_dim))
 
             i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
             i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)
@@ -323,9 +318,7 @@ class RingPolicyModule(nn.Module):
             out_size = (self.n_nodes**2 - self.n_nodes) // 2
 
         # Grab the needed elems from the adjacency matrix and reshape.
-        edge_actions = edgewise_dot_prod[
-            torch.arange(batch_size)[:, None, None], i0, i1
-        ]
+        edge_actions = edgewise_dot_prod[torch.arange(batch_size)[:, None, None], i0, i1]
         edge_actions = edge_actions.reshape(*states_tensor["batch_shape"], out_size)
 
         if self.is_backward:
@@ -919,7 +912,6 @@ if __name__ == "__main__":
 
     replay_buffer = ReplayBuffer(
         env,
-        objects_type="trajectories",
         capacity=BATCH_SIZE,
         prioritized=True,
     )
@@ -948,10 +940,10 @@ if __name__ == "__main__":
             with torch.no_grad():
                 replay_buffer.add(training_samples)
                 if iteration > 20:
-                    training_samples = training_samples[: BATCH_SIZE // 2]  # pyright: ignore
-                    buffer_samples = replay_buffer.sample(
-                        n_trajectories=BATCH_SIZE // 2
-                    )
+                    training_samples = training_samples[
+                        : BATCH_SIZE // 2
+                    ]  # pyright: ignore
+                    buffer_samples = replay_buffer.sample(n_trajectories=BATCH_SIZE // 2)
                     training_samples.extend(buffer_samples)  # pyright: ignore
 
         optimizer.zero_grad()

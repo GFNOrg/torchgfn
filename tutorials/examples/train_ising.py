@@ -87,9 +87,9 @@ def main(args):
             save_estimator_outputs=False,
             save_logprobs=False,
         )
-        training_samples = gflownet.to_training_samples(trajectories)  # pyright: ignore
+        training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)  # pyright: ignore
+        loss = gflownet.loss(env, training_samples)
         loss.backward()
         optimizer.step()
 

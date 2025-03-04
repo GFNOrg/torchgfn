@@ -55,7 +55,7 @@ def render(env, validation_samples=None):
     for i, mu in enumerate(env.mus):
         idx = abs(x - mu.numpy()) == min(abs(x - mu.numpy()))
         ax1.plot([x[idx]], [d[idx]], "bo")
-        ax1.text(x[idx] + 0.1, d[idx], "Mode {}".format(i + 1), rotation=0)  # pyright: ignore
+        ax1.text(x[idx] + 0.1, d[idx].item(), "Mode {}".format(i + 1), rotation=0)
 
     ax1.spines[["right", "top"]].set_visible(False)
     ax1.set_ylabel("Reward Value")
@@ -72,7 +72,7 @@ class ScaledGaussianWithOptionalExit(Distribution):
 
     def __init__(
         self,
-        states: torch.Tensor,  # Tensor with shape (n_states, 2) with [x position, step counter] for each state.
+        states: States,  # States of which the tensor has shape (n_states, 2) with [x position, step counter] for each state.
         mus: torch.Tensor,  # Tensor with shape (n_states, 1) with mean of Gaussian distribution for each state.
         scales: torch.Tensor,  # Tensor with shape (n_states, 1) with scale of Gaussian distribution for each state.
         backward: bool,
@@ -134,8 +134,8 @@ class GaussianStepMLP(MLP):
         assert policy_std_min < policy_std_max
         self.policy_std_min = policy_std_min
         self.policy_std_max = policy_std_max
-        self.input_dim = 2  # [x_pos, counter].  # pyright: ignore
-        self.output_dim = 2  # [mus, scales].  # pyright: ignore
+        self.input_dim = 2  # [x_pos, counter].
+        self.output_dim = 2  # [mus, scales].
 
         super().__init__(
             input_dim=self.input_dim,
@@ -174,6 +174,7 @@ class StepEstimator(GFNModule):
         self.backward = backward
         self.n_steps_per_trajectory = env.n_steps_per_trajectory
 
+    @property
     def expected_output_dim(self) -> int:
         return 2  # [locs, scales].
 

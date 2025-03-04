@@ -1,21 +1,20 @@
 import math
+import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Tuple, TypeVar, Union
+from typing import Any, Generic, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
 
-from gfn.containers import Trajectories
-from gfn.containers.base import Container
+from gfn.containers import Container, Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
+from gfn.utils.common import has_log_probs
 from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
 
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
-)
+TrainingSampleType = TypeVar("TrainingSampleType", bound=Container)
 
 
 class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
@@ -74,6 +73,35 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
     def loss(self, env: Env, training_objects: Any) -> torch.Tensor:
         """Computes the loss given the training objects."""
 
+    def loss_from_trajectories(
+        self, env: Env, trajectories: Trajectories
+    ) -> torch.Tensor:
+        """Helper method to compute loss directly from trajectories.
+
+        This method handles converting trajectories to the appropriate training samples
+        and computing the loss with the correct arguments based on the GFlowNet type.
+
+        Args:
+            env: The environment to compute the loss for
+            trajectories: The trajectories to compute the loss from
+
+        Returns:
+            torch.Tensor: The computed loss
+        """
+        training_samples = self.to_training_samples(trajectories)
+        if isinstance(self, PFBasedGFlowNet):
+            # Check if trajectories already have log_probs
+            if has_log_probs(trajectories):
+                warnings.warn(
+                    "Recalculating logprobs for trajectories that already have them. "
+                    "This may be inefficient for on-policy trajectories. "
+                    "If the training is done on-policy, you should call loss() directly with recalculate_all_logprobs=False instead of loss_from_trajectories()."
+                )
+
+            # We know this is safe because PFBasedGFlowNet's loss accepts these arguments
+            return self.loss(env, training_samples, recalculate_all_logprobs=True)
+        return self.loss(env, training_samples)
+
 
 class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     """A GFlowNet that uses forward (PF) and backward (PB) policy networks."""
@@ -114,7 +142,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     @abstractmethod
     def loss(
         self, env: Env, training_objects: Any, recalculate_all_logprobs: bool = False
-    ):
+    ) -> torch.Tensor:
         """Computes the loss given the training objects.
 
         Args:
@@ -198,6 +226,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
 
         assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
         assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
+        assert log_rewards is not None
         return (
             total_log_pf_trajectories,
             total_log_pb_trajectories,
