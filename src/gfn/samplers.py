@@ -147,7 +147,7 @@ class Sampler:
         if conditioning is not None:
             assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
 
-        device = states.tensor.device
+        device = states.device
 
         dones = (
             states.is_initial_state
@@ -207,11 +207,12 @@ class Sampler:
                 all_estimator_outputs.append(estimator_outputs_padded)
 
             actions[~dones] = valid_actions
-            trajectories_actions.append(actions)
             if save_logprobs:
                 # When off_policy, actions_log_probs are None.
                 log_probs[~dones] = actions_log_probs
-                trajectories_logprobs.append(log_probs)
+
+            trajectories_actions.append(actions)
+            trajectories_logprobs.append(log_probs)
 
             if self.estimator.is_backward:
                 new_states = env._backward_step(states, actions)
@@ -219,7 +220,7 @@ class Sampler:
                 new_states = env._step(states, actions)
             sink_states_mask = new_states.is_sink_state
 
-            # Increment the step, determine which trajectories are finisihed, and eval
+            # Increment the step, determine which trajectories are finished, and eval
             # rewards.
             step += 1
 
@@ -242,37 +243,24 @@ class Sampler:
                 )
             states = new_states
             dones = dones | new_dones
-
             trajectories_states.append(deepcopy(states))
-        # TODO: do not ignore the next three ignores
-        trajectories_states = states.stack_states(
-            trajectories_states
-        )  # pyright: ignore
-        trajectories_actions = env.Actions.stack(trajectories_actions)[
-            1:  # Drop dummy action
-        ]  # pyright: ignore
-        trajectories_logprobs = (
-            torch.stack(trajectories_logprobs, dim=0)[1:]  # Drop dummy logprob
-            if save_logprobs
-            else None
-        )  # pyright: ignore
 
-        # TODO: use torch.nested.nested_tensor(dtype, device, requires_grad).
-        if save_estimator_outputs:
-            all_estimator_outputs = torch.stack(all_estimator_outputs, dim=0)
-        # TODO: do not ignore the next ignores
         trajectories = Trajectories(
             env=env,
-            states=trajectories_states,  # pyright: ignore
+            states=env.States.stack(trajectories_states),
             conditioning=conditioning,
-            actions=trajectories_actions,  # pyright: ignore
+            actions=env.Actions.stack(trajectories_actions[1:]),
             when_is_done=trajectories_dones,
             is_backward=self.estimator.is_backward,
             log_rewards=trajectories_log_rewards,
-            log_probs=trajectories_logprobs,  # pyright: ignore
+            log_probs=(
+                torch.stack(trajectories_logprobs, dim=0)[1:] if save_logprobs else None
+            ),
             estimator_outputs=(
-                all_estimator_outputs if save_estimator_outputs else None
-            ),  # pyright: ignore
+                torch.stack(all_estimator_outputs, dim=0)
+                if save_estimator_outputs
+                else None
+            ),
         )
 
         return trajectories

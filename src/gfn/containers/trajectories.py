@@ -104,7 +104,7 @@ class Trajectories(Container):
             assert (
                 log_probs.shape == (self.max_length, self.n_trajectories)
                 and log_probs.dtype == torch.float
-            )
+            ), f"log_probs.shape={log_probs.shape}, self.max_length={self.max_length}, self.n_trajectories={self.n_trajectories}"
         else:
             log_probs = torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
         self.log_probs: torch.Tensor = log_probs
@@ -256,7 +256,7 @@ class Trajectories(Container):
 
         # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
-        self.states.extend(other.states)
+        self.states.extend(other.states)  # n_trajectories comes from this.
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
 
         # For log_probs, we first need to make the first dimensions of self.log_probs

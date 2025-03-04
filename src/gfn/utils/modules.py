@@ -17,6 +17,7 @@ class MLP(nn.Module):
         n_hidden_layers: Optional[int] = 2,
         activation_fn: Optional[Literal["relu", "tanh", "elu"]] = "relu",
         trunk: Optional[nn.Module] = None,
+        add_layer_norm: bool = False,
     ):
         """Instantiates a MLP instance.
 
@@ -28,6 +29,8 @@ class MLP(nn.Module):
             activation_fn: Activation function.
             trunk: If provided, this module will be used as the trunk of the network
                 (i.e. all layers except last layer).
+            add_layer_norm: If True, add a LayerNorm after each linear layer.
+                (incompatible with `trunk` argument)
         """
         super().__init__()
         self._input_dim = input_dim
@@ -44,9 +47,18 @@ class MLP(nn.Module):
                 activation = nn.ReLU
             elif activation_fn == "tanh":
                 activation = nn.Tanh
-            arch = [nn.Linear(input_dim, hidden_dim), activation()]
+            if add_layer_norm:
+                arch = [
+                    nn.Linear(input_dim, hidden_dim),
+                    nn.LayerNorm(hidden_dim),
+                    activation(),
+                ]
+            else:
+                arch = [nn.Linear(input_dim, hidden_dim), activation()]
             for _ in range(n_hidden_layers - 1):
                 arch.append(nn.Linear(hidden_dim, hidden_dim))
+                if add_layer_norm:
+                    arch.append(nn.LayerNorm(hidden_dim))
                 arch.append(activation())
             self.trunk = nn.Sequential(*arch)
             self.trunk.hidden_dim = hidden_dim

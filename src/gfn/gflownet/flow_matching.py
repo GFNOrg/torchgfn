@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import torch
 
@@ -33,7 +33,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
         super().__init__()
 
-        assert isinstance(  # TODO: need a more flexible type check.
+        assert isinstance(
             logF,
             DiscretePolicyEstimator | ConditionalDiscretePolicyEstimator,
         ), "logF must be a DiscretePolicyEstimator or ConditionalDiscretePolicyEstimator"
@@ -157,7 +157,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         self,
         env: DiscreteEnv,
         terminating_states: DiscreteStates,
-        conditioning: torch.Tensor,
+        conditioning: Optional[torch.Tensor],
     ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
         del env  # Unused
@@ -173,6 +173,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
         terminating_log_edge_flows = log_edge_flows[:, -1]
         log_rewards = terminating_states.log_rewards
+
         return (terminating_log_edge_flows - log_rewards).pow(2).mean()
 
     def loss(

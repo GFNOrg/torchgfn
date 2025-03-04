@@ -25,7 +25,9 @@ classifiers = [
 einops = ">=0.6.1"
 numpy = ">=1.21.2"
 python = "^3.10"
-torch = ">=1.9.0"
+torch = ">=2.6.0"
+tensordict = ">=0.6.1"
+torch_geometric = ">=2.6.1"
 
 # dev dependencies.
 black = { version = "24.3", optional = true }
