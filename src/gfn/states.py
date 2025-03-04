@@ -84,7 +84,10 @@ class States(ABC):
 
     @classmethod
     def from_batch_shape(
-        cls, batch_shape: int | tuple[int, ...], random: bool = False, sink: bool = False
+        cls,
+        batch_shape: int | tuple[int, ...],
+        random: bool = False,
+        sink: bool = False,
     ) -> States | GraphStates:
         """Create a States object with the given batch shape.
 
