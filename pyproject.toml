@@ -2,9 +2,6 @@
 requires = ["poetry-core>=1.0.8"]
 build-backend = "poetry.core.masonry.api"
 
-[project]
-name = "torchgfn"
-
 [tool.poetry]
 name = "torchgfn"
 packages = [{include = "gfn", from = "src"}]
@@ -108,6 +105,7 @@ commands = pytest -s
 '''
 
 [tool.pyright]
+pythonVersion = "3.10"
 include = [
     "src/gfn/**",
 ]
@@ -120,13 +118,7 @@ exclude = [
 strict = [
 
 ]
-
-typeCheckingMode = "basic"
-pythonVersion = "3.10"
-typeshedPath = "typeshed"
-enableTypeIgnoreComments = true
-
-# This is required as the CI pre-commit does not download the module (i.e. numpy)
+# This is required as the CI pre-commit does not dl the module (i.e. numpy)
 # Therefore, we have to ignore missing imports
 reportMissingImports = "none"
 reportUnknownMemberType = "none"
