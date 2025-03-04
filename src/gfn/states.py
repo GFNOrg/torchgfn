@@ -28,8 +28,8 @@ class States(ABC):
     `DiscreteEnv`), then each `States` object is also endowed with a `forward_masks` and
     `backward_masks` boolean attributes representing which actions are allowed at each
     state. This makes it possible to instantly access the allowed actions at each state,
-    without having to call the environment's `validate_actions` method. Put different,
-    `validate_actions` for such environments, directly calls the masks. This is handled
+    without having to call the environment's `is_action_valid` method. Put different,
+    `is_action_valid` for such environments, directly calls the masks. This is handled
     in the DiscreteState subclass.
 
     A `batch_shape` attribute is also required, to keep track of the batch dimension.
@@ -344,7 +344,7 @@ class DiscreteStates(States, ABC):
 
     States are endowed with a `forward_masks` and `backward_masks`: boolean attributes
     representing which actions are allowed at each state. This is the mechanism by
-    which all elements of the library (including an environment's `validate_actions`
+    which all elements of the library (including an environment's `is_action_valid`
     method) verifies the allowed actions at each state.
 
     Attributes:

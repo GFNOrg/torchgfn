@@ -230,20 +230,7 @@ class Env(ABC):
             batch_shape=batch_shape, random=random, sink=sink
         )
 
-    def validate_actions(
-        self, states: States, actions: Actions, backward: bool = False
-    ) -> bool:
-        """First, asserts that states and actions have the same batch_shape.
-        Then, uses `is_action_valid`.
-        Returns a boolean indicating whether states/actions pairs are valid."""
-        assert states.batch_shape == actions.batch_shape
-        return self.is_action_valid(states, actions, backward)
-
-    def _step(
-        self,
-        states: States,
-        actions: Actions,
-    ) -> States:
+    def _step(self, states: States, actions: Actions,) -> States:
         """Core step function. Calls the user-defined self.step() function.
 
         Function that takes a batch of states and actions and returns a batch of next
@@ -257,7 +244,7 @@ class Env(ABC):
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
-        if not self.validate_actions(valid_states, valid_actions):
+        if not self.is_action_valid(valid_states, valid_actions):
             raise NonValidActionsError(
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
@@ -284,11 +271,7 @@ class Env(ABC):
         new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
         return new_states
 
-    def _backward_step(
-        self,
-        states: States,
-        actions: Actions,
-    ) -> States:
+    def _backward_step(self, states: States, actions: Actions) -> States:
         """Core backward_step function. Calls the user-defined self.backward_step fn.
 
         This function takes a batch of states and actions and returns a batch of next
@@ -302,7 +285,7 @@ class Env(ABC):
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
-        if not self.validate_actions(valid_states, valid_actions, backward=True):
+        if not self.is_action_valid(valid_states, valid_actions, backward=True):
             raise NonValidActionsError(
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
