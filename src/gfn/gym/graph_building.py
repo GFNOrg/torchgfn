@@ -1,8 +1,8 @@
 from typing import Callable, Literal, Tuple
 
 import torch
-from torch_geometric.data import Data as GeometricData
 from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import GraphEnv, NonValidActionsError
@@ -281,9 +281,7 @@ class GraphBuilding(GraphEnv):
 
             # Check feature dimension
             if new_nodes.shape[1] != graph.x.shape[1]:
-                raise ValueError(
-                    f"Node features must have dimension {graph.x.shape[1]}"
-                )
+                raise ValueError(f"Node features must have dimension {graph.x.shape[1]}")
 
             # Add new nodes to the graph
             graph.x = torch.cat([graph.x, new_nodes], dim=0)
