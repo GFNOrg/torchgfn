@@ -129,7 +129,7 @@ def states_actions_tns_to_traj(
     # stack is a class method, so actions[0] is just to access a class instance and is not particularly relevant
     actions = actions[0].stack(actions)
     log_rewards = env.log_reward(states[-2])
-    states = states[0].stack_states(states)
+    states = states[0].stack(states)
     when_is_done = torch.tensor([len(states_tns) - 1])
 
     log_probs = None
@@ -167,7 +167,8 @@ def warm_up(
         env: The environment instance
         n_epochs: Number of epochs for warmup
         batch_size: Number of trajectories to sample from replay buffer
-        recalculate_all_logprobs: For PFBasedGFlowNets only, force recalculating all log probs. Useful trajectories do not already have log probs.
+        recalculate_all_logprobs: For PFBasedGFlowNets only, force recalculating all log probs.
+            Useful trajectories do not already have log probs.
     Returns:
         GFlowNet: A trained GFlowNet
     """
@@ -184,7 +185,7 @@ def warm_up(
         else:
             loss = gflownet.loss(env, training_trajs)
 
-        loss.backward()
+        loss.backward()  # pyright: ignore
         optimizer.step()
         t.set_description(f"{epoch=}, {loss=}")
 

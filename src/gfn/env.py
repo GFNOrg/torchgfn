@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Union, cast
 
 import torch
-from tensordict import TensorDict
+from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import Actions, GraphActions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
@@ -23,12 +24,12 @@ class Env(ABC):
 
     def __init__(
         self,
-        s0: torch.Tensor | TensorDict,
+        s0: torch.Tensor | GeometricData,
         state_shape: Tuple,
         action_shape: Tuple,
         dummy_action: torch.Tensor,
         exit_action: torch.Tensor,
-        sf: Optional[torch.Tensor | TensorDict] = None,
+        sf: Optional[torch.Tensor | GeometricData] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -51,7 +52,7 @@ class Env(ABC):
         """
         self.device = get_device(device_str, default_device=s0.device)
 
-        self.s0 = s0.to(self.device)
+        self.s0 = s0.to(self.device)  # pyright: ignore
         assert s0.shape == state_shape
         if sf is None:
             sf = torch.full(s0.shape, -float("inf")).to(self.device)
@@ -229,20 +230,7 @@ class Env(ABC):
             batch_shape=batch_shape, random=random, sink=sink
         )
 
-    def validate_actions(
-        self, states: States, actions: Actions, backward: bool = False
-    ) -> bool:
-        """First, asserts that states and actions have the same batch_shape.
-        Then, uses `is_action_valid`.
-        Returns a boolean indicating whether states/actions pairs are valid."""
-        assert states.batch_shape == actions.batch_shape
-        return self.is_action_valid(states, actions, backward)
-
-    def _step(
-        self,
-        states: States,
-        actions: Actions,
-    ) -> States:
+    def _step(self, states: States, actions: Actions) -> States:
         """Core step function. Calls the user-defined self.step() function.
 
         Function that takes a batch of states and actions and returns a batch of next
@@ -256,7 +244,7 @@ class Env(ABC):
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
-        if not self.validate_actions(valid_states, valid_actions):
+        if not self.is_action_valid(valid_states, valid_actions):
             raise NonValidActionsError(
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
@@ -275,7 +263,7 @@ class Env(ABC):
 
         new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
 
-        if not isinstance(new_not_done_states_tensor, (torch.Tensor, TensorDict)):
+        if not isinstance(new_not_done_states_tensor, (torch.Tensor, GeometricBatch)):
             raise Exception(
                 "User implemented env.step function *must* return a torch.Tensor!"
             )
@@ -283,11 +271,7 @@ class Env(ABC):
         new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
         return new_states
 
-    def _backward_step(
-        self,
-        states: States,
-        actions: Actions,
-    ) -> States:
+    def _backward_step(self, states: States, actions: Actions) -> States:
         """Core backward_step function. Calls the user-defined self.backward_step fn.
 
         This function takes a batch of states and actions and returns a batch of next
@@ -301,7 +285,7 @@ class Env(ABC):
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
-        if not self.validate_actions(valid_states, valid_actions, backward=True):
+        if not self.is_action_valid(valid_states, valid_actions, backward=True):
             raise NonValidActionsError(
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
@@ -590,12 +574,12 @@ class DiscreteEnv(Env, ABC):
 class GraphEnv(Env):
     """Base class for graph-based environments."""
 
-    sf: TensorDict  # this tells the type checker that sf is a TensorDict
+    sf: GeometricData  # this tells the type checker that sf is a GeometricData
 
     def __init__(
         self,
-        s0: TensorDict,
-        sf: TensorDict,
+        s0: GeometricData,
+        sf: GeometricData,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -604,14 +588,16 @@ class GraphEnv(Env):
         Args:
             s0: The initial graph state.
             sf: The sink graph state.
-            device_str: 'cpu' or 'cuda'. Defaults to None, in which case the device is
-                inferred from s0.
+            device_str: String representation of the device.
             preprocessor: a Preprocessor object that converts raw graph states to a tensor
                 that can be fed into a neural network. Defaults to None, in which case
                 the IdentityPreprocessor is used.
         """
-        self.s0 = s0.to(device_str)
-        self.features_dim = s0["node_feature"].shape[-1]
+        device = get_device(device_str, default_device=s0.device)
+        assert s0.x is not None
+
+        self.s0 = s0.to(device)  # pyright: ignore
+        self.features_dim = s0.x.shape[-1]
         self.sf = sf
 
         self.States = self.make_states_class()

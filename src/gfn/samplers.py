@@ -246,7 +246,7 @@ class Sampler:
             trajectories_states.append(deepcopy(states))
 
         # Stack all states and actions
-        stacked_states = env.States.stack_states(trajectories_states)
+        stacked_states = env.States.stack(trajectories_states)
         stacked_actions = env.Actions.stack(trajectories_actions)[
             1:
         ]  # Drop dummy action

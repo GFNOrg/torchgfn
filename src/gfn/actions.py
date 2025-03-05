@@ -204,8 +204,9 @@ class GraphActions(Actions):
 
         Args:
             action: a GraphActionType indicating the type of action.
-            features: a tensor of shape (batch_shape, feature_shape) representing the features of the nodes or of the edges, depending on the action type.
-                In case of EXIT action, this can be None.
+            features: a tensor of shape (batch_shape, feature_shape) representing the features
+                of the nodes or of the edges, depending on the action type. In case of EXIT
+                action, this can be None.
             edge_index: an tensor of shape (batch_shape, 2) representing the edge to add.
                 This must defined if and only if the action type is GraphActionType.AddEdge.
         """
@@ -245,12 +246,16 @@ class GraphActions(Actions):
         """Returns the number of actions in the batch."""
         return int(prod(self.batch_shape))
 
-    def __getitem__(self, index: int | Sequence[int] | Sequence[bool]) -> GraphActions:
+    def __getitem__(
+        self, index: int | List[int] | List[bool] | slice | torch.Tensor
+    ) -> GraphActions:
         """Get particular actions of the batch."""
         return GraphActions(self.tensor[index])
 
     def __setitem__(
-        self, index: int | Sequence[int] | Sequence[bool], action: GraphActions
+        self,
+        index: int | List[int] | List[bool] | slice | torch.Tensor,
+        action: GraphActions,
     ) -> None:
         """Set particular actions of the batch."""
         self.tensor[index] = action.tensor
@@ -263,15 +268,18 @@ class GraphActions(Actions):
 
         Returns: boolean tensor of shape batch_shape indicating whether the actions are equal.
         """
-        compare = torch.all(self.tensor == other.tensor, dim=-1)
-        return (
-            compare["action_type"]
-            & (compare["action_type"] == GraphActionType.EXIT | compare["features"])
-            & (
-                compare["action_type"]
-                != GraphActionType.ADD_EDGE | compare["edge_index"]
-            )
+        action_compare = torch.all(
+            self.tensor["action_type"] == other.tensor["action_type"]
         )
+        exit_compare = (
+            torch.all(self.tensor["features"] == other.tensor["features"])
+            | action_compare
+            == GraphActionType.EXIT
+        )
+        edge_compare = (action_compare != GraphActionType.ADD_EDGE) | (
+            torch.all(self.tensor["edge_index"] == other.tensor["edge_index"])
+        )
+        return action_compare & exit_compare & edge_compare
 
     @property
     def is_exit(self) -> torch.Tensor:

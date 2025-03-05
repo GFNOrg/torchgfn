@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Literal
 
 import torch
 from torch.distributions import Categorical, Distribution
@@ -60,7 +60,7 @@ class CompositeDistribution(
     def sample(self, sample_shape=torch.Size()) -> Dict[str, torch.Tensor]:
         return {k: v.sample(sample_shape) for k, v in self.dists.items()}
 
-    def log_prob(self, sample: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def log_prob(self, sample: Dict[str, torch.Tensor]) -> torch.Tensor | Literal[0]:
         log_probs = [
             v.log_prob(sample[k]).reshape(sample[k].shape[0], -1).sum(dim=-1)
             for k, v in self.dists.items()
@@ -73,35 +73,30 @@ class CompositeDistribution(
 class CategoricalIndexes(Categorical):
     """Samples indexes from a categorical distribution."""
 
-    def __init__(self, probs: torch.Tensor, node_indexes: torch.Tensor):
+    def __init__(self, probs: torch.Tensor, n_nodes: int):
         """Initializes the distribution.
 
         Args:
             probs: The probabilities of the categorical distribution.
             n: The number of nodes in the graph.
         """
-        self.node_indexes = node_indexes
-        assert probs.shape == (
-            probs.shape[0],
-            node_indexes.shape[0] * node_indexes.shape[0],
-        )
+        assert probs.shape == (probs.shape[0], n_nodes * n_nodes)
+        self.n_nodes = n_nodes
         super().__init__(probs)
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         samples = super().sample(sample_shape)
         out = torch.stack(
             [
-                samples // self.node_indexes.shape[0],
-                samples % self.node_indexes.shape[0],
+                samples // self.n_nodes,
+                samples % self.n_nodes,
             ],
             dim=-1,
         )
-        out = self.node_indexes.index_select(0, out.flatten()).reshape(*out.shape)
         return out
 
     def log_prob(self, value):
-        value = value[..., 0] * self.node_indexes.shape[0] + value[..., 1]
-        value = torch.bucketize(value, self.node_indexes)
+        value = value[..., 0] * self.n_nodes + value[..., 1]
         return super().log_prob(value)
 
 

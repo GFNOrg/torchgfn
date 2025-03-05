@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Callable
 
 import torch
-from tensordict import TensorDict
+from torch_geometric.data import Batch as GeometricBatch
 
 from gfn.states import DiscreteStates, GraphStates, States
 
@@ -58,8 +58,8 @@ class EnumPreprocessor(Preprocessor):
         Each state is represented by a unique integer (>= 0) index.
 
         Args:
-            get_states_indices (Callable[[DiscreteStates], BatchOutputTensor]): function that returns the unique indices of the states.
-                BatchOutputTensor is a tensor of shape (*batch_shape, 1).
+            get_states_indices: function that returns the unique indices of the states.
+                torch.Tensor is a tensor of shape (*batch_shape, 1).
         """
         super().__init__(output_dim=1)
         self.get_states_indices = get_states_indices
@@ -79,5 +79,5 @@ class GraphPreprocessor(Preprocessor):
     def __init__(self) -> None:
         super().__init__(-1)  # TODO: review output_dim API
 
-    def preprocess(self, states: GraphStates) -> TensorDict:
+    def preprocess(self, states: GraphStates) -> GeometricBatch:
         return states.tensor

@@ -56,8 +56,8 @@ class Transitions(Container):
                 the children of the transitions.
             is_backward: Whether the transitions are backward transitions (i.e.
                 `next_states` is the parent of states).
-            log_rewards: Tensor of shape (n_transitions,) containing the log-rewards of the transitions (using a default value like
-                `-float('inf')` for non-terminating transitions).
+            log_rewards: Tensor of shape (n_transitions,) containing the log-rewards of the transitions (using a
+                default value like `-float('inf')` for non-terminating transitions).
             log_probs: Tensor of shape (n_transitions,) containing the log-probabilities of the actions.
 
         Raises:

@@ -441,7 +441,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         if out.shape[-1] != 1:
             out = self.reduction_fxn(out, -1)
 
-        assert out.shape[-1] == 1
+        assert out.shape[-1] == self.expected_output_dim
         return out
 
     @property
@@ -487,6 +487,9 @@ class GraphActionPolicyEstimator(GFNModule):
         if preprocessor is None:
             preprocessor = GraphPreprocessor()
         super().__init__(module, preprocessor, is_backward)
+
+    def expected_output_dim(self) -> int:
+        return 0
 
     def forward(self, states: GraphStates) -> TensorDict:
         """Forward pass of the module.
@@ -549,7 +552,7 @@ class GraphActionPolicyEstimator(GFNModule):
             ) * edge_index_probs + epsilon * uniform_dist_probs
             edge_index_probs[torch.isnan(edge_index_probs)] = 1
             dists["edge_index"] = CategoricalIndexes(
-                probs=edge_index_probs, node_indexes=states.tensor["node_index"]
+                probs=edge_index_probs, n_nodes=states.tensor.num_nodes
             )
 
         dists["features"] = Normal(module_output["features"], temperature)
