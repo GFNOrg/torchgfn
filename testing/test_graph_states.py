@@ -1,11 +1,10 @@
 import pytest
 import torch
-
-from torch_geometric.data import Data as GeometricData
 from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.data import Data as GeometricData
 
-from gfn.states import GraphStates
 from gfn.actions import GraphActionType
+from gfn.states import GraphStates
 
 
 class MyGraphStates(GraphStates):
