@@ -24,13 +24,22 @@ class MyGraphStates(GraphStates):
 
 
 @pytest.fixture
-def simple_graph_state():
+def datas():
+    """Creates a list of 10 GeometricData objects"""
+    return [
+        GeometricData(
+            x=torch.tensor([[i], [i + 0.5]]),
+            edge_index=torch.tensor([[0], [1]]),
+            edge_attr=torch.tensor([[i * 0.1]]),
+        )
+        for i in range(10)
+    ]
+
+
+@pytest.fixture
+def simple_graph_state(datas):
     """Creates a simple graph state with 2 nodes and 1 edge"""
-    data = GeometricData(
-        x=torch.tensor([[1.0], [2.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.5]]),
-    )
+    data = datas[0]
     batch = GeometricBatch.from_data_list([data])
     batch.batch_shape = (1,)
     return MyGraphStates(batch)
@@ -65,7 +74,7 @@ def test_extend_empty_state(empty_graph_state, simple_graph_state):
     assert torch.equal(empty_graph_state.tensor.batch, simple_graph_state.tensor.batch)
 
 
-def test_extend_1d_batch(simple_graph_state):
+def test_extend_1d(simple_graph_state):
     """Test extending two 1D batch states"""
     other_state = simple_graph_state.clone()
 
@@ -94,100 +103,52 @@ def test_extend_1d_batch(simple_graph_state):
     )
 
 
-def test_extend_2d_batch():
+def test_extend_2d(datas):
     """Test extending two 2D batch states"""
-    # Create first state (T=2, B=1)
-    data1 = GeometricData(
-        x=torch.tensor([[1.0], [2.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.5]]),
-    )
-    data2 = GeometricData(
-        x=torch.tensor([[3.0], [4.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.6]]),
-    )
-    batch1 = GeometricBatch.from_data_list([data1, data2])
-    batch1.batch_shape = (2, 1)
+    batch1 = GeometricBatch.from_data_list(datas[:4])
+    batch1.batch_shape = (2, 2)
     state1 = MyGraphStates(batch1)
 
-    # Create second state (T=3, B=1)
-    data3 = GeometricData(
-        x=torch.tensor([[5.0], [6.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.7]]),
-    )
-    data4 = GeometricData(
-        x=torch.tensor([[7.0], [8.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.8]]),
-    )
-    data5 = GeometricData(
-        x=torch.tensor([[9.0], [10.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.9]]),
-    )
-    batch2 = GeometricBatch.from_data_list([data3, data4, data5])
-    batch2.batch_shape = (3, 1)
+    batch2 = GeometricBatch.from_data_list(datas[4:])
+    batch2.batch_shape = (3, 2)
     state2 = MyGraphStates(batch2)
 
     # Extend state1 with state2
     state1.extend(state2)
 
-    # Check final shape should be (max_len=3, B=2)
-    assert state1.tensor.batch_shape == (3, 2)
+    # Check final shape should be (max_len=3, B=4)
+    assert state1.tensor.batch_shape == (3, 4)
 
     # Check that we have the correct number of nodes and edges
     # Each graph has 2 nodes and 1 edge
     # For 3 time steps and 2 batches, we should have:
-    expected_nodes = 3 * 2 * 2  # T * nodes_per_graph * B
-    expected_edges = 3 * 1 * 2  # T * edges_per_graph * B
+    expected_nodes = 3 * 2 * 4  # T * nodes_per_graph * B
+    expected_edges = 3 * 1 * 4  # T * edges_per_graph * B
 
     # The actual count might be higher due to padding with sink states
     assert state1.tensor.num_nodes >= expected_nodes
     assert state1.tensor.num_edges >= expected_edges
 
 
-def test_getitem():
+def test_getitem(datas):
     """Test indexing into GraphStates"""
     # Create a batch with 3 graphs
-    data1 = GeometricData(
-        x=torch.tensor([[1.0], [2.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.5]]),
-    )
-    data2 = GeometricData(
-        x=torch.tensor([[3.0], [4.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.6]]),
-    )
-    data3 = GeometricData(
-        x=torch.tensor([[5.0], [6.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.7]]),
-    )
-    batch = GeometricBatch.from_data_list([data1, data2, data3])
+    batch = GeometricBatch.from_data_list(datas[:3])
     batch.batch_shape = (3,)
     states = MyGraphStates(batch)
 
     # Get a single graph
     single_state = states[1]
-    assert single_state.tensor.batch_shape[0] == 1
+    assert single_state.tensor.batch_shape == (1,)
     assert single_state.tensor.num_nodes == 2
-    assert torch.allclose(single_state.tensor.x, torch.tensor([[3.0], [4.0]]))
+    assert torch.allclose(single_state.tensor.x, datas[1].x)
 
     # Get multiple graphs
     multi_state = states[[0, 2]]
-    assert multi_state.tensor.batch_shape[0] == 2
+    assert multi_state.tensor.batch_shape == (2,)
     assert multi_state.tensor.num_nodes == 4
-
-    # Check first graph in selection
-    first_graph = multi_state.tensor.get_example(0)
-    assert torch.allclose(first_graph.x, torch.tensor([[1.0], [2.0]]))
-
-    # Check second graph in selection
-    second_graph = multi_state.tensor.get_example(1)
-    assert torch.allclose(second_graph.x, torch.tensor([[5.0], [6.0]]))
+    assert torch.allclose(multi_state.tensor.get_example(0).x, datas[0].x)
+    assert torch.allclose(multi_state.tensor.get_example(1).x, datas[2].x)
 
 
 def test_clone(simple_graph_state):
@@ -203,18 +164,14 @@ def test_clone(simple_graph_state):
     # Modify the clone and check that the original is unchanged
     cloned.tensor.x[0, 0] = 99.0
     assert cloned.tensor.x[0, 0] == 99.0
-    assert simple_graph_state.tensor.x[0, 0] == 1.0
+    assert simple_graph_state.tensor.x[0, 0] == 0.0
 
 
-def test_is_initial_state():
+def test_is_initial_state(datas):
     """Test is_initial_state property"""
     # Create a batch with s0 and a different graph
     s0 = MyGraphStates.s0.clone()
-    different = GeometricData(
-        x=torch.tensor([[5.0], [6.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.9]]),
-    )
+    different = datas[9]
     batch = GeometricBatch.from_data_list([s0, different])
     batch.batch_shape = (2,)
     states = MyGraphStates(batch)
@@ -225,15 +182,11 @@ def test_is_initial_state():
     assert not is_initial[1].item()
 
 
-def test_is_sink_state():
+def test_is_sink_state(datas):
     """Test is_sink_state property"""
     # Create a batch with sf and a different graph
     sf = MyGraphStates.sf.clone()
-    different = GeometricData(
-        x=torch.tensor([[5.0], [6.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.9]]),
-    )
+    different = datas[9]
     batch = GeometricBatch.from_data_list([sf, different])
     batch.batch_shape = (2,)
     states = MyGraphStates(batch)
@@ -265,14 +218,10 @@ def test_from_batch_shape():
     assert torch.all(is_sink)
 
 
-def test_forward_masks():
+def test_forward_masks(datas):
     """Test forward_masks property"""
     # Create a graph with 2 nodes and 1 edge
-    data = GeometricData(
-        x=torch.tensor([[1.0], [2.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.5]]),
-    )
+    data = datas[0]
     batch = GeometricBatch.from_data_list([data])
     batch.batch_shape = (1,)
     states = MyGraphStates(batch)
@@ -299,14 +248,10 @@ def test_forward_masks():
     )
 
 
-def test_backward_masks():
+def test_backward_masks(datas):
     """Test backward_masks property"""
     # Create a graph with 2 nodes and 1 edge
-    data = GeometricData(
-        x=torch.tensor([[1.0], [2.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.5]]),
-    )
+    data = datas[0]
     batch = GeometricBatch.from_data_list([data])
     batch.batch_shape = (1,)
     states = MyGraphStates(batch)
@@ -331,38 +276,27 @@ def test_backward_masks():
     )
 
 
-def test_stack():
+def test_stack(datas):
     """Test stacking GraphStates objects"""
     # Create two states
-    data1 = GeometricData(
-        x=torch.tensor([[1.0], [2.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.5]]),
-    )
-    batch1 = GeometricBatch.from_data_list([data1])
-    batch1.batch_shape = (1,)
+    batch1 = GeometricBatch.from_data_list(datas[0:2])
+    batch1.batch_shape = (2,)
     state1 = MyGraphStates(batch1)
 
-    data2 = GeometricData(
-        x=torch.tensor([[3.0], [4.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.7]]),
-    )
-    batch2 = GeometricBatch.from_data_list([data2])
-    batch2.batch_shape = (1,)
+    batch2 = GeometricBatch.from_data_list(datas[2:4])
+    batch2.batch_shape = (2,)
     state2 = MyGraphStates(batch2)
 
     # Stack the states
     stacked = MyGraphStates.stack([state1, state2])
 
     # Check the batch shape
-    assert stacked.tensor.batch_shape == (2, 1)
+    assert stacked.tensor.batch_shape == (2, 2)
 
     # Check the number of nodes and edges
-    assert stacked.tensor.num_nodes == 4  # 2 states * 2 nodes
-    assert stacked.tensor.num_edges == 2  # 2 states * 1 edge
+    assert stacked.tensor.num_nodes == 8  # 4 states * 2 nodes
+    assert stacked.tensor.num_edges == 4  # 4 states * 1 edge
 
     # Check the batch indices
-    batch_indices = stacked.tensor.batch
-    assert torch.equal(batch_indices[:2], torch.zeros(2, dtype=torch.long))
-    assert torch.equal(batch_indices[2:], torch.ones(2, dtype=torch.long))
+    assert torch.equal(stacked.tensor.batch[:4], batch1.batch)
+    assert torch.equal(stacked.tensor.batch[4:], batch2.batch + 2)
