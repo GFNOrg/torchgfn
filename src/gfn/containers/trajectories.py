@@ -33,7 +33,8 @@ class Trajectories(Container):
         when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
         is_backward: Whether the trajectories are backward or forward.
         log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
-        log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the trajectories' actions.
+        log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the
+            trajectories' actions.
 
     """
 
@@ -57,7 +58,8 @@ class Trajectories(Container):
             when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
             is_backward: Whether the trajectories are backward or forward.
             log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
-            log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the trajectories' actions.
+            log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of
+                the trajectories' actions.
             estimator_outputs: Tensor of shape (batch_shape, output_dim).
                 When forward sampling off-policy for an n-step trajectory,
                 n forward passes will be made on some function approximator,
@@ -103,25 +105,37 @@ class Trajectories(Container):
             assert (
                 log_probs.shape == (self.max_length, self.n_trajectories)
                 and log_probs.dtype == torch.float
-            )
+            ), f"log_probs.shape={log_probs.shape}, "
+            f"self.max_length={self.max_length}, "
+            f"self.n_trajectories={self.n_trajectories}"
         else:
             log_probs = torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
         self.log_probs: torch.Tensor = log_probs
 
         self.estimator_outputs = estimator_outputs
         if self.estimator_outputs is not None:
-            # assert self.estimator_outputs.shape[:len(self.states.batch_shape)] == self.states.batch_shape TODO: check why fails
+            #  TODO: check why this fails.
+            # assert self.estimator_outputs.shape[:len(self.states.batch_shape)] == self.states.batch_shape
             assert self.estimator_outputs.dtype == torch.float
 
     def __repr__(self) -> str:
         states = self.states.tensor.transpose(0, 1)
         assert states.ndim == 3
         trajectories_representation = ""
+        assert isinstance(
+            self.env.s0, torch.Tensor
+        ), "not supported for Graph trajectories."
+        assert isinstance(
+            self.env.sf, torch.Tensor
+        ), "not supported for Graph trajectories."
+
         for traj in states[:10]:
             one_traj_repr = []
             for step in traj:
                 one_traj_repr.append(str(step.cpu().numpy()))
-                if step.equal(self.env.s0 if self.is_backward else self.env.sf):
+                if self.is_backward and step.equal(self.env.s0):
+                    break
+                elif not self.is_backward and step.equal(self.env.sf):
                     break
             trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
@@ -255,7 +269,7 @@ class Trajectories(Container):
 
         # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
-        self.states.extend(other.states)
+        self.states.extend(other.states)  # n_trajectories comes from this.
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
 
         # For log_probs, we first need to make the first dimensions of self.log_probs
@@ -482,6 +496,10 @@ class Trajectories(Container):
         new_actions[torch.arange(len(self)), seq_lengths] = self.env.exit_action
 
         # Assign reversed states to new_states
+        assert isinstance(states[:, -1], torch.Tensor)
+        assert isinstance(
+            self.env.s0, torch.Tensor
+        ), "reverse_backward_trajectories not supported for Graph trajectories"
         assert torch.all(states[:, -1] == self.env.s0), "Last state must be s0"
         new_states[:, 0] = self.env.s0
         new_states[:, 1:-1][mask] = states[:, :-1][mask][rev_idx[mask]]
@@ -536,7 +554,7 @@ class Trajectories(Container):
 
 
 def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:
-    """Pads tensor a to match the dimention of b."""
+    """Pads tensor a to match the dimension of b."""
     assert a.shape[0] < target_dim0, "a is already larger than target_dim0!"
     pad_dim = target_dim0 - a.shape[0]
     pad_dim_full = (pad_dim,) + tuple(a.shape[1:])

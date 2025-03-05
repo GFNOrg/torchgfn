@@ -45,7 +45,8 @@ class QuarterCircle(Distribution):
             delta: the radius of the quarter disk.
             northeastern: whether the quarter disk is northeastern or southwestern.
             centers: the centers of the distribution with shape (n_states, 2).
-            mixture_logits: Tensor of shape (n_states", n_components) containing the logits of the mixture of Beta distributions.
+            mixture_logits: Tensor of shape (n_states", n_components) containing the logits of
+                the mixture of Beta distributions.
             alpha: Tensor of shape (n_states", n_components) containing the alpha parameters of the Beta distributions.
             beta: Tensor of shape (n_states", n_components) containing the beta parameters of the Beta distributions.
         """
@@ -262,11 +263,16 @@ class QuarterDisk(Distribution):
 
         Args:
             delta: the radius of the quarter disk.
-            mixture_logits: Tensor of shape (n_components,) containing the logits of the mixture of Beta distributions.
-            alpha_r: Tensor of shape (n_components,) containing the alpha parameters of the Beta distributions for the radius.
-            beta_r: Tensor of shape (n_components,) containing the beta parameters of the Beta distributions for the radius.
-            alpha_theta: Tensor of shape (n_components,) containing the alpha parameters of the Beta distributions for the angle.
-            beta_theta: Tensor of shape (n_components,) containing the beta parameters of the Beta distributions for the angle.
+            mixture_logits: Tensor of shape (n_components,) containing the logits of
+                the mixture of Beta distributions.
+            alpha_r: Tensor of shape (n_components,) containing the alpha parameters of
+                the Beta distributions for the radius.
+            beta_r: Tensor of shape (n_components,) containing the beta parameters of the
+                Beta distributions for the radius.
+            alpha_theta: Tensor of shape (n_components,) containing the alpha parameters of
+                the Beta distributions for the angle.
+            beta_theta: Tensor of shape (n_components,) containing the beta parameters of
+                the Beta distributions for the angle.
         """
         self.delta = delta
         self.mixture_logits = mixture_logits
@@ -374,7 +380,8 @@ class QuarterCircleWithExit(Distribution):
             delta: the radius of the quarter disk.
             centers: the centers of the distribution with shape (n_states, 2).
             exit_probability: Tensor of shape (n_states,) containing the probability of exiting the quarter disk.
-            mixture_logits: Tensor of shape (n_states, n_components) containing the logits of the mixture of Beta distributions.
+            mixture_logits: Tensor of shape (n_states, n_components) containing the logits of the mixture of
+                Beta distributions.
             alpha: Tensor of shape (n_states, n_components) containing the alpha parameters of the Beta distributions.
             beta: Tensor of shape (n_states, n_components) containing the beta parameters of the Beta distributions.
             epsilon: the epsilon value to consider the state as being at the border of the square.
@@ -578,9 +585,11 @@ class BoxPFMLP(MLP):
         """Computes the forward pass of the neural network.
 
         Args:
-            preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute the forward pass of the neural network.
+            preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute
+                the forward pass of the neural network.
 
-        Returns the output of the neural network as a tensor of shape (*batch_shape, 1 + 5 * max_n_components).
+        Returns the output of the neural network as a tensor of shape (*batch_shape,
+            1 + 5 * max_n_components).
         """
         assert preprocessed_states.shape[-1] == 2
         batch_shape = preprocessed_states.shape[:-1]
@@ -635,8 +644,9 @@ class BoxPFMLP(MLP):
         desired_out[~idx_s0] = desired_out_slice2
 
         # Apply sigmoid to all except the dimensions between 1 and 1 + self._n_comp_max
-        # These are the components that represent the concentration parameters of the Betas, before normalizing, and should
-        # thus be between 0 and 1 (along with the exit probability)
+        # These are the components that represent the concentration parameters of the
+        # Betas, before normalizing, and should thus be between 0 and 1 (along with
+        # the exit probability).
         desired_out[..., 0] = torch.sigmoid(desired_out[..., 0])
         desired_out[..., 1 + self._n_comp_max :] = torch.sigmoid(
             desired_out[..., 1 + self._n_comp_max :]
@@ -688,9 +698,11 @@ class BoxPBMLP(MLP):
         """Computes the forward pass of the neural network.
 
         Args:
-            preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute the forward pass of the neural network.
+            preprocessed_states: The tensor states of shape (*batch_shape, 2) to
+                compute the forward pass of the neural network.
 
-        Returns the output of the neural network as a tensor of shape (*batch_shape, 3 * n_components).
+        Returns the output of the neural network as a tensor of shape (*batch_shape,
+            3 * n_components).
         """
         assert preprocessed_states.shape[-1] == 2
         batch_shape = preprocessed_states.shape[:-1]
@@ -715,7 +727,8 @@ class BoxStateFlowModule(MLP):
         """Computes the forward pass of the neural network.
 
         Args:
-            preprocessed_states: The tensor states of shape (*batch_shape, input_dim) to compute the forward pass of the neural network.
+            preprocessed_states: The tensor states of shape (*batch_shape, input_dim) to compute
+                the forward pass of the neural network.
 
         Returns the output of the neural network as a tensor of shape (*batch_shape, output_dim).
         """
@@ -729,8 +742,8 @@ class BoxStateFlowModule(MLP):
 class BoxPBUniform(torch.nn.Module):
     """A module to be used to create a uniform PB distribution for the Box environment
 
-    A module that returns (1, 1, 1) for all states. Used with QuarterCircle, it leads to a
-    uniform distribution over parents in the south-western part of circle.
+    A module that returns (1, 1, 1) for all states. Used with QuarterCircle, it leads
+        to a uniform distribution over parents in the south-western part of circle.
     """
 
     input_dim = 2
@@ -739,7 +752,8 @@ class BoxPBUniform(torch.nn.Module):
         """Computes the forward pass of the neural network.
 
         Args:
-            preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute the forward pass of the neural network.
+            preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute
+                the forward pass of the neural network.
 
         Returns a tensor of shape (*batch_shape, 3) filled by ones.
         """
@@ -753,7 +767,8 @@ def split_PF_module_output(output: torch.Tensor, n_comp_max: int):
     """Splits the module output into the expected parameter sets.
 
     Args:
-        output: the module_output from the P_F model as a tensor of shape (*batch_shape, output_dim).
+        output: the module_output from the P_F model as a tensor of shape
+            (*batch_shape, output_dim).
         n_comp_max: the larger number of the two n_components and n_components_s0.
 
     Returns:

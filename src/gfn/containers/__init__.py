@@ -1,11 +1,11 @@
 from .base import Container
-from .replay_buffer import PrioritizedReplayBuffer, ReplayBuffer
+from .replay_buffer import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from .state_pairs import StatePairs
 from .trajectories import Trajectories
 from .transitions import Transitions
 
 __all__ = [
-    "PrioritizedReplayBuffer",
+    "NormBasedDiversePrioritizedReplayBuffer",
     "ReplayBuffer",
     "StatePairs",
     "Trajectories",

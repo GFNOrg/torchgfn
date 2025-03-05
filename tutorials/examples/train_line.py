@@ -198,7 +198,7 @@ class StepEstimator(GFNModule):
         locs, scales = torch.split(module_output, [1, 1], dim=-1)
 
         return ScaledGaussianWithOptionalExit(
-            states,
+            states,  # pyright: ignore
             locs,
             scales + scale_factor,  # Increase this value to induce exploration.
             backward=self.backward,

@@ -18,7 +18,7 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
+from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -144,7 +144,7 @@ def main(args):  # noqa: C901
                     output_dim=1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
-                    trunk=pf_module.trunk if args.tied else None,
+                    trunk=pf_module.trunk if args.tied else None,  # pyright: ignore
                 )
 
             logF_estimator = ScalarEstimator(
@@ -181,7 +181,7 @@ def main(args):  # noqa: C901
     replay_buffer = None
     if args.replay_buffer_size > 0:
         if args.replay_buffer_prioritized:
-            replay_buffer = PrioritizedReplayBuffer(
+            replay_buffer = NormBasedDiversePrioritizedReplayBuffer(
                 env,
                 capacity=args.replay_buffer_size,
                 cutoff_distance=args.cutoff_distance,
@@ -233,7 +233,7 @@ def main(args):  # noqa: C901
         training_samples = gflownet.to_training_samples(trajectories)
         if replay_buffer is not None:
             with torch.no_grad():
-                replay_buffer.add(training_samples)
+                replay_buffer.add(training_samples)  # pyright: ignore
                 training_objects = replay_buffer.sample(n_trajectories=args.batch_size)
         else:
             training_objects = training_samples
