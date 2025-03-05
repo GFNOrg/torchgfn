@@ -723,7 +723,31 @@ class GraphStates(States):
         Returns:
             A new GraphStates object containing the selected graphs.
         """
-        # Convert the index to a list of indices
+        # Cases:
+        # 1. 2d Batch Shape (traj, batch,)
+        #     a. get traj loc idx = [1, ...]
+        #     b. get batch loc idx = [..., 1]
+        #     c. do both  idx = [1:3, 3:]
+        # 2. 1d Batch Shape (batch,)
+        #     a. get element idx = [1]
+        #     b. get range idx = [1:3]
+
+        # Batch Reference: https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.Batch.html
+        # get_example(idx: int)→ BaseData[source]
+        # Gets the Data or HeteroData object at index idx. The Batch object must have been created via from_data_list() in order to be able to reconstruct the initial object.
+
+        # Return type
+        # :
+        # BaseData
+
+        # index_select(idx: Union[slice, Tensor, ndarray, Sequence])→ List[BaseData][source]
+        # Creates a subset of Data or HeteroData objects from specified indices idx. Indices idx can be a slicing object, e.g., [2:5], a list, a tuple, or a torch.Tensor or np.ndarray of type long or bool. The Batch object must have been created via from_data_list() in order to be able to reconstruct the initial objects.
+
+        # Return type
+        # :
+        # List[BaseData]
+
+        # Convert the index to a list of indices.
         tensor_idx = torch.arange(len(self)).view(*self.batch_shape)
         if isinstance(index, int):
             new_shape = (1, *self.batch_shape[1:])
@@ -745,9 +769,10 @@ class GraphStates(States):
                 )
             ]
 
-        # Create a new batch from the selected graphs
+        # Create a new batch from the selected graphs.
+        # TODO: is there any downside to always using GeometricBatch even when the batch dimension is empty.
         new_batch = GeometricBatch.from_data_list(cast(List[BaseData], selected_graphs))
-        new_batch.batch_shape = new_shape
+        new_batch.batch_shape = new_shape  # TODO: change to match torch.Tensor behvaiour.
 
         # Create a new GraphStates object
         out = self.__class__(new_batch)

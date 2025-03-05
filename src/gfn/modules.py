@@ -524,6 +524,9 @@ class GraphActionPolicyEstimator(GFNModule):
             epsilon: with probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy."""
 
+        raise NotImplementedError(
+            "This method is incompatible with pyg and will be fixed in a future PR."
+        )
         dists = {}
 
         action_type_logits = module_output["action_type"]

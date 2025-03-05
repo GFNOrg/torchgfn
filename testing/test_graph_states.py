@@ -67,8 +67,8 @@ def test_getitem_1d(datas):
 
     # Get a single graph
     single_state = states[1]
-    assert single_state.tensor.batch_shape == (1,)
-    assert single_state.tensor.num_nodes == 2
+    assert single_state.tensor.batch_shape == (1,)  # TODO: should compare directly with a torch.Tensor()
+    assert single_state.tensor.num_nodes == 2       # (across all getitem tests).
     assert torch.allclose(single_state.tensor.x, datas[1].x)
 
     # Get multiple graphs
