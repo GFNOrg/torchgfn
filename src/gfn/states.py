@@ -726,10 +726,12 @@ class GraphStates(States):
         # Convert the index to a list of indices
         tensor_idx = torch.arange(len(self)).view(*self.batch_shape)
         if isinstance(index, int):
-            new_shape = (1,)
+            new_shape = (1, *self.batch_shape[1:])
         else:
             new_shape = tensor_idx[index].shape
-        indices = tensor_idx[index].flatten().tolist()
+            if new_shape == torch.Size([]):
+                new_shape = (1,)
+        indices = tensor_idx[index].flatten().tolist()  # TODO: is .flatten() necessary?
 
         # Get the selected graphs from the batch
         selected_graphs = self.tensor.index_select(indices)
@@ -765,11 +767,15 @@ class GraphStates(States):
         """
         # Convert the index to a list of indices
         batch_shape = self.batch_shape
-        if isinstance(index, int):
+        if isinstance(index, int) and len(batch_shape) == 1:
             indices = [index]
         else:
             tensor_idx = torch.arange(len(self)).view(*batch_shape)
-            indices = tensor_idx[index].flatten().tolist()
+            indices = (
+                tensor_idx[index].flatten().tolist()
+            )  # TODO: is .flatten() necessary?
+
+        assert len(indices) == len(graph)
 
         # Get the data list from the current batch
         data_list = self.tensor.to_data_list()
@@ -779,8 +785,7 @@ class GraphStates(States):
 
         # Replace the selected graphs
         for i, idx in enumerate(indices):
-            if i < len(new_data_list):
-                data_list[idx] = new_data_list[i]
+            data_list[idx] = new_data_list[i]
 
         # Create a new batch from the updated data list
         self.tensor = GeometricBatch.from_data_list(data_list)

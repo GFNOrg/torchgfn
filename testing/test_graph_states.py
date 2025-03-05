@@ -58,79 +58,7 @@ def empty_graph_state():
     return MyGraphStates(batch)
 
 
-def test_extend_empty_state(empty_graph_state, simple_graph_state):
-    """Test extending an empty state with a non-empty state"""
-    empty_graph_state.extend(simple_graph_state)
-
-    # Check that the empty state now has the same content as the simple state
-    assert empty_graph_state.tensor.batch_shape == simple_graph_state.tensor.batch_shape
-    assert torch.equal(empty_graph_state.tensor.x, simple_graph_state.tensor.x)
-    assert torch.equal(
-        empty_graph_state.tensor.edge_index, simple_graph_state.tensor.edge_index
-    )
-    assert torch.equal(
-        empty_graph_state.tensor.edge_attr, simple_graph_state.tensor.edge_attr
-    )
-    assert torch.equal(empty_graph_state.tensor.batch, simple_graph_state.tensor.batch)
-
-
-def test_extend_1d(simple_graph_state):
-    """Test extending two 1D batch states"""
-    other_state = simple_graph_state.clone()
-
-    # Store original number of nodes and edges
-    original_num_nodes = simple_graph_state.tensor.num_nodes
-    original_num_edges = simple_graph_state.tensor.num_edges
-
-    simple_graph_state.extend(other_state)
-
-    # Check batch shape is updated
-    assert simple_graph_state.tensor.batch_shape[0] == 2
-
-    # Check number of nodes and edges doubled
-    assert simple_graph_state.tensor.num_nodes == 2 * original_num_nodes
-    assert simple_graph_state.tensor.num_edges == 2 * original_num_edges
-
-    # Check that batch indices are properly updated
-    batch_indices = simple_graph_state.tensor.batch
-    assert torch.equal(
-        batch_indices[:original_num_nodes],
-        torch.zeros(original_num_nodes, dtype=torch.long),
-    )
-    assert torch.equal(
-        batch_indices[original_num_nodes:],
-        torch.ones(original_num_nodes, dtype=torch.long),
-    )
-
-
-def test_extend_2d(datas):
-    """Test extending two 2D batch states"""
-    batch1 = GeometricBatch.from_data_list(datas[:4])
-    batch1.batch_shape = (2, 2)
-    state1 = MyGraphStates(batch1)
-
-    batch2 = GeometricBatch.from_data_list(datas[4:])
-    batch2.batch_shape = (3, 2)
-    state2 = MyGraphStates(batch2)
-
-    # Extend state1 with state2
-    state1.extend(state2)
-
-    # Check final shape should be (max_len=3, B=4)
-    assert state1.tensor.batch_shape == (3, 4)
-
-    # Check that we have the correct number of nodes and edges
-    # Each graph has 2 nodes and 1 edge
-    # For 3 time steps and 2 batches, we should have:
-    expected_nodes = 3 * 2 * 4  # T * nodes_per_graph * B
-    expected_edges = 3 * 1 * 4  # T * edges_per_graph * B
-
-    # The actual count might be higher due to padding with sink states
-    assert state1.tensor.num_nodes >= expected_nodes
-    assert state1.tensor.num_edges >= expected_edges
-
-
-def test_getitem(datas):
+def test_getitem_1d(datas):
     """Test indexing into GraphStates"""
     # Create a batch with 3 graphs
     batch = GeometricBatch.from_data_list(datas[:3])
@@ -149,6 +77,103 @@ def test_getitem(datas):
     assert multi_state.tensor.num_nodes == 4
     assert torch.allclose(multi_state.tensor.get_example(0).x, datas[0].x)
     assert torch.allclose(multi_state.tensor.get_example(1).x, datas[2].x)
+
+
+def test_getitem_2d(datas):
+    """Test indexing into GraphStates with 2D batch shape"""
+    # Create a batch with 2x2 graphs
+    batch = GeometricBatch.from_data_list(datas[:4])
+    batch.batch_shape = (2, 2)
+    states = MyGraphStates(batch)
+
+    # Get a single row
+    single_state = states[0]
+    assert single_state.tensor.batch_shape == (1, 2)
+    assert single_state.tensor.num_nodes == 4  # 2 graphs * 2 nodes
+    assert torch.allclose(single_state.tensor.get_example(0).x, datas[0].x)
+    assert torch.allclose(single_state.tensor.get_example(1).x, datas[1].x)
+
+    # Try again with slicing
+    single_state2 = states[0, [0, 1]]  # pyright: ignore  # TODO: Fix pyright issue
+    assert torch.equal(single_state.tensor.x, single_state2.tensor.x)
+
+    # Get a single graph with 2D indexing
+    multi_state = states[1, 1]
+    assert multi_state.tensor.batch_shape == (1,)
+    assert multi_state.tensor.num_nodes == 2  # 1 graph * 2 nodes
+    assert torch.allclose(multi_state.tensor.x, datas[3].x)
+
+
+def test_setitem_1d(datas):
+    """Test setting values in GraphStates"""
+    # Create a graph state with 3 graphs
+    batch = GeometricBatch.from_data_list(datas[:3])
+    batch.batch_shape = (3,)
+    states = MyGraphStates(batch)
+
+    # Create a new graph state
+    new_batch = GeometricBatch.from_data_list(datas[3:5])
+    new_batch.batch_shape = (2,)
+    new_states = MyGraphStates(new_batch)
+
+    # Set the new graph in the first position
+    states[0] = new_states[0]
+
+    # Check that the first graph is now the new graph
+    first_graph = states[0].tensor
+    assert torch.equal(first_graph.x, datas[3].x)
+    assert torch.equal(first_graph.edge_attr, datas[3].edge_attr)
+    assert torch.equal(first_graph.edge_index, datas[3].edge_index)
+    assert states.tensor.batch_shape == (3,)  # Batch shape should not change
+
+    # Set the new graph in the second and third positions
+    states[[1, 2]] = new_states
+
+    # Check that the second and third graphs are now the new graph
+    second_graph = states[1].tensor
+    assert torch.equal(second_graph.x, datas[3].x)
+    assert torch.equal(second_graph.edge_attr, datas[3].edge_attr)
+    assert torch.equal(second_graph.edge_index, datas[3].edge_index)
+
+    third_graph = states[2].tensor
+    assert torch.equal(third_graph.x, datas[4].x)
+    assert torch.equal(third_graph.edge_attr, datas[4].edge_attr)
+    assert torch.equal(third_graph.edge_index, datas[4].edge_index)
+    assert states.tensor.batch_shape == (3,)  # Batch shape should not change
+
+    # Cannot set a graph with a wrong length
+    with pytest.raises(AssertionError):
+        states[0] = new_states
+    with pytest.raises(AssertionError):
+        states[[1, 2]] = new_states[0]
+
+
+def test_setitem_2d(datas):
+    """Test setting values in GraphStates with 2D batch shape"""
+    # Create a graph state with 2x2 graphs
+    batch = GeometricBatch.from_data_list(datas[:4])
+    batch.batch_shape = (2, 2)
+    states = MyGraphStates(batch)
+
+    # Set the new graphs in the first row
+    new_batch_row = GeometricBatch.from_data_list(datas[4:6])
+    new_batch_row.batch_shape = (2,)
+    new_states_row = MyGraphStates(new_batch_row)
+    states[0] = new_states_row
+    assert torch.equal(states[0, 0].tensor.x, datas[4].x)
+    assert torch.equal(states[0, 0].tensor.edge_attr, datas[4].edge_attr)
+    assert torch.equal(states[0, 0].tensor.edge_index, datas[4].edge_index)
+    assert states.tensor.batch_shape == (2, 2)  # Batch shape should not change
+
+    # Set the new graphs in the first column
+    new_batch_col = GeometricBatch.from_data_list(datas[6:8])
+    new_batch_col.batch_shape = (2,)
+    new_states_col = MyGraphStates(new_batch_col)
+    states[:, 1] = new_states_col  # pyright: ignore  # TODO: Fix pyright issue
+    assert torch.equal(states[1, 1].tensor.x, datas[7].x)
+    assert torch.equal(states[1, 1].tensor.edge_attr, datas[7].edge_attr)
+    assert torch.equal(states[1, 1].tensor.edge_index, datas[7].edge_index)
+    assert states.tensor.batch_shape == (2, 2)  # Batch shape should not change
 
 
 def test_clone(simple_graph_state):
@@ -276,7 +301,7 @@ def test_backward_masks(datas):
     )
 
 
-def test_stack(datas):
+def test_stack_1d(datas):
     """Test stacking GraphStates objects"""
     # Create two states
     batch1 = GeometricBatch.from_data_list(datas[0:2])
@@ -300,3 +325,101 @@ def test_stack(datas):
     # Check the batch indices
     assert torch.equal(stacked.tensor.batch[:4], batch1.batch)
     assert torch.equal(stacked.tensor.batch[4:], batch2.batch + 2)
+
+
+def test_stack_2d(datas):
+    """Test stacking GraphStates objects with 2D batch shape"""
+    # Create two states
+    batch1 = GeometricBatch.from_data_list(datas[:4])
+    batch1.batch_shape = (2, 2)
+    state1 = MyGraphStates(batch1)
+
+    batch2 = GeometricBatch.from_data_list(datas[4:8])
+    batch2.batch_shape = (2, 2)
+    state2 = MyGraphStates(batch2)
+
+    # Stack the states
+    stacked = MyGraphStates.stack([state1, state2])
+
+    # Check the batch shape
+    assert stacked.tensor.batch_shape == (2, 2, 2)
+
+    # Check the number of nodes and edges
+    assert stacked.tensor.num_nodes == 16  # 8 states * 2 nodes
+    assert stacked.tensor.num_edges == 8  # 8 states * 1 edge
+
+    # Check the batch indices
+    assert torch.equal(stacked.tensor.batch[:8], batch1.batch)
+    assert torch.equal(stacked.tensor.batch[8:], batch2.batch + 4)
+
+
+def test_extend_empty_state(empty_graph_state, simple_graph_state):
+    """Test extending an empty state with a non-empty state"""
+    empty_graph_state.extend(simple_graph_state)
+
+    # Check that the empty state now has the same content as the simple state
+    assert empty_graph_state.tensor.batch_shape == simple_graph_state.tensor.batch_shape
+    assert torch.equal(empty_graph_state.tensor.x, simple_graph_state.tensor.x)
+    assert torch.equal(
+        empty_graph_state.tensor.edge_index, simple_graph_state.tensor.edge_index
+    )
+    assert torch.equal(
+        empty_graph_state.tensor.edge_attr, simple_graph_state.tensor.edge_attr
+    )
+    assert torch.equal(empty_graph_state.tensor.batch, simple_graph_state.tensor.batch)
+
+
+def test_extend_1d(simple_graph_state):
+    """Test extending two 1D batch states"""
+    other_state = simple_graph_state.clone()
+
+    # Store original number of nodes and edges
+    original_num_nodes = simple_graph_state.tensor.num_nodes
+    original_num_edges = simple_graph_state.tensor.num_edges
+
+    simple_graph_state.extend(other_state)
+
+    # Check batch shape is updated
+    assert simple_graph_state.tensor.batch_shape[0] == 2
+
+    # Check number of nodes and edges doubled
+    assert simple_graph_state.tensor.num_nodes == 2 * original_num_nodes
+    assert simple_graph_state.tensor.num_edges == 2 * original_num_edges
+
+    # Check that batch indices are properly updated
+    batch_indices = simple_graph_state.tensor.batch
+    assert torch.equal(
+        batch_indices[:original_num_nodes],
+        torch.zeros(original_num_nodes, dtype=torch.long),
+    )
+    assert torch.equal(
+        batch_indices[original_num_nodes:],
+        torch.ones(original_num_nodes, dtype=torch.long),
+    )
+
+
+def test_extend_2d(datas):
+    """Test extending two 2D batch states"""
+    batch1 = GeometricBatch.from_data_list(datas[:4])
+    batch1.batch_shape = (2, 2)
+    state1 = MyGraphStates(batch1)
+
+    batch2 = GeometricBatch.from_data_list(datas[4:])
+    batch2.batch_shape = (3, 2)
+    state2 = MyGraphStates(batch2)
+
+    # Extend state1 with state2
+    state1.extend(state2)
+
+    # Check final shape should be (max_len=3, B=4)
+    assert state1.tensor.batch_shape == (3, 4)
+
+    # Check that we have the correct number of nodes and edges
+    # Each graph has 2 nodes and 1 edge
+    # For 3 time steps and 2 batches, we should have:
+    expected_nodes = 3 * 2 * 4  # T * nodes_per_graph * B
+    expected_edges = 3 * 1 * 4  # T * edges_per_graph * B
+
+    # The actual count might be higher due to padding with sink states
+    assert state1.tensor.num_nodes >= expected_nodes
+    assert state1.tensor.num_edges >= expected_edges
