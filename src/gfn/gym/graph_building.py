@@ -5,7 +5,7 @@ from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActions, GraphActionType
-from gfn.env import GraphEnv, NonValidActionsError
+from gfn.env import GraphEnv
 from gfn.states import GraphStates
 
 
@@ -67,8 +67,6 @@ class GraphBuilding(GraphEnv):
 
         Returns the next graph the new GraphStates.
         """
-        if not self.is_action_valid(states, actions):
-            raise NonValidActionsError("Invalid action.")
         if len(actions) == 0:
             return states.tensor
 

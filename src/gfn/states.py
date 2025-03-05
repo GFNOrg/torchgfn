@@ -549,6 +549,10 @@ class GraphStates(States):
         self.tensor = tensor
         if not hasattr(self.tensor, "batch_shape"):
             self.tensor.batch_shape = self.tensor.batch_size
+
+        if tensor.x.size(0) > 0:
+            assert tensor.num_graphs == prod(tensor.batch_shape)
+
         self._log_rewards: Optional[torch.Tensor] = None
 
     @property
