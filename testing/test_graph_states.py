@@ -71,21 +71,26 @@ def test_getitem_1d(datas):
     batch.batch_shape = (3,)
     assert tuple(tsr.shape) == batch.batch_shape == (3,)
     states = MyGraphStates(batch)
+    states.log_rewards = tsr.clone()
 
     # Get a single graph
     single_tsr = tsr[1]
     single_state = states[1]
     assert tuple(single_tsr.shape) == single_state.tensor.batch_shape == ()
+    assert single_state.log_rewards is not None and single_state.log_rewards.shape == ()
     assert single_state.tensor.num_nodes == 2
     assert torch.allclose(single_state.tensor.x, datas[1].x)
+    assert torch.allclose(single_state.log_rewards, tsr[1])
 
     # Get multiple graphs
     multi_tsr = tsr[[0, 2]]
     multi_state = states[[0, 2]]
     assert tuple(multi_tsr.shape) == multi_state.tensor.batch_shape == (2,)
+    assert multi_state.log_rewards is not None and multi_state.log_rewards.shape == (2,)
     assert multi_state.tensor.num_nodes == 4
     assert torch.allclose(multi_state.tensor.get_example(0).x, datas[0].x)
     assert torch.allclose(multi_state.tensor.get_example(1).x, datas[2].x)
+    assert torch.allclose(multi_state.log_rewards, tsr[[0, 2]])
 
 
 def test_getitem_2d(datas):
@@ -101,14 +106,17 @@ def test_getitem_2d(datas):
     batch.batch_shape = (2, 2)
     assert tuple(tsr.shape) == batch.batch_shape == (2, 2)
     states = MyGraphStates(batch)
+    states.log_rewards = tsr.clone()
 
     # Get a single row
     tsr_row = tsr[0]
     batch_row = states[0]
     assert tuple(tsr_row.shape) == batch_row.tensor.batch_shape == (2,)
+    assert batch_row.log_rewards is not None and batch_row.log_rewards.shape == (2,)
     assert batch_row.tensor.num_nodes == 4  # 2 graphs * 2 nodes
     assert torch.allclose(batch_row.tensor.get_example(0).x, datas[0].x)
     assert torch.allclose(batch_row.tensor.get_example(1).x, datas[1].x)
+    assert torch.allclose(batch_row.log_rewards, tsr[0])
 
     # Try again with slicing
     tsr_row2 = tsr[0, [0, 1]]
@@ -120,8 +128,10 @@ def test_getitem_2d(datas):
     single_tsr = tsr[1, 1]
     single_state = states[1, 1]
     assert tuple(single_tsr.shape) == single_state.tensor.batch_shape == ()
+    assert single_state.log_rewards is not None and single_state.log_rewards.shape == ()
     assert single_state.tensor.num_nodes == 2  # 1 graph * 2 nodes
     assert torch.allclose(single_state.tensor.x, datas[3].x)
+    assert torch.allclose(single_state.log_rewards, tsr[1, 1])
 
     with pytest.raises(IndexError):
         states[2, 2]
