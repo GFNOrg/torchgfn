@@ -306,7 +306,7 @@ class States(ABC):
         Args:
             log_rewards: Tensor of shape `batch_shape` representing the log rewards of the states.
         """
-        assert log_rewards.shape == self.batch_shape
+        assert tuple(log_rewards.shape) == self.batch_shape
         self._log_rewards = log_rewards
 
     def sample(self, n_samples: int) -> States:
@@ -891,9 +891,9 @@ class GraphStates(States):
 
         # Combine log rewards if they exist
         if self._log_rewards is not None and other._log_rewards is not None:
-            self._log_rewards = torch.cat([self._log_rewards, other._log_rewards], dim=0)
+            self.log_rewards = torch.cat([self._log_rewards, other._log_rewards], dim=0)
         elif other._log_rewards is not None:
-            self._log_rewards = other._log_rewards.clone()
+            self.log_rewards = other._log_rewards.clone()
 
     def _compare(self, other: GeometricData) -> torch.Tensor:
         """Compares the current batch of graphs with another graph.
@@ -996,7 +996,7 @@ class GraphStates(States):
             log_rewards = []
             for state in states:
                 log_rewards.append(state._log_rewards)
-            out._log_rewards = torch.stack(log_rewards)
+            out.log_rewards = torch.stack(log_rewards)
 
         return out
 
