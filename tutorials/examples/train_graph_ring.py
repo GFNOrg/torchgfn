@@ -923,7 +923,7 @@ if __name__ == "__main__":
         trajectories = gflownet.sample_trajectories(
             env,
             n=BATCH_SIZE,
-            save_logprobs=True,  # pyright: ignore
+            save_logprobs=True,
             epsilon=0.2 * (1 - iteration / N_ITERATIONS),
         )
         training_samples = gflownet.to_training_samples(trajectories)
@@ -940,14 +940,12 @@ if __name__ == "__main__":
             with torch.no_grad():
                 replay_buffer.add(training_samples)
                 if iteration > 20:
-                    training_samples = training_samples[
-                        : BATCH_SIZE // 2
-                    ]  # pyright: ignore
+                    training_samples = training_samples[: BATCH_SIZE // 2]
                     buffer_samples = replay_buffer.sample(n_trajectories=BATCH_SIZE // 2)
-                    training_samples.extend(buffer_samples)  # pyright: ignore
+                    training_samples.extend(buffer_samples)
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)  # pyright: ignore
+        loss = gflownet.loss(env, training_samples)
         pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
         print(
             "Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(

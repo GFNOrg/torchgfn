@@ -1,4 +1,4 @@
-from typing import Callable, Literal, Tuple
+from typing import Callable, Literal, Optional, Tuple
 
 import torch
 from torch_geometric.data import Batch as GeometricBatch
@@ -52,9 +52,15 @@ class GraphBuilding(GraphEnv):
             device_str=device_str,
         )
 
-    def reset(self, batch_shape: Tuple | int) -> GraphStates:
+    def reset(
+        self,
+        batch_shape: int | Tuple[int, ...],
+        random: bool = False,
+        sink: bool = False,
+        seed: Optional[int] = None,
+    ) -> GraphStates:
         """Reset the environment to a new batch of graphs."""
-        states = super().reset(batch_shape)
+        states = super().reset(batch_shape, random, sink, seed)
         assert isinstance(states, GraphStates)
         return states
 
@@ -153,7 +159,7 @@ class GraphBuilding(GraphEnv):
                         dtype=torch.bool,
                         device=graph.x.device,
                     )
-                    mask[node_idx] = False  # pyright: ignore
+                    mask[node_idx] = False
 
                     # Update node features
                     graph.x = graph.x[mask]

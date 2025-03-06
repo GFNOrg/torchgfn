@@ -144,7 +144,7 @@ def main(args):  # noqa: C901
                     output_dim=1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
-                    trunk=pf_module.trunk if args.tied else None,  # pyright: ignore
+                    trunk=pf_module.trunk if args.tied else None,
                 )
 
             logF_estimator = ScalarEstimator(
