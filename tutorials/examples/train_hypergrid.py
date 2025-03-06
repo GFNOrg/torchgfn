@@ -144,7 +144,7 @@ def main(args):  # noqa: C901
                     output_dim=1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
-                    trunk=pf_module.trunk if args.tied else None,  # pyright: ignore
+                    trunk=pf_module.trunk if args.tied else None,
                 )
 
             logF_estimator = ScalarEstimator(
@@ -233,7 +233,7 @@ def main(args):  # noqa: C901
         training_samples = gflownet.to_training_samples(trajectories)
         if replay_buffer is not None:
             with torch.no_grad():
-                replay_buffer.add(training_samples)  # pyright: ignore
+                replay_buffer.add(training_samples)
                 training_objects = replay_buffer.sample(n_trajectories=args.batch_size)
         else:
             training_objects = training_samples

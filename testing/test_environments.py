@@ -9,6 +9,7 @@ from gfn.actions import GraphActionType
 from gfn.env import NonValidActionsError
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuilding
+from gfn.states import GraphStates
 
 
 # Utilities.
@@ -420,7 +421,8 @@ def test_graph_env():
 
     sf_states = env._step(states, actions)
     assert torch.all(sf_states.is_sink_state)
-    env.reward(sf_states)  # pyright: ignore
+    assert isinstance(sf_states, GraphStates)
+    env.reward(sf_states)
 
     num_edges_per_batch = len(states.tensor.edge_attr) // BATCH_SIZE
     # Remove edges.

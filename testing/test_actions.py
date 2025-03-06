@@ -100,15 +100,13 @@ def test_graph_action(graph_action):
     )
     assert torch.all(
         stacked_actions.tensor["action_type"]
-        == manually_stacked_tensor["action_type"]  # pyright: ignore
+        == manually_stacked_tensor.get("action_type")
     )
     assert torch.all(
-        stacked_actions.tensor["features"]
-        == manually_stacked_tensor["features"]  # pyright: ignore
+        stacked_actions.tensor["features"] == manually_stacked_tensor.get("features")
     )
     assert torch.all(
-        stacked_actions.tensor["edge_index"]
-        == manually_stacked_tensor["edge_index"]  # pyright: ignore
+        stacked_actions.tensor["edge_index"] == manually_stacked_tensor.get("edge_index")
     )
     is_exit_stacked = torch.stack([exit_actions.is_exit, dummy_actions.is_exit], dim=0)
     assert torch.all(stacked_actions.is_exit == is_exit_stacked)
@@ -126,15 +124,15 @@ def test_graph_action(graph_action):
     )
     assert torch.all(
         extended_actions.tensor["action_type"]
-        == manually_extended_tensor["action_type"]  # pyright: ignore
+        == manually_extended_tensor.get("action_type")
     )
     assert torch.all(
-        extended_actions.tensor["features"]
-        == manually_extended_tensor["features"]  # pyright: ignore
+        extended_actions.tensor["features"] == manually_extended_tensor.get("features")
     )
+
     assert torch.all(
         extended_actions.tensor["edge_index"]
-        == manually_extended_tensor["edge_index"]  # pyright: ignore
+        == manually_extended_tensor.get("edge_index")
     )
     is_exit_extended = torch.cat([exit_actions.is_exit, dummy_actions.is_exit], dim=0)
     assert torch.all(extended_actions.is_exit == is_exit_extended)

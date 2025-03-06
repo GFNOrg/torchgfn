@@ -52,12 +52,16 @@ class Env(ABC):
         """
         self.device = get_device(device_str, default_device=s0.device)
 
-        self.s0 = s0.to(self.device)  # pyright: ignore
+        self.s0 = s0.to(self.device)  # type: ignore
         assert s0.shape == state_shape
+
         if sf is None:
             sf = torch.full(s0.shape, -float("inf")).to(self.device)
+
         self.sf = sf
+        assert self.sf is not None
         assert self.sf.shape == state_shape
+
         self.state_shape = state_shape
         self.action_shape = action_shape
         self.dummy_action = dummy_action.to(self.device)
@@ -96,7 +100,7 @@ class Env(ABC):
 
         Args:
             batch_shape: Tuple representing the shape of the batch of states.
-            random (optional): Initalize states randomly.
+            random (optional): Initialize states randomly.
             sink (optional): States initialized with sf (the sink state).
 
         Returns:
@@ -381,6 +385,8 @@ class DiscreteEnv(Env, ABC):
         if exit_action is None:
             exit_action = torch.tensor([n_actions - 1], device=device)
 
+        assert dummy_action is not None
+        assert exit_action is not None
         assert s0.shape == state_shape
         assert dummy_action.shape == action_shape
         assert exit_action.shape == action_shape
@@ -579,9 +585,9 @@ class GraphEnv(Env):
         device = get_device(device_str, default_device=s0.device)
         assert s0.x is not None
 
-        self.s0 = s0.to(device)  # pyright: ignore
+        self.s0 = s0.to(device)  # type: ignore
         self.features_dim = s0.x.shape[-1]
-        self.sf = sf.to(device)  # pyright: ignore
+        self.sf = sf.to(device)  # type: ignore
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()

@@ -139,21 +139,22 @@ class GraphBuilding(GraphEnv):
             # Remove nodes with matching features
             for i, features in enumerate(actions.features):
                 graph = data_list[i]
+                assert isinstance(graph.num_nodes, int)
 
                 # Find nodes with matching features
                 is_equal = torch.all(graph.x == features.unsqueeze(0), dim=1)
 
                 if torch.any(is_equal):
                     # Remove the first matching node
-                    node_idx = torch.where(is_equal)[0][0].item()
+                    node_idx = int(torch.where(is_equal)[0][0].item())
 
                     # Remove the node
                     mask = torch.ones(
-                        graph.num_nodes,  # pyright: ignore
+                        graph.num_nodes,
                         dtype=torch.bool,
                         device=graph.x.device,
                     )
-                    mask[node_idx] = False  # pyright: ignore
+                    mask[node_idx] = False
 
                     # Update node features
                     graph.x = graph.x[mask]
@@ -198,6 +199,8 @@ class GraphBuilding(GraphEnv):
 
         for i in range(len(actions)):
             graph = data_list[i]
+            assert isinstance(graph.num_nodes, int)
+
             if actions.action_type[i] == GraphActionType.ADD_NODE:
                 # Check if a node with these features already exists
                 equal_nodes = torch.all(
@@ -217,11 +220,7 @@ class GraphBuilding(GraphEnv):
                 src, dst = actions.edge_index[i]
 
                 # Check if src and dst are valid node indices
-                if (
-                    src >= graph.num_nodes  # pyright: ignore
-                    or dst >= graph.num_nodes  # pyright: ignore
-                    or src == dst
-                ):
+                if src >= graph.num_nodes or dst >= graph.num_nodes or src == dst:
                     return False
 
                 # Check if the edge already exists
@@ -305,4 +304,6 @@ class GraphBuilding(GraphEnv):
 
     def make_random_states_tensor(self, batch_shape: Tuple) -> GraphStates:
         """Generates random states tensor of shape (*batch_shape, feature_dim)."""
-        return self.States.from_batch_shape(batch_shape)  # pyright: ignore
+        random_states_tensor = self.States.from_batch_shape(batch_shape)
+        assert isinstance(random_states_tensor, GraphStates)
+        return random_states_tensor

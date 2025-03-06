@@ -120,7 +120,7 @@ def test_getitem_2d(datas):
 
     # Try again with slicing
     tsr_row2 = tsr[0, [0, 1]]
-    batch_row2 = states[0, [0, 1]]  # pyright: ignore  # TODO: Fix pyright issue
+    batch_row2 = states[0, [0, 1]]
     assert tuple(tsr_row2.shape) == batch_row2.tensor.batch_shape == (2,)
     assert torch.equal(batch_row.tensor.x, batch_row2.tensor.x)
 
@@ -206,7 +206,7 @@ def test_setitem_2d(datas):
     new_batch_col = GeometricBatch.from_data_list(datas[6:8])
     new_batch_col.batch_shape = (2,)
     new_states_col = MyGraphStates(new_batch_col)
-    states[:, 1] = new_states_col  # pyright: ignore  # TODO: Fix pyright issue
+    states[:, 1] = new_states_col
     assert torch.equal(states[1, 1].tensor.x, datas[7].x)
     assert torch.equal(states[1, 1].tensor.edge_attr, datas[7].edge_attr)
     assert torch.equal(states[1, 1].tensor.edge_index, datas[7].edge_index)

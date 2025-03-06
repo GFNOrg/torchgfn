@@ -82,7 +82,7 @@ def directed_reward(states: GraphStates) -> torch.Tensor:
             visited.append(current)
 
             # Get the outgoing neighbor
-            current = torch.where(adj_matrix[current] == 1)[0].item()  # pyright: ignore
+            current = torch.where(adj_matrix[int(current)] == 1)[0].item()
 
             # If we've visited all nodes and returned to 0, it's a valid ring
             if len(visited) == graph.tensor.num_nodes and current == 0:
@@ -271,10 +271,13 @@ class RingPolicyModule(nn.Module):
         for i in range(0, len(self.conv_blks), 2):
             x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
             if self.is_directed:
+                assert isinstance(self.conv_blks[i + 1], nn.ModuleList)
                 x_in, x_out = torch.chunk(x_new, 2, dim=-1)
+
                 # Process each component separately through its own MLP.
-                x_in = self.conv_blks[i + 1][0](x_in)  # pyright: ignore
-                x_out = self.conv_blks[i + 1][1](x_out)  # pyright: ignore
+                mlp_in, mlp_out = self.conv_blks[i + 1]
+                x_in = mlp_in(x_in)
+                x_out = mlp_out(x_out)
                 x_new = torch.cat([x_in, x_out], dim=-1)
             else:
                 x_new = self.conv_blks[i + 1](x_new)  # Linear -> ReLU -> Linear.
@@ -923,7 +926,7 @@ if __name__ == "__main__":
         trajectories = gflownet.sample_trajectories(
             env,
             n=BATCH_SIZE,
-            save_logprobs=True,  # pyright: ignore
+            save_logprobs=True,
             epsilon=0.2 * (1 - iteration / N_ITERATIONS),
         )
         training_samples = gflownet.to_training_samples(trajectories)
@@ -940,14 +943,12 @@ if __name__ == "__main__":
             with torch.no_grad():
                 replay_buffer.add(training_samples)
                 if iteration > 20:
-                    training_samples = training_samples[
-                        : BATCH_SIZE // 2
-                    ]  # pyright: ignore
+                    training_samples = training_samples[: BATCH_SIZE // 2]
                     buffer_samples = replay_buffer.sample(n_trajectories=BATCH_SIZE // 2)
-                    training_samples.extend(buffer_samples)  # pyright: ignore
+                    training_samples.extend(buffer_samples)  # type: ignore
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)  # pyright: ignore
+        loss = gflownet.loss(env, training_samples)
         pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
         print(
             "Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(

@@ -3,7 +3,17 @@ from __future__ import annotations  # This allows to use the class name in type 
 from abc import ABC
 from copy import deepcopy
 from math import prod
-from typing import Callable, ClassVar, List, Optional, Sequence, Tuple, cast
+from typing import (
+    Callable,
+    ClassVar,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    cast,
+)
 
 import numpy as np
 import torch
@@ -709,7 +719,8 @@ class GraphStates(States):
         )
 
     def __getitem__(
-        self, index: int | Sequence[int] | slice | torch.Tensor
+        self,
+        index: Union[int, Sequence[int], slice, torch.Tensor, Literal[1], Tuple],
     ) -> GraphStates:
         """Get a subset of the GraphStates.
 
@@ -754,7 +765,11 @@ class GraphStates(States):
 
         return out
 
-    def __setitem__(self, index: int | Sequence[int], graph: GraphStates):
+    def __setitem__(
+        self,
+        index: Union[int, Sequence[int], slice, torch.Tensor, Literal[1], Tuple],
+        graph: GraphStates,
+    ) -> None:
         """Set a subset of the GraphStates.
 
         Args:
