@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Union, cast
+from typing import Optional, Tuple, cast
 
 import torch
 from torch_geometric.data import Batch as GeometricBatch
@@ -207,7 +207,7 @@ class Env(ABC):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
+        batch_shape: int | Tuple[int, ...],
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
@@ -222,8 +222,6 @@ class Env(ABC):
         if random and seed is not None:
             set_seed(seed, performance_mode=True)
 
-        if batch_shape is None:
-            batch_shape = (1,)
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
         return self.states_from_batch_shape(
@@ -265,7 +263,8 @@ class Env(ABC):
 
         if not isinstance(new_not_done_states_tensor, (torch.Tensor, GeometricBatch)):
             raise Exception(
-                "User implemented env.step function *must* return a torch.Tensor!"
+                "User implemented env.step function *must* return a torch.Tensor or "
+                "a GeometricBatch (for graph-based environments)."
             )
 
         new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
@@ -424,7 +423,7 @@ class DiscreteEnv(Env, ABC):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
+        batch_shape: int | Tuple[int, ...],
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
