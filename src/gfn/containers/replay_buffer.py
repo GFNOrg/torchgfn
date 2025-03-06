@@ -47,21 +47,6 @@ class ReplayBuffer(Generic[ContainerType]):
         self.training_objects: ContainerType | None = None
         self.prioritized = prioritized
 
-        # self.terminating_states = None
-        # self.objects_type = objects_type
-        # if objects_type == "trajectories":
-        #     self.training_objects = Trajectories(env)
-        # elif objects_type == "transitions":
-        #     self.training_objects = Transitions(env)
-        # elif objects_type == "states":
-        #     self.training_objects = env.states_from_batch_shape((0,))
-        #     self.terminating_states = env.states_from_batch_shape((0,))
-        #     self.terminating_states.log_rewards = torch.zeros((0,), device=env.device)
-        # else:
-        #     raise ValueError(f"Unknown objects_type: {objects_type}")
-
-        # self._is_full = False
-
     def __repr__(self):
         if self.training_objects is None:
             type_str = "empty"
@@ -208,7 +193,10 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             training_objects = training_objects[idx_bigger_rewards]
 
             # TODO: Concatenate input with final state for conditional GFN.
-            # if self.is_conditional:
+            if self.is_conditional:
+                raise NotImplementedError(
+                    "{instance.__class__.__name__} does not yet support conditional GFNs."
+                )
             #     batch = torch.cat(
             #         [dict_curr_batch["input"], dict_curr_batch["final_state"]],
             #         dim=-1,
