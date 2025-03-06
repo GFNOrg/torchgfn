@@ -59,49 +59,76 @@ def empty_graph_state():
 
 
 def test_getitem_1d(datas):
-    """Test indexing into GraphStates"""
+    """Test indexing into GraphStates
+
+    Make sure the behavior is consistent with that of a Tensor.__getitem__.
+    """
+    # Create a tensor with 3 elements for comparison
+    tsr = torch.tensor([1, 2, 3])
+
     # Create a batch with 3 graphs
     batch = GeometricBatch.from_data_list(datas[:3])
     batch.batch_shape = (3,)
+    assert tuple(tsr.shape) == batch.batch_shape == (3,)
     states = MyGraphStates(batch)
 
     # Get a single graph
+    single_tsr = tsr[1]
     single_state = states[1]
-    assert single_state.tensor.batch_shape == (1,)  # TODO: should compare directly with a torch.Tensor()
-    assert single_state.tensor.num_nodes == 2       # (across all getitem tests).
+    assert tuple(single_tsr.shape) == single_state.tensor.batch_shape == ()
+    assert single_state.tensor.num_nodes == 2
     assert torch.allclose(single_state.tensor.x, datas[1].x)
 
     # Get multiple graphs
+    multi_tsr = tsr[[0, 2]]
     multi_state = states[[0, 2]]
-    assert multi_state.tensor.batch_shape == (2,)
+    assert tuple(multi_tsr.shape) == multi_state.tensor.batch_shape == (2,)
     assert multi_state.tensor.num_nodes == 4
     assert torch.allclose(multi_state.tensor.get_example(0).x, datas[0].x)
     assert torch.allclose(multi_state.tensor.get_example(1).x, datas[2].x)
 
 
 def test_getitem_2d(datas):
-    """Test indexing into GraphStates with 2D batch shape"""
+    """Test indexing into GraphStates with 2D batch shape
+
+    Make sure the behavior is consistent with that of a Tensor.__getitem__.
+    """
+    # Create a tensor with 4 elements for comparison
+    tsr = torch.tensor([[1, 2], [3, 4]])
+
     # Create a batch with 2x2 graphs
     batch = GeometricBatch.from_data_list(datas[:4])
     batch.batch_shape = (2, 2)
+    assert tuple(tsr.shape) == batch.batch_shape == (2, 2)
     states = MyGraphStates(batch)
 
     # Get a single row
-    single_state = states[0]
-    assert single_state.tensor.batch_shape == (1, 2)
-    assert single_state.tensor.num_nodes == 4  # 2 graphs * 2 nodes
-    assert torch.allclose(single_state.tensor.get_example(0).x, datas[0].x)
-    assert torch.allclose(single_state.tensor.get_example(1).x, datas[1].x)
+    tsr_row = tsr[0]
+    batch_row = states[0]
+    assert tuple(tsr_row.shape) == batch_row.tensor.batch_shape == (2,)
+    assert batch_row.tensor.num_nodes == 4  # 2 graphs * 2 nodes
+    assert torch.allclose(batch_row.tensor.get_example(0).x, datas[0].x)
+    assert torch.allclose(batch_row.tensor.get_example(1).x, datas[1].x)
 
     # Try again with slicing
-    single_state2 = states[0, [0, 1]]  # pyright: ignore  # TODO: Fix pyright issue
-    assert torch.equal(single_state.tensor.x, single_state2.tensor.x)
+    tsr_row2 = tsr[0, [0, 1]]
+    batch_row2 = states[0, [0, 1]]  # pyright: ignore  # TODO: Fix pyright issue
+    assert tuple(tsr_row2.shape) == batch_row2.tensor.batch_shape == (2,)
+    assert torch.equal(batch_row.tensor.x, batch_row2.tensor.x)
 
     # Get a single graph with 2D indexing
-    multi_state = states[1, 1]
-    assert multi_state.tensor.batch_shape == (1,)
-    assert multi_state.tensor.num_nodes == 2  # 1 graph * 2 nodes
-    assert torch.allclose(multi_state.tensor.x, datas[3].x)
+    single_tsr = tsr[1, 1]
+    single_state = states[1, 1]
+    assert tuple(single_tsr.shape) == single_state.tensor.batch_shape == ()
+    assert single_state.tensor.num_nodes == 2  # 1 graph * 2 nodes
+    assert torch.allclose(single_state.tensor.x, datas[3].x)
+
+    with pytest.raises(IndexError):
+        states[2, 2]
+
+    # We can't index on a Batch with 0-dimensional batch shape
+    with pytest.raises(AssertionError):
+        single_state[0]
 
 
 def test_setitem_1d(datas):

@@ -558,7 +558,7 @@ class GraphStates(States):
     @property
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
-        return tuple(self.tensor.batch_shape)
+        return self.tensor.batch_shape
 
     @classmethod
     def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> GeometricBatch:
@@ -719,63 +719,38 @@ class GraphStates(States):
         Returns:
             A new GraphStates object containing the selected graphs.
         """
-        # Cases:
-        # 1. 2d Batch Shape (traj, batch,)
-        #     a. get traj loc idx = [1, ...]
-        #     b. get batch loc idx = [..., 1]
-        #     c. do both  idx = [1:3, 3:]
-        # 2. 1d Batch Shape (batch,)
-        #     a. get element idx = [1]
-        #     b. get range idx = [1:3]
-
-        # Batch Reference: https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.data.Batch.html
-        # get_example(idx: int)→ BaseData[source]
-        # Gets the Data or HeteroData object at index idx. The Batch object must have been created via from_data_list() in order to be able to reconstruct the initial object.
-
-        # Return type
-        # :
-        # BaseData
-
-        # index_select(idx: Union[slice, Tensor, ndarray, Sequence])→ List[BaseData][source]
-        # Creates a subset of Data or HeteroData objects from specified indices idx. Indices idx can be a slicing object, e.g., [2:5], a list, a tuple, or a torch.Tensor or np.ndarray of type long or bool. The Batch object must have been created via from_data_list() in order to be able to reconstruct the initial objects.
-
-        # Return type
-        # :
-        # List[BaseData]
+        assert (
+            self.batch_shape != ()
+        ), "We can't index on a Batch with 0-dimensional batch shape."
 
         # Convert the index to a list of indices.
-        tensor_idx = torch.arange(len(self)).view(*self.batch_shape)
-        if isinstance(index, int):
-            new_shape = (1, *self.batch_shape[1:])
-        else:
-            new_shape = tensor_idx[index].shape
-            if new_shape == torch.Size([]):
-                new_shape = (1,)
-        indices = tensor_idx[index].flatten().tolist()  # TODO: is .flatten() necessary?
+        tensor_idx = torch.arange(len(self)).view(*self.batch_shape)[index]
+        new_shape = tuple(tensor_idx.shape)
+        flat_idx = tensor_idx.flatten()
 
         # Get the selected graphs from the batch
-        selected_graphs = self.tensor.index_select(indices)
+        selected_graphs = self.tensor.index_select(flat_idx)
         if len(selected_graphs) == 0:
-            assert np.prod(new_shape) == 0
-            selected_graphs = [
+            assert np.prod(new_shape) == 0 and len(new_shape) > 0
+            selected_graphs = [  # TODO: Is this the best way to create an empty Batch?
                 GeometricData(
-                    x=torch.zeros(0, self.tensor.x.size(1)),
+                    x=torch.zeros(*new_shape, self.tensor.x.size(1)),
                     edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, self.tensor.edge_attr.size(1)),
+                    edge_attr=torch.zeros(*new_shape, self.tensor.edge_attr.size(1)),
                 )
             ]
 
         # Create a new batch from the selected graphs.
         # TODO: is there any downside to always using GeometricBatch even when the batch dimension is empty.
         new_batch = GeometricBatch.from_data_list(cast(List[BaseData], selected_graphs))
-        new_batch.batch_shape = new_shape  # TODO: change to match torch.Tensor behvaiour
+        new_batch.batch_shape = new_shape
 
         # Create a new GraphStates object
         out = self.__class__(new_batch)
 
         # Copy log rewards if they exist
         if self._log_rewards is not None:
-            out._log_rewards = self._log_rewards[indices]
+            out.log_rewards = self._log_rewards[index]
 
         return out
 
