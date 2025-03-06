@@ -119,8 +119,8 @@ def test_getitem_2d(datas):
     assert torch.allclose(batch_row.log_rewards, tsr[0])
 
     # Try again with slicing
-    tsr_row2 = tsr[0, [0, 1]]
-    batch_row2 = states[0, [0, 1]]
+    tsr_row2 = tsr[0, :]
+    batch_row2 = states[0, :]
     assert tuple(tsr_row2.shape) == batch_row2.tensor.batch_shape == (2,)
     assert torch.equal(batch_row.tensor.x, batch_row2.tensor.x)
 
@@ -164,7 +164,7 @@ def test_setitem_1d(datas):
     assert states.tensor.batch_shape == (3,)  # Batch shape should not change
 
     # Set the new graph in the second and third positions
-    states[[1, 2]] = new_states
+    states[1:] = new_states  # pyright: ignore  # TODO: Fix pyright issue
 
     # Check that the second and third graphs are now the new graph
     second_graph = states[1].tensor
@@ -182,7 +182,7 @@ def test_setitem_1d(datas):
     with pytest.raises(AssertionError):
         states[0] = new_states
     with pytest.raises(AssertionError):
-        states[[1, 2]] = new_states[0]
+        states[1:] = new_states[0]  # pyright: ignore
 
 
 def test_setitem_2d(datas):
