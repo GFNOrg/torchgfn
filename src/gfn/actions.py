@@ -136,7 +136,7 @@ class Actions(ABC):
                 "extend_with_dummy_actions is only implemented for bi-dimensional actions."
             )
 
-    def compare(self, other: torch.Tensor) -> torch.Tensor:
+    def _compare(self, other: torch.Tensor) -> torch.Tensor:
         """Compares the actions to a tensor of actions.
 
         Args:
@@ -163,7 +163,7 @@ class Actions(ABC):
         dummy_actions_tensor = self.__class__.dummy_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))
         )
-        return self.compare(dummy_actions_tensor)
+        return self._compare(dummy_actions_tensor)
 
     @property
     def is_exit(self) -> torch.Tensor:
@@ -171,7 +171,7 @@ class Actions(ABC):
         exit_actions_tensor = self.__class__.exit_action.repeat(
             *self.batch_shape, *((1,) * len(self.__class__.action_shape))
         )
-        return self.compare(exit_actions_tensor)
+        return self._compare(exit_actions_tensor)
 
 
 class GraphActionType(enum.IntEnum):
@@ -237,30 +237,7 @@ class GraphActions(Actions):
     def __repr__(self):
         return f"""GraphAction object with {self.batch_shape} actions."""
 
-    @property
-    def device(self) -> torch.device | None:
-        """Returns the device of the features tensor."""
-        return self.tensor.device
-
-    def __len__(self) -> int:
-        """Returns the number of actions in the batch."""
-        return int(prod(self.batch_shape))
-
-    def __getitem__(
-        self, index: int | List[int] | List[bool] | slice | torch.Tensor
-    ) -> GraphActions:
-        """Get particular actions of the batch."""
-        return GraphActions(self.tensor[index])
-
-    def __setitem__(
-        self,
-        index: int | List[int] | List[bool] | slice | torch.Tensor,
-        action: GraphActions,
-    ) -> None:
-        """Set particular actions of the batch."""
-        self.tensor[index] = action.tensor
-
-    def compare(self, other: GraphActions) -> torch.Tensor:
+    def _compare(self, other: GraphActions) -> torch.Tensor:
         """Compares the actions to another GraphAction object.
 
         Args:

@@ -60,8 +60,8 @@ class Env(ABC):
         assert self.sf.shape == state_shape
         self.state_shape = state_shape
         self.action_shape = action_shape
-        self.dummy_action = dummy_action
-        self.exit_action = exit_action
+        self.dummy_action = dummy_action.to(self.device)
+        self.exit_action = exit_action.to(self.device)
 
         # Warning: don't use self.States or self.Actions to initialize an instance of the class.
         # Use self.states_from_tensor or self.actions_from_tensor instead.
@@ -97,7 +97,7 @@ class Env(ABC):
         Args:
             batch_shape: Tuple representing the shape of the batch of states.
             random (optional): Initalize states randomly.
-            sink (optional): States initialized with s_f (the sink state).
+            sink (optional): States initialized with sf (the sink state).
 
         Returns:
             States: A batch of initial states.
@@ -429,27 +429,10 @@ class DiscreteEnv(Env, ABC):
         sink: bool = False,
         seed: Optional[int] = None,
     ) -> DiscreteStates:
-        """Instantiates a batch of initial states.
-
-        `random` and `sink` cannot be both True. When `random` is `True` and `seed` is
-            not `None`, environment randomization is fixed by the submitted seed for
-            reproducibility.
-        """
-        assert not (random and sink)
-
-        if random and seed is not None:
-            torch.manual_seed(seed)  # TODO: Improve seeding here?
-
-        if batch_shape is None:
-            batch_shape = (1,)
-        if isinstance(batch_shape, int):
-            batch_shape = (batch_shape,)
-        states = self.states_from_batch_shape(
-            batch_shape=batch_shape, random=random, sink=sink
-        )
+        """Instantiates a batch of initial DiscreteStates."""
+        states = super().reset(batch_shape, random, sink, seed)
         states = cast(DiscreteStates, states)
         self.update_masks(states)
-
         return states
 
     @abstractmethod
@@ -473,12 +456,13 @@ class DiscreteEnv(Env, ABC):
         return DiscreteEnvStates
 
     def make_actions_class(self) -> type[Actions]:
+        """Same functionality as the parent class, but with a different class name."""
         env = self
 
         class DiscreteEnvActions(Actions):
             action_shape = env.action_shape
-            dummy_action = env.dummy_action.to(device=env.device)
-            exit_action = env.exit_action.to(device=env.device)
+            dummy_action = env.dummy_action
+            exit_action = env.exit_action
 
         return DiscreteEnvActions
 
@@ -598,7 +582,7 @@ class GraphEnv(Env):
 
         self.s0 = s0.to(device)  # pyright: ignore
         self.features_dim = s0.x.shape[-1]
-        self.sf = sf
+        self.sf = sf.to(device)  # pyright: ignore
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()

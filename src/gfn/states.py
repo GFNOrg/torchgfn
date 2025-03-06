@@ -144,10 +144,10 @@ class States(ABC):
                 f"make_sink_states_tensor is not implemented by default for {cls.__name__}"
             )
 
-    def __len__(self):
+    def __len__(self) -> int:
         return prod(self.batch_shape)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.__class__.__name__} object of batch shape {self.batch_shape} and state shape {self.state_shape}"
 
     @property
@@ -249,7 +249,7 @@ class States(ABC):
                 f"extend_with_sf is not implemented for graph states nor for batch shapes {self.batch_shape}"
             )
 
-    def compare(self, other: torch.Tensor) -> torch.Tensor:
+    def _compare(self, other: torch.Tensor) -> torch.Tensor:
         """Computes elementwise equality between state tensor with an external tensor.
 
         Args:
@@ -278,7 +278,7 @@ class States(ABC):
             raise NotImplementedError(
                 f"is_initial_state is not implemented by default for {self.__class__.__name__}"
             )
-        return self.compare(source_states_tensor)
+        return self._compare(source_states_tensor)
 
     @property
     def is_sink_state(self) -> torch.Tensor:
@@ -292,7 +292,7 @@ class States(ABC):
             raise NotImplementedError(
                 f"is_sink_state is not implemented by default for {self.__class__.__name__}"
             )
-        return self.compare(sink_states)
+        return self._compare(sink_states)
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
@@ -392,10 +392,10 @@ class DiscreteStates(States, ABC):
         assert self.forward_masks.shape == (*self.batch_shape, self.n_actions)
         assert self.backward_masks.shape == (*self.batch_shape, self.n_actions - 1)
 
-    def clone(self) -> States:
+    def clone(self) -> DiscreteStates:
         """Returns a clone of the current instance."""
         return self.__class__(
-            self.tensor.detach().clone(),
+            self.tensor.detach().clone(),  # TODO: Are States carrying gradients?
             self.forward_masks,
             self.backward_masks,
         )
@@ -701,10 +701,6 @@ class GraphStates(States):
 
         return batch
 
-    def __len__(self) -> int:
-        """Returns the number of graphs in the batch."""
-        return int(np.prod(self.batch_shape))
-
     def __repr__(self):
         """Returns a string representation of the GraphStates object."""
         return (
@@ -772,7 +768,7 @@ class GraphStates(States):
         # Create a new batch from the selected graphs.
         # TODO: is there any downside to always using GeometricBatch even when the batch dimension is empty.
         new_batch = GeometricBatch.from_data_list(cast(List[BaseData], selected_graphs))
-        new_batch.batch_shape = new_shape  # TODO: change to match torch.Tensor behvaiour.
+        new_batch.batch_shape = new_shape  # TODO: change to match torch.Tensor behvaiour
 
         # Create a new GraphStates object
         out = self.__class__(new_batch)
@@ -838,7 +834,7 @@ class GraphStates(States):
         return self
 
     @staticmethod
-    def clone_batch(batch: GeometricBatch) -> GeometricBatch:
+    def _clone_batch(batch: GeometricBatch) -> GeometricBatch:
         """Clones a PyG Batch object.
 
         Args:
@@ -860,7 +856,7 @@ class GraphStates(States):
             A new GraphStates object with the same data.
         """
         # Create a deep copy of the batch
-        new_batch = self.clone_batch(self.tensor)
+        new_batch = self._clone_batch(self.tensor)
 
         # Create a new GraphStates object
         out = self.__class__(new_batch)
@@ -879,7 +875,7 @@ class GraphStates(States):
         """
         if len(self) == 0:
             # If self is empty, just copy other
-            self.tensor = self.clone_batch(other.tensor)
+            self.tensor = self._clone_batch(other.tensor)
             if other._log_rewards is not None:
                 self._log_rewards = other._log_rewards.clone()
             return
@@ -923,21 +919,6 @@ class GraphStates(States):
             self._log_rewards = torch.cat([self._log_rewards, other._log_rewards], dim=0)
         elif other._log_rewards is not None:
             self._log_rewards = other._log_rewards.clone()
-
-    @property
-    def log_rewards(self) -> torch.Tensor | None:
-        """Returns the log rewards of the states."""
-        return self._log_rewards
-
-    @log_rewards.setter
-    def log_rewards(self, log_rewards: torch.Tensor) -> None:
-        """Sets the log rewards of the states.
-
-        Args:
-            log_rewards: Tensor of shape `batch_shape` representing the log rewards.
-        """
-        assert log_rewards.shape == self.batch_shape
-        self._log_rewards = log_rewards
 
     def _compare(self, other: GeometricData) -> torch.Tensor:
         """Compares the current batch of graphs with another graph.
@@ -1182,3 +1163,7 @@ class GraphStates(States):
             "features": features_mask,
             "edge_index": edge_index_masks,
         }
+
+    # TODO: some methods are not implemented yet
+    # flatten
+    # extend_with_sf
