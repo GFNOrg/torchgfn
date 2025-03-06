@@ -1139,6 +1139,8 @@ class GraphStates(States):
             "edge_index": edge_index_masks,
         }
 
-    # TODO: some methods are not implemented yet
-    # flatten
-    # extend_with_sf
+    def flatten(self) -> None:
+        raise NotImplementedError
+
+    def extend_with_sf(self, required_first_dim: int) -> None:
+        raise NotImplementedError
