@@ -28,9 +28,9 @@ class Line(Env):
         self.mixture = [Normal(m, s) for m, s in zip(self.mus, self.sigmas)]
 
         self.init_value = init_value  # Used in s0.
-        self.lb = torch.min(self.mus) - self.n_sd * torch.max(self.sigmas)
-        self.ub = torch.max(self.mus) + self.n_sd * torch.max(self.sigmas)
-        assert self.lb < self.init_value < self.ub
+        lb = torch.min(self.mus) - self.n_sd * torch.max(self.sigmas)
+        ub = torch.max(self.mus) + self.n_sd * torch.max(self.sigmas)
+        assert lb < self.init_value < ub
 
         s0 = torch.tensor([self.init_value, 0.0], device=torch.device(device_str))
         dummy_action = torch.tensor([float("inf")], device=torch.device(device_str))

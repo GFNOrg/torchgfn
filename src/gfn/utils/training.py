@@ -185,7 +185,7 @@ def warm_up(
         else:
             loss = gflownet.loss(env, training_trajs)
 
-        loss.backward()  # pyright: ignore
+        loss.backward()
         optimizer.step()
         t.set_description(f"{epoch=}, {loss=}")
 
