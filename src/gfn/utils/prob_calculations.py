@@ -26,9 +26,9 @@ def check_cond_forward(
             return module(states)
 
 
-#########################
-##### Trajectories  #####
-#########################
+# ------------
+# Trajectories
+# ------------
 
 
 def get_trajectory_pfs_and_pbs(
@@ -170,9 +170,9 @@ def get_trajectory_pbs(
     return log_pb_trajectories
 
 
-########################
-##### Transitions  #####
-########################
+# -----------
+# Transitions
+# -----------
 
 
 def get_transition_pfs_and_pbs(

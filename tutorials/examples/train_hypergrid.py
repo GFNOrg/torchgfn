@@ -18,7 +18,7 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
-from gfn.containers import PrioritizedReplayBuffer, ReplayBuffer
+from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -181,7 +181,7 @@ def main(args):  # noqa: C901
     replay_buffer = None
     if args.replay_buffer_size > 0:
         if args.replay_buffer_prioritized:
-            replay_buffer = PrioritizedReplayBuffer(
+            replay_buffer = NormBasedDiversePrioritizedReplayBuffer(
                 env,
                 capacity=args.replay_buffer_size,
                 cutoff_distance=args.cutoff_distance,

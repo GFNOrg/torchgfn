@@ -147,7 +147,7 @@ class Sampler:
         if conditioning is not None:
             assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
 
-        device = states.tensor.device
+        device = states.device
 
         dones = (
             states.is_initial_state
@@ -205,13 +205,14 @@ class Sampler:
                 all_estimator_outputs.append(estimator_outputs_padded)
 
             actions[~dones] = valid_actions
-            trajectories_actions.append(actions)
             if save_logprobs:
                 assert (
                     actions_log_probs is not None
                 ), "actions_log_probs should not be None when save_logprobs is True"
                 log_probs[~dones] = actions_log_probs
-                trajectories_logprobs.append(log_probs)
+
+            trajectories_actions.append(actions)
+            trajectories_logprobs.append(log_probs)
 
             if self.estimator.is_backward:
                 new_states = env._backward_step(states, actions)
@@ -219,7 +220,7 @@ class Sampler:
                 new_states = env._step(states, actions)
             sink_states_mask = new_states.is_sink_state
 
-            # Increment the step, determine which trajectories are finisihed, and eval
+            # Increment the step, determine which trajectories are finished, and eval
             # rewards.
             step += 1
 
@@ -242,11 +243,10 @@ class Sampler:
                 )
             states = new_states
             dones = dones | new_dones
-
             trajectories_states.append(deepcopy(states))
 
         # Stack all states and actions
-        stacked_states = env.States.stack_states(trajectories_states)
+        stacked_states = env.States.stack(trajectories_states)
         stacked_actions = env.Actions.stack(trajectories_actions)[
             1:
         ]  # Drop dummy action
