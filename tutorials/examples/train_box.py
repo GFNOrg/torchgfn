@@ -272,7 +272,9 @@ def main(args):  # noqa: C901
             wandb.log(to_log, step=iteration)
         if iteration % (args.validation_interval // 5) == 0:
             tqdm.write(
-                f"States: {states_visited}, Loss: {loss.item():.3f}, {logZ_info}true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
+                f"States: {states_visited}, "
+                f"Loss: {loss.item():.3f}, {logZ_info}"
+                f"true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
             )
 
         if iteration % args.validation_interval == 0:

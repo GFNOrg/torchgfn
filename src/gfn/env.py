@@ -1,18 +1,20 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Union, cast
+from typing import Optional, Tuple, cast
 
 import torch
+from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.data import Data as GeometricData
 
-from gfn.actions import Actions
+from gfn.actions import Actions, GraphActions
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
-from gfn.states import DiscreteStates, States
+from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import set_seed
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
 
 
-def get_device(device_str, default_device):
+def get_device(device_str, default_device) -> torch.device:
     return torch.device(device_str) if device_str is not None else default_device
 
 
@@ -22,12 +24,12 @@ class Env(ABC):
 
     def __init__(
         self,
-        s0: torch.Tensor,
+        s0: torch.Tensor | GeometricData,
         state_shape: Tuple,
         action_shape: Tuple,
         dummy_action: torch.Tensor,
         exit_action: torch.Tensor,
-        sf: Optional[torch.Tensor] = None,
+        sf: Optional[torch.Tensor | GeometricData] = None,
         device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
@@ -50,16 +52,20 @@ class Env(ABC):
         """
         self.device = get_device(device_str, default_device=s0.device)
 
-        self.s0 = s0.to(self.device)
+        self.s0 = s0.to(self.device)  # type: ignore
         assert s0.shape == state_shape
+
         if sf is None:
             sf = torch.full(s0.shape, -float("inf")).to(self.device)
-        self.sf: torch.Tensor = sf
+
+        self.sf = sf
+        assert self.sf is not None
         assert self.sf.shape == state_shape
+
         self.state_shape = state_shape
         self.action_shape = action_shape
-        self.dummy_action = dummy_action
-        self.exit_action = exit_action
+        self.dummy_action = dummy_action.to(self.device)
+        self.exit_action = exit_action.to(self.device)
 
         # Warning: don't use self.States or self.Actions to initialize an instance of the class.
         # Use self.states_from_tensor or self.actions_from_tensor instead.
@@ -94,8 +100,8 @@ class Env(ABC):
 
         Args:
             batch_shape: Tuple representing the shape of the batch of states.
-            random (optional): Initalize states randomly.
-            sink (optional): States initialized with s_f (the sink state).
+            random (optional): Initialize states randomly.
+            sink (optional): States initialized with sf (the sink state).
 
         Returns:
             States: A batch of initial states.
@@ -205,7 +211,7 @@ class Env(ABC):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
+        batch_shape: int | Tuple[int, ...],
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
@@ -220,28 +226,13 @@ class Env(ABC):
         if random and seed is not None:
             set_seed(seed, performance_mode=True)
 
-        if batch_shape is None:
-            batch_shape = (1,)
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
         return self.states_from_batch_shape(
             batch_shape=batch_shape, random=random, sink=sink
         )
 
-    def validate_actions(
-        self, states: States, actions: Actions, backward: bool = False
-    ) -> bool:
-        """First, asserts that states and actions have the same batch_shape.
-        Then, uses `is_action_valid`.
-        Returns a boolean indicating whether states/actions pairs are valid."""
-        assert states.batch_shape == actions.batch_shape
-        return self.is_action_valid(states, actions, backward)
-
-    def _step(
-        self,
-        states: States,
-        actions: Actions,
-    ) -> States:
+    def _step(self, states: States, actions: Actions) -> States:
         """Core step function. Calls the user-defined self.step() function.
 
         Function that takes a batch of states and actions and returns a batch of next
@@ -255,13 +246,17 @@ class Env(ABC):
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
-        if not self.validate_actions(valid_states, valid_actions):
+        if not self.is_action_valid(valid_states, valid_actions):
             raise NonValidActionsError(
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
 
+        # Set to the sink state when the action is exit.
         new_sink_states_idx = actions.is_exit
-        new_states.tensor[new_sink_states_idx] = self.sf
+        sf_tensor = self.States.make_sink_states_tensor(
+            (int(new_sink_states_idx.sum().item()),)
+        )
+        new_states[new_sink_states_idx] = self.States(sf_tensor)
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
         assert new_sink_states_idx.shape == states.batch_shape
 
@@ -269,20 +264,17 @@ class Env(ABC):
         not_done_actions = actions[~new_sink_states_idx]
 
         new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
-        if not isinstance(new_not_done_states_tensor, torch.Tensor):
+
+        if not isinstance(new_not_done_states_tensor, (torch.Tensor, GeometricBatch)):
             raise Exception(
-                "User implemented env.step function *must* return a torch.Tensor!"
+                "User implemented env.step function *must* return a torch.Tensor or "
+                "a GeometricBatch (for graph-based environments)."
             )
 
-        new_states.tensor[~new_sink_states_idx] = new_not_done_states_tensor
-
+        new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
         return new_states
 
-    def _backward_step(
-        self,
-        states: States,
-        actions: Actions,
-    ) -> States:
+    def _backward_step(self, states: States, actions: Actions) -> States:
         """Core backward_step function. Calls the user-defined self.backward_step fn.
 
         This function takes a batch of states and actions and returns a batch of next
@@ -296,14 +288,14 @@ class Env(ABC):
         valid_actions = actions[valid_states_idx]
         valid_states = states[valid_states_idx]
 
-        if not self.validate_actions(valid_states, valid_actions, backward=True):
+        if not self.is_action_valid(valid_states, valid_actions, backward=True):
             raise NonValidActionsError(
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
 
         # Calculate the backward step, and update only the states which are not Done.
         new_not_done_states_tensor = self.backward_step(valid_states, valid_actions)
-        new_states.tensor[valid_states_idx] = new_not_done_states_tensor
+        new_states[valid_states_idx] = self.States(new_not_done_states_tensor)
 
         return new_states
 
@@ -355,6 +347,9 @@ class DiscreteEnv(Env, ABC):
     via mask tensors, that are directly attached to `States` objects.
     """
 
+    s0: torch.Tensor  # this tells the type checker that s0 is a torch.Tensor
+    sf: torch.Tensor  # this tells the type checker that sf is a torch.Tensor
+
     def __init__(
         self,
         n_actions: int,
@@ -390,6 +385,8 @@ class DiscreteEnv(Env, ABC):
         if exit_action is None:
             exit_action = torch.tensor([n_actions - 1], device=device)
 
+        assert dummy_action is not None
+        assert exit_action is not None
         assert s0.shape == state_shape
         assert dummy_action.shape == action_shape
         assert exit_action.shape == action_shape
@@ -432,32 +429,15 @@ class DiscreteEnv(Env, ABC):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int, ...]]] = None,
+        batch_shape: int | Tuple[int, ...],
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
     ) -> DiscreteStates:
-        """Instantiates a batch of initial states.
-
-        `random` and `sink` cannot be both True. When `random` is `True` and `seed` is
-            not `None`, environment randomization is fixed by the submitted seed for
-            reproducibility.
-        """
-        assert not (random and sink)
-
-        if random and seed is not None:
-            torch.manual_seed(seed)  # TODO: Improve seeding here?
-
-        if batch_shape is None:
-            batch_shape = (1,)
-        if isinstance(batch_shape, int):
-            batch_shape = (batch_shape,)
-        states = self.states_from_batch_shape(
-            batch_shape=batch_shape, random=random, sink=sink
-        )
+        """Instantiates a batch of initial DiscreteStates."""
+        states = super().reset(batch_shape, random, sink, seed)
         states = cast(DiscreteStates, states)
         self.update_masks(states)
-
         return states
 
     @abstractmethod
@@ -481,12 +461,13 @@ class DiscreteEnv(Env, ABC):
         return DiscreteEnvStates
 
     def make_actions_class(self) -> type[Actions]:
+        """Same functionality as the parent class, but with a different class name."""
         env = self
 
         class DiscreteEnvActions(Actions):
             action_shape = env.action_shape
-            dummy_action = env.dummy_action.to(device=env.device)
-            exit_action = env.exit_action.to(device=env.device)
+            dummy_action = env.dummy_action
+            exit_action = env.exit_action
 
         return DiscreteEnvActions
 
@@ -577,3 +558,72 @@ class DiscreteEnv(Env, ABC):
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
+
+
+class GraphEnv(Env):
+    """Base class for graph-based environments."""
+
+    sf: GeometricData  # this tells the type checker that sf is a GeometricData
+
+    def __init__(
+        self,
+        s0: GeometricData,
+        sf: GeometricData,
+        device_str: Optional[str] = None,
+        preprocessor: Optional[Preprocessor] = None,
+    ):
+        """Initializes a graph-based environment.
+
+        Args:
+            s0: The initial graph state.
+            sf: The sink graph state.
+            device_str: String representation of the device.
+            preprocessor: a Preprocessor object that converts raw graph states to a tensor
+                that can be fed into a neural network. Defaults to None, in which case
+                the IdentityPreprocessor is used.
+        """
+        device = get_device(device_str, default_device=s0.device)
+        assert s0.x is not None
+
+        self.s0 = s0.to(device)  # type: ignore
+        self.features_dim = s0.x.shape[-1]
+        self.sf = sf.to(device)  # type: ignore
+
+        self.States = self.make_states_class()
+        self.Actions = self.make_actions_class()
+
+        self.preprocessor = preprocessor
+
+    def make_states_class(self) -> type[GraphStates]:
+        env = self
+
+        class GraphEnvStates(GraphStates):
+            s0 = env.s0
+            sf = env.sf
+            make_random_states_graph = env.make_random_states_tensor
+
+        return GraphEnvStates
+
+    def make_actions_class(self) -> type[GraphActions]:
+        """The default Actions class factory for all Environments.
+
+        Returns a class that inherits from Actions and implements assumed methods.
+        The make_actions_class method should be overwritten to achieve more
+        environment-specific Actions functionality.
+        """
+        env = self
+
+        class DefaultGraphAction(GraphActions):
+            features_dim = env.features_dim
+
+        return DefaultGraphAction
+
+    @abstractmethod
+    def step(self, states: GraphStates, actions: Actions) -> torch.Tensor:
+        """Function that takes a batch of graph states and actions and returns a batch of next
+        graph states."""
+
+    @abstractmethod
+    def backward_step(self, states: GraphStates, actions: Actions) -> torch.Tensor:
+        """Function that takes a batch of graph states and actions and returns a batch of previous
+        graph states."""

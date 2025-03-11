@@ -33,7 +33,7 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
         super().__init__()
 
-        assert isinstance(  # TODO: need a more flexible type check.
+        assert isinstance(
             logF,
             DiscretePolicyEstimator | ConditionalDiscretePolicyEstimator,
         ), "logF must be a DiscretePolicyEstimator or ConditionalDiscretePolicyEstimator"
