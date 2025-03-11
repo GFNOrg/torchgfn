@@ -9,7 +9,7 @@ import os
 import sys
 
 project = "torchgfn"
-copyright = "2022-2023, Salem Lahlou, Joseph Viviano, & Victor Schmidt"
+copyright = "2022-2024, Salem Lahlou, Joseph Viviano, & Victor Schmidt"
 author = "Salem Lahlou, Joseph Viviano, & Victor Schmidt"
 
 
@@ -61,8 +61,12 @@ exclude_patterns = []
 
 html_static_path = ["_static"]
 
-html_theme = "renku"
+html_theme = "alabaster"
 html_theme_options = {
     "collapse_navigation": False,
     "navigation_depth": 4,
+    "logo_only": False,
+    "display_version": True,
+    "prev_next_buttons_location": "bottom",
+    "style_external_links": False,
 }

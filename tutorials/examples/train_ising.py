@@ -8,8 +8,7 @@ from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.gym.discrete_ebm import IsingModel
 from gfn.modules import DiscretePolicyEstimator
-from gfn.utils.modules import NeuralNet
-from gfn.utils.training import validate
+from gfn.utils.modules import MLP
 
 
 def main(args):
@@ -27,8 +26,6 @@ def main(args):
     n_hidden = 2
     acc_fn = "relu"
     lr = 0.001
-    lr_Z = 0.01
-    validation_samples = 1000
 
     def make_J(L, coupling_constant):
         """Ising model parameters."""
@@ -66,7 +63,7 @@ def main(args):
     env = DiscreteEBM(N, alpha=1, energy=ising_energy, device_str=device)
 
     # Parametrization and losses
-    pf_module = NeuralNet(
+    pf_module = MLP(
         input_dim=env.preprocessor.output_dim,
         output_dim=env.n_actions,
         hidden_dim=hidden_dim,
@@ -78,13 +75,18 @@ def main(args):
         pf_module, env.n_actions, env.preprocessor, is_backward=False
     )
     gflownet = FMGFlowNet(pf_estimator)
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=lr)
 
     # Learning
-    visited_terminating_states = env.States.from_batch_shape((0,))
     states_visited = 0
-    for i in (pbar := tqdm(range(10000))):
-        trajectories = gflownet.sample_trajectories(env, n_samples=8, off_policy=False)
+
+    for i in tqdm(range(10000)):
+        trajectories = gflownet.sample_trajectories(
+            env,
+            n=8,
+            save_estimator_outputs=False,
+            save_logprobs=False,
+        )
         training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples)

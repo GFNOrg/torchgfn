@@ -11,23 +11,23 @@ And run one of the following to reproduce some of the results in
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 """
 
-from argparse import ArgumentParser
-from math import ceil
-from typing import List, Any, Union, Optional, Callable
 import datetime
 import os
-import pickle
 import signal
 import sys
 import threading
 import time
+from argparse import ArgumentParser
+from math import ceil
+from typing import Callable, Optional, cast
 
-from torch.nn.parallel import DistributedDataParallel as DDP
-from tqdm import tqdm, trange
 import torch
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.profiler import ProfilerActivity, profile
+from tqdm import tqdm, trange
 
-from gfn.containers import ReplayBuffer, PrioritizedReplayBuffer
+from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -38,11 +38,10 @@ from gfn.gflownet import (
 )
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
-from gfn.utils.modules import DiscreteUniform, NeuralNet, Tabular
+from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
-from torch.profiler import profile, ProfilerActivity
-
 
 DEFAULT_SEED = 4444
 
@@ -54,13 +53,15 @@ def average_gradients(model):
         dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
         param.grad.data /= size
 
+
 def average_models(model):
     """Averages model weights across all ranks."""
     world_size = float(dist.get_world_size())
     for param in model.parameters():
-        param_tensor = param.data.clone() # clone to avoid inplace operations
+        param_tensor = param.data.clone()  # clone to avoid inplace operations
         dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
         param.data = param_tensor / world_size
+
 
 def initialize_distributed_compute(dist_backend: str = "ccl"):
     """Initalizes distributed compute using either ccl or mpi backends."""
@@ -108,11 +109,21 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
 
         # for now, let us enforce that each agent gets equal number of ranks.
         # TODO: later, we can relax this condition.
-        assert (my_size % args.num_agent_groups == 0)
+        assert my_size % args.num_agent_groups == 0
         agent_group_size = my_size // args.num_agent_groups
-        agent_group_rank_list = [list(range(i * agent_group_size, (i + 1) * agent_group_size)) for i in range(args.num_agent_groups)]
-        print (agent_group_rank_list)
-        agent_group_list = [dist.new_group(agent_group_rank_list[i], backend=dist_backend, timeout=datetime.timedelta(minutes=5),)  for i in range(args.num_agent_groups)]
+        agent_group_rank_list = [
+            list(range(i * agent_group_size, (i + 1) * agent_group_size))
+            for i in range(args.num_agent_groups)
+        ]
+        print(agent_group_rank_list)
+        agent_group_list = [
+            dist.new_group(
+                agent_group_rank_list[i],
+                backend=dist_backend,
+                timeout=datetime.timedelta(minutes=5),
+            )
+            for i in range(args.num_agent_groups)
+        ]
 
         print(f"+ My rank: {my_rank} size: {my_size}")
 
@@ -120,13 +131,14 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
 
 
 class DistributedErrorHandler:
-    def __init__(self,
-                 device_str: str,
-                 rank: int,
-                 world_size: int,
-                 error_check_interval: float = 1.0,
-                 cleanup_callback: Optional[Callable] = None,
-        ):
+    def __init__(
+        self,
+        device_str: str,
+        rank: int,
+        world_size: int,
+        error_check_interval: float = 1.0,
+        cleanup_callback: Optional[Callable] = None,
+    ):
         """
         Initialize error handler for distributed training.
 
@@ -158,7 +170,7 @@ class DistributedErrorHandler:
 
     def _signal_handler(self, signum, frame):
         """Handle external signals"""
-        print(f'Process {self.rank} received signal {signum}')
+        print(f"Process {self.rank} received signal {signum}")
         self.shutdown_flag.set()
         self._cleanup()
         sys.exit(1)
@@ -172,13 +184,13 @@ class DistributedErrorHandler:
                 dist.all_reduce(error_count, op=dist.ReduceOp.SUM)
 
                 if error_count.item() > 0:
-                    print(f'Process {self.rank}: Detected error in another process')
+                    print(f"Process {self.rank}: Detected error in another process")
                     self.shutdown_flag.set()
                     self._cleanup()
                     sys.exit(1)
 
             except Exception as e:
-                print('Process {}: Error in error checker: {}'.format(self.rank, e))
+                print("Process {}: Error in error checker: {}".format(self.rank, e))
                 self.signal_error()
                 break
 
@@ -202,7 +214,7 @@ class DistributedErrorHandler:
             try:
                 self.cleanup_callback()
             except Exception as e:
-                print(f'Process {self.rank}: Error in cleanup: {str(e)}')
+                print(f"Process {self.rank}: Error in cleanup: {str(e)}")
 
         try:
             dist.destroy_process_group()
@@ -211,7 +223,10 @@ class DistributedErrorHandler:
 
 
 def gather_distributed_data(
-    local_tensor: torch.Tensor, world_size: int = None, rank: int = None, verbose: bool = False,
+    local_tensor: torch.Tensor,
+    world_size: int = None,
+    rank: int = None,
+    verbose: bool = False,
 ) -> torch.Tensor:
     """
     Gather data from all processes in a distributed setting.
@@ -234,27 +249,32 @@ def gather_distributed_data(
         rank = dist.get_rank()
 
     # First gather batch_sizes to allocate correct buffer sizes.
-    local_batch_size = torch.tensor([local_tensor.shape[0]], device=local_tensor.device, dtype=local_tensor.dtype)
+    local_batch_size = torch.tensor(
+        [local_tensor.shape[0]], device=local_tensor.device, dtype=local_tensor.dtype
+    )
     if rank == 0:
         # Assumes same dimensionality on all ranks!
         batch_size_list = [
-            torch.zeros((1, ), device=local_tensor.device, dtype=local_tensor.dtype) for _ in range(world_size)
+            torch.zeros((1,), device=local_tensor.device, dtype=local_tensor.dtype)
+            for _ in range(world_size)
         ]
     else:
         batch_size_list = None
 
     if verbose:
         print("rank={}, batch_size_list={}".format(rank, batch_size_list))
-        print("+ gather of local_batch_size={} to batch_size_list".format(local_batch_size))
+        print(
+            "+ gather of local_batch_size={} to batch_size_list".format(local_batch_size)
+        )
     dist.gather(local_batch_size, gather_list=batch_size_list, dst=0)
     dist.barrier()  # Add synchronization
 
     # Pad local tensor to maximum size.
     if verbose:
-         print("+ padding local tensor")
+        print("+ padding local tensor")
 
     if rank == 0:
-        max_batch_size = (max(bs for bs in batch_size_list))
+        max_batch_size = max(bs for bs in batch_size_list)
     else:
         max_batch_size = 0
 
@@ -269,7 +289,7 @@ def gather_distributed_data(
         padding = torch.zeros(
             (max_batch_size - local_tensor.shape[0], state_size),
             dtype=local_tensor.dtype,
-            device=local_tensor.device
+            device=local_tensor.device,
         )
         local_tensor = torch.cat((local_tensor, padding), dim=0)
 
@@ -296,7 +316,7 @@ def gather_distributed_data(
     if rank == 0:
         results = []
         for tensor, batch_size in zip(tensor_list, batch_size_list):
-            trimmed_tensor = tensor[:batch_size.item(), ...]
+            trimmed_tensor = tensor[: batch_size.item(), ...]
             results.append(trimmed_tensor)
 
         if verbose:
@@ -326,12 +346,16 @@ def main(args):  # noqa: C901
         wandb.config.update(args)
 
     if args.distributed:
-        my_rank, my_size, agent_group_size, agent_group_list = initialize_distributed_compute()
+        my_rank, my_size, agent_group_size, agent_group_list = (
+            initialize_distributed_compute()
+        )
         my_rank = dist.get_rank()
         world_size = torch.distributed.get_world_size()
         my_agent_group_id = my_rank // agent_group_size
         print(f"Running with DDP on rank {my_rank}/{world_size}.")
-        print(f"agent_group_size, my_agent_group_id = {agent_group_size, my_agent_group_id}")
+        print(
+            f"agent_group_size, my_agent_group_id = {agent_group_size, my_agent_group_id}"
+        )
     else:
         world_size = 1  # Single machine.
         my_rank = 0  # Single machine.
@@ -364,7 +388,7 @@ def main(args):  # noqa: C901
         if args.tabular:
             module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
         else:
-            module = NeuralNet(
+            module = MLP(
                 input_dim=env.preprocessor.output_dim,
                 output_dim=env.n_actions,
                 hidden_dim=args.hidden_dim,
@@ -387,19 +411,19 @@ def main(args):  # noqa: C901
             if not args.uniform_pb:
                 pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
         else:
-            pf_module = NeuralNet(
+            pf_module = MLP(
                 input_dim=env.preprocessor.output_dim,
                 output_dim=env.n_actions,
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
             )
             if not args.uniform_pb:
-                pb_module = NeuralNet(
+                pb_module = MLP(
                     input_dim=env.preprocessor.output_dim,
                     output_dim=env.n_actions - 1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
-                    torso=pf_module.torso if args.tied else None,
+                    trunk=pf_module.trunk if args.tied else None,
                 )
         if args.uniform_pb:
             pb_module = DiscreteUniform(env.n_actions - 1)
@@ -428,7 +452,8 @@ def main(args):  # noqa: C901
                 assert locals()[v] is not None, f"{v} is None, Args: {args}"
             gflownet = ModifiedDBGFlowNet(pf_estimator, pb_estimator)
 
-        if args.loss in ("DB", "SubTB"):
+        elif args.loss in ("DB", "SubTB"):
+            # We need a LogStateFlowEstimator.
             for v in ["pf_estimator", "pb_estimator"]:
                 assert locals()[v] is not None, f"{v} is None, Args: {args}"
 
@@ -436,12 +461,12 @@ def main(args):  # noqa: C901
             if args.tabular:
                 module = Tabular(n_states=env.n_states, output_dim=1)
             else:
-                module = NeuralNet(
+                module = MLP(
                     input_dim=env.preprocessor.output_dim,
                     output_dim=1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
-                    torso=pf_module.torso if args.tied else None,
+                    trunk=pf_module.trunk if args.tied else None,
                 )
 
             if args.distributed:
@@ -481,7 +506,7 @@ def main(args):  # noqa: C901
 
         assert gflownet is not None, f"gflownet is None, Args: {args}"
 
-    # Initialize the replay buffer ?
+    # Create replay buffer if needed
     replay_buffer = None
     object_type_mapping = {
         "TB": "trajectories",
@@ -492,27 +517,32 @@ def main(args):  # noqa: C901
         "FM": "states",
     }
     if args.replay_buffer_size > 0:
-
-        if args.replay_buffer_prioritized:
-            replay_buffer = PrioritizedReplayBuffer(
+        if args.diverse_replay_buffer:
+            replay_buffer = NormBasedDiversePrioritizedReplayBuffer(
                 env,
-                objects_type=object_type_mapping[args.loss],
                 capacity=args.replay_buffer_size,
-                p_norm_distance=1,  # Use L1-norm for diversity estimation.
-                cutoff_distance=0,  # -1 turns off diversity-based filtering.
+                cutoff_distance=args.cutoff_distance,
+                p_norm_distance=args.p_norm_distance,
             )
         else:
             replay_buffer = ReplayBuffer(
                 env,
-                objects_type=objects_type,
                 capacity=args.replay_buffer_size,
+                prioritized=False,
             )
+
+    # Move the gflownet to the GPU.
+    gflownet = gflownet.to(device_str)
 
     # 3. Create the optimizer
     non_logz_params = [
         v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
     ]
-    logz_params = [dict(gflownet.named_parameters())["logZ"]]
+    if "logZ" in dict(gflownet.named_parameters()):
+        logz_params = [dict(gflownet.named_parameters())["logZ"]]
+    else:
+        logz_params = []
+
     params = [
         {"params": non_logz_params, "lr": args.lr},
         # Log Z gets dedicated learning rate (typically higher).
@@ -554,7 +584,7 @@ def main(args):  # noqa: C901
     if args.distributed:
         # Create and start error handler.
         def cleanup():
-            print(f'Process {rank}: Cleaning up...')
+            print(f"Process {rank}: Cleaning up...")
 
         rank = os.environ["RANK"]
         world_size = os.environ["WORLD_SIZE"]
@@ -564,7 +594,7 @@ def main(args):  # noqa: C901
             world_size,
             cleanup_callback=cleanup,
         )
-        #handler.start()
+        # handler.start()
 
     if args.distributed:
         world_size = torch.distributed.get_world_size()
@@ -583,7 +613,7 @@ def main(args):  # noqa: C901
 
         trajectories = gflownet.sample_trajectories(
             env,
-            n_samples=per_node_batch_size,  # Split batch across all workers.
+            n=args.batch_size,
             save_logprobs=is_on_policy,
             save_estimator_outputs=False,
         )
@@ -614,7 +644,7 @@ def main(args):  # noqa: C901
         loss = gflownet.loss(
             env,
             training_objects,
-            reduction="sum" if args.distributed else "mean",
+            reduction="sum" if args.distributed or args.loss == "SubTB" else "mean",
         )
 
         # Normalize the loss by the local batch size if distributed
@@ -628,7 +658,7 @@ def main(args):  # noqa: C901
         if args.distributed:
             dist.barrier()
         bar0_end = time.time()
-        total_bar0_time += (bar0_end - bar0_start)
+        total_bar0_time += bar0_end - bar0_start
 
         # Time backpropagation computation.
         loss_backward_start = time.time()
@@ -648,19 +678,21 @@ def main(args):  # noqa: C901
         if args.distributed:
             dist.barrier()
         bar1_end = time.time()
-        total_bar1_time += (bar1_end - bar1_start)
+        total_bar1_time += bar1_end - bar1_start
 
         average_start = time.time()
         if args.distributed and (iteration % args.average_every == 0):
-            print ("before averaging model, iteration = ", iteration)
+            print("before averaging model, iteration = ", iteration)
             average_models(gflownet)
-            print ("after averaging model, iteration = ", iteration)
+            print("after averaging model, iteration = ", iteration)
         average_end = time.time()
-        average_time = average_end - average_start;
+        average_time = average_end - average_start
         total_average_time += average_time
 
         # Keep track of trajectories / states.
-        visited_terminating_states.extend(trajectories.last_states)
+        last_states = trajectories.last_states
+        last_states = cast(DiscreteStates, last_states)
+        visited_terminating_states.extend(last_states)
         states_visited += len(trajectories)
 
         # Calculate how long this iteration took.
@@ -676,23 +708,34 @@ def main(args):  # noqa: C901
             ]
         )
 
-        log_this_iter = ((iteration % args.validation_interval == 0) or iteration == n_iterations - 1)
+        log_this_iter = (
+            iteration % args.validation_interval == 0
+        ) or iteration == n_iterations - 1
 
-        print("before distributed -- orig_shape={}".format(visited_terminating_states.tensor.shape))
+        print(
+            "before distributed -- orig_shape={}".format(
+                visited_terminating_states.tensor.shape
+            )
+        )
         if args.distributed and log_this_iter:
             try:
                 all_visited_terminating_states = gather_distributed_data(
                     visited_terminating_states.tensor
                 )
             except Exception as e:
-                print('Process {}: Caught error: {}'.format(my_rank, e))
-                #handler.signal_error()
+                print("Process {}: Caught error: {}".format(my_rank, e))
+                # handler.signal_error()
                 sys.exit(1)
         else:
             all_visited_terminating_states = visited_terminating_states.tensor
 
         if my_rank == 0:
-            print("after distributed -- gathered_shape={}, orig_shape={}".format(all_visited_terminating_states.shape, visited_terminating_states.tensor.shape))
+            print(
+                "after distributed -- gathered_shape={}, orig_shape={}".format(
+                    all_visited_terminating_states.shape,
+                    visited_terminating_states.tensor.shape,
+                )
+            )
 
         # If we are on the master node, calculate the validation metrics.
         if my_rank == 0:
@@ -780,13 +823,13 @@ def validate_hypergrid(
     discovered_modes,
 ):
     # Standard validation shared across envs.
-    #validation_info, visited_terminating_states = validate(
-    #    env,
-    #    gflownet,
-    #    n_validation_samples,
-    #    visited_terminating_states,
-    #)
-    validation_info = {}
+    validation_info, visited_terminating_states = validate(
+        env,
+        gflownet,
+        n_validation_samples,
+        visited_terminating_states,
+    )
+    # validation_info = {}
 
     # Add the mode counting metric.
     states, scale = visited_terminating_states, env.scale_factor
@@ -895,8 +938,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=0,
+        default=10000,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
+    )
+    parser.add_argument(
+        "--diverse_replay_buffer",
+        action="store_true",
+        help="Use a diverse replay buffer",
     )
 
     # Loss settings.
@@ -904,7 +952,7 @@ if __name__ == "__main__":
         "--loss",
         type=str,
         choices=["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"],
-        default="TB",
+        default="FM",
         help="Loss function to use",
     )
     parser.add_argument(

@@ -36,11 +36,11 @@ pip install torchgfn[scripts]
 To install the cutting edge version (from the `main` branch):
 
 ```bash
-git clone https://github.com/saleml/torchgfn.git
+git clone https://github.com/GFNOrg/torchgfn.git
 conda create -n gfn python=3.10
 conda activate gfn
 cd torchgfn
-pip install .
+pip install -e ".[all]"
 ```
 
 ## Installing `oneccl` bindings for multinode training.
@@ -104,62 +104,121 @@ Example scripts and notebooks for the three environments are provided [here](htt
 
 ### Standalone example
 
-This example, which shows how to use the library for a simple discrete environment, requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]` or `pip install torchgfn[scripts]`.
+This example, which shows how to use the library for a simple discrete environment, requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]` or `pip install torchgfn[scripts]`. In the first example, we will train a Tarjectory Balance GFlowNet:
 
 ```python
 import torch
 from tqdm import tqdm
 
-from gfn.gflownet import TBGFlowNet  # We use a GFlowNet with the Trajectory Balance (TB) loss
+from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid  # We use the hyper grid environment
 from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import Sampler
-from gfn.utils import NeuralNet  # NeuralNet is a simple multi-layer perceptron (MLP)
+from gfn.utils.modules import MLP  # is a simple multi-layer perceptron (MLP)
 
-if __name__ == "__main__":
+# 1 - We define the environment.
+env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
 
-    # 1 - We define the environment.
-     env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
+# 2 - We define the needed modules (neural networks).
+# The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
+module_PF = MLP(
+    input_dim=env.preprocessor.output_dim,
+    output_dim=env.n_actions
+)  # Neural network for the forward policy, with as many outputs as there are actions
 
-    # 2 - We define the needed modules (neural networks).
-    # The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
-    module_PF = NeuralNet(
-        input_dim=env.preprocessor.output_dim,
-        output_dim=env.n_actions
-    )  # Neural network for the forward policy, with as many outputs as there are actions
-    module_PB = NeuralNet(
-        input_dim=env.preprocessor.output_dim,
-        output_dim=env.n_actions - 1,
-        torso=module_PF.torso  # We share all the parameters of P_F and P_B, except for the last layer
-    )
+module_PB = MLP(
+    input_dim=env.preprocessor.output_dim,
+    output_dim=env.n_actions - 1,
+    trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
+)
 
-    # 3 - We define the estimators.
-    pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor)
-    pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor)
+# 3 - We define the estimators.
+pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor)
+pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor)
 
-    # 4 - We define the GFlowNet.
-    gfn = TBGFlowNet(init_logZ=0., pf=pf_estimator, pb=pb_estimator)  # We initialize logZ to 0
+# 4 - We define the GFlowNet.
+gfn = TBGFlowNet(logZ=0., pf=pf_estimator, pb=pb_estimator)  # We initialize logZ to 0
 
-    # 5 - We define the sampler and the optimizer.
-    sampler = Sampler(estimator=pf_estimator)  # We use an on-policy sampler, based on the forward policy
+# 5 - We define the sampler and the optimizer.
+sampler = Sampler(estimator=pf_estimator)  # We use an on-policy sampler, based on the forward policy
 
-    # Policy parameters have their own LR.
-    non_logz_params = [v for k, v in dict(gfn.named_parameters()).items() if k != "logZ"]
-    optimizer = torch.optim.Adam(non_logz_params, lr=1e-3)
+# Different policy parameters can have their own LR.
+# Log Z gets dedicated learning rate (typically higher).
+optimizer = torch.optim.Adam(gfn.pf_pb_parameters(), lr=1e-3)
+optimizer.add_param_group({"params": gfn.logz_parameters(), "lr": 1e-1})
 
-    # Log Z gets dedicated learning rate (typically higher).
-    logz_params = [dict(gfn.named_parameters())["logZ"]]
-    optimizer.add_param_group({"params": logz_params, "lr": 1e-1})
+# 6 - We train the GFlowNet for 1000 iterations, with 16 trajectories per iteration
+for i in (pbar := tqdm(range(1000))):
+    trajectories = sampler.sample_trajectories(env=env, n=16, save_logprobs=True)  # The save_logprobs=True makes on-policy training faster
+    optimizer.zero_grad()
+    loss = gfn.loss(env, trajectories)
+    loss.backward()
+    optimizer.step()
+    if i % 25 == 0:
+        pbar.set_postfix({"loss": loss.item()})
+```
 
-    # 6 - We train the GFlowNet for 1000 iterations, with 16 trajectories per iteration
-    for i in (pbar := tqdm(range(1000))):
-        trajectories = sampler.sample_trajectories(env=env, n_trajectories=16)
-        optimizer.zero_grad()
-        loss = gfn.loss(env, trajectories)
-        loss.backward()
-        optimizer.step()
-        if i % 25 == 0:
-            pbar.set_postfix({"loss": loss.item()})
+and in this example, we instead train using Sub Trajectory Balance. You can see we simply assemble our GFlowNet from slightly different building blocks:
+
+```python
+import torch
+from tqdm import tqdm
+
+from gfn.gflownet import SubTBGFlowNet
+from gfn.gym import HyperGrid  # We use the hyper grid environment
+from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.samplers import Sampler
+from gfn.utils.modules import MLP  # MLP is a simple multi-layer perceptron (MLP)
+
+# 1 - We define the environment.
+env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
+
+# 2 - We define the needed modules (neural networks).
+# The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
+module_PF = MLP(
+    input_dim=env.preprocessor.output_dim,
+    output_dim=env.n_actions
+)  # Neural network for the forward policy, with as many outputs as there are actions
+
+module_PB = MLP(
+    input_dim=env.preprocessor.output_dim,
+    output_dim=env.n_actions - 1,
+    trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
+)
+module_logF = MLP(
+    input_dim=env.preprocessor.output_dim,
+    output_dim=1,  # Important for ScalarEstimators!
+)
+
+# 3 - We define the estimators.
+pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor)
+pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor)
+logF_estimator = ScalarEstimator(module=module_logF, preprocessor=env.preprocessor)
+
+# 4 - We define the GFlowNet.
+gfn = SubTBGFlowNet(pf=pf_estimator, pb=pb_estimator, logF=logF_estimator, lamda=0.9)
+
+# 5 - We define the sampler and the optimizer.
+sampler = Sampler(estimator=pf_estimator) 
+
+# Different policy parameters can have their own LR.
+# Log F gets dedicated learning rate (typically higher).
+optimizer = torch.optim.Adam(gfn.pf_pb_parameters(), lr=1e-3)
+optimizer.add_param_group({"params": gfn.logF_parameters(), "lr": 1e-2})
+
+# 6 - We train the GFlowNet for 1000 iterations, with 16 trajectories per iteration
+for i in (pbar := tqdm(range(1000))):
+    # We are going to sample trajectories off policy, by tempering the distribution. 
+    # We should not save the sampling logprobs, as we are not using them for training.
+    # We should save the estimator outputs to make training faster.
+    trajectories = sampler.sample_trajectories(env=env, n=16, save_logprobs=False, save_estimator_outputs=True, temperature=1.5)
+    optimizer.zero_grad()
+    loss = gfn.loss(env, trajectories)
+    loss.backward()
+    optimizer.step()
+    if i % 25 == 0:
+        pbar.set_postfix({"loss": loss.item()})
+
 ```
 
 ## Contributing
@@ -173,7 +232,13 @@ pre-commit run --all-files
 ```
 
 Run `pre-commit` after staging, and before committing. Make sure all the tests pass (By running `pytest`). Note that the `pytest` hook of `pre-commit` only runs the tests in the `testing/` folder. To run all the tests, which take longer, run `pytest` manually.
-The codebase uses `black` formatter.
+
+The codebase uses:
+- `black` formatter for code style
+- `flake8` for linting
+- `pyright` for static type checking
+
+The pre-commit hooks ensure code quality and type safety across the project. The pyright configuration includes all project directories including tutorials/examples and testing.
 
 To make the docs locally:
 
@@ -214,27 +279,33 @@ Additionally, each subclass needs to define two more class variable tensors:
 
 ### Containers
 
-Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Two containers are available:
+Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Three containers are available:
 
 - [Transitions](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/transitions.py), representing a batch of transitions $s \rightarrow s'$.
 - [Trajectories](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
+- [StatePairs](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/state_pairs.py), representing pairs of states with optional conditioning, particularly useful for flow matching algorithms.
 
 These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of the [ReplayBuffer](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/replay_buffer.py) class.
 
 They inherit from the base `Container` [class](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/base.py), indicating some helpful methods.
 
-In most cases, one needs to sample complete trajectories. From a batch of trajectories, a batch of states and batch of transitions can be defined using `Trajectories.to_transitions()` and `Trajectories.to_states()`, in order to train GFlowNets with losses that are edge-decomposable or state-decomposable.  These exclude meaningless transitions and dummy states that were added to the batch of trajectories to allow for efficient batching.
+In most cases, one needs to sample complete trajectories. From a batch of trajectories, various training samples can be generated:
+- Use `Trajectories.to_transitions()` and `Trajectories.to_states()` for edge-decomposable or state-decomposable losses
+- Use `Trajectories.to_state_pairs()` for flow matching losses
+- Use `GFlowNet.loss_from_trajectories()` as a convenience method that handles the conversion internally
+
+These methods exclude meaningless transitions and dummy states that were added to the batch of trajectories to allow for efficient batching.
 
 ### Modules
 
 Training GFlowNets requires one or multiple estimators, called `GFNModule`s, which is an abstract subclass of `torch.nn.Module`. In addition to the usual `forward` function, `GFNModule`s need to implement a `required_output_dim` attribute, to ensure that the outputs have the required dimension for the task at hand; and some (but not all) need to implement a `to_probability_distribution` function.
 
-- `DiscretePolicyEstimator` is a `GFNModule` that defines the policies $P_F(. \mid s)$ and $P_B(. \mid s)$ for discrete environments. When `is_backward=False`, the required output dimension is `n = env.n_actions`, and when `is_backward=True`, it is `n = env.n_actions - 1`. These `n` numbers represent the logits of a Categorical distribution. The corresponding `to_probability_distribution` function transforms the logits by masking illegal actions (according to the forward or backward masks), then return a Categorical distribution. The masking is done by setting the corresponding logit to $-\infty$. The function also includes exploration parameters, in order to define a tempered version of $P_F$, or a mixture of $P_F$ with a uniform distribution. `DiscretePolicyEstimator`` with `is_backward=False`` can be used to represent log-edge-flow estimators $\log F(s \rightarrow s')$.
+- `DiscretePolicyEstimator` is a `GFNModule` that defines the policies $P_F(. \mid s)$ and $P_B(. \mid s)$ for discrete environments. When `is_backward=False`, the required output dimension is `n = env.n_actions`, and when `is_backward=True`, it is `n = env.n_actions - 1`. These `n` numbers represent the logits of a Categorical distribution. The corresponding `to_probability_distribution` function transforms the logits by masking illegal actions (according to the forward or backward masks), then return a Categorical distribution. The masking is done by setting the corresponding logit to $-\infty$. The function also includes exploration parameters, in order to define a tempered version of $P_F$, or a mixture of $P_F$ with a uniform distribution. `DiscretePolicyEstimator` with `is_backward=False` can be used to represent log-edge-flow estimators $\log F(s \rightarrow s')$.
 - `ScalarModule` is a simple module with required output dimension 1. It is useful to define log-state flows $\log F(s)$.
 
 For non-discrete environments, the user needs to specify their own policies $P_F$ and $P_B$. The module, taking as input a batch of states (as a `States`) object, should return the batched parameters of a `torch.Distribution`. The distribution depends on the environment. The `to_probability_distribution` function handles the conversion of the parameter outputs to an actual batched `Distribution` object, that implements at least the `sample` and `log_prob` functions. An example is provided [here](https://github.com/saleml/torchgfn/tree/master/src/gfn/gym/helpers/box_utils.py), for a square environment in which the forward policy has support either on a quarter disk, or on an arc-circle, such that the angle, and the radius (for the quarter disk part) are scaled samples from a mixture of Beta distributions. The provided example shows an intricate scenario, and it is not expected that user defined environment need this much level of details.
 
-In general, (and perhaps obviously) the `to_probability_distribution` method is used to calculate a probability distribution from a policy. Therefore, in order to go off-policy, one needs to modify the computations in this method during sampling. One accomplishes this using `policy_kwargs`, a `dict` of kwarg-value pairs which are used by the `Estimator` when calculating the new policy. In the discrete case, where common settings apply, one can see their use in `DiscretePolicyEstimator`'s `to_probability_distribution` method by passing a softmax `temperature`, `sf_bias` (a scalar to subtract from the exit action logit) or `epsilon` which allows for e-greedy style exploration. In the continuous case, it is not possible to forsee the methods used for off-policy exploration (as it depends on the details of the `to_probability_distribution` method, which is not generic for continuous GFNs), so this must be handled by the user, using custom `policy_kwargs`.
+In general, (and perhaps obviously) the `to_probability_distribution` method is used to calculate a probability distribution from a policy. Therefore, in order to go off-policy, one needs to modify the computations in this method during sampling. One accomplishes this using `policy_kwargs`, a `dict` of kwarg-value pairs which are used by the `Estimator` when calculating the new policy. In the discrete case, where common settings apply, one can see their use in `DiscretePolicyEstimator`'s `to_probability_distribution` method by passing a softmax `temperature`, `sf_bias` (a scalar to subtract from the exit action logit) or `epsilon` which allows for e-greedy style exploration. In the continuous case, it is not possible to foresee the methods used for off-policy exploration (as it depends on the details of the `to_probability_distribution` method, which is not generic for continuous GFNs), so this must be handled by the user, using custom `policy_kwargs`.
 
 In all `GFNModule`s, note that the input of the `forward` function is a `States` object. Meaning that they first need to be transformed to tensors. However, `states.tensor` does not necessarily include the structure that a neural network can used to generalize. It is common in these scenarios to have a function that transforms these raw tensor states to ones where the structure is clearer, via a `Preprocessor` object, that is part of the environment. More on this [here](https://github.com/saleml/torchgfn/tree/master/tutorials/ENV.md). The default preprocessor of an environment is the identity preprocessor. The `forward` pass thus first calls the `preprocessor` attribute of the environment on `States`, before performing any transformation. The `preprocessor` is thus an attribute of the module. If it is not explicitly defined, it is set to the identity preprocessor.
 
@@ -242,12 +313,17 @@ For discrete environments, a `Tabular` module is provided, where a lookup table 
 
 ### Samplers
 
-A [Sampler](https://github.com/saleml/torchgfn/tree/master/src/gfn/samplers.py) object defines how actions are sampled (`sample_actions()`) at each state, and trajectories  (`sample_trajectories()`), which can sample a batch of trajectories starting from a given set of initial states or starting from $s_0$. It requires a `GFNModule` that implements the `to_probability_distribution` function. For off-policy sampling, the parameters of `to_probability_distribution` can be directly passed when initializing the `Sampler`.
+A [Sampler](https://github.com/saleml/torchgfn/tree/master/src/gfn/samplers.py) object defines how actions are sampled (`sample_actions()`) at each state, and trajectories  (`sample_trajectories()`), which can sample a batch of trajectories starting from a given set of initial states or starting from $s_0$. It requires a `GFNModule` that implements the `to_probability_distribution` function. For simple off-policy sampling (e.g., epsilon-noisy or tempering), you can pass appropriate `policy_kwargs` to the `Sampler` object, which will be used by the `GFNModule`. If you need more complex off-policy sampling, you can subclass the `Sampler` object, and override the `sample_actions` and `sample_trajectories` methods.
+
+Currently, the library provides two samplers:
+
+- Sampler
+- LocalSearchSampler (references: [EB-GFN](https://arxiv.org/abs/2202.01361), [LS-GFN](https://arxiv.org/abs/2310.02710))
 
 
 ### Losses
 
-GFlowNets can be trained with different losses, each of which requires a different parametrization, which we call in this library a `GFlowNet`. A `GFlowNet` is a `GFNModule` that includes one or multiple `GFNModule`s, at least one of which implements a `to_probability_distribution` function. They also need to implement a `loss` function, that takes as input either states, transitions, or trajectories, depending on the loss.
+GFlowNets can be trained with different losses, each of which requires a different parametrization, which we call in this library a `GFlowNet`. A `GFlowNet` includes one or multiple `GFNModule`s, at least one of which implements a `to_probability_distribution` function. They also need to implement a `loss` function, that takes as input either states, transitions, or trajectories, depending on the loss.
 
 Currently, the implemented losses are:
 
@@ -274,49 +350,29 @@ class MyGFlowNet(GFlowNet[Trajectories]):
 
 **Example: Flow Matching GFlowNet**
 
-Let's consider the example of the `FMGFlowNet` class, which is a subclass of `GFlowNet` that implements the Flow Matching GFlowNet. The training samples are tuples of discrete states, so the class references the type `Tuple[DiscreteStates, DiscreteStates]` when subclassing `GFlowNet`:
+Let's consider the example of the `FMGFlowNet` class, which is a subclass of `GFlowNet` that implements the Flow Matching GFlowNet. The training samples are pairs of states managed by the `StatePairs` container:
 
 ```python
-class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
+class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
     ...
 
     def to_training_samples(
         self, trajectories: Trajectories
-    ) -> tuple[DiscreteStates, DiscreteStates]:
+    ) -> StatePairs[DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        return trajectories.to_non_initial_intermediary_and_terminating_states()
+        return trajectories.to_state_pairs()
+```
 
+This means that the `loss` method of `FMGFlowNet` will receive a `StatePairs[DiscreteStates]` object as its training samples argument:
+
+```python
+def loss(self, env: DiscreteEnv, states: StatePairs[DiscreteStates]) -> torch.Tensor:
+    ...
 ```
 
 **Adding New Training Sample Types**
 
 If your GFlowNet returns a unique type of training samples, you'll need to expand the `TrainingSampleType` bound. This ensures type-safety and better code clarity.
-
-In the earlier example, the `FMGFlowNet` used:
-
-```python
-GFlowNet[Tuple[DiscreteStates, DiscreteStates]]
-```
-
-This means the method `to_training_samples` should return a tuple of `DiscreteStates`.
-
-If the `to_training_sample` method of your new GFlowNet, for example, returns an `int`, you should expand the `TrainingSampleType` in `src/gfn/gflownet/base.py` to include this type in the `bound` of the `TypeVar`:
-
-Before:
-
-```python
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
-)
-```
-
-After:
-
-```python
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...], int]
-)
-```
 
 **Implementing Class Methods**
 

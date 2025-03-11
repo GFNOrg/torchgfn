@@ -1,17 +1,20 @@
-from typing import Optional, Tuple
+from typing import Any
 
 import torch
-from torchtyping import TensorType as TT
 
-from gfn.containers import Trajectories
-from gfn.env import Env
+from gfn.containers import StatePairs, Trajectories
+from gfn.env import DiscreteEnv
 from gfn.gflownet.base import GFlowNet, loss_reduce
-from gfn.modules import DiscretePolicyEstimator
+from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
 
 
-class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
+class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
     r"""Flow Matching GFlowNet, with edge flow estimator.
 
     $\mathcal{O}_{edge}$ is the set of functions from the non-terminating edges
@@ -23,23 +26,28 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
     3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
-        logF: LogEdgeFlowEstimator
+        logF: an estimator of log edge flows.
         alpha: weight for the reward matching loss.
     """
 
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
         super().__init__()
 
+        assert isinstance(
+            logF,
+            DiscretePolicyEstimator | ConditionalDiscretePolicyEstimator,
+        ), "logF must be a DiscretePolicyEstimator or ConditionalDiscretePolicyEstimator"
         self.logF = logF
         self.alpha = alpha
 
     def sample_trajectories(
         self,
-        env: Env,
-        save_logprobs: bool,
+        env: DiscreteEnv,
+        n: int,
+        conditioning: torch.Tensor | None = None,
+        save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
-        n_samples: int = 1000,
-        **policy_kwargs: Optional[dict],
+        **policy_kwargs: Any,
     ) -> Trajectories:
         """Sample trajectory with optional kwargs controling the policy."""
         if not env.is_discrete:
@@ -49,19 +57,21 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         sampler = Sampler(estimator=self.logF)
         trajectories = sampler.sample_trajectories(
             env,
-            n_trajectories=n_samples,
-            save_estimator_outputs=save_estimator_outputs,
+            n=n,
+            conditioning=conditioning,
             save_logprobs=save_logprobs,
+            save_estimator_outputs=save_estimator_outputs,
             **policy_kwargs,
         )
         return trajectories
 
     def flow_matching_loss(
         self,
-        env: Env,
+        env: DiscreteEnv,
         states: DiscreteStates,
+        conditioning: torch.Tensor | None,
         reduction: str = "mean",
-    ) -> TT["n_trajectories", torch.float]:
+    ) -> torch.Tensor:
         """Computes the FM for the provided states.
 
         The Flow Matching loss is defined as the log-sum incoming flows minus log-sum
@@ -83,6 +93,7 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
             states.forward_masks, -float("inf"), dtype=torch.float
         )
 
+        # TODO: Need to vectorize this loop.
         for action_idx in range(env.n_actions - 1):
             valid_backward_mask = states.backward_masks[:, action_idx]
             valid_forward_mask = states.forward_masks[:, action_idx]
@@ -98,19 +109,45 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
                 valid_backward_states, backward_actions
             )
 
-            incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
-                valid_backward_states_parents
-            )[:, action_idx]
+            if conditioning is not None:
+                # Mask out only valid conditioning elements.
+                valid_backward_conditioning = conditioning[valid_backward_mask]
+                valid_forward_conditioning = conditioning[valid_forward_mask]
 
-            outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
-                valid_forward_states
-            )[:, action_idx]
+                with has_conditioning_exception_handler("logF", self.logF):
+                    incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
+                        valid_backward_states_parents,
+                        valid_backward_conditioning,
+                    )[:, action_idx]
 
-        # Now the exit action
+                    outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
+                        valid_forward_states,
+                        valid_forward_conditioning,
+                    )[:, action_idx]
+
+            else:
+                with no_conditioning_exception_handler("logF", self.logF):
+                    incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
+                        valid_backward_states_parents,
+                    )[:, action_idx]
+
+                    outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
+                        valid_forward_states,
+                    )[:, action_idx]
+
+        # Now the exit action.
         valid_forward_mask = states.forward_masks[:, -1]
-        outgoing_log_flows[valid_forward_mask, -1] = self.logF(
-            states[valid_forward_mask]
-        )[:, -1]
+        if conditioning is not None:
+            with has_conditioning_exception_handler("logF", self.logF):
+                outgoing_log_flows[valid_forward_mask, -1] = self.logF(
+                    states[valid_forward_mask],
+                    conditioning[valid_forward_mask],
+                )[:, -1]
+        else:
+            with no_conditioning_exception_handler("logF", self.logF):
+                outgoing_log_flows[valid_forward_mask, -1] = self.logF(
+                    states[valid_forward_mask],
+                )[:, -1]
 
         log_incoming_flows = torch.logsumexp(incoming_log_flows, dim=-1)
         log_outgoing_flows = torch.logsumexp(outgoing_log_flows, dim=-1)
@@ -119,36 +156,62 @@ class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
         return loss_reduce(scores, reduction)
 
     def reward_matching_loss(
-        self, env: Env, terminating_states: DiscreteStates,reduction: str = "mean"
-    ) -> TT[0, float]:
+        self,
+        env: DiscreteEnv,
+        terminating_states: DiscreteStates,
+        conditioning: torch.Tensor | None,
+        log_rewards: torch.Tensor | None,
+        reduction: str = "mean",
+    ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
-        del env  # Unused
-        assert terminating_states.log_rewards is not None
-        log_edge_flows = self.logF(terminating_states)
+        if conditioning is not None:
+            with has_conditioning_exception_handler("logF", self.logF):
+                log_edge_flows = self.logF(terminating_states, conditioning)
+        else:
+            with no_conditioning_exception_handler("logF", self.logF):
+                log_edge_flows = self.logF(terminating_states)
 
         # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
         terminating_log_edge_flows = log_edge_flows[:, -1]
-        log_rewards = terminating_states.log_rewards
+        if terminating_states.log_rewards is None:
+            log_rewards = env.reward(terminating_states)
+        else:
+            log_rewards = terminating_states.log_rewards
+
         scores = (terminating_log_edge_flows - log_rewards).pow(2)
 
         return loss_reduce(scores, reduction)
 
     def loss(
-        self, env: Env, states_tuple: Tuple[DiscreteStates, DiscreteStates], reduction: str = "mean"
-    ) -> TT[0, float]:
+        self,
+        env: DiscreteEnv,
+        state_pairs: StatePairs[DiscreteStates],
+        reduction: str = "mean",
+    ) -> torch.Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
         Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
-        tuple of states, the first one being the internal states of the trajectories
-        (i.e. non-terminal states), and the second one being the terminal states of the
-        trajectories."""
-        intermediary_states, terminating_states = states_tuple
-        fm_loss = self.flow_matching_loss(env, intermediary_states, reduction=reduction)
-        rm_loss = self.reward_matching_loss(env, terminating_states, reduction=reduction)
+        StatePairs container that holds both the internal states of the trajectories
+        (i.e. non-terminal states) and the terminal states."""
+        assert isinstance(state_pairs.intermediary_states, DiscreteStates)
+        assert isinstance(state_pairs.terminating_states, DiscreteStates)
+        fm_loss = self.flow_matching_loss(
+            env,
+            state_pairs.intermediary_states,
+            state_pairs.intermediary_conditioning,
+            reduction=reduction,
+        )
+        rm_loss = self.reward_matching_loss(
+            env,
+            state_pairs.terminating_states,
+            state_pairs.terminating_conditioning,
+            state_pairs.log_rewards,
+            reduction=reduction,
+        )
         return fm_loss + self.alpha * rm_loss
 
     def to_training_samples(
         self, trajectories: Trajectories
-    ) -> tuple[DiscreteStates, DiscreteStates]:
+    ) -> StatePairs[DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        return trajectories.to_non_initial_intermediary_and_terminating_states()
+        return trajectories.to_state_pairs()

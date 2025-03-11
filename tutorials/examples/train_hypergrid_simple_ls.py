@@ -8,7 +8,7 @@ from tqdm import tqdm
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator
-from gfn.samplers import Sampler
+from gfn.samplers import LocalSearchSampler
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP
@@ -41,7 +41,7 @@ def main(args):
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
 
     # Feed pf to the sampler.
-    sampler = Sampler(estimator=pf_estimator)
+    sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)
 
     # Move the gflownet to the GPU.
     gflownet = gflownet.to(device_str)
@@ -56,12 +56,17 @@ def main(args):
     for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
         trajectories = sampler.sample_trajectories(
             env,
-            n=args.batch_size,
-            save_logprobs=True,
+            n=(args.batch_size // args.n_local_search_loops),
+            save_logprobs=False,
             save_estimator_outputs=False,
             epsilon=args.epsilon,
+            n_local_search_loops=args.n_local_search_loops,
+            back_ratio=args.back_ratio,
+            use_metropolis_hastings=args.use_metropolis_hastings,
         )
-        visited_terminating_states.extend(cast(DiscreteStates, trajectories.last_states))
+        last_states = trajectories.last_states
+        last_states = cast(DiscreteStates, last_states)
+        visited_terminating_states.extend(last_states)
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories)
@@ -115,6 +120,25 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument(
         "--epsilon", type=float, default=0.1, help="Epsilon for the sampler"
+    )
+
+    # Local search parameters.
+    parser.add_argument(
+        "--n_local_search_loops",
+        type=int,
+        default=2,
+        help="Number of local search loops",
+    )
+    parser.add_argument(
+        "--back_ratio",
+        type=float,
+        default=0.5,
+        help="The ratio of the number of backward steps to the length of the trajectory",
+    )
+    parser.add_argument(
+        "--use_metropolis_hastings",
+        action="store_true",
+        help="Use Metropolis-Hastings acceptance criterion",
     )
 
     args = parser.parse_args()

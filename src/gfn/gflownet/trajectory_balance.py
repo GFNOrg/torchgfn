@@ -3,14 +3,16 @@ Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.1325
 and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
+from typing import cast
+
 import torch
 import torch.nn as nn
-from torchtyping import TensorType as TT
 
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
-from gfn.modules import GFNModule
+from gfn.modules import GFNModule, ScalarEstimator
+from gfn.utils.handlers import is_callable_exception_handler
 
 
 class TBGFlowNet(TrajectoryBasedGFlowNet):
@@ -23,7 +25,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
     the DAG, or a singleton thereof, if self.logit_PB is a fixed DiscretePBEstimator.
 
     Attributes:
-        logZ: a LogZEstimator instance.
+        logZ: a ScalarEstimator (for conditional GFNs) instance, or float.
         log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
@@ -31,14 +33,19 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         pf: GFNModule,
         pb: GFNModule,
-        init_logZ: float = 0.0,
+        logZ: float | ScalarEstimator = 0.0,
         log_reward_clip_min: float = -float("inf"),
     ):
         super().__init__(pf, pb)
 
-        self.logZ = nn.Parameter(
-            torch.tensor(init_logZ)
-        )  # TODO: Optionally, this should be a nn.Module to support conditional GFNs.
+        if isinstance(logZ, float):
+            self.logZ = nn.Parameter(torch.tensor(logZ))
+        else:
+            assert isinstance(
+                logZ, ScalarEstimator
+            ), "logZ must be either float or a ScalarEstimator"
+            self.logZ = logZ
+
         self.log_reward_clip_min = log_reward_clip_min
 
     def loss(
@@ -47,7 +54,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = False,
         reduction: str = "mean",
-    ) -> TT[0, float]:
+    ) -> torch.Tensor:
         """Trajectory balance loss.
 
         The trajectory balance loss is described in 2.3 of
@@ -60,7 +67,18 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         _, _, scores = self.get_trajectories_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
-        scores = (scores + self.logZ).pow(2)
+
+        # If the conditioning values exist, we pass them to self.logZ
+        # (should be a ScalarEstimator or equivalent).
+        if trajectories.conditioning is not None:
+            with is_callable_exception_handler("logZ", self.logZ):
+                assert isinstance(self.logZ, ScalarEstimator)
+                logZ = self.logZ(trajectories.conditioning)
+        else:
+            logZ = self.logZ
+
+        logZ = cast(torch.Tensor, logZ)
+        scores = (scores + logZ.squeeze()).pow(2)
         loss = loss_reduce(scores, reduction)
         if torch.isnan(loss):
             raise ValueError("loss is nan")
@@ -93,7 +111,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = False,
         reduction: str = "mean",
-    ) -> TT[0, float]:
+    ) -> torch.Tensor:
         """Log Partition Variance loss.
 
         This method is described in section 3.2 of

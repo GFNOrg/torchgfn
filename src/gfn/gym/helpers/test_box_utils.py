@@ -2,16 +2,7 @@ import pytest
 import torch
 
 from gfn.gym import Box
-from gfn.gym.helpers.box_utils import (
-    BoxPBEstimator,
-    BoxPBNeuralNet,
-    BoxPFEstimator,
-    BoxPFNeuralNet,
-    QuarterCircle,
-    QuarterCircleWithExit,
-    QuarterDisk,
-    split_PF_module_output,
-)
+from gfn.gym.helpers.box_utils import BoxPFMLP, split_PF_module_output
 
 
 @pytest.mark.parametrize("n_components", [5, 6])
@@ -38,7 +29,7 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
         torch.FloatTensor([[0.03, 0.06], [0.2, 0.3], [0.95, 0.7]])
     )
 
-    net_forward = BoxPFNeuralNet(
+    net_forward = BoxPFMLP(
         hidden_dim=hidden_dim,
         n_hidden_layers=n_hidden_layers,
         n_components=n_components,
@@ -65,7 +56,7 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
     assert exit_probability > 0
 
     def _assert_correct_parameter_masking(x, mask_val):
-        B, P = x.shape
+        B, _ = x.shape
 
         if n_components_s0 > n_components:
             assert (
@@ -84,7 +75,7 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
     assert torch.sum(beta_r == 0.5) == max(n_components_s0, n_components)
 
     # Now check the batch of all-intermediate states.
-    B, P = out_intermediate.shape
+    B, _ = out_intermediate.shape
     (
         exit_probability,
         mixture_logits,
@@ -105,4 +96,4 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
 
 
 if __name__ == "__main__":
-    test_mixed_distributions()
+    test_mixed_distributions(n_components=5, n_components_s0=6)
