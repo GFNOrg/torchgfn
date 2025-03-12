@@ -9,7 +9,7 @@ from gfn.containers.base import Container
 from gfn.containers.state_pairs import StatePairs
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
-from gfn.states import DiscreteStates, States
+from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import has_log_probs
 
 
@@ -119,25 +119,26 @@ class Trajectories(Container):
             assert self.estimator_outputs.dtype == torch.float
 
     def __repr__(self) -> str:
-        states = self.states.tensor.transpose(0, 1)
-        assert states.ndim == 3
         trajectories_representation = ""
-        assert isinstance(
-            self.env.s0, torch.Tensor
-        ), "not supported for Graph trajectories."
-        assert isinstance(
-            self.env.sf, torch.Tensor
-        ), "not supported for Graph trajectories."
+        n_traj_to_print = 10
 
-        for traj in states[:10]:
-            one_traj_repr = []
-            for step in traj:
-                one_traj_repr.append(str(step.cpu().numpy()))
-                if self.is_backward and step.equal(self.env.s0):
-                    break
-                elif not self.is_backward and step.equal(self.env.sf):
-                    break
-            trajectories_representation += "-> ".join(one_traj_repr) + "\n"
+        if isinstance(self.states, GraphStates):
+            for i in range(n_traj_to_print):
+                trajectories_representation += str(self.states[..., i]) + "\n"
+        else:
+            states = self.states.tensor.transpose(0, 1)
+            assert states.ndim == 3
+            assert isinstance(self.env.s0, torch.Tensor)
+            assert isinstance(self.env.sf, torch.Tensor)
+            for traj in states[:n_traj_to_print]:
+                one_traj_repr = []
+                for step in traj:
+                    one_traj_repr.append(str(step.cpu().numpy()))  # step.__repr__()
+                    if self.is_backward and step.equal(self.env.s0):
+                        break
+                    elif not self.is_backward and step.equal(self.env.sf):
+                        break
+                trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
             f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length}, First 10 trajectories:"
             + f"states=\n{trajectories_representation}"
