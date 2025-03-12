@@ -73,7 +73,7 @@ def main(args):
         loss.backward()
         optimizer.step()
         if (it + 1) % args.validation_interval == 0:
-            validation_info = validate(
+            validation_info, _ = validate(
                 env,
                 gflownet,
                 args.validation_samples,

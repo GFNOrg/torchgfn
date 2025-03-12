@@ -1,4 +1,5 @@
 import math
+import warnings
 from typing import List, Literal, Tuple
 
 import torch
@@ -503,7 +504,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         env: Env,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = False,
-        reduction: str = "sum",
+        reduction: str = "mean",
     ) -> torch.Tensor:
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
@@ -543,6 +544,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
 
+        # TODO: we need to know what reductions are valid for each weighting method.
         weight_functions = {
             "equal_within": self.get_equal_within_contributions,
             "equal": self.get_equal_contributions,
@@ -562,6 +564,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         final_scores = flat_contributions * all_scores[~flattening_mask].pow(2)
 
         # TODO: default was sum, should we allow mean?
-        assert reduction != "mean", "Mean reduction is not supported for SubTBGFlowNet"
+        if reduction == "mean":
+            warnings.warn(
+                "Mean reduction is not supported for SubTBGFlowNet with geometric weighting, using sum instead."
+            )
+            reduction = "sum"
 
         return loss_reduce(final_scores, reduction)

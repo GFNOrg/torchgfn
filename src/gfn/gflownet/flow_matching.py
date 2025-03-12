@@ -173,11 +173,6 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
 
         # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
         terminating_log_edge_flows = log_edge_flows[:, -1]
-        if terminating_states.log_rewards is None:
-            log_rewards = env.reward(terminating_states)
-        else:
-            log_rewards = terminating_states.log_rewards
-
         scores = (terminating_log_edge_flows - log_rewards).pow(2)
 
         return loss_reduce(scores, reduction)

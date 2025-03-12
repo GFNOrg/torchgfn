@@ -17,14 +17,19 @@ from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
 TrainingSampleType = TypeVar("TrainingSampleType", bound=Container)
 
 
-def loss_reduce(loss, method):
+def loss_reduce(loss: torch.Tensor, method: str) -> torch.Tensor:
     """Utility function to handle loss aggregation strategies."""
-    if method == "mean":
-        return torch.mean(loss)
-    elif method == "sum":
-        return torch.sum(loss)
-    elif method == "none":
-        return loss
+    reduction_methods = {
+        "mean": torch.mean,
+        "sum": torch.sum,
+        "none": lambda x: x,
+    }
+    if method in reduction_methods:
+        return reduction_methods[method](loss)
+    else:
+        raise ValueError(
+            f"Invalid loss reduction method: {method} not in {reduction_methods.keys()}"
+        )
 
 
 class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
@@ -107,7 +112,8 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
                 warnings.warn(
                     "Recalculating logprobs for trajectories that already have them. "
                     "This may be inefficient for on-policy trajectories. "
-                    "If the training is done on-policy, you should call loss() directly with recalculate_all_logprobs=False instead of loss_from_trajectories()."
+                    "If the training is done on-policy, you should call loss() directly "
+                    "with recalculate_all_logprobs=False instead of loss_from_trajectories()."
                 )
 
             # We know this is safe because PFBasedGFlowNet's loss accepts these arguments

@@ -100,10 +100,11 @@ class HyperGrid(DiscreteEnv):
         # Pre-computes these values when printing.
         if self.calculate_all_states:
             self._calculate_all_states_tensor()
-            print("+ Environment has {} states".format(len(self._all_states)))
+            assert self._all_states is not None
+            print(f"+ Environment has {len(self._all_states)} states")
         if self.calculate_partition:
             self._calculate_log_partition()
-            print("+ Environment log partition is {}".format(self._log_partition))
+            print(f"+ Environment log partition is {self._log_partition}")
 
         # This scale is used to stabilize some calculations.
         # self.scale_factor = smallest_multiplier_to_integers([R0, R1, R2])
@@ -360,22 +361,26 @@ class HyperGrid(DiscreteEnv):
             self._true_dist_pmf = self.reward(self.all_states)
             self._true_dist_pmf /= self._true_dist_pmf.sum()
 
+        assert self._true_dist_pmf is not None
         return self._true_dist_pmf
 
     @property
-    def log_partition(self) -> float:
+    def log_partition(self) -> float | None:
         return self._log_partition
 
     @property
     def all_states(self) -> DiscreteStates:
         """Returns a tensor of all hypergrid states as a States instance."""
-        return self.States(self._all_states)
+        assert self._all_states is not None
+        all_states = self.States(self._all_states)
+        assert isinstance(all_states, DiscreteStates)
+        return all_states
 
     @property
     def terminating_states(self) -> DiscreteStates:
         return self.all_states
 
-    # Helper methods for enumerating all possible states.
+    # Helper methods for enumerating all possible statxes.
     def _generate_combinations_chunk(self, numbers, n, start, end):
         """Generate combinations with replacement for the specified range."""
         # islice accesses a subset of the full iterator - each job does unique work.

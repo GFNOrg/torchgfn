@@ -320,6 +320,7 @@ def test_get_grid():
 
     # log(Z) should equal the environment log_partition.
     Z = rewards.sum()
+    assert env.log_partition is not None
     assert np.isclose(Z.log().item(), env.log_partition)
 
     # State indices of the grid are ordered from 0:HEIGHT**2.

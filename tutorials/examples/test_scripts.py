@@ -1,7 +1,8 @@
-# This file includes tests for the three examples in the tutorials folder.
-# The tests ensure that after a certain number of iterations, the final L1 distance
-# or JSD between the learned distribution and the target distribution is below a
-# certain threshold.
+"""Includes tests for some examples in the tutorials folder.
+The tests ensure that after a certain number of iterations, the final L1
+distance or JSD between the learned distribution and the target distribution is
+below a certain threshold.
+"""
 
 from dataclasses import dataclass
 
@@ -50,32 +51,30 @@ class DiscreteEBMArgs(CommonArgs):
 
 @dataclass
 class HypergridArgs(CommonArgs):
-    ndim: int = 2
+    calculate_all_states: bool = True
+    calculate_partition: bool = True
+    distributed: bool = False
+    diverse_replay_buffer: bool = False
     height: int = 8
+    loss: str = "TB"
+    ndim: int = 2
+    profile: bool = False
     R0: float = 0.1
     R1: float = 0.5
     R2: float = 2.0
-    calculate_partition: bool = True
-    calculate_all_states: bool = True
-    loss: str = "TB"
     replay_buffer_size: int = 0
-    distributed: bool = False
-    diverse_replay_buffer: bool = False
-    profile: bool = False
-    calculate_partition: bool = True
-    calculate_all_states: bool = True
 
 
 @dataclass
 class BoxArgs(CommonArgs):
     delta: float = 0.25
-    min_concentration: float = 0.1
-    max_concentration: float = 5.1
-    n_components: int = 2
-    n_components_s0: int = 4
     gamma_scheduler: float = 0.5
-    scheduler_milestone: int = 2500
     lr_F: float = 1e-2
+    max_concentration: float = 5.1
+    min_concentration: float = 0.1
+    n_components_s0: int = 4
+    n_components: int = 2
+    scheduler_milestone: int = 2500
     use_local_search: bool = False
 
 
@@ -105,9 +104,7 @@ def test_hypergrid(ndim: int, height: int):
         ), f"Final L1 distance: {final_l1_dist}"
 
 
-# TODO: "FM" & replay buffer are broken due to the implementation of StatePairs.
-# TODO: Add FM back in once StatePairs is fixed.
-@pytest.mark.parametrize("loss", ["TB", "DB", "SubTB", "ZVar", "ModifiedDB"])
+@pytest.mark.parametrize("loss", ["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"])
 @pytest.mark.parametrize("replay_buffer_size", [0, 100, 10000])
 def test_hypergrid_losses_and_replay_buffer(loss: str, replay_buffer_size: int):
     args = HypergridArgs(
@@ -123,12 +120,11 @@ def test_hypergrid_losses_and_replay_buffer(loss: str, replay_buffer_size: int):
         assert final_l1_dist > 0  # This is a sanity check that the script is running
 
 
-# TODO: These tests all fail, it appears the models do not train properly.
+# TODO: Most tests all fail, it appears the models do not train properly.
 @pytest.mark.parametrize("ndim", [2, 4])
 @pytest.mark.parametrize("alpha", [0.1, 1.0])
 def test_discreteebm(ndim: int, alpha: float):
-    n_trajectories = 16000
-    args = DiscreteEBMArgs(ndim=ndim, alpha=alpha, n_trajectories=n_trajectories)
+    args = DiscreteEBMArgs(ndim=ndim, alpha=alpha, n_trajectories=16000)
     final_l1_dist = train_discreteebm_main(args)
     if ndim == 2 and alpha == 0.1:
         assert np.isclose(
@@ -184,5 +180,4 @@ def test_box(delta: float, loss: str):
 
 
 if __name__ == "__main__":
-    # test_hypergrid_losses_and_replay_buffer('ModifiedDB', 100)
-    test_discreteebm(ndim=2, alpha=1.0)
+    test_hypergrid_losses_and_replay_buffer("FM", 10000)

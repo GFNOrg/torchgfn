@@ -38,7 +38,7 @@ def validate(
     gflownet: GFlowNet,
     n_validation_samples: int = 1000,
     visited_terminating_states: Optional[DiscreteStates] = None,
-) -> Tuple[Dict[str, float], DiscreteStates]:
+) -> Tuple[Dict[str, float], DiscreteStates | None]:
     """Evaluates the current gflownet on the given environment.
 
     This is for environments with known target reward. The validation is done by
@@ -64,7 +64,7 @@ def validate(
     else:
         # The environment does not implement a true_dist_pmf property, nor a log_partition property
         # We cannot validate the gflownet
-        return {}
+        return {}, None
 
     logZ = None
     if isinstance(gflownet, TBGFlowNet):

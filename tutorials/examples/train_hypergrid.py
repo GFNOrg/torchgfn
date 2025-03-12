@@ -96,11 +96,19 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
         os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
 
         print("+ OMP_NUM_THREADS = ", os.getenv("OMP_NUM_THREADS"))
+
+        world_size = os.environ.get("WORLD_SIZE")
+        if world_size is None:
+            raise ValueError("WORLD_SIZE is not set")
+        rank = os.environ.get("RANK")
+        if rank is None:
+            raise ValueError("RANK is not set")
+
         dist.init_process_group(
             backend=dist_backend,
             init_method="env://",
-            world_size=int(os.environ.get("WORLD_SIZE")),
-            rank=int(os.environ.get("RANK")),
+            world_size=int(world_size),
+            rank=int(rank),
             timeout=datetime.timedelta(minutes=5),
         )
 
@@ -201,7 +209,8 @@ class DistributedErrorHandler:
         try:
             self.error_tensor.fill_(1)
             dist.all_reduce(self.error_tensor, op=dist.ReduceOp.SUM)
-        except:
+        except Exception as e:
+            print(f"Process {self.rank}: Error in signal_error: {str(e)}")
             pass  # If this fails, processes will eventually timeout
 
         self.shutdown_flag.set()
@@ -218,16 +227,16 @@ class DistributedErrorHandler:
 
         try:
             dist.destroy_process_group()
-        except:
-            pass
+        except Exception as e:
+            print(f"Process {self.rank}: Error in destroy_process_group: {str(e)}")
 
 
 def gather_distributed_data(
     local_tensor: torch.Tensor,
-    world_size: int = None,
-    rank: int = None,
+    world_size: int | None = None,
+    rank: int | None = None,
     verbose: bool = False,
-) -> torch.Tensor:
+) -> torch.Tensor | None:
     """
     Gather data from all processes in a distributed setting.
 
@@ -274,7 +283,8 @@ def gather_distributed_data(
         print("+ padding local tensor")
 
     if rank == 0:
-        max_batch_size = max(bs for bs in batch_size_list)
+        assert batch_size_list is not None
+        max_batch_size = max([bs.item() for bs in batch_size_list])
     else:
         max_batch_size = 0
 
@@ -287,7 +297,7 @@ def gather_distributed_data(
     # Pad local tensor to maximum size.
     if local_tensor.shape[0] < max_batch_size:
         padding = torch.zeros(
-            (max_batch_size - local_tensor.shape[0], state_size),
+            (int(max_batch_size - local_tensor.shape[0]), state_size),
             dtype=local_tensor.dtype,
             device=local_tensor.device,
         )
@@ -297,7 +307,7 @@ def gather_distributed_data(
     if rank == 0:
         tensor_list = [
             torch.zeros(
-                (max_batch_size, state_size),
+                (int(max_batch_size), state_size),
                 dtype=local_tensor.dtype,
                 device=local_tensor.device,
             )
@@ -315,6 +325,8 @@ def gather_distributed_data(
     # Only rank 0 processes the results
     if rank == 0:
         results = []
+        assert tensor_list is not None
+        assert batch_size_list is not None
         for tensor, batch_size in zip(tensor_list, batch_size_list):
             trimmed_tensor = tensor[: batch_size.item(), ...]
             results.append(trimmed_tensor)
@@ -423,7 +435,11 @@ def main(args):  # noqa: C901
                     output_dim=env.n_actions - 1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
-                    trunk=pf_module.trunk if args.tied else None,
+                    trunk=(
+                        pf_module.trunk
+                        if args.tied and isinstance(pf_module.trunk, torch.nn.Module)
+                        else None
+                    ),
                 )
         if args.uniform_pb:
             pb_module = DiscreteUniform(env.n_actions - 1)
@@ -435,6 +451,8 @@ def main(args):  # noqa: C901
             pf_module = DDP(pf_module, process_group=agent_group_list[my_agent_group_id])
             pb_module = DDP(pb_module, process_group=agent_group_list[my_agent_group_id])
 
+        assert pf_module is not None
+        assert pb_module is not None
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
@@ -466,7 +484,11 @@ def main(args):  # noqa: C901
                     output_dim=1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
-                    trunk=pf_module.trunk if args.tied else None,
+                    trunk=(
+                        pf_module.trunk
+                        if args.tied and isinstance(pf_module.trunk, torch.nn.Module)
+                        else None
+                    ),
                 )
 
             if args.distributed:
@@ -508,14 +530,7 @@ def main(args):  # noqa: C901
 
     # Create replay buffer if needed
     replay_buffer = None
-    object_type_mapping = {
-        "TB": "trajectories",
-        "SubTB": "trajectories",
-        "ZVar": "trajectories",
-        "DB": "transitions",
-        "ModifiedDB": "transitions",
-        "FM": "states",
-    }
+
     if args.replay_buffer_size > 0:
         if args.diverse_replay_buffer:
             replay_buffer = NormBasedDiversePrioritizedReplayBuffer(
@@ -586,18 +601,19 @@ def main(args):  # noqa: C901
         def cleanup():
             print(f"Process {rank}: Cleaning up...")
 
-        rank = os.environ["RANK"]
-        world_size = os.environ["WORLD_SIZE"]
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
         handler = DistributedErrorHandler(
             device_str,
             rank,
             world_size,
             cleanup_callback=cleanup,
         )
-        # handler.start()
+        # handler.start()  # TODO: remove this?
 
     if args.distributed:
         world_size = torch.distributed.get_world_size()
+
     for iteration in trange(n_iterations):
 
         iteration_start = time.time()
@@ -641,9 +657,10 @@ def main(args):  # noqa: C901
 
         # Time the loss computation
         loss_start = time.time()
+
         loss = gflownet.loss(
             env,
-            training_objects,
+            training_objects,  # type: ignore
             reduction="sum" if args.distributed or args.loss == "SubTB" else "mean",
         )
 
@@ -730,6 +747,7 @@ def main(args):  # noqa: C901
             all_visited_terminating_states = visited_terminating_states.tensor
 
         if my_rank == 0:
+            assert all_visited_terminating_states is not None
             print(
                 "after distributed -- gathered_shape={}, orig_shape={}".format(
                     all_visited_terminating_states.shape,
@@ -755,12 +773,13 @@ def main(args):  # noqa: C901
                 wandb.log(to_log, step=iteration)
 
             if log_this_iter:
+                assert all_visited_terminating_states is not None
                 print("logging thjs iteration!")
                 validation_info, discovered_modes = validate_hypergrid(
                     env,
                     gflownet,
                     args.validation_samples,
-                    all_visited_terminating_states,
+                    DiscreteStates(all_visited_terminating_states),
                     discovered_modes,
                 )
 
@@ -819,7 +838,7 @@ def validate_hypergrid(
     env,
     gflownet,
     n_validation_samples,
-    visited_terminating_states: torch.Tensor | None,
+    visited_terminating_states: DiscreteStates | None,
     discovered_modes,
 ):
     # Standard validation shared across envs.
@@ -829,14 +848,15 @@ def validate_hypergrid(
         n_validation_samples,
         visited_terminating_states,
     )
-    # validation_info = {}
 
-    # Add the mode counting metric.
-    states, scale = visited_terminating_states, env.scale_factor
+    # validation_info = {}
+    # Modes will have a reward greater than 1.
     mode_reward_threshold = 1.0  # Assumes height >= 5. TODO - verify.
 
-    # Modes will have a reward greater than 1.
-    modes = states[env.reward(states) >= mode_reward_threshold]
+    assert isinstance(visited_terminating_states, DiscreteStates)
+    modes = visited_terminating_states[
+        env.reward(visited_terminating_states) >= mode_reward_threshold
+    ]
     modes_found = set([tuple(s.tolist()) for s in modes])
     discovered_modes.update(modes_found)
     validation_info["n_modes_found"] = len(discovered_modes)
@@ -991,8 +1011,10 @@ if __name__ == "__main__":
         "--n_hidden",
         type=int,
         default=2,
-        help="Number of hidden layers (of size `hidden_dim`) in the estimators'"
-        + " neural network modules",
+        help=(
+            "Number of hidden layers (of size `hidden_dim`) in the estimators'"
+            " neural network modules"
+        ),
     )
 
     # Training settings.
@@ -1012,8 +1034,10 @@ if __name__ == "__main__":
         "--n_trajectories",
         type=int,
         default=int(1e6),
-        help="Total budget of trajectories to train on. "
-        + "Training iterations = n_trajectories // batch_size",
+        help=(
+            "Total budget of trajectories to train on. "
+            "Training iterations = n_trajectories // batch_size"
+        ),
     )
 
     # Validation settings.
@@ -1063,8 +1087,10 @@ if __name__ == "__main__":
         "--trajectories_to_profile",
         type=int,
         default=2048,
-        help="Number of trajectories to profile using the Pytorch Profiler."
-        + " Preferably, a multiple of batch size.",
+        help=(
+            "Number of trajectories to profile using the Pytorch Profiler. "
+            "Preferably, a multiple of batch size."
+        ),
     )
 
     args = parser.parse_args()
