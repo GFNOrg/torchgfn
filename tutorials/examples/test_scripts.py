@@ -180,4 +180,4 @@ def test_box(delta: float, loss: str):
 
 
 if __name__ == "__main__":
-    test_hypergrid_losses_and_replay_buffer("FM", 10000)
+    test_hypergrid(2, 8)

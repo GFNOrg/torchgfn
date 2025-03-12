@@ -775,11 +775,13 @@ def main(args):  # noqa: C901
             if log_this_iter:
                 assert all_visited_terminating_states is not None
                 print("logging thjs iteration!")
+                visited_terminating_states = env.States(all_visited_terminating_states)
+                assert isinstance(visited_terminating_states, DiscreteStates)
                 validation_info, discovered_modes = validate_hypergrid(
                     env,
                     gflownet,
                     args.validation_samples,
-                    DiscreteStates(all_visited_terminating_states),
+                    visited_terminating_states,
                     discovered_modes,
                 )
 
@@ -856,7 +858,7 @@ def validate_hypergrid(
     assert isinstance(visited_terminating_states, DiscreteStates)
     modes = visited_terminating_states[
         env.reward(visited_terminating_states) >= mode_reward_threshold
-    ]
+    ].tensor
     modes_found = set([tuple(s.tolist()) for s in modes])
     discovered_modes.update(modes_found)
     validation_info["n_modes_found"] = len(discovered_modes)
