@@ -249,6 +249,7 @@ def PFBasedGFlowNet_with_return(
 
     if isinstance(gflownet, TBGFlowNet):
         assert isinstance(training_objects, Trajectories)
+        assert training_objects.log_probs is not None
         assert torch.all(
             torch.abs(
                 gflownet.get_pfs_and_pbs(training_objects)[0]
