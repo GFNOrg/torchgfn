@@ -2,7 +2,7 @@ from typing import Tuple
 
 import torch
 
-from gfn.containers import Trajectories, Transitions, has_log_probs
+from gfn.containers import Trajectories, Transitions
 from gfn.modules import GFNModule
 from gfn.states import States
 from gfn.utils.handlers import (
@@ -71,7 +71,7 @@ def get_trajectory_pfs(
     if valid_states.batch_shape != tuple(valid_actions.batch_shape):
         raise AssertionError("Something wrong happening with log_pf evaluations")
 
-    if has_log_probs(trajectories) and not recalculate_all_logprobs:
+    if trajectories.has_log_probs and not recalculate_all_logprobs:
         log_pf_trajectories = trajectories.log_probs
     else:
         log_pf_trajectories = torch.full_like(
@@ -198,7 +198,7 @@ def get_transition_pfs(
     states = transitions.states
     actions = transitions.actions
 
-    if has_log_probs(transitions) and not recalculate_all_logprobs:
+    if transitions.has_log_probs and not recalculate_all_logprobs:
         log_pf_actions = transitions.log_probs
     else:
         # Evaluate the log PF of the actions, with optional conditioning.

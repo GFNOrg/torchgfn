@@ -5,7 +5,7 @@ from typing import Sequence
 import torch
 
 from gfn.actions import Actions
-from gfn.containers.base import Container, has_log_probs
+from gfn.containers.base import Container
 from gfn.containers.state_pairs import StatePairs
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
@@ -382,7 +382,7 @@ class Trajectories(Container):
             )
 
         # Initialize log_probs None if not available
-        if has_log_probs(self):
+        if self.has_log_probs:
             log_probs = self.log_probs[~self.actions.is_dummy]
         else:
             log_probs = None

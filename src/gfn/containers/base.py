@@ -55,10 +55,10 @@ class Container(ABC):
             else:
                 raise ValueError(f"Unexpected {key} of type {type(val)}")
 
+    @property
+    def has_log_probs(self) -> bool:
+        """Returns True if the container has the log_probs attribute populated."""
+        if not hasattr(self, "log_probs"):
+            return False
 
-def has_log_probs(obj: Container):
-    """Returns True if the submitted container has the log_probs attribute populated."""
-    if not hasattr(obj, "log_probs"):
-        return False
-
-    return obj.log_probs is not None and obj.log_probs.nelement() > 0
+        return self.log_probs is not None and self.log_probs.nelement() > 0

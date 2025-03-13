@@ -10,7 +10,6 @@ from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
-from gfn.utils.handlers import warn_about_recalculating_logprobs
 from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
 
 TrainingSampleType = TypeVar("TrainingSampleType", bound=Container)
@@ -103,7 +102,6 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
             torch.Tensor: The computed loss
         """
         training_samples = self.to_training_samples(trajectories)
-        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
 
         return self.loss(
             env,

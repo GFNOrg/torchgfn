@@ -3,7 +3,7 @@ from typing import Tuple
 
 import torch
 
-from gfn.containers import Trajectories, Transitions, has_log_probs
+from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
@@ -236,7 +236,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         pf_dist = self.pf.to_probability_distribution(states, module_output)
 
-        if has_log_probs(transitions) and not recalculate_all_logprobs:
+        if transitions.has_log_probs and not recalculate_all_logprobs:
             valid_log_pf_actions = transitions[mask].log_probs
         else:
             # Evaluate the log PF of the actions sampled off policy.

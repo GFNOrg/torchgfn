@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from gfn.env import Env
     from gfn.states import States
 
-from gfn.containers.base import Container, has_log_probs
+from gfn.containers.base import Container
 
 
 class Transitions(Container):
@@ -213,7 +213,7 @@ class Transitions(Container):
         log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
 
         # Only return logprobs if they exist.
-        log_probs = self.log_probs[index] if has_log_probs(self) else None
+        log_probs = self.log_probs[index] if self.has_log_probs else None
 
         return Transitions(
             env=self.env,
