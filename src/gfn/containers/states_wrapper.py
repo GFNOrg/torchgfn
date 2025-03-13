@@ -80,9 +80,7 @@ class StatesWrapper(Container, Generic[StateType]):
         if log_rewards is not None:
             self._log_rewards = log_rewards
         else:  # if log_rewards is None, there are two cases
-            if (
-                self.states.nelement() == 0
-            ):  # 1) if we are initializing with empty states
+            if self.states.tensor.nelement() == 0:  # 1) initializing with empty states
                 self._log_rewards = torch.full(
                     size=(0,), fill_value=0, dtype=torch.float, device=device
                 )
