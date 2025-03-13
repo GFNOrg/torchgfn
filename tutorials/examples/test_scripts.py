@@ -84,7 +84,6 @@ def test_hypergrid(ndim: int, height: int):
     n_trajectories = 64000  # if ndim == 2 else 16000
     args = HypergridArgs(ndim=ndim, height=height, n_trajectories=n_trajectories)
     final_l1_dist = train_hypergrid_main(args)
-    print(final_l1_dist)
 
     if ndim == 2 and height == 8:
         assert np.isclose(
@@ -120,7 +119,6 @@ def test_hypergrid_losses_and_replay_buffer(loss: str, replay_buffer_size: int):
         assert final_l1_dist > 0  # This is a sanity check that the script is running
 
 
-# TODO: Most tests all fail, it appears the models do not train properly.
 @pytest.mark.parametrize("ndim", [2, 4])
 @pytest.mark.parametrize("alpha", [0.1, 1.0])
 def test_discreteebm(ndim: int, alpha: float):
@@ -170,7 +168,7 @@ def test_box(delta: float, loss: str):
         #       an issue with no seeding properly. Need to investigate.
         assert np.isclose(final_jsd, 0.1, atol=1e-2) or np.isclose(
             final_jsd, 3.81e-2, atol=1e-2
-        )
+        ), f"Final JSD: {final_jsd}"
     elif loss == "DB" and delta == 0.1:
         assert np.isclose(final_jsd, 0.134, atol=1e-1), f"Final JSD: {final_jsd}"
     if loss == "TB" and delta == 0.25:
@@ -180,4 +178,4 @@ def test_box(delta: float, loss: str):
 
 
 if __name__ == "__main__":
-    test_hypergrid(2, 8)
+    test_box(0.1, "TB")
