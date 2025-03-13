@@ -114,7 +114,6 @@ class DiscreteEBM(DiscreteEnv):
             # exit_action=,
             n_actions=n_actions,
             sf=sf,
-            device_str=device_str,
             preprocessor=preprocessor,
         )
 

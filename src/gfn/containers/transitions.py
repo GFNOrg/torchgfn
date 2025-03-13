@@ -50,6 +50,7 @@ class Transitions(Container):
             env: Environment
             states: States object with uni-dimensional `batch_shape`, representing the
                 parents of the transitions.
+            conditioning: The conditioning of the transitions for conditional MDPs.
             actions: Actions chosen at the parents of each transitions.
             is_done: Tensor of shape (n_transitions,) indicating whether the action is the exit action.
             next_states: States object with uni-dimensional `batch_shape`, representing
@@ -67,11 +68,15 @@ class Transitions(Container):
         self.env = env
         self.conditioning = conditioning
         self.is_backward = is_backward
-        self.states = (
-            states
-            if states is not None
-            else env.states_from_batch_shape(batch_shape=(0,))
-        )
+
+        # Assert that all tensors are in the same device as the environment.
+        device = self.env.device
+        for obj in [states, actions, next_states]:
+            assert obj.tensor.device == device if obj is not None else True
+        for tensor in [conditioning, is_done, log_rewards, log_probs]:
+            assert tensor.device == device if tensor is not None else True
+
+        self.states = states if states is not None else env.states_from_batch_shape((0,))
         assert len(self.states.batch_shape) == 1
 
         self.actions = (
@@ -82,7 +87,7 @@ class Transitions(Container):
         self.is_done = (
             is_done
             if is_done is not None
-            else torch.full(size=(0,), fill_value=False, dtype=torch.bool)
+            else torch.full(size=(0,), fill_value=False, dtype=torch.bool, device=device)
         )
         assert (
             self.is_done.shape == (self.n_transitions,)
@@ -90,20 +95,26 @@ class Transitions(Container):
         )
 
         self.next_states = (
-            next_states
-            if next_states is not None
-            else env.states_from_batch_shape(batch_shape=(0,))
+            next_states if next_states is not None else env.states_from_batch_shape((0,))
         )
         assert (
             len(self.next_states.batch_shape) == 1
             and self.states.batch_shape == self.next_states.batch_shape
         )
-        self._log_rewards = log_rewards if log_rewards is not None else torch.zeros(0)
+        self._log_rewards = (
+            log_rewards
+            if log_rewards is not None
+            else torch.zeros(0, dtype=torch.float, device=device)
+        )
         assert (
             self._log_rewards.shape == (self.n_transitions,)
             and self._log_rewards.dtype == torch.float
         )
-        self.log_probs = log_probs if log_probs is not None else torch.zeros(0)
+        self.log_probs = (
+            log_probs
+            if log_probs is not None
+            else torch.zeros(0, dtype=torch.float, device=device)
+        )
         assert (
             self.log_probs.shape == (self.n_transitions,) or len(self.log_probs) == 0
         ) and self.log_probs.dtype == torch.float

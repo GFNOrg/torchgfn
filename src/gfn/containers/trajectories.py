@@ -35,7 +35,6 @@ class Trajectories(Container):
         log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
         log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the
             trajectories' actions.
-
     """
 
     def __init__(
@@ -54,6 +53,7 @@ class Trajectories(Container):
         Args:
             env: The environment in which the trajectories are defined.
             states: The states of the trajectories.
+            conditioning: The conditioning of the trajectories for conditional MDPs.
             actions: The actions of the trajectories.
             when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
             is_backward: Whether the trajectories are backward or forward.
@@ -73,6 +73,20 @@ class Trajectories(Container):
         self.env = env
         self.conditioning = conditioning
         self.is_backward = is_backward
+
+        # Assert that all tensors are in the same device as the environment.
+        device = self.env.device
+        for obj in [states, actions]:
+            assert obj.tensor.device == device if obj is not None else True
+        for tensor in [
+            conditioning,
+            when_is_done,
+            log_rewards,
+            log_probs,
+            estimator_outputs,
+        ]:
+            assert tensor.device == device if tensor is not None else True
+
         self.states = (
             states if states is not None else env.states_from_batch_shape((0, 0))
         )
@@ -84,7 +98,7 @@ class Trajectories(Container):
         self.when_is_done = (
             when_is_done
             if when_is_done is not None
-            else torch.full(size=(0,), fill_value=-1, dtype=torch.long)
+            else torch.full(size=(0,), fill_value=-1, dtype=torch.long, device=device)
         )
         assert (
             self.when_is_done.shape == (self.n_trajectories,)
@@ -94,7 +108,7 @@ class Trajectories(Container):
         self._log_rewards = (
             log_rewards
             if log_rewards is not None
-            else torch.full(size=(0,), fill_value=0, dtype=torch.float)
+            else torch.full(size=(0,), fill_value=0, dtype=torch.float, device=device)
         )
         assert (
             self._log_rewards.shape == (self.n_trajectories,)
@@ -109,7 +123,9 @@ class Trajectories(Container):
             f"self.max_length={self.max_length}, "
             f"self.n_trajectories={self.n_trajectories}"
         else:
-            log_probs = torch.full(size=(0, 0), fill_value=0, dtype=torch.float)
+            log_probs = torch.full(
+                size=(0, 0), fill_value=0, dtype=torch.float, device=device
+            )
         self.log_probs: torch.Tensor = log_probs
 
         self.estimator_outputs = estimator_outputs
