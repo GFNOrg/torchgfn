@@ -238,6 +238,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         if transitions.has_log_probs and not recalculate_all_logprobs:
             valid_log_pf_actions = transitions[mask].log_probs
+            assert valid_log_pf_actions is not None
         else:
             # Evaluate the log PF of the actions sampled off policy.
             valid_log_pf_actions = pf_dist.log_prob(actions.tensor)

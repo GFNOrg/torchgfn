@@ -78,7 +78,6 @@ class HyperGrid(DiscreteEnv):
             s0=s0,
             state_shape=state_shape,
             sf=sf,
-            device_str=device_str,
             preprocessor=preprocessor,
         )
 

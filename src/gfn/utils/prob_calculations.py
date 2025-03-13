@@ -73,6 +73,7 @@ def get_trajectory_pfs(
 
     if trajectories.has_log_probs and not recalculate_all_logprobs:
         log_pf_trajectories = trajectories.log_probs
+        assert log_pf_trajectories is not None
     else:
         log_pf_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],
@@ -200,6 +201,7 @@ def get_transition_pfs(
 
     if transitions.has_log_probs and not recalculate_all_logprobs:
         log_pf_actions = transitions.log_probs
+        assert log_pf_actions is not None
     else:
         # Evaluate the log PF of the actions, with optional conditioning.
         # TODO: Inefficient duplication in case of tempered policy

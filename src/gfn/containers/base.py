@@ -57,7 +57,7 @@ class Container(ABC):
 
     @property
     def has_log_probs(self) -> bool:
-        """Returns True if the container has the log_probs attribute populated."""
+        """Returns whether the trajectories have log probabilities."""
         if not hasattr(self, "log_probs"):
             return False
 
