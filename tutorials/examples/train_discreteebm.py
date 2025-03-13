@@ -60,6 +60,7 @@ def main(args):  # noqa: C901
         preprocessor=env.preprocessor,
     )
     gflownet = FMGFlowNet(estimator)
+    gflownet = gflownet.to(env.device)
 
     # 3. Create the optimizer
     optimizer = torch.optim.Adam(module.parameters(), lr=args.lr)

@@ -94,7 +94,7 @@ class StatesWrapper(Container, Generic[StateType]):
     @property
     def intermediary_states(self) -> StateType:
         """Return the intermediary states."""
-        return cast(StateType, self.states[~self.is_terminating])
+        return cast(StateType, self.states[~self.states.is_initial_state])
 
     @property
     def terminating_states(self) -> StateType:
@@ -106,7 +106,7 @@ class StatesWrapper(Container, Generic[StateType]):
         """Return the intermediary conditioning."""
         if self.conditioning is None:
             return None
-        return self.conditioning[~self.is_terminating]
+        return self.conditioning[~self.states.is_initial_state]
 
     @property
     def terminating_conditioning(self) -> torch.Tensor | None:
