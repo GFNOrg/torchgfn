@@ -18,7 +18,9 @@ class Container(ABC):
         """Returns the number of elements in the container."""
 
     @abstractmethod
-    def __getitem__(self, index: int | Sequence[int]) -> Container:
+    def __getitem__(
+        self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
+    ) -> Container:
         """Subsets the container."""
 
     @abstractmethod

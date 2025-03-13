@@ -25,13 +25,14 @@ from gfn.gflownet import (
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
-    BoxPBNeuralNet,
+    BoxPBMLP,
     BoxPBUniform,
     BoxPFEstimator,
-    BoxPFNeuralNet,
+    BoxPFMLP,
     BoxStateFlowModule,
 )
 from gfn.modules import ScalarEstimator
+from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.common import set_seed
 
 DEFAULT_SEED = 4444
@@ -105,7 +106,7 @@ def main(args):  # noqa: C901
     #    For this we need modules and estimators.
     #    Depending on the loss, we may need several estimators:
     gflownet = None
-    pf_module = BoxPFNeuralNet(
+    pf_module = BoxPFMLP(
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
         n_components=args.n_components,
@@ -114,11 +115,11 @@ def main(args):  # noqa: C901
     if args.uniform_pb:
         pb_module = BoxPBUniform()
     else:
-        pb_module = BoxPBNeuralNet(
+        pb_module = BoxPBMLP(
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
             n_components=args.n_components,
-            torso=pf_module.torso if args.tied else None,
+            trunk=pf_module.trunk if args.tied else None,
         )
 
     pf_estimator = BoxPFEstimator(
@@ -148,7 +149,7 @@ def main(args):  # noqa: C901
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
-            torso=None,  # We do not tie the parameters of the flow function to PF
+            trunk=None,  # We do not tie the parameters of the flow function to PF
             logZ_value=logZ,
         )
         logF_estimator = ScalarEstimator(module=module, preprocessor=env.preprocessor)
@@ -179,11 +180,26 @@ def main(args):  # noqa: C901
         )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
+    gflownet = gflownet.to(device_str)
+
+    if not args.use_local_search:
+        sampler = Sampler(estimator=pf_estimator)
+        local_search_params = {}
+    else:
+        sampler = LocalSearchSampler(
+            pf_estimator=pf_estimator, pb_estimator=pb_estimator
+        )
+        local_search_params = {
+            "n_local_search_loops": args.n_local_search_loops,
+            "back_ratio": args.back_ratio,
+            "use_metropolis_hastings": args.use_metropolis_hastings,
+        }
 
     # 3. Create the optimizer and scheduler
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
     if not args.uniform_pb:
+        assert isinstance(pb_module.last_layer, torch.nn.Module)
         optimizer.add_param_group(
             {
                 "params": (
@@ -226,22 +242,20 @@ def main(args):  # noqa: C901
     states_visited = 0
 
     jsd = float("inf")
-    for iteration in trange(n_iterations):
+    for iteration in trange(n_iterations, dynamic_ncols=True):
         if iteration % 1000 == 0:
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
-        trajectories = gflownet.sample_trajectories(
-            env, save_logprobs=True, n_samples=args.batch_size
+        # Sampling on-policy, so we save logprobs for faster computation.
+        trajectories = sampler.sample_trajectories(
+            env, save_logprobs=True, n=args.batch_size, **local_search_params
         )
 
-        training_samples = gflownet.to_training_samples(trajectories)
-
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
-
+        loss = gflownet.loss_from_trajectories(env, trajectories)
         loss.backward()
         for p in gflownet.parameters():
-            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad
+            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
                 p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
@@ -258,7 +272,9 @@ def main(args):  # noqa: C901
             wandb.log(to_log, step=iteration)
         if iteration % (args.validation_interval // 5) == 0:
             tqdm.write(
-                f"States: {states_visited}, Loss: {loss.item():.3f}, {logZ_info}true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
+                f"States: {states_visited}, "
+                f"Loss: {loss.item():.3f}, {logZ_info}"
+                f"true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
             )
 
         if iteration % args.validation_interval == 0:
@@ -396,6 +412,31 @@ if __name__ == "__main__":
         type=int,
         default=2500,
         help="Every scheduler_milestone steps, multiply the learning rate by gamma_scheduler",
+    )
+
+    parser.add_argument(
+        "--use_local_search",
+        action="store_true",
+        help="Use local search to sample the next state",
+    )
+
+    # Local search parameters.
+    parser.add_argument(
+        "--n_local_search_loops",
+        type=int,
+        default=2,
+        help="Number of local search loops",
+    )
+    parser.add_argument(
+        "--back_ratio",
+        type=float,
+        default=0.5,
+        help="The ratio of the number of backward steps to the length of the trajectory",
+    )
+    parser.add_argument(
+        "--use_metropolis_hastings",
+        action="store_true",
+        help="Use Metropolis-Hastings acceptance criterion",
     )
 
     parser.add_argument(

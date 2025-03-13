@@ -4,21 +4,20 @@ from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
-from torch.nn.parameter import Parameter
-from torchtyping import TensorType as TT
 
 
-class NeuralNet(nn.Module):
+class MLP(nn.Module):
     """Implements a basic MLP."""
 
     def __init__(
         self,
         input_dim: int,
         output_dim: int,
-        hidden_dim: Optional[int] = 256,
+        hidden_dim: int = 256,
         n_hidden_layers: Optional[int] = 2,
         activation_fn: Optional[Literal["relu", "tanh", "elu"]] = "relu",
-        torso: Optional[nn.Module] = None,
+        trunk: Optional[nn.Module] = None,
+        add_layer_norm: bool = False,
     ):
         """Instantiates a MLP instance.
 
@@ -28,13 +27,17 @@ class NeuralNet(nn.Module):
             hidden_dim: Number of units per hidden layer.
             n_hidden_layers: Number of hidden layers.
             activation_fn: Activation function.
-            torso: If provided, this module will be used as the torso of the network
+            trunk: If provided, this module will be used as the trunk of the network
                 (i.e. all layers except last layer).
+            add_layer_norm: If True, add a LayerNorm after each linear layer.
+                (incompatible with `trunk` argument)
         """
         super().__init__()
+        self._input_dim = input_dim
         self._output_dim = output_dim
 
-        if torso is None:
+        if trunk is None:
+            assert hidden_dim is not None, "hidden_dim must be provided"
             assert (
                 n_hidden_layers is not None and n_hidden_layers >= 0
             ), "n_hidden_layers must be >= 0"
@@ -45,29 +48,57 @@ class NeuralNet(nn.Module):
                 activation = nn.ReLU
             elif activation_fn == "tanh":
                 activation = nn.Tanh
-            arch = [nn.Linear(input_dim, hidden_dim), activation()]
+            if add_layer_norm:
+                arch = [
+                    nn.Linear(input_dim, hidden_dim),
+                    nn.LayerNorm(hidden_dim),
+                    activation(),
+                ]
+            else:
+                arch = [nn.Linear(input_dim, hidden_dim), activation()]
             for _ in range(n_hidden_layers - 1):
                 arch.append(nn.Linear(hidden_dim, hidden_dim))
+                if add_layer_norm:
+                    arch.append(nn.LayerNorm(hidden_dim))
                 arch.append(activation())
-            self.torso = nn.Sequential(*arch)
-            self.torso.hidden_dim = hidden_dim
+            self.trunk = nn.Sequential(*arch)
+            self.trunk.hidden_dim = torch.tensor(hidden_dim)
+            self._hidden_dim = hidden_dim
         else:
-            self.torso = torso
-        self.last_layer = nn.Linear(self.torso.hidden_dim, output_dim)
+            self.trunk = trunk
+            assert hasattr(trunk, "hidden_dim") and isinstance(
+                trunk.hidden_dim, torch.Tensor
+            ), "trunk must have a hidden_dim attribute"
+            self._hidden_dim = int(trunk.hidden_dim.item())
+        self.last_layer = nn.Linear(self._hidden_dim, output_dim)
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the neural network.
 
         Args:
             preprocessed_states: a batch of states appropriately preprocessed for
-                ingestion by the MLP.
-        Returns: out, a set of continuous variables.
+                ingestion by the MLP. The shape of the tensor should be (*batch_shape, input_dim).
+        Returns: a tensor of shape (*batch_shape, output_dim).
         """
-        out = self.torso(preprocessed_states)
+        out = self.trunk(preprocessed_states)
         out = self.last_layer(out)
         return out
+
+    @property
+    def input_dim(self):
+        return self._input_dim
+
+    @property
+    def output_dim(self):
+        return self._output_dim
+
+    @input_dim.setter
+    def input_dim(self, value: int):
+        self._input_dim = value
+
+    @output_dim.setter
+    def output_dim(self, value: int):
+        self._output_dim = value
 
 
 class Tabular(nn.Module):
@@ -97,9 +128,14 @@ class Tabular(nn.Module):
         self.table = nn.parameter.Parameter(self.table)
         self.device = None
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
+        """Forward method for the tabular policy.
+
+        Args:
+            preprocessed_states: a batch of states appropriately preprocessed for
+                ingestion by the tabular policy. The shape of the tensor should be (*batch_shape, 1).
+        Returns: a tensor of shape (*batch_shape, output_dim).
+        """
         if self.device is None:
             self.device = preprocessed_states.device
             self.table = self.table.to(self.device)
@@ -128,9 +164,15 @@ class DiscreteUniform(nn.Module):
         super().__init__()
         self.output_dim = output_dim
 
-    def forward(
-        self, preprocessed_states: TT["batch_shape", "input_dim", float]
-    ) -> TT["batch_shape", "output_dim", float]:
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
+        """Forward method for the uniform distribution.
+
+        Args:
+            preprocessed_states: a batch of states appropriately preprocessed for
+                ingestion by the uniform distribution. The shape of the tensor should be (*batch_shape, input_dim).
+
+        Returns: a tensor of shape (*batch_shape, output_dim).
+        """
         out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
             preprocessed_states.device
         )

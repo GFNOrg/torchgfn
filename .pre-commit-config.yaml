@@ -1,50 +1,48 @@
 ---
-default_language_version:
-  node: 15.1.0
 repos:
-  - repo: https://github.com/python/black
-    rev: 23.7.0
-    hooks:
-      - id: black
-        language_version: python3.10
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v2.0.0
-    hooks:
-      - id: flake8
   - repo: https://github.com/pycqa/autoflake
-    rev: v2.2.0
+    rev: v2.3.1
     hooks:
       - id: autoflake
         name: autoflake
         entry: autoflake
         language: python
-        "types": [python]
+        types: [python]
         require_serial: true
         args:
           - "--in-place"
           - "--expand-star-imports"
           - "--remove-duplicate-keys"
           - "--remove-unused-variables"
+          - "--remove-all-unused-imports"
+          - "--ignore-init-module-imports"
   - repo: https://github.com/pycqa/isort
-    rev: 5.12.0
+    rev: 5.13.2
     hooks:
       - id: isort
-        files: "\\.(py)$"
-        args: [--settings-path=pyproject.toml]
+  - repo: https://github.com/python/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.1.1 
+    hooks:
+      - id: flake8
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.320
+    rev: v1.1.394  # REPLACE WITH YOUR SYSTEM PYRIGHT VERSION!!!
     hooks:
       - id: pyright
-        name: pyright
-        entry: pyright
-        args:
-          - --project=pyproject.toml
+        language: system  # Use the system's shell and Python
+        entry: pyright  # Simply call 'pyright'
+        pass_filenames: false
+        always_run: true
   - repo: local
     hooks:
       - id: pytest-check
         name: pytest-check
         entry: pytest
-        language: python
-        files: testing/
+        args: [testing/]
+        language: system
+        pass_filenames: false
         types: [python]
         always_run: true

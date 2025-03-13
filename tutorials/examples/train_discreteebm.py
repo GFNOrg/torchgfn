@@ -12,6 +12,7 @@ python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --l
 """
 
 from argparse import ArgumentParser
+from typing import cast
 
 import torch
 import wandb
@@ -20,8 +21,9 @@ from tqdm import tqdm, trange
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.modules import DiscretePolicyEstimator
+from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
-from gfn.utils.modules import NeuralNet, Tabular
+from gfn.utils.modules import MLP, Tabular
 from gfn.utils.training import validate
 
 DEFAULT_SEED = 4444
@@ -46,7 +48,7 @@ def main(args):  # noqa: C901
     if args.tabular:
         module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
     else:
-        module = NeuralNet(
+        module = MLP(
             input_dim=env.preprocessor.output_dim,
             output_dim=env.n_actions,
             hidden_dim=args.hidden_dim,
@@ -63,7 +65,6 @@ def main(args):  # noqa: C901
     optimizer = torch.optim.Adam(module.parameters(), lr=args.lr)
 
     # 4. Train the gflownet
-
     visited_terminating_states = env.states_from_batch_shape((0,))
 
     states_visited = 0
@@ -71,16 +72,15 @@ def main(args):  # noqa: C901
     validation_info = {"l1_dist": float("inf")}
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
-            env, save_logprobs=True, n_samples=args.batch_size
+            env, save_logprobs=False, n=args.batch_size
         )
         training_samples = gflownet.to_training_samples(trajectories)
-
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples)
         loss.backward()
         optimizer.step()
 
-        visited_terminating_states.extend(trajectories.last_states)
+        visited_terminating_states.extend(cast(DiscreteStates, trajectories.last_states))
 
         states_visited += len(trajectories)
 
@@ -88,7 +88,7 @@ def main(args):  # noqa: C901
         if use_wandb:
             wandb.log(to_log, step=iteration)
         if iteration % args.validation_interval == 0:
-            validation_info = validate(
+            validation_info, _ = validate(
                 env,
                 gflownet,
                 args.validation_samples,
