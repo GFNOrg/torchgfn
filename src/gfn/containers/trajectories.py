@@ -10,7 +10,6 @@ from gfn.containers.state_pairs import StatePairs
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 from gfn.states import DiscreteStates, GraphStates, States
-from gfn.utils.common import has_log_probs
 
 
 # TODO: remove env from this class?
@@ -71,7 +70,6 @@ class Trajectories(Container):
         is used to compute the rewards, at each call of self.log_rewards
         """
         self.env = env
-        self.conditioning = conditioning
         self.is_backward = is_backward
 
         # Assert that all tensors are in the same device as the environment.
@@ -91,10 +89,17 @@ class Trajectories(Container):
             states if states is not None else env.states_from_batch_shape((0, 0))
         )
         assert len(self.states.batch_shape) == 2
+
+        self.conditioning = conditioning
+
         self.actions = (
             actions if actions is not None else env.actions_from_batch_shape((0, 0))
         )
-        assert len(self.actions.batch_shape) == 2
+        assert (self.actions.batch_shape == self.states.batch_shape == (0, 0)) or (
+            self.actions.batch_shape
+            == (self.states.batch_shape[0] - 1, self.states.batch_shape[1])
+        )
+
         self.when_is_done = (
             when_is_done
             if when_is_done is not None
@@ -105,28 +110,35 @@ class Trajectories(Container):
             and self.when_is_done.dtype == torch.long
         )
 
-        self._log_rewards = (
-            log_rewards
-            if log_rewards is not None
-            else torch.full(size=(0,), fill_value=0, dtype=torch.float, device=device)
-        )
-        assert (
+        # self._log_rewards can be torch.Tensor of shape (self.n_trajectories,) or None.
+        if log_rewards is not None:
+            self._log_rewards = log_rewards
+        else:  # if log_rewards is None, there are two cases
+            if self.n_trajectories == 0:  # 1) we are initializing empty Trajectories
+                self._log_rewards = torch.full(
+                    size=(0,), fill_value=0, dtype=torch.float, device=device
+                )
+            else:  # 2) we don't have log_rewards and need to compute them on the fly
+                self._log_rewards = None
+        assert self._log_rewards is None or (
             self._log_rewards.shape == (self.n_trajectories,)
             and self._log_rewards.dtype == torch.float
         )
 
-        if log_probs is not None and log_probs.shape != (0, 0):
-            assert (
-                log_probs.shape == (self.max_length, self.n_trajectories)
-                and log_probs.dtype == torch.float
-            ), f"log_probs.shape={log_probs.shape}, "
-            f"self.max_length={self.max_length}, "
-            f"self.n_trajectories={self.n_trajectories}"
+        # same as self._log_rewards, but we can't compute log_probs within the class.
+        if log_probs is not None:
+            self.log_probs = log_probs
         else:
-            log_probs = torch.full(
-                size=(0, 0), fill_value=0, dtype=torch.float, device=device
-            )
-        self.log_probs: torch.Tensor = log_probs
+            if self.n_trajectories == 0:
+                self.log_probs = torch.full(
+                    size=(0, 0), fill_value=0, dtype=torch.float, device=device
+                )
+            else:
+                self.log_probs = None
+        assert self.log_probs is None or (
+            self.log_probs.shape == self.actions.batch_shape
+            and self.log_probs.dtype == torch.float
+        )
 
         self.estimator_outputs = estimator_outputs
         if self.estimator_outputs is not None:
@@ -184,15 +196,17 @@ class Trajectories(Container):
     @property
     def log_rewards(self) -> torch.Tensor | None:
         """Returns the log rewards of the trajectories as a tensor of shape (n_trajectories,)."""
-        if self._log_rewards is not None:
-            assert self._log_rewards.shape == (self.n_trajectories,)
-            return self._log_rewards
-        if self.is_backward:
+        if self.is_backward:  # TODO: Why can't backward trajectories have log_rewards?
             return None
-        try:
-            return self.env.log_reward(self.last_states)
-        except NotImplementedError:
-            return torch.log(self.env.reward(self.last_states))
+
+        if self._log_rewards is None:
+            try:
+                self._log_rewards = self.env.log_reward(self.last_states)
+            except NotImplementedError:
+                self._log_rewards = torch.log(self.env.reward(self.last_states))
+
+        assert self._log_rewards.shape == (self.n_trajectories,)
+        return self._log_rewards
 
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
@@ -206,11 +220,11 @@ class Trajectories(Container):
         actions = self.actions[:, index]
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
-        if self.log_probs.shape != (0, 0):
+        if self.log_probs is not None:
             log_probs = self.log_probs[:, index]
             log_probs = log_probs[:new_max_length]
         else:
-            log_probs = self.log_probs
+            log_probs = None
         log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
         if self.estimator_outputs is not None:
             # TODO: Is there a safer way to index self.estimator_outputs for
@@ -290,30 +304,28 @@ class Trajectories(Container):
         self.states.extend(other.states)  # n_trajectories comes from this.
         self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
 
-        # For log_probs, we first need to make the first dimensions of self.log_probs
-        # and other.log_probs equal (i.e. the number of steps in the trajectories), and
-        # then concatenate them.
-        new_max_length = max(self.log_probs.shape[0], other.log_probs.shape[0])
-        self.log_probs = self.extend_log_probs(self.log_probs, new_max_length)
-        other.log_probs = self.extend_log_probs(other.log_probs, new_max_length)
-        self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
-
         # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat(
                 (self._log_rewards, other._log_rewards),
                 dim=0,
             )
+            assert len(self._log_rewards) == self.actions.batch_shape[-1]
         # Will not be None if object is initialized as empty.
         else:
             self._log_rewards = None
 
-        # Ensure log_probs/rewards are the correct dimensions. TODO: Remove?
-        if self.log_probs.numel() > 0:
+        # For log_probs, we first need to make the first dimensions of self.log_probs
+        # and other.log_probs equal (i.e. the number of steps in the trajectories), and
+        # then concatenate them.
+        if self.log_probs is not None and other.log_probs is not None:
+            new_max_length = max(self.log_probs.shape[0], other.log_probs.shape[0])
+            self.log_probs = self.extend_log_probs(self.log_probs, new_max_length)
+            other.log_probs = self.extend_log_probs(other.log_probs, new_max_length)
+            self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
             assert self.log_probs.shape == self.actions.batch_shape
-
-        if self.log_rewards is not None:
-            assert len(self.log_rewards) == self.actions.batch_shape[-1]
+        else:
+            self.log_probs = None
 
         # Either set, or append, estimator outputs if they exist in the submitted
         # trajectory.
@@ -401,7 +413,7 @@ class Trajectories(Container):
             )
 
         # Initialize log_probs None if not available
-        if has_log_probs(self):
+        if self.log_probs is not None:
             log_probs = self.log_probs[~self.actions.is_dummy]
         else:
             log_probs = None
