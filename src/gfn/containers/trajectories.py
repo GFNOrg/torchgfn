@@ -120,7 +120,7 @@ class Trajectories(Container):
 
     def __repr__(self) -> str:
         trajectories_representation = ""
-        n_traj_to_print = 10
+        n_traj_to_print = min(10, self.n_trajectories)
 
         if isinstance(self.states, GraphStates):
             for i in range(n_traj_to_print):
@@ -140,8 +140,9 @@ class Trajectories(Container):
                         break
                 trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
-            f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length}, First 10 trajectories:"
-            + f"states=\n{trajectories_representation}"
+            f"Trajectories(n_trajectories={self.n_trajectories}, max_length={self.max_length}\n"
+            + f"First {n_traj_to_print} trajectories (states):\n"
+            + f"{trajectories_representation}"
             # + f"actions=\n{self.actions.tensor.squeeze().transpose(0, 1)[:10].numpy()}, "
             + f"when_is_done={self.when_is_done[:10].cpu().numpy()})"
         )
