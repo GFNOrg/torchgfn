@@ -170,7 +170,7 @@ def test_box(delta: float, loss: str):
         #       an issue with no seeding properly. Need to investigate.
         assert np.isclose(final_jsd, 0.1, atol=1e-2) or np.isclose(
             final_jsd, 3.81e-2, atol=1e-2
-        )
+        ), f"Final JSD: {final_jsd}"
     elif loss == "DB" and delta == 0.1:
         assert np.isclose(final_jsd, 0.134, atol=1e-1), f"Final JSD: {final_jsd}"
     if loss == "TB" and delta == 0.25:
@@ -180,4 +180,4 @@ def test_box(delta: float, loss: str):
 
 
 if __name__ == "__main__":
-    test_hypergrid(2, 8)
+    test_box(0.1, "TB")
