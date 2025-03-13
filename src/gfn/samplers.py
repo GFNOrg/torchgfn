@@ -144,10 +144,11 @@ class Sampler:
             ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
             n_trajectories = states.batch_shape[0]
 
+        device = states.device
+
         if conditioning is not None:
             assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
-
-        device = states.device
+            assert conditioning.device == device
 
         dones = (
             states.is_initial_state

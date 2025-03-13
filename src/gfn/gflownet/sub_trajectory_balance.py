@@ -477,10 +477,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         # The following tensor represents the weights given to each possible
         # sub-trajectory length.
-        contributions = (L ** torch.arange(max_len).double()).float()
+        contributions = (
+            L ** torch.arange(max_len, device=is_done.device).double()
+        ).float()
         contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
         contributions = contributions.repeat_interleave(
-            torch.arange(max_len, 0, -1),
+            torch.arange(max_len, 0, -1, device=is_done.device),
             dim=0,
             output_size=int(max_len * (max_len + 1) / 2),
         )

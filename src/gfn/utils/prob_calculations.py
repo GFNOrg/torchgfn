@@ -222,12 +222,12 @@ def get_transition_pfs(
 
 def get_transition_pbs(pb: GFNModule, transitions: Transitions) -> torch.Tensor:
     # automatically removes invalid transitions (i.e. s_f -> s_f)
-    valid_next_states = transitions.next_states[~transitions.is_done]
+    valid_next_states = transitions.next_states[~transitions.is_terminating]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]
 
     # Evaluate the log PB of the actions, with optional conditioning.
     masked_cond = (
-        transitions.conditioning[~transitions.is_done]
+        transitions.conditioning[~transitions.is_terminating]
         if transitions.conditioning is not None
         else None
     )
@@ -245,6 +245,6 @@ def get_transition_pbs(pb: GFNModule, transitions: Transitions) -> torch.Tensor:
             valid_next_states, estimator_outputs
         ).log_prob(non_exit_actions.tensor)
 
-        log_pb_actions[~transitions.is_done] = valid_log_pb_actions
+        log_pb_actions[~transitions.is_terminating] = valid_log_pb_actions
 
     return log_pb_actions

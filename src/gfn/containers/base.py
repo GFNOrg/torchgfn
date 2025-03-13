@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from gfn.env import Env
+    from gfn.states import States
 
 import torch
 
@@ -54,3 +55,8 @@ class Container(ABC):
                 self.__dict__[key] = torch.load(os.path.join(path, key + ".pt"))
             else:
                 raise ValueError(f"Unexpected {key} of type {type(val)}")
+
+    @property
+    @abstractmethod
+    def last_states(self) -> States:
+        """Returns the last states of the container."""

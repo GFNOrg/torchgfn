@@ -1,4 +1,4 @@
-from gfn.containers import StatePairs, Trajectories
+from gfn.containers import StatesWrapper, Trajectories
 from gfn.containers.base import Container
 from gfn.gflownet import FMGFlowNet, TBGFlowNet
 from gfn.gym import Box, HyperGrid
@@ -47,8 +47,8 @@ def test_flow_matching_gflownet_generic():
     mock_trajectories = Trajectories(env)
     states_pairs = gflownet.to_training_samples(mock_trajectories)
 
-    # Assert that the result is a StatePairs[DiscreteStates]
-    assert isinstance(states_pairs, StatePairs)
+    # Assert that the result is a StatesWrapper[DiscreteStates]
+    assert isinstance(states_pairs, StatesWrapper)
     assert isinstance(states_pairs.intermediary_states, DiscreteStates)
     assert isinstance(states_pairs.terminating_states, DiscreteStates)
 

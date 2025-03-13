@@ -138,11 +138,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         preds = log_pf_actions + log_F_s
 
         # uncomment next line for debugging
-        # assert transitions.next_states.is_sink_state.equal(transitions.is_done)
+        # assert transitions.next_states.is_sink_state.equal(transitions.is_terminating)
 
         # automatically removes invalid transitions (i.e. s_f -> s_f)
-        valid_next_states = transitions.next_states[~transitions.is_done]
-        valid_transitions_is_done = transitions.is_done[
+        valid_next_states = transitions.next_states[~transitions.is_terminating]
+        valid_transitions_is_terminating = transitions.is_terminating[
             ~transitions.states.is_sink_state
         ]
 
@@ -150,20 +150,21 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         if transitions.conditioning is not None:
             with has_conditioning_exception_handler("logF", self.logF):
                 valid_log_F_s_next = self.logF(
-                    valid_next_states, transitions.conditioning[~transitions.is_done]
+                    valid_next_states,
+                    transitions.conditioning[~transitions.is_terminating],
                 ).squeeze(-1)
         else:
             with no_conditioning_exception_handler("logF", self.logF):
                 valid_log_F_s_next = self.logF(valid_next_states).squeeze(-1)
 
         log_F_s_next = torch.zeros_like(log_pb_actions)
-        log_F_s_next[~valid_transitions_is_done] = valid_log_F_s_next
+        log_F_s_next[~valid_transitions_is_terminating] = valid_log_F_s_next
         assert transitions.log_rewards is not None
         valid_transitions_log_rewards = transitions.log_rewards[
             ~transitions.states.is_sink_state
         ]
-        log_F_s_next[valid_transitions_is_done] = valid_transitions_log_rewards[
-            valid_transitions_is_done
+        log_F_s_next[valid_transitions_is_terminating] = valid_transitions_log_rewards[
+            valid_transitions_is_terminating
         ]
         targets = log_pb_actions + log_F_s_next
 
