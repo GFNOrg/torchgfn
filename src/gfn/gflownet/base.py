@@ -157,12 +157,6 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     def pf_pb_parameters(self):
         return [v for k, v in self.named_parameters() if "pb" in k or "pf" in k]
 
-    def logF_named_parameters(self):
-        return {k: v for k, v in self.named_parameters() if "logF" in k}
-
-    def logF_parameters(self):
-        return [v for k, v in self.named_parameters() if "logF" in k]
-
     @abstractmethod
     def loss(
         self,
