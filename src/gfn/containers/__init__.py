@@ -1,4 +1,4 @@
-from .base import Container
+from .base import Container, has_log_probs
 from .replay_buffer import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from .state_pairs import StatePairs
 from .trajectories import Trajectories
@@ -11,4 +11,5 @@ __all__ = [
     "Trajectories",
     "Transitions",
     "Container",
+    "has_log_probs",
 ]

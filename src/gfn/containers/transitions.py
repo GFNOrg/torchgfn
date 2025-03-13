@@ -9,8 +9,7 @@ if TYPE_CHECKING:
     from gfn.env import Env
     from gfn.states import States
 
-from gfn.containers.base import Container
-from gfn.utils.common import has_log_probs
+from gfn.containers.base import Container, has_log_probs
 
 
 class Transitions(Container):

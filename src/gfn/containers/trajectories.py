@@ -5,12 +5,11 @@ from typing import Sequence
 import torch
 
 from gfn.actions import Actions
-from gfn.containers.base import Container
+from gfn.containers.base import Container, has_log_probs
 from gfn.containers.state_pairs import StatePairs
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 from gfn.states import DiscreteStates, States
-from gfn.utils.common import has_log_probs
 
 
 # TODO: remove env from this class?

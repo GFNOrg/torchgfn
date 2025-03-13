@@ -2,10 +2,9 @@ from typing import Tuple
 
 import torch
 
-from gfn.containers import Trajectories, Transitions
+from gfn.containers import Trajectories, Transitions, has_log_probs
 from gfn.modules import GFNModule
 from gfn.states import States
-from gfn.utils.common import has_log_probs
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,

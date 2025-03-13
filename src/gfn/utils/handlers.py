@@ -1,5 +1,8 @@
+import warnings
 from contextlib import contextmanager
 from typing import Any
+
+from gfn.containers import Container, has_log_probs
 
 
 @contextmanager
@@ -40,3 +43,16 @@ def is_callable_exception_handler(
             f"conditioning was passed but {target_name} is not callable: {type(target)}"
         )
         raise
+
+
+def warn_about_recalculating_logprobs(
+    obj: Container,
+    recalculate_all_logprobs: bool,
+):
+    if recalculate_all_logprobs and has_log_probs(obj):
+        warnings.warn(
+            "Recalculating logprobs for a container that already has them. "
+            "This is inefficient when training on-policy.You should instead "
+            "call loss() or loss_from_trajectories() with "
+            "recalculate_all_logprobs=False "
+        )

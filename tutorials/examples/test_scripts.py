@@ -8,9 +8,14 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from .train_box import main as train_box_main
-from .train_discreteebm import main as train_discreteebm_main
-from .train_hypergrid import main as train_hypergrid_main
+try:
+    from train_box import main as train_box_main
+    from train_discreteebm import main as train_discreteebm_main
+    from train_hypergrid import main as train_hypergrid_main
+except ImportError:
+    from .train_box import main as train_box_main
+    from .train_discreteebm import main as train_discreteebm_main
+    from .train_hypergrid import main as train_hypergrid_main
 
 
 @dataclass
