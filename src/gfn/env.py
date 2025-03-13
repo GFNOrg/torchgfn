@@ -385,6 +385,13 @@ class DiscreteEnv(Env, ABC):
         if exit_action is None:
             exit_action = torch.tensor([n_actions - 1], device=device)
 
+        # If these shapes are integers, convert them to tuples.
+        if isinstance(action_shape, int):
+            action_shape = (action_shape,)
+
+        if isinstance(state_shape, int):
+            state_shape = (state_shape,)
+
         assert dummy_action is not None
         assert exit_action is not None
         assert s0.shape == state_shape
