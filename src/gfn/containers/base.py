@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Sequence
-
-if TYPE_CHECKING:
-    from gfn.env import Env
+from typing import Sequence
+from gfn.env import Env
 
 import torch
 
