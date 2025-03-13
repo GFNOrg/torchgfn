@@ -41,6 +41,9 @@ class CommonArgs:
     validation_interval: int = 100
     validation_samples: int = 200000
     wandb_project: str = ""
+    replay_buffer_prioritized: bool = False
+    cutoff_distance: float = 0.1
+    p_norm_distance: float = 2.0
 
 
 @dataclass
@@ -70,11 +73,6 @@ class BoxArgs(CommonArgs):
     delta: float = 0.25
     gamma_scheduler: float = 0.5
     lr_F: float = 1e-2
-    max_concentration: float = 5.1
-    min_concentration: float = 0.1
-    n_components_s0: int = 4
-    n_components: int = 2
-    scheduler_milestone: int = 2500
     use_local_search: bool = False
 
 
@@ -84,6 +82,7 @@ def test_hypergrid(ndim: int, height: int):
     n_trajectories = 64000  # if ndim == 2 else 16000
     args = HypergridArgs(ndim=ndim, height=height, n_trajectories=n_trajectories)
     final_l1_dist = train_hypergrid_main(args)
+    assert final_l1_dist is not None
 
     if ndim == 2 and height == 8:
         assert np.isclose(

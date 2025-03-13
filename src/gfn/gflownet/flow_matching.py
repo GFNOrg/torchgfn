@@ -164,6 +164,7 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
+        del env  # Unused
         if conditioning is not None:
             with has_conditioning_exception_handler("logF", self.logF):
                 log_edge_flows = self.logF(terminating_states, conditioning)

@@ -14,10 +14,6 @@ from gfn.utils.common import set_seed
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
 
 
-def get_device(device_str, default_device) -> torch.device:
-    return torch.device(device_str) if device_str is not None else default_device
-
-
 class Env(ABC):
     """Base class for all environments. Environments require that individual states be represented as a unique tensor of
     arbitrary shape."""
@@ -30,7 +26,6 @@ class Env(ABC):
         dummy_action: torch.Tensor,
         exit_action: torch.Tensor,
         sf: Optional[torch.Tensor | GeometricData] = None,
-        device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
         """Initializes an environment.
@@ -44,15 +39,12 @@ class Env(ABC):
             exit_action: Tensor of shape "action_shape" representing the exit action.
             sf: Tensor of shape "state_shape" representing the final state.
                 Only used for a human readable representation of the states or trajectories.
-            device_str: 'cpu' or 'cuda'. Defaults to None, in which case the device is
-                inferred from s0.
             preprocessor: a Preprocessor object that converts raw states to a tensor
                 that can be fed into a neural network. Defaults to None, in which case
                 the IdentityPreprocessor is used.
         """
-        self.device = get_device(device_str, default_device=s0.device)
-
-        self.s0 = s0.to(self.device)  # type: ignore
+        self.device = s0.device
+        self.s0 = s0
         assert s0.shape == state_shape
 
         if sf is None:
@@ -60,6 +52,7 @@ class Env(ABC):
 
         self.sf = sf
         assert self.sf is not None
+        assert self.sf.device == self.device
         assert self.sf.shape == state_shape
 
         self.state_shape = state_shape
@@ -375,15 +368,13 @@ class DiscreteEnv(Env, ABC):
             device_str: String representation of a torch.device.
             preprocessor: An optional preprocessor for intermediate states.
         """
-        device = get_device(device_str, default_device=s0.device)
-
         # The default dummy action is -1.
         if dummy_action is None:
-            dummy_action = torch.tensor([-1], device=device)
+            dummy_action = torch.tensor([-1], device=s0.device)
 
         # The default exit action index is the final element of the action space.
         if exit_action is None:
-            exit_action = torch.tensor([n_actions - 1], device=device)
+            exit_action = torch.tensor([n_actions - 1], device=s0.device)
 
         assert dummy_action is not None
         assert exit_action is not None
@@ -399,7 +390,6 @@ class DiscreteEnv(Env, ABC):
             dummy_action,
             exit_action,
             sf,
-            device_str,
             preprocessor,
         )
 
@@ -582,12 +572,14 @@ class GraphEnv(Env):
                 that can be fed into a neural network. Defaults to None, in which case
                 the IdentityPreprocessor is used.
         """
-        device = get_device(device_str, default_device=s0.device)
-        assert s0.x is not None
+        assert s0.device == sf.device
+        self.device = s0.device
 
-        self.s0 = s0.to(device)  # type: ignore
+        self.s0 = s0
+        self.sf = sf
+
+        assert s0.x is not None
         self.features_dim = s0.x.shape[-1]
-        self.sf = sf.to(device)  # type: ignore
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
