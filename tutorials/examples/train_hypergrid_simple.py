@@ -61,7 +61,9 @@ def main(args):
             save_estimator_outputs=False,
             epsilon=args.epsilon,
         )
-        visited_terminating_states.extend(cast(DiscreteStates, trajectories.last_states))
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)

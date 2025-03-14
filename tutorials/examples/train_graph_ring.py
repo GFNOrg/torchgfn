@@ -932,12 +932,9 @@ if __name__ == "__main__":
         training_samples = gflownet.to_training_samples(trajectories)
 
         # Collect rewards for reporting.
-        if isinstance(training_samples, tuple):
-            last_states = training_samples[1]
-        else:
-            last_states = training_samples.last_states
-        assert isinstance(last_states, GraphStates)
-        rewards = state_evaluator(last_states)
+        terminating_states = training_samples.terminating_states
+        assert isinstance(terminating_states, GraphStates)
+        rewards = state_evaluator(terminating_states)
 
         if USE_BUFFER:
             with torch.no_grad():
@@ -964,6 +961,6 @@ if __name__ == "__main__":
     print("Time:", t2 - t1)
 
     # This comes from the gflownet, not the buffer.
-    last_states = trajectories.last_states[:8]
-    assert isinstance(last_states, GraphStates)
-    render_states(last_states, state_evaluator, DIRECTED)
+    samples_to_render = trajectories.terminating_states[:8]
+    assert isinstance(samples_to_render, GraphStates)
+    render_states(samples_to_render, state_evaluator, DIRECTED)

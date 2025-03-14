@@ -144,10 +144,11 @@ class Sampler:
             ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
             n_trajectories = states.batch_shape[0]
 
+        device = states.device
+
         if conditioning is not None:
             assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
-
-        device = states.device
+            assert conditioning.device == device
 
         dones = (
             states.is_initial_state
@@ -164,7 +165,9 @@ class Sampler:
         trajectories_states: List[States] = [deepcopy(states)]
         trajectories_actions: List[Actions] = [dummy_actions]
         trajectories_logprobs: List[torch.Tensor] = [dummy_logprobs]
-        trajectories_dones = torch.zeros(n_trajectories, dtype=torch.long, device=device)
+        trajectories_terminating_idx = torch.zeros(
+            n_trajectories, dtype=torch.long, device=device
+        )
         trajectories_log_rewards = torch.zeros(
             n_trajectories, dtype=torch.float, device=device
         )
@@ -232,7 +235,7 @@ class Sampler:
                 if self.estimator.is_backward
                 else sink_states_mask
             ) & ~dones
-            trajectories_dones[new_dones & ~dones] = step
+            trajectories_terminating_idx[new_dones & ~dones] = step
             try:
                 trajectories_log_rewards[new_dones & ~dones] = env.log_reward(
                     states[new_dones & ~dones]
@@ -266,7 +269,7 @@ class Sampler:
             states=stacked_states,
             conditioning=conditioning,
             actions=stacked_actions,
-            when_is_done=trajectories_dones,
+            terminating_idx=trajectories_terminating_idx,
             is_backward=self.estimator.is_backward,
             log_rewards=trajectories_log_rewards,
             log_probs=stacked_logprobs,
@@ -337,17 +340,17 @@ class LocalSearchSampler(Sampler):
             assert (
                 back_ratio is not None and 0 < back_ratio <= 1
             ), "Either kwarg `back_steps` or `back_ratio` must be specified"
-            K = torch.ceil(back_ratio * (trajectories.when_is_done - 1)).long()
+            K = torch.ceil(back_ratio * (trajectories.terminating_idx - 1)).long()
         else:
             K = torch.where(
-                back_steps > trajectories.when_is_done,
-                trajectories.when_is_done,
+                back_steps > trajectories.terminating_idx,
+                trajectories.terminating_idx,
                 back_steps,
             )
 
         prev_trajectories = self.backward_sampler.sample_trajectories(
             env,
-            states=trajectories.last_states,
+            states=trajectories.terminating_states,
             conditioning=conditioning,
             save_estimator_outputs=save_estimator_outputs,
             save_logprobs=save_logprobs,
@@ -362,7 +365,7 @@ class LocalSearchSampler(Sampler):
         assert prev_trajectories.log_rewards is not None
 
         ### Reconstructing with self.estimator
-        n_prevs = prev_trajectories.when_is_done - K - 1
+        n_prevs = prev_trajectories.terminating_idx - K - 1
         junction_states_tsr = torch.gather(
             prev_trajectories.states.tensor,
             0,
@@ -557,7 +560,7 @@ class LocalSearchSampler(Sampler):
 
         # Obtain full trajectories by concatenating the backward and forward parts.
         max_n_prev = n_prevs.max()
-        n_recons = recon_trajectories.when_is_done
+        n_recons = recon_trajectories.terminating_idx
         max_n_recon = n_recons.max()
 
         new_trajectories_log_rewards = recon_trajectories.log_rewards  # Episodic reward
@@ -692,7 +695,7 @@ class LocalSearchSampler(Sampler):
                 )
 
                 # Forward part
-                _len_recon = recon_trajectories.when_is_done[i]
+                _len_recon = recon_trajectories.terminating_idx[i]
                 _new_trajectories_states_tsr[
                     _n_prev + 1 : _n_prev + _len_recon + 1, i
                 ] = recon_trajectories.states.tensor[1 : _len_recon + 1, i]
@@ -741,7 +744,7 @@ class LocalSearchSampler(Sampler):
             states=env.states_from_tensor(new_trajectories_states_tsr),
             conditioning=prev_trajectories.conditioning,
             actions=env.actions_from_tensor(new_trajectories_actions_tsr),
-            when_is_done=new_trajectories_dones,
+            terminating_idx=new_trajectories_dones,
             is_backward=False,
             log_rewards=new_trajectories_log_rewards,
             log_probs=new_trajectories_log_pf,

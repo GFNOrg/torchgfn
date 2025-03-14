@@ -64,9 +64,9 @@ def main(args):
             back_ratio=args.back_ratio,
             use_metropolis_hastings=args.use_metropolis_hastings,
         )
-        last_states = trajectories.last_states
-        last_states = cast(DiscreteStates, last_states)
-        visited_terminating_states.extend(last_states)
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)

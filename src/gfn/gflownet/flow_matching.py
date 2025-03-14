@@ -3,7 +3,7 @@ from typing import Any
 
 import torch
 
-from gfn.containers import StatePairs, Trajectories
+from gfn.containers import StatesContainer, Trajectories
 from gfn.env import DiscreteEnv
 from gfn.gflownet.base import GFlowNet
 from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
@@ -17,7 +17,7 @@ from gfn.utils.handlers import (
 warnings.filterwarnings("once", message="recalculate_all_logprobs is not used for FM.*")
 
 
-class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
+class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
     r"""Flow Matching GFlowNet, with edge flow estimator.
 
     $\mathcal{O}_{edge}$ is the set of functions from the non-terminating edges
@@ -180,36 +180,36 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
     def loss(
         self,
         env: DiscreteEnv,
-        state_pairs: StatePairs[DiscreteStates],
+        states_container: StatesContainer[DiscreteStates],
         recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
         Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
-        StatePairs container that holds both the internal states of the trajectories
-        (i.e. non-terminal states) and the terminal states.
-        """
-        assert isinstance(state_pairs.intermediary_states, DiscreteStates)
-        assert isinstance(state_pairs.terminating_states, DiscreteStates)
+        StatesContainer container that holds both the internal states of the trajectories
+        (i.e. non-terminal states) and the terminal states."""
+        assert isinstance(states_container.intermediary_states, DiscreteStates)
+        assert isinstance(states_container.terminating_states, DiscreteStates)
         if recalculate_all_logprobs:
             warnings.warn(
                 "recalculate_all_logprobs is not used for FM. " "Ignoring the argument."
             )
         del recalculate_all_logprobs  # Unused for FM.
-
         fm_loss = self.flow_matching_loss(
-            env, state_pairs.intermediary_states, state_pairs.intermediary_conditioning
+            env,
+            states_container.intermediary_states,
+            states_container.intermediary_conditioning,
         )
         rm_loss = self.reward_matching_loss(
             env,
-            state_pairs.terminating_states,
-            state_pairs.terminating_conditioning,
-            state_pairs.log_rewards,
+            states_container.terminating_states,
+            states_container.terminating_conditioning,
+            states_container.terminating_log_rewards,
         )
         return fm_loss + self.alpha * rm_loss
 
     def to_training_samples(
         self, trajectories: Trajectories
-    ) -> StatePairs[DiscreteStates]:
+    ) -> StatesContainer[DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        return trajectories.to_state_pairs()
+        return trajectories.to_states_container()

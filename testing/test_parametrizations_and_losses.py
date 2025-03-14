@@ -62,8 +62,8 @@ def test_FM(env_name: str, ndim: int, module_name: str):
 
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    states_tuple = trajectories.to_state_pairs()
-    loss = gflownet.loss(env, states_tuple, recalculate_all_logprobs=False)
+    states_container = trajectories.to_states_container()
+    loss = gflownet.loss(env, states_container, recalculate_all_logprobs=False)
     assert loss >= 0
 
 
@@ -369,7 +369,7 @@ def test_subTB_vs_TB(
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 @pytest.mark.parametrize("ndim", [2, 3])
-def test_flow_matching_state_pairs(env_name: str, ndim: int):
+def test_flow_matching_states_container(env_name: str, ndim: int):
     """Test that flow matching correctly processes state pairs from trajectories."""
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=ndim, preprocessor_name="KHot")
@@ -385,6 +385,6 @@ def test_flow_matching_state_pairs(env_name: str, ndim: int):
 
     gflownet = FMGFlowNet(log_F_edge)
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    states_pairs = trajectories.to_state_pairs()
+    states_pairs = trajectories.to_states_container()
     loss = gflownet.loss(env, states_pairs)
     assert loss >= 0

@@ -6,7 +6,7 @@ import torch
 
 from gfn.actions import Actions
 from gfn.containers.base import Container
-from gfn.containers.state_pairs import StatePairs
+from gfn.containers.states_container import StatesContainer
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 from gfn.states import DiscreteStates, GraphStates, States
@@ -22,14 +22,14 @@ class Trajectories(Container):
     the trajectory index. Because different trajectories may have different lengths,
     shorter trajectories are padded with the tensor representation of the terminal
     state ($s_f$ or $s_0$ depending on the direction of the trajectory), and
-    actions is appended with dummy actions. The `when_is_done` tensor represents
+    actions is appended with dummy actions. The `terminating_idx` tensor represents
     the time step at which each trajectory ends.
 
     Attributes:
         env: The environment in which the trajectories are defined.
         states: The states of the trajectories.
         actions: The actions of the trajectories.
-        when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
+        terminating_idx: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
         is_backward: Whether the trajectories are backward or forward.
         log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
         log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the
@@ -42,7 +42,7 @@ class Trajectories(Container):
         states: States | None = None,
         conditioning: torch.Tensor | None = None,
         actions: Actions | None = None,
-        when_is_done: torch.Tensor | None = None,
+        terminating_idx: torch.Tensor | None = None,
         is_backward: bool = False,
         log_rewards: torch.Tensor | None = None,
         log_probs: torch.Tensor | None = None,
@@ -54,7 +54,7 @@ class Trajectories(Container):
             states: The states of the trajectories.
             conditioning: The conditioning of the trajectories for conditional MDPs.
             actions: The actions of the trajectories.
-            when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
+            terminating_idx: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
             is_backward: Whether the trajectories are backward or forward.
             log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
             log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of
@@ -72,13 +72,13 @@ class Trajectories(Container):
         self.env = env
         self.is_backward = is_backward
 
-        # Assert that all tensors are in the same device as the environment.
+        # Assert that all tensors are on the same device as the environment.
         device = self.env.device
         for obj in [states, actions]:
             assert obj.tensor.device == device if obj is not None else True
         for tensor in [
             conditioning,
-            when_is_done,
+            terminating_idx,
             log_rewards,
             log_probs,
             estimator_outputs,
@@ -89,32 +89,35 @@ class Trajectories(Container):
             states if states is not None else env.states_from_batch_shape((0, 0))
         )
         assert len(self.states.batch_shape) == 2
+        batch_shape = self.states.batch_shape
 
         self.conditioning = conditioning
+        assert self.conditioning is None or (
+            self.conditioning.shape[: len(batch_shape)] == batch_shape
+        )
 
         self.actions = (
             actions if actions is not None else env.actions_from_batch_shape((0, 0))
         )
-        assert (self.actions.batch_shape == self.states.batch_shape == (0, 0)) or (
-            self.actions.batch_shape
-            == (self.states.batch_shape[0] - 1, self.states.batch_shape[1])
+        assert (self.actions.batch_shape == batch_shape == (0, 0)) or (
+            self.actions.batch_shape == (batch_shape[0] - 1, batch_shape[1])
         )
 
-        self.when_is_done = (
-            when_is_done
-            if when_is_done is not None
+        self.terminating_idx = (
+            terminating_idx
+            if terminating_idx is not None
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long, device=device)
         )
         assert (
-            self.when_is_done.shape == (self.n_trajectories,)
-            and self.when_is_done.dtype == torch.long
+            self.terminating_idx.shape == (self.n_trajectories,)
+            and self.terminating_idx.dtype == torch.long
         )
 
         # self._log_rewards can be torch.Tensor of shape (self.n_trajectories,) or None.
         if log_rewards is not None:
             self._log_rewards = log_rewards
         else:  # if log_rewards is None, there are two cases
-            if self.n_trajectories == 0:  # 1) we are initializing empty Trajectories
+            if self.n_trajectories == 0:  # 1) initializing with empty Trajectories
                 self._log_rewards = torch.full(
                     size=(0,), fill_value=0, dtype=torch.float, device=device
                 )
@@ -143,7 +146,7 @@ class Trajectories(Container):
         self.estimator_outputs = estimator_outputs
         if self.estimator_outputs is not None:
             #  TODO: check why this fails.
-            # assert self.estimator_outputs.shape[:len(self.states.batch_shape)] == self.states.batch_shape
+            # assert self.estimator_outputs.shape[:len(batch_shape)] == batch_shape
             assert self.estimator_outputs.dtype == torch.float
 
     def __repr__(self) -> str:
@@ -172,7 +175,7 @@ class Trajectories(Container):
             + f"First {n_traj_to_print} trajectories:\n"
             + f"states=\n{trajectories_representation}"
             # + f"actions=\n{self.actions.tensor.squeeze().transpose(0, 1)[:10].numpy()}, "
-            + f"when_is_done={self.when_is_done[:10].cpu().numpy()})"
+            + f"terminating_idx={self.terminating_idx[:10].cpu().numpy()})"
         )
 
     @property
@@ -190,20 +193,24 @@ class Trajectories(Container):
         return self.actions.batch_shape[0]
 
     @property
-    def last_states(self) -> States:
-        return self.states[self.when_is_done - 1, torch.arange(self.n_trajectories)]
+    def terminating_states(self) -> States:
+        """Return the terminating states."""
+        return self.states[self.terminating_idx - 1, torch.arange(self.n_trajectories)]
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
-        """Returns the log rewards of the trajectories as a tensor of shape (n_trajectories,)."""
+        """Returns the log rewards for the Trajectories as a tensor of shape (n_trajectories,).
+
+        If the `log_rewards` are not provided during initialization, they are computed on the fly.
+        """
         if self.is_backward:  # TODO: Why can't backward trajectories have log_rewards?
             return None
 
         if self._log_rewards is None:
             try:
-                self._log_rewards = self.env.log_reward(self.last_states)
+                self._log_rewards = self.env.log_reward(self.terminating_states)
             except NotImplementedError:
-                self._log_rewards = torch.log(self.env.reward(self.last_states))
+                self._log_rewards = torch.log(self.env.reward(self.terminating_states))
 
         assert self._log_rewards.shape == (self.n_trajectories,)
         return self._log_rewards
@@ -214,9 +221,12 @@ class Trajectories(Container):
         """Returns a subset of the `n_trajectories` trajectories."""
         if isinstance(index, int):
             index = [index]
-        when_is_done = self.when_is_done[index]
-        new_max_length = when_is_done.max().item() if len(when_is_done) > 0 else 0
+        terminating_idx = self.terminating_idx[index]
+        new_max_length = terminating_idx.max().item() if len(terminating_idx) > 0 else 0
         states = self.states[:, index]
+        conditioning = (
+            self.conditioning[:, index] if self.conditioning is not None else None
+        )
         actions = self.actions[:, index]
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
@@ -245,8 +255,9 @@ class Trajectories(Container):
         return Trajectories(
             env=self.env,
             states=states,
+            conditioning=conditioning,
             actions=actions,
-            when_is_done=when_is_done,
+            terminating_idx=terminating_idx,
             is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
@@ -290,19 +301,27 @@ class Trajectories(Container):
     def extend(self, other: Trajectories) -> None:
         """Extend the trajectories with another set of trajectories.
 
-        Extends along all attributes in turn (actions, states, when_is_done, log_probs,
+        Extends along all attributes in turn (actions, states, terminating_idx, log_probs,
         log_rewards).
 
         Args:
             other: an external set of Trajectories.
         """
+        if self.conditioning is not None:
+            # TODO: Support the case
+            raise NotImplementedError(
+                "`extend` is not implemented for conditional Trajectories."
+            )
+
         if len(other) == 0:
             return
 
         # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
         self.states.extend(other.states)  # n_trajectories comes from this.
-        self.when_is_done = torch.cat((self.when_is_done, other.when_is_done), dim=0)
+        self.terminating_idx = torch.cat(
+            (self.terminating_idx, other.terminating_idx), dim=0
+        )
 
         # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
@@ -378,8 +397,7 @@ class Trajectories(Container):
     def to_transitions(self) -> Transitions:
         """Returns a `Transitions` object from the trajectories."""
         if self.conditioning is not None:
-            traj_len = self.actions.batch_shape[0]
-            expand_dims = (traj_len,) + tuple(self.conditioning.shape)
+            expand_dims = (self.max_length,) + tuple(self.conditioning.shape)
             conditioning = self.conditioning.unsqueeze(0).expand(expand_dims)[
                 ~self.actions.is_dummy
             ]
@@ -389,7 +407,7 @@ class Trajectories(Container):
         states = self.states[:-1][~self.actions.is_dummy]
         next_states = self.states[1:][~self.actions.is_dummy]
         actions = self.actions[~self.actions.is_dummy]
-        is_done = (
+        is_terminating = (
             next_states.is_sink_state
             if not self.is_backward
             else next_states.is_initial_state
@@ -404,10 +422,10 @@ class Trajectories(Container):
                 device=actions.device,
             )
             # TODO: Can we vectorize this?
-            log_rewards[is_done] = torch.cat(
+            log_rewards[is_terminating] = torch.cat(
                 [
-                    self._log_rewards[self.when_is_done == i]
-                    for i in range(self.when_is_done.max() + 1)
+                    self._log_rewards[self.terminating_idx == i]
+                    for i in range(self.terminating_idx.max() + 1)
                 ],
                 dim=0,
             )
@@ -423,57 +441,59 @@ class Trajectories(Container):
             states=states,
             conditioning=conditioning,
             actions=actions,
-            is_done=is_done,
+            is_terminating=is_terminating,
             next_states=next_states,
             is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
         )
 
-    def to_states(self) -> States:
-        """Returns a `States` object from the trajectories, containing all states in the trajectories"""
-        states = self.states.flatten()
-        return states[~states.is_sink_state]
-
-    def to_state_pairs(self) -> StatePairs[DiscreteStates]:
-        """Converts a batch of trajectories into a batch of training samples.
+    def to_states_container(self) -> StatesContainer:
+        """Returns a `StatesContainer` object from the trajectories.
 
         Returns:
-            StatePairs: A StatePairs object containing intermediary and terminating states.
+            StatesContainer: A StatesContainer object containing all valid states.
         """
-        states = self.to_states()
-        if not isinstance(states, DiscreteStates):
-            raise TypeError("to_state_pairs only works with DiscreteStates")
+        if not isinstance(self.states, DiscreteStates):
+            raise TypeError("to_states_container only works with DiscreteStates")
 
+        is_terminating = torch.zeros(
+            self.states.batch_shape, dtype=torch.bool, device=self.states.device
+        )
+        is_terminating[self.terminating_idx - 1, torch.arange(len(self))] = True
+
+        states = self.states.flatten()
+        is_terminating = is_terminating.flatten()
+
+        is_valid = ~states.is_sink_state & (
+            ~states.is_initial_state | (states.is_initial_state & is_terminating)
+        )
+        states = states[is_valid]
+        is_terminating = is_terminating[is_valid]
+
+        conditioning = None
         if self.conditioning is not None:
-            traj_len = self.states.batch_shape[0]
-            expand_dims = (traj_len,) + tuple(self.conditioning.shape)
-            intermediary_conditioning = self.conditioning.unsqueeze(0).expand(
-                expand_dims
-            )[~states.is_sink_state & ~states.is_initial_state]
-            conditioning = self.conditioning  # n_final_states == n_trajectories.
+            conditioning = self.conditioning.repeat(
+                self.max_length + 1, *((1,) * (len(self.conditioning.shape) - 1))
+            )[is_valid]
+
+        if self.log_rewards is None:
+            log_rewards = None
         else:
-            intermediary_conditioning = None
-            conditioning = None
-
-        intermediary_states = states[~states.is_sink_state & ~states.is_initial_state]
-        terminating_states = self.last_states
-
-        # Ensure both states are DiscreteStates
-        if not isinstance(intermediary_states, DiscreteStates) or not isinstance(
-            terminating_states, DiscreteStates
-        ):
-            raise TypeError(
-                "Both intermediary and terminating states must be DiscreteStates"
+            log_rewards = torch.full(
+                (len(states),),
+                fill_value=-float("inf"),
+                dtype=torch.float,
+                device=states.device,
             )
+            log_rewards[is_terminating] = self.log_rewards
 
-        return StatePairs[DiscreteStates](
+        return StatesContainer[DiscreteStates](
             env=self.env,
-            intermediary_states=intermediary_states,
-            terminating_states=terminating_states,
-            intermediary_conditioning=intermediary_conditioning,
-            terminating_conditioning=conditioning,
-            log_rewards=self.log_rewards,
+            states=states,
+            conditioning=conditioning,
+            is_terminating=is_terminating,
+            log_rewards=log_rewards,
         )
 
     def reverse_backward_trajectories(self, debug: bool = False) -> Trajectories:
@@ -490,7 +510,7 @@ class Trajectories(Container):
             )
 
         # Compute sequence lengths and maximum length
-        seq_lengths = self.when_is_done  # shape (n_trajectories,)
+        seq_lengths = self.terminating_idx  # shape (n_trajectories,)
         max_len = int(seq_lengths.max().item())
 
         # Get actions and states
@@ -547,7 +567,7 @@ class Trajectories(Container):
             states=self.env.states_from_tensor(new_states),
             conditioning=self.conditioning,
             actions=self.env.actions_from_tensor(new_actions),
-            when_is_done=self.when_is_done + 1,
+            terminating_idx=self.terminating_idx + 1,
             is_backward=False,
             log_rewards=self.log_rewards,
             log_probs=None,  # We can't simply pass the trajectories.log_probs
@@ -568,13 +588,13 @@ class Trajectories(Container):
             )  # shape (max_len + 2, n_trajectories, *state_dim)
 
             for i in range(len(self)):
-                _new_actions[self.when_is_done[i], i] = self.env.exit_action
-                _new_actions[: self.when_is_done[i], i] = self.actions.tensor[
-                    : self.when_is_done[i], i
+                _new_actions[self.terminating_idx[i], i] = self.env.exit_action
+                _new_actions[: self.terminating_idx[i], i] = self.actions.tensor[
+                    : self.terminating_idx[i], i
                 ].flip(0)
 
-                _new_states[: self.when_is_done[i] + 1, i] = self.states.tensor[
-                    : self.when_is_done[i] + 1, i
+                _new_states[: self.terminating_idx[i] + 1, i] = self.states.tensor[
+                    : self.terminating_idx[i] + 1, i
                 ].flip(0)
 
             assert torch.all(new_actions == _new_actions)

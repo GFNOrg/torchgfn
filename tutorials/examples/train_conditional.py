@@ -177,13 +177,14 @@ def build_subTB_gflownet(env):
 
 
 def train(env, gflownet, seed):
-    torch.manual_seed(0)
+    torch.manual_seed(seed)
     exploration_rate = 0.5
     lr = 0.0005
 
     # Move the gflownet to the GPU.
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():
-        gflownet = gflownet.to("cuda")
+        gflownet = gflownet.to(device)
 
     # Policy parameters and logZ/logF get independent LRs (logF/Z typically higher).
     if type(gflownet) is TBGFlowNet:
@@ -202,7 +203,7 @@ def train(env, gflownet, seed):
 
     print("+ Training Conditional {}!".format(type(gflownet)))
     for _ in (pbar := tqdm(range(n_iterations))):
-        conditioning = torch.rand((batch_size, 1))
+        conditioning = torch.rand((batch_size, 1), device=device)
         conditioning = (conditioning > 0.5).to(torch.float)  # Randomly 1 and zero.
 
         trajectories = gflownet.sample_trajectories(

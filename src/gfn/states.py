@@ -212,28 +212,27 @@ class States(ABC):
             ValueError: if `self.batch_shape != other.batch_shape` or if
             `self.batch_shape != (1,) or (2,)`.
         """
-        other_batch_shape = other.batch_shape
-        if len(other_batch_shape) == len(self.batch_shape) == 1:
+        if len(other.batch_shape) == len(self.batch_shape) == 1:
             # This corresponds to adding a state to a trajectory
-            self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
+            self.batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
 
-        elif len(other_batch_shape) == len(self.batch_shape) == 2:
+        elif len(other.batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
             self.extend_with_sf(
-                required_first_dim=max(self.batch_shape[0], other_batch_shape[0])
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
             other.extend_with_sf(
-                required_first_dim=max(self.batch_shape[0], other_batch_shape[0])
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
             self.batch_shape = (
                 self.batch_shape[0],
-                self.batch_shape[1] + other_batch_shape[1],
+                self.batch_shape[1] + other.batch_shape[1],
             )
             self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
         else:
             raise ValueError(
-                f"extend is not implemented for batch shapes {self.batch_shape} and {other_batch_shape}"
+                f"extend is not implemented for batch shapes {self.batch_shape} and {other.batch_shape}"
             )
 
     def extend_with_sf(self, required_first_dim: int) -> None:
