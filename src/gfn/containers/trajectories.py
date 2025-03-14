@@ -413,8 +413,8 @@ class Trajectories(Container):
             )
 
         # Initialize log_probs None if not available
-        if self.log_probs is not None:
-            log_probs = self.log_probs[~self.actions.is_dummy]
+        if self.has_log_probs:
+            log_probs = self.log_probs[~self.actions.is_dummy]  # type: ignore
         else:
             log_probs = None
 

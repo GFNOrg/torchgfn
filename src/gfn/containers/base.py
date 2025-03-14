@@ -54,3 +54,11 @@ class Container(ABC):
                 self.__dict__[key] = torch.load(os.path.join(path, key + ".pt"))
             else:
                 raise ValueError(f"Unexpected {key} of type {type(val)}")
+
+    @property
+    def has_log_probs(self) -> bool:
+        """Returns whether the trajectories have log probabilities."""
+        if not hasattr(self, "log_probs"):
+            return False
+
+        return self.log_probs is not None and self.log_probs.nelement() > 0
