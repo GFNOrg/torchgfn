@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from typing import Sequence
-from gfn.env import Env
 
 import torch
+
+from gfn.env import Env
 
 
 class Container(ABC):

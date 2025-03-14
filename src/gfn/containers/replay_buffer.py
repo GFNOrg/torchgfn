@@ -10,7 +10,6 @@ from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 
-
 ContainerUnion = Union[Trajectories, Transitions, StatePairs]
 ValidContainerTypes = (Trajectories, Transitions, StatePairs)
 

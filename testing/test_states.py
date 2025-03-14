@@ -4,9 +4,7 @@ from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActionType
-from gfn.states import GraphStates
-from gfn.states import DiscreteStates
-from gfn.states import States
+from gfn.states import DiscreteStates, GraphStates, States
 
 
 class MyGraphStates(GraphStates):
@@ -63,10 +61,11 @@ def empty_graph_state():
 @pytest.fixture
 def simple_discrete_state():
     """Creates a simple discrete state with 3 possible actions"""
+
     class SimpleDiscreteStates(DiscreteStates):
         state_shape = (2,)  # 2-dimensional state
         n_actions = 3  # 3 possible actions
-        device = torch.device('cpu')
+        device = torch.device("cpu")
         s0 = torch.tensor([0.0, 0.0])
         sf = torch.tensor([1.0, 1.0])
 
@@ -74,17 +73,18 @@ def simple_discrete_state():
     tensor = torch.tensor([[0.5, 0.5]])
     forward_masks = torch.tensor([[True, True, True]])  # All actions allowed
     backward_masks = torch.tensor([[True, True]])  # All backward actions allowed
-    
+
     return SimpleDiscreteStates(tensor, forward_masks, backward_masks)
 
 
 @pytest.fixture
 def empty_discrete_state():
     """Creates an empty discrete state"""
+
     class SimpleDiscreteStates(DiscreteStates):
         state_shape = (2,)  # 2-dimensional state
         n_actions = 3  # 3 possible actions
-        device = torch.device('cpu')
+        device = torch.device("cpu")
         s0 = torch.tensor([0.0, 0.0])
         sf = torch.tensor([1.0, 1.0])
 
@@ -92,13 +92,14 @@ def empty_discrete_state():
     tensor = torch.zeros((0, 2))
     forward_masks = torch.zeros((0, 3), dtype=torch.bool)
     backward_masks = torch.zeros((0, 2), dtype=torch.bool)
-    
+
     return SimpleDiscreteStates(tensor, forward_masks, backward_masks)
 
 
 @pytest.fixture
 def simple_tensor_state():
     """Creates a simple tensor state"""
+
     class SimpleTensorStates(States):
         state_shape = (2,)  # 2-dimensional state
         s0 = torch.tensor([0.0, 0.0])
@@ -112,6 +113,7 @@ def simple_tensor_state():
 @pytest.fixture
 def empty_tensor_state():
     """Creates an empty tensor state"""
+
     class SimpleTensorStates(States):
         state_shape = (2,)  # 2-dimensional state
         s0 = torch.tensor([0.0, 0.0])
@@ -277,11 +279,10 @@ def test_setitem_2d(datas):
     assert states.tensor.batch_shape == (2, 2)  # Batch shape should not change
 
 
-@pytest.mark.parametrize("state_fixture", [
-    "simple_graph_state",
-    "simple_discrete_state",
-    "simple_tensor_state"
-])
+@pytest.mark.parametrize(
+    "state_fixture",
+    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+)
 def test_clone(state_fixture, request):
     """Test cloning different types of States objects"""
     state = request.getfixturevalue(state_fixture)
@@ -289,7 +290,7 @@ def test_clone(state_fixture, request):
 
     # Check that the clone has the same content
     assert cloned.batch_shape == state.batch_shape
-    
+
     # For tensor-based states
     if hasattr(state.tensor, "shape"):
         assert torch.equal(cloned.tensor, state.tensor)
@@ -310,96 +311,91 @@ def test_clone(state_fixture, request):
         assert state.tensor.x[0] != 99.0
 
 
-@pytest.mark.parametrize("state_fixture", [
-    "simple_graph_state",
-    "simple_discrete_state",
-    "simple_tensor_state"
-])
+@pytest.mark.parametrize(
+    "state_fixture",
+    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+)
 def test_is_initial_state(state_fixture, request):
     """Test is_initial_state property for different state types"""
     state = request.getfixturevalue(state_fixture)
-    
+
     # Get is_initial_state
     is_initial = state.is_initial_state
-    
+
     # Check shape matches batch shape
     assert is_initial.shape == state.batch_shape
-    
+
     # Check type
     assert isinstance(is_initial, torch.Tensor)
     assert is_initial.dtype == torch.bool
 
 
-@pytest.mark.parametrize("state_fixture", [
-    "simple_graph_state",
-    "simple_discrete_state",
-    "simple_tensor_state"
-])
+@pytest.mark.parametrize(
+    "state_fixture",
+    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+)
 def test_is_sink_state(state_fixture, request):
     """Test is_sink_state property for different state types"""
     state = request.getfixturevalue(state_fixture)
-    
+
     # Get is_sink_state
     is_sink = state.is_sink_state
-    
+
     # Check shape matches batch shape
     assert is_sink.shape == state.batch_shape
-    
+
     # Check type
     assert isinstance(is_sink, torch.Tensor)
     assert is_sink.dtype == torch.bool
 
 
-@pytest.mark.parametrize("state_fixture", [
-    "simple_graph_state",
-    "simple_discrete_state",
-    "simple_tensor_state"
-])
+@pytest.mark.parametrize(
+    "state_fixture",
+    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+)
 def test_from_batch_shape(state_fixture, request):
     """Test creating states from batch shape for different state types"""
     StateClass = request.getfixturevalue(state_fixture).__class__
-    
+
     # Create states with initial state
     states = StateClass.from_batch_shape((3,))
     assert states.batch_shape == (3,)
-    
+
     # Check all states are initial states
     is_initial = states.is_initial_state
     assert torch.all(is_initial)
-    
+
     # Create states with sink state
     sink_states = StateClass.from_batch_shape((2,), sink=True)
     assert sink_states.batch_shape == (2,)
-    
+
     # Check all states are sink states
     is_sink = sink_states.is_sink_state
     assert torch.all(is_sink)
 
 
-@pytest.mark.parametrize("empty_state_fixture", [
-    "empty_graph_state",
-    "empty_discrete_state",
-    "empty_tensor_state"
-])
-@pytest.mark.parametrize("simple_state_fixture", [
-    "simple_graph_state",
-    "simple_discrete_state",
-    "simple_tensor_state"
-])
+@pytest.mark.parametrize(
+    "empty_state_fixture",
+    ["empty_graph_state", "empty_discrete_state", "empty_tensor_state"],
+)
+@pytest.mark.parametrize(
+    "simple_state_fixture",
+    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+)
 def test_extend_empty_state(empty_state_fixture, simple_state_fixture, request):
     """Test extending an empty state with a non-empty state"""
     empty_state = request.getfixturevalue(empty_state_fixture)
     simple_state = request.getfixturevalue(simple_state_fixture)
-    
+
     # Skip if states are of different types
     if not isinstance(empty_state, simple_state.__class__):
         pytest.skip("States must be of same type")
-    
+
     empty_state.extend(simple_state)
-    
+
     # Check that the empty state now has the same content as the simple state
     assert empty_state.batch_shape == simple_state.batch_shape
-    
+
     # For tensor-based states
     if hasattr(simple_state.tensor, "shape"):
         assert torch.equal(empty_state.tensor, simple_state.tensor)
