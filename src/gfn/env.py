@@ -352,6 +352,7 @@ class DiscreteEnv(Env, ABC):
         dummy_action: Optional[torch.Tensor] = None,
         exit_action: Optional[torch.Tensor] = None,
         sf: Optional[torch.Tensor] = None,
+        device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
         """Initializes a discrete environment.
@@ -558,6 +559,7 @@ class GraphEnv(Env):
         self,
         s0: GeometricData,
         sf: GeometricData,
+        device_str: Optional[str] = None,
         preprocessor: Optional[Preprocessor] = None,
     ):
         """Initializes a graph-based environment.

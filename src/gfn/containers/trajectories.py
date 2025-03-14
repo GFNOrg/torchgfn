@@ -70,6 +70,7 @@ class Trajectories(Container):
         is used to compute the rewards, at each call of self.log_rewards
         """
         self.env = env
+        self.conditioning = conditioning
         self.is_backward = is_backward
 
         # Assert that all tensors are in the same device as the environment.

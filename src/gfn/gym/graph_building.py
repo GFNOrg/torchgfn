@@ -49,6 +49,7 @@ class GraphBuilding(GraphEnv):
         super().__init__(
             s0=s0,
             sf=sf,
+            device_str=device_str,
         )
 
     def reset(

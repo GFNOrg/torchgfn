@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 from tqdm import trange
@@ -38,7 +38,7 @@ def validate(
     gflownet: GFlowNet,
     n_validation_samples: int = 1000,
     visited_terminating_states: Optional[DiscreteStates] = None,
-) -> Dict[str, float]:
+) -> Tuple[Dict[str, float], DiscreteStates | None]:
     """Evaluates the current gflownet on the given environment.
 
     This is for environments with known target reward. The validation is done by
@@ -64,7 +64,7 @@ def validate(
     else:
         # The environment does not implement a true_dist_pmf property, nor a log_partition property
         # We cannot validate the gflownet
-        return {}
+        return {}, None
 
     logZ = None
     if isinstance(gflownet, TBGFlowNet):
@@ -83,7 +83,8 @@ def validate(
     validation_info = {"l1_dist": l1_dist}
     if logZ is not None:
         validation_info["logZ_diff"] = abs(logZ - true_logZ)
-    return validation_info
+
+    return (validation_info, terminating_states)
 
 
 def states_actions_tns_to_traj(

@@ -5,7 +5,7 @@ import torch
 
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
-from gfn.gflownet.base import PFBasedGFlowNet
+from gfn.gflownet.base import PFBasedGFlowNet, loss_reduce
 from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.utils.common import has_log_probs
 from gfn.utils.handlers import (
@@ -173,14 +173,19 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         return log_pf_actions, log_pb_actions, scores
 
     def loss(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self,
+        env: Env,
+        transitions: Transitions,
+        recalculate_all_logprobs: bool = False,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         """Detailed balance loss.
 
         The detailed balance loss is described in section
         3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266)."""
         _, _, scores = self.get_scores(env, transitions, recalculate_all_logprobs)
-        loss = torch.mean(scores**2)
+        scores = scores**2
+        loss = loss_reduce(scores, reduction)
 
         if torch.isnan(loss):
             raise ValueError("loss is nan")
@@ -286,13 +291,19 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         return scores
 
     def loss(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self,
+        env: Env,
+        transitions: Transitions,
+        recalculate_all_logprobs: bool = False,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         """Calculates the modified detailed balance loss."""
+        # TODO: If all transitions are terminating this fails due to masking.
         scores = self.get_scores(
             transitions, recalculate_all_logprobs=recalculate_all_logprobs
         )
-        return torch.mean(scores**2)
+        scores = scores**2
+        return loss_reduce(scores, reduction)
 
     def to_training_samples(self, trajectories: Trajectories) -> Transitions:
         return trajectories.to_transitions()

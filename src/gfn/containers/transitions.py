@@ -65,6 +65,7 @@ class Transitions(Container):
                 `batch_shapes`.
         """
         self.env = env
+        self.conditioning = conditioning
         self.is_backward = is_backward
 
         # Assert that all tensors are in the same device as the environment.
