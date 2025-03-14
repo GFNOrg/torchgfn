@@ -35,7 +35,7 @@ def get_trajectory_pfs_and_pbs(
     pb: GFNModule,
     trajectories: Trajectories,
     fill_value: float = 0.0,
-    recalculate_all_logprobs: bool = False,
+    recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     # fill value is the value used for invalid states (sink state usually)
 
@@ -57,7 +57,7 @@ def get_trajectory_pfs(
     pf: GFNModule,
     trajectories: Trajectories,
     fill_value: float = 0.0,
-    recalculate_all_logprobs: bool = False,
+    recalculate_all_logprobs: bool = True,
 ) -> torch.Tensor:
     if trajectories.is_backward:
         raise ValueError("Backward trajectories are not supported")
@@ -179,7 +179,7 @@ def get_transition_pfs_and_pbs(
     pf: GFNModule,
     pb: GFNModule,
     transitions: Transitions,
-    recalculate_all_logprobs: bool = False,
+    recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if transitions.is_backward:
         raise ValueError("Backward transitions are not supported")
@@ -194,7 +194,7 @@ def get_transition_pfs_and_pbs(
 
 
 def get_transition_pfs(
-    pf: GFNModule, transitions: Transitions, recalculate_all_logprobs: bool = False
+    pf: GFNModule, transitions: Transitions, recalculate_all_logprobs: bool = True
 ) -> torch.Tensor:
     states = transitions.states
     actions = transitions.actions
