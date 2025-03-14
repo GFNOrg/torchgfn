@@ -57,11 +57,11 @@ class StatesContainer(Container, Generic[StateType]):
             else cast(StateType, env.states_from_batch_shape((0,)))
         )
         assert len(self.states.batch_shape) == 1
+        batch_shape = self.states.batch_shape
 
         self.conditioning = conditioning
-        assert (
-            self.conditioning is None
-            or self.conditioning.shape == self.states.tensor.shape
+        assert self.conditioning is None or (
+            self.conditioning.shape[: len(batch_shape)] == batch_shape
         )
 
         self.is_terminating = (
@@ -72,7 +72,7 @@ class StatesContainer(Container, Generic[StateType]):
             )
         )
         assert (
-            self.is_terminating.shape == self.states.batch_shape
+            self.is_terminating.shape == batch_shape
             and self.is_terminating.dtype == torch.bool
         )
 
@@ -87,7 +87,7 @@ class StatesContainer(Container, Generic[StateType]):
             else:  # 2) we don't have log_rewards and need to compute them on the fly
                 self._log_rewards = None
         assert self._log_rewards is None or (
-            self._log_rewards.shape == self.states.batch_shape
+            self._log_rewards.shape == batch_shape
             and self._log_rewards.dtype == torch.float
         )
 

@@ -76,17 +76,17 @@ class Transitions(Container):
 
         self.states = states if states is not None else env.states_from_batch_shape((0,))
         assert len(self.states.batch_shape) == 1
+        batch_shape = self.states.batch_shape
 
         self.conditioning = conditioning
-        assert (
-            self.conditioning is None
-            or self.conditioning.shape == self.states.tensor.shape
+        assert self.conditioning is None or (
+            self.conditioning.shape[: len(batch_shape)] == batch_shape
         )
 
         self.actions = (
             actions if actions is not None else env.actions_from_batch_shape((0,))
         )
-        assert self.actions.batch_shape == self.states.batch_shape
+        assert self.actions.batch_shape == batch_shape
 
         self.is_terminating = (
             is_terminating
@@ -101,7 +101,7 @@ class Transitions(Container):
         self.next_states = (
             next_states if next_states is not None else env.states_from_batch_shape((0,))
         )
-        assert self.states.batch_shape == self.next_states.batch_shape
+        assert self.next_states.batch_shape == batch_shape
 
         # self._log_rewards can be torch.Tensor of shape (self.n_transitions,) or None.
         if log_rewards is not None:
