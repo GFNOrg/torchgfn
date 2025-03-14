@@ -3,18 +3,11 @@ import torch
 
 from gfn.containers import StatePairs, Trajectories, Transitions
 from gfn.gym.discrete_ebm import DiscreteEBM
+from gfn.env import Env
 
 
-@pytest.fixture
-def simple_env():
-    """Create a simple discrete environment for testing."""
-    return DiscreteEBM(ndim=2)
-
-
-@pytest.fixture
-def transitions_fixture(simple_env):
-    """Create a fixture for Transitions container."""
-    env = simple_env
+def transitions_containers(env: Env):
+    """Creates Transitions containers."""
 
     # Create some states
     states1 = env.states_from_tensor(torch.tensor([[0, 0], [1, 1]]))
@@ -55,10 +48,8 @@ def transitions_fixture(simple_env):
     return transitions1, transitions2
 
 
-@pytest.fixture
-def state_pairs_fixture(simple_env):
-    """Create a fixture for StatePairs container."""
-    env = simple_env
+def state_pairs_containers(env: Env):
+    """Creates StatePairs containers."""
 
     # Create first set of state pairs
     intermediary_states1 = env.states_from_tensor(torch.tensor([[0, 1], [1, 0]]))
@@ -87,10 +78,8 @@ def state_pairs_fixture(simple_env):
     return state_pairs1, state_pairs2
 
 
-@pytest.fixture
-def trajectories_fixture(simple_env):
-    """Create a fixture for Trajectories container."""
-    env = simple_env
+def trajectories_containers(env: Env):
+    """Creates Trajectories containers."""
 
     # Create first set of trajectories
     states1 = env.states_from_tensor(
@@ -114,14 +103,14 @@ def trajectories_fixture(simple_env):
         )
     )
 
-    when_is_done1 = torch.tensor([2, 2])
+    terminating_idx1 = torch.tensor([2, 2])
     log_rewards1 = torch.tensor([-2.0, -2.0])
 
     trajectories1 = Trajectories(
         env=env,
         states=states1,
         actions=actions1,
-        when_is_done=when_is_done1,
+        terminating_idx=terminating_idx1,
         log_rewards=log_rewards1,
     )
 
@@ -142,20 +131,19 @@ def trajectories_fixture(simple_env):
             [
                 [[0], [1]],  # Step 0
                 [[1], [1]],  # Step 1
-                [[0], [2]],  # Step 2 (exit for trajectory 2)
-                [[2], [2]],  # Step 3 (exit for trajectory 1, padding for trajectory 2)
+                [[2], [2]],  # Exit action for both trajectories
             ]
         )
     )
 
-    when_is_done2 = torch.tensor([3, 2])
+    terminating_idx2 = torch.tensor([3, 2])
     log_rewards2 = torch.tensor([-3.0, -2.0])
 
     trajectories2 = Trajectories(
         env=env,
         states=states2,
         actions=actions2,
-        when_is_done=when_is_done2,
+        terminating_idx=terminating_idx2,
         log_rewards=log_rewards2,
     )
 
@@ -163,14 +151,21 @@ def trajectories_fixture(simple_env):
 
 
 @pytest.mark.parametrize(
-    "container", ["transitions_fixture", "state_pairs_fixture", "trajectories_fixture"]
+    "container_type", ["transitions", "state_pairs", "trajectories"]
 )
-def test_containers(container, request):
-    container1, container2 = request.getfixturevalue(container)
+def test_containers(container_type: str):
+    env = DiscreteEBM(ndim=2)
+    if container_type == "transitions":
+        container1, container2 = transitions_containers(env)
+    elif container_type == "state_pairs":
+        container1, container2 = state_pairs_containers(env)
+    elif container_type == "trajectories":
+        container1, container2 = trajectories_containers(env)
+
     initial_len = len(container1)
 
     # Test extending container1 with container2
-    container1.extend(container2)
+    container1.extend(container2)  # type: ignore
 
     # Check that the length of container1 is now the sum of both containers
     assert len(container1) == initial_len + len(container2)
@@ -190,9 +185,12 @@ def test_containers(container, request):
             assert torch.equal(
                 container1_obj.next_states.tensor, container2_obj.next_states.tensor
             )
+            assert container1_obj.log_probs is not None
+            assert container2_obj.log_probs is not None
             assert torch.equal(container1_obj.log_probs, container2_obj.log_probs)
 
             assert isinstance(container1_obj.log_rewards, torch.Tensor)
+            assert isinstance(container2_obj.log_rewards, torch.Tensor)
             assert torch.equal(container1_obj.log_rewards, container2_obj.log_rewards)
     elif isinstance(container1, StatePairs):
         for i in range(len(container2)):
@@ -206,6 +204,8 @@ def test_containers(container, request):
                 container1_obj.terminating_states.tensor,
                 container2_obj.terminating_states.tensor,
             )
+            assert isinstance(container1_obj.log_rewards, torch.Tensor)
+            assert isinstance(container2_obj.log_rewards, torch.Tensor)
             assert torch.equal(container1_obj.log_rewards, container2_obj.log_rewards)
     elif isinstance(container1, Trajectories):
         for i in range(len(container2)):
@@ -217,6 +217,7 @@ def test_containers(container, request):
             assert torch.equal(
                 container1_obj.actions.tensor, container2_obj.actions.tensor
             )
-            assert torch.equal(container1_obj.when_is_done, container2_obj.when_is_done)
+            assert torch.equal(container1_obj.terminating_idx, container2_obj.terminating_idx)
             assert isinstance(container1_obj.log_rewards, torch.Tensor)
+            assert isinstance(container2_obj.log_rewards, torch.Tensor)
             assert torch.equal(container1_obj.log_rewards, container2_obj.log_rewards)

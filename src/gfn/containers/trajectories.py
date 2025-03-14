@@ -29,7 +29,7 @@ class Trajectories(Container):
         env: The environment in which the trajectories are defined.
         states: The states of the trajectories.
         actions: The actions of the trajectories.
-        when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
+        terminating_idx: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
         is_backward: Whether the trajectories are backward or forward.
         log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
         log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of the
@@ -42,7 +42,7 @@ class Trajectories(Container):
         states: States | None = None,
         conditioning: torch.Tensor | None = None,
         actions: Actions | None = None,
-        when_is_done: torch.Tensor | None = None,
+        terminating_idx: torch.Tensor | None = None,
         is_backward: bool = False,
         log_rewards: torch.Tensor | None = None,
         log_probs: torch.Tensor | None = None,
@@ -54,7 +54,7 @@ class Trajectories(Container):
             states: The states of the trajectories.
             conditioning: The conditioning of the trajectories for conditional MDPs.
             actions: The actions of the trajectories.
-            when_is_done: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
+            terminating_idx: Tensor of shape (n_trajectories,) indicating the time step at which each trajectory ends.
             is_backward: Whether the trajectories are backward or forward.
             log_rewards: Tensor of shape (n_trajectories,) containing the log rewards of the trajectories.
             log_probs: Tensor of shape (max_length, n_trajectories) indicating the log probabilities of
@@ -78,7 +78,7 @@ class Trajectories(Container):
             assert obj.tensor.device == device if obj is not None else True
         for tensor in [
             conditioning,
-            when_is_done,
+            terminating_idx,
             log_rewards,
             log_probs,
             estimator_outputs,
@@ -100,14 +100,14 @@ class Trajectories(Container):
             == (self.states.batch_shape[0] - 1, self.states.batch_shape[1])
         )
 
-        self.when_is_done = (
-            when_is_done
-            if when_is_done is not None
+        self.terminating_idx = (
+            terminating_idx
+            if terminating_idx is not None
             else torch.full(size=(0,), fill_value=-1, dtype=torch.long, device=device)
         )
         assert (
-            self.when_is_done.shape == (self.n_trajectories,)
-            and self.when_is_done.dtype == torch.long
+            self.terminating_idx.shape == (self.n_trajectories,)
+            and self.terminating_idx.dtype == torch.long
         )
 
         # self._log_rewards can be torch.Tensor of shape (self.n_trajectories,) or None.

@@ -31,7 +31,7 @@ def trajectories(simple_env):
         actions=action_class(torch.ones(10, 5, 1)),
         log_probs=torch.ones(10, 5),
         log_rewards=torch.arange(5, dtype=torch.float),
-        when_is_done=torch.randint(0, 5, (5,), dtype=torch.long),
+        terminating_idx=torch.randint(0, 5, (5,), dtype=torch.long),
     )
 
     return traj
@@ -220,7 +220,7 @@ def test_add_with_diversity(simple_env, trajectories):
             actions=action_class(torch.ones(1, 1, 1)),
             log_probs=torch.zeros(1, 1),
             log_rewards=torch.tensor([i + 10], dtype=torch.float),
-            when_is_done=torch.tensor([1], dtype=torch.long),
+            terminating_idx=torch.tensor([1], dtype=torch.long),
         )
         similar_trajs.extend(new_traj)
 
@@ -257,7 +257,7 @@ def test_skip_diversity_check(simple_env, trajectories):
             actions=action_class(torch.ones(1, 1, 1)),
             log_probs=torch.zeros(1, 1),
             log_rewards=torch.tensor([i + 10], dtype=torch.float),
-            when_is_done=torch.tensor([1], dtype=torch.long),
+            terminating_idx=torch.tensor([1], dtype=torch.long),
         )
         better_trajs.extend(new_traj)
     # Add better trajectories - they should replace lower reward ones
