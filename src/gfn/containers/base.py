@@ -58,5 +58,5 @@ class Container(ABC):
 
     @property
     @abstractmethod
-    def last_states(self) -> States:
+    def terminating_states(self) -> States:
         """Returns the last states of the container."""

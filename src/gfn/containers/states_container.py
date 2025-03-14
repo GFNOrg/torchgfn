@@ -125,11 +125,6 @@ class StatesContainer(Container, Generic[StateType]):
         )
 
     @property
-    def last_states(self) -> StateType:
-        """Get the last states, i.e. terminating states"""
-        return self.terminating_states
-
-    @property
     def log_rewards(self) -> torch.Tensor | None:
         """
         Returns the log rewards for the States as a tensor of shape (len(self.states),),
@@ -146,11 +141,11 @@ class StatesContainer(Container, Generic[StateType]):
             )
             try:
                 self._log_rewards[self.is_terminating] = self.env.log_reward(
-                    self.last_states
+                    self.terminating_states
                 )
             except NotImplementedError:
                 self._log_rewards[self.is_terminating] = torch.log(
-                    self.env.reward(self.last_states)
+                    self.env.reward(self.terminating_states)
                 )
 
         assert self._log_rewards.shape == self.states.batch_shape

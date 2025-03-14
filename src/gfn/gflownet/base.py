@@ -57,7 +57,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         trajectories = self.sample_trajectories(
             env, n, save_estimator_outputs=False, save_logprobs=False
         )
-        return trajectories.last_states
+        return trajectories.terminating_states
 
     def logz_named_parameters(self):
         return {k: v for k, v in dict(self.named_parameters()).items() if "logZ" in k}

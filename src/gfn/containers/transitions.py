@@ -157,8 +157,8 @@ class Transitions(Container):
         )
 
     @property
-    def last_states(self) -> States:
-        """Get the last states, i.e. terminating states"""
+    def terminating_states(self) -> States:
+        """Return the terminating states."""
         return self.states[self.is_terminating]
 
     @property
@@ -181,11 +181,11 @@ class Transitions(Container):
             )
             try:
                 self._log_rewards[self.is_terminating] = self.env.log_reward(
-                    self.last_states
+                    self.terminating_states
                 )
             except NotImplementedError:
                 self._log_rewards[self.is_terminating] = torch.log(
-                    self.env.reward(self.last_states)
+                    self.env.reward(self.terminating_states)
                 )
 
         assert self._log_rewards.shape == (self.n_transitions,)

@@ -348,7 +348,7 @@ class LocalSearchSampler(Sampler):
 
         prev_trajectories = self.backward_sampler.sample_trajectories(
             env,
-            states=trajectories.last_states,
+            states=trajectories.terminating_states,
             conditioning=conditioning,
             save_estimator_outputs=save_estimator_outputs,
             save_logprobs=save_logprobs,
