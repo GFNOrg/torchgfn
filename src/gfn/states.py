@@ -158,7 +158,13 @@ class States(ABC):
         return prod(self.batch_shape)
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__} object of batch shape {self.batch_shape} and state shape {self.state_shape}"
+        parts = [
+            f"{self.__class__.__name__}(",
+            f"batch={self.batch_shape},",
+            f"state={self.state_shape},",
+            f"dev={self.device})",
+        ]
+        return " ".join(parts)
 
     @property
     def device(self) -> torch.device:
@@ -412,6 +418,18 @@ class DiscreteStates(States, ABC):
 
     def _check_both_forward_backward_masks_exist(self):
         assert self.forward_masks is not None and self.backward_masks is not None
+
+    def __repr__(self):
+        """Returns a detailed string representation of the DiscreteStates object."""
+        parts = [
+            f"{self.__class__.__name__}(",
+            f"batch={self.batch_shape},",
+            f"state={self.state_shape},",
+            f"actions={self.n_actions},",
+            f"dev={self.device},",
+            f"masks={tuple(self.forward_masks.shape)})",
+        ]
+        return " ".join(parts)
 
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
@@ -712,11 +730,18 @@ class GraphStates(States):
         return batch
 
     def __repr__(self):
-        """Returns a string representation of the GraphStates object."""
-        return (
-            f"{self.__class__.__name__} object of batch shape {self.batch_shape} and "
-            f"node feature dim {self.tensor.x.size(1)} and edge feature dim {self.tensor.edge_attr.size(1)}"
-        )
+        """Returns a detailed string representation of the GraphStates object."""
+        parts = [
+            f"{self.__class__.__name__}(",
+            f"batch={self.batch_shape},",
+            f"state x={self.tensor.x.shape},",
+            f"state edge_index={self.tensor.edge_index.shape},",
+            f"state edge_attr={self.tensor.edge_attr.shape},",
+            f"actions={self.n_actions},",
+            f"dev={self.device},",
+            f"masks={tuple(self.forward_masks.shape)})",
+        ]
+        return " ".join(parts)
 
     def __getitem__(
         self,

@@ -5,7 +5,6 @@ import torch
 from gfn.containers import Trajectories, Transitions
 from gfn.modules import GFNModule
 from gfn.states import States
-from gfn.utils.common import has_log_probs
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -36,7 +35,7 @@ def get_trajectory_pfs_and_pbs(
     pb: GFNModule,
     trajectories: Trajectories,
     fill_value: float = 0.0,
-    recalculate_all_logprobs: bool = False,
+    recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     # fill value is the value used for invalid states (sink state usually)
 
@@ -58,7 +57,7 @@ def get_trajectory_pfs(
     pf: GFNModule,
     trajectories: Trajectories,
     fill_value: float = 0.0,
-    recalculate_all_logprobs: bool = False,
+    recalculate_all_logprobs: bool = True,
 ) -> torch.Tensor:
     if trajectories.is_backward:
         raise ValueError("Backward trajectories are not supported")
@@ -72,8 +71,9 @@ def get_trajectory_pfs(
     if valid_states.batch_shape != tuple(valid_actions.batch_shape):
         raise AssertionError("Something wrong happening with log_pf evaluations")
 
-    if has_log_probs(trajectories) and not recalculate_all_logprobs:
+    if trajectories.has_log_probs and not recalculate_all_logprobs:
         log_pf_trajectories = trajectories.log_probs
+        assert log_pf_trajectories is not None
     else:
         log_pf_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],
@@ -179,7 +179,7 @@ def get_transition_pfs_and_pbs(
     pf: GFNModule,
     pb: GFNModule,
     transitions: Transitions,
-    recalculate_all_logprobs: bool = False,
+    recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if transitions.is_backward:
         raise ValueError("Backward transitions are not supported")
@@ -194,13 +194,14 @@ def get_transition_pfs_and_pbs(
 
 
 def get_transition_pfs(
-    pf: GFNModule, transitions: Transitions, recalculate_all_logprobs: bool = False
+    pf: GFNModule, transitions: Transitions, recalculate_all_logprobs: bool = True
 ) -> torch.Tensor:
     states = transitions.states
     actions = transitions.actions
 
-    if has_log_probs(transitions) and not recalculate_all_logprobs:
+    if transitions.has_log_probs and not recalculate_all_logprobs:
         log_pf_actions = transitions.log_probs
+        assert log_pf_actions is not None
     else:
         # Evaluate the log PF of the actions, with optional conditioning.
         # TODO: Inefficient duplication in case of tempered policy

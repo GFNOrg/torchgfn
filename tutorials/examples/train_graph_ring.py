@@ -948,7 +948,7 @@ if __name__ == "__main__":
                     training_samples.extend(buffer_samples)  # type: ignore
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
+        loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
         pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
         print(
             "Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(

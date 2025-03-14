@@ -1,3 +1,4 @@
+import warnings
 from typing import Any
 
 import torch
@@ -12,6 +13,8 @@ from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
 )
+
+warnings.filterwarnings("once", message="recalculate_all_logprobs is not used for FM.*")
 
 
 class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
@@ -178,14 +181,22 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
         self,
         env: DiscreteEnv,
         state_pairs: StatePairs[DiscreteStates],
+        recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
         Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
         StatePairs container that holds both the internal states of the trajectories
-        (i.e. non-terminal states) and the terminal states."""
+        (i.e. non-terminal states) and the terminal states.
+        """
         assert isinstance(state_pairs.intermediary_states, DiscreteStates)
         assert isinstance(state_pairs.terminating_states, DiscreteStates)
+        if recalculate_all_logprobs:
+            warnings.warn(
+                "recalculate_all_logprobs is not used for FM. " "Ignoring the argument."
+            )
+        del recalculate_all_logprobs  # Unused for FM.
+
         fm_loss = self.flow_matching_loss(
             env, state_pairs.intermediary_states, state_pairs.intermediary_conditioning
         )
