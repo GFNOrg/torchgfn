@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Protocol, Union, cast, runtime_checkable
+from typing import Union, cast
 
 import torch
 
@@ -9,21 +9,6 @@ from gfn.containers.state_pairs import StatePairs
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
-
-
-@runtime_checkable
-class Container(Protocol):
-    def __getitem__(self, idx): ...  # noqa: E704
-
-    def extend(self, other): ...  # noqa: E704
-
-    def __len__(self) -> int: ...  # noqa: E704
-
-    @property
-    def log_rewards(self) -> torch.Tensor | None: ...  # noqa: E704
-
-    @property
-    def last_states(self): ...  # noqa: E704
 
 
 ContainerUnion = Union[Trajectories, Transitions, StatePairs]
