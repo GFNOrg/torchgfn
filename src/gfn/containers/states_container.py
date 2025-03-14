@@ -125,7 +125,7 @@ class StatesContainer(Container, Generic[StateType]):
         )
 
     @property
-    def log_rewards(self) -> torch.Tensor | None:
+    def log_rewards(self) -> torch.Tensor:
         """
         Returns the log rewards for the States as a tensor of shape (len(self.states),),
         with a value of `-float('inf')`for intermediate states.

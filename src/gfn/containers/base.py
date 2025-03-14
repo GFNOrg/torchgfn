@@ -60,3 +60,8 @@ class Container(ABC):
     @abstractmethod
     def terminating_states(self) -> States:
         """Returns the last states of the container."""
+
+    @property
+    @abstractmethod
+    def log_rewards(self) -> torch.Tensor:
+        """Returns the rewards of the container."""
