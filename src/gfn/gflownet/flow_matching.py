@@ -2,7 +2,7 @@ from typing import Any
 
 import torch
 
-from gfn.containers import StatesWrapper, Trajectories
+from gfn.containers import StatesContainer, Trajectories
 from gfn.env import DiscreteEnv
 from gfn.gflownet.base import GFlowNet
 from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
@@ -14,7 +14,7 @@ from gfn.utils.handlers import (
 )
 
 
-class FMGFlowNet(GFlowNet[StatesWrapper[DiscreteStates]]):
+class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
     r"""Flow Matching GFlowNet, with edge flow estimator.
 
     $\mathcal{O}_{edge}$ is the set of functions from the non-terminating edges
@@ -177,30 +177,30 @@ class FMGFlowNet(GFlowNet[StatesWrapper[DiscreteStates]]):
     def loss(
         self,
         env: DiscreteEnv,
-        states_wrapper: StatesWrapper[DiscreteStates],
+        states_container: StatesContainer[DiscreteStates],
     ) -> torch.Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
         Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
-        StatesWrapper container that holds both the internal states of the trajectories
+        StatesContainer container that holds both the internal states of the trajectories
         (i.e. non-terminal states) and the terminal states."""
-        assert isinstance(states_wrapper.intermediary_states, DiscreteStates)
-        assert isinstance(states_wrapper.terminating_states, DiscreteStates)
+        assert isinstance(states_container.intermediary_states, DiscreteStates)
+        assert isinstance(states_container.terminating_states, DiscreteStates)
         fm_loss = self.flow_matching_loss(
             env,
-            states_wrapper.intermediary_states,
-            states_wrapper.intermediary_conditioning,
+            states_container.intermediary_states,
+            states_container.intermediary_conditioning,
         )
         rm_loss = self.reward_matching_loss(
             env,
-            states_wrapper.terminating_states,
-            states_wrapper.terminating_conditioning,
-            states_wrapper.terminating_log_rewards,
+            states_container.terminating_states,
+            states_container.terminating_conditioning,
+            states_container.terminating_log_rewards,
         )
         return fm_loss + self.alpha * rm_loss
 
     def to_training_samples(
         self, trajectories: Trajectories
-    ) -> StatesWrapper[DiscreteStates]:
+    ) -> StatesContainer[DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        return trajectories.to_states_wrapper()
+        return trajectories.to_states_container()

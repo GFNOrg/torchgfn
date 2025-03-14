@@ -5,7 +5,7 @@ from typing import Protocol, Union, cast, runtime_checkable
 
 import torch
 
-from gfn.containers.states_wrapper import StatesWrapper
+from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
@@ -26,8 +26,8 @@ class Container(Protocol):
     def last_states(self): ...  # noqa: E704
 
 
-ContainerUnion = Union[Trajectories, Transitions, StatesWrapper]
-ValidContainerTypes = (Trajectories, Transitions, StatesWrapper)
+ContainerUnion = Union[Trajectories, Transitions, StatesContainer]
+ValidContainerTypes = (Trajectories, Transitions, StatesContainer)
 
 
 class ReplayBuffer:
@@ -71,8 +71,8 @@ class ReplayBuffer:
             self.training_objects = cast(ContainerUnion, Trajectories(self.env))
         elif isinstance(training_objects, Transitions):
             self.training_objects = cast(ContainerUnion, Transitions(self.env))
-        elif isinstance(training_objects, StatesWrapper):
-            self.training_objects = cast(ContainerUnion, StatesWrapper(self.env))
+        elif isinstance(training_objects, StatesContainer):
+            self.training_objects = cast(ContainerUnion, StatesContainer(self.env))
         else:
             raise ValueError(f"Unsupported type: {type(training_objects)}")
 

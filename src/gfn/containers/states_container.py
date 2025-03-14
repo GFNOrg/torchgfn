@@ -13,7 +13,7 @@ from gfn.containers.base import Container
 StateType = TypeVar("StateType", bound="States")
 
 
-class StatesWrapper(Container, Generic[StateType]):
+class StatesContainer(Container, Generic[StateType]):
     """Container for states (mainly used for Flow Matching GFlowNet).
 
     This container holds states along with optional conditioning tensors.
@@ -34,7 +34,7 @@ class StatesWrapper(Container, Generic[StateType]):
         is_terminating: torch.Tensor | None = None,
         log_rewards: torch.Tensor | None = None,
     ):
-        """Initialize a StatesWrapper container.
+        """Initialize a StatesContainer.
 
         Args:
             env: Environment instance
@@ -120,7 +120,7 @@ class StatesWrapper(Container, Generic[StateType]):
 
     def __repr__(self) -> str:
         return (
-            f"StatesWrapper(n_states={len(self.states)}, "
+            f"StatesContainer(n_states={len(self.states)}, "
             f"n_terminating={self.is_terminating.sum().item()})"
         )
 
@@ -163,8 +163,8 @@ class StatesWrapper(Container, Generic[StateType]):
         assert log_rewards is not None
         return log_rewards[self.is_terminating]
 
-    def extend(self, other: StatesWrapper[StateType]) -> None:
-        """Extend this container with another StatesWrapper container."""
+    def extend(self, other: StatesContainer[StateType]) -> None:
+        """Extend this container with another StatesContainer container."""
         assert len(self.states.batch_shape) == len(other.states.batch_shape) == 1
 
         self.states.extend(other.states)
@@ -186,7 +186,7 @@ class StatesWrapper(Container, Generic[StateType]):
 
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
-    ) -> StatesWrapper[StateType]:
+    ) -> StatesContainer[StateType]:
         """Returns a subset of the states along the batch dimension.
 
         Note:
@@ -203,8 +203,8 @@ class StatesWrapper(Container, Generic[StateType]):
         )
         log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
 
-        # We can construct a new StatesWrapper with the same StateType
-        return StatesWrapper[StateType](
+        # We can construct a new StatesContainer with the same StateType
+        return StatesContainer[StateType](
             env=self.env,
             states=states,
             conditioning=conditioning,

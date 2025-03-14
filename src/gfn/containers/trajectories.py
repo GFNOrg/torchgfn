@@ -6,7 +6,7 @@ import torch
 
 from gfn.actions import Actions
 from gfn.containers.base import Container
-from gfn.containers.states_wrapper import StatesWrapper
+from gfn.containers.states_container import StatesContainer
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 from gfn.states import DiscreteStates, GraphStates, States
@@ -447,14 +447,14 @@ class Trajectories(Container):
             log_probs=log_probs,
         )
 
-    def to_states_wrapper(self) -> StatesWrapper:
-        """Returns a `StatesWrapper` object from the trajectories.
+    def to_states_container(self) -> StatesContainer:
+        """Returns a `StatesContainer` object from the trajectories.
 
         Returns:
-            StatesWrapper: A StatesWrapper object containing all valid states.
+            StatesContainer: A StatesContainer object containing all valid states.
         """
         if not isinstance(self.states, DiscreteStates):
-            raise TypeError("to_states_wrapper only works with DiscreteStates")
+            raise TypeError("to_states_container only works with DiscreteStates")
 
         is_terminating = torch.zeros(
             self.states.batch_shape, dtype=torch.bool, device=self.states.device
@@ -487,7 +487,7 @@ class Trajectories(Container):
             )
             log_rewards[is_terminating] = self.log_rewards
 
-        return StatesWrapper[DiscreteStates](
+        return StatesContainer[DiscreteStates](
             env=self.env,
             states=states,
             conditioning=conditioning,
