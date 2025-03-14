@@ -333,7 +333,7 @@ def test_replay_buffer(
             # Filter out trajectories that are at max length
             training_objects = trajectories
             training_objects_2 = trajectories[
-                trajectories.when_is_done != trajectories.max_length
+                trajectories.terminating_idx != trajectories.max_length
             ]
             replay_buffer.add(training_objects_2)
 

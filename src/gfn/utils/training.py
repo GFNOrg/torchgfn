@@ -130,7 +130,7 @@ def states_actions_tns_to_traj(
     actions = actions[0].stack(actions)
     log_rewards = env.log_reward(states[-2])
     states = states[0].stack(states)
-    when_is_done = torch.tensor([len(states_tns) - 1])
+    terminating_idx = torch.tensor([len(states_tns) - 1])
 
     log_probs = None
     estimator_outputs = None
@@ -141,7 +141,7 @@ def states_actions_tns_to_traj(
         conditioning,
         actions,
         log_rewards=log_rewards,
-        when_is_done=when_is_done,
+        terminating_idx=terminating_idx,
         log_probs=log_probs,
         estimator_outputs=estimator_outputs,
     )
