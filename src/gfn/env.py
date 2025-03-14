@@ -347,8 +347,8 @@ class DiscreteEnv(Env, ABC):
         self,
         n_actions: int,
         s0: torch.Tensor,
-        state_shape: Tuple,
-        action_shape: Tuple = (1,),
+        state_shape: Tuple | int,
+        action_shape: Tuple | int = (1,),
         dummy_action: Optional[torch.Tensor] = None,
         exit_action: Optional[torch.Tensor] = None,
         sf: Optional[torch.Tensor] = None,
@@ -374,6 +374,13 @@ class DiscreteEnv(Env, ABC):
         # The default exit action index is the final element of the action space.
         if exit_action is None:
             exit_action = torch.tensor([n_actions - 1], device=s0.device)
+
+        # If these shapes are integers, convert them to tuples.
+        if isinstance(action_shape, int):
+            action_shape = (action_shape,)
+
+        if isinstance(state_shape, int):
+            state_shape = (state_shape,)
 
         assert dummy_action is not None
         assert exit_action is not None
