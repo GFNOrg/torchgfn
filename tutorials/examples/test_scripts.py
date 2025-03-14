@@ -75,13 +75,21 @@ def test_hypergrid(ndim: int, height: int):
     args = HypergridArgs(ndim=ndim, height=height, n_trajectories=n_trajectories)
     final_l1_dist = train_hypergrid_main(args)
     if ndim == 2 and height == 8:
-        assert np.isclose(final_l1_dist, 8.78e-4, atol=1e-3)
+        assert np.isclose(
+            final_l1_dist, 8.78e-4, atol=1e-3
+        ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 2 and height == 16:
-        assert np.isclose(final_l1_dist, 2.62e-4, atol=1e-3)
+        assert np.isclose(
+            final_l1_dist, 2.62e-4, atol=1e-3
+        ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 4 and height == 8:
-        assert np.isclose(final_l1_dist, 1.6e-4, atol=1e-3)
+        assert np.isclose(
+            final_l1_dist, 1.6e-4, atol=1e-3
+        ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 4 and height == 16:
-        assert np.isclose(final_l1_dist, 6.89e-6, atol=1e-5)
+        assert np.isclose(
+            final_l1_dist, 6.89e-6, atol=1e-5
+        ), f"final_l1_dist: {final_l1_dist}"
 
 
 @pytest.mark.parametrize("loss", ["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"])
@@ -107,13 +115,21 @@ def test_discreteebm(ndim: int, alpha: float):
     args = DiscreteEBMArgs(ndim=ndim, alpha=alpha, n_trajectories=n_trajectories)
     final_l1_dist = train_discreteebm_main(args)
     if ndim == 2 and alpha == 0.1:
-        assert np.isclose(final_l1_dist, 2.97e-3, atol=1e-2)
+        assert np.isclose(
+            final_l1_dist, 2.97e-3, atol=1e-2
+        ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 2 and alpha == 1.0:
-        assert np.isclose(final_l1_dist, 0.017, atol=1e-2)
+        assert np.isclose(
+            final_l1_dist, 0.017, atol=1e-2
+        ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 4 and alpha == 0.1:
-        assert np.isclose(final_l1_dist, 0.009, atol=1e-2)
+        assert np.isclose(
+            final_l1_dist, 0.009, atol=1e-2
+        ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 4 and alpha == 1.0:
-        assert np.isclose(final_l1_dist, 0.062, atol=1e-2)
+        assert np.isclose(
+            final_l1_dist, 0.062, atol=1e-2
+        ), f"final_l1_dist: {final_l1_dist}"
 
 
 @pytest.mark.parametrize("delta", [0.1, 0.25])
@@ -142,10 +158,11 @@ def test_box(delta: float, loss: str):
         #       an issue with no seeding properly. Need to investigate.
         assert np.isclose(final_jsd, 0.1, atol=1e-2) or np.isclose(
             final_jsd, 3.81e-2, atol=1e-2
-        )
+        ), f"final_jsd: {final_jsd}"
+
     elif loss == "DB" and delta == 0.1:
-        assert np.isclose(final_jsd, 0.134, atol=1e-1)
+        assert np.isclose(final_jsd, 0.134, atol=1e-1), f"final_jsd: {final_jsd}"
     if loss == "TB" and delta == 0.25:
-        assert np.isclose(final_jsd, 0.0411, atol=1e-1)
+        assert np.isclose(final_jsd, 0.0411, atol=1e-1), f"final_jsd: {final_jsd}"
     elif loss == "DB" and delta == 0.25:
-        assert np.isclose(final_jsd, 0.0142, atol=1e-2)
+        assert np.isclose(final_jsd, 0.0142, atol=1e-2), f"final_jsd: {final_jsd}"

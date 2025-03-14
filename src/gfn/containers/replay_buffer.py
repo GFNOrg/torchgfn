@@ -1,17 +1,33 @@
 from __future__ import annotations
 
 import os
-from typing import Union, cast
+from typing import Protocol, Union, cast, runtime_checkable
 
 import torch
 
-from gfn.containers.state_pairs import StatePairs
+from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 
-ContainerUnion = Union[Trajectories, Transitions, StatePairs]
-ValidContainerTypes = (Trajectories, Transitions, StatePairs)
+
+@runtime_checkable
+class Container(Protocol):
+    def __getitem__(self, idx): ...  # noqa: E704
+
+    def extend(self, other): ...  # noqa: E704
+
+    def __len__(self) -> int: ...  # noqa: E704
+
+    @property
+    def log_rewards(self) -> torch.Tensor | None: ...  # noqa: E704
+
+    @property
+    def terminating_states(self): ...  # noqa: E704
+
+
+ContainerUnion = Union[Trajectories, Transitions, StatesContainer]
+ValidContainerTypes = (Trajectories, Transitions, StatesContainer)
 
 
 class ReplayBuffer:
@@ -55,8 +71,8 @@ class ReplayBuffer:
             self.training_objects = cast(ContainerUnion, Trajectories(self.env))
         elif isinstance(training_objects, Transitions):
             self.training_objects = cast(ContainerUnion, Transitions(self.env))
-        elif isinstance(training_objects, StatePairs):
-            self.training_objects = cast(ContainerUnion, StatePairs(self.env))
+        elif isinstance(training_objects, StatesContainer):
+            self.training_objects = cast(ContainerUnion, StatesContainer(self.env))
         else:
             raise ValueError(f"Unsupported type: {type(training_objects)}")
 
@@ -109,7 +125,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         env: the Environment instance.
         capacity: the size of the buffer.
         training_objects: the buffer of objects used for training.
-        cutoff_distance: threshold used to determine if new last_states are different
+        cutoff_distance: threshold used to determine if new terminating_states are different
             enough from those already contained in the buffer.
         p_norm_distance: p-norm distance value to pass to torch.cdist, for the
             determination of novel states.
@@ -126,7 +142,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         Args:
             env: the Environment instance.
             capacity: the size of the buffer.
-            cutoff_distance: threshold used to determine if new last_states are
+            cutoff_distance: threshold used to determine if new terminating_states are
                 different enough from those already contained in the buffer. If the
                 cutoff is negative, all diversity caclulations are skipped (since all
                 norms are >= 0).
@@ -190,8 +206,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
 
             if self.cutoff_distance >= 0:
                 # Filter the batch for diverse final_states with high reward.
-                batch = training_objects.last_states.tensor.float()
-                batch_dim = training_objects.last_states.batch_shape[0]
+                batch = training_objects.terminating_states.tensor.float()
+                batch_dim = training_objects.terminating_states.batch_shape[0]
                 batch_batch_dist = torch.cdist(
                     batch.view(batch_dim, -1).unsqueeze(0),
                     batch.view(batch_dim, -1).unsqueeze(0),
@@ -206,10 +222,10 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
                 training_objects = training_objects[idx_batch_batch]
 
                 # Compute all pairwise distances between the remaining batch & buffer.
-                batch = training_objects.last_states.tensor.float()
-                buffer = self.training_objects.last_states.tensor.float()
-                batch_dim = training_objects.last_states.batch_shape[0]
-                tmp = self.training_objects.last_states
+                batch = training_objects.terminating_states.tensor.float()
+                buffer = self.training_objects.terminating_states.tensor.float()
+                batch_dim = training_objects.terminating_states.batch_shape[0]
+                tmp = self.training_objects.terminating_states
                 buffer_dim = tmp.batch_shape[0]
                 batch_buffer_dist = (
                     torch.cdist(

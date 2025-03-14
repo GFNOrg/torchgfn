@@ -186,7 +186,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         """
         targets = torch.full_like(preds, fill_value=-float("inf"))
         assert trajectories.log_rewards is not None
-        log_rewards = trajectories.log_rewards[trajectories.when_is_done >= i]
+        log_rewards = trajectories.log_rewards[trajectories.terminating_idx >= i]
 
         if math.isfinite(self.log_reward_clip_min):
             log_rewards.clamp_min(
@@ -328,11 +328,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 i,
             )
 
-            flattening_mask = trajectories.when_is_done.lt(
+            flattening_mask = trajectories.terminating_idx.lt(
                 torch.arange(
                     i,
                     trajectories.max_length + 1,
-                    device=trajectories.when_is_done.device,
+                    device=trajectories.terminating_idx.device,
                 ).unsqueeze(-1)
             )
 
@@ -364,12 +364,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
         max_len = trajectories.max_length
         n_rows = int(max_len * (1 + max_len) / 2)
 
         # the following tensor represents the inverse of how many sub-trajectories there are in each trajectory
-        contributions = 2.0 / (is_done * (is_done + 1)) / len(trajectories)
+        contributions = (
+            2.0 / (terminating_idx * (terminating_idx + 1)) / len(trajectories)
+        )
 
         # if we repeat the previous tensor, we get a tensor of shape
         # (max_len * (max_len + 1) / 2, n_trajectories) that we can multiply with
@@ -393,10 +395,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
         max_len = trajectories.max_length
         n_rows = int(max_len * (1 + max_len) / 2)
-        n_sub_trajectories = int((is_done * (is_done + 1) / 2).sum().item())
+        n_sub_trajectories = int(
+            (terminating_idx * (terminating_idx + 1) / 2).sum().item()
+        )
         contributions = torch.ones(n_rows, len(trajectories)) / n_sub_trajectories
         return contributions
 
@@ -413,11 +417,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         max_len = trajectories.max_length
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
 
         # Each trajectory contributes one element to the loss, equally weighted
         contributions = torch.zeros_like(all_scores)
-        indices = (max_len * (is_done - 1) - (is_done - 1) * (is_done - 2) / 2).long()
+        indices = (
+            max_len * (terminating_idx - 1)
+            - (terminating_idx - 1) * (terminating_idx - 2) / 2
+        ).long()
         contributions.scatter_(0, indices.unsqueeze(0), 1)
         contributions = contributions / len(trajectories)
 
@@ -438,13 +445,13 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
         max_len = trajectories.max_length
         n_rows = int(max_len * (1 + max_len) / 2)
 
         # The following tensor represents the inverse of how many transitions
         # there are in each trajectory.
-        contributions = (1.0 / is_done / len(trajectories)).repeat(max_len, 1)
+        contributions = (1.0 / terminating_idx / len(trajectories)).repeat(max_len, 1)
         contributions = torch.cat(
             (
                 contributions,
@@ -474,14 +481,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         del all_scores
         L = self.lamda
         max_len = trajectories.max_length
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
 
         # The following tensor represents the weights given to each possible
         # sub-trajectory length.
-        contributions = (L ** torch.arange(max_len).double()).float()
+        contributions = (
+            L ** torch.arange(max_len, device=terminating_idx.device).double()
+        ).float()
         contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
         contributions = contributions.repeat_interleave(
-            torch.arange(max_len, 0, -1),
+            torch.arange(max_len, 0, -1, device=terminating_idx.device),
             dim=0,
             output_size=int(max_len * (max_len + 1) / 2),
         )
@@ -493,7 +502,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         per_trajectory_denom = (
             1.0
             / (1 - L) ** 2
-            * (L * (L ** is_done.double() - 1) + (1 - L) * is_done.double())
+            * (
+                L * (L ** terminating_idx.double() - 1)
+                + (1 - L) * terminating_idx.double()
+            )
         ).float()
         contributions = contributions / per_trajectory_denom / len(trajectories)
 
@@ -521,7 +533,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             # The position i of the following 1D tensor represents the number of sub-
             # trajectories of length i in the batch.
             # n_sub_trajectories = torch.maximum(
-            #     trajectories.when_is_done - torch.arange(3).unsqueeze(-1),
+            #     trajectories.terminating_idx - torch.arange(3).unsqueeze(-1),
             #     torch.tensor(0),
             # ).sum(1)
 

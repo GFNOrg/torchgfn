@@ -60,6 +60,7 @@ def main(args):  # noqa: C901
         preprocessor=env.preprocessor,
     )
     gflownet = FMGFlowNet(estimator)
+    gflownet = gflownet.to(env.device)
 
     # 3. Create the optimizer
     optimizer = torch.optim.Adam(module.parameters(), lr=args.lr)
@@ -80,7 +81,9 @@ def main(args):  # noqa: C901
         loss.backward()
         optimizer.step()
 
-        visited_terminating_states.extend(cast(DiscreteStates, trajectories.last_states))
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
 
         states_visited += len(trajectories)
 

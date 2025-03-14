@@ -245,9 +245,9 @@ def main(args):  # noqa: C901
         )
         loss.backward()
         optimizer.step()
-        last_states = trajectories.last_states
-        last_states = cast(DiscreteStates, last_states)
-        visited_terminating_states.extend(last_states)
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
 
         states_visited += len(trajectories)
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
+
+if TYPE_CHECKING:
+    from gfn.states import States
 
 import torch
 
@@ -53,6 +56,16 @@ class Container(ABC):
                 self.__dict__[key] = torch.load(os.path.join(path, key + ".pt"))
             else:
                 raise ValueError(f"Unexpected {key} of type {type(val)}")
+
+    @property
+    @abstractmethod
+    def terminating_states(self) -> States:
+        """Returns the last states of the container."""
+
+    @property
+    @abstractmethod
+    def log_rewards(self) -> torch.Tensor:
+        """Returns the rewards of the container."""
 
     @property
     def has_log_probs(self) -> bool:

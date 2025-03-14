@@ -7,7 +7,7 @@ from gfn.containers.replay_buffer import (
     NormBasedDiversePrioritizedReplayBuffer,
     ReplayBuffer,
 )
-from gfn.containers.state_pairs import StatePairs
+from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.gym.hypergrid import HyperGrid
@@ -28,8 +28,8 @@ def trajectories(simple_env):
     traj = Trajectories(
         simple_env,
         states=state_class(torch.randn(10, 5, 2)),
-        actions=action_class(torch.ones(10, 5, 1)),
-        log_probs=torch.ones(10, 5),
+        actions=action_class(torch.ones(9, 5, 1)),
+        log_probs=torch.ones(9, 5),
         log_rewards=torch.arange(5, dtype=torch.float),
         terminating_idx=torch.randint(0, 5, (5,), dtype=torch.long),
     )
@@ -50,7 +50,7 @@ def transitions(simple_env):
         actions=action_class(torch.ones(5, 1)),
         log_probs=torch.zeros(5),
         log_rewards=torch.ones((5,), dtype=torch.float),
-        is_done=torch.zeros(5, dtype=torch.bool),
+        is_terminating=torch.zeros(5, dtype=torch.bool),
     )
 
     return trans
@@ -61,11 +61,17 @@ def state_pairs(simple_env):
     # Create a batch of state pairs
     state_class = simple_env.make_states_class()
 
-    pairs = StatePairs(
+    pairs = StatesContainer(
         simple_env,
-        intermediary_states=state_class(torch.randn(5, 2)),
-        terminating_states=state_class(torch.randn(5, 2)),
-        log_rewards=torch.ones((5), dtype=torch.float),
+        states=state_class(torch.randn(10, 2)),
+        is_terminating=torch.tensor(
+            [False, False, False, False, False, True, True, True, True, True],
+            dtype=torch.bool,
+        ),
+        log_rewards=torch.tensor(
+            [torch.inf, torch.inf, torch.inf, torch.inf, torch.inf, 1, 1, 1, 1, 1],
+            dtype=torch.float,
+        ),
     )
 
     return pairs
@@ -109,9 +115,10 @@ def test_add_state_pairs(simple_env, state_pairs):
     buffer.add(state_pairs)
 
     assert buffer.training_objects is not None
-    assert isinstance(buffer.training_objects, StatePairs)
-    assert len(buffer) == 5
-    assert "statepairs" in repr(buffer)
+    assert isinstance(buffer.training_objects, StatesContainer)
+    assert len(buffer) == 10
+    print(repr(buffer))
+    assert "statescontainer" in repr(buffer)
 
 
 def test_capacity_limit(simple_env, trajectories):
@@ -216,7 +223,7 @@ def test_add_with_diversity(simple_env, trajectories):
     for i in range(3):
         new_traj = Trajectories(
             simple_env,
-            states=state_class(torch.randn(1, 1, 2)),
+            states=state_class(torch.randn(2, 1, 2)),
             actions=action_class(torch.ones(1, 1, 1)),
             log_probs=torch.zeros(1, 1),
             log_rewards=torch.tensor([i + 10], dtype=torch.float),
@@ -253,14 +260,15 @@ def test_skip_diversity_check(simple_env, trajectories):
     for i in range(3):
         new_traj = Trajectories(
             simple_env,
-            states=state_class(torch.randn(1, 1, 2)),
+            states=state_class(torch.randn(2, 1, 2)),
             actions=action_class(torch.ones(1, 1, 1)),
             log_probs=torch.zeros(1, 1),
             log_rewards=torch.tensor([i + 10], dtype=torch.float),
             terminating_idx=torch.tensor([1], dtype=torch.long),
         )
         better_trajs.extend(new_traj)
-    # Add better trajectories - they should replace lower reward ones
+
+    # Add better trajectories - they should replace lower reward ones.
     buffer.add(better_trajs)
 
     # The buffer should contain the highest reward trajectories
