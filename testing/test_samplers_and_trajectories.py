@@ -431,6 +431,3 @@ def test_states_actions_tns_to_traj():
 #             },
 #             batch_size=states.batch_shape,
 #         )
-
-if __name__ == "__main__":
-    test_to_transition(env_name="HyperGrid")
