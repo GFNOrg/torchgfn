@@ -71,7 +71,12 @@ class HypergridArgs(CommonArgs):
 @dataclass
 class BoxArgs(CommonArgs):
     delta: float = 0.25
+    min_concentration: float = 0.1
+    max_concentration: float = 5.1
+    n_components: int = 2
+    n_components_s0: int = 4
     gamma_scheduler: float = 0.5
+    scheduler_milestone: int = 2500
     lr_F: float = 1e-2
     use_local_search: bool = False
 
