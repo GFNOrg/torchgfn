@@ -7,10 +7,10 @@ from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
-from gfn.utils.common import has_log_probs
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
+    warn_about_recalculating_logprobs,
 )
 from gfn.utils.prob_calculations import get_transition_pfs_and_pbs
 
@@ -80,14 +80,14 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             )
 
     def get_pfs_and_pbs(
-        self, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return get_transition_pfs_and_pbs(
             self.pf, self.pb, transitions, recalculate_all_logprobs
         )
 
     def get_scores(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Given a batch of transitions, calculate the scores.
 
@@ -174,12 +174,14 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         return log_pf_actions, log_pb_actions, scores
 
     def loss(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> torch.Tensor:
         """Detailed balance loss.
 
         The detailed balance loss is described in section
-        3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266)."""
+        3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
+        """
+        warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
         _, _, scores = self.get_scores(env, transitions, recalculate_all_logprobs)
         loss = torch.mean(scores**2)
 
@@ -201,7 +203,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     """
 
     def get_scores(
-        self, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> torch.Tensor:
         """DAG-GFN-style detailed balance, when all states are connected to the sink.
 
@@ -235,7 +237,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         pf_dist = self.pf.to_probability_distribution(states, module_output)
 
-        if has_log_probs(transitions) and not recalculate_all_logprobs:
+        if transitions.has_log_probs and not recalculate_all_logprobs:
             valid_log_pf_actions = transitions[mask].log_probs
             assert valid_log_pf_actions is not None
         else:
@@ -287,9 +289,10 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         return scores
 
     def loss(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> torch.Tensor:
         """Calculates the modified detailed balance loss."""
+        warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
         scores = self.get_scores(
             transitions, recalculate_all_logprobs=recalculate_all_logprobs
         )

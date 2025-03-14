@@ -252,7 +252,9 @@ def main(args):  # noqa: C901
         )
 
         optimizer.zero_grad()
-        loss = gflownet.loss_from_trajectories(env, trajectories)
+        loss = gflownet.loss_from_trajectories(
+            env, trajectories, recalculate_all_logprobs=False
+        )
         loss.backward()
         for p in gflownet.parameters():
             if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.

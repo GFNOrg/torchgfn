@@ -296,7 +296,9 @@ def test_to_transition(env_name: str):
         bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
         # evaluate with pf_estimator
         backward_traj_pfs = get_trajectory_pfs(
-            pf=pf_estimator, trajectories=bwd_trajectories
+            pf=pf_estimator,
+            trajectories=bwd_trajectories,
+            recalculate_all_logprobs=False,
         )
         bwd_trajectories.log_probs = backward_traj_pfs
         _ = bwd_trajectories.to_transitions()
@@ -429,3 +431,6 @@ def test_states_actions_tns_to_traj():
 #             },
 #             batch_size=states.batch_shape,
 #         )
+
+if __name__ == "__main__":
+    test_to_transition(env_name="HyperGrid")

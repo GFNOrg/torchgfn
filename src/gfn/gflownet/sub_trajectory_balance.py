@@ -10,6 +10,7 @@ from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
+    warn_about_recalculating_logprobs,
 )
 
 ContributionsTensor = (
@@ -276,7 +277,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        recalculate_all_logprobs: bool = False,
+        recalculate_all_logprobs: bool = True,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Scores all submitted trajectories.
 
@@ -514,8 +515,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        recalculate_all_logprobs: bool = False,
+        recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
+        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
             env, trajectories, recalculate_all_logprobs=recalculate_all_logprobs

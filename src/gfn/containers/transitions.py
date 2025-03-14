@@ -252,7 +252,12 @@ class Transitions(Container):
         is_terminating = self.is_terminating[index]
         next_states = self.next_states[index]
         log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
-        log_probs = self.log_probs[index] if self.log_probs is not None else None
+
+        # Only return logprobs if they exist.
+        if self.has_log_probs:
+            log_probs = self.log_probs[index]  # type: ignore
+        else:
+            log_probs = None
 
         return Transitions(
             env=self.env,

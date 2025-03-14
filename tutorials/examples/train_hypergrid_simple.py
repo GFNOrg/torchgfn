@@ -66,7 +66,7 @@ def main(args):
         )
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, trajectories)
+        loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
         loss.backward()
         optimizer.step()
         if (it + 1) % args.validation_interval == 0:

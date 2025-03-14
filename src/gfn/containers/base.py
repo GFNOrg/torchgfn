@@ -65,3 +65,11 @@ class Container(ABC):
     @abstractmethod
     def log_rewards(self) -> torch.Tensor:
         """Returns the rewards of the container."""
+
+    @property
+    def has_log_probs(self) -> bool:
+        """Returns whether the trajectories have log probabilities."""
+        if not hasattr(self, "log_probs"):
+            return False
+
+        return self.log_probs is not None and self.log_probs.nelement() > 0

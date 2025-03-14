@@ -215,7 +215,9 @@ def train(env, gflownet, seed):
             epsilon=exploration_rate,
         )
         optimizer.zero_grad()
-        loss = gflownet.loss_from_trajectories(env, trajectories)
+        loss = gflownet.loss_from_trajectories(
+            env, trajectories, recalculate_all_logprobs=False
+        )
         loss.backward()
         optimizer.step()
         pbar.set_postfix({"loss": loss.item()})
