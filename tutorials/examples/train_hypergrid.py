@@ -240,7 +240,9 @@ def main(args):  # noqa: C901
 
         optimizer.zero_grad()
         gflownet = cast(GFlowNet, gflownet)
-        loss = gflownet.loss(env, training_objects)
+        loss = gflownet.loss(
+            env, training_objects, recalculate_all_logprobs=args.replay_buffer_size > 0
+        )
         loss.backward()
         optimizer.step()
         last_states = trajectories.last_states

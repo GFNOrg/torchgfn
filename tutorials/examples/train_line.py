@@ -249,7 +249,7 @@ def train(
             scale_factor=scale_schedule[iteration],  # Off policy kwargs.
         )
         training_samples = gflownet.to_training_samples(trajectories)
-        loss = gflownet.loss(env, training_samples)
+        loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
         loss.backward()
 
         # Gradient Clipping.

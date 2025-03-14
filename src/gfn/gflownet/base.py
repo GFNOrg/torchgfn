@@ -97,6 +97,8 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         Args:
             env: The environment to compute the loss for
             trajectories: The trajectories to compute the loss from
+            recalculate_all_logprobs: If True, always recalculate logprobs even
+                if they exist. If False, use existing logprobs when available.
 
         Returns:
             torch.Tensor: The computed loss

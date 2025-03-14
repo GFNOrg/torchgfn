@@ -89,7 +89,7 @@ def main(args):
         )
         training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
+        loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
         loss.backward()
         optimizer.step()
 
