@@ -53,6 +53,7 @@ class HypergridArgs(CommonArgs):
     R2: float = 2.0
     loss: str = "TB"
     replay_buffer_size: int = 0
+    plot: bool = False
 
 
 @dataclass
