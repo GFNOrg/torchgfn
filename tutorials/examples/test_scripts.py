@@ -46,12 +46,13 @@ class DiscreteEBMArgs(CommonArgs):
 
 @dataclass
 class HypergridArgs(CommonArgs):
-    ndim: int = 2
     height: int = 8
+    loss: str = "TB"
+    ndim: int = 2
+    plot: bool = False
     R0: float = 0.1
     R1: float = 0.5
     R2: float = 2.0
-    loss: str = "TB"
     replay_buffer_size: int = 0
 
 
