@@ -149,14 +149,9 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             p_norm_distance: p-norm distance value to pass to torch.cdist, for the
                 determination of novel states.
         """
-        super().__init__(env, capacity)
+        super().__init__(env, capacity, prioritized=True)
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
-        self._prioritized = True
-
-    @property
-    def prioritized(self) -> bool:
-        return self._prioritized
 
     def add(self, training_objects: ContainerUnion):
         """Adds a training object to the buffer."""
@@ -192,7 +187,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             training_objects = training_objects[idx_bigger_rewards]
 
             # TODO: Concatenate input with final state for conditional GFN.
-            if self.is_conditional:
+            if training_objects.conditioning:
                 raise NotImplementedError(
                     "{instance.__class__.__name__} does not yet support conditional GFNs."
                 )

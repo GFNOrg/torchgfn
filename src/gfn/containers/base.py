@@ -5,10 +5,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-    from gfn.env import Env
     from gfn.states import States
 
 import torch
+
+from gfn.env import Env
 
 
 class Container(ABC):
