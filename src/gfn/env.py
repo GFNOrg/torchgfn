@@ -332,12 +332,13 @@ class Env(ABC):
 
 
 class DiscreteEnv(Env, ABC):
-    """
-    Base class for discrete environments, where actions are represented by a number in
+    """Base class for discrete environments, where actions are represented by a number in
     {0, ..., n_actions - 1}, the last one being the exit action.
 
-    `DiscreteEnv` allows for  specifying the validity of actions (forward and backward),
-    via mask tensors, that are directly attached to `States` objects.
+    For a guide on creating your own environments, see the documentation at:
+    :doc:`guides/creating_environments`
+
+    For a complete example, see the HyperGrid environment in src/gfn/gym/hypergrid.py
     """
 
     s0: torch.Tensor  # this tells the type checker that s0 is a torch.Tensor
@@ -348,6 +349,7 @@ class DiscreteEnv(Env, ABC):
         n_actions: int,
         s0: torch.Tensor,
         state_shape: Tuple | int,
+        # Advanced parameters (optional):
         action_shape: Tuple | int = (1,),
         dummy_action: Optional[torch.Tensor] = None,
         exit_action: Optional[torch.Tensor] = None,
@@ -355,7 +357,6 @@ class DiscreteEnv(Env, ABC):
         preprocessor: Optional[Preprocessor] = None,
     ):
         """Initializes a discrete environment.
-
         Args:
             n_actions: The number of actions in the environment.
             s0: Tensor of shape "state_shape" representing the initial state (shared among all trajectories).
@@ -367,6 +368,22 @@ class DiscreteEnv(Env, ABC):
             device_str: String representation of a torch.device.
             preprocessor: An optional preprocessor for intermediate states.
         """
+        # Add validation/warnings for advanced usage
+        if (
+            dummy_action is not None
+            or exit_action is not None
+            or sf is not None
+            or preprocessor is not None
+        ):
+            import warnings
+
+            warnings.warn(
+                "You're using advanced parameters (dummy_action/exit_action/sf/preprocessor). "
+                "These are only needed for custom action handling. "
+                "For basic environments, you can omit these.",
+                UserWarning,
+            )
+
         # The default dummy action is -1.
         if dummy_action is None:
             dummy_action = torch.tensor([-1], device=s0.device)
