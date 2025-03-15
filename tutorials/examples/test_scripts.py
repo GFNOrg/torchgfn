@@ -3,9 +3,8 @@
 # or JSD between the learned distribution and the target distribution is below a
 # certain threshold.
 
-from dataclasses import dataclass
 from argparse import Namespace
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 
 import numpy as np
 import pytest
