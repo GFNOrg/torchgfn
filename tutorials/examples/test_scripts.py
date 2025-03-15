@@ -4,6 +4,8 @@
 # certain threshold.
 
 from dataclasses import dataclass
+from argparse import Namespace
+from dataclasses import asdict
 
 import numpy as np
 import pytest
@@ -149,9 +151,9 @@ def test_box(delta: float, loss: str):
         validation_interval=validation_interval,
         validation_samples=validation_samples,
     )
-
-    print(args)
-    final_jsd = train_box_main(args)
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    final_jsd = train_box_main(namespace_args)
 
     if loss == "TB" and delta == 0.1:
         # TODO: This value seems to be machine dependent. Either that or is is

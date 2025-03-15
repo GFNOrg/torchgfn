@@ -88,7 +88,7 @@ def estimate_jsd(kde1: KernelDensity, kde2: KernelDensity) -> float:
     return jsd / 2.0
 
 
-def main(args: Namespace) -> None:  # noqa: C901
+def main(args: Namespace) -> float:  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
 
