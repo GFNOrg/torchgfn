@@ -92,6 +92,21 @@ def test_hypergrid_tb(ndim: int, height: int):
         ), f"final_l1_dist: {final_l1_dist}"
 
 
+@pytest.mark.parametrize("ndim", [2, 4])
+def test_hypergrid_fm(ndim: int):
+    n_trajectories = 64000
+    args = HypergridArgs(loss="FM", ndim=ndim, height=8, n_trajectories=n_trajectories)
+    final_l1_dist = train_hypergrid_main(args)
+    if ndim == 2:
+        assert np.isclose(
+            final_l1_dist, 5.1e-4, atol=1e-3
+        ), f"final_l1_dist: {final_l1_dist}"
+    elif ndim == 4:
+        assert np.isclose(
+            final_l1_dist, 6.28e-5, atol=1e-3
+        ), f"final_l1_dist: {final_l1_dist}"
+
+
 @pytest.mark.parametrize("loss", ["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"])
 @pytest.mark.parametrize("replay_buffer_size", [0, 10, 100])
 def test_hypergrid_losses_and_replay_buffer(loss: str, replay_buffer_size: int):
