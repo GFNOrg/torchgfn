@@ -379,7 +379,7 @@ def main(args):  # noqa: C901
         ax1.set_title("True Distribution")
 
         # Learned reward distribution
-        im2 = ax2.imshow(
+        _ = ax2.imshow(
             learned_dist,
             cmap="viridis",
             interpolation="none",
