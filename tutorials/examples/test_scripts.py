@@ -70,8 +70,8 @@ class BoxArgs(CommonArgs):
 
 @pytest.mark.parametrize("ndim", [2, 4])
 @pytest.mark.parametrize("height", [8, 16])
-def test_hypergrid(ndim: int, height: int):
-    n_trajectories = 64000  # if ndim == 2 else 16000
+def test_hypergrid_tb(ndim: int, height: int):
+    n_trajectories = 64000
     args = HypergridArgs(ndim=ndim, height=height, n_trajectories=n_trajectories)
     final_l1_dist = train_hypergrid_main(args)
     if ndim == 2 and height == 8:
