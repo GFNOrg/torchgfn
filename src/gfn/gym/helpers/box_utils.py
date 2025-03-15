@@ -30,6 +30,15 @@ class QuarterCircle(Distribution):
     This is useful for the `Box` environment.
     """
 
+    delta: float
+    northeastern: bool
+    n_states: int
+    n_components: int
+    centers: States
+    base_dist: MixtureSameFamily
+    min_angles: Tensor
+    max_angles: Tensor
+
     def __init__(
         self,
         delta: float,
