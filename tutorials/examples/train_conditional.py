@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from argparse import ArgumentParser
+from typing import Tuple
 
 import torch
 from torch.optim import Adam
@@ -20,10 +21,20 @@ from gfn.modules import (
 )
 from gfn.utils.modules import MLP
 
-DEFAULT_SEED = 4444
+DEFAULT_SEED: int = 4444
 
 
-def build_conditional_pf_pb(env):
+def build_conditional_pf_pb(
+    env: HyperGrid,
+) -> Tuple[ConditionalDiscretePolicyEstimator, ConditionalDiscretePolicyEstimator]:
+    """Build conditional policy forward and backward estimators.
+
+    Args:
+        env: The HyperGrid environment
+
+    Returns:
+        A tuple of (forward policy estimator, backward policy estimator)
+    """
     CONCAT_SIZE = 16
     module_PF = MLP(
         input_dim=env.preprocessor.output_dim,
@@ -75,7 +86,17 @@ def build_conditional_pf_pb(env):
     return pf_estimator, pb_estimator
 
 
-def build_conditional_logF_scalar_estimator(env):
+def build_conditional_logF_scalar_estimator(
+    env: HyperGrid,
+) -> ConditionalScalarEstimator:
+    """Build conditional log flow estimator.
+
+    Args:
+        env: The HyperGrid environment
+
+    Returns:
+        A conditional scalar estimator for log flow
+    """
     CONCAT_SIZE = 16
     module_state_logF = MLP(
         input_dim=env.preprocessor.output_dim,
@@ -107,7 +128,15 @@ def build_conditional_logF_scalar_estimator(env):
 
 
 # Build the GFlowNet -- Modules pre-concatenation.
-def build_tb_gflownet(env):
+def build_tb_gflownet(env: HyperGrid) -> TBGFlowNet:
+    """Build a Trajectory Balance GFlowNet.
+
+    Args:
+        env: The HyperGrid environment
+
+    Returns:
+        A TBGFlowNet instance
+    """
     pf_estimator, pb_estimator = build_conditional_pf_pb(env)
 
     module_logZ = MLP(
