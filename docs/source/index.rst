@@ -6,3 +6,4 @@
    :maxdepth: 4
 
    self
+   guides/creating_environments
