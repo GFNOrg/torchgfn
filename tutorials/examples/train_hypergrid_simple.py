@@ -1,4 +1,19 @@
 #!/usr/bin/env python
+r"""
+A simplified version of GFlowNet training on the HyperGrid environment, focusing on the core concepts.
+This script implements Trajectory Balance (TB) training with minimal features to aid understanding.
+
+Example usage:
+python train_hypergrid_simple.py --ndim 2 --height 8 --epsilon 0.1
+
+Key differences from the full version:
+- Only implements TB loss
+- No replay buffer
+- No wandb integration
+- Simpler architecture with shared trunks
+- Basic command line options
+"""
+
 import argparse
 from typing import cast
 
