@@ -2,7 +2,7 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from typing import Literal, Tuple, List
+from typing import List, Literal, Tuple
 
 import torch
 from einops import rearrange

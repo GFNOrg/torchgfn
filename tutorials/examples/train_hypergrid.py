@@ -17,11 +17,11 @@ distribution for the HyperGrid environment, which is useful for evaluation and v
 from argparse import ArgumentParser
 from typing import cast
 
+import matplotlib.pyplot as plt
 import torch
 import wandb
-from tqdm import tqdm, trange
-import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+from tqdm import tqdm, trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.gflownet import (
@@ -34,7 +34,7 @@ from gfn.gflownet import (
     TBGFlowNet,
 )
 from gfn.gym import HyperGrid
-from gfn.modules import DiscretePolicyEstimator, ScalarEstimator, GFNModule
+from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
