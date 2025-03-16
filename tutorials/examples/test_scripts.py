@@ -3,7 +3,8 @@
 # or JSD between the learned distribution and the target distribution is below a
 # certain threshold.
 
-from dataclasses import dataclass
+from argparse import Namespace
+from dataclasses import asdict, dataclass
 
 import numpy as np
 import pytest
@@ -54,6 +55,7 @@ class HypergridArgs(CommonArgs):
     R1: float = 0.5
     R2: float = 2.0
     replay_buffer_size: int = 0
+    plot: bool = False
 
 
 @dataclass
@@ -71,41 +73,78 @@ class BoxArgs(CommonArgs):
 
 @pytest.mark.parametrize("ndim", [2, 4])
 @pytest.mark.parametrize("height", [8, 16])
-def test_hypergrid_tb(ndim: int, height: int):
+@pytest.mark.parametrize("replay_buffer_size", [0, 1000])
+def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
     n_trajectories = 64000
-    args = HypergridArgs(ndim=ndim, height=height, n_trajectories=n_trajectories)
+    args = HypergridArgs(
+        ndim=ndim,
+        height=height,
+        n_trajectories=n_trajectories,
+        replay_buffer_size=replay_buffer_size,
+    )
     final_l1_dist = train_hypergrid_main(args)
     if ndim == 2 and height == 8:
-        assert np.isclose(
-            final_l1_dist, 8.78e-4, atol=1e-3
-        ), f"final_l1_dist: {final_l1_dist}"
+        if replay_buffer_size == 0:
+            assert np.isclose(
+                final_l1_dist, 8.78e-4, atol=1e-3
+            ), f"final_l1_dist: {final_l1_dist}"
+        else:
+            assert np.isclose(
+                final_l1_dist, 6.68e-4, atol=1e-3
+            ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 2 and height == 16:
+        if replay_buffer_size != 0:
+            pytest.skip("Skipping test for replay buffer size != 0")
         assert np.isclose(
             final_l1_dist, 2.62e-4, atol=1e-3
         ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 4 and height == 8:
-        assert np.isclose(
-            final_l1_dist, 1.6e-4, atol=1e-3
-        ), f"final_l1_dist: {final_l1_dist}"
+        if replay_buffer_size == 0:
+            assert np.isclose(
+                final_l1_dist, 1.6e-4, atol=1e-3
+            ), f"final_l1_dist: {final_l1_dist}"
+        else:
+            assert np.isclose(
+                final_l1_dist, 6.65e-5, atol=1e-3
+            ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 4 and height == 16:
+        if replay_buffer_size != 0:
+            pytest.skip("Skipping test for replay buffer size != 0")
         assert np.isclose(
             final_l1_dist, 6.89e-6, atol=1e-5
         ), f"final_l1_dist: {final_l1_dist}"
 
 
 @pytest.mark.parametrize("ndim", [2, 4])
-def test_hypergrid_fm(ndim: int):
+@pytest.mark.parametrize("replay_buffer_size", [0, 100])
+def test_hypergrid_fm(ndim: int, replay_buffer_size: int):
     n_trajectories = 64000
-    args = HypergridArgs(loss="FM", ndim=ndim, height=8, n_trajectories=n_trajectories)
+    args = HypergridArgs(
+        loss="FM",
+        ndim=ndim,
+        height=8,
+        n_trajectories=n_trajectories,
+        replay_buffer_size=replay_buffer_size,
+    )
     final_l1_dist = train_hypergrid_main(args)
     if ndim == 2:
-        assert np.isclose(
-            final_l1_dist, 5.1e-4, atol=1e-3
-        ), f"final_l1_dist: {final_l1_dist}"
+        if replay_buffer_size == 0:
+            assert np.isclose(
+                final_l1_dist, 5.1e-4, atol=1e-3
+            ), f"final_l1_dist: {final_l1_dist}"
+        else:
+            assert np.isclose(
+                final_l1_dist, 9.85e-4, atol=1e-3
+            ), f"final_l1_dist: {final_l1_dist}"
     elif ndim == 4:
-        assert np.isclose(
-            final_l1_dist, 6.28e-5, atol=1e-3
-        ), f"final_l1_dist: {final_l1_dist}"
+        if replay_buffer_size == 0:
+            assert np.isclose(
+                final_l1_dist, 6.28e-5, atol=1e-3
+            ), f"final_l1_dist: {final_l1_dist}"
+        else:
+            assert np.isclose(
+                final_l1_dist, 9.47e-5, atol=1e-3
+            ), f"final_l1_dist: {final_l1_dist}"
 
 
 @pytest.mark.parametrize("loss", ["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"])
@@ -165,9 +204,9 @@ def test_box(delta: float, loss: str):
         validation_interval=validation_interval,
         validation_samples=validation_samples,
     )
-
-    print(args)
-    final_jsd = train_box_main(args)
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    final_jsd = train_box_main(namespace_args)
 
     if loss == "TB" and delta == 0.1:
         # TODO: This value seems to be machine dependent. Either that or is is
