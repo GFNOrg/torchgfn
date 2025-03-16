@@ -47,8 +47,9 @@ class ReplayBuffer:
 
     def add(self, training_objects: ContainerUnion) -> None:
         """Adds a training object to the buffer."""
-        if not isinstance(training_objects, ValidContainerTypes):  # type: ignore
+        if not isinstance(training_objects, ValidContainerTypes):
             raise TypeError("Must be a container type")
+
         self._add_objs(training_objects)
 
     def __repr__(self):
@@ -96,10 +97,12 @@ class ReplayBuffer:
 
             # Ascending sort.
             ix = torch.argsort(self.training_objects.log_rewards)
-            self.training_objects = cast(ContainerUnion, self.training_objects[ix])  # type: ignore
+            self.training_objects = cast(ContainerUnion, self.training_objects[ix])
 
         assert self.training_objects is not None
-        self.training_objects = cast(ContainerUnion, self.training_objects[-self.capacity :])  # type: ignore
+        self.training_objects = cast(
+            ContainerUnion, self.training_objects[-self.capacity :]
+        )
 
     def sample(self, n_trajectories: int) -> ContainerUnion:
         """Samples `n_trajectories` training objects from the buffer."""
@@ -116,6 +119,11 @@ class ReplayBuffer:
         """Loads the buffer from disk."""
         if self.training_objects is not None:
             self.training_objects.load(os.path.join(directory, "training_objects"))
+
+    @property
+    def device(self) -> torch.device:
+        assert self.training_objects is not None, "Buffer is empty, it has no device!"
+        return self.training_objects.device
 
 
 class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
@@ -144,7 +152,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             capacity: the size of the buffer.
             cutoff_distance: threshold used to determine if new terminating_states are
                 different enough from those already contained in the buffer. If the
-                cutoff is negative, all diversity caclulations are skipped (since all
+                cutoff is negative, all diversity calculations are skipped (since all
                 norms are >= 0).
             p_norm_distance: p-norm distance value to pass to torch.cdist, for the
                 determination of novel states.
@@ -155,7 +163,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
 
     def add(self, training_objects: ContainerUnion):
         """Adds a training object to the buffer."""
-        if not isinstance(training_objects, ValidContainerTypes):  # type: ignore
+        if not isinstance(training_objects, ValidContainerTypes):
             raise TypeError("Must be a container type")
 
         to_add = len(training_objects)
