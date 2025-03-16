@@ -449,11 +449,7 @@ class Trajectories(Container):
         )
 
     def to_states_container(self) -> StatesContainer:
-        """Returns a `StatesContainer` object from the trajectories.
-
-        Returns:
-            StatesContainer: A StatesContainer object containing all valid states.
-        """
+        """Returns a `StatesContainer` object from the trajectories."""
         if not isinstance(self.states, DiscreteStates):
             raise TypeError("to_states_container only works with DiscreteStates")
 
@@ -486,7 +482,25 @@ class Trajectories(Container):
                 dtype=torch.float,
                 device=states.device,
             )
-            log_rewards[is_terminating] = self.log_rewards
+            # Get the original indices (before flattening and filtering).
+            orig_batch_indices = torch.arange(
+                self.states.batch_shape[0], device=states.device
+            ).repeat_interleave(self.states.batch_shape[1])
+            orig_traj_indices = torch.arange(
+                self.states.batch_shape[1], device=states.device
+            ).repeat(self.states.batch_shape[0])
+
+            # Retain only the valid indices.
+            valid_batch_indices = orig_batch_indices[is_valid]
+            valid_traj_indices = orig_traj_indices[is_valid]
+
+            # Assign rewards to valid terminating states.
+            terminating_mask = is_terminating & (
+                valid_batch_indices == (self.terminating_idx[valid_traj_indices] - 1)
+            )
+            log_rewards[terminating_mask] = self.log_rewards[
+                valid_traj_indices[terminating_mask]
+            ]
 
         return StatesContainer[DiscreteStates](
             env=self.env,

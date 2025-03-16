@@ -340,3 +340,65 @@ These methods are defined in `src/gfn/gflownet/base.py` and are abstract methods
 **Testing**
 
 Remember to create unit tests for your new GFlowNet to ensure it works as intended and integrates seamlessly with other parts of the codebase. This ensures maintainability and reliability of the code!
+
+
+## Training Examples
+
+The repository includes several example environments and training scripts. Below are three different implementations of training on the HyperGrid environment, which serve as good starting points for understanding GFlowNets:
+
+1. `tutorials/examples/train_hypergrid.py`: The main training script with full features:
+   - Multiple loss functions (FM, TB, DB, SubTB, ZVar, ModifiedDB)
+   - Weights & Biases integration for experiment tracking
+   - Support for replay buffers (including prioritized)
+   - Visualization capabilities for 2D environments:
+     * True probability distribution
+     * Learned probability distribution
+     * L1 distance evolution over training
+   - Various hyperparameter options
+   - Reproduces results from multiple papers (see script docstring)
+
+2. `tutorials/examples/train_hypergrid_simple.py`: A simplified version focused on core concepts:
+   - Uses only Trajectory Balance (TB) loss
+   - Minimal architecture with shared trunks
+   - No extra features (no replay buffer, no wandb)
+   - Great starting point for understanding GFlowNets
+
+3. `tutorials/examples/train_hypergrid_simple_ls.py`: Demonstrates advanced sampling strategies:
+   - Implements local search sampling
+   - Configurable local search parameters
+   - Optional Metropolis-Hastings acceptance criterion
+   - Shows how to extend basic GFlowNet training with sophisticated sampling
+
+Other environments available in the package include:
+- Discrete Energy Based Model: A simple environment for learning energy-based distributions
+- Box Environment: A continuous environment for sampling from distributions in bounded spaces
+- Custom environments can be added by following the environment creation guide in `tutorials/ENV.md`
+
+## Usage Examples
+
+To train with Weights & Biases tracking:
+```bash
+python tutorials/examples/train_hypergrid.py --ndim 4 --height 8 --wandb_project your_project_name
+```
+
+To train with visualization (2D environments only):
+```bash
+python tutorials/examples/train_hypergrid.py --ndim 2 --height 8 --plot
+```
+
+To try the simple version with epsilon-greedy exploration:
+```bash
+python tutorials/examples/train_hypergrid_simple.py --ndim 2 --height 8 --epsilon 0.1
+```
+
+To experiment with local search:
+```bash
+python tutorials/examples/train_hypergrid_simple_ls.py --ndim 2 --height 8 --n_local_search_loops 2 --back_ratio 0.5 --use_metropolis_hastings
+```
+
+For more options and configurations, check the help of each script:
+```bash
+python tutorials/examples/train_hypergrid.py --help
+python tutorials/examples/train_hypergrid_simple.py --help
+python tutorials/examples/train_hypergrid_simple_ls.py --help
+```
