@@ -84,6 +84,8 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             AssertionError: If the batch shape is not linear.
             AssertionError: If any state is at $s_0$.
         """
+        if len(states) == 0:
+            return torch.tensor(0.0, device=states.device)
 
         assert len(states.batch_shape) == 1
         assert not torch.any(states.is_initial_state)
@@ -164,6 +166,8 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         log_rewards: torch.Tensor | None,
     ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
+        if len(terminating_states) == 0:
+            return torch.tensor(0.0, device=terminating_states.device)
         del env  # Unused
 
         if conditioning is not None:

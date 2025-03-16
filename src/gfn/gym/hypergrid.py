@@ -2,7 +2,7 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from typing import Literal, Tuple
+from typing import List, Literal, Tuple
 
 import torch
 from einops import rearrange
@@ -198,6 +198,22 @@ class HyperGrid(DiscreteEnv):
         true_dist = self.reward(all_states)
         true_dist /= true_dist.sum()
         return true_dist
+
+    def all_indices(self) -> List[Tuple[int, ...]]:
+        """Generate all possible indices for the grid.
+
+        Returns:
+            List of index tuples representing all possible grid positions
+        """
+
+        def _all_indices(dim: int, height: int) -> List[Tuple[int, ...]]:
+            if dim == 1:
+                return [(i,) for i in range(height)]
+            return [
+                (i, *j) for i in range(height) for j in _all_indices(dim - 1, height)
+            ]
+
+        return _all_indices(self.ndim, self.height)
 
     @property
     def log_partition(self) -> float:
