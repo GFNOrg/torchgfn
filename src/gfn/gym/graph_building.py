@@ -34,13 +34,13 @@ class GraphBuilding(GraphEnv):
             x=torch.zeros((0, feature_dim), dtype=torch.float32),
             edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,
+            device=device_str,  # TODO: can we use a device object?
         )
         sf = GeometricData(
             x=torch.ones((1, feature_dim), dtype=torch.float32) * float("inf"),
             edge_attr=torch.ones((0, feature_dim), dtype=torch.float32) * float("inf"),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,
+            device=device_str,  # TODO: can we use a device object?
         )
 
         self.state_evaluator = state_evaluator

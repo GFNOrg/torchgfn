@@ -12,6 +12,7 @@ Key components:
 
 import math
 import time
+from argparse import Namespace
 from typing import Optional
 
 import matplotlib.pyplot as plt
@@ -351,7 +352,13 @@ class RingGraphBuilding(GraphBuilding):
         directed: Whether the graph should be directed.
     """
 
-    def __init__(self, n_nodes: int, state_evaluator: callable, directed: bool):
+    def __init__(
+        self,
+        n_nodes: int,
+        state_evaluator: callable,
+        directed: bool,
+        device: torch.device,
+    ):
         self.n_nodes = n_nodes
         if directed:
             # all off-diagonal edges + exit.
@@ -362,6 +369,7 @@ class RingGraphBuilding(GraphBuilding):
         super().__init__(feature_dim=n_nodes, state_evaluator=state_evaluator)
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
         self.is_directed = directed
+        self.device = device
 
     def make_actions_class(self) -> type[Actions]:
         env = self
@@ -376,8 +384,8 @@ class RingGraphBuilding(GraphBuilding):
             """
 
             action_shape = (1,)
-            dummy_action = torch.tensor([env.n_actions])
-            exit_action = torch.tensor([env.n_actions - 1])
+            dummy_action = torch.tensor([env.n_actions]).to(env.device)
+            exit_action = torch.tensor([env.n_actions - 1]).to(env.device)
 
         return RingActions
 
@@ -408,15 +416,19 @@ class RingGraphBuilding(GraphBuilding):
                 x=torch.arange(env.n_nodes)[:, None],
                 edge_attr=torch.ones((0, 1)),
                 edge_index=torch.ones((2, 0), dtype=torch.long),
+            ).to(
+                env.device  # type: ignore # TODO: does this work with multi-gpu?
             )
             sf = GeometricData(
                 x=-torch.ones(env.n_nodes)[:, None],
                 edge_attr=torch.zeros((0, 1)),
                 edge_index=torch.zeros((2, 0), dtype=torch.long),
+            ).to(
+                env.device  # type: ignore
             )
 
             def __init__(self, tensor: GeometricBatch):
-                self.tensor = tensor
+                self.tensor = tensor.to(env.device.type)
                 self.node_features_dim = tensor.x.shape[-1]
                 self.edge_features_dim = tensor.edge_attr.shape[-1]
                 self._log_rewards: Optional[float] = None
@@ -441,7 +453,9 @@ class RingGraphBuilding(GraphBuilding):
                     Tensor: Boolean mask of shape [batch_size, n_actions] where True indicates valid actions
                 """
                 # Allow all actions.
-                forward_masks = torch.ones(len(self), self.n_actions, dtype=torch.bool)
+                forward_masks = torch.ones(
+                    len(self), self.n_actions, dtype=torch.bool, device=self.device
+                )
 
                 if env.is_directed:
                     i_up, j_up = torch.triu_indices(
@@ -452,8 +466,8 @@ class RingGraphBuilding(GraphBuilding):
                     )  # Lower triangle.
 
                     # Combine them
-                    ei0 = torch.cat([i_up, i_lo])
-                    ei1 = torch.cat([j_up, j_lo])
+                    ei0 = torch.cat([i_up, i_lo]).to(self.device.type)
+                    ei1 = torch.cat([j_up, j_lo]).to(self.device.type)
                 else:
                     ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
 
@@ -463,12 +477,12 @@ class RingGraphBuilding(GraphBuilding):
                     assert torch.all(existing_edges >= 0)  # TODO: convert to test.
 
                     if existing_edges.numel() == 0:
-                        edge_idx = torch.zeros(0, dtype=torch.bool)
+                        edge_idx = torch.zeros(0, dtype=torch.bool).to(self.device)
                     else:
                         edge_idx = torch.logical_and(
                             existing_edges[0][..., None] == ei0[None],
                             existing_edges[1][..., None] == ei1[None],
-                        )
+                        ).to(self.device)
 
                         # Collapse across the edge dimension.
                         if len(edge_idx.shape) == 2:
@@ -504,7 +518,7 @@ class RingGraphBuilding(GraphBuilding):
                 # Disallow all actions.
                 backward_masks = torch.zeros(
                     len(self), self.n_actions - 1, dtype=torch.bool
-                )
+                ).to(self.device)
 
                 for i in range(len(self)):
                     existing_edges = self[i].tensor.edge_index
@@ -620,8 +634,8 @@ class RingGraphBuilding(GraphBuilding):
             ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
 
         # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
-        ei0 = torch.cat((ei0, torch.IntTensor([-1, -2])), dim=0)
-        ei1 = torch.cat((ei1, torch.IntTensor([-1, -2])), dim=0)
+        ei0 = torch.cat((ei0, torch.IntTensor([-1, -2])), dim=0).to(self.device)
+        ei1 = torch.cat((ei1, torch.IntTensor([-1, -2])), dim=0).to(self.device)
 
         # Indexes either the second last element (exit) or la
         # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
@@ -852,7 +866,7 @@ class AdjacencyPolicyModule(nn.Module):
             return torch.cat([edge_actions, exit_action], dim=-1)
 
 
-if __name__ == "__main__":
+def main(args: Namespace):
     """
     Main execution for training a GFlowNet to generate ring graphs.
 
@@ -873,32 +887,32 @@ if __name__ == "__main__":
     2. Train the GFlowNet using trajectory balance
     3. Visualize sample generated graphs
     """
-    N_NODES = 4
-    N_ITERATIONS = 200
-    LR = 0.001
-    BATCH_SIZE = 1024
-    DIRECTED = True
-    USE_BUFFER = False
-    USE_GNN = True  # Set to False to use MLP with adjacency matrices instead of GNN
-    NUM_CONV_LAYERS = 1
+    # TODO: add a parser.
+    device = torch.device(args.device)
 
-    state_evaluator = undirected_reward if not DIRECTED else directed_reward
+    state_evaluator = undirected_reward if not args.directed else directed_reward
     torch.random.manual_seed(7)
     env = RingGraphBuilding(
-        n_nodes=N_NODES, state_evaluator=state_evaluator, directed=DIRECTED
+        n_nodes=args.n_nodes,
+        state_evaluator=state_evaluator,
+        directed=args.directed,
+        device=device,
     )
 
     # Choose model type based on USE_GNN flag
-    if USE_GNN:
+    if args.use_gnn:
         module_pf = RingPolicyModule(
-            env.n_nodes, DIRECTED, num_conv_layers=NUM_CONV_LAYERS
+            env.n_nodes, args.directed, num_conv_layers=args.num_conv_layers
         )
         module_pb = RingPolicyModule(
-            env.n_nodes, DIRECTED, is_backward=True, num_conv_layers=NUM_CONV_LAYERS
+            env.n_nodes,
+            args.directed,
+            is_backward=True,
+            num_conv_layers=args.num_conv_layers,
         )
     else:
-        module_pf = AdjacencyPolicyModule(env.n_nodes, DIRECTED)
-        module_pb = AdjacencyPolicyModule(env.n_nodes, DIRECTED, is_backward=True)
+        module_pf = AdjacencyPolicyModule(env.n_nodes, args.directed)
+        module_pb = AdjacencyPolicyModule(env.n_nodes, args.directed, is_backward=True)
 
     pf = DiscretePolicyEstimator(
         module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
@@ -910,24 +924,24 @@ if __name__ == "__main__":
         is_backward=True,
     )
     gflownet = TBGFlowNet(pf, pb)
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=LR)
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
 
     replay_buffer = ReplayBuffer(
         env,
-        capacity=BATCH_SIZE,
+        capacity=args.batch_size,
         prioritized=True,
     )
 
     losses = []
 
     t1 = time.time()
-    for iteration in range(N_ITERATIONS):
+    for iteration in range(args.n_iterations):
         trajectories = gflownet.sample_trajectories(
             env,
-            n=BATCH_SIZE,
+            n=args.batch_size,
             save_logprobs=True,
-            epsilon=0.2 * (1 - iteration / N_ITERATIONS),
+            epsilon=0.2 * (1 - iteration / args.n_iterations),
         )
         training_samples = gflownet.to_training_samples(trajectories)
 
@@ -936,12 +950,14 @@ if __name__ == "__main__":
         assert isinstance(terminating_states, GraphStates)
         rewards = state_evaluator(terminating_states)
 
-        if USE_BUFFER:
+        if args.use_buffer:
             with torch.no_grad():
                 replay_buffer.add(training_samples)
                 if iteration > 20:
-                    training_samples = training_samples[: BATCH_SIZE // 2]
-                    buffer_samples = replay_buffer.sample(n_trajectories=BATCH_SIZE // 2)
+                    training_samples = training_samples[: args.batch_size // 2]
+                    buffer_samples = replay_buffer.sample(
+                        n_trajectories=args.batch_size // 2
+                    )
                     training_samples.extend(buffer_samples)  # type: ignore
 
         optimizer.zero_grad()
@@ -961,6 +977,23 @@ if __name__ == "__main__":
     print("Time:", t2 - t1)
 
     # This comes from the gflownet, not the buffer.
-    samples_to_render = trajectories.terminating_states[:8]
-    assert isinstance(samples_to_render, GraphStates)
-    render_states(samples_to_render, state_evaluator, DIRECTED)
+    if args.plot:
+        samples_to_render = trajectories.terminating_states[:8]
+        assert isinstance(samples_to_render, GraphStates)
+        render_states(samples_to_render, state_evaluator, args.directed)
+
+
+if __name__ == "__main__":
+    # TODO: add a parser.
+    args = Namespace(
+        n_nodes=4,
+        n_iterations=200,
+        lr=0.001,
+        batch_size=1024,
+        directed=True,
+        use_buffer=False,
+        use_gnn=True,  # Set to False to use MLP with adjacency matrices instead of GNN
+        num_conv_layers=1,
+        device="cpu",
+    )
+    main(args)

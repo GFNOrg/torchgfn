@@ -92,7 +92,9 @@ def main(args: Namespace) -> float:  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
 
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
 
     use_wandb = len(args.wandb_project) > 0
     if use_wandb:
@@ -102,7 +104,7 @@ def main(args: Namespace) -> float:  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
 
     # 1. Create the environment
-    env = Box(delta=args.delta, epsilon=1e-10, device_str=device_str)
+    env = Box(delta=args.delta, epsilon=1e-10, device=device)
 
     # 2. Create the gflownet.
     #    For this we need modules and estimators.
@@ -184,7 +186,7 @@ def main(args: Namespace) -> float:  # noqa: C901
         )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
-    gflownet = gflownet.to(device_str)
+    gflownet = gflownet.to(device)
 
     if not args.use_local_search:
         sampler = Sampler(estimator=pf_estimator)

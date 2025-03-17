@@ -221,6 +221,8 @@ class Env(ABC):
 
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
+        elif isinstance(batch_shape, list):
+            batch_shape = tuple(batch_shape)
         return self.states_from_batch_shape(
             batch_shape=batch_shape, random=random, sink=sink
         )
