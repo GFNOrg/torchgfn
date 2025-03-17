@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Sequence
 
 import torch
+from torch_geometric.data import Batch
 
 from gfn.actions import Actions
 from gfn.containers.base import Container
@@ -75,7 +76,11 @@ class Trajectories(Container):
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
         for obj in [states, actions]:
-            assert obj.tensor.device == device if obj is not None else True
+            if obj is not None:
+                if isinstance(obj.tensor, Batch):
+                    assert obj.tensor[0].x.device == device
+                else:
+                    assert obj.tensor.device == device
         for tensor in [
             conditioning,
             terminating_idx,
