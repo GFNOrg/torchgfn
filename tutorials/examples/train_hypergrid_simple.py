@@ -39,20 +39,16 @@ def main(args):
 
     # Build the GFlowNet.
     module_PF = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=env.n_states,
         output_dim=env.n_actions,
     )
     module_PB = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=env.n_states,
         output_dim=env.n_actions - 1,
         trunk=module_PF.trunk,
     )
-    pf_estimator = DiscretePolicyEstimator(
-        module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor
-    )
-    pb_estimator = DiscretePolicyEstimator(
-        module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor
-    )
+    pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False)
+    pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True)
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
 
     # Feed pf to the sampler.

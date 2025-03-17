@@ -34,6 +34,7 @@ from gfn.gym.helpers.box_utils import (
     BoxStateFlowModule,
 )
 from gfn.modules import ScalarEstimator
+from gfn.preprocessors import IdentityPreprocessor
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.common import set_seed
 
@@ -103,6 +104,7 @@ def main(args: Namespace) -> float:  # noqa: C901
 
     # 1. Create the environment
     env = Box(delta=args.delta, epsilon=1e-10, device_str=device_str)
+    preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
     # 2. Create the gflownet.
     #    For this we need modules and estimators.
@@ -149,14 +151,14 @@ def main(args: Namespace) -> float:  # noqa: C901
         # We need a LogStateFlowEstimator
 
         module = BoxStateFlowModule(
-            input_dim=env.preprocessor.output_dim,
+            input_dim=preprocessor.output_dim,
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
             trunk=None,  # We do not tie the parameters of the flow function to PF
             logZ_value=logZ,
         )
-        logF_estimator = ScalarEstimator(module=module, preprocessor=env.preprocessor)
+        logF_estimator = ScalarEstimator(module=module, preprocessor=preprocessor)
 
         if args.loss == "DB":
             gflownet = DBGFlowNet(

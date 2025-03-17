@@ -135,7 +135,7 @@ def main(args):  # noqa: C901
             module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
         else:
             module = MLP(
-                input_dim=env.preprocessor.output_dim,
+                input_dim=env.ndim,
                 output_dim=env.n_actions,
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
@@ -143,7 +143,6 @@ def main(args):  # noqa: C901
         estimator = DiscretePolicyEstimator(
             module=module,
             n_actions=env.n_actions,
-            preprocessor=env.preprocessor,
         )
         gflownet = FMGFlowNet(estimator)
     else:
@@ -155,14 +154,14 @@ def main(args):  # noqa: C901
                 pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
         else:
             pf_module = MLP(
-                input_dim=env.preprocessor.output_dim,
+                input_dim=env.ndim,
                 output_dim=env.n_actions,
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
             )
             if not args.uniform_pb:
                 pb_module = MLP(
-                    input_dim=env.preprocessor.output_dim,
+                    input_dim=env.ndim,
                     output_dim=env.n_actions - 1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
@@ -181,13 +180,11 @@ def main(args):  # noqa: C901
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
-            preprocessor=env.preprocessor,
         )
         pb_estimator = DiscretePolicyEstimator(
             module=pb_module,
             n_actions=env.n_actions,
             is_backward=True,
-            preprocessor=env.preprocessor,
         )
 
         if args.loss == "ModifiedDB":
@@ -209,16 +206,14 @@ def main(args):  # noqa: C901
                 module = Tabular(n_states=env.n_states, output_dim=1)
             else:
                 module = MLP(
-                    input_dim=env.preprocessor.output_dim,
+                    input_dim=env.ndim,
                     output_dim=1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
                     trunk=pf_module.trunk if args.tied else None,
                 )
 
-            logF_estimator = ScalarEstimator(
-                module=module, preprocessor=env.preprocessor
-            )
+            logF_estimator = ScalarEstimator(module=module)
             if args.loss == "DB":
                 gflownet = DBGFlowNet(
                     pf=pf_estimator,

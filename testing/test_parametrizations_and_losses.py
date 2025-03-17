@@ -22,7 +22,9 @@ from gfn.gym.helpers.box_utils import (
     BoxPFEstimator,
     BoxPFMLP,
 )
+from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 
 N = 10  # Number of trajectories from sample_trajectories (changes tests globally).
@@ -36,19 +38,22 @@ N = 10  # Number of trajectories from sample_trajectories (changes tests globall
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 def test_FM(env_name: str, ndim: int, module_name: str):
     if env_name == "HyperGrid":
-        env = HyperGrid(
-            ndim=ndim, preprocessor_name="Enum" if module_name == "Tabular" else "KHot"
-        )
+        env = HyperGrid(ndim=ndim)
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBM(
-            ndim=ndim,
-            preprocessor_name="Enum" if module_name == "Tabular" else "Identity",
-        )
+        env = DiscreteEBM(ndim=ndim)
     else:
         raise ValueError("Unknown environment name")
 
+    if module_name == "Tabular":
+        preprocessor = EnumPreprocessor(env.get_states_indices)
+    else:
+        if env_name == "HyperGrid":
+            preprocessor = KHotPreprocessor(env.height, env.ndim)
+        else:
+            preprocessor = IdentityPreprocessor(output_dim=env.ndim)
+
     if module_name == "MLP":
-        module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
+        module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     elif module_name == "Tabular":
         module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
     else:
@@ -57,7 +62,7 @@ def test_FM(env_name: str, ndim: int, module_name: str):
     log_F_edge = DiscretePolicyEstimator(
         module=module,
         n_actions=env.n_actions,
-        preprocessor=env.preprocessor,
+        preprocessor=preprocessor,
     )
 
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
@@ -137,26 +142,23 @@ def PFBasedGFlowNet_with_return(
     zero_logF: bool,
 ):
     if env_name == "HyperGrid":
-        env = HyperGrid(
-            ndim=ndim,
-            height=4,
-            preprocessor_name="Enum" if module_name == "Tabular" else "KHot",
-        )
+        env = HyperGrid(ndim=ndim, height=4)
+        preprocessor = KHotPreprocessor(env.height, env.ndim)
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBM(
-            ndim=ndim,
-            preprocessor_name="Enum" if module_name == "Tabular" else "Identity",
-        )
+        env = DiscreteEBM(ndim=ndim)
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
     elif env_name == "Box":
         if module_name == "Tabular":
             pytest.skip("Tabular module impossible for Box")
         env = Box(delta=1.0 / ndim)
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
     else:
         raise ValueError("Unknown environment name")
 
     if module_name == "Tabular":
         # Cannot be the Box environment
         assert isinstance(env, HyperGrid) or isinstance(env, DiscreteEBM)
+        preprocessor = EnumPreprocessor(env.get_states_indices)
         pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
         pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
         logF_module = Tabular(n_states=env.n_states, output_dim=1)
@@ -171,7 +173,7 @@ def PFBasedGFlowNet_with_return(
 
         else:
             pf_module = MLP(
-                input_dim=env.preprocessor.output_dim,
+                input_dim=preprocessor.output_dim,
                 output_dim=env.n_actions,
             )
 
@@ -184,7 +186,7 @@ def PFBasedGFlowNet_with_return(
             )
         elif module_name == "MLP" and not isinstance(env, Box):
             pb_module = MLP(
-                input_dim=env.preprocessor.output_dim,
+                input_dim=preprocessor.output_dim,
                 output_dim=env.n_actions - 1,
             )
         elif module_name == "Uniform" and not isinstance(env, Box):
@@ -195,7 +197,7 @@ def PFBasedGFlowNet_with_return(
         if zero_logF:
             logF_module = DiscreteUniform(output_dim=1)
         else:
-            logF_module = MLP(input_dim=env.preprocessor.output_dim, output_dim=1)
+            logF_module = MLP(input_dim=preprocessor.output_dim, output_dim=1)
 
     if isinstance(env, Box):
         pf = BoxPFEstimator(
@@ -210,16 +212,14 @@ def PFBasedGFlowNet_with_return(
             n_components=ndim + 1 if module_name != "Uniform" else 1,
         )
     else:
-        pf = DiscretePolicyEstimator(
-            pf_module, env.n_actions, preprocessor=env.preprocessor
-        )
+        pf = DiscretePolicyEstimator(pf_module, env.n_actions, preprocessor=preprocessor)
         pb = DiscretePolicyEstimator(
             pb_module,
             env.n_actions,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
             is_backward=True,
         )
-    logF = ScalarEstimator(module=logF_module, preprocessor=env.preprocessor)
+    logF = ScalarEstimator(module=logF_module, preprocessor=preprocessor)
 
     if gflownet_name == "DB":
         gflownet = DBGFlowNet(
@@ -372,15 +372,17 @@ def test_subTB_vs_TB(
 def test_flow_matching_states_container(env_name: str, ndim: int):
     """Test that flow matching correctly processes state pairs from trajectories."""
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim, preprocessor_name="KHot")
+        env = HyperGrid(ndim=ndim)
+        preprocessor = KHotPreprocessor(env.height, env.ndim)
     else:
-        env = DiscreteEBM(ndim=ndim, preprocessor_name="Identity")
+        env = DiscreteEBM(ndim=ndim)
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
-    module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
+    module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     log_F_edge = DiscretePolicyEstimator(
         module=module,
         n_actions=env.n_actions,
-        preprocessor=env.preprocessor,
+        preprocessor=preprocessor,
     )
 
     gflownet = FMGFlowNet(log_F_edge)

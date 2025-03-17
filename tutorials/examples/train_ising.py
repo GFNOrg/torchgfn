@@ -64,16 +64,14 @@ def main(args):
 
     # Parametrization and losses
     pf_module = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=env.ndim,
         output_dim=env.n_actions,
         hidden_dim=hidden_dim,
         n_hidden_layers=n_hidden,
         activation_fn=acc_fn,
     )
 
-    pf_estimator = DiscretePolicyEstimator(
-        pf_module, env.n_actions, env.preprocessor, is_backward=False
-    )
+    pf_estimator = DiscretePolicyEstimator(pf_module, env.n_actions, is_backward=False)
     gflownet = FMGFlowNet(pf_estimator)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=lr)
 
