@@ -71,7 +71,7 @@ class States(ABC):
     )
 
     def __init__(self, tensor: torch.Tensor):
-        """Initalize the State container with a batch of states.
+        """Initialize the State container with a batch of states.
         Args:
             tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of states.
         """
@@ -174,10 +174,7 @@ class States(ABC):
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> States:
         """Access particular states of the batch."""
-        out = self.__class__(
-            self.tensor[index]
-        )  # TODO: Inefficient - this might make a copy of the tensor!
-        return out
+        return self.__class__(self.tensor[index])
 
     def __setitem__(
         self,
@@ -585,7 +582,7 @@ class GraphStates(States):
     @property
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
-        return self.tensor.batch_shape
+        return tuple(self.tensor.batch_shape)
 
     @classmethod
     def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> GeometricBatch:
