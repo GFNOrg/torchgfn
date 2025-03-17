@@ -51,6 +51,7 @@ wandb = { version = "*", optional = true }
 scikit-learn = {version = "*", optional = true }
 scipy = { version = "*", optional = true }
 matplotlib = { version = "*", optional = true }
+torchtyping = { version = "*", optional = true }
 
 [tool.poetry.extras]
 dev = [
@@ -67,7 +68,8 @@ dev = [
     "sphinx",
     "tox",
     "flake8",
-    "nbmake"
+    "nbmake",
+    "torchtyping"
 ]
 
 scripts = ["tqdm", "wandb", "scikit-learn", "scipy", "matplotlib"]
@@ -90,7 +92,8 @@ all = [
     "tox",
     "tqdm",
     "wandb",
-    "nbmake"
+    "nbmake",
+    "torchtyping"
 ]
 
 [tool.poetry.urls]
