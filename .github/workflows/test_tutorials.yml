@@ -23,4 +23,4 @@ jobs:
           pip install .[all]  # Install all dependencies, including dev
 
       - name: Test tutorials notebooks
-        run: pytest --nbmake tutorials/notebooks -k "not intro_gfn_continuous_line.ipynb"  # TODO: remove this once the tutorial is fixed
+        run: pytest --nbmake tutorials/notebooks
