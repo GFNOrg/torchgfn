@@ -25,6 +25,9 @@ class Box(Env):
         self.epsilon = epsilon
         if isinstance(device, str):
             self.device = torch.device(device)
+        else:
+            self.device = device
+
         s0 = torch.tensor([0.0, 0.0], device=self.device)
         exit_action = torch.tensor([-float("inf"), -float("inf")], device=self.device)
         dummy_action = torch.tensor([float("inf"), float("inf")], device=self.device)
