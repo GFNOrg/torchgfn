@@ -39,7 +39,10 @@ class Actions(ABC):
         ), f"Batched actions tensor has shape {tensor.shape}, but the expected action shape is {self.action_shape}."
 
         self.tensor = tensor
-        self.batch_shape = tuple(self.tensor.shape)[: -len(self.action_shape)]
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return tuple(self.tensor.shape)[: -len(self.action_shape)]
 
     @classmethod
     def make_dummy_actions(cls, batch_shape: tuple[int, ...]) -> Actions:
@@ -96,7 +99,6 @@ class Actions(ABC):
     def extend(self, other: Actions) -> None:
         """Collates to another Actions object of the same batch shape."""
         if len(self.batch_shape) == len(other.batch_shape) == 1:
-            self.batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
         elif len(self.batch_shape) == len(other.batch_shape) == 2:
             self.extend_with_dummy_actions(
@@ -104,10 +106,6 @@ class Actions(ABC):
             )
             other.extend_with_dummy_actions(
                 required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
-            )
-            self.batch_shape = (
-                self.batch_shape[0],
-                self.batch_shape[1] + other.batch_shape[1],
             )
             self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
         else:
@@ -129,7 +127,6 @@ class Actions(ABC):
                 return
             n = required_first_dim - self.batch_shape[0]
             dummy_actions = self.__class__.make_dummy_actions((n, self.batch_shape[1]))
-            self.batch_shape = (self.batch_shape[0] + n, self.batch_shape[1])
             self.tensor = torch.cat((self.tensor, dummy_actions.tensor), dim=0)
         else:
             raise NotImplementedError(
@@ -210,7 +207,8 @@ class GraphActions(Actions):
             edge_index: an tensor of shape (batch_shape, 2) representing the edge to add.
                 This must defined if and only if the action type is GraphActionType.AddEdge.
         """
-        self.batch_shape = tensor["action_type"].shape
+        self._batch_shape = tensor["action_type"].shape
+
         features = tensor.get("features", None)
         if features is None:
             assert torch.all(
@@ -233,6 +231,10 @@ class GraphActions(Actions):
             },
             batch_size=self.batch_shape,
         )
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return self._batch_shape
 
     def __repr__(self):
         return f"""GraphAction object with {self.batch_shape} actions."""
@@ -310,3 +312,8 @@ class GraphActions(Actions):
                 batch_size=batch_shape,
             )
         )
+
+    def extend(self, other: Actions) -> None:
+        """Extends an Actions instance with another Actions instance."""
+        super().extend(other)
+        self._batch_shape = self.tensor.batch_size

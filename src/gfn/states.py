@@ -80,18 +80,13 @@ class States(ABC):
         assert tensor.shape[-len(self.state_shape) :] == self.state_shape
 
         self.tensor = tensor
-        self._batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
         self._log_rewards = (
             None  # Useful attribute if we want to store the log-reward of the states
         )
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return self._batch_shape
-
-    @batch_shape.setter
-    def batch_shape(self, batch_shape: tuple[int, ...]) -> None:
-        self._batch_shape = batch_shape
+        return tuple(self.tensor.shape)[: -len(self.state_shape)]
 
     @classmethod
     def from_batch_shape(
@@ -214,7 +209,6 @@ class States(ABC):
         """
         if len(other.batch_shape) == len(self.batch_shape) == 1:
             # This corresponds to adding a state to a trajectory
-            self.batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
 
         elif len(other.batch_shape) == len(self.batch_shape) == 2:
@@ -224,10 +218,6 @@ class States(ABC):
             )
             other.extend_with_sf(
                 required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
-            )
-            self.batch_shape = (
-                self.batch_shape[0],
-                self.batch_shape[1] + other.batch_shape[1],
             )
             self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
         else:
@@ -258,7 +248,6 @@ class States(ABC):
                 ),
                 dim=0,
             )
-            self.batch_shape = (required_first_dim, self.batch_shape[1])
         else:
             raise ValueError(
                 f"extend_with_sf is not implemented for graph states nor for batch shapes {self.batch_shape}"
@@ -345,11 +334,6 @@ class States(ABC):
                     raise ValueError("Some states have no log rewards.")
                 log_rewards.append(s._log_rewards)
             stacked_states._log_rewards = torch.stack(log_rewards, dim=0)
-
-        # Adds the trajectory dimension.
-        stacked_states.batch_shape = (
-            stacked_states.tensor.shape[0],
-        ) + state_example.batch_shape
 
         return stacked_states
 
@@ -575,7 +559,10 @@ class GraphStates(States):
         """
         self.tensor = tensor
         if not hasattr(self.tensor, "batch_shape"):
-            self.tensor.batch_shape = self.tensor.batch_size
+            if isinstance(self.tensor.batch_size, tuple):
+                self.tensor.batch_shape = self.tensor.batch_size
+            else:
+                self.tensor.batch_shape = (self.tensor.batch_size,)
 
         if tensor.x.size(0) > 0:
             assert tensor.num_graphs == prod(tensor.batch_shape)
