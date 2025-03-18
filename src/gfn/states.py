@@ -559,7 +559,10 @@ class GraphStates(States):
         """
         self.tensor = tensor
         if not hasattr(self.tensor, "batch_shape"):
-            self.tensor.batch_shape = self.tensor.batch_size  # TODO: Is this correct?
+            if isinstance(self.tensor.batch_size, tuple):
+                self.tensor.batch_shape = self.tensor.batch_size
+            else:
+                self.tensor.batch_shape = (self.tensor.batch_size,)
 
         if tensor.x.size(0) > 0:
             assert tensor.num_graphs == prod(tensor.batch_shape)
