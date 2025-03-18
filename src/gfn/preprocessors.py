@@ -76,8 +76,21 @@ class EnumPreprocessor(Preprocessor):
 
 
 class GraphPreprocessor(Preprocessor):
-    def __init__(self) -> None:
-        super().__init__(-1)  # TODO: review output_dim API
+    """Preprocessor for graph states to extract the tensor representation.
+
+    This simple preprocessor extracts the GeometricBatch from GraphStates to make
+    it compatible with the policy networks. It doesn't perform any complex
+    transformations, just ensuring the tensors are accessible in the right format.
+
+    Args:
+        feature_dim: The dimension of features in the graph (default: 1)
+    """
+
+    def __init__(self, feature_dim: int = 1):
+        super().__init__(output_dim=feature_dim)
 
     def preprocess(self, states: GraphStates) -> GeometricBatch:
         return states.tensor
+
+    def __call__(self, states: GraphStates) -> GeometricBatch:
+        return self.preprocess(states)

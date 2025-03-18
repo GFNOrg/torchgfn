@@ -1,19 +1,17 @@
+import math
 from abc import ABC, abstractmethod
 from typing import Any
 
 import torch
 import torch.nn as nn
-from tensordict import TensorDict
-from torch.distributions import Categorical, Distribution, Normal
+from torch.distributions import Categorical, Distribution
+from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
-from gfn.preprocessors import GraphPreprocessor, IdentityPreprocessor, Preprocessor
-from gfn.states import DiscreteStates, GraphStates, States
-from gfn.utils.distributions import (
-    CategoricalActionType,
-    CategoricalIndexes,
-    CompositeDistribution,
-    UnsqueezedCategorical,
-)
+from gfn.preprocessors import IdentityPreprocessor, Preprocessor
+from gfn.states import DiscreteStates, States
+from gfn.utils.distributions import UnsqueezedCategorical
+from gfn.utils.modules import MLP
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -457,106 +455,280 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-class GraphActionPolicyEstimator(GFNModule):
-    r"""Container for forward and backward policy estimators for graph environments.
+class GNNEdgeRingPolicyModule(nn.Module):
+    """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
 
-    $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$.
-
-    or
-
-    $s \mapsto (P_B(s' \mid s))_{s' \in Parents(s)}$.
-
-    Attributes:
-        temperature: scalar to divide the logits by before softmax.
-        sf_bias: scalar to subtract from the exit action logit before dividing by
-            temperature.
-        epsilon: with probability epsilon, a random action is chosen.
+    Args:
+        n_nodes: The number of nodes in the graph.
     """
 
     def __init__(
         self,
-        module: nn.Module,
-        preprocessor: Preprocessor | None = None,
+        n_nodes: int,
+        directed: bool,
+        num_conv_layers: int = 1,
+        embedding_dim: int = 128,
         is_backward: bool = False,
     ):
-        """Initializes a estimator for P_F for graph environments.
+        super().__init__()
+        self.hidden_dim = self.embedding_dim = embedding_dim
+        self.is_directed = directed
+        self.is_backward = is_backward
+        self.n_nodes = n_nodes
+        self.num_conv_layers = num_conv_layers
+
+        # Node embedding layer.
+        self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
+        self.conv_blks = nn.ModuleList()
+        self.exit_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=1,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+        if directed:
+            for i in range(num_conv_layers):
+                self.conv_blks.extend(
+                    [
+                        DirGNNConv(
+                            GCNConv(
+                                self.embedding_dim if i == 0 else self.hidden_dim,
+                                self.hidden_dim,
+                            ),
+                            alpha=0.5,
+                            root_weight=True,
+                        ),
+                        # Process in/out components separately
+                        nn.ModuleList(
+                            [
+                                nn.Sequential(
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
+                                    nn.ReLU(),
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
+                                )
+                                for _ in range(2)  # 1 for in & 1 for out-features.
+                            ]
+                        ),
+                    ]
+                )
+        else:  # Undirected case.
+            for i in range(num_conv_layers):
+                self.conv_blks.extend(
+                    [
+                        GINConv(
+                            MLP(
+                                input_dim=(
+                                    self.embedding_dim if i == 0 else self.hidden_dim
+                                ),
+                                output_dim=self.hidden_dim,
+                                hidden_dim=self.hidden_dim,
+                                n_hidden_layers=1,
+                                add_layer_norm=True,
+                            ),
+                        ),
+                        nn.Sequential(
+                            nn.Linear(self.hidden_dim, self.hidden_dim),
+                            nn.ReLU(),
+                            nn.Linear(self.hidden_dim, self.hidden_dim),
+                        ),
+                    ]
+                )
+
+        self.norm = nn.LayerNorm(self.hidden_dim)
+
+    def _group_mean(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
+        cumsum = torch.zeros(
+            (len(tensor) + 1, *tensor.shape[1:]),
+            dtype=tensor.dtype,
+            device=tensor.device,
+        )
+        cumsum[1:] = torch.cumsum(tensor, dim=0)
+
+        # Subtract the end val from each batch idx fom the start val of each batch idx.
+        size = batch_ptr[1:] - batch_ptr[:-1]
+        return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
+
+    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+        node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
+        batch_size = int(math.prod(states_tensor.batch_shape))
+
+        # Multiple action type convolutions with residual connections.
+        x = self.embedding(node_features.squeeze().int())
+        for i in range(0, len(self.conv_blks), 2):
+            x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
+            if self.is_directed:
+                assert isinstance(self.conv_blks[i + 1], nn.ModuleList)
+                x_in, x_out = torch.chunk(x_new, 2, dim=-1)
+
+                # Process each component separately through its own MLP.
+                mlp_in, mlp_out = self.conv_blks[i + 1]
+                x_in = mlp_in(x_in)
+                x_out = mlp_out(x_out)
+                x_new = torch.cat([x_in, x_out], dim=-1)
+            else:
+                x_new = self.conv_blks[i + 1](x_new)  # Linear -> ReLU -> Linear.
+
+            x = x_new + x if i > 0 else x_new  # Residual connection.
+            x = self.norm(x)  # Layernorm.
+
+        # This MLP computes the exit action.
+        node_feature_means = self._group_mean(x, batch_ptr)
+        exit_action = self.exit_mlp(node_feature_means)
+
+        x = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
+
+        # Undirected.
+        if self.is_directed:
+            feature_dim = self.hidden_dim // 2
+            source_features = x[..., :feature_dim]
+            target_features = x[..., feature_dim:]
+
+            # Dot product between source and target features (asymmetric).
+            edgewise_dot_prod = torch.einsum(
+                "bnf,bmf->bnm", source_features, target_features
+            )
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(feature_dim))
+
+            i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+            i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)
+
+            # Combine them.
+            i0 = torch.cat([i_up, i_lo])
+            i1 = torch.cat([j_up, j_lo])
+            out_size = self.n_nodes**2 - self.n_nodes
+
+        else:
+            # Dot product between all node features (symmetric).
+            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x, x)
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
+                torch.tensor(self.hidden_dim)
+            )
+            i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+            out_size = (self.n_nodes**2 - self.n_nodes) // 2
+
+        # Grab the needed elems from the adjacency matrix and reshape.
+        edge_actions = edgewise_dot_prod[torch.arange(batch_size)[:, None, None], i0, i1]
+        edge_actions = edge_actions.reshape(*states_tensor["batch_shape"], out_size)
+
+        if self.is_backward:
+            return edge_actions
+        else:
+            return torch.cat([edge_actions, exit_action], dim=-1)
+
+
+class MLPAdjacencyPolicyModule(nn.Module):
+    """Policy network that processes flattened adjacency matrices to predict graph actions.
+
+    Unlike the GNN-based RingPolicyModule, this module uses standard MLPs to process
+    the entire adjacency matrix as a flattened vector. This approach:
+
+    1. Can directly process global graph structure without message passing
+    2. May be more effective for small graphs where global patterns are important
+    3. Does not require complex graph neural network operations
+
+    The module architecture consists of:
+    - An MLP to process the flattened adjacency matrix into an embedding
+    - An edge MLP that predicts logits for each possible edge action
+    - An exit MLP that predicts a logit for the exit action
+
+    Args:
+        n_nodes: Number of nodes in the graph
+        directed: Whether the graph is directed or undirected
+        embedding_dim: Dimension of internal embeddings (default: 128)
+        is_backward: Whether this is a backward policy (default: False)
+    """
+
+    def __init__(
+        self,
+        n_nodes: int,
+        directed: bool,
+        embedding_dim: int = 128,
+        is_backward: bool = False,
+    ):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.is_directed = directed
+        self.is_backward = is_backward
+        self.hidden_dim = embedding_dim
+
+        # MLP for processing the flattened adjacency matrix
+        self.mlp = MLP(
+            input_dim=n_nodes * n_nodes,  # Flattened adjacency matrix
+            output_dim=embedding_dim,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=2,
+            add_layer_norm=True,
+        )
+
+        # Exit action MLP
+        self.exit_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=1,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+        # Edge prediction MLP
+        if directed:
+            # For directed graphs: all off-diagonal elements
+            out_size = n_nodes**2 - n_nodes
+        else:
+            # For undirected graphs: upper triangle without diagonal
+            out_size = (n_nodes**2 - n_nodes) // 2
+
+        self.edge_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=out_size,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+        """Forward pass to compute action logits from graph states.
+
+        Process:
+        1. Convert the graph representation to adjacency matrices
+        2. Process the flattened adjacency matrices through the main MLP
+        3. Predict logits for edge actions and exit action
 
         Args:
-            is_backward: if False, then this is a forward policy, else backward policy.
-        """
-        if preprocessor is None:
-            preprocessor = GraphPreprocessor()
-        super().__init__(module, preprocessor, is_backward)
-
-    def expected_output_dim(self) -> int:
-        return 0
-
-    def forward(self, states: GraphStates) -> TensorDict:
-        """Forward pass of the module.
-
-        Args:
-            states: The input graph states.
+            states_tensor: A GeometricBatch containing graph state information
 
         Returns:
-            TensorDict containing:
-                - action_type: logits for action type selection (batch_shape, n_actions)
-                - features: parameters for node/edge features (batch_shape, feature_dim)
-                - edge_index: logits for edge connections (batch_shape, n_nodes, n_nodes)
+            A tensor of logits for all possible actions
         """
-        return self.module(states)
-
-    def to_probability_distribution(
-        self,
-        states: GraphStates,
-        module_output: TensorDict,
-        temperature: float = 1.0,
-        epsilon: float = 0.0,
-    ) -> CompositeDistribution:
-        """Returns a probability distribution given a batch of states and module output.
-
-        We handle off-policyness using these kwargs.
-
-        Args:
-            states: The states to use.
-            module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
-            temperature: scalar to divide the logits by before softmax. Does nothing
-                if set to 1.0 (default), in which case it's on policy.
-            epsilon: with probability epsilon, a random action is chosen. Does nothing
-                if set to 0.0 (default), in which case it's on policy."""
-
-        raise NotImplementedError(
-            "This method is incompatible with pyg and will be fixed in a future PR."
+        # Convert the graph to adjacency matrix
+        batch_size = int(states_tensor.batch_size)
+        adj_matrices = torch.zeros(
+            (batch_size, self.n_nodes, self.n_nodes),
+            device=states_tensor.x.device,
         )
-        dists = {}
 
-        action_type_logits = module_output["action_type"]
-        masks = states.backward_masks if self.is_backward else states.forward_masks
-        action_type_logits[~masks["action_type"]] = -float("inf")
-        action_type_probs = torch.softmax(action_type_logits / temperature, dim=-1)
-        uniform_dist_probs = masks["action_type"].float() / masks["action_type"].sum(
-            dim=-1, keepdim=True
-        )
-        action_type_probs = (
-            1 - epsilon
-        ) * action_type_probs + epsilon * uniform_dist_probs
-        dists["action_type"] = CategoricalActionType(probs=action_type_probs)
+        # Fill the adjacency matrices from edge indices
+        if states_tensor.edge_index.numel() > 0:
+            for i in range(batch_size):
+                eis = states_tensor[i].edge_index
+                adj_matrices[i, eis[0], eis[1]] = 1
 
-        edge_index_logits = module_output["edge_index"]
-        edge_index_logits[~masks["edge_index"]] = -float("inf")
-        if torch.any(edge_index_logits != -float("inf")):
-            B, N, N = edge_index_logits.shape
-            edge_index_logits = edge_index_logits.reshape(B, N * N)
-            edge_index_probs = torch.softmax(edge_index_logits / temperature, dim=-1)
-            uniform_dist_probs = (
-                torch.ones_like(edge_index_probs) / edge_index_probs.shape[-1]
-            )
-            edge_index_probs = (
-                1 - epsilon
-            ) * edge_index_probs + epsilon * uniform_dist_probs
-            edge_index_probs[torch.isnan(edge_index_probs)] = 1
-            dists["edge_index"] = CategoricalIndexes(
-                probs=edge_index_probs, n_nodes=states.tensor.num_nodes
-            )
+        # Flatten the adjacency matrices for the MLP
+        adj_matrices_flat = adj_matrices.view(batch_size, -1)
 
-        dists["features"] = Normal(module_output["features"], temperature)
-        return CompositeDistribution(dists=dists)
+        # Process with MLP
+        embedding = self.mlp(adj_matrices_flat)
+
+        # Generate edge and exit actions
+        edge_actions = self.edge_mlp(embedding)
+        exit_action = self.exit_mlp(embedding)
+
+        if self.is_backward:
+            return edge_actions
+        else:
+            return torch.cat([edge_actions, exit_action], dim=-1)
