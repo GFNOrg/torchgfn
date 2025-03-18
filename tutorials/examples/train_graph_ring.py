@@ -384,6 +384,7 @@ class RingGraphBuilding(GraphBuilding):
             """
 
             action_shape = (1,)
+            # TODO: move to init: https://github.com/GFNOrg/torchgfn/pull/281#discussion_r2001077914
             dummy_action = torch.tensor([env.n_actions]).to(env.device)
             exit_action = torch.tensor([env.n_actions - 1]).to(env.device)
 
@@ -413,16 +414,16 @@ class RingGraphBuilding(GraphBuilding):
             """
 
             s0 = GeometricData(
-                x=torch.arange(env.n_nodes)[:, None],
-                edge_attr=torch.ones((0, 1)),
-                edge_index=torch.ones((2, 0), dtype=torch.long),
+                x=torch.arange(env.n_nodes)[:, None].to(env.device),
+                edge_attr=torch.ones((0, 1)).to(env.device),
+                edge_index=torch.ones((2, 0), dtype=torch.long).to(env.device),
             ).to(
                 env.device  # type: ignore # TODO: does this work with multi-gpu?
             )
             sf = GeometricData(
-                x=-torch.ones(env.n_nodes)[:, None],
-                edge_attr=torch.zeros((0, 1)),
-                edge_index=torch.zeros((2, 0), dtype=torch.long),
+                x=-torch.ones(env.n_nodes)[:, None].to(env.device),
+                edge_attr=torch.zeros((0, 1)).to(env.device),
+                edge_index=torch.zeros((2, 0), dtype=torch.long).to(env.device),
             ).to(
                 env.device  # type: ignore
             )
@@ -459,15 +460,15 @@ class RingGraphBuilding(GraphBuilding):
 
                 if env.is_directed:
                     i_up, j_up = torch.triu_indices(
-                        self.n_nodes, self.n_nodes, offset=1
+                        self.n_nodes, self.n_nodes, offset=1, device=self.device
                     )  # Upper triangle.
                     i_lo, j_lo = torch.tril_indices(
-                        self.n_nodes, self.n_nodes, offset=-1
+                        self.n_nodes, self.n_nodes, offset=-1, device=self.device
                     )  # Lower triangle.
 
                     # Combine them
-                    ei0 = torch.cat([i_up, i_lo]).to(self.device.type)
-                    ei1 = torch.cat([j_up, j_lo]).to(self.device.type)
+                    ei0 = torch.cat([i_up, i_lo])
+                    ei1 = torch.cat([j_up, j_lo])
                 else:
                     ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
 
