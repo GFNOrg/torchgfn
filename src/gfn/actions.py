@@ -314,10 +314,6 @@ class GraphActions(Actions):
         )
 
     def extend(self, other: Actions) -> None:
-        """Extends an Actions instance along the first dimension with dummy actions.
-
-        The Actions instance batch_shape must be 2-dimensional. This is used to pad
-        trajectories actions.
-        """
+        """Extends an Actions instance with another Actions instance."""
         super().extend(other)
         self._batch_shape = self.tensor.batch_size
