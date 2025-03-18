@@ -29,19 +29,21 @@ class GraphBuilding(GraphEnv):
         self,
         feature_dim: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
-        device_str: Literal["cpu", "cuda"] = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
         s0 = GeometricData(
-            x=torch.zeros((0, feature_dim), dtype=torch.float32),
-            edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32),
-            edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,  # TODO: can we use a device object?
+            x=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
+            edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
+            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+            device=device,  # TODO: can we use a device object?
         )
         sf = GeometricData(
-            x=torch.ones((1, feature_dim), dtype=torch.float32) * float("inf"),
-            edge_attr=torch.ones((0, feature_dim), dtype=torch.float32) * float("inf"),
-            edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,  # TODO: can we use a device object?
+            x=torch.ones((1, feature_dim), dtype=torch.float32).to(device)
+            * float("inf"),
+            edge_attr=torch.ones((0, feature_dim), dtype=torch.float32).to(device)
+            * float("inf"),
+            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+            device=device,  # TODO: can we use a device object?
         )
 
         self.state_evaluator = state_evaluator
@@ -397,22 +399,22 @@ class RingGraphBuilding(GraphBuilding):
             """
 
             s0 = GeometricData(
-                x=torch.arange(env.n_nodes)[:, None],
-                edge_attr=torch.ones((0, 1)),
-                edge_index=torch.ones((2, 0), dtype=torch.long),
+                x=torch.arange(env.n_nodes)[:, None].to(env.device),
+                edge_attr=torch.ones((0, 1)).to(env.device),
+                edge_index=torch.ones((2, 0), dtype=torch.long).to(env.device),
             ).to(
                 env.device  # type: ignore # TODO: does this work with multi-gpu?
             )
             sf = GeometricData(
-                x=-torch.ones(env.n_nodes)[:, None],
-                edge_attr=torch.zeros((0, 1)),
-                edge_index=torch.zeros((2, 0), dtype=torch.long),
+                x=-torch.ones(env.n_nodes)[:, None].to(env.device),
+                edge_attr=torch.zeros((0, 1)).to(env.device),
+                edge_index=torch.zeros((2, 0), dtype=torch.long).to(env.device),
             ).to(
                 env.device  # type: ignore
             )
 
             def __init__(self, tensor: GeometricBatch):
-                self.tensor = tensor.to(env.device.type)
+                self.tensor = tensor.to(env.device)
                 self.node_features_dim = tensor.x.shape[-1]
                 self.edge_features_dim = tensor.edge_attr.shape[-1]
                 self._log_rewards: Optional[float] = None
@@ -443,15 +445,15 @@ class RingGraphBuilding(GraphBuilding):
 
                 if env.is_directed:
                     i_up, j_up = torch.triu_indices(
-                        self.n_nodes, self.n_nodes, offset=1
+                        self.n_nodes, self.n_nodes, offset=1, device=self.device
                     )  # Upper triangle.
                     i_lo, j_lo = torch.tril_indices(
-                        self.n_nodes, self.n_nodes, offset=-1
+                        self.n_nodes, self.n_nodes, offset=-1, device=self.device
                     )  # Lower triangle.
 
                     # Combine them
-                    ei0 = torch.cat([i_up, i_lo]).to(self.device.type)
-                    ei1 = torch.cat([j_up, j_lo]).to(self.device.type)
+                    ei0 = torch.cat([i_up, i_lo])
+                    ei1 = torch.cat([j_up, j_lo])
                 else:
                     ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
 
@@ -501,18 +503,18 @@ class RingGraphBuilding(GraphBuilding):
                 """
                 # Disallow all actions.
                 backward_masks = torch.zeros(
-                    len(self), self.n_actions - 1, dtype=torch.bool
-                ).to(self.device)
+                    len(self), self.n_actions - 1, dtype=torch.bool, device=self.device
+                )
 
                 for i in range(len(self)):
                     existing_edges = self[i].tensor.edge_index
 
                     if env.is_directed:
                         i_up, j_up = torch.triu_indices(
-                            self.n_nodes, self.n_nodes, offset=1
+                            self.n_nodes, self.n_nodes, offset=1, device=self.device
                         )  # Upper triangle.
                         i_lo, j_lo = torch.tril_indices(
-                            self.n_nodes, self.n_nodes, offset=-1
+                            self.n_nodes, self.n_nodes, offset=-1, device=self.device
                         )  # Lower triangle.
 
                         # Combine them
@@ -520,7 +522,7 @@ class RingGraphBuilding(GraphBuilding):
                         ei1 = torch.cat([j_up, j_lo])
                     else:
                         ei0, ei1 = torch.triu_indices(
-                            self.n_nodes, self.n_nodes, offset=1
+                            self.n_nodes, self.n_nodes, offset=1, device=self.device
                         )
 
                     if len(existing_edges) == 0:
