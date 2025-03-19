@@ -616,6 +616,10 @@ class Trajectories(Container):
 
         return reversed_trajectories
 
+    @property
+    def device(self) -> torch.device:
+        return self.states.device
+
 
 def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:
     """Pads tensor a to match the dimension of b."""

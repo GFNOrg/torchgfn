@@ -40,6 +40,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         logF: a ScalarEstimator instance.
         forward_looking: whether to implement the forward looking GFN loss.
         log_reward_clip_min: If finite, clips log rewards to this value.
+        safe_log_prob_min: If True, uses a -1e10 as the minimum log probability value
+            to avoid numerical instability, otherwise uses 1e-38.
     """
 
     def __init__(
@@ -49,6 +51,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         logF: ScalarEstimator | ConditionalScalarEstimator,
         forward_looking: bool = False,
         log_reward_clip_min: float = -float("inf"),
+        safe_log_prob_min: bool = True,
     ):
         super().__init__(pf, pb)
         assert any(
@@ -58,6 +61,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self.logF = logF
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
+        if safe_log_prob_min:
+            self.log_prob_min = -1e-10
+        else:
+            self.log_prob_min = 1e-38
 
     def logF_named_parameters(self):
         try:
@@ -113,6 +120,13 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         states = transitions.states
         actions = transitions.actions
 
+        if len(states) == 0:
+            return (
+                torch.tensor(self.log_prob_min, device=transitions.device),
+                torch.tensor(self.log_prob_min, device=transitions.device),
+                torch.tensor(0.0, device=transitions.device),
+            )
+
         # uncomment next line for debugging
         # assert transitions.states.is_sink_state.equal(transitions.actions.is_dummy)
         check_compatibility(states, actions, transitions)
@@ -146,6 +160,13 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             ~transitions.states.is_sink_state
         ]
 
+        if len(valid_next_states) == 0:
+            return (
+                torch.tensor(self.log_prob_min, device=transitions.device),
+                torch.tensor(self.log_prob_min, device=transitions.device),
+                torch.tensor(0.0, device=transitions.device),
+            )
+
         # LogF is potentially a conditional computation.
         if transitions.conditioning is not None:
             with has_conditioning_exception_handler("logF", self.logF):
@@ -171,7 +192,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         scores = preds - targets
 
         assert scores.shape == (transitions.n_transitions,)
-        return log_pf_actions, log_pb_actions, scores
+        return (log_pf_actions, log_pb_actions, scores)
 
     def loss(
         self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
@@ -220,6 +241,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         if transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
 
+        if len(transitions) == 0:
+            return torch.tensor(0.0, device=transitions.device)
+
         mask = ~transitions.next_states.is_sink_state
         states = transitions.states[mask]
         valid_next_states = transitions.next_states[mask]
@@ -234,6 +258,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         else:
             with no_conditioning_exception_handler("pf", self.pf):
                 module_output = self.pf(states)
+
+        if len(states) == 0:
+            return torch.tensor(0.0, device=transitions.device)
 
         pf_dist = self.pf.to_probability_distribution(states, module_output)
 

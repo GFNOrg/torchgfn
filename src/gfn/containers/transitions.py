@@ -299,3 +299,7 @@ class Transitions(Container):
             self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=0)
         else:
             self.log_probs = None
+
+    @property
+    def device(self) -> torch.device:
+        return self.states.device
