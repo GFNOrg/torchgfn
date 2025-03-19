@@ -211,12 +211,6 @@ class GraphActions(Actions):
 
         features = tensor.get("features", None)
         if features is None:
-            assert torch.all(
-                torch.logical_or(
-                    tensor["action_type"] == GraphActionType.EXIT,
-                    tensor["action_type"] == GraphActionType.DUMMY,
-                )
-            )
             features = torch.zeros((*self.batch_shape, self.features_dim))
         edge_index = tensor.get("edge_index", None)
         if edge_index is None:
