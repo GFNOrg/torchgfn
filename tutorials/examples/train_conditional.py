@@ -210,7 +210,6 @@ def train(env, gflownet, seed):
     exploration_rate = 0.5
     lr = 0.0005
 
-    # Possibly move the gflownet to the correct GPU.
     # Policy parameters and logZ/logF get independent LRs (logF/Z typically higher).
     if type(gflownet) is TBGFlowNet:
         optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
@@ -221,7 +220,7 @@ def train(env, gflownet, seed):
     elif type(gflownet) is FMGFlowNet or type(gflownet) is ModifiedDBGFlowNet:
         optimizer = Adam(gflownet.parameters(), lr=lr)
     else:
-        print("What is this gflownet? {}".format(type(gflownet)))
+        print("unknown gflownet type: {}".format(type(gflownet)))
 
     n_iterations = int(10)  # 1e4)
     batch_size = int(1e4)
