@@ -6,7 +6,7 @@ import torch
 from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
-from gfn.gym.graph_building import RingGraphBuilding
+from gfn.gym.graph_building import GraphBuilding, RingGraphBuilding
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator, GFNModule, GNNEdgePolicyModule
 from gfn.samplers import LocalSearchSampler, Sampler
