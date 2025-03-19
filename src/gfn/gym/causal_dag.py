@@ -6,7 +6,7 @@ from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import GraphEnv
-from gfn.states import GraphStates
+from gfn.states import DAGStates
 
 
 class Causal_DAG(GraphEnv):
@@ -29,7 +29,7 @@ class Causal_DAG(GraphEnv):
     def __init__(
         self,
         nodes: torch.Tensor,
-        state_evaluator: Callable[[GraphStates], torch.Tensor],
+        state_evaluator: Callable[[DAGStates], torch.Tensor],
         device_str: Literal["cpu", "cuda"] = "cpu",
     ):
 
@@ -57,17 +57,17 @@ class Causal_DAG(GraphEnv):
         self,
         batch_shape: int | Tuple[int, ...],
         seed: Optional[int] = None,
-    ) -> GraphStates:
+    ) -> DAGStates:
         """Reset the environment to a new batch of graphs."""
         states = super().reset(batch_shape, seed=seed, random=False, sink=False)
-        assert isinstance(states, GraphStates)
+        assert isinstance(states, DAGStates)
         return states
 
-    def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
+    def step(self, states: DAGStates, actions: GraphActions) -> GeometricBatch:
         """Step function for the GraphBuilding environment.
 
         Args:
-            states: GraphStates object representing the current graph states.
+            states: DAGStates object representing the current graph states.
             actions: Actions to apply to each graph state.
 
         Returns:
@@ -122,13 +122,11 @@ class Causal_DAG(GraphEnv):
         new_tensor.batch_shape = states.tensor.batch_shape
         return new_tensor
 
-    def backward_step(
-        self, states: GraphStates, actions: GraphActions
-    ) -> GeometricBatch:
+    def backward_step(self, states: DAGStates, actions: GraphActions) -> GeometricBatch:
         """Backward step function for the Causal DAG environment.
 
         Args:
-            states: GraphStates object representing the current graph.
+            states: DAGStates object representing the current graph.
             actions: Actions indicating which edge to remove.
 
         Returns:
@@ -171,7 +169,7 @@ class Causal_DAG(GraphEnv):
         new_tensor.batch_shape = states.tensor.batch_shape
         return new_tensor
 
-    def reward(self, final_states: GraphStates) -> torch.Tensor:
+    def reward(self, final_states: DAGStates) -> torch.Tensor:
         """The environment's reward given a state.
         This or log_reward must be implemented.
 
