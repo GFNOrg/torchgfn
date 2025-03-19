@@ -1,9 +1,12 @@
 """This file contains some examples of modules that can be used with GFN."""
 
+import math
 from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
+from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 
 class MLP(nn.Module):
@@ -177,3 +180,167 @@ class DiscreteUniform(nn.Module):
             preprocessed_states.device
         )
         return out
+
+
+class GraphEdgeActionGNN(nn.Module):
+    """Implements a GNN for graph edge action prediction."""
+
+    def __init__(
+        self,
+        n_nodes: int,
+        directed: bool,
+        num_conv_layers: int = 1,
+        embedding_dim: int = 128,
+        is_backward: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.hidden_dim = self.embedding_dim = embedding_dim
+        self.is_directed = directed
+        self.is_backward = is_backward
+        self.n_nodes = n_nodes
+        self.num_conv_layers = num_conv_layers
+
+        # Node embedding layer.
+        self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
+        self.conv_blks = nn.ModuleList()
+        self.exit_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=1,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+        if directed:
+            for i in range(num_conv_layers):
+                self.conv_blks.extend(
+                    [
+                        DirGNNConv(
+                            GCNConv(
+                                self.embedding_dim if i == 0 else self.hidden_dim,
+                                self.hidden_dim,
+                            ),
+                            alpha=0.5,
+                            root_weight=True,
+                        ),
+                        # Process in/out components separately
+                        nn.ModuleList(
+                            [
+                                nn.Sequential(
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
+                                    nn.ReLU(),
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
+                                )
+                                for _ in range(2)  # 1 for in & 1 for out-features.
+                            ]
+                        ),
+                    ]
+                )
+        else:  # Undirected case.
+            for i in range(num_conv_layers):
+                self.conv_blks.extend(
+                    [
+                        GINConv(
+                            MLP(
+                                input_dim=(
+                                    self.embedding_dim if i == 0 else self.hidden_dim
+                                ),
+                                output_dim=self.hidden_dim,
+                                hidden_dim=self.hidden_dim,
+                                n_hidden_layers=1,
+                                add_layer_norm=True,
+                            ),
+                        ),
+                        nn.Sequential(
+                            nn.Linear(self.hidden_dim, self.hidden_dim),
+                            nn.ReLU(),
+                            nn.Linear(self.hidden_dim, self.hidden_dim),
+                        ),
+                    ]
+                )
+
+        self.norm = nn.LayerNorm(self.hidden_dim)
+
+    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+        node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
+        batch_size = int(math.prod(states_tensor.batch_shape))
+
+        # Multiple action type convolutions with residual connections.
+        x = self.embedding(node_features.squeeze().int())
+        for i in range(0, len(self.conv_blks), 2):
+            x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
+            if self.is_directed:
+                assert isinstance(self.conv_blks[i + 1], nn.ModuleList)
+                x_in, x_out = torch.chunk(x_new, 2, dim=-1)
+
+                # Process each component separately through its own MLP.
+                mlp_in, mlp_out = self.conv_blks[i + 1]
+                x_in = mlp_in(x_in)
+                x_out = mlp_out(x_out)
+                x_new = torch.cat([x_in, x_out], dim=-1)
+            else:
+                x_new = self.conv_blks[i + 1](x_new)  # Linear -> ReLU -> Linear.
+
+            x = x_new + x if i > 0 else x_new  # Residual connection.
+            x = self.norm(x)  # Layernorm.
+
+        # This MLP computes the exit action.
+        def group_mean(tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
+            cumsum = torch.zeros(
+                (len(tensor) + 1, *tensor.shape[1:]),
+                dtype=tensor.dtype,
+                device=tensor.device,
+            )
+            cumsum[1:] = torch.cumsum(tensor, dim=0)
+
+            # Subtract the end val from each batch idx fom the start val of each batch idx.
+            size = batch_ptr[1:] - batch_ptr[:-1]
+            return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
+
+        node_feature_means = group_mean(x, batch_ptr)
+        exit_action = self.exit_mlp(node_feature_means)
+
+        x = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
+
+        # Undirected.
+        if self.is_directed:
+            feature_dim = self.hidden_dim // 2
+            source_features = x[..., :feature_dim]
+            target_features = x[..., feature_dim:]
+
+            # Dot product between source and target features (asymmetric).
+            edgewise_dot_prod = torch.einsum(
+                "bnf,bmf->bnm", source_features, target_features
+            )
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(feature_dim))
+
+            i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+            i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)
+
+            # Combine them.
+            i0 = torch.cat([i_up, i_lo])
+            i1 = torch.cat([j_up, j_lo])
+            out_size = self.n_nodes**2 - self.n_nodes
+
+        else:
+            # Dot product between all node features (symmetric).
+            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x, x)
+            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
+                torch.tensor(self.hidden_dim)
+            )
+            i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+            out_size = (self.n_nodes**2 - self.n_nodes) // 2
+
+        # Grab the needed elems from the adjacency matrix and reshape.
+        edge_actions = edgewise_dot_prod[torch.arange(batch_size)[:, None, None], i0, i1]
+        edge_actions = edge_actions.reshape(*states_tensor["batch_shape"], out_size)
+
+        if self.is_backward:
+            return edge_actions
+        else:
+            return torch.cat([edge_actions, exit_action], dim=-1)

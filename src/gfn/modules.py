@@ -1,4 +1,3 @@
-import math
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -6,7 +5,6 @@ import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
 from torch_geometric.data import Batch as GeometricBatch
-from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
@@ -455,8 +453,8 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-class GNNEdgeRingPolicyModule(nn.Module):
-    """Simple module which outputs a fixed logits for the actions, depending on the number of edges.
+class GNNEdgePolicyModule(GFNModule):
+    """A module which outputs a fixed logits for the actions (edge actions, exit action).
 
     Args:
         n_nodes: The number of nodes in the graph.
@@ -464,165 +462,52 @@ class GNNEdgeRingPolicyModule(nn.Module):
 
     def __init__(
         self,
-        n_nodes: int,
-        directed: bool,
-        num_conv_layers: int = 1,
-        embedding_dim: int = 128,
+        module: nn.Module,
+        preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
+        reduction: str = "mean",
     ):
-        super().__init__()
-        self.hidden_dim = self.embedding_dim = embedding_dim
-        self.is_directed = directed
-        self.is_backward = is_backward
-        self.n_nodes = n_nodes
-        self.num_conv_layers = num_conv_layers
-
-        # Node embedding layer.
-        self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
-        self.conv_blks = nn.ModuleList()
-        self.exit_mlp = MLP(
-            input_dim=self.hidden_dim,
-            output_dim=1,
-            hidden_dim=self.hidden_dim,
-            n_hidden_layers=1,
-            add_layer_norm=True,
+        super().__init__(
+            module=module, preprocessor=preprocessor, is_backward=is_backward
         )
+        assert hasattr(module, "n_nodes"), "module must have a `n_nodes` attribute"
+        assert isinstance(module.n_nodes, int), "n_nodes must be an integer"
+        self.n_nodes = module.n_nodes
 
-        if directed:
-            for i in range(num_conv_layers):
-                self.conv_blks.extend(
-                    [
-                        DirGNNConv(
-                            GCNConv(
-                                self.embedding_dim if i == 0 else self.hidden_dim,
-                                self.hidden_dim,
-                            ),
-                            alpha=0.5,
-                            root_weight=True,
-                        ),
-                        # Process in/out components separately
-                        nn.ModuleList(
-                            [
-                                nn.Sequential(
-                                    nn.Linear(
-                                        self.hidden_dim // 2, self.hidden_dim // 2
-                                    ),
-                                    nn.ReLU(),
-                                    nn.Linear(
-                                        self.hidden_dim // 2, self.hidden_dim // 2
-                                    ),
-                                )
-                                for _ in range(2)  # 1 for in & 1 for out-features.
-                            ]
-                        ),
-                    ]
-                )
-        else:  # Undirected case.
-            for i in range(num_conv_layers):
-                self.conv_blks.extend(
-                    [
-                        GINConv(
-                            MLP(
-                                input_dim=(
-                                    self.embedding_dim if i == 0 else self.hidden_dim
-                                ),
-                                output_dim=self.hidden_dim,
-                                hidden_dim=self.hidden_dim,
-                                n_hidden_layers=1,
-                                add_layer_norm=True,
-                            ),
-                        ),
-                        nn.Sequential(
-                            nn.Linear(self.hidden_dim, self.hidden_dim),
-                            nn.ReLU(),
-                            nn.Linear(self.hidden_dim, self.hidden_dim),
-                        ),
-                    ]
-                )
-
-        self.norm = nn.LayerNorm(self.hidden_dim)
-
-    def _group_mean(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
-        cumsum = torch.zeros(
-            (len(tensor) + 1, *tensor.shape[1:]),
-            dtype=tensor.dtype,
-            device=tensor.device,
+        assert reduction in REDUCTION_FXNS, "reduction function not one of {}".format(
+            REDUCTION_FXNS.keys()
         )
-        cumsum[1:] = torch.cumsum(tensor, dim=0)
+        self.reduction_fxn = REDUCTION_FXNS[reduction]
 
-        # Subtract the end val from each batch idx fom the start val of each batch idx.
-        size = batch_ptr[1:] - batch_ptr[:-1]
-        return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
+    def forward(self, input: States | torch.Tensor) -> torch.Tensor:
+        """Forward pass of the module.
 
-    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
-        node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
-        batch_size = int(math.prod(states_tensor.batch_shape))
+        Args:
+            input: The input to the module, as states or a tensor.
 
-        # Multiple action type convolutions with residual connections.
-        x = self.embedding(node_features.squeeze().int())
-        for i in range(0, len(self.conv_blks), 2):
-            x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
-            if self.is_directed:
-                assert isinstance(self.conv_blks[i + 1], nn.ModuleList)
-                x_in, x_out = torch.chunk(x_new, 2, dim=-1)
+        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        if isinstance(input, States):
+            input = self.preprocessor(input)
 
-                # Process each component separately through its own MLP.
-                mlp_in, mlp_out = self.conv_blks[i + 1]
-                x_in = mlp_in(x_in)
-                x_out = mlp_out(x_out)
-                x_new = torch.cat([x_in, x_out], dim=-1)
-            else:
-                x_new = self.conv_blks[i + 1](x_new)  # Linear -> ReLU -> Linear.
+        out = self.module(input)
 
-            x = x_new + x if i > 0 else x_new  # Residual connection.
-            x = self.norm(x)  # Layernorm.
+        # Ensures estimator outputs are always scalar.
+        if out.shape[-1] != 1:
+            out = self.reduction_fxn(out, -1)
 
-        # This MLP computes the exit action.
-        node_feature_means = self._group_mean(x, batch_ptr)
-        exit_action = self.exit_mlp(node_feature_means)
+        assert out.shape[-1] == 1
+        return out
 
-        x = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
+    def expected_output_dim(self) -> int:
+        out_size = int(self.n_nodes**2 - self.n_nodes)  # No self-loops.
+        if not self.is_directed:
+            out_size = out_size // 2  # No double-counting.
 
-        # Undirected.
-        if self.is_directed:
-            feature_dim = self.hidden_dim // 2
-            source_features = x[..., :feature_dim]
-            target_features = x[..., feature_dim:]
-
-            # Dot product between source and target features (asymmetric).
-            edgewise_dot_prod = torch.einsum(
-                "bnf,bmf->bnm", source_features, target_features
-            )
-            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(feature_dim))
-
-            i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
-            i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)
-
-            # Combine them.
-            i0 = torch.cat([i_up, i_lo])
-            i1 = torch.cat([j_up, j_lo])
-            out_size = self.n_nodes**2 - self.n_nodes
-
-        else:
-            # Dot product between all node features (symmetric).
-            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x, x)
-            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
-                torch.tensor(self.hidden_dim)
-            )
-            i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
-            out_size = (self.n_nodes**2 - self.n_nodes) // 2
-
-        # Grab the needed elems from the adjacency matrix and reshape.
-        edge_actions = edgewise_dot_prod[torch.arange(batch_size)[:, None, None], i0, i1]
-        edge_actions = edge_actions.reshape(*states_tensor["batch_shape"], out_size)
-
-        if self.is_backward:
-            return edge_actions
-        else:
-            return torch.cat([edge_actions, exit_action], dim=-1)
+        return out_size + 1 if self.is_backward else out_size
 
 
-class MLPAdjacencyPolicyModule(nn.Module):
+class MLPAdjacencyPolicyModule(GFNModule):
     """Policy network that processes flattened adjacency matrices to predict graph actions.
 
     Unlike the GNN-based RingPolicyModule, this module uses standard MLPs to process
@@ -732,3 +617,10 @@ class MLPAdjacencyPolicyModule(nn.Module):
             return edge_actions
         else:
             return torch.cat([edge_actions, exit_action], dim=-1)
+
+    def expected_output_dim(self):
+        out_size = self.n_nodes**2 - self.n_nodes  # No self-loops for directed graphs.
+        if not self.is_directed:
+            out_size = out_size // 2  # No double-counting.
+
+        return out_size + 1 if self.is_backward else out_size
