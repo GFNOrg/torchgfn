@@ -62,9 +62,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
         if safe_log_prob_min:
-            self.log_prob_min = -1e-10
+            self.log_prob_min = -1e10
         else:
-            self.log_prob_min = 1e-38
+            self.log_prob_min = -1e38
 
     def logF_named_parameters(self):
         try:
