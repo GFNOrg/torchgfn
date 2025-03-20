@@ -1,11 +1,12 @@
 from typing import Literal, Optional, Tuple
 
 import torch
+from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 from torch_geometric.utils import to_dense_adj
 
-from gfn.actions import GraphActions, GraphActionType
+from gfn.actions import Actions, GraphActions, GraphActionType
 from gfn.env import GraphEnv
 from gfn.states import GraphStates
 
@@ -33,6 +34,7 @@ class BayesianStructure(GraphEnv):
     ):
 
         self.n_nodes = n_nodes
+        self.n_actions = n_nodes**2 + 1
 
         s0 = GeometricData(
             x=torch.arange(n_nodes, dtype=torch.float)[:, None],  # Node ids
@@ -54,21 +56,22 @@ class BayesianStructure(GraphEnv):
             sf=sf,
         )
 
-    def make_actions_class(self) -> type[GraphActions]:
+    def make_actions_class(self) -> type[Actions]:
+        env = self
 
-        class BayesianStructureActions(GraphActions):
+        class BayesianStructureActions(Actions):
             """Actions for building DAGs for Bayesian structure
 
             Actions are represented as discrete indices where:
             - 0 to (n_nodes ** 2) - 1: Add edge between nodes i and j
                 where i = index // n_nodes, j = index % n_nodes
-            - n_nodes ** 2: Exit action
-            - n_nodes ** 2 + 1: dummy action (used for padding)
+            - n_actions - 1 = n_nodes ** 2: Exit action
+            - n_actions = n_nodes ** 2 + 1: dummy action (used for padding)
             """
 
             action_shape = (1,)
-            exit_action = torch.tensor([self.n_nodes**2])
-            dummy_action = torch.tensor([self.n_nodes**2 + 1])
+            exit_action = torch.tensor([env.n_actions - 1])
+            dummy_action = torch.tensor([env.n_actions])
 
         return BayesianStructureActions
 
@@ -94,70 +97,87 @@ class BayesianStructure(GraphEnv):
 
             s0 = env.s0
             sf = env.sf
-            n_actions = env.n_nodes**2 + 1
+            n_nodes = env.n_nodes
+            n_actions = env.n_actions
 
             @property
-            def forward_masks(self) -> dict:
-                """Returns masks denoting allowed forward actions.
+            def num_edges(self) -> torch.Tensor:
+                """Returns the number of edges in each graph."""
+                return torch.tensor(
+                    [data.num_edges for data in self.tensor.to_data_list()]
+                ).view(*self.batch_shape)
+
+            @property
+            def forward_masks(self) -> torch.Tensor:
+                """Returns forward action mask for the current state.
 
                 Returns:
-                    A dictionary containing masks for different action types.
+                    A tensor of shape [batch_size, n_actions] with True for valid actions.
                 """
-                # Get the data list from the batch
-                data_list = self.tensor.to_data_list()
-                num_nodes = self.tensor.x.size(0)
+                assert (
+                    ~self.is_sink_state
+                ).all(), "No valid forward actions for sink states."
 
-                # Initialize masks
-                action_type_mask = torch.ones(
-                    self.batch_shape + (3,), dtype=torch.bool, device=self.device
-                )
-                dense_masks = torch.ones(
-                    (len(data_list), num_nodes, num_nodes),
-                    dtype=torch.bool,
-                    device=self.device,
-                )
+                # Allow all actions.
+                forward_mask = torch.ones(len(self), self.n_actions, dtype=torch.bool)
 
                 # For each graph in the batch
-                for i, data in enumerate(data_list):
-                    # Flatten the batch index
-                    flat_idx = i
-                    # ADD_NODE is not allowed in Bayesian Structure Learning setting
-                    action_type_mask[flat_idx, GraphActionType.ADD_NODE] = False
-                    # ADD_EDGE is allowed only if there are at least 2 nodes
-                    assert data.num_nodes is not None
-                    action_type_mask[flat_idx, GraphActionType.ADD_EDGE] = (
-                        data.num_nodes > 1
-                    )
-                    # EXIT is always allowed
-                    action_type_mask[flat_idx, GraphActionType.EXIT] = True
-
+                for i, data in enumerate(self.tensor.to_data_list()):
                     # For each graph, create a dense mask for potential edges
                     sparse_edge_index = data.edge_index
                     adjacency = (
-                        to_dense_adj(sparse_edge_index, max_num_nodes=num_nodes)
+                        to_dense_adj(sparse_edge_index, max_num_nodes=self.n_nodes)
                         .squeeze(0)
                         .to(torch.bool)
                     )
                     # Create self-loop mask
                     self_loops = torch.eye(
-                        num_nodes, dtype=torch.bool, device=self.device
+                        self.n_nodes, dtype=torch.bool, device=self.device
                     )
                     # Compute transitive closure using the Floyd–Warshall style update:
                     # reach[u, v] is True if there is a path from u to v.
                     reach = adjacency.clone()
-                    for k in range(num_nodes):
+                    for k in range(self.n_nodes):
                         reach = reach | (reach[:, k : k + 1] & reach[k : k + 1, :])
                     # An edge u -> v is allowed if:
                     # 1. There is no existing edge (i.e. not in adjacency)
                     # 2. It won't create a cycle (i.e. no path from v back to u: reach[v, u] is False)
                     # 3. u and v are different (avoid self-loops)
                     allowed = (~adjacency) & (~reach.T) & (~self_loops)
-                    dense_masks[i, :num_nodes, :num_nodes] = allowed
+                    forward_mask[i, : self.n_nodes**2] = allowed.flatten()
 
-                return {"action_type": action_type_mask, "dense_mask": dense_masks}
+                return forward_mask.view(*self.batch_shape, self.n_actions)
 
-            def backward_masks(self):
-                raise NotImplementedError
+            @property
+            def backward_masks(self) -> torch.Tensor:
+                """Compute masks for valid backward actions from the current state (a DAG).
+                All existing edges are considered for removal.
+
+                The EXIT action is not included in backward masks.
+
+                Returns:
+                    A tensor of shape [batch_size, n_actions - 1] with True for valid backward actions.
+                """
+                assert (
+                    ~self.is_initial_state
+                ).all(), "No valid backward actions for initial states."
+
+                # Disable all actions.
+                backward_masks = torch.zeros(
+                    len(self), self.n_actions - 1, dtype=torch.bool
+                )
+
+                # Get the data list from the batch
+                data_list = self.tensor.to_data_list()
+
+                # For each graph in the batch
+                for i, data in enumerate(data_list):
+                    # For each graph, create a dense mask for potential edges
+                    backward_masks[i] = to_dense_adj(
+                        data.edge_index, max_num_nodes=self.n_nodes
+                    ).flatten()
+
+                return backward_masks.view(*self.batch_shape, self.n_actions - 1)
 
         return BayesianStructureStates
 
@@ -170,6 +190,53 @@ class BayesianStructure(GraphEnv):
         states = super().reset(batch_shape, seed=seed, random=False, sink=False)
         assert isinstance(states, GraphStates)
         return states
+
+    def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        graph_actions = self.convert_actions(actions)
+        new_states = super()._step(states, graph_actions)
+        assert isinstance(new_states, self.States)
+        return new_states
+
+    def convert_actions(self, actions: Actions) -> GraphActions:
+        """Convert actions from the Actions class to the GraphActions class.
+
+        This method maps discrete action indices to specific graph operations:
+        - GraphActionType.ADD_EDGE: Add an edge between specific nodes
+        - GraphActionType.EXIT: Terminate trajectory
+        - GraphActionType.DUMMY: No-op action (for padding)
+
+        Args:
+            actions: Discrete actions to convert
+
+        Returns:
+            Equivalent actions in the GraphActions format
+        """
+        # TODO: factor out into utility function.
+        action_tensor = actions.tensor.squeeze(-1).clone()
+
+        is_exit = action_tensor == (self.n_actions - 1)
+        action_type = torch.where(
+            is_exit, GraphActionType.EXIT, GraphActionType.ADD_EDGE
+        )
+        action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
+
+        edge_index = torch.zeros(
+            (action_type.shape[0], 2), dtype=torch.long, device=action_type.device
+        )
+        edge_index[~is_exit, 0] = action_tensor[~is_exit] // self.n_nodes
+        edge_index[~is_exit, 1] = action_tensor[~is_exit] % self.n_nodes
+
+        graph_actions = GraphActions(
+            TensorDict(
+                {
+                    "action_type": action_type,
+                    "features": torch.ones(action_type.shape + (1,)),
+                    "edge_index": edge_index,
+                },
+                batch_size=action_type.shape,
+            )
+        )
+        return graph_actions
 
     def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
         """Step function for the GraphBuilding environment.
@@ -283,9 +350,10 @@ class BayesianStructure(GraphEnv):
         self,
         states: GraphStates,
         actions: GraphActions,
-    ) -> torch.Tensor:
+        backward: bool = False,
+    ) -> bool:
         # TODO
-        raise NotImplementedError
+        return True
 
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
