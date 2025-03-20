@@ -9,11 +9,12 @@ from gfn.env import GraphEnv
 from gfn.states import DAGStates
 
 
-class Causal_DAG(GraphEnv):
+class BayesianStructure(GraphEnv):
     """Environment for incrementally building graphs.
 
-    This environment replicates the setting of the Causal DAG construction task (Bayesian
-    Structure Learning). We assume that we have the nodes of interest in our initial state.
+    This environment replicates the setting of the Bayesian structure learning task.
+    We assume that we have the nodes of interest in our initial state.
+
     The environment allows the following actions:
     - Adding edges between existing nodes with features
     - Terminating construction (EXIT)
@@ -78,7 +79,7 @@ class Causal_DAG(GraphEnv):
 
         if torch.any(actions.action_type == GraphActionType.ADD_NODE):
             raise ValueError(
-                "ADD_NODE action is not supported in Causal DAG environment."
+                "ADD_NODE action is not supported in BayesianStructure environment."
             )
 
         # Get the data list from the batch for processing individual graphs
@@ -123,7 +124,7 @@ class Causal_DAG(GraphEnv):
         return new_tensor
 
     def backward_step(self, states: DAGStates, actions: GraphActions) -> GeometricBatch:
-        """Backward step function for the Causal DAG environment.
+        """Backward step function for the Bayesian structure learning environment.
 
         Args:
             states: DAGStates object representing the current graph.
@@ -135,10 +136,10 @@ class Causal_DAG(GraphEnv):
         if len(actions) == 0:
             return states.tensor
 
-        # Check that there are no ADD_NODE actions (not supported in Causal DAG)
+        # Check that there are no ADD_NODE actions (not supported in this environment)
         if torch.any(actions.action_type == GraphActionType.ADD_NODE):
             raise ValueError(
-                "ADD_NODE action is not supported in Causal DAG environment."
+                "ADD_NODE action is not supported in BayesianStructure environment."
             )
 
         # Get the data list from the batch for processing individual graphs
