@@ -16,9 +16,8 @@ Key components:
 import torch
 from numpy.random import default_rng
 
-from gfn.utils.common import set_seed
 from gfn.gym.bayesian_structure import BayesianStructure
-
+from gfn.utils.common import set_seed
 
 DEFAULT_SEED = 4444
 
@@ -26,11 +25,16 @@ DEFAULT_SEED = 4444
 def main(args):
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
-    rng = default_rng(seed)
+    default_rng(seed)
     device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
     # Create the environment
-    # env = BayesianStructure()  # TODO
+    env = BayesianStructure(
+        n_nodes=args.n_nodes,
+        state_evaluator=lambda x: torch.zeros(x.batch_size, device=x.device),  # TODO
+        device=device_str,
+    )
+    env.reset(args.batch_size)
 
 
 if __name__ == "__main__":
@@ -38,6 +42,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--n_nodes", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 

@@ -1,27 +1,25 @@
-from typing import Callable, Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 import torch
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
+from torch_geometric.utils import to_dense_adj
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import GraphEnv
-from gfn.states import DAGStates
+from gfn.states import GraphStates
 
 
 class BayesianStructure(GraphEnv):
-    """Environment for incrementally building graphs.
-
-    This environment replicates the setting of the Bayesian structure learning task.
-    We assume that we have the nodes of interest in our initial state.
+    """Environment for incrementally building a directed acyclic graph (DAG) for
+    Bayesian structure learning (Deleu et al., 2022).
 
     The environment allows the following actions:
     - Adding edges between existing nodes with features
     - Terminating construction (EXIT)
 
     Args:
-        nodes (num_nodes*feature_dim): states for which the casual relationship needs to be
-            established. This will be the intial state of env where all nodes are disconnected.
+        n_nodes: Number of nodes in the graph.
         state_evaluator: Callable that computes rewards for final states.
             If None, uses default GCNConvEvaluator
         device_str: Device to run computations on ('cpu' or 'cuda')
@@ -29,24 +27,26 @@ class BayesianStructure(GraphEnv):
 
     def __init__(
         self,
-        nodes: torch.Tensor,
-        state_evaluator: Callable[[DAGStates], torch.Tensor],
-        device_str: Literal["cpu", "cuda"] = "cpu",
+        n_nodes: int,
+        state_evaluator: callable,
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
 
-        self.feature_dim = nodes.shape[1]
+        self.n_nodes = n_nodes
+
         s0 = GeometricData(
-            x=nodes,
-            edge_attr=torch.zeros((0, self.feature_dim), dtype=torch.float32),
+            x=torch.arange(n_nodes, dtype=torch.float)[:, None],
+            # Node feature is node id, shape (n_nodes, 1)
             edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,
+            # Edge indices, shape (2, n_edges)
+            device=device,
         )
         sf = GeometricData(
-            x=torch.ones((1, self.feature_dim), dtype=torch.float32) * float("inf"),
-            edge_attr=torch.ones((0, self.feature_dim), dtype=torch.float32),
+            x=-torch.ones(n_nodes, dtype=torch.float)[:, None],
             edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,
+            device=device,
         )
+
         self.state_evaluator = state_evaluator
 
         super().__init__(
@@ -54,21 +54,119 @@ class BayesianStructure(GraphEnv):
             sf=sf,
         )
 
+    def make_actions_class(self) -> type[GraphActions]:
+
+        class BayesianStructureActions(GraphActions):
+            """Actions for building DAGs for Bayesian structure
+
+            Actions are represented as discrete indices where:
+            - 0 to (n_nodes ** 2) - 1: Add edge between nodes i and j
+                where i = index // n_nodes, j = index % n_nodes
+            - n_nodes ** 2: Exit action
+            - n_nodes ** 2 + 1: dummy action (used for padding)
+            """
+
+            action_shape = (1,)
+            exit_action = torch.tensor([self.n_nodes**2])
+            dummy_action = torch.tensor([self.n_nodes**2 + 1])
+
+        return BayesianStructureActions
+
+    def make_states_class(self) -> type[GraphStates]:
+
+        class BayesianStructureStates(GraphStates):
+            """
+            Base class for Graph as a state representation. The `GraphStates` object is a batched
+            collection of multiple graph objects. The `GeometricBatch` object is used to
+            represent the batch of graph objects as states.
+            """
+
+            def __init__(self, tensor: GeometricBatch):
+                """Initialize the GraphStates with a PyG Batch object.
+
+                Args:
+                    tensor: A PyG Batch object representing a batch of graphs.
+                """
+                super().__init__(tensor)
+
+            @property
+            def forward_masks(self) -> dict:
+                """Returns masks denoting allowed forward actions.
+
+                Returns:
+                    A dictionary containing masks for different action types.
+                """
+                # Get the data list from the batch
+                data_list = self.tensor.to_data_list()
+                num_nodes = self.tensor.x.size(0)
+
+                # Initialize masks
+                action_type_mask = torch.ones(
+                    self.batch_shape + (3,), dtype=torch.bool, device=self.device
+                )
+                dense_masks = torch.ones(
+                    (len(data_list), num_nodes, num_nodes),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+
+                # For each graph in the batch
+                for i, data in enumerate(data_list):
+                    # Flatten the batch index
+                    flat_idx = i
+                    # ADD_NODE is not allowed in Bayesian Structure Learning setting
+                    action_type_mask[flat_idx, GraphActionType.ADD_NODE] = False
+                    # ADD_EDGE is allowed only if there are at least 2 nodes
+                    assert data.num_nodes is not None
+                    action_type_mask[flat_idx, GraphActionType.ADD_EDGE] = (
+                        data.num_nodes > 1
+                    )
+                    # EXIT is always allowed
+                    action_type_mask[flat_idx, GraphActionType.EXIT] = True
+
+                    # For each graph, create a dense mask for potential edges
+                    sparse_edge_index = data.edge_index
+                    adjacency = to_dense_adj(
+                        sparse_edge_index, max_num_nodes=num_nodes
+                    ).squeeze(0)
+                    # Create self-loop mask
+                    self_loops = torch.eye(
+                        num_nodes, dtype=torch.bool, device=self.device
+                    )
+                    # Compute transitive closure using the Floyd–Warshall style update:
+                    # reach[u, v] is True if there is a path from u to v.
+                    reach = adjacency.clone()
+                    for k in range(num_nodes):
+                        reach = reach | (reach[:, k : k + 1] & reach[k : k + 1, :])
+                    # An edge u -> v is allowed if:
+                    # 1. There is no existing edge (i.e. not in adjacency)
+                    # 2. It won't create a cycle (i.e. no path from v back to u: reach[v, u] is False)
+                    # 3. u and v are different (avoid self-loops)
+                    allowed = (~adjacency) & (~reach.T) & (~self_loops)
+                    dense_masks[i, :num_nodes, :num_nodes] = allowed
+
+                return {"action_type": action_type_mask, "dense_mask": dense_masks}
+
+            def backward_masks(self):
+                raise NotImplementedError
+
+        return BayesianStructureStates
+
     def reset(
         self,
         batch_shape: int | Tuple[int, ...],
         seed: Optional[int] = None,
-    ) -> DAGStates:
+    ) -> GraphStates:
         """Reset the environment to a new batch of graphs."""
         states = super().reset(batch_shape, seed=seed, random=False, sink=False)
-        assert isinstance(states, DAGStates)
+        assert isinstance(states, GraphStates)
         return states
 
-    def step(self, states: DAGStates, actions: GraphActions) -> GeometricBatch:
+    def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
         """Step function for the GraphBuilding environment.
 
         Args:
-            states: DAGStates object representing the current graph states.
+            states: BayesianStructureStates object representing the current graph states.
             actions: Actions to apply to each graph state.
 
         Returns:
@@ -123,11 +221,13 @@ class BayesianStructure(GraphEnv):
         new_tensor.batch_shape = states.tensor.batch_shape
         return new_tensor
 
-    def backward_step(self, states: DAGStates, actions: GraphActions) -> GeometricBatch:
+    def backward_step(
+        self, states: GraphStates, actions: GraphActions
+    ) -> GeometricBatch:
         """Backward step function for the Bayesian structure learning environment.
 
         Args:
-            states: DAGStates object representing the current graph.
+            states: BayesianStructureStates object representing the current graph.
             actions: Actions indicating which edge to remove.
 
         Returns:
@@ -170,7 +270,15 @@ class BayesianStructure(GraphEnv):
         new_tensor.batch_shape = states.tensor.batch_shape
         return new_tensor
 
-    def reward(self, final_states: DAGStates) -> torch.Tensor:
+    def is_action_valid(
+        self,
+        states: GraphStates,
+        actions: GraphActions,
+    ) -> torch.Tensor:
+        # TODO
+        raise NotImplementedError
+
+    def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
         This or log_reward must be implemented.
 
@@ -194,7 +302,7 @@ class BayesianStructure(GraphEnv):
         # Create a new batch from the updated data list
         reverted_states.tensor = GeometricBatch.from_data_list(data_list)
         # Compute the BDe score for the reverted graph (before the last action)
-        score_before = self.state_evaluator(DAGStates(reverted_states.tensor))
+        score_before = self.state_evaluator(self.States(reverted_states.tensor))
         # Compute the BDe score for the current graph (after the last action)
         score_after = self.state_evaluator(final_states)
         # Compute the delta score (reward)

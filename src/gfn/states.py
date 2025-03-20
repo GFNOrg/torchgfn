@@ -20,7 +20,6 @@ import torch
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 from torch_geometric.data.data import BaseData
-from torch_geometric.utils import to_dense_adj
 
 from gfn.actions import GraphActionType
 
