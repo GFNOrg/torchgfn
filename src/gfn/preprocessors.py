@@ -42,9 +42,7 @@ class IdentityPreprocessor(Preprocessor):
 
     def preprocess(self, states: States) -> torch.Tensor:
         """Identity preprocessor. Returns the states as they are."""
-        return (
-            states.tensor.float()
-        )  # TODO: should we typecast here? not a true identity...
+        return states.tensor
 
 
 class EnumPreprocessor(Preprocessor):
