@@ -3,17 +3,11 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from tensordict import TensorDict
-from torch.distributions import Categorical, Distribution, Normal
+from torch.distributions import Categorical, Distribution
 
-from gfn.preprocessors import GraphPreprocessor, IdentityPreprocessor, Preprocessor
-from gfn.states import DiscreteStates, GraphStates, States
-from gfn.utils.distributions import (
-    CategoricalActionType,
-    CategoricalIndexes,
-    CompositeDistribution,
-    UnsqueezedCategorical,
-)
+from gfn.preprocessors import IdentityPreprocessor, Preprocessor
+from gfn.states import DiscreteStates, States
+from gfn.utils.distributions import UnsqueezedCategorical
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -457,106 +451,54 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-class GraphActionPolicyEstimator(GFNModule):
-    r"""Container for forward and backward policy estimators for graph environments.
+# class GraphEdgeEstimator(DiscretePolicyEstimator):
+#     """A module which outputs a fixed logits for the actions (edge actions, exit action).
 
-    $s \mapsto (P_F(s' \mid s))_{s' \in Children(s)}$.
+#     Args:
+#         n_nodes: The number of nodes in the graph.
+#     """
 
-    or
+#     def __init__(
+#         self,
+#         module: nn.Module,
+#         preprocessor: Preprocessor | None = None,
+#         is_backward: bool = False,
+#     ):
+#         assert hasattr(module, "n_nodes"), "module must have a `n_nodes` attribute"
+#         assert isinstance(module.n_nodes, int), "n_nodes must be an integer"
+#         assert hasattr(module, "output_dim"), "module must have a `output_dim` attribute"
+#         assert isinstance(module.output_dim, int), "output_dim must be an integer"
 
-    $s \mapsto (P_B(s' \mid s))_{s' \in Parents(s)}$.
+#         super().__init__(
+#             module=module,
+#             n_actions=module.output_dim,  # type: ignore
+#             preprocessor=preprocessor,
+#             is_backward=is_backward,
+#         )
 
-    Attributes:
-        temperature: scalar to divide the logits by before softmax.
-        sf_bias: scalar to subtract from the exit action logit before dividing by
-            temperature.
-        epsilon: with probability epsilon, a random action is chosen.
-    """
+#     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
+#         """Forward pass of the module.
 
-    def __init__(
-        self,
-        module: nn.Module,
-        preprocessor: Preprocessor | None = None,
-        is_backward: bool = False,
-    ):
-        """Initializes a estimator for P_F for graph environments.
+#         Args:
+#             input: The input to the module, as states or a tensor.
 
-        Args:
-            is_backward: if False, then this is a forward policy, else backward policy.
-        """
-        if preprocessor is None:
-            preprocessor = GraphPreprocessor()
-        super().__init__(module, preprocessor, is_backward)
+#         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+#         """
+#         if isinstance(input, States):
+#             input = self.preprocessor(input)
 
-    def expected_output_dim(self) -> int:
-        return 0
+#         out = self.module(input)
 
-    def forward(self, states: GraphStates) -> TensorDict:
-        """Forward pass of the module.
+#         assert out.shape[-1] == self.expected_output_dim
+#         return out
 
-        Args:
-            states: The input graph states.
+#     @property
+#     def n_nodes(self):
+#         return self.module.n_nodes
 
-        Returns:
-            TensorDict containing:
-                - action_type: logits for action type selection (batch_shape, n_actions)
-                - features: parameters for node/edge features (batch_shape, feature_dim)
-                - edge_index: logits for edge connections (batch_shape, n_nodes, n_nodes)
-        """
-        return self.module(states)
-
-    def to_probability_distribution(
-        self,
-        states: GraphStates,
-        module_output: TensorDict,
-        temperature: float = 1.0,
-        epsilon: float = 0.0,
-    ) -> CompositeDistribution:
-        """Returns a probability distribution given a batch of states and module output.
-
-        We handle off-policyness using these kwargs.
-
-        Args:
-            states: The states to use.
-            module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
-            temperature: scalar to divide the logits by before softmax. Does nothing
-                if set to 1.0 (default), in which case it's on policy.
-            epsilon: with probability epsilon, a random action is chosen. Does nothing
-                if set to 0.0 (default), in which case it's on policy."""
-
-        raise NotImplementedError(
-            "This method is incompatible with pyg and will be fixed in a future PR."
-        )
-        dists = {}
-
-        action_type_logits = module_output["action_type"]
-        masks = states.backward_masks if self.is_backward else states.forward_masks
-        action_type_logits[~masks["action_type"]] = -float("inf")
-        action_type_probs = torch.softmax(action_type_logits / temperature, dim=-1)
-        uniform_dist_probs = masks["action_type"].float() / masks["action_type"].sum(
-            dim=-1, keepdim=True
-        )
-        action_type_probs = (
-            1 - epsilon
-        ) * action_type_probs + epsilon * uniform_dist_probs
-        dists["action_type"] = CategoricalActionType(probs=action_type_probs)
-
-        edge_index_logits = module_output["edge_index"]
-        edge_index_logits[~masks["edge_index"]] = -float("inf")
-        if torch.any(edge_index_logits != -float("inf")):
-            B, N, N = edge_index_logits.shape
-            edge_index_logits = edge_index_logits.reshape(B, N * N)
-            edge_index_probs = torch.softmax(edge_index_logits / temperature, dim=-1)
-            uniform_dist_probs = (
-                torch.ones_like(edge_index_probs) / edge_index_probs.shape[-1]
-            )
-            edge_index_probs = (
-                1 - epsilon
-            ) * edge_index_probs + epsilon * uniform_dist_probs
-            edge_index_probs[torch.isnan(edge_index_probs)] = 1
-            dists["edge_index"] = CategoricalIndexes(
-                probs=edge_index_probs, n_nodes=states.tensor.num_nodes
-            )
-
-        dists["features"] = Normal(module_output["features"], temperature)
-        return CompositeDistribution(dists=dists)
+#     @property
+#     def expected_output_dim(self) -> int:
+#         if not isinstance(self.module.output_dim, int):
+#             return int(self.module.output_dim)  # type: ignore
+#         else:
+#             return self.module.output_dim

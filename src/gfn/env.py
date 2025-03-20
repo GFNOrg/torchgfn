@@ -379,10 +379,22 @@ class DiscreteEnv(Env, ABC):
         ):
             import warnings
 
+            expert_parameters_used = []
+            if dummy_action is not None:
+                expert_parameters_used.append("dummy_action")
+            if exit_action is not None:
+                expert_parameters_used.append("exit_action")
+            if sf is not None:
+                expert_parameters_used.append("sf")
+            if preprocessor is not None:
+                expert_parameters_used.append("preprocessor")
+
             warnings.warn(
-                "You're using advanced parameters (dummy_action/exit_action/sf/preprocessor). "
+                "You're using advanced parameters: ({}). "
                 "These are only needed for custom action handling. "
-                "For basic environments, you can omit these.",
+                "For basic environments, you can omit these.".format(
+                    ", ".join(expert_parameters_used)
+                ),
                 UserWarning,
             )
 

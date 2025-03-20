@@ -1,6 +1,6 @@
 from .box import Box
 from .discrete_ebm import DiscreteEBM
-from .graph_building import GraphBuilding
+from .graph_building import GraphBuilding, GraphBuildingOnEdges
 from .hypergrid import HyperGrid
 from .line import Line
 
@@ -10,4 +10,5 @@ __all__ = [
     "HyperGrid",
     "Line",
     "GraphBuilding",
+    "GraphBuildingOnEdges",
 ]

@@ -29,7 +29,11 @@ class Preprocessor(ABC):
     def __call__(self, states: States) -> torch.Tensor:
         """Transform the states to the input of the neural network, calling the preprocess method."""
         out = self.preprocess(states)
-        assert out.shape[-1] == self.output_dim
+        if isinstance(out, GeometricBatch):
+            assert out.x.shape[-1] == self.output_dim
+        else:
+            assert out.shape[-1] == self.output_dim
+
         return out
 
     def __repr__(self):
@@ -42,9 +46,7 @@ class IdentityPreprocessor(Preprocessor):
 
     def preprocess(self, states: States) -> torch.Tensor:
         """Identity preprocessor. Returns the states as they are."""
-        return (
-            states.tensor.float()
-        )  # TODO: should we typecast here? not a true identity...
+        return states.tensor
 
 
 class EnumPreprocessor(Preprocessor):
@@ -76,8 +78,21 @@ class EnumPreprocessor(Preprocessor):
 
 
 class GraphPreprocessor(Preprocessor):
-    def __init__(self) -> None:
-        super().__init__(-1)  # TODO: review output_dim API
+    """Preprocessor for graph states to extract the tensor representation.
+
+    This simple preprocessor extracts the GeometricBatch from GraphStates to make
+    it compatible with the policy networks. It doesn't perform any complex
+    transformations, just ensuring the tensors are accessible in the right format.
+
+    Args:
+        feature_dim: The dimension of features in the graph (default: 1)
+    """
+
+    def __init__(self, feature_dim: int = 1):
+        super().__init__(output_dim=feature_dim)
 
     def preprocess(self, states: GraphStates) -> GeometricBatch:
         return states.tensor
+
+    def __call__(self, states: GraphStates) -> GeometricBatch:
+        return self.preprocess(states)
