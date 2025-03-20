@@ -34,16 +34,18 @@ def main(args):
         state_evaluator=lambda x: torch.zeros(x.batch_size, device=x.device),  # TODO
         device=device_str,
     )
-    env.reset(args.batch_size)
+    states = env.reset(args.batch_size)
+    print(states)
 
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n_nodes", type=int, default=10)
+    parser.add_argument("--n_nodes", type=int, default=5)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--no_cuda", action="store_true")
     args = parser.parse_args()
 
     main(args)

@@ -35,14 +35,14 @@ class BayesianStructure(GraphEnv):
         self.n_nodes = n_nodes
 
         s0 = GeometricData(
-            x=torch.arange(n_nodes, dtype=torch.float)[:, None],
-            # Node feature is node id, shape (n_nodes, 1)
+            x=torch.arange(n_nodes, dtype=torch.float)[:, None],  # Node ids
+            edge_attr=torch.ones((0, 1)),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
-            # Edge indices, shape (2, n_edges)
             device=device,
         )
         sf = GeometricData(
             x=-torch.ones(n_nodes, dtype=torch.float)[:, None],
+            edge_attr=torch.zeros((0, 1)),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
             device=device,
         )
@@ -73,21 +73,28 @@ class BayesianStructure(GraphEnv):
         return BayesianStructureActions
 
     def make_states_class(self) -> type[GraphStates]:
+        env = self
 
         class BayesianStructureStates(GraphStates):
-            """
-            Base class for Graph as a state representation. The `GraphStates` object is a batched
-            collection of multiple graph objects. The `GeometricBatch` object is used to
-            represent the batch of graph objects as states.
+            """Represents the state for building DAGs for Bayesian structure.
+
+            Each state is a graph with a fixed number of nodes wierhe edges
+            are being addd incrementally to form a DAG.
+
+            The state representation consists of:
+            - x: Node IDs (shape: [n_nodes, 1])
+            - edge_index: Edge indices (shape: [2, n_edges])
+
+            Special states:
+            - s0: Initial state with no edges
+            - sf: Terminal dummy state
+
+            The class also provides masks for allowed actions.
             """
 
-            def __init__(self, tensor: GeometricBatch):
-                """Initialize the GraphStates with a PyG Batch object.
-
-                Args:
-                    tensor: A PyG Batch object representing a batch of graphs.
-                """
-                super().__init__(tensor)
+            s0 = env.s0
+            sf = env.sf
+            n_actions = env.n_nodes**2 + 1
 
             @property
             def forward_masks(self) -> dict:
@@ -126,9 +133,11 @@ class BayesianStructure(GraphEnv):
 
                     # For each graph, create a dense mask for potential edges
                     sparse_edge_index = data.edge_index
-                    adjacency = to_dense_adj(
-                        sparse_edge_index, max_num_nodes=num_nodes
-                    ).squeeze(0)
+                    adjacency = (
+                        to_dense_adj(sparse_edge_index, max_num_nodes=num_nodes)
+                        .squeeze(0)
+                        .to(torch.bool)
+                    )
                     # Create self-loop mask
                     self_loops = torch.eye(
                         num_nodes, dtype=torch.bool, device=self.device
