@@ -50,7 +50,7 @@ def test_FM(env_name: str, ndim: int, module_name: str):
         if env_name == "HyperGrid":
             preprocessor = KHotPreprocessor(env.height, env.ndim)
         else:
-            preprocessor = IdentityPreprocessor(output_dim=env.ndim)
+            preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
     if module_name == "MLP":
         module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)

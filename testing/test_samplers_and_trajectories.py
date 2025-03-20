@@ -223,7 +223,7 @@ def test_local_search_for_loop_equivalence(env_name):
             preprocessor = KHotPreprocessor(env.height, env.ndim)
         elif env_name == "DiscreteEBM":
             env = DiscreteEBM(ndim=5)
-            preprocessor = IdentityPreprocessor(output_dim=env.ndim)
+            preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
         else:
             raise ValueError("Unknown environment name")
 
