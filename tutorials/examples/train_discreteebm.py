@@ -33,15 +33,17 @@ def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
 
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
 
     use_wandb = len(args.wandb_project) > 0
     if use_wandb:
         wandb.init(project=args.wandb_project)
         wandb.config.update(args)
 
-    # 1. Create the environment
-    env = DiscreteEBM(ndim=args.ndim, alpha=args.alpha, device_str=device_str)
+    # 1. Create the environment.
+    env = DiscreteEBM(ndim=args.ndim, alpha=args.alpha, device=device)
 
     # 2. Create the gflownet.
     # We need a LogEdgeFlowEstimator
@@ -59,12 +61,12 @@ def main(args):  # noqa: C901
         n_actions=env.n_actions,
     )
     gflownet = FMGFlowNet(estimator)
-    gflownet = gflownet.to(env.device)
+    gflownet = gflownet.to(device)
 
-    # 3. Create the optimizer
+    # 3. Create the optimizer.
     optimizer = torch.optim.Adam(module.parameters(), lr=args.lr)
 
-    # 4. Train the gflownet
+    # 4. Train the gflownet.
     visited_terminating_states = env.states_from_batch_shape((0,))
 
     states_visited = 0
@@ -144,8 +146,10 @@ if __name__ == "__main__":
         "--n_hidden",
         type=int,
         default=2,
-        help="Number of hidden layers (of size `hidden_dim`) in the estimators'"
-        + " neural network modules",
+        help=(
+            "Number of hidden layers (of size `hidden_dim`) in the estimators' "
+            "neural network modules"
+        ),
     )
 
     parser.add_argument(
@@ -173,7 +177,10 @@ if __name__ == "__main__":
         "--validation_samples",
         type=int,
         default=200000,
-        help="Number of validation samples to use to evaluate the probability mass function.",
+        help=(
+            "Number of validation samples to use to evaluate the probability mass "
+            "function."
+        ),
     )
 
     parser.add_argument(

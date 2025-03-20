@@ -32,10 +32,12 @@ from gfn.utils.training import validate
 
 def main(args):
     set_seed(args.seed)
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
 
     # Setup the Environment.
-    env = HyperGrid(ndim=args.ndim, height=args.height, device_str=device_str)
+    env = HyperGrid(ndim=args.ndim, height=args.height, device=device)
 
     # Build the GFlowNet.
     module_PF = MLP(
@@ -55,7 +57,7 @@ def main(args):
     sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)
 
     # Move the gflownet to the GPU.
-    gflownet = gflownet.to(device_str)
+    gflownet = gflownet.to(device)
 
     # Policy parameters have their own LR. Log Z gets dedicated learning rate
     # (typically higher).

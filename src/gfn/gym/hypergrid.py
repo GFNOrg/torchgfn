@@ -21,20 +21,20 @@ class HyperGrid(DiscreteEnv):
         R1: float = 0.5,
         R2: float = 2.0,
         reward_cos: bool = False,
-        device_str: Literal["cpu", "cuda"] = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
         """HyperGrid environment from the GFlowNets paper.
         The states are represented as 1-d tensors of length `ndim` with values in
         {0, 1, ..., height - 1}.
 
         Args:
-            ndim (int, optional): dimension of the grid. Defaults to 2.
-            height (int, optional): height of the grid. Defaults to 4.
-            R0 (float, optional): reward parameter R0. Defaults to 0.1.
-            R1 (float, optional): reward parameter R1. Defaults to 0.5.
-            R2 (float, optional): reward parameter R1. Defaults to 2.0.
-            reward_cos (bool, optional): Which version of the reward to use. Defaults to False.
-            device_str (str, optional): "cpu" or "cuda". Defaults to "cpu".
+            ndim: dimension of the grid. Defaults to 2.
+            height: height of the grid. Defaults to 4.
+            R0: reward parameter R0. Defaults to 0.1.
+            R1: reward parameter R1. Defaults to 0.5.
+            R2: reward parameter R1. Defaults to 2.0.
+            reward_cos: Which version of the reward to use. Defaults to False.
+            device: The device to use for the environment.
         """
         self.ndim = ndim
         self.height = height
@@ -43,10 +43,11 @@ class HyperGrid(DiscreteEnv):
         self.R2 = R2
         self.reward_cos = reward_cos
 
-        s0 = torch.zeros(ndim, dtype=torch.long, device=torch.device(device_str))
-        sf = torch.full(
-            (ndim,), fill_value=-1, dtype=torch.long, device=torch.device(device_str)
-        )
+        if isinstance(device, str):
+            device = torch.device(device)
+
+        s0 = torch.zeros(ndim, dtype=torch.long, device=device)
+        sf = torch.full((ndim,), fill_value=-1, dtype=torch.long, device=device)
         n_actions = ndim + 1
 
         state_shape = (self.ndim,)

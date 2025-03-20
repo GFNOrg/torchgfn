@@ -206,11 +206,6 @@ def train(env, gflownet, seed):
     exploration_rate = 0.5
     lr = 0.0005
 
-    # Move the gflownet to the GPU.
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if torch.cuda.is_available():
-        gflownet = gflownet.to(device)
-
     # Policy parameters and logZ/logF get independent LRs (logF/Z typically higher).
     if type(gflownet) is TBGFlowNet:
         optimizer = Adam(gflownet.pf_pb_parameters(), lr=lr)
@@ -221,14 +216,14 @@ def train(env, gflownet, seed):
     elif type(gflownet) is FMGFlowNet or type(gflownet) is ModifiedDBGFlowNet:
         optimizer = Adam(gflownet.parameters(), lr=lr)
     else:
-        print("What is this gflownet? {}".format(type(gflownet)))
+        print("unknown gflownet type: {}".format(type(gflownet)))
 
     n_iterations = int(10)  # 1e4)
     batch_size = int(1e4)
 
     print("+ Training Conditional {}!".format(type(gflownet)))
     for _ in (pbar := tqdm(range(n_iterations))):
-        conditioning = torch.rand((batch_size, 1), device=device)
+        conditioning = torch.rand((batch_size, 1)).to(gflownet.device)  # type: ignore
         conditioning = (conditioning > 0.5).to(torch.float)  # Randomly 1 and zero.
 
         trajectories = gflownet.sample_trajectories(
@@ -260,21 +255,25 @@ GFN_FNS = {
 
 
 def main(args):
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
     environment = HyperGrid(
         ndim=5,
         height=2,
-        device_str="cuda" if torch.cuda.is_available() else "cpu",
+        device=device,
     )
-
     seed = int(args.seed) if args.seed is not None else DEFAULT_SEED
 
     if args.gflownet == "all":
         for fn in GFN_FNS.values():
             gflownet = fn(environment)
+            gflownet = gflownet.to(device)
             train(environment, gflownet, seed)
     else:
         assert args.gflownet in GFN_FNS, "invalid gflownet name\n{}".format(GFN_FNS)
         gflownet = GFN_FNS[args.gflownet](environment)
+        gflownet = gflownet.to(device)
         train(environment, gflownet, seed)
 
 

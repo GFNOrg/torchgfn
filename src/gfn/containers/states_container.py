@@ -206,3 +206,7 @@ class StatesContainer(Container, Generic[StateType]):
             is_terminating=is_terminating,
             log_rewards=log_rewards,
         )
+
+    @property
+    def device(self) -> torch.device:
+        return self.states.device
