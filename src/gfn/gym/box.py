@@ -18,18 +18,19 @@ class Box(Env):
         R1: float = 0.5,
         R2: float = 2.0,
         epsilon: float = 1e-4,
-        device_str: Literal["cpu", "cuda"] = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
         assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
         self.epsilon = epsilon
-        s0 = torch.tensor([0.0, 0.0], device=torch.device(device_str))
-        exit_action = torch.tensor(
-            [-float("inf"), -float("inf")], device=torch.device(device_str)
-        )
-        dummy_action = torch.tensor(
-            [float("inf"), float("inf")], device=torch.device(device_str)
-        )
+        if isinstance(device, str):
+            self.device = torch.device(device)
+        else:
+            self.device = device
+
+        s0 = torch.tensor([0.0, 0.0], device=self.device)
+        exit_action = torch.tensor([-float("inf"), -float("inf")], device=self.device)
+        dummy_action = torch.tensor([float("inf"), float("inf")], device=self.device)
 
         self.R0 = R0
         self.R1 = R1

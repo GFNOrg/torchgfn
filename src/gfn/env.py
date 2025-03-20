@@ -204,7 +204,7 @@ class Env(ABC):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: int | Tuple[int, ...],
+        batch_shape: int | Tuple[int, ...] | list[int],
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
@@ -221,6 +221,8 @@ class Env(ABC):
 
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
+        elif isinstance(batch_shape, list):
+            batch_shape = tuple(batch_shape)
         return self.states_from_batch_shape(
             batch_shape=batch_shape, random=random, sink=sink
         )

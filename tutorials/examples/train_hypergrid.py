@@ -110,7 +110,9 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
 
     use_wandb = len(args.wandb_project) > 0
     if use_wandb:
@@ -118,9 +120,7 @@ def main(args):  # noqa: C901
         wandb.config.update(args)
 
     # 1. Create the environment
-    env = HyperGrid(
-        args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
-    )
+    env = HyperGrid(args.ndim, args.height, args.R0, args.R1, args.R2, device=device)
 
     # 2. Create the gflownets.
     #    For this we need modules and estimators.
@@ -262,8 +262,7 @@ def main(args):  # noqa: C901
                 capacity=args.replay_buffer_size,
             )
 
-    # Move the gflownet to the GPU.
-    gflownet = gflownet.to(device_str)
+    gflownet = gflownet.to(device)
 
     # 3. Create the optimizer
     # Policy parameters have their own LR.
