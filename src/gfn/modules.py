@@ -4,12 +4,10 @@ from typing import Any
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
-from torch_geometric.data import Batch as GeometricBatch
 
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import UnsqueezedCategorical
-from gfn.utils.modules import MLP
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -453,174 +451,54 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-class GNNEdgePolicyModule(GFNModule):
-    """A module which outputs a fixed logits for the actions (edge actions, exit action).
+# class GraphEdgeEstimator(DiscretePolicyEstimator):
+#     """A module which outputs a fixed logits for the actions (edge actions, exit action).
 
-    Args:
-        n_nodes: The number of nodes in the graph.
-    """
+#     Args:
+#         n_nodes: The number of nodes in the graph.
+#     """
 
-    def __init__(
-        self,
-        module: nn.Module,
-        preprocessor: Preprocessor | None = None,
-        is_backward: bool = False,
-        reduction: str = "mean",
-    ):
-        super().__init__(
-            module=module, preprocessor=preprocessor, is_backward=is_backward
-        )
-        assert hasattr(module, "n_nodes"), "module must have a `n_nodes` attribute"
-        assert isinstance(module.n_nodes, int), "n_nodes must be an integer"
-        self.n_nodes = module.n_nodes
+#     def __init__(
+#         self,
+#         module: nn.Module,
+#         preprocessor: Preprocessor | None = None,
+#         is_backward: bool = False,
+#     ):
+#         assert hasattr(module, "n_nodes"), "module must have a `n_nodes` attribute"
+#         assert isinstance(module.n_nodes, int), "n_nodes must be an integer"
+#         assert hasattr(module, "output_dim"), "module must have a `output_dim` attribute"
+#         assert isinstance(module.output_dim, int), "output_dim must be an integer"
 
-        assert reduction in REDUCTION_FXNS, "reduction function not one of {}".format(
-            REDUCTION_FXNS.keys()
-        )
-        self.reduction_fxn = REDUCTION_FXNS[reduction]
+#         super().__init__(
+#             module=module,
+#             n_actions=module.output_dim,  # type: ignore
+#             preprocessor=preprocessor,
+#             is_backward=is_backward,
+#         )
 
-    def forward(self, input: States | torch.Tensor) -> torch.Tensor:
-        """Forward pass of the module.
+#     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
+#         """Forward pass of the module.
 
-        Args:
-            input: The input to the module, as states or a tensor.
+#         Args:
+#             input: The input to the module, as states or a tensor.
 
-        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
-        """
-        if isinstance(input, States):
-            input = self.preprocessor(input)
+#         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+#         """
+#         if isinstance(input, States):
+#             input = self.preprocessor(input)
 
-        out = self.module(input)
+#         out = self.module(input)
 
-        # Ensures estimator outputs are always scalar.
-        if out.shape[-1] != 1:
-            out = self.reduction_fxn(out, -1)
+#         assert out.shape[-1] == self.expected_output_dim
+#         return out
 
-        assert out.shape[-1] == 1
-        return out
+#     @property
+#     def n_nodes(self):
+#         return self.module.n_nodes
 
-    def expected_output_dim(self) -> int:
-        out_size = int(self.n_nodes**2 - self.n_nodes)  # No self-loops.
-        if not self.is_directed:
-            out_size = out_size // 2  # No double-counting.
-
-        return out_size + 1 if self.is_backward else out_size
-
-
-class MLPAdjacencyPolicyModule(GFNModule):
-    """Policy network that processes flattened adjacency matrices to predict graph actions.
-
-    Unlike the GNN-based RingPolicyModule, this module uses standard MLPs to process
-    the entire adjacency matrix as a flattened vector. This approach:
-
-    1. Can directly process global graph structure without message passing
-    2. May be more effective for small graphs where global patterns are important
-    3. Does not require complex graph neural network operations
-
-    The module architecture consists of:
-    - An MLP to process the flattened adjacency matrix into an embedding
-    - An edge MLP that predicts logits for each possible edge action
-    - An exit MLP that predicts a logit for the exit action
-
-    Args:
-        n_nodes: Number of nodes in the graph
-        directed: Whether the graph is directed or undirected
-        embedding_dim: Dimension of internal embeddings (default: 128)
-        is_backward: Whether this is a backward policy (default: False)
-    """
-
-    def __init__(
-        self,
-        n_nodes: int,
-        directed: bool,
-        embedding_dim: int = 128,
-        is_backward: bool = False,
-    ):
-        super().__init__()
-        self.n_nodes = n_nodes
-        self.is_directed = directed
-        self.is_backward = is_backward
-        self.hidden_dim = embedding_dim
-
-        # MLP for processing the flattened adjacency matrix
-        self.mlp = MLP(
-            input_dim=n_nodes * n_nodes,  # Flattened adjacency matrix
-            output_dim=embedding_dim,
-            hidden_dim=embedding_dim,
-            n_hidden_layers=2,
-            add_layer_norm=True,
-        )
-
-        # Exit action MLP
-        self.exit_mlp = MLP(
-            input_dim=embedding_dim,
-            output_dim=1,
-            hidden_dim=embedding_dim,
-            n_hidden_layers=1,
-            add_layer_norm=True,
-        )
-
-        # Edge prediction MLP
-        if directed:
-            # For directed graphs: all off-diagonal elements
-            out_size = n_nodes**2 - n_nodes
-        else:
-            # For undirected graphs: upper triangle without diagonal
-            out_size = (n_nodes**2 - n_nodes) // 2
-
-        self.edge_mlp = MLP(
-            input_dim=embedding_dim,
-            output_dim=out_size,
-            hidden_dim=embedding_dim,
-            n_hidden_layers=1,
-            add_layer_norm=True,
-        )
-
-    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
-        """Forward pass to compute action logits from graph states.
-
-        Process:
-        1. Convert the graph representation to adjacency matrices
-        2. Process the flattened adjacency matrices through the main MLP
-        3. Predict logits for edge actions and exit action
-
-        Args:
-            states_tensor: A GeometricBatch containing graph state information
-
-        Returns:
-            A tensor of logits for all possible actions
-        """
-        # Convert the graph to adjacency matrix
-        batch_size = int(states_tensor.batch_size)
-        adj_matrices = torch.zeros(
-            (batch_size, self.n_nodes, self.n_nodes),
-            device=states_tensor.x.device,
-        )
-
-        # Fill the adjacency matrices from edge indices
-        if states_tensor.edge_index.numel() > 0:
-            for i in range(batch_size):
-                eis = states_tensor[i].edge_index
-                adj_matrices[i, eis[0], eis[1]] = 1
-
-        # Flatten the adjacency matrices for the MLP
-        adj_matrices_flat = adj_matrices.view(batch_size, -1)
-
-        # Process with MLP
-        embedding = self.mlp(adj_matrices_flat)
-
-        # Generate edge and exit actions
-        edge_actions = self.edge_mlp(embedding)
-        exit_action = self.exit_mlp(embedding)
-
-        if self.is_backward:
-            return edge_actions
-        else:
-            return torch.cat([edge_actions, exit_action], dim=-1)
-
-    def expected_output_dim(self):
-        out_size = self.n_nodes**2 - self.n_nodes  # No self-loops for directed graphs.
-        if not self.is_directed:
-            out_size = out_size // 2  # No double-counting.
-
-        return out_size + 1 if self.is_backward else out_size
+#     @property
+#     def expected_output_dim(self) -> int:
+#         if not isinstance(self.module.output_dim, int):
+#             return int(self.module.output_dim)  # type: ignore
+#         else:
+#             return self.module.output_dim

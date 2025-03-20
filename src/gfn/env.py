@@ -378,6 +378,7 @@ class DiscreteEnv(Env, ABC):
             or preprocessor is not None
         ):
             import warnings
+
             expert_parameters_used = []
             if dummy_action is not None:
                 expert_parameters_used.append("dummy_action")

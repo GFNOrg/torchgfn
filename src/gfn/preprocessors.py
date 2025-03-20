@@ -29,7 +29,11 @@ class Preprocessor(ABC):
     def __call__(self, states: States) -> torch.Tensor:
         """Transform the states to the input of the neural network, calling the preprocess method."""
         out = self.preprocess(states)
-        assert out.shape[-1] == self.output_dim
+        if isinstance(out, GeometricBatch):
+            assert out.x.shape[-1] == self.output_dim
+        else:
+            assert out.shape[-1] == self.output_dim
+
         return out
 
     def __repr__(self):

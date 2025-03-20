@@ -20,25 +20,17 @@ from matplotlib import patches
 
 from gfn.containers import ReplayBuffer
 from gfn.gflownet.trajectory_balance import TBGFlowNet
-from gfn.gym.graph_building import RingGraphBuilding
-from gfn.modules import (
-    DiscretePolicyEstimator,
-    GNNEdgeRingPolicyModule,
-    MLPAdjacencyPolicyModule,
-)
+from gfn.gym.graph_building import GraphBuildingOnEdges
+from gfn.modules import DiscretePolicyEstimator
 from gfn.preprocessors import GraphPreprocessor
 from gfn.states import GraphStates
+from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
 
 
 class RingReward(object):
     """
-    This function evaluates if a graph forms a valid directed ring (directed cycle).
-    A valid directed ring must satisfy these conditions:
-        1. Each node must have exactly one outgoing edge (row sum = 1 in
-            adjacency matrix).
-        2. Each node must have exactly one incoming edge (column sum = 1 in
-            adjacency matrix).
-        3. Following the edges must form a single cycle that includes all nodes.
+    This function evaluates if a graph forms a valid ring (directed or
+        undirected cycle).
 
     Args:
         directed: Whether the graph is directed.
@@ -123,7 +115,7 @@ class RingReward(object):
         This function evaluates if a graph forms a valid undirected ring (cycle).
         A valid undirected ring must satisfy these conditions:
         1. Each node must have exactly two neighbors (degree = 2)
-        2. The graph must form a single connected cycle including all nodes
+        2. The graph must form a single connected cycle including all nodes.
 
         The algorithm:
         1. Checks that all nodes have degree 2
@@ -292,7 +284,7 @@ def main(args: Namespace):
     )
     torch.random.manual_seed(7)
 
-    env = RingGraphBuilding(
+    env = GraphBuildingOnEdges(
         n_nodes=args.n_nodes,
         state_evaluator=state_evaluator,
         directed=args.directed,
@@ -301,20 +293,18 @@ def main(args: Namespace):
 
     # Choose model type based on USE_GNN flag
     if args.use_gnn:
-        module_pf = GNNEdgeRingPolicyModule(
+        module_pf = GraphEdgeActionGNN(
             env.n_nodes, args.directed, num_conv_layers=args.num_conv_layers
         )
-        module_pb = GNNEdgeRingPolicyModule(
+        module_pb = GraphEdgeActionGNN(
             env.n_nodes,
             args.directed,
             is_backward=True,
             num_conv_layers=args.num_conv_layers,
         )
     else:
-        module_pf = MLPAdjacencyPolicyModule(env.n_nodes, args.directed)
-        module_pb = MLPAdjacencyPolicyModule(
-            env.n_nodes, args.directed, is_backward=True
-        )
+        module_pf = GraphEdgeActionMLP(env.n_nodes, args.directed)
+        module_pb = GraphEdgeActionMLP(env.n_nodes, args.directed, is_backward=True)
 
     pf = DiscretePolicyEstimator(
         module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()

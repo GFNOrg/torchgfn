@@ -317,20 +317,18 @@ class GraphBuilding(GraphEnv):
         return random_states_tensor
 
 
-class RingGraphBuilding(GraphBuilding):
-    """Environment for building ring graphs with discrete action space.
+class GraphBuildingOnEdges(GraphBuilding):
+    """Environment for building graphs edge by edge with discrete action space.
 
-    This environment is specialized for creating ring graphs where each node has
-    exactly two neighbors and the edges form a single cycle. The environment supports
-    both directed and undirected graphs.
+    The environment supports both directed and undirected graphs.
 
     In each state, the policy can:
-    1. Add an edge between existing nodes
-    2. Use the exit action to terminate graph building
+    1. Add an edge between existing nodes.
+    2. Use the exit action to terminate graph building.
 
     The action space is discrete, with size:
-    - For directed graphs: n_nodes^2 - n_nodes + 1 (all possible directed edges + exit)
-    - For undirected graphs: (n_nodes^2 - n_nodes)/2 + 1 (upper triangle + exit)
+    - For directed graphs: n_nodes^2 - n_nodes + 1 (all possible directed edges + exit).
+    - For undirected graphs: (n_nodes^2 - n_nodes)/2 + 1 (upper triangle + exit).
 
     Args:
         n_nodes: The number of nodes in the graph.
@@ -360,8 +358,8 @@ class RingGraphBuilding(GraphBuilding):
     def make_actions_class(self) -> type[Actions]:
         env = self
 
-        class RingActions(Actions):
-            """Actions for building ring graphs.
+        class EdgeActions(Actions):
+            """Actions for building graphs with a fixed number of nodes.
 
             Actions are represented as discrete indices where:
             - 0 to n_actions-2: Adding an edge between specific nodes
@@ -373,22 +371,23 @@ class RingGraphBuilding(GraphBuilding):
             dummy_action = torch.tensor([env.n_actions]).to(env.device)
             exit_action = torch.tensor([env.n_actions - 1]).to(env.device)
 
-        return RingActions
+        return EdgeActions
 
     def make_states_class(self) -> type[GraphStates]:
         env = self
 
-        class RingStates(GraphStates):
-            """Represents the state of a ring graph building process.
+        class GraphBuildingOnEdgesStates(GraphStates):
+            """Represents the state of an edge-by-edge graph building process.
 
-            This class extends GraphStates to specifically handle ring graph states.
-            Each state represents a graph with a fixed number of nodes where edges
-            are being added incrementally to form a ring structure.
+            This class extends GraphStates to specifically handle edge-by-edge graph
+            building states. Each state represents a graph with a fixed number of nodes
+            where edges are being added incrementally.
 
             The state representation consists of:
             - node_feature: Node IDs for each node in the graph (shape: [n_nodes, 1])
             - edge_feature: Features for each edge (shape: [n_edges, 1])
-            - edge_index: Indices representing the source and target nodes for each edge (shape: [n_edges, 2])
+            - edge_index: Indices representing the source and target nodes for each edge
+                (shape: [n_edges, 2])
 
             Special states:
             - s0: Initial state with n_nodes and no edges
@@ -431,12 +430,14 @@ class RingGraphBuilding(GraphBuilding):
                 2. The edge connects two distinct nodes
 
                 For directed graphs, all possible src->dst edges are considered.
-                For undirected graphs, only the upper triangular portion of the adjacency matrix is used.
+                For undirected graphs, only the upper triangular portion of the
+                    adjacency matrix is used.
 
                 The last action is always the EXIT action, which is always valid.
 
                 Returns:
-                    Tensor: Boolean mask of shape [batch_size, n_actions] where True indicates valid actions
+                    Tensor: Boolean mask of shape [batch_size, n_actions] where
+                        True indicates valid actions
                 """
                 # Allow all actions.
                 forward_masks = torch.ones(
@@ -546,7 +547,7 @@ class RingGraphBuilding(GraphBuilding):
             def backward_masks(self, value: torch.Tensor):
                 pass  # bwd masks is computed on the fly
 
-        return RingStates
+        return GraphBuildingOnEdgesStates
 
     def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
         """Take a step in the environment by applying actions to states.

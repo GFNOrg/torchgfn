@@ -6,9 +6,9 @@ import torch
 from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
-from gfn.gym.graph_building import GraphBuilding, RingGraphBuilding
+from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
-from gfn.modules import DiscretePolicyEstimator, GFNModule, GNNEdgePolicyModule
+from gfn.modules import DiscretePolicyEstimator, GFNModule
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.modules import MLP, GraphEdgeActionGNN
 from gfn.utils.prob_calculations import get_trajectory_pfs
@@ -372,33 +372,59 @@ def test_states_actions_tns_to_traj():
     replay_buffer.add(trajs)
 
 
-def test_ring_graph_building():
-    env = RingGraphBuilding(
+def test_graph_building_on_edges():
+    env = GraphBuildingOnEdges(
         n_nodes=10,
         directed=False,
         device=torch.device("cpu"),
         state_evaluator=lambda s: torch.zeros(s.batch_shape),
     )
-    estimator = GraphEdgeActionGNN(
+    # Test forward sampler.
+    estimator_fwd = GraphEdgeActionGNN(
         n_nodes=env.n_nodes,
         directed=env.is_directed,
         num_conv_layers=1,
         embedding_dim=128,
         is_backward=False,
     )
-    module = GNNEdgePolicyModule(
-        module=estimator,
+    module_fwd = DiscretePolicyEstimator(
+        module=estimator_fwd,
+        n_actions=env.n_actions,
         is_backward=False,
+        preprocessor=env.preprocessor,
     )
+    module_fwd.to(device=env.device)
 
-    module.to(device=env.device)
-
-    sampler = Sampler(estimator=module)
+    sampler = Sampler(estimator=module_fwd)
     trajectories = sampler.sample_trajectories(
         env,
         n=7,
         save_logprobs=True,
         save_estimator_outputs=False,
     )
-
     assert len(trajectories) == 7
+
+    # Test backward sampler.
+    estimator_bwd = GraphEdgeActionGNN(
+        n_nodes=env.n_nodes,
+        directed=env.is_directed,
+        num_conv_layers=1,
+        embedding_dim=128,
+        is_backward=True,
+    )
+    module_bwd = DiscretePolicyEstimator(
+        module=estimator_bwd,
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=env.preprocessor,
+    )
+    module_bwd.to(device=env.device)
+
+    sampler = Sampler(estimator=module_bwd)
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=8,
+        save_logprobs=True,
+        save_estimator_outputs=False,
+    )
+    assert len(trajectories) == 8
