@@ -179,4 +179,24 @@ class Causal_DAG(GraphEnv):
         Returns:
             torch.Tensor: Tensor of shape "batch_shape" containing the rewards.
         """
-        return self.state_evaluator(final_states)
+        # Clone the final states to create a reverted graph
+        reverted_states = final_states.clone()
+        # Get the data list from the batch for processing individual graphs
+        data_list = reverted_states.tensor.to_data_list()
+        for i in range(len(data_list)):
+            graph = data_list[i]
+            # Remove the edge
+            graph.edge_index = graph.edge_index[:, -1]
+            # Also remove the edge feature
+            if graph.edge_attr is not None and graph.edge_attr.shape[0] > 0:
+                graph.edge_attr = graph.edge_attr[:-1]
+        # Create a new batch from the updated data list
+        reverted_states.tensor = GeometricBatch.from_data_list(data_list)
+        # Compute the BDe score for the reverted graph (before the last action)
+        score_before = self.state_evaluator(DAGStates(reverted_states.tensor))
+        # Compute the BDe score for the current graph (after the last action)
+        score_after = self.state_evaluator(final_states)
+        # Compute the delta score (reward)
+        delta_score = score_after - score_before
+
+        return delta_score
