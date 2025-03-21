@@ -47,7 +47,7 @@ class BitSequenceStates(DiscreteStates):
         extend_with_sf(required_first_dim: int) -> None:
             Extends the current BitSequencesStates object with sink states.
 
-        stack_states(cls, states: List[BitSequencesStates]) -> BitSequencesStates:
+        stack(cls, states: List[BitSequencesStates]) -> BitSequencesStates:
             Stacks a list of BitSequencesStates objects into a single BitSequencesStates object.
 
         to_str() -> List[str]:
@@ -70,6 +70,7 @@ class BitSequenceStates(DiscreteStates):
             length = torch.zeros(
                 self.batch_shape, dtype=torch.long, device=self.__class__.device
             )
+        assert length is not None
         assert length.dtype == torch.long
         self.length = length
 
@@ -89,6 +90,9 @@ class BitSequenceStates(DiscreteStates):
     ) -> BitSequenceStates:
         states = self.tensor[index]
         self._check_both_forward_backward_masks_exist()
+        # print(index.shape)
+        # print(self.tensor)
+        # print(self.length.shape)
         length = self.length[index]
         forward_masks = self.forward_masks[index]
         backward_masks = self.backward_masks[index]
@@ -103,7 +107,7 @@ class BitSequenceStates(DiscreteStates):
 
     def flatten(self) -> BitSequenceStates:
         states = self.tensor.view(-1, *self.state_shape)
-        length = self.length.view(-1, self.length.shape[-1])
+        length = self.length.view(-1)
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
         backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
@@ -135,8 +139,8 @@ class BitSequenceStates(DiscreteStates):
         self.length = _extend(self.length, required_first_dim)
 
     @classmethod
-    def stack_states(cls, states: List[BitSequenceStates]):
-        stacked_states = cast(BitSequenceStates, super().stack_states(states))
+    def stack(cls, states: Sequence[BitSequenceStates]) -> BitSequenceStates:
+        stacked_states = cast(BitSequenceStates, super().stack(states))
         stacked_states.length = torch.stack([s.length for s in states], dim=0)
         return stacked_states
 
@@ -197,25 +201,26 @@ class BitSequence(DiscreteEnv):
         H: Optional[torch.Tensor] = None,
         device_str: str = "cpu",
         preprocessor: Optional[Preprocessor] = None,
+        seed: int = 0,
     ):
         assert seq_size % word_size == 0, "word_size must divide seq_size."
         self.words_per_seq: int = seq_size // word_size
         self.word_size: int = word_size
         self.seq_size: int = seq_size
         self.n_modes: int = n_modes
-        n_actions = 2**word_size + 1
+        self.n_actions = 2**word_size + 1
         s0 = -torch.ones(
             self.words_per_seq, dtype=torch.long, device=torch.device(device_str)
         )
         state_shape = s0.shape
         action_shape = (1,)
         dummy_action = -torch.ones(1, dtype=torch.long)
-        exit_action = (n_actions - 1) * torch.ones(1, dtype=torch.long)
-        sf = (n_actions - 1) * torch.ones(
+        exit_action = (self.n_actions - 1) * torch.ones(1, dtype=torch.long)
+        sf = (self.n_actions - 1) * torch.ones(
             self.words_per_seq, dtype=torch.long, device=torch.device(device_str)
         )
         super().__init__(
-            n_actions,
+            self.n_actions,
             s0,
             state_shape,
             action_shape,
@@ -226,7 +231,7 @@ class BitSequence(DiscreteEnv):
             preprocessor,
         )
         self.H = H
-        self.modes = self.make_modes_set()  # set of modes written as binary
+        self.modes = self.make_modes_set(seed)  # set of modes written as binary
         self.temperature = temperature
 
     def make_states_class(self) -> type[BitSequenceStates]:
@@ -364,13 +369,11 @@ class BitSequence(DiscreteEnv):
         Returns:
             BitSequenceStates: The new states of the environment after applying the actions.
         """
-
+        length = states.length.clone()
         new_states = super(DiscreteEnv, self)._step(states, actions)
         assert isinstance(new_states, BitSequenceStates)
-        new_states.length = states.length + 1
-
+        new_states.length = length + 1
         self.update_masks(new_states)
-
         return new_states
 
     def _backward_step(self, states: BitSequenceStates, actions: Actions):
@@ -384,18 +387,19 @@ class BitSequence(DiscreteEnv):
         Returns:
             BitSequenceStates: The new states after performing the backward step.
         """
+        length = states.length.clone()
         new_states = super(DiscreteEnv, self)._backward_step(states, actions)
         assert isinstance(new_states, BitSequenceStates)
-        new_states.length = states.length - 1
+        new_states.length = length - 1
         self.update_masks(new_states)
         return new_states
 
-    def make_modes_set(self, seed: int = 42) -> torch.Tensor:
+    def make_modes_set(self, seed) -> torch.Tensor:
         """
         Generates a set of unique mode sequences based on the predefined tensor H.
 
         Args:
-            seed (int, optional): The seed for random number generation. Defaults to 42.
+            seed (int, optional): The seed for random number generation. Defaults to 0.
 
         Returns:
             torch.Tensor: A tensor containing the unique mode sequences.
@@ -405,9 +409,10 @@ class BitSequence(DiscreteEnv):
 
         Notes:
             - The method sets the random seed for both CPU and GPU (if available) to ensure reproducibility.
-            - The tensor H is initialized with predefined sequences if it is not already set. This default value is the one chosen in the TB objectie paper.
+            - The tensor H is initialized with predefined sequences if it is not already set. This default value is the one chosen in the TB objective paper.
             - The method ensures that the number of unique sequences generated does not exceed the possible combinations.
             - The method returns a binary sequence, which is useful to easily compute the hamming distance.
+            - Each mode is created by randomly appending rows from H. Each mode is unique.
         """
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -428,7 +433,9 @@ class BitSequence(DiscreteEnv):
 
         num_possible = self.H.shape[0] ** m
         if self.n_modes > num_possible:
-            raise ValueError("Not enough unique sequences available.")
+            raise ValueError(
+                "Not enough unique sequences available for the set of modes."
+            )
 
         unique_indices = set()
         unique_sequences = []
@@ -552,15 +559,18 @@ class BitSequence(DiscreteEnv):
             torch.Tensor: The calculated reward for the given final states.
         """
 
+        return torch.exp(self.log_reward(final_states))
+
+    def log_reward(self, final_states: BitSequenceStates) -> torch.Tensor:
         binary_final_states = self.integers_to_binary(
             final_states.tensor, self.word_size
         )
         edit_distance = self.hamming_distance(binary_final_states, self.modes)
-        return torch.exp(-edit_distance / self.temperature)
+        return -edit_distance / self.temperature
 
-    def create_test_set(self, k: int, seed: int = 42) -> BitSequenceStates:
+    def create_test_set(self, k: int, seed: int = 0) -> BitSequenceStates:
         """
-        Create a test set by altering k times each mode a random number of bits selected randomly.
+        Create a test set by altering k times each mode a random number of bits.
         Test set of size n_modes * k.
 
         Args:
@@ -625,7 +635,7 @@ class BitSequence(DiscreteEnv):
             list_of_states.append(self.states_from_tensor(new_tensor))
 
         list_of_states.append(self.reset((n_trajectories,), sink=True))
-        states = BitSequenceStates.stack_states(list_of_states)
+        states = BitSequenceStates.stack(list_of_states)
 
         for i in range(self.words_per_seq):
             word_tensor = terminating_states_tensor[:, i].to(self.device)
@@ -645,6 +655,35 @@ class BitSequence(DiscreteEnv):
 
         return traj
 
+    @property
+    def terminating_states(self) -> BitSequenceStates:
+        list_of_integers = torch.arange(
+            0, 2**self.seq_size, device=self.device
+        ).unsqueeze(-1)
+        binary = self.integers_to_binary(list_of_integers, self.seq_size)
+        integers = self.binary_to_integers(binary, self.word_size)
+        return self.states_from_tensor(
+            integers,
+            length=torch.full(
+                (2**self.seq_size,), self.words_per_seq, device=self.device
+            ),
+        )
+
+    @property
+    def n_terminating_states(self) -> int:
+        return 2**self.seq_size
+
+    @property
+    def n_states3(self) -> int:
+        return 2 ** (self.seq_size + 1) - 1
+
+    @property
+    def true_dist_pmf(self) -> torch.Tensor:
+        states = self.terminating_states
+        rewards = self.reward(states)
+        true_dist = rewards / rewards.sum()
+        return true_dist
+
 
 class BitSequencePlus(BitSequence):
     """
@@ -660,6 +699,7 @@ class BitSequencePlus(BitSequence):
         H: Optional[torch.Tensor] = None,
         device_str: str = "cpu",
         preprocessor: Optional[Preprocessor] = None,
+        seed: int = 0,
     ):
         assert seq_size % word_size == 0, "word_size must divide seq_size."
         self.words_per_seq: int = seq_size // word_size
@@ -690,7 +730,7 @@ class BitSequencePlus(BitSequence):
             preprocessor,
         )
         self.H = H
-        self.modes = self.make_modes_set()  # set of modes written as binary
+        self.modes = self.make_modes_set(seed)  # set of modes written as binary
         self.temperature = temperature
 
     def update_masks(self, states: BitSequenceStates) -> None:
