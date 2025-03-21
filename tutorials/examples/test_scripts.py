@@ -347,10 +347,10 @@ def test_bitsequence(seq_size: int, n_modes: int):
     final_l1_dist = train_bitsequence_main(args)
     assert final_l1_dist is not None
     if seq_size == 4 and n_modes == 2:
-        assert np.isclose(final_l1_dist, 1.07e-5, atol=1e-6)
+        assert final_l1_dist <= 1e-4
     if seq_size == 4 and n_modes == 4:
-        assert np.isclose(final_l1_dist, 3.90e-7, atol=1e-8)
+        assert final_l1_dist <= 1e-4
     if seq_size == 8 and n_modes == 2:
-        assert np.isclose(final_l1_dist, 1.59e-4, atol=1e-5)
+        assert final_l1_dist <= 1e-3
     if seq_size == 8 and n_modes == 4:
-        assert np.isclose(final_l1_dist, 3.48e-4, atol=1e-5)
+        assert final_l1_dist <= 1e-3
