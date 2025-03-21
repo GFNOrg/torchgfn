@@ -22,6 +22,7 @@ from tqdm import tqdm
 
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
+from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import LocalSearchSampler
 from gfn.states import DiscreteStates
@@ -38,19 +39,24 @@ def main(args):
 
     # Setup the Environment.
     env = HyperGrid(ndim=args.ndim, height=args.height, device=device)
+    preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Build the GFlowNet.
     module_PF = MLP(
-        input_dim=env.n_states,
+        input_dim=preprocessor.output_dim,
         output_dim=env.n_actions,
     )
     module_PB = MLP(
-        input_dim=env.n_states,
+        input_dim=preprocessor.output_dim,
         output_dim=env.n_actions - 1,
         trunk=module_PF.trunk,
     )
-    pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False)
-    pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True)
+    pf_estimator = DiscretePolicyEstimator(
+        module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
+    )
+    pb_estimator = DiscretePolicyEstimator(
+        module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
+    )
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
 
     # Feed pf to the sampler.
