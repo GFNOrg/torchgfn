@@ -7,10 +7,10 @@ from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
-from gfn.utils.common import has_log_probs
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
+    warn_about_recalculating_logprobs,
 )
 from gfn.utils.prob_calculations import get_transition_pfs_and_pbs
 
@@ -40,6 +40,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         logF: a ScalarEstimator instance.
         forward_looking: whether to implement the forward looking GFN loss.
         log_reward_clip_min: If finite, clips log rewards to this value.
+        safe_log_prob_min: If True, uses a -1e10 as the minimum log probability value
+            to avoid numerical instability, otherwise uses 1e-38.
     """
 
     def __init__(
@@ -49,6 +51,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         logF: ScalarEstimator | ConditionalScalarEstimator,
         forward_looking: bool = False,
         log_reward_clip_min: float = -float("inf"),
+        safe_log_prob_min: bool = True,
     ):
         super().__init__(pf, pb)
         assert any(
@@ -58,6 +61,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self.logF = logF
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
+        if safe_log_prob_min:
+            self.log_prob_min = -1e10
+        else:
+            self.log_prob_min = -1e38
 
     def logF_named_parameters(self):
         try:
@@ -80,14 +87,14 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             )
 
     def get_pfs_and_pbs(
-        self, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return get_transition_pfs_and_pbs(
             self.pf, self.pb, transitions, recalculate_all_logprobs
         )
 
     def get_scores(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Given a batch of transitions, calculate the scores.
 
@@ -112,6 +119,13 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         states = transitions.states
         actions = transitions.actions
+
+        if len(states) == 0:
+            return (
+                torch.tensor(self.log_prob_min, device=transitions.device),
+                torch.tensor(self.log_prob_min, device=transitions.device),
+                torch.tensor(0.0, device=transitions.device),
+            )
 
         # uncomment next line for debugging
         # assert transitions.states.is_sink_state.equal(transitions.actions.is_dummy)
@@ -138,47 +152,57 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         preds = log_pf_actions + log_F_s
 
         # uncomment next line for debugging
-        # assert transitions.next_states.is_sink_state.equal(transitions.is_done)
+        # assert transitions.next_states.is_sink_state.equal(transitions.is_terminating)
 
         # automatically removes invalid transitions (i.e. s_f -> s_f)
-        valid_next_states = transitions.next_states[~transitions.is_done]
-        valid_transitions_is_done = transitions.is_done[
+        valid_next_states = transitions.next_states[~transitions.is_terminating]
+        valid_transitions_is_terminating = transitions.is_terminating[
             ~transitions.states.is_sink_state
         ]
+
+        if len(valid_next_states) == 0:
+            return (
+                torch.tensor(self.log_prob_min, device=transitions.device),
+                torch.tensor(self.log_prob_min, device=transitions.device),
+                torch.tensor(0.0, device=transitions.device),
+            )
 
         # LogF is potentially a conditional computation.
         if transitions.conditioning is not None:
             with has_conditioning_exception_handler("logF", self.logF):
                 valid_log_F_s_next = self.logF(
-                    valid_next_states, transitions.conditioning[~transitions.is_done]
+                    valid_next_states,
+                    transitions.conditioning[~transitions.is_terminating],
                 ).squeeze(-1)
         else:
             with no_conditioning_exception_handler("logF", self.logF):
                 valid_log_F_s_next = self.logF(valid_next_states).squeeze(-1)
 
         log_F_s_next = torch.zeros_like(log_pb_actions)
-        log_F_s_next[~valid_transitions_is_done] = valid_log_F_s_next
+        log_F_s_next[~valid_transitions_is_terminating] = valid_log_F_s_next
         assert transitions.log_rewards is not None
         valid_transitions_log_rewards = transitions.log_rewards[
             ~transitions.states.is_sink_state
         ]
-        log_F_s_next[valid_transitions_is_done] = valid_transitions_log_rewards[
-            valid_transitions_is_done
+        log_F_s_next[valid_transitions_is_terminating] = valid_transitions_log_rewards[
+            valid_transitions_is_terminating
         ]
         targets = log_pb_actions + log_F_s_next
 
         scores = preds - targets
 
         assert scores.shape == (transitions.n_transitions,)
-        return log_pf_actions, log_pb_actions, scores
+        return (log_pf_actions, log_pb_actions, scores)
 
     def loss(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> torch.Tensor:
         """Detailed balance loss.
 
         The detailed balance loss is described in section
-        3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266)."""
+        3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
+        """
+        warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
         _, _, scores = self.get_scores(env, transitions, recalculate_all_logprobs)
         loss = torch.mean(scores**2)
 
@@ -200,7 +224,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     """
 
     def get_scores(
-        self, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> torch.Tensor:
         """DAG-GFN-style detailed balance, when all states are connected to the sink.
 
@@ -217,6 +241,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         if transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
 
+        if len(transitions) == 0:
+            return torch.tensor(0.0, device=transitions.device)
+
         mask = ~transitions.next_states.is_sink_state
         states = transitions.states[mask]
         valid_next_states = transitions.next_states[mask]
@@ -232,10 +259,14 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             with no_conditioning_exception_handler("pf", self.pf):
                 module_output = self.pf(states)
 
+        if len(states) == 0:
+            return torch.tensor(0.0, device=transitions.device)
+
         pf_dist = self.pf.to_probability_distribution(states, module_output)
 
-        if has_log_probs(transitions) and not recalculate_all_logprobs:
+        if transitions.has_log_probs and not recalculate_all_logprobs:
             valid_log_pf_actions = transitions[mask].log_probs
+            assert valid_log_pf_actions is not None
         else:
             # Evaluate the log PF of the actions sampled off policy.
             valid_log_pf_actions = pf_dist.log_prob(actions.tensor)
@@ -285,9 +316,10 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         return scores
 
     def loss(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = False
+        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> torch.Tensor:
         """Calculates the modified detailed balance loss."""
+        warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
         scores = self.get_scores(
             transitions, recalculate_all_logprobs=recalculate_all_logprobs
         )

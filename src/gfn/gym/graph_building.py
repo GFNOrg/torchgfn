@@ -28,19 +28,21 @@ class GraphBuilding(GraphEnv):
         self,
         feature_dim: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
-        device_str: Literal["cpu", "cuda"] = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
         s0 = GeometricData(
-            x=torch.zeros((0, feature_dim), dtype=torch.float32),
-            edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32),
-            edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,
+            x=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
+            edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
+            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+            device=device,  # TODO: can we use a device object?
         )
         sf = GeometricData(
-            x=torch.ones((1, feature_dim), dtype=torch.float32) * float("inf"),
-            edge_attr=torch.ones((0, feature_dim), dtype=torch.float32) * float("inf"),
-            edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,
+            x=torch.ones((1, feature_dim), dtype=torch.float32).to(device)
+            * float("inf"),
+            edge_attr=torch.ones((0, feature_dim), dtype=torch.float32).to(device)
+            * float("inf"),
+            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+            device=device,  # TODO: can we use a device object?
         )
 
         self.state_evaluator = state_evaluator
@@ -49,7 +51,6 @@ class GraphBuilding(GraphEnv):
         super().__init__(
             s0=s0,
             sf=sf,
-            device_str=device_str,
         )
 
     def reset(

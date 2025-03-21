@@ -9,13 +9,18 @@ python train_hypergrid.py --ndim 2 --height 64 --R0 {0.1, 0.01, 0.001} --tied {-
 And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
+
+This script also provides a function `get_exact_P_T` that computes the exact terminating state
+distribution for the HyperGrid environment, which is useful for evaluation and visualization.
 """
 
 from argparse import ArgumentParser
 from typing import cast
 
+import matplotlib.pyplot as plt
 import torch
 import wandb
+from matplotlib.gridspec import GridSpec
 from tqdm import tqdm, trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
@@ -29,7 +34,7 @@ from gfn.gflownet import (
     TBGFlowNet,
 )
 from gfn.gym import HyperGrid
-from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
@@ -38,10 +43,76 @@ from gfn.utils.training import validate
 DEFAULT_SEED = 4444
 
 
+def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
+    r"""Evaluates the exact terminating state distribution P_T for HyperGrid.
+
+    For each state s', the terminating state probability is computed as:
+
+    .. math::
+        P_T(s') = u(s') P_F(s_f | s')
+
+    where u(s') satisfies the recursion:
+
+    .. math::
+        u(s') = \sum_{s \in \text{Par}(s')} u(s) P_F(s' | s)
+
+    with the base case u(s_0) = 1.
+
+    Args:
+        env: The HyperGrid environment
+        gflownet: The GFlowNet model
+
+    Returns:
+        The exact terminating state distribution as a tensor
+    """
+    grid = env.build_grid()
+
+    # Get the forward policy distribution for all states
+    with torch.no_grad():
+        # Handle both FM and other GFlowNet types
+        policy: GFNModule = cast(
+            GFNModule, gflownet.logF if isinstance(gflownet, FMGFlowNet) else gflownet.pf
+        )
+
+        estimator_outputs = policy(grid)
+        dist = policy.to_probability_distribution(grid, estimator_outputs)
+        probabilities = torch.exp(dist.logits)  # Get raw probabilities
+
+    u = torch.ones(grid.batch_shape)
+
+    indices = env.all_indices()
+    for index in indices[1:]:
+        parents = [
+            tuple(list(index[:i]) + [index[i] - 1] + list(index[i + 1 :]) + [i])
+            for i in range(len(index))
+            if index[i] > 0
+        ]
+        parents_tensor = torch.tensor(parents)
+        parents_indices = parents_tensor[:, :-1].long()  # All but last column for u
+        action_indices = parents_tensor[:, -1].long()  # Last column for probabilities
+
+        # Compute u values for parent states
+        parent_u_values = torch.stack([u[tuple(p.tolist())] for p in parents_indices])
+
+        # Compute probabilities for parent transitions
+        parent_probs = torch.stack(
+            [
+                probabilities[tuple(list(p.tolist()) + [a.item()])]
+                for p, a in zip(parents_indices, action_indices)
+            ]
+        )
+
+        u[tuple(index)] = torch.sum(parent_u_values * parent_probs)
+
+    return (u * probabilities[..., -1]).view(-1).detach().cpu()
+
+
 def main(args):  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
 
     use_wandb = len(args.wandb_project) > 0
     if use_wandb:
@@ -49,9 +120,7 @@ def main(args):  # noqa: C901
         wandb.config.update(args)
 
     # 1. Create the environment
-    env = HyperGrid(
-        args.ndim, args.height, args.R0, args.R1, args.R2, device_str=device_str
-    )
+    env = HyperGrid(args.ndim, args.height, args.R0, args.R1, args.R2, device=device)
 
     # 2. Create the gflownets.
     #    For this we need modules and estimators.
@@ -193,8 +262,7 @@ def main(args):  # noqa: C901
                 capacity=args.replay_buffer_size,
             )
 
-    # Move the gflownet to the GPU.
-    gflownet = gflownet.to(device_str)
+    gflownet = gflownet.to(device)
 
     # 3. Create the optimizer
     # Policy parameters have their own LR.
@@ -223,6 +291,8 @@ def main(args):  # noqa: C901
     states_visited = 0
     n_iterations = args.n_trajectories // args.batch_size
     validation_info = {"l1_dist": float("inf")}
+    l1_distances = []  # Track l1 distances over time
+    validation_steps = []  # Track corresponding steps
     for iteration in trange(n_iterations):
         trajectories = gflownet.sample_trajectories(
             env,
@@ -240,12 +310,14 @@ def main(args):  # noqa: C901
 
         optimizer.zero_grad()
         gflownet = cast(GFlowNet, gflownet)
-        loss = gflownet.loss(env, training_objects)
+        loss = gflownet.loss(
+            env, training_objects, recalculate_all_logprobs=args.replay_buffer_size > 0
+        )
         loss.backward()
         optimizer.step()
-        last_states = trajectories.last_states
-        last_states = cast(DiscreteStates, last_states)
-        visited_terminating_states.extend(last_states)
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
 
         states_visited += len(trajectories)
 
@@ -263,6 +335,74 @@ def main(args):  # noqa: C901
                 wandb.log(validation_info, step=iteration)
             to_log.update(validation_info)
             tqdm.write(f"{iteration}: {to_log}")
+            l1_distances.append(validation_info["l1_dist"])  # Store l1 distance
+            validation_steps.append(iteration)  # Store corresponding step
+
+    if args.plot:
+        if args.wandb_project:
+            raise ValueError("plot argument is incompatible with wandb_project")
+        if args.ndim != 2:
+            raise ValueError("plotting is only supported for 2D environments")
+
+        # Create figure with 3 subplots with proper spacing
+        fig = plt.figure(figsize=(15, 5))
+        gs = GridSpec(1, 4, width_ratios=[1, 1, 0.1, 1.2])
+
+        ax1 = fig.add_subplot(gs[0])
+        ax2 = fig.add_subplot(gs[1])
+        cax = fig.add_subplot(gs[2])  # Colorbar axis
+        ax3 = fig.add_subplot(gs[3])
+
+        # Get distributions and find global min/max for consistent color scaling
+        true_dist = env.true_dist_pmf.reshape(args.height, args.height).cpu().numpy()
+        learned_dist = (
+            get_exact_P_T(env, gflownet).reshape(args.height, args.height).numpy()
+        )
+
+        # Ensure consistent orientation by transposing
+        true_dist = true_dist.T
+        learned_dist = learned_dist.T
+
+        vmin = min(true_dist.min(), learned_dist.min())
+        vmax = max(true_dist.max(), learned_dist.max())
+
+        # True reward distribution
+        im1 = ax1.imshow(
+            true_dist,
+            cmap="viridis",
+            interpolation="none",
+            origin="lower",
+            vmin=vmin,
+            vmax=vmax,
+        )
+        ax1.set_title("True Distribution")
+
+        # Learned reward distribution
+        _ = ax2.imshow(
+            learned_dist,
+            cmap="viridis",
+            interpolation="none",
+            origin="lower",
+            vmin=vmin,
+            vmax=vmax,
+        )
+        ax2.set_title("Learned Distribution")
+
+        # Add colorbar in its own axis
+        plt.colorbar(im1, cax=cax)
+
+        # L1 distances over time
+        states_per_validation = args.batch_size * args.validation_interval
+        validation_states = [i * states_per_validation for i in range(len(l1_distances))]
+        ax3.plot(validation_states, l1_distances)
+        ax3.set_xlabel("States Visited")
+        ax3.set_ylabel("L1 Distance")
+        ax3.set_title("L1 Distance Evolution")
+        ax3.set_yscale("log")  # Set log scale for y-axis
+
+        plt.tight_layout()
+        plt.show()
+        plt.close()
 
     return validation_info["l1_dist"]
 
@@ -297,7 +437,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=10,
+        default=1000,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
     )
     parser.add_argument(
@@ -385,6 +525,12 @@ if __name__ == "__main__":
         type=str,
         default="",
         help="Name of the wandb project. If empty, don't use wandb",
+    )
+
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Generate plots of true and learned distributions (only works for 2D, incompatible with wandb)",
     )
 
     args = parser.parse_args()

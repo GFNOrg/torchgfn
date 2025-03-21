@@ -2,7 +2,7 @@
 Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 """
 
-from typing import Literal, Tuple
+from typing import List, Literal, Tuple
 
 import torch
 from einops import rearrange
@@ -23,7 +23,7 @@ class HyperGrid(DiscreteEnv):
         R1: float = 0.5,
         R2: float = 2.0,
         reward_cos: bool = False,
-        device_str: Literal["cpu", "cuda"] = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
         preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"] = "KHot",
     ):
         """HyperGrid environment from the GFlowNets paper.
@@ -33,14 +33,14 @@ class HyperGrid(DiscreteEnv):
         which can be a one-hot, a K-hot, or an identity encoding.
 
         Args:
-            ndim (int, optional): dimension of the grid. Defaults to 2.
-            height (int, optional): height of the grid. Defaults to 4.
-            R0 (float, optional): reward parameter R0. Defaults to 0.1.
-            R1 (float, optional): reward parameter R1. Defaults to 0.5.
-            R2 (float, optional): reward parameter R1. Defaults to 2.0.
-            reward_cos (bool, optional): Which version of the reward to use. Defaults to False.
-            device_str (str, optional): "cpu" or "cuda". Defaults to "cpu".
-            preprocessor_name (str, optional): "KHot" or "OneHot" or "Identity". Defaults to "KHot".
+            ndim: dimension of the grid. Defaults to 2.
+            height: height of the grid. Defaults to 4.
+            R0: reward parameter R0. Defaults to 0.1.
+            R1: reward parameter R1. Defaults to 0.5.
+            R2: reward parameter R1. Defaults to 2.0.
+            reward_cos: Which version of the reward to use. Defaults to False.
+            device: The device to use for the environment.
+            preprocessor_name: Preprocessor to use. Defaults to "KHot".
         """
         self.ndim = ndim
         self.height = height
@@ -49,10 +49,11 @@ class HyperGrid(DiscreteEnv):
         self.R2 = R2
         self.reward_cos = reward_cos
 
-        s0 = torch.zeros(ndim, dtype=torch.long, device=torch.device(device_str))
-        sf = torch.full(
-            (ndim,), fill_value=-1, dtype=torch.long, device=torch.device(device_str)
-        )
+        if isinstance(device, str):
+            device = torch.device(device)
+
+        s0 = torch.zeros(ndim, dtype=torch.long, device=device)
+        sf = torch.full((ndim,), fill_value=-1, dtype=torch.long, device=device)
         n_actions = ndim + 1
 
         if preprocessor_name == "Identity":
@@ -78,7 +79,6 @@ class HyperGrid(DiscreteEnv):
             s0=s0,
             state_shape=state_shape,
             sf=sf,
-            device_str=device_str,
             preprocessor=preprocessor,
         )
 
@@ -199,6 +199,22 @@ class HyperGrid(DiscreteEnv):
         true_dist = self.reward(all_states)
         true_dist /= true_dist.sum()
         return true_dist
+
+    def all_indices(self) -> List[Tuple[int, ...]]:
+        """Generate all possible indices for the grid.
+
+        Returns:
+            List of index tuples representing all possible grid positions
+        """
+
+        def _all_indices(dim: int, height: int) -> List[Tuple[int, ...]]:
+            if dim == 1:
+                return [(i,) for i in range(height)]
+            return [
+                (i, *j) for i in range(height) for j in _all_indices(dim - 1, height)
+            ]
+
+        return _all_indices(self.ndim, self.height)
 
     @property
     def log_partition(self) -> float:

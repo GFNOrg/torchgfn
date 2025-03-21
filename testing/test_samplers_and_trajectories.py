@@ -296,7 +296,9 @@ def test_to_transition(env_name: str):
         bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
         # evaluate with pf_estimator
         backward_traj_pfs = get_trajectory_pfs(
-            pf=pf_estimator, trajectories=bwd_trajectories
+            pf=pf_estimator,
+            trajectories=bwd_trajectories,
+            recalculate_all_logprobs=False,
         )
         bwd_trajectories.log_probs = backward_traj_pfs
         _ = bwd_trajectories.to_transitions()
@@ -333,7 +335,7 @@ def test_replay_buffer(
             # Filter out trajectories that are at max length
             training_objects = trajectories
             training_objects_2 = trajectories[
-                trajectories.when_is_done != trajectories.max_length
+                trajectories.terminating_idx != trajectories.max_length
             ]
             replay_buffer.add(training_objects_2)
 

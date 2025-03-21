@@ -62,8 +62,8 @@ def test_FM(env_name: str, ndim: int, module_name: str):
 
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    states_tuple = trajectories.to_state_pairs()
-    loss = gflownet.loss(env, states_tuple)
+    states_container = trajectories.to_states_container()
+    loss = gflownet.loss(env, states_container, recalculate_all_logprobs=False)
     assert loss >= 0
 
 
@@ -84,7 +84,7 @@ def test_get_pfs_and_pbs(
     gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
 
-    _ = gflownet_on.get_pfs_and_pbs(trajectories)
+    _ = gflownet_on.get_pfs_and_pbs(trajectories, recalculate_all_logprobs=False)
     _ = gflownet_off.get_pfs_and_pbs(trajectories, recalculate_all_logprobs=True)
 
 
@@ -104,7 +104,9 @@ def test_get_scores(
     )
     gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
-    scores_on = gflownet_on.get_trajectories_scores(trajectories)
+    scores_on = gflownet_on.get_trajectories_scores(
+        trajectories, recalculate_all_logprobs=False
+    )
     scores_off = gflownet_off.get_trajectories_scores(
         trajectories, recalculate_all_logprobs=True
     )
@@ -245,13 +247,16 @@ def PFBasedGFlowNet_with_return(
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
     training_objects = gflownet.to_training_samples(trajectories)
     gflownet = cast(GFlowNet, gflownet)
-    _ = gflownet.loss(env, training_objects)
+    _ = gflownet.loss(env, training_objects, recalculate_all_logprobs=False)
 
     if isinstance(gflownet, TBGFlowNet):
         assert isinstance(training_objects, Trajectories)
+        assert training_objects.log_probs is not None
         assert torch.all(
             torch.abs(
-                gflownet.get_pfs_and_pbs(training_objects)[0]
+                gflownet.get_pfs_and_pbs(
+                    training_objects, recalculate_all_logprobs=False
+                )[0]
                 - training_objects.log_probs
             )
             < 1e-5
@@ -353,18 +358,18 @@ def test_subTB_vs_TB(
     )
 
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    subtb_loss = gflownet.loss(env, trajectories)
+    subtb_loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
 
     if weighting == "TB":
         tb_loss = TBGFlowNet(pf=pf, pb=pb).loss(
-            env, trajectories
+            env, trajectories, recalculate_all_logprobs=False
         )  # LogZ is default 0.0.
         assert (tb_loss - subtb_loss).abs() < 1e-4
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 @pytest.mark.parametrize("ndim", [2, 3])
-def test_flow_matching_state_pairs(env_name: str, ndim: int):
+def test_flow_matching_states_container(env_name: str, ndim: int):
     """Test that flow matching correctly processes state pairs from trajectories."""
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=ndim, preprocessor_name="KHot")
@@ -380,6 +385,6 @@ def test_flow_matching_state_pairs(env_name: str, ndim: int):
 
     gflownet = FMGFlowNet(log_F_edge)
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    states_pairs = trajectories.to_state_pairs()
+    states_pairs = trajectories.to_states_container()
     loss = gflownet.loss(env, states_pairs)
     assert loss >= 0

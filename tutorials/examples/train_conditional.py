@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from argparse import ArgumentParser
+from typing import Tuple
 
 import torch
 from torch.optim import Adam
@@ -20,10 +21,20 @@ from gfn.modules import (
 )
 from gfn.utils.modules import MLP
 
-DEFAULT_SEED = 4444
+DEFAULT_SEED: int = 4444
 
 
-def build_conditional_pf_pb(env):
+def build_conditional_pf_pb(
+    env: HyperGrid,
+) -> Tuple[ConditionalDiscretePolicyEstimator, ConditionalDiscretePolicyEstimator]:
+    """Build conditional policy forward and backward estimators.
+
+    Args:
+        env: The HyperGrid environment
+
+    Returns:
+        A tuple of (forward policy estimator, backward policy estimator)
+    """
     CONCAT_SIZE = 16
     module_PF = MLP(
         input_dim=env.preprocessor.output_dim,
@@ -75,7 +86,17 @@ def build_conditional_pf_pb(env):
     return pf_estimator, pb_estimator
 
 
-def build_conditional_logF_scalar_estimator(env):
+def build_conditional_logF_scalar_estimator(
+    env: HyperGrid,
+) -> ConditionalScalarEstimator:
+    """Build conditional log flow estimator.
+
+    Args:
+        env: The HyperGrid environment
+
+    Returns:
+        A conditional scalar estimator for log flow
+    """
     CONCAT_SIZE = 16
     module_state_logF = MLP(
         input_dim=env.preprocessor.output_dim,
@@ -107,7 +128,15 @@ def build_conditional_logF_scalar_estimator(env):
 
 
 # Build the GFlowNet -- Modules pre-concatenation.
-def build_tb_gflownet(env):
+def build_tb_gflownet(env: HyperGrid) -> TBGFlowNet:
+    """Build a Trajectory Balance GFlowNet.
+
+    Args:
+        env: The HyperGrid environment
+
+    Returns:
+        A TBGFlowNet instance
+    """
     pf_estimator, pb_estimator = build_conditional_pf_pb(env)
 
     module_logZ = MLP(
@@ -177,13 +206,9 @@ def build_subTB_gflownet(env):
 
 
 def train(env, gflownet, seed):
-    torch.manual_seed(0)
+    torch.manual_seed(seed)
     exploration_rate = 0.5
     lr = 0.0005
-
-    # Move the gflownet to the GPU.
-    if torch.cuda.is_available():
-        gflownet = gflownet.to("cuda")
 
     # Policy parameters and logZ/logF get independent LRs (logF/Z typically higher).
     if type(gflownet) is TBGFlowNet:
@@ -195,14 +220,14 @@ def train(env, gflownet, seed):
     elif type(gflownet) is FMGFlowNet or type(gflownet) is ModifiedDBGFlowNet:
         optimizer = Adam(gflownet.parameters(), lr=lr)
     else:
-        print("What is this gflownet? {}".format(type(gflownet)))
+        print("unknown gflownet type: {}".format(type(gflownet)))
 
     n_iterations = int(10)  # 1e4)
     batch_size = int(1e4)
 
     print("+ Training Conditional {}!".format(type(gflownet)))
     for _ in (pbar := tqdm(range(n_iterations))):
-        conditioning = torch.rand((batch_size, 1))
+        conditioning = torch.rand((batch_size, 1)).to(gflownet.device)  # type: ignore
         conditioning = (conditioning > 0.5).to(torch.float)  # Randomly 1 and zero.
 
         trajectories = gflownet.sample_trajectories(
@@ -214,7 +239,9 @@ def train(env, gflownet, seed):
             epsilon=exploration_rate,
         )
         optimizer.zero_grad()
-        loss = gflownet.loss_from_trajectories(env, trajectories)
+        loss = gflownet.loss_from_trajectories(
+            env, trajectories, recalculate_all_logprobs=False
+        )
         loss.backward()
         optimizer.step()
         pbar.set_postfix({"loss": loss.item()})
@@ -232,21 +259,25 @@ GFN_FNS = {
 
 
 def main(args):
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
     environment = HyperGrid(
         ndim=5,
         height=2,
-        device_str="cuda" if torch.cuda.is_available() else "cpu",
+        device=device,
     )
-
     seed = int(args.seed) if args.seed is not None else DEFAULT_SEED
 
     if args.gflownet == "all":
         for fn in GFN_FNS.values():
             gflownet = fn(environment)
+            gflownet = gflownet.to(device)
             train(environment, gflownet, seed)
     else:
         assert args.gflownet in GFN_FNS, "invalid gflownet name\n{}".format(GFN_FNS)
         gflownet = GFN_FNS[args.gflownet](environment)
+        gflownet = gflownet.to(device)
         train(environment, gflownet, seed)
 
 

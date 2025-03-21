@@ -1,4 +1,19 @@
 #!/usr/bin/env python
+r"""
+A simplified version of GFlowNet training on the HyperGrid environment, focusing on the core concepts.
+This script implements Trajectory Balance (TB) training with minimal features to aid understanding.
+
+Example usage:
+python train_hypergrid_simple.py --ndim 2 --height 8 --epsilon 0.1
+
+Key differences from the full version:
+- Only implements TB loss
+- No replay buffer
+- No wandb integration
+- Simpler architecture with shared trunks
+- Basic command line options
+"""
+
 import argparse
 from typing import cast
 
@@ -17,10 +32,12 @@ from gfn.utils.training import validate
 
 def main(args):
     set_seed(args.seed)
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
 
     # Setup the Environment.
-    env = HyperGrid(ndim=args.ndim, height=args.height, device_str=device_str)
+    env = HyperGrid(ndim=args.ndim, height=args.height, device=device)
 
     # Build the GFlowNet.
     module_PF = MLP(
@@ -44,7 +61,7 @@ def main(args):
     sampler = Sampler(estimator=pf_estimator)
 
     # Move the gflownet to the GPU.
-    gflownet = gflownet.to(device_str)
+    gflownet = gflownet.to(device)
 
     # Policy parameters have their own LR. Log Z gets dedicated learning rate
     # (typically higher).
@@ -61,10 +78,12 @@ def main(args):
             save_estimator_outputs=False,
             epsilon=args.epsilon,
         )
-        visited_terminating_states.extend(cast(DiscreteStates, trajectories.last_states))
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, trajectories)
+        loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
         loss.backward()
         optimizer.step()
         if (it + 1) % args.validation_interval == 0:

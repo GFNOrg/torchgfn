@@ -71,7 +71,7 @@ class States(ABC):
     )
 
     def __init__(self, tensor: torch.Tensor):
-        """Initalize the State container with a batch of states.
+        """Initialize the State container with a batch of states.
         Args:
             tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of states.
         """
@@ -80,18 +80,13 @@ class States(ABC):
         assert tensor.shape[-len(self.state_shape) :] == self.state_shape
 
         self.tensor = tensor
-        self._batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
         self._log_rewards = (
             None  # Useful attribute if we want to store the log-reward of the states
         )
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return self._batch_shape
-
-    @batch_shape.setter
-    def batch_shape(self, batch_shape: tuple[int, ...]) -> None:
-        self._batch_shape = batch_shape
+        return tuple(self.tensor.shape)[: -len(self.state_shape)]
 
     @classmethod
     def from_batch_shape(
@@ -158,7 +153,13 @@ class States(ABC):
         return prod(self.batch_shape)
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__} object of batch shape {self.batch_shape} and state shape {self.state_shape}"
+        parts = [
+            f"{self.__class__.__name__}(",
+            f"batch={self.batch_shape},",
+            f"state={self.state_shape},",
+            f"dev={self.device})",
+        ]
+        return " ".join(parts)
 
     @property
     def device(self) -> torch.device:
@@ -168,10 +169,7 @@ class States(ABC):
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> States:
         """Access particular states of the batch."""
-        out = self.__class__(
-            self.tensor[index]
-        )  # TODO: Inefficient - this might make a copy of the tensor!
-        return out
+        return self.__class__(self.tensor[index])
 
     def __setitem__(
         self,
@@ -206,28 +204,22 @@ class States(ABC):
             ValueError: if `self.batch_shape != other.batch_shape` or if
             `self.batch_shape != (1,) or (2,)`.
         """
-        other_batch_shape = other.batch_shape
-        if len(other_batch_shape) == len(self.batch_shape) == 1:
+        if len(other.batch_shape) == len(self.batch_shape) == 1:
             # This corresponds to adding a state to a trajectory
-            self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
 
-        elif len(other_batch_shape) == len(self.batch_shape) == 2:
+        elif len(other.batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
             self.extend_with_sf(
-                required_first_dim=max(self.batch_shape[0], other_batch_shape[0])
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
             other.extend_with_sf(
-                required_first_dim=max(self.batch_shape[0], other_batch_shape[0])
-            )
-            self.batch_shape = (
-                self.batch_shape[0],
-                self.batch_shape[1] + other_batch_shape[1],
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
             self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
         else:
             raise ValueError(
-                f"extend is not implemented for batch shapes {self.batch_shape} and {other_batch_shape}"
+                f"extend is not implemented for batch shapes {self.batch_shape} and {other.batch_shape}"
             )
 
     def extend_with_sf(self, required_first_dim: int) -> None:
@@ -253,7 +245,6 @@ class States(ABC):
                 ),
                 dim=0,
             )
-            self.batch_shape = (required_first_dim, self.batch_shape[1])
         else:
             raise ValueError(
                 f"extend_with_sf is not implemented for graph states nor for batch shapes {self.batch_shape}"
@@ -341,11 +332,6 @@ class States(ABC):
                 log_rewards.append(s._log_rewards)
             stacked_states._log_rewards = torch.stack(log_rewards, dim=0)
 
-        # Adds the trajectory dimension.
-        stacked_states.batch_shape = (
-            stacked_states.tensor.shape[0],
-        ) + state_example.batch_shape
-
         return stacked_states
 
 
@@ -412,6 +398,18 @@ class DiscreteStates(States, ABC):
 
     def _check_both_forward_backward_masks_exist(self):
         assert self.forward_masks is not None and self.backward_masks is not None
+
+    def __repr__(self):
+        """Returns a detailed string representation of the DiscreteStates object."""
+        parts = [
+            f"{self.__class__.__name__}(",
+            f"batch={self.batch_shape},",
+            f"state={self.state_shape},",
+            f"actions={self.n_actions},",
+            f"dev={self.device},",
+            f"masks={tuple(self.forward_masks.shape)})",
+        ]
+        return " ".join(parts)
 
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
@@ -558,7 +556,10 @@ class GraphStates(States):
         """
         self.tensor = tensor
         if not hasattr(self.tensor, "batch_shape"):
-            self.tensor.batch_shape = self.tensor.batch_size
+            if isinstance(self.tensor.batch_size, tuple):
+                self.tensor.batch_shape = self.tensor.batch_size
+            else:
+                self.tensor.batch_shape = (self.tensor.batch_size,)
 
         if tensor.x.size(0) > 0:
             assert tensor.num_graphs == prod(tensor.batch_shape)
@@ -568,7 +569,7 @@ class GraphStates(States):
     @property
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
-        return self.tensor.batch_shape
+        return tuple(self.tensor.batch_shape)
 
     @classmethod
     def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> GeometricBatch:
@@ -712,11 +713,18 @@ class GraphStates(States):
         return batch
 
     def __repr__(self):
-        """Returns a string representation of the GraphStates object."""
-        return (
-            f"{self.__class__.__name__} object of batch shape {self.batch_shape} and "
-            f"node feature dim {self.tensor.x.size(1)} and edge feature dim {self.tensor.edge_attr.size(1)}"
-        )
+        """Returns a detailed string representation of the GraphStates object."""
+        parts = [
+            f"{self.__class__.__name__}(",
+            f"batch={self.batch_shape},",
+            f"state x={self.tensor.x.shape},",
+            f"state edge_index={self.tensor.edge_index.shape},",
+            f"state edge_attr={self.tensor.edge_attr.shape},",
+            f"actions={self.n_actions},",
+            f"dev={self.device},",
+            f"masks={tuple(self.forward_masks.shape)})",
+        ]
+        return " ".join(parts)
 
     def __getitem__(
         self,
