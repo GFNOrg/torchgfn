@@ -39,6 +39,7 @@ class GraphBuilding(GraphEnv):
             x=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
             edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+            device=device,
         )
         sf = GeometricData(
             x=torch.ones((1, feature_dim), dtype=torch.float32).to(device)
@@ -46,6 +47,7 @@ class GraphBuilding(GraphEnv):
             edge_attr=torch.ones((0, feature_dim), dtype=torch.float32).to(device)
             * float("inf"),
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+            device=device,
         )
 
         self.state_evaluator = state_evaluator
@@ -352,7 +354,9 @@ class GraphBuildingOnEdges(GraphBuilding):
         else:
             # bottom triangle + exit.
             self.n_actions = ((n_nodes**2 - n_nodes) // 2) + 1
-        super().__init__(feature_dim=n_nodes, state_evaluator=state_evaluator, device=device)
+        super().__init__(
+            feature_dim=n_nodes, state_evaluator=state_evaluator, device=device
+        )
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
         self.is_directed = directed
 
@@ -453,7 +457,9 @@ class GraphBuildingOnEdges(GraphBuilding):
                     ei0 = torch.cat([i_up, i_lo])
                     ei1 = torch.cat([j_up, j_lo])
                 else:
-                    ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1, device=self.device)
+                    ei0, ei1 = torch.triu_indices(
+                        self.n_nodes, self.n_nodes, offset=1, device=self.device
+                    )
 
                 # Remove existing edges.
                 for i in range(len(self)):
@@ -473,7 +479,9 @@ class GraphBuildingOnEdges(GraphBuilding):
                             edge_idx = edge_idx.sum(0).bool()
 
                         # Adds an unmasked exit action.
-                        edge_idx = torch.cat((edge_idx, torch.tensor([False], device=self.device)))
+                        edge_idx = torch.cat(
+                            (edge_idx, torch.tensor([False], device=self.device))
+                        )
                         forward_masks[i, edge_idx] = (
                             False  # Disallow the addition of this edge.
                         )

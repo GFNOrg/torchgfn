@@ -52,6 +52,7 @@ class RingReward(object):
         self.reward_val = reward_val
         self.eps_val = eps_val
         self.device = device
+
     def __call__(self, states: GraphStates) -> torch.Tensor:
         if self.directed:
             return self.directed_reward(states)
@@ -78,7 +79,9 @@ class RingReward(object):
         if states.tensor.edge_index.numel() == 0:
             return torch.full(states.batch_shape, self.eps_val, device=self.device)
 
-        out = torch.full((len(states),), self.eps_val, device=self.device)  # Default reward.
+        out = torch.full(
+            (len(states),), self.eps_val, device=self.device
+        )  # Default reward.
 
         for i in range(len(states)):
             graph = states[i]
@@ -132,7 +135,9 @@ class RingReward(object):
         if states.tensor.edge_index.numel() == 0:
             return torch.full(states.batch_shape, self.eps_val, device=self.device)
 
-        out = torch.full((len(states),), self.eps_val, device=self.device)  # Default reward.
+        out = torch.full(
+            (len(states),), self.eps_val, device=self.device
+        )  # Default reward.
 
         for i in range(len(states)):
             graph = states[i]

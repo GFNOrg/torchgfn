@@ -608,8 +608,8 @@ class GraphEnv(Env):
                 that can be fed into a neural network. Defaults to None, in which case
                 the IdentityPreprocessor is used.
         """
-        assert s0.x.device == sf.x.device
-        self.device = s0.x.device
+        assert s0.device == sf.device
+        self.device = s0.device
 
         self.s0 = s0
         self.sf = sf
