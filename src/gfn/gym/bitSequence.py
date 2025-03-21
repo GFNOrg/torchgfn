@@ -227,7 +227,6 @@ class BitSequence(DiscreteEnv):
             dummy_action,
             exit_action,
             sf,
-            device_str,
             preprocessor,
         )
         self.H = H
@@ -648,7 +647,7 @@ class BitSequence(DiscreteEnv):
             self,
             states,
             actions=actions,
-            when_is_done=(self.words_per_seq + 1)
+            terminating_idx=(self.words_per_seq + 1)
             * torch.ones(n_trajectories, dtype=torch.long, device=self.device),
             log_rewards=torch.zeros(n_trajectories, device=self.device),
         )
@@ -726,7 +725,6 @@ class BitSequencePlus(BitSequence):
             dummy_action,
             exit_action,
             sf,
-            device_str,
             preprocessor,
         )
         self.H = H

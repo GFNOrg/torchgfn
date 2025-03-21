@@ -104,19 +104,13 @@ class BoxArgs(CommonArgs):
     scheduler_milestone: int = 2500
     use_local_search: bool = False
 
+
 @dataclass
-class BitSequenceArgs:
-    loss: str = "TB"
-    device: str = "cpu"
-    seed: int = 0
+class BitSequenceArgs(CommonArgs):
     n_iterations: int = 1000
-    batch_size: int = 16
-    lr: float = 1e-3
-    lr_Z: float = 1e-1
     word_size: int = 1
     seq_size: int = 4
     n_modes: int = 2
-
 
 
 @dataclass
@@ -342,14 +336,13 @@ def test_line_smoke():
     namespace_args = Namespace(**args_dict)
     train_line_main(namespace_args)  # Just ensure it runs without errors.
 
+
 @pytest.mark.parametrize("seq_size", [4, 8])
 @pytest.mark.parametrize("n_modes", [2, 4])
 def test_bitsequence(seq_size: int, n_modes: int):
     n_iterations = 1000
     args = BitSequenceArgs(
-        seq_size=seq_size,
-        n_modes=n_modes,
-        n_iterations=n_iterations,
+        seq_size=seq_size, n_modes=n_modes, n_iterations=n_iterations, seed=0
     )
     final_l1_dist = train_bitsequence_main(args)
     assert final_l1_dist is not None
