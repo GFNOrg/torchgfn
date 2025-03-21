@@ -65,29 +65,30 @@ from tqdm import tqdm
 
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid  # We use the hyper grid environment
+from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import Sampler
 from gfn.utils.modules import MLP  # is a simple multi-layer perceptron (MLP)
 
 # 1 - We define the environment.
 env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
+preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
 
 # 2 - We define the needed modules (neural networks).
-# The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
 module_PF = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=env.n_actions
 )  # Neural network for the forward policy, with as many outputs as there are actions
 
 module_PB = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=env.n_actions - 1,
     trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
 )
 
 # 3 - We define the estimators.
-pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor)
-pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor)
+pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=preprocessor)
+pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=preprocessor)
 
 # 4 - We define the GFlowNet.
 gfn = TBGFlowNet(logZ=0., pf=pf_estimator, pb=pb_estimator)  # We initialize logZ to 0
@@ -119,33 +120,35 @@ from tqdm import tqdm
 
 from gfn.gflownet import SubTBGFlowNet
 from gfn.gym import HyperGrid  # We use the hyper grid environment
+from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.samplers import Sampler
 from gfn.utils.modules import MLP  # MLP is a simple multi-layer perceptron (MLP)
 
 # 1 - We define the environment.
 env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
+preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
 
 # 2 - We define the needed modules (neural networks).
 # The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
 module_PF = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=env.n_actions
 )  # Neural network for the forward policy, with as many outputs as there are actions
 
 module_PB = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=env.n_actions - 1,
     trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
 )
 module_logF = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=1,  # Important for ScalarEstimators!
 )
 
 # 3 - We define the estimators.
-pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor)
-pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor)
+pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=preprocessor)
+pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=preprocessor)
 logF_estimator = ScalarEstimator(module=module_logF, preprocessor=env.preprocessor)
 
 # 4 - We define the GFlowNet.
@@ -260,7 +263,7 @@ For non-discrete environments, the user needs to specify their own policies $P_F
 
 In general, (and perhaps obviously) the `to_probability_distribution` method is used to calculate a probability distribution from a policy. Therefore, in order to go off-policy, one needs to modify the computations in this method during sampling. One accomplishes this using `policy_kwargs`, a `dict` of kwarg-value pairs which are used by the `Estimator` when calculating the new policy. In the discrete case, where common settings apply, one can see their use in `DiscretePolicyEstimator`'s `to_probability_distribution` method by passing a softmax `temperature`, `sf_bias` (a scalar to subtract from the exit action logit) or `epsilon` which allows for e-greedy style exploration. In the continuous case, it is not possible to foresee the methods used for off-policy exploration (as it depends on the details of the `to_probability_distribution` method, which is not generic for continuous GFNs), so this must be handled by the user, using custom `policy_kwargs`.
 
-In all `GFNModule`s, note that the input of the `forward` function is a `States` object. Meaning that they first need to be transformed to tensors. However, `states.tensor` does not necessarily include the structure that a neural network can used to generalize. It is common in these scenarios to have a function that transforms these raw tensor states to ones where the structure is clearer, via a `Preprocessor` object, that is part of the environment. More on this [here](https://github.com/saleml/torchgfn/tree/master/tutorials/ENV.md). The default preprocessor of an environment is the identity preprocessor. The `forward` pass thus first calls the `preprocessor` attribute of the environment on `States`, before performing any transformation. The `preprocessor` is thus an attribute of the module. If it is not explicitly defined, it is set to the identity preprocessor.
+In all `GFNModule`s, note that the input of the `forward` function is a `States` object. Meaning that they first need to be transformed to tensors. However, `states.tensor` does not necessarily include the structure that a neural network can used to generalize. It is common in these scenarios to have a function that transforms these raw tensor states to ones where the structure is clearer, via a `Preprocessor` object, that is part of the environment. More on this [here](https://github.com/saleml/torchgfn/tree/master/tutorials/ENV.md). The `forward` pass thus first calls the `preprocessor` attribute of the environment on `States`, before performing any transformation. The `preprocessor` is thus an attribute of the module. If it is not explicitly defined, it is set to the identity preprocessor.
 
 For discrete environments, a `Tabular` module is provided, where a lookup table is used instead of a neural network. Additionally, a `UniformPB` module is provided, implementing a uniform backward policy. These modules are provided [here](https://github.com/saleml/torchgfn/tree/master/src/gfn/utils/modules.py).
 
