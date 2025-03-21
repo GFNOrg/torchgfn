@@ -46,8 +46,7 @@ class BasePrior(ABC):
 class UniformPrior(BasePrior):
     @property
     def log_prior(self):
-        if self._log_prior is None:
-            self._log_prior = torch.zeros(self.num_variables)
+        self._log_prior = torch.zeros(self.num_variables)
         return self._log_prior
 
 
@@ -58,13 +57,12 @@ class ErdosRenyiPrior(BasePrior):
 
     @property
     def log_prior(self):
-        if self._log_prior is None:
-            num_edges = self.num_variables * self.num_edges_per_node  # Default value
-            p = num_edges / ((self.num_variables * (self.num_variables - 1)) // 2)
-            all_parents = torch.arange(self.num_variables)
-            self._log_prior = all_parents * math.log(p) + (
-                self.num_variables - all_parents - 1
-            ) * math.log1p(-p)
+        num_edges = self.num_variables * self.num_edges_per_node  # Default value
+        p = num_edges / ((self.num_variables * (self.num_variables - 1)) // 2)
+        all_parents = torch.arange(self.num_variables)
+        self._log_prior = all_parents * math.log(p) + (
+            self.num_variables - all_parents - 1
+        ) * math.log1p(-p)
         return self._log_prior
 
 
@@ -75,19 +73,17 @@ class EdgePrior(BasePrior):
 
     @property
     def log_prior(self):
-        if self._log_prior is None:
-            self._log_prior = torch.arange(self.num_variables) * math.log(self.beta)
+        self._log_prior = torch.arange(self.num_variables) * math.log(self.beta)
         return self._log_prior
 
 
 class FairPrior(BasePrior):
     @property
     def log_prior(self):
-        if self._log_prior is None:
-            all_parents = torch.arange(self.num_variables)
-            self._log_prior = (
-                -gammaln(self.num_variables + 1)
-                + gammaln(self.num_variables - all_parents + 1)
-                + gammaln(all_parents + 1)
-            )
+        all_parents = torch.arange(self.num_variables)
+        self._log_prior = (
+            -gammaln(self.num_variables + 1)
+            + gammaln(self.num_variables - all_parents + 1)
+            + gammaln(all_parents + 1)
+        )
         return self._log_prior

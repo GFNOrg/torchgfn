@@ -48,7 +48,7 @@ def main(args):
 
     # Create the environment
     env = BayesianStructure(
-        n_nodes=args.n_nodes,
+        num_nodes=args.n_nodes,
         state_evaluator=lambda x: torch.zeros(x.batch_size, device=x.device),  # TODO
         device=device,
     )

@@ -20,7 +20,7 @@ class BayesianStructure(GraphEnv):
     - Terminating construction (EXIT)
 
     Args:
-        n_nodes: Number of nodes in the graph.
+        num_nodes: Number of nodes in the graph.
         state_evaluator: Callable that computes rewards for final states.
             If None, uses default GCNConvEvaluator
         device_str: Device to run computations on ('cpu' or 'cuda')
@@ -28,22 +28,22 @@ class BayesianStructure(GraphEnv):
 
     def __init__(
         self,
-        n_nodes: int,
+        num_nodes: int,
         state_evaluator: callable,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
 
-        self.n_nodes = n_nodes
-        self.n_actions = n_nodes**2 + 1
+        self.num_nodes = num_nodes
+        self.n_actions = num_nodes**2 + 1
 
         s0 = GeometricData(
-            x=torch.arange(n_nodes, dtype=torch.float)[:, None],  # Node ids
+            x=torch.arange(num_nodes, dtype=torch.float)[:, None],  # Node ids
             edge_attr=torch.ones((0, 1)),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
             device=device,
         )
         sf = GeometricData(
-            x=-torch.ones(n_nodes, dtype=torch.float)[:, None],
+            x=-torch.ones(num_nodes, dtype=torch.float)[:, None],
             edge_attr=torch.zeros((0, 1)),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
             device=device,
@@ -63,10 +63,10 @@ class BayesianStructure(GraphEnv):
             """Actions for building DAGs for Bayesian structure
 
             Actions are represented as discrete indices where:
-            - 0 to (n_nodes ** 2) - 1: Add edge between nodes i and j
-                where i = index // n_nodes, j = index % n_nodes
-            - n_actions - 1 = n_nodes ** 2: Exit action
-            - n_actions = n_nodes ** 2 + 1: dummy action (used for padding)
+            - 0 to (num_nodes ** 2) - 1: Add edge between nodes i and j
+                where i = index // num_nodes, j = index % num_nodes
+            - n_actions - 1 = num_nodes ** 2: Exit action
+            - n_actions = num_nodes ** 2 + 1: dummy action (used for padding)
             """
 
             action_shape = (1,)
@@ -85,7 +85,7 @@ class BayesianStructure(GraphEnv):
             are being addd incrementally to form a DAG.
 
             The state representation consists of:
-            - x: Node IDs (shape: [n_nodes, 1])
+            - x: Node IDs (shape: [num_nodes, 1])
             - edge_index: Edge indices (shape: [2, n_edges])
 
             Special states:
@@ -97,7 +97,7 @@ class BayesianStructure(GraphEnv):
 
             s0 = env.s0
             sf = env.sf
-            n_nodes = env.n_nodes
+            num_nodes = env.num_nodes
             n_actions = env.n_actions
 
             @property
@@ -126,25 +126,25 @@ class BayesianStructure(GraphEnv):
                     # For each graph, create a dense mask for potential edges
                     sparse_edge_index = data.edge_index
                     adjacency = (
-                        to_dense_adj(sparse_edge_index, max_num_nodes=self.n_nodes)
+                        to_dense_adj(sparse_edge_index, max_num_nodes=self.num_nodes)
                         .squeeze(0)
                         .to(torch.bool)
                     )
                     # Create self-loop mask
                     self_loops = torch.eye(
-                        self.n_nodes, dtype=torch.bool, device=self.device
+                        self.num_nodes, dtype=torch.bool, device=self.device
                     )
                     # Compute transitive closure using the Floyd–Warshall style update:
                     # reach[u, v] is True if there is a path from u to v.
                     reach = adjacency.clone()
-                    for k in range(self.n_nodes):
+                    for k in range(self.num_nodes):
                         reach = reach | (reach[:, k : k + 1] & reach[k : k + 1, :])
                     # An edge u -> v is allowed if:
                     # 1. There is no existing edge (i.e. not in adjacency)
                     # 2. It won't create a cycle (i.e. no path from v back to u: reach[v, u] is False)
                     # 3. u and v are different (avoid self-loops)
                     allowed = (~adjacency) & (~reach.T) & (~self_loops)
-                    forward_mask[i, : self.n_nodes**2] = allowed.flatten()
+                    forward_mask[i, : self.num_nodes**2] = allowed.flatten()
 
                 return forward_mask.view(*self.batch_shape, self.n_actions)
 
@@ -174,7 +174,7 @@ class BayesianStructure(GraphEnv):
                 for i, data in enumerate(data_list):
                     # For each graph, create a dense mask for potential edges
                     backward_masks[i] = to_dense_adj(
-                        data.edge_index, max_num_nodes=self.n_nodes
+                        data.edge_index, max_num_nodes=self.num_nodes
                     ).flatten()
 
                 return backward_masks.view(*self.batch_shape, self.n_actions - 1)
@@ -223,8 +223,8 @@ class BayesianStructure(GraphEnv):
         edge_index = torch.zeros(
             (action_type.shape[0], 2), dtype=torch.long, device=action_type.device
         )
-        edge_index[~is_exit, 0] = action_tensor[~is_exit] // self.n_nodes
-        edge_index[~is_exit, 1] = action_tensor[~is_exit] % self.n_nodes
+        edge_index[~is_exit, 0] = action_tensor[~is_exit] // self.num_nodes
+        edge_index[~is_exit, 1] = action_tensor[~is_exit] % self.num_nodes
 
         graph_actions = GraphActions(
             TensorDict(
@@ -366,23 +366,30 @@ class BayesianStructure(GraphEnv):
             torch.Tensor: Tensor of shape "batch_shape" containing the rewards.
         """
         # Clone the final states to create a reverted graph
+        batch_size = final_states.batch_shape[0]
         reverted_states = final_states.clone()
-        # Get the data list from the batch for processing individual graphs
-        data_list = reverted_states.tensor.to_data_list()
-        for i in range(len(data_list)):
-            graph = data_list[i]
+        data_list = []
+        for i in range(batch_size):
+            graph = reverted_states[i]
             # Remove the edge
-            graph.edge_index = graph.edge_index[:, -1]
+            graph.tensor.edge_index = graph.tensor.edge_index[:, :-1]
             # Also remove the edge feature
-            if graph.edge_attr is not None and graph.edge_attr.shape[0] > 0:
-                graph.edge_attr = graph.edge_attr[:-1]
+            if (
+                graph.tensor.edge_attr is not None
+                and graph.tensor.edge_attr.shape[0] > 0
+            ):
+                graph.tensor.edge_attr = graph.tensor.edge_attr[:-1]
+            data_list.append(graph.tensor)
         # Create a new batch from the updated data list
-        reverted_states.tensor = GeometricBatch.from_data_list(data_list)
-        # Compute the BDe score for the reverted graph (before the last action)
-        score_before = self.state_evaluator(self.States(reverted_states.tensor))
-        # Compute the BDe score for the current graph (after the last action)
+        reverted_states = GeometricBatch.from_data_list(data_list)
+        reverted_states.batch_shape = final_states.batch_shape
+        # Compute the local score for the reverted graph (before the last action)
+        score_before = self.state_evaluator(GraphStates(reverted_states))
+        # Compute the local score for the current graph (after the last action)
         score_after = self.state_evaluator(final_states)
         # Compute the delta score (reward)
+        print(score_before)
+        print(score_after)
         delta_score = score_after - score_before
 
         return delta_score

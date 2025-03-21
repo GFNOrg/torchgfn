@@ -7,7 +7,7 @@ import torch
 from scipy.special import gammaln
 from torch_geometric.utils import to_dense_adj
 
-from gfn.gym.helpers.bayesian_structure.prior import BasePrior
+from gfn.gym.helpers.bayesian_structure.priors import BasePrior
 from gfn.states import GraphStates
 
 
@@ -34,7 +34,7 @@ class BaseScore(ABC):
         self.prior = prior
         self.column_names = list(data.columns)
         self.num_nodes = len(self.column_names)
-        self.prior.num_nodes = self.num_nodes
+        self.prior.num_variables = self.num_nodes
 
     @abstractmethod
     def state_evaluator(self, state: GraphStates) -> torch.Tensor:
@@ -124,10 +124,11 @@ class BGeScore(BaseScore):
         each of which has attributes 'edge_index' and a method to convert the
         sparse representation to an adjacency matrix.
         """
-        data_list = state.tensor.to_data_list()
+        batch_size = state.batch_shape[0]
         scores = []
 
-        for graph in data_list:
+        for i in range(batch_size):
+            graph = state[i].tensor
             # Convert the graph object to an adjacency matrix.
             # Here we assume a helper function 'to_dense_adj' is available.
             adj_matrix = to_dense_adj(
@@ -135,7 +136,6 @@ class BGeScore(BaseScore):
             ).squeeze(0)
             score = self._calculate_bge_score(adj_matrix)
             scores.append(score)
-
         return torch.tensor(scores, dtype=torch.float32, device=state.device)
 
     def _calculate_bge_score(self, adj_matrix: torch.Tensor) -> float:
@@ -147,6 +147,7 @@ class BGeScore(BaseScore):
         for i in range(self.num_nodes):
             parents = torch.where(adj_matrix[:, i] == 1)[0].tolist()
             num_parents = len(parents)
+            # self.prior.num_variables = num_parents
             if num_parents > 0:
                 # In Code2 the node is combined with its parents.
                 variables = [i] + parents
@@ -175,9 +176,8 @@ class BGeScore(BaseScore):
                     * (self.num_samples + self.alpha_w - self.num_nodes + 1)
                     * torch.log(torch.abs(self.R[i, i]))
                 )
-
             local_score = (
-                self.log_gamma_term[num_parents]
+                self.log_gamma_term[num_parents].item()
                 + log_term_r.item()
                 + self.prior(num_parents)
             )

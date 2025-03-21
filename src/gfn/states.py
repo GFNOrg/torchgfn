@@ -720,7 +720,6 @@ class GraphStates(States):
             f"state x={self.tensor.x.shape},",
             f"state edge_index={self.tensor.edge_index.shape},",
             f"state edge_attr={self.tensor.edge_attr.shape},",
-            f"actions={self.n_actions},",
             f"dev={self.device},",
             # f"masks={tuple(self.forward_masks.shape)})",  # TODO: file an issue
         ]
