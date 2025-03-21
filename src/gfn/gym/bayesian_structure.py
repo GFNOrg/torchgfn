@@ -79,7 +79,7 @@ class BayesianStructure(GraphEnv):
         env = self
 
         class BayesianStructureStates(GraphStates):
-            """Represents the state for building DAGs for Bayesian structure.
+            """Represents the state for building DAGs for Bayesian structure
 
             Each state is a graph with a fixed number of nodes wierhe edges
             are being addd incrementally to form a DAG.
