@@ -78,9 +78,9 @@ class Trajectories(Container):
         for obj in [states, actions]:
             if obj is not None:
                 if isinstance(obj.tensor, GeometricBatch):
-                    assert obj.tensor[0].x.device == device
+                    assert obj.tensor[0].x.device.type == device.type
                 else:
-                    assert obj.tensor.device == device
+                    assert obj.tensor.device.type == device.type
         for tensor in [
             conditioning,
             terminating_idx,
@@ -88,7 +88,7 @@ class Trajectories(Container):
             log_probs,
             estimator_outputs,
         ]:
-            assert tensor.device == device if tensor is not None else True
+            assert tensor.device.type == device.type if tensor is not None else True
 
         self.states = (
             states if states is not None else env.states_from_batch_shape((0, 0))

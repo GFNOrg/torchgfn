@@ -756,7 +756,7 @@ class GraphStates(States):
         ), "We can't index on a Batch with 0-dimensional batch shape."
 
         # Convert the index to a list of indices.
-        tensor_idx = torch.arange(len(self)).view(*self.batch_shape)[index]
+        tensor_idx = torch.arange(len(self), device=self.device).view(*self.batch_shape)[index]
         new_shape = tuple(tensor_idx.shape)
         flat_idx = tensor_idx.flatten()
 
@@ -802,7 +802,7 @@ class GraphStates(States):
         if isinstance(index, int) and len(batch_shape) == 1:
             indices = [index]
         else:
-            tensor_idx = torch.arange(len(self)).view(*batch_shape)
+            tensor_idx = torch.arange(len(self), device=self.device).view(*batch_shape)
             indices = (
                 tensor_idx[index].flatten().tolist()
             )  # TODO: is .flatten() necessary?
