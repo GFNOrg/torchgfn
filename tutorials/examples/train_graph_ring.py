@@ -46,10 +46,12 @@ class RingReward(object):
         directed: bool,
         reward_val: float = 100.0,
         eps_val: float = 1e-6,
+        device: torch.device = torch.device("cpu"),
     ):
         self.directed = directed
         self.reward_val = reward_val
         self.eps_val = eps_val
+        self.device = device
 
     def __call__(self, states: GraphStates) -> torch.Tensor:
         if self.directed:
@@ -75,9 +77,11 @@ class RingReward(object):
             A tensor of rewards with the same batch shape as states.
         """
         if states.tensor.edge_index.numel() == 0:
-            return torch.full(states.batch_shape, self.eps_val)
+            return torch.full(states.batch_shape, self.eps_val, device=self.device)
 
-        out = torch.full((len(states),), self.eps_val)  # Default reward.
+        out = torch.full(
+            (len(states),), self.eps_val, device=self.device
+        )  # Default reward.
 
         for i in range(len(states)):
             graph = states[i]
@@ -129,9 +133,11 @@ class RingReward(object):
             A tensor of rewards with the same batch shape as states
         """
         if states.tensor.edge_index.numel() == 0:
-            return torch.full(states.batch_shape, self.eps_val)
+            return torch.full(states.batch_shape, self.eps_val, device=self.device)
 
-        out = torch.full((len(states),), self.eps_val)  # Default reward.
+        out = torch.full(
+            (len(states),), self.eps_val, device=self.device
+        )  # Default reward.
 
         for i in range(len(states)):
             graph = states[i]
@@ -281,6 +287,7 @@ def main(args: Namespace):
         directed=args.directed,
         reward_val=100.0,
         eps_val=1e-6,
+        device=device,
     )
     torch.random.manual_seed(7)
 
@@ -387,5 +394,6 @@ if __name__ == "__main__":
         use_gnn=True,  # Set to False to use MLP with adjacency matrices instead of GNN.
         num_conv_layers=1,
         device="cpu",
+        plot=True,
     )
     main(args)

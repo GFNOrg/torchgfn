@@ -31,11 +31,15 @@ class GraphBuilding(GraphEnv):
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
+        if isinstance(device, str):
+            device = torch.device(device)
+        self.device = device
+
         s0 = GeometricData(
             x=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
             edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
-            device=device,  # TODO: can we use a device object?
+            device=device,
         )
         sf = GeometricData(
             x=torch.ones((1, feature_dim), dtype=torch.float32).to(device)
@@ -43,7 +47,7 @@ class GraphBuilding(GraphEnv):
             edge_attr=torch.ones((0, feature_dim), dtype=torch.float32).to(device)
             * float("inf"),
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
-            device=device,  # TODO: can we use a device object?
+            device=device,
         )
 
         self.state_evaluator = state_evaluator
@@ -350,10 +354,11 @@ class GraphBuildingOnEdges(GraphBuilding):
         else:
             # bottom triangle + exit.
             self.n_actions = ((n_nodes**2 - n_nodes) // 2) + 1
-        super().__init__(feature_dim=n_nodes, state_evaluator=state_evaluator)
+        super().__init__(
+            feature_dim=n_nodes, state_evaluator=state_evaluator, device=device
+        )
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
         self.is_directed = directed
-        self.device = device
 
     def make_actions_class(self) -> type[Actions]:
         env = self
@@ -399,17 +404,13 @@ class GraphBuildingOnEdges(GraphBuilding):
 
             s0 = GeometricData(
                 x=torch.arange(env.n_nodes)[:, None].to(env.device),
-                edge_attr=torch.ones((0, 1)).to(env.device),
-                edge_index=torch.ones((2, 0), dtype=torch.long).to(env.device),
-            ).to(
-                env.device  # type: ignore # TODO: does this work with multi-gpu?
+                edge_attr=torch.ones((0, 1), device=env.device),
+                edge_index=torch.ones((2, 0), dtype=torch.long, device=env.device),
             )
             sf = GeometricData(
                 x=-torch.ones(env.n_nodes)[:, None].to(env.device),
-                edge_attr=torch.zeros((0, 1)).to(env.device),
-                edge_index=torch.zeros((2, 0), dtype=torch.long).to(env.device),
-            ).to(
-                env.device  # type: ignore
+                edge_attr=torch.zeros((0, 1), device=env.device),
+                edge_index=torch.zeros((2, 0), dtype=torch.long, device=env.device),
             )
 
             def __init__(self, tensor: GeometricBatch):
@@ -456,7 +457,9 @@ class GraphBuildingOnEdges(GraphBuilding):
                     ei0 = torch.cat([i_up, i_lo])
                     ei1 = torch.cat([j_up, j_lo])
                 else:
-                    ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+                    ei0, ei1 = torch.triu_indices(
+                        self.n_nodes, self.n_nodes, offset=1, device=self.device
+                    )
 
                 # Remove existing edges.
                 for i in range(len(self)):
@@ -464,7 +467,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                     assert torch.all(existing_edges >= 0)  # TODO: convert to test.
 
                     if existing_edges.numel() == 0:
-                        edge_idx = torch.zeros(0, dtype=torch.bool).to(self.device)
+                        edge_idx = torch.zeros(0, dtype=torch.bool, device=self.device)
                     else:
                         edge_idx = torch.logical_and(
                             existing_edges[0][..., None] == ei0[None],
@@ -476,7 +479,9 @@ class GraphBuildingOnEdges(GraphBuilding):
                             edge_idx = edge_idx.sum(0).bool()
 
                         # Adds an unmasked exit action.
-                        edge_idx = torch.cat((edge_idx, torch.BoolTensor([False])))
+                        edge_idx = torch.cat(
+                            (edge_idx, torch.tensor([False], device=self.device))
+                        )
                         forward_masks[i, edge_idx] = (
                             False  # Disallow the addition of this edge.
                         )
@@ -621,8 +626,8 @@ class GraphBuildingOnEdges(GraphBuilding):
             ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
 
         # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
-        ei0 = torch.cat((ei0, torch.IntTensor([-1, -2])), dim=0).to(self.device)
-        ei1 = torch.cat((ei1, torch.IntTensor([-1, -2])), dim=0).to(self.device)
+        ei0 = torch.cat((ei0, torch.tensor([-1, -2])), dim=0).to(self.device)
+        ei1 = torch.cat((ei1, torch.tensor([-1, -2])), dim=0).to(self.device)
 
         # Indexes either the second last element (exit) or la
         # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
@@ -636,6 +641,6 @@ class GraphBuildingOnEdges(GraphBuilding):
                     "edge_index": torch.stack([ei0, ei1], dim=-1),
                 },
                 batch_size=action_tensor.shape,
-            )
+            ).to(self.device)
         )
         return out
