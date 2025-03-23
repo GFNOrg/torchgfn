@@ -76,6 +76,7 @@ class IsingArgs(CommonArgs):
     L: float = 6
     J: float = 0.44
     n_iterations: int = 10
+    device: str = "cpu"
     batch_size: int = 4
 
 

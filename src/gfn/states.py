@@ -284,7 +284,6 @@ class States(ABC):
     @property
     def is_sink_state(self) -> torch.Tensor:
         """Returns a tensor of shape `batch_shape` that is True for states that are $s_f$ of the DAG."""
-        # TODO: self.__class__.sf == self.tensor -- or something similar?
         if isinstance(self.__class__.sf, torch.Tensor):
             sink_states = self.__class__.sf.repeat(
                 *self.batch_shape, *((1,) * len(self.__class__.state_shape))
@@ -391,7 +390,7 @@ class DiscreteStates(States, ABC):
     def clone(self) -> DiscreteStates:
         """Returns a clone of the current instance."""
         return self.__class__(
-            self.tensor.detach().clone(),  # TODO: Are States carrying gradients?
+            self.tensor.clone(),
             self.forward_masks,
             self.backward_masks,
         )
@@ -751,7 +750,9 @@ class GraphStates(States):
         selected_graphs = self.tensor.index_select(flat_idx)
         if len(selected_graphs) == 0:
             assert np.prod(new_shape) == 0 and len(new_shape) > 0
-            selected_graphs = [  # TODO: Is this the best way to create an empty Batch?
+            # Ensures all the expected attributes are properly initialized with the
+            # correct dimensions.
+            selected_graphs = [
                 GeometricData(
                     x=torch.zeros(*new_shape, self.tensor.x.size(1)),
                     edge_index=torch.zeros(2, 0, dtype=torch.long),
@@ -760,7 +761,6 @@ class GraphStates(States):
             ]
 
         # Create a new batch from the selected graphs.
-        # TODO: is there any downside to always using GeometricBatch even when the batch dimension is empty.
         new_batch = GeometricBatch.from_data_list(cast(List[BaseData], selected_graphs))
         new_batch.batch_shape = new_shape
 
@@ -790,9 +790,7 @@ class GraphStates(States):
             indices = [index]
         else:
             tensor_idx = torch.arange(len(self)).view(*batch_shape)
-            indices = (
-                tensor_idx[index].flatten().tolist()
-            )  # TODO: is .flatten() necessary?
+            indices = tensor_idx[index].flatten().tolist()
 
         assert len(indices) == len(graph)
 
@@ -932,9 +930,9 @@ class GraphStates(States):
         # Get the data list from the batch
         data_list = self.tensor.to_data_list()
 
-        assert other.edge_index is not None  # TODO: is allowing None here a good idea?
-        assert other.edge_attr is not None  #
-        assert other.num_nodes is not None  #
+        assert other.edge_index is not None
+        assert other.edge_attr is not None
+        assert other.num_nodes is not None
 
         for i, data in enumerate(data_list):
             # Check if the number of nodes is the same

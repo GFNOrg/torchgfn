@@ -44,7 +44,7 @@ class QuarterCircle(Distribution):
         self,
         delta: float,
         northeastern: bool,
-        centers: States,  # TODO: should probably be a tensor
+        centers: States,
         mixture_logits: Tensor,
         alpha: Tensor,
         beta: Tensor,
@@ -391,7 +391,7 @@ class QuarterCircleWithExit(Distribution):
     def __init__(
         self,
         delta: float,
-        centers: States,  # TODO: should probably be a tensor
+        centers: States,
         exit_probability: Tensor,
         mixture_logits: Tensor,
         alpha: Tensor,
@@ -432,7 +432,7 @@ class QuarterCircleWithExit(Distribution):
             centers.device
         )
 
-    def sample(self, sample_shape: Size = Size()) -> Tensor:
+    def sample(self) -> Tensor:
         """Samples from the distribution.
 
         Args:
@@ -440,24 +440,18 @@ class QuarterCircleWithExit(Distribution):
 
         Returns the sampled actions of shape (sample_shape, n_states, 2).
         """
-        actions = self.dist_without_exit.sample(sample_shape)
-        repeated_exit_probability = self.exit_probability.repeat(sample_shape + (1,))
+        actions = self.dist_without_exit.sample()
+        repeated_exit_probability = self.exit_probability.repeat((1,))
         exit_mask = torch.bernoulli(repeated_exit_probability).bool()
 
-        # TODO: this will BREAK with sample_shape defined not matching
-        # self.centers.tensor.shape! Do we need `sample_shape` at all, if not, we should
-        # remove it.
-        if sample_shape:
-            raise NotImplementedError(
-                "User defined sample_shape not supported currently."
-            )
         # When torch.norm(1 - states, dim=-1) <= env.delta or
         # torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1), we have to exit
         exit_mask[torch.norm(1 - self.centers.tensor, dim=-1) <= self.delta] = True
         exit_mask[torch.any(self.centers.tensor >= 1 - self.epsilon, dim=-1)] = True
         actions[exit_mask] = self.exit_action
 
-        assert actions.shape == sample_shape + (self.n_states, 2)
+        assert actions.shape == self.centers.tensor.shape == (self.n_states, 2)
+
         return actions
 
     def log_prob(self, sampled_actions: Tensor) -> Tensor:
@@ -528,7 +522,7 @@ class DistributionWrapper(Distribution):
                 alpha=alpha_theta[self.idx_not_initial, :n_components],
                 beta=beta_theta[self.idx_not_initial, :n_components],
                 epsilon=epsilon,
-            )  # no sample_shape req as it is stored in centers.
+            )
 
     def sample(self, sample_shape: Size = Size()) -> Tensor:
         """Samples from the distribution.
@@ -552,7 +546,7 @@ class DistributionWrapper(Distribution):
             output[self.idx_is_initial] = sample_disk
         if len(self.idx_not_initial) > 0:
             assert self.quarter_circ is not None
-            sample_circ = self.quarter_circ.sample(sample_shape=sample_shape)
+            sample_circ = self.quarter_circ.sample()
             output[self.idx_not_initial] = sample_circ
 
         return output

@@ -12,7 +12,7 @@ Key components:
 
 import math
 import time
-from argparse import Namespace, ArgumentParser
+from argparse import ArgumentParser, Namespace
 
 import matplotlib.pyplot as plt
 import torch
@@ -274,7 +274,6 @@ def main(args: Namespace):
     2. Train the GFlowNet using trajectory balance
     3. Visualize sample generated graphs
     """
-    # TODO: add a parser.
     device = torch.device(args.device)
 
     state_evaluator = RingReward(
@@ -379,30 +378,56 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Train a GFlowNet to generate ring graphs")
 
     # Model parameters
-    parser.add_argument("--n_nodes", type=int, default=4,
-                        help="Number of nodes in the graph")
-    parser.add_argument("--directed", action="store_true", default=True,
-                        help="Whether to generate directed rings")
-    parser.add_argument("--use_gnn", action="store_true", default=True,
-                        help="Use GNN-based policy (True) or MLP-based policy (False)")
-    parser.add_argument("--num_conv_layers", type=int, default=1,
-                        help="Number of convolutional layers")
+    parser.add_argument(
+        "--n_nodes", type=int, default=4, help="Number of nodes in the graph"
+    )
+    parser.add_argument(
+        "--directed",
+        action="store_true",
+        default=True,
+        help="Whether to generate directed rings",
+    )
+    parser.add_argument(
+        "--use_gnn",
+        action="store_true",
+        default=True,
+        help="Use GNN-based policy (True) or MLP-based policy (False)",
+    )
+    parser.add_argument(
+        "--num_conv_layers", type=int, default=1, help="Number of convolutional layers"
+    )
 
     # Training parameters
-    parser.add_argument("--n_iterations", type=int, default=200,
-                        help="Number of training iterations")
-    parser.add_argument("--lr", type=float, default=0.001,
-                        help="Learning rate for optimizer")
-    parser.add_argument("--batch_size", type=int, default=1024,
-                        help="Batch size for training")
-    parser.add_argument("--use_buffer", action="store_true", default=False,
-                        help="Whether to use replay buffer")
+    parser.add_argument(
+        "--n_iterations", type=int, default=200, help="Number of training iterations"
+    )
+    parser.add_argument(
+        "--lr", type=float, default=0.001, help="Learning rate for optimizer"
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=1024, help="Batch size for training"
+    )
+    parser.add_argument(
+        "--use_buffer",
+        action="store_true",
+        default=False,
+        help="Whether to use replay buffer",
+    )
 
     # Misc parameters
-    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"],
-                        help="Device to run on (cpu or cuda)")
-    parser.add_argument("--plot", action="store_true", default=False,
-                        help="Whether to plot generated graphs")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        choices=["cpu", "cuda"],
+        help="Device to run on (cpu or cuda)",
+    )
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        default=False,
+        help="Whether to plot generated graphs",
+    )
 
     args = parser.parse_args()
     main(args)
