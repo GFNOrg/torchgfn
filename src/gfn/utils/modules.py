@@ -1,6 +1,6 @@
 """This file contains some examples of modules that can be used with GFN."""
 
-from typing import Literal, Optional
+from typing import Literal, Optional, Callable
 
 import torch
 import torch.nn as nn
@@ -177,3 +177,94 @@ class DiscreteUniform(nn.Module):
             preprocessed_states.device
         )
         return out
+
+
+class LinearTransformer(nn.Module):
+    """The Linear Transformer module.
+
+    Implements Transformers are RNNs: Fast Autoregressive Transformers with Linear
+        Attention. Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, François
+        Fleuret, ICML 2020.
+
+    Expresses self-attention as a linear dot-product of kernel feature maps and makes
+    use the associativity property of matrix products to reduce the complexity of the
+    attention computation from O(n^2) to O(n).
+    """
+    def __init__(
+        self,
+        n_layer: int,
+        n_head: int,
+        d: int,
+        var: float,
+        device: torch.device,
+    ):
+        super(LinearTransformer, self).__init__()
+
+        # Contains the attention parameters for all layers and heads.
+        self.register_parameter(
+            'allparam',
+            torch.nn.Parameter(torch.zeros(n_layer, n_head, 2, d, d)),
+        )
+
+        # Initialize the parameters using samples from a normal distribution (0, var).
+        with torch.no_grad():
+            self.allparam.normal_(0, var)  # type: ignore
+
+        self._n_layer = n_layer
+        self._n_head = n_head
+        self._device = device
+
+    @property
+    def n_layer(self) -> int:
+        return self._n_layer
+
+    @property
+    def n_head(self) -> int:
+        return self._n_head
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
+
+    def forward(self, Z):
+        for i in range(self.n_layer):
+            Zi = Z
+            residues = 0
+
+            # The forward map of each layer is given by F(Z) = Z + attention(Z).
+            for j in range(self.n_head):
+                Pij = self.allparam[i, j, 0, :, :]  # type: ignore
+                Qij = self.allparam[i, j, 1, :, :]  # type: ignore
+                residues = residues + self.attention(Pij, Qij, Zi)
+
+            Z = Zi + residues
+
+        return Z
+
+    def attention(self, P, Q, Z, activation: Callable | None = None):
+        B, N, d = Z.shape  # unpacks Z into batch size, seq length, and embedding dim.
+
+        P_full = torch.cat([P, torch.zeros(1,d - 1).to(self.device)], dim=0)
+        P_full = torch.cat([P_full, torch.zeros(d, 1).to(self.device)], dim=1)
+        P_full[d - 1, d - 1] = 1
+
+        Q_full = torch.cat([Q, torch.zeros(1, d - 1).to(self.device)], dim=0)
+        Q_full = torch.cat([Q_full, torch.zeros(d, 1).to(self.device)], dim=1)
+        A = torch.eye(N).to(self.device)
+        A[N - 1, N - 1] = 0
+
+        attn = torch.einsum('BNi, ij, BMj -> BNM', (Z, Q_full, Z))
+        if activation is not None:
+            attn = activation(attn)
+
+        key = torch.einsum('ij, BNj -> BNi', (P_full, Z))
+        output = torch.einsum('BNM,ML, BLi -> BNi', (attn, A, key))
+
+        return output / (N - 1)
+
+    def zero_p(self):
+        """Enforces top-left-dxd-block sparsity on P."""
+        for i in range(self.n_layer):
+            for j in range(self.n_head):
+                with torch.no_grad():
+                    self.allparam[i, j, 0, :, :].zero_()  # type: ignore
