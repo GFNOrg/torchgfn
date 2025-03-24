@@ -435,10 +435,7 @@ class QuarterCircleWithExit(Distribution):
     def sample(self) -> Tensor:
         """Samples from the distribution.
 
-        Args:
-            sample_shape: the shape of the samples to generate.
-
-        Returns the sampled actions of shape (sample_shape, n_states, 2).
+        Returns the sampled actions with shape (n_states, 2).
         """
         actions = self.dist_without_exit.sample()
         repeated_exit_probability = self.exit_probability.repeat((1,))
