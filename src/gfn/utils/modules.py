@@ -1,9 +1,10 @@
 """This file contains some examples of modules that can be used with GFN."""
 
-from typing import Callable, Literal, Optional
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
+from linear_attention_transformer import LinearAttentionTransformer
 
 
 class MLP(nn.Module):
@@ -189,83 +190,59 @@ class LinearTransformer(nn.Module):
     Expresses self-attention as a linear dot-product of kernel feature maps and makes
     use the associativity property of matrix products to reduce the complexity of the
     attention computation from O(n^2) to O(n).
+
+    Implementation from https://github.com/lucidrains/linear-attention-transformer.
+
+    Args:
+        dim: The dimension of the input.
+        depth: The depth of the transformer.
+        max_seq_len: The maximum sequence length.
+        n_heads: The number of attention heads.
     """
 
     def __init__(
         self,
-        n_layer: int,
-        n_head: int,
-        d: int,
-        var: float,
-        device: torch.device,
+        dim: int,
+        depth: int,
+        max_seq_len: int,
+        n_heads: int = 8,
+        causal: bool = False,
     ):
-        super(LinearTransformer, self).__init__()
+        super().__init__()
+        assert isinstance(dim, int) and dim > 0, "dim must be a positive integer"
+        assert isinstance(depth, int) and depth > 0, "depth must be a positive integer"
+        assert (
+            isinstance(max_seq_len, int) and max_seq_len > 0
+        ), "max_seq_len must be a positive integer"
 
-        # Contains the attention parameters for all layers and heads.
-        self.register_parameter(
-            "allparam",
-            torch.nn.Parameter(torch.zeros(n_layer, n_head, 2, d, d)),
+        self.module = LinearAttentionTransformer(
+            dim,
+            depth,
+            max_seq_len,
+            heads=n_heads,
+            causal=causal,
+            dim_head=None,
+            bucket_size=64,
+            ff_chunks=1,
+            ff_glu=False,
+            ff_dropout=0.0,
+            attn_layer_dropout=0.0,
+            attn_dropout=0.0,
+            reversible=False,
+            blindspot_size=1,
+            n_local_attn_heads=0,
+            local_attn_window_size=128,
+            receives_context=False,
+            attend_axially=False,
+            pkm_layers=tuple(),
+            pkm_num_keys=128,
+            linformer_settings=None,
+            context_linformer_settings=None,
+            shift_tokens=False,
         )
+        # TODO: Should we have a final linear layer as part of this module?
+        # The output dimension is the same as the embedding dimension.
+        self.output_dim = dim
 
-        # Initialize the parameters using samples from a normal distribution (0, var).
-        with torch.no_grad():
-            self.allparam.normal_(0, var)  # type: ignore
-
-        self._n_layer = n_layer
-        self._n_head = n_head
-        self._device = device
-
-    @property
-    def n_layer(self) -> int:
-        return self._n_layer
-
-    @property
-    def n_head(self) -> int:
-        return self._n_head
-
-    @property
-    def device(self) -> torch.device:
-        return self._device
-
-    def forward(self, Z):
-        for i in range(self.n_layer):
-            Zi = Z
-            residues = 0
-
-            # The forward map of each layer is given by F(Z) = Z + attention(Z).
-            for j in range(self.n_head):
-                Pij = self.allparam[i, j, 0, :, :]  # type: ignore
-                Qij = self.allparam[i, j, 1, :, :]  # type: ignore
-                residues = residues + self.attention(Pij, Qij, Zi)
-
-            Z = Zi + residues
-
-        return Z
-
-    def attention(self, P, Q, Z, activation: Callable | None = None):
-        B, N, d = Z.shape  # unpacks Z into batch size, seq length, and embedding dim.
-
-        P_full = torch.cat([P, torch.zeros(1, d - 1).to(self.device)], dim=0)
-        P_full = torch.cat([P_full, torch.zeros(d, 1).to(self.device)], dim=1)
-        P_full[d - 1, d - 1] = 1
-
-        Q_full = torch.cat([Q, torch.zeros(1, d - 1).to(self.device)], dim=0)
-        Q_full = torch.cat([Q_full, torch.zeros(d, 1).to(self.device)], dim=1)
-        A = torch.eye(N).to(self.device)
-        A[N - 1, N - 1] = 0
-
-        attn = torch.einsum("BNi, ij, BMj -> BNM", (Z, Q_full, Z))
-        if activation is not None:
-            attn = activation(attn)
-
-        key = torch.einsum("ij, BNj -> BNi", (P_full, Z))
-        output = torch.einsum("BNM,ML, BLi -> BNi", (attn, A, key))
-
-        return output / (N - 1)
-
-    def zero_p(self):
-        """Enforces top-left-dxd-block sparsity on P."""
-        for i in range(self.n_layer):
-            for j in range(self.n_head):
-                with torch.no_grad():
-                    self.allparam[i, j, 0, :, :].zero_()  # type: ignore
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.module(x)
