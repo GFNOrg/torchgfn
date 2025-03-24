@@ -51,8 +51,6 @@ therefore total number of actions should be specified as an attribute. The
 set to any shape by the user (for example `(1,5)` if the policy is sampling 5
 independent actions per step).
 
-If the states (as represented in the `States` class) need to be transformed to another format before being processed (by neural networks for example), then the environment should define a `preprocessor` attribute, which should be an instance of the [base preprocessor class](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/preprocessors.py). If no preprocessor is defined, the states are used as is (actually transformed using the `IdentityPreprocessor`, which transforms the state tensors to `FloatTensor`s). Implementing a specific preprocessor requires defining the `preprocess` function, and the `output_shape` attribute, which is a tuple representing the shape of *one* preprocessed state.
-
 In addition to the above methods, in the discrete case, you must also define
 the following method:
 

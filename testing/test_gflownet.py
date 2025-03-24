@@ -3,6 +3,7 @@ from gfn.containers.base import Container
 from gfn.gflownet import FMGFlowNet, TBGFlowNet
 from gfn.gym import Box, HyperGrid
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
+from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator
 from gfn.states import DiscreteStates
 from gfn.utils.modules import MLP
@@ -38,10 +39,11 @@ def test_trajectory_based_gflownet_generic():
 
 
 def test_flow_matching_gflownet_generic():
-    env = HyperGrid(ndim=2, preprocessor_name="KHot")
-    module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
+    env = HyperGrid(ndim=2)
+    preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
+    module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     estimator = DiscretePolicyEstimator(
-        module, n_actions=env.n_actions, preprocessor=env.preprocessor
+        module, n_actions=env.n_actions, preprocessor=preprocessor
     )
     gflownet = FMGFlowNet(estimator)
     mock_trajectories = Trajectories(env)
@@ -76,9 +78,7 @@ def test_pytorch_inheritance():
         tbgflownet.state_dict(), "__dict__"
     ), "Expected gflownet to have indexable state_dict() method inherited from nn.Module"
 
-    estimator = DiscretePolicyEstimator(
-        pf_module, n_actions=2, preprocessor=env.preprocessor
-    )
+    estimator = DiscretePolicyEstimator(pf_module, n_actions=2)
     fmgflownet = FMGFlowNet(estimator)
     assert hasattr(
         fmgflownet.parameters(), "__iter__"
