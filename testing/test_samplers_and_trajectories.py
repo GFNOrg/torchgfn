@@ -404,7 +404,7 @@ def test_graph_building_on_edges():
         module=estimator_fwd,
         n_actions=env.n_actions,
         is_backward=False,
-        preprocessor=env.preprocessor,
+        preprocessor=IdentityPreprocessor(output_dim=1),
     )
     module_fwd.to(device=env.device)
 
@@ -429,7 +429,7 @@ def test_graph_building_on_edges():
         module=estimator_bwd,
         n_actions=env.n_actions,
         is_backward=True,
-        preprocessor=env.preprocessor,
+        preprocessor=IdentityPreprocessor(output_dim=1),
     )
     module_bwd.to(device=env.device)
 

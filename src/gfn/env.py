@@ -220,7 +220,7 @@ class Env(ABC):
         states and a boolean tensor indicating sink states in the new batch.
         """
         assert states.batch_shape == actions.batch_shape
-        new_states = states.clone()  # TODO: Ensure this is efficient!
+        new_states = states.clone()
         valid_states_idx: torch.Tensor = ~states.is_sink_state
         assert valid_states_idx.shape == states.batch_shape
         assert valid_states_idx.dtype == torch.bool
@@ -262,7 +262,7 @@ class Env(ABC):
         states and a boolean tensor indicating initial states in the new batch.
         """
         assert states.batch_shape == actions.batch_shape
-        new_states = states.clone()  # TODO: Ensure this is efficient!
+        new_states = states.clone()
         valid_states_idx: torch.Tensor = ~new_states.is_initial_state
         assert valid_states_idx.shape == states.batch_shape
         assert valid_states_idx.dtype == torch.bool
