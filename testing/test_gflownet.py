@@ -3,8 +3,8 @@ from gfn.containers.base import Container
 from gfn.gflownet import FMGFlowNet, TBGFlowNet
 from gfn.gym import Box, HyperGrid
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
-from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator
+from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.modules import MLP
 
