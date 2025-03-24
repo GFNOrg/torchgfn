@@ -1,6 +1,6 @@
 """This file contains some examples of modules that can be used with GFN."""
 
-from typing import Literal, Optional, Callable
+from typing import Callable, Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -190,6 +190,7 @@ class LinearTransformer(nn.Module):
     use the associativity property of matrix products to reduce the complexity of the
     attention computation from O(n^2) to O(n).
     """
+
     def __init__(
         self,
         n_layer: int,
@@ -202,7 +203,7 @@ class LinearTransformer(nn.Module):
 
         # Contains the attention parameters for all layers and heads.
         self.register_parameter(
-            'allparam',
+            "allparam",
             torch.nn.Parameter(torch.zeros(n_layer, n_head, 2, d, d)),
         )
 
@@ -244,7 +245,7 @@ class LinearTransformer(nn.Module):
     def attention(self, P, Q, Z, activation: Callable | None = None):
         B, N, d = Z.shape  # unpacks Z into batch size, seq length, and embedding dim.
 
-        P_full = torch.cat([P, torch.zeros(1,d - 1).to(self.device)], dim=0)
+        P_full = torch.cat([P, torch.zeros(1, d - 1).to(self.device)], dim=0)
         P_full = torch.cat([P_full, torch.zeros(d, 1).to(self.device)], dim=1)
         P_full[d - 1, d - 1] = 1
 
@@ -253,12 +254,12 @@ class LinearTransformer(nn.Module):
         A = torch.eye(N).to(self.device)
         A[N - 1, N - 1] = 0
 
-        attn = torch.einsum('BNi, ij, BMj -> BNM', (Z, Q_full, Z))
+        attn = torch.einsum("BNi, ij, BMj -> BNM", (Z, Q_full, Z))
         if activation is not None:
             attn = activation(attn)
 
-        key = torch.einsum('ij, BNj -> BNi', (P_full, Z))
-        output = torch.einsum('BNM,ML, BLi -> BNi', (attn, A, key))
+        key = torch.einsum("ij, BNj -> BNi", (P_full, Z))
+        output = torch.einsum("BNM,ML, BLi -> BNi", (attn, A, key))
 
         return output / (N - 1)
 
