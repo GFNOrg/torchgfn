@@ -82,6 +82,7 @@ class IsingArgs(CommonArgs):
 
 @dataclass
 class LineArgs(CommonArgs):
+    device: str = "cpu"
     exploration_var_starting_val: float = 1.0
     gradient_clip_value: float = 1.0
     lr_base: float = 1e-3
