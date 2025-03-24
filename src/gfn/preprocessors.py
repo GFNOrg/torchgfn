@@ -26,10 +26,14 @@ class Preprocessor(ABC):
         Returns the preprocessed states as a tensor of shape (*batch_shape, output_dim).
         """
 
-    def __call__(self, states: States) -> torch.Tensor:
+    def __call__(self, states: States | GraphStates) -> torch.Tensor | GeometricBatch:
         """Transform the states to the input of the neural network, calling the preprocess method."""
         out = self.preprocess(states)
-        assert out.shape[-1] == self.output_dim
+        if isinstance(out, GeometricBatch):
+            assert out.x.shape[-1] == self.output_dim
+        else:
+            assert out.shape[-1] == self.output_dim
+
         return out
 
     def __repr__(self):
@@ -38,13 +42,12 @@ class Preprocessor(ABC):
 
 class IdentityPreprocessor(Preprocessor):
     """Simple preprocessor applicable to environments with uni-dimensional states.
-    This is the default preprocessor used."""
+    This is the default preprocessor used, and handles graph and tensor-based states.
+    """
 
-    def preprocess(self, states: States) -> torch.Tensor:
+    def preprocess(self, states: States | GraphStates) -> torch.Tensor | GeometricBatch:
         """Identity preprocessor. Returns the states as they are."""
-        return (
-            states.tensor.float()
-        )  # TODO: should we typecast here? not a true identity...
+        return states.tensor
 
 
 class EnumPreprocessor(Preprocessor):
@@ -73,11 +76,3 @@ class EnumPreprocessor(Preprocessor):
         Returns the unique indices of the states as a tensor of shape `batch_shape`.
         """
         return self.get_states_indices(states).long().unsqueeze(-1)
-
-
-class GraphPreprocessor(Preprocessor):
-    def __init__(self) -> None:
-        super().__init__(-1)  # TODO: review output_dim API
-
-    def preprocess(self, states: GraphStates) -> GeometricBatch:
-        return states.tensor

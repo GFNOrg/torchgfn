@@ -280,13 +280,14 @@ def train(
 
 
 def main(args: Namespace):
+    device = torch.device(args.device) if isinstance(args.device, str) else args.device
     environment = Line(
         mus=[2, 5],
         sigmas=[0.5, 0.5],
         init_value=0,
         n_sd=4.5,
         n_steps_per_trajectory=5,
-        device="cpu",  # TODO: make configurable.
+        device=device,
     )
 
     # Hyperparameters.
@@ -310,9 +311,7 @@ def main(args: Namespace):
         policy_std_max=policy_std_max,
     )
     pb = StepEstimator(environment, pb_module, backward=True)
-    gflownet = TBGFlowNet(pf=pf, pb=pb, logZ=0.0).to(
-        torch.device("cpu")
-    )  # TODO: make configurable.
+    gflownet = TBGFlowNet(pf=pf, pb=pb, logZ=0.0).to(device)
 
     gflownet = train(
         gflownet,
@@ -336,5 +335,6 @@ if __name__ == "__main__":
         lr_base=1e-3,
         gradient_clip_value=5,
         exploration_var_starting_val=2,  # Used for off-policy training.
+        device="cpu",
     )
     main(args)
