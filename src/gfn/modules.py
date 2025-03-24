@@ -198,7 +198,7 @@ class ScalarEstimator(GFNModule):
         """
         # If the input is a States object, preprocess it.
         out = self.preprocessor(input) if isinstance(input, States) else input
-        out = self.module(input)
+        out = self.module(out)
 
         # Ensures estimator outputs are always scalar.
         if out.shape[-1] != 1:
