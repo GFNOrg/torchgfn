@@ -26,14 +26,13 @@ class Preprocessor(ABC):
         Returns the preprocessed states as a tensor of shape (*batch_shape, output_dim).
         """
 
-    def __call__(self, states: States) -> torch.Tensor:
+    def __call__(self, states: States | GraphStates) -> torch.Tensor | GeometricBatch:
         """Transform the states to the input of the neural network, calling the preprocess method."""
         out = self.preprocess(states)
         if isinstance(out, GeometricBatch):
-            raise ValueError(
-                "The preprocessor is not compatible with GeometricBatch objects."
-            )
-        assert out.shape[-1] == self.output_dim
+            assert out.x.shape[-1] == self.output_dim
+        else:
+            assert out.shape[-1] == self.output_dim
 
         return out
 
@@ -43,9 +42,10 @@ class Preprocessor(ABC):
 
 class IdentityPreprocessor(Preprocessor):
     """Simple preprocessor applicable to environments with uni-dimensional states.
-    This is the default preprocessor used."""
+    This is the default preprocessor used, and handles graph and tensor-based states.
+    """
 
-    def preprocess(self, states: States) -> torch.Tensor:
+    def preprocess(self, states: States | GraphStates) -> torch.Tensor | GeometricBatch:
         """Identity preprocessor. Returns the states as they are."""
         return states.tensor
 
@@ -76,26 +76,3 @@ class EnumPreprocessor(Preprocessor):
         Returns the unique indices of the states as a tensor of shape `batch_shape`.
         """
         return self.get_states_indices(states).long().unsqueeze(-1)
-
-
-class GraphPreprocessor(Preprocessor):
-    """Preprocessor for graph states to extract the tensor representation.
-
-    This simple preprocessor extracts the GeometricBatch from GraphStates to make
-    it compatible with the policy networks. It doesn't perform any complex
-    transformations, just ensuring the tensors are accessible in the right format.
-
-    Args:
-        feature_dim: The dimension of features in the graph (default: 1)
-    """
-
-    def __init__(self, feature_dim: int = 1):
-        super().__init__(output_dim=feature_dim)
-
-    def preprocess(self, states: GraphStates) -> GeometricBatch:
-        return states.tensor
-
-    def __call__(self, states: GraphStates) -> GeometricBatch:
-        out = self.preprocess(states)
-        assert out.x.shape[-1] == self.output_dim
-        return out

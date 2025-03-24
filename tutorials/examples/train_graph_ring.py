@@ -22,7 +22,7 @@ from gfn.containers import ReplayBuffer
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.modules import DiscretePolicyEstimator
-from gfn.preprocessors import GraphPreprocessor
+from gfn.preprocessors import IdentityPreprocessor
 from gfn.states import GraphStates
 from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
 
@@ -314,12 +314,14 @@ def main(args: Namespace):
         module_pb = GraphEdgeActionMLP(env.n_nodes, args.directed, is_backward=True)
 
     pf = DiscretePolicyEstimator(
-        module=module_pf, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
+        module=module_pf,
+        n_actions=env.n_actions,
+        preprocessor=IdentityPreprocessor(output_dim=1),
     )
     pb = DiscretePolicyEstimator(
         module=module_pb,
         n_actions=env.n_actions,
-        preprocessor=GraphPreprocessor(),
+        preprocessor=IdentityPreprocessor(output_dim=1),
         is_backward=True,
     )
     gflownet = TBGFlowNet(pf, pb).to(device)

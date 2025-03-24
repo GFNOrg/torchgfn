@@ -26,9 +26,8 @@ Advanced Usage
 For more complex environments, you can:
 
 1. Customize action representation with ``action_shape``, ``dummy_action``, ``exit_action``
-2. Add custom preprocessors for neural network inputs
-3. Implement state enumeration methods for exact calculations
-4. Add environment-specific helper methods
+2. Implement state enumeration methods for exact calculations
+3. Add environment-specific helper methods
 
 Environment Examples
 ------------------
@@ -46,12 +45,10 @@ The library includes several example environments showcasing different features:
 
 - ``HyperGrid``: A N-dimensional grid environment. Shows:
    - State enumeration for exact calculations
-   - Custom preprocessors (K-hot, One-hot, Identity encoding)
    - Parameterized reward functions
 
 - ``DiscreteEBM``: Energy-based model environment. Features:
    - Complex reward functions
-   - Custom state preprocessing
    - Advanced state enumeration
 
 - ``GraphBuilding``: Graph-based environment using ``GraphEnv``. Illustrates:
@@ -67,22 +64,18 @@ The library includes several example environments showcasing different features:
 
 When to Use Advanced Features
 ---------------------------
-1. **Custom Preprocessors**: Use when:
-   - States need special encoding for neural networks
-   - You want to experiment with different state representations
-   - Example: ``HyperGrid``'s K-hot encoding
 
-2. **State Enumeration**: Implement when:
+1. **State Enumeration**: Implement when:
    - Your state space is finite and enumerable
    - You need exact calculations of partition functions
    - Example: ``DiscreteEBM``'s state indexing
 
-3. **Graph-Based States**: Use ``GraphEnv`` when:
+2. **Graph-Based States**: Use ``GraphEnv`` when:
    - States are naturally represented as graphs
    - You need to handle variable-sized states
    - Example: ``GraphBuilding`` environment
 
-4. **Custom Action Spaces**: Consider when:
+3. **Custom Action Spaces**: Consider when:
    - Actions have complex structure
    - You need special action validation
    - Example: ``Box``'s continuous action space with constraints 

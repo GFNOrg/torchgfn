@@ -34,6 +34,7 @@ from gfn.gflownet import (
     TBGFlowNet,
 )
 from gfn.gym import HyperGrid
+from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
@@ -121,6 +122,7 @@ def main(args):  # noqa: C901
 
     # 1. Create the environment
     env = HyperGrid(args.ndim, args.height, args.R0, args.R1, args.R2, device=device)
+    preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
 
     # 2. Create the gflownets.
     #    For this we need modules and estimators.
@@ -135,7 +137,7 @@ def main(args):  # noqa: C901
             module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
         else:
             module = MLP(
-                input_dim=env.preprocessor.output_dim,
+                input_dim=preprocessor.output_dim,
                 output_dim=env.n_actions,
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
@@ -143,7 +145,7 @@ def main(args):  # noqa: C901
         estimator = DiscretePolicyEstimator(
             module=module,
             n_actions=env.n_actions,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
         gflownet = FMGFlowNet(estimator)
     else:
@@ -155,14 +157,14 @@ def main(args):  # noqa: C901
                 pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
         else:
             pf_module = MLP(
-                input_dim=env.preprocessor.output_dim,
+                input_dim=preprocessor.output_dim,
                 output_dim=env.n_actions,
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
             )
             if not args.uniform_pb:
                 pb_module = MLP(
-                    input_dim=env.preprocessor.output_dim,
+                    input_dim=preprocessor.output_dim,
                     output_dim=env.n_actions - 1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
@@ -181,13 +183,13 @@ def main(args):  # noqa: C901
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
         pb_estimator = DiscretePolicyEstimator(
             module=pb_module,
             n_actions=env.n_actions,
             is_backward=True,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
 
         if args.loss == "ModifiedDB":
@@ -209,16 +211,14 @@ def main(args):  # noqa: C901
                 module = Tabular(n_states=env.n_states, output_dim=1)
             else:
                 module = MLP(
-                    input_dim=env.preprocessor.output_dim,
+                    input_dim=preprocessor.output_dim,
                     output_dim=1,
                     hidden_dim=args.hidden_dim,
                     n_hidden_layers=args.n_hidden,
                     trunk=pf_module.trunk if args.tied else None,
                 )
 
-            logF_estimator = ScalarEstimator(
-                module=module, preprocessor=env.preprocessor
-            )
+            logF_estimator = ScalarEstimator(module=module, preprocessor=preprocessor)
             if args.loss == "DB":
                 gflownet = DBGFlowNet(
                     pf=pf_estimator,

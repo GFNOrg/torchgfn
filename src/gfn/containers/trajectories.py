@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Sequence
 
 import torch
+from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 
 from gfn.actions import Actions
@@ -78,9 +79,11 @@ class Trajectories(Container):
         for obj in [states, actions]:
             if obj is not None:
                 if isinstance(obj.tensor, GeometricBatch):
-                    assert obj.tensor[0].x.device.type == device.type
+                    assert obj.tensor.x.device == device
+                elif isinstance(obj.tensor, TensorDict):
+                    assert obj.tensor["x"].device == device
                 else:
-                    assert obj.tensor.device.type == device.type
+                    assert obj.tensor.device == device
         for tensor in [
             conditioning,
             terminating_idx,
@@ -620,6 +623,10 @@ class Trajectories(Container):
             assert torch.all(new_states == _new_states)
 
         return reversed_trajectories
+
+    @property
+    def device(self) -> torch.device:
+        return self.states.device
 
 
 def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:
