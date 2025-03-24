@@ -144,7 +144,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 log_F_s = self.logF(states).squeeze(-1)
 
         if self.forward_looking:
-            log_rewards = env.log_reward(states)  # TODO: RM unsqueeze(-1) ?
+            log_rewards = env.log_reward(states)
             if math.isfinite(self.log_reward_clip_min):
                 log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
             log_F_s = log_F_s + log_rewards

@@ -10,6 +10,35 @@ from gfn.env import GraphEnv
 from gfn.states import GraphStates
 
 
+def get_edge_indices(
+    n_nodes: int,
+    is_directed: bool,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Get the source and target node indices for the edges.
+
+    Args:
+        n_nodes: The number of nodes in the graph.
+        is_directed: Whether the graph is directed.
+        device: The device to run the computation on.
+
+    Returns:
+        A tuple of two tensors, the source and target node indices.
+    """
+    if is_directed:
+        # Upper triangle.
+        i_up, j_up = torch.triu_indices(n_nodes, n_nodes, offset=1, device=device)
+        # Lower triangle.
+        i_lo, j_lo = torch.tril_indices(n_nodes, n_nodes, offset=-1, device=device)
+
+        ei0 = torch.cat([i_up, i_lo])  # Combine them
+        ei1 = torch.cat([j_up, j_lo])
+    else:
+        ei0, ei1 = torch.triu_indices(n_nodes, n_nodes, offset=1, device=device)
+
+    return ei0, ei1
+
+
 class GraphBuilding(GraphEnv):
     """Environment for incrementally building graphs.
 
@@ -345,7 +374,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         n_nodes: int,
         state_evaluator: callable,
         directed: bool,
-        device: torch.device,
+        device: torch.device | str,
     ):
         self.n_nodes = n_nodes
         if directed:
@@ -357,7 +386,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         super().__init__(
             feature_dim=n_nodes,
             state_evaluator=state_evaluator,
-            device=device,
+            device=device,  # type: ignore
         )
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
         self.is_directed = directed
@@ -447,21 +476,8 @@ class GraphBuildingOnEdges(GraphBuilding):
                     len(self), self.n_actions, dtype=torch.bool, device=self.device
                 )
 
-                if env.is_directed:
-                    i_up, j_up = torch.triu_indices(
-                        self.n_nodes, self.n_nodes, offset=1, device=self.device
-                    )  # Upper triangle.
-                    i_lo, j_lo = torch.tril_indices(
-                        self.n_nodes, self.n_nodes, offset=-1, device=self.device
-                    )  # Lower triangle.
-
-                    # Combine them
-                    ei0 = torch.cat([i_up, i_lo])
-                    ei1 = torch.cat([j_up, j_lo])
-                else:
-                    ei0, ei1 = torch.triu_indices(
-                        self.n_nodes, self.n_nodes, offset=1, device=self.device
-                    )
+                # Convert action indices to source-target node pairs
+                ei0, ei1 = get_edge_indices(self.n_nodes, env.is_directed, self.device)
 
                 # Remove existing edges.
                 for i in range(len(self)):
@@ -516,22 +532,12 @@ class GraphBuildingOnEdges(GraphBuilding):
 
                 for i in range(len(self)):
                     existing_edges = self[i].tensor.edge_index
-
-                    if env.is_directed:
-                        i_up, j_up = torch.triu_indices(
-                            self.n_nodes, self.n_nodes, offset=1, device=self.device
-                        )  # Upper triangle.
-                        i_lo, j_lo = torch.tril_indices(
-                            self.n_nodes, self.n_nodes, offset=-1, device=self.device
-                        )  # Lower triangle.
-
-                        # Combine them
-                        ei0 = torch.cat([i_up, i_lo])
-                        ei1 = torch.cat([j_up, j_lo])
-                    else:
-                        ei0, ei1 = torch.triu_indices(
-                            self.n_nodes, self.n_nodes, offset=1, device=self.device
-                        )
+                    # Convert action indices to source-target node pairs.
+                    ei0, ei1 = get_edge_indices(
+                        self.n_nodes,
+                        env.is_directed,
+                        self.device,
+                    )
 
                     if len(existing_edges) == 0:
                         edge_idx = torch.zeros(0, dtype=torch.bool)
@@ -544,9 +550,8 @@ class GraphBuildingOnEdges(GraphBuilding):
                         if len(edge_idx.shape) == 2:
                             edge_idx = edge_idx.sum(0).bool()
 
-                        backward_masks[i, edge_idx] = (
-                            True  # Allow the removal of this edge.
-                        )
+                        # Allow the removal of this edge.
+                        backward_masks[i, edge_idx] = True
 
                 return backward_masks.view(*self.batch_shape, self.n_actions - 1)
 
@@ -611,21 +616,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
 
         # Convert action indices to source-target node pairs
-        # TODO: factor out into utility function.
-        if self.is_directed:
-            i_up, j_up = torch.triu_indices(
-                self.n_nodes, self.n_nodes, offset=1
-            )  # Upper triangle.
-            i_lo, j_lo = torch.tril_indices(
-                self.n_nodes, self.n_nodes, offset=-1
-            )  # Lower triangle.
-
-            # Combine them
-            ei0 = torch.cat([i_up, i_lo])
-            ei1 = torch.cat([j_up, j_lo])
-
-        else:
-            ei0, ei1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+        ei0, ei1 = get_edge_indices(self.n_nodes, self.is_directed, self.device)
 
         # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
         ei0 = torch.cat((ei0, torch.tensor([-1, -2])), dim=0).to(self.device)

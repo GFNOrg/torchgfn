@@ -76,11 +76,13 @@ class IsingArgs(CommonArgs):
     L: float = 6
     J: float = 0.44
     n_iterations: int = 10
+    device: str = "cpu"
     batch_size: int = 4
 
 
 @dataclass
 class LineArgs(CommonArgs):
+    device: str = "cpu"
     exploration_var_starting_val: float = 1.0
     gradient_clip_value: float = 1.0
     lr_base: float = 1e-3
