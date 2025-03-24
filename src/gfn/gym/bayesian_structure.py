@@ -1,4 +1,4 @@
-from typing import Literal, Optional, Tuple
+from typing import Callable, Literal, Optional, Tuple
 
 import torch
 from tensordict import TensorDict
@@ -29,7 +29,7 @@ class BayesianStructure(GraphEnv):
     def __init__(
         self,
         num_nodes: int,
-        state_evaluator: callable,
+        state_evaluator: Callable[[GraphStates], torch.Tensor],
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
 
@@ -365,31 +365,43 @@ class BayesianStructure(GraphEnv):
         Returns:
             torch.Tensor: Tensor of shape "batch_shape" containing the rewards.
         """
-        # Clone the final states to create a reverted graph
-        batch_size = final_states.batch_shape[0]
-        reverted_states = final_states.clone()
-        data_list = []
-        for i in range(batch_size):
-            graph = reverted_states[i]
-            # Remove the edge
-            graph.tensor.edge_index = graph.tensor.edge_index[:, :-1]
-            # Also remove the edge feature
-            if (
-                graph.tensor.edge_attr is not None
-                and graph.tensor.edge_attr.shape[0] > 0
-            ):
-                graph.tensor.edge_attr = graph.tensor.edge_attr[:-1]
-            data_list.append(graph.tensor)
-        # Create a new batch from the updated data list
-        reverted_states = GeometricBatch.from_data_list(data_list)
-        reverted_states.batch_shape = final_states.batch_shape
-        # Compute the local score for the reverted graph (before the last action)
-        score_before = self.state_evaluator(GraphStates(reverted_states))
-        # Compute the local score for the current graph (after the last action)
-        score_after = self.state_evaluator(final_states)
-        # Compute the delta score (reward)
-        print(score_before)
-        print(score_after)
-        delta_score = score_after - score_before
+        return self.state_evaluator(final_states).to(self.device)
 
-        return delta_score
+    # def delta_reward(self, final_states: GraphStates) -> torch.Tensor:
+    #     """The environment's reward given a state.
+    #     This or log_reward must be implemented.
+
+    #     Args:
+    #         final_states: A batch of final states.
+
+    #     Returns:
+    #         torch.Tensor: Tensor of shape "batch_shape" containing the rewards.
+    #     """
+    #     # Clone the final states to create a reverted graph
+    #     batch_size = final_states.batch_shape[0]
+    #     reverted_states = final_states.clone()
+    #     data_list = []
+    #     for i in range(batch_size):
+    #         graph = reverted_states[i]
+    #         # Remove the edge
+    #         graph.tensor.edge_index = graph.tensor.edge_index[:, :-1]
+    #         # Also remove the edge feature
+    #         if (
+    #             graph.tensor.edge_attr is not None
+    #             and graph.tensor.edge_attr.shape[0] > 0
+    #         ):
+    #             graph.tensor.edge_attr = graph.tensor.edge_attr[:-1]
+    #         data_list.append(graph.tensor)
+    #     # Create a new batch from the updated data list
+    #     reverted_states = GeometricBatch.from_data_list(data_list)
+    #     reverted_states.batch_shape = final_states.batch_shape
+    #     # Compute the local score for the reverted graph (before the last action)
+    #     score_before = self.state_evaluator(GraphStates(reverted_states))
+    #     # Compute the local score for the current graph (after the last action)
+    #     score_after = self.state_evaluator(final_states)
+    #     # Compute the delta score (reward)
+    #     print(score_before)
+    #     print(score_after)
+    #     delta_score = score_after - score_before
+
+    #     return delta_score

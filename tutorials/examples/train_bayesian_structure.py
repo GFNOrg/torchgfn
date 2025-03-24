@@ -3,7 +3,7 @@ The goal of this script is to reproduce the results of DAG-GFlowNet for
 Bayesian structure learning (Deleu et al., 2022) using the GraphEnv.
 
 Specifically, we consider a randomly generated (under the Erdős-Rényi model) linear-Gaussian
-Bayesian network over `n_nodes` nodes. We generate 100 datapoints from it, and use them to
+Bayesian network over `num_nodes` nodes. We generate 100 datapoints from it, and use them to
 calculate the BGe score. The GFlowNet is learned to generate directed acyclic graphs (DAGs)
 proportionally to their BGe score, using the modified DB loss.
 
@@ -20,6 +20,7 @@ import torch
 
 from gfn.actions import Actions
 from gfn.gym.bayesian_structure import BayesianStructure
+from gfn.gym.helpers.bayesian_structure.factories import get_scorer
 from gfn.states import GraphStates
 from gfn.utils.common import set_seed
 
@@ -31,7 +32,7 @@ def get_random_action(env: BayesianStructure, states: GraphStates) -> Actions:
     assert isinstance(states, env.States)
 
     action_masks = cast(torch.Tensor, states.forward_masks)
-    # shape: (batch_size, n_actions) where n_actions = n_nodes^2 + 1
+    # shape: (batch_size, n_actions) where n_actions = num_nodes^2 + 1
 
     action_probs = torch.rand(action_masks.shape, device=action_masks.device)
     action_probs = action_probs * action_masks
@@ -46,10 +47,24 @@ def main(args):
     set_seed(seed)
     device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
+    rng = torch.Generator(device="cpu")  # The device should be cpu
+    rng.manual_seed(seed)
+
+    # Create the scorer
+    scorer, _, _ = get_scorer(
+        args.graph_name,
+        args.prior_name,
+        args.num_nodes,
+        args.num_edges,
+        args.num_samples,
+        args.node_names,
+        rng=rng,
+    )
+
     # Create the environment
     env = BayesianStructure(
-        num_nodes=args.n_nodes,
-        state_evaluator=lambda x: torch.zeros(x.batch_size, device=x.device),  # TODO
+        num_nodes=args.num_nodes,
+        state_evaluator=scorer.state_evaluator,
         device=device,
     )
 
@@ -84,9 +99,7 @@ def main(args):
 
         new_dones = next_states.is_sink_state & ~dones
         trajectories_terminating_idx[new_dones] = step
-        trajectories_log_rewards[new_dones] = torch.ones_like(
-            trajectories_log_rewards[new_dones]
-        )
+        trajectories_log_rewards[new_dones] = env.log_reward(states[new_dones])
         dones = dones | new_dones
 
         states = next_states
@@ -97,7 +110,26 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n_nodes", type=int, default=4)
+    # Environment parameters
+    parser.add_argument("--num_nodes", type=int, default=4)
+    parser.add_argument(
+        "--num_edges",
+        type=int,
+        default=6,
+        help="Number of edges in the sampled erdos renyi graph",
+    )
+    parser.add_argument(
+        "--num_samples", type=int, default=100, help="Number of samples."
+    )
+    parser.add_argument("--graph_name", type=str, default="erdos_renyi_lingauss")
+    parser.add_argument("--prior_name", type=str, default="uniform")
+    parser.add_argument(
+        "--node_names",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Optional list of node names.",
+    )
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--no_cuda", action="store_true")

@@ -70,7 +70,7 @@ dev = [
     "nbmake",
 ]
 
-scripts = ["tqdm", "wandb", "scikit-learn", "scipy", "matplotlib"]
+scripts = ["tqdm", "wandb", "scikit-learn", "scipy", "matplotlib", "pgmpy"]
 
 all = [
     "black",

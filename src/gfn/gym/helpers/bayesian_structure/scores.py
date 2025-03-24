@@ -144,31 +144,22 @@ class BGeScore(BaseScore):
         The score is computed as the sum of local scores over all nodes.
         """
         total_score = 0.0
-        for i in range(self.num_nodes):
+        for i in range(self.num_nodes):  # i is the target node index
             parents = torch.where(adj_matrix[:, i] == 1)[0].tolist()
             num_parents = len(parents)
             # self.prior.num_variables = num_parents
+
             if num_parents > 0:
-                # In Code2 the node is combined with its parents.
                 variables = [i] + parents
                 R_parents = self.R[parents, :][:, parents]
                 R_all = self.R[variables, :][:, variables]
                 # torch.linalg.slogdet returns (sign, logdet)
                 _, logdet_Rp = torch.linalg.slogdet(R_parents)
                 _, logdet_Rall = torch.linalg.slogdet(R_all)
+
+                tmp_var = self.num_samples + self.alpha_w - self.num_nodes + num_parents
                 log_term_r = (
-                    0.5
-                    * (self.num_samples + self.alpha_w - self.num_nodes + num_parents)
-                    * logdet_Rp
-                    - 0.5
-                    * (
-                        self.num_samples
-                        + self.alpha_w
-                        - self.num_nodes
-                        + num_parents
-                        + 1
-                    )
-                    * logdet_Rall
+                    0.5 * (tmp_var) * logdet_Rp - 0.5 * (tmp_var + 1) * logdet_Rall
                 )
             else:
                 log_term_r = (
@@ -176,6 +167,7 @@ class BGeScore(BaseScore):
                     * (self.num_samples + self.alpha_w - self.num_nodes + 1)
                     * torch.log(torch.abs(self.R[i, i]))
                 )
+
             local_score = (
                 self.log_gamma_term[num_parents].item()
                 + log_term_r.item()

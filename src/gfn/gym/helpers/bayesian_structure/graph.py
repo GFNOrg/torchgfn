@@ -4,7 +4,7 @@ from typing import List, Optional
 
 import torch
 from pgmpy.factors.continuous import LinearGaussianCPD
-from torch_geometric.data import Data
+from torch_geometric.data import Data as GeometricData
 
 
 def sample_erdos_renyi_graph(
@@ -13,7 +13,7 @@ def sample_erdos_renyi_graph(
     p: Optional[float] = None,
     num_edges: Optional[int] = None,
     node_names: Optional[List[str]] = None,
-) -> Data:
+) -> GeometricData:
     """
     Sample an Erdos-Renyi graph.
 
@@ -40,19 +40,23 @@ def sample_erdos_renyi_graph(
         uppercase = string.ascii_uppercase
         iterator = chain.from_iterable(product(uppercase, repeat=r) for r in count(1))
         node_names = ["".join(letters) for letters in islice(iterator, num_nodes)]
+
     # Generate adjacency matrix using torch and keep lower triangular matrix
     adjacency = (torch.rand(num_nodes, num_nodes, generator=rng) < p).to(torch.int64)
     adjacency = torch.tril(adjacency, diagonal=-1)
-    # Permute rows and columns
+
+    # Permute rows, columns, and node names
     perm = torch.randperm(num_nodes, generator=rng)
-    node_names = [
-        node_names[i] for i in perm.tolist()
-    ]  # update mapping according to permutation
     adjacency = adjacency[perm, :]
     adjacency = adjacency[:, perm]
+    node_names = [node_names[i] for i in perm.tolist()]
+
     # Get edge indices using torch.nonzero and transpose to shape (2, num_edges)
     edge_index = torch.nonzero(adjacency, as_tuple=False).t().contiguous()
-    return Data(edge_index=edge_index, num_nodes=num_nodes, node_names=node_names)
+
+    return GeometricData(
+        edge_index=edge_index, num_nodes=num_nodes, node_names=node_names
+    )
 
 
 def sample_erdos_renyi_linear_gaussian(
@@ -64,7 +68,7 @@ def sample_erdos_renyi_linear_gaussian(
     loc_edges: float = 0.0,
     scale_edges: float = 1.0,
     obs_noise: float = 0.1,
-) -> Data:
+) -> GeometricData:
     """
     Sample a linear Gaussian Bayesian network based on an Erdos-Renyi graph.
 
@@ -102,7 +106,7 @@ def sample_erdos_renyi_linear_gaussian(
             parents = []
         num_parents = len(parents)
         theta = torch.normal(
-            mean=torch.full((num_parents + 1,), loc_edges, device=rng.device),
+            mean=torch.full((num_parents + 1,), loc_edges),
             std=scale_edges,
             generator=rng,
         )
