@@ -220,7 +220,7 @@ class Env(ABC):
         states and a boolean tensor indicating sink states in the new batch.
         """
         assert states.batch_shape == actions.batch_shape
-        new_states = states.clone()  # TODO: Ensure this is efficient!
+        new_states = states.clone()
         valid_states_idx: torch.Tensor = ~states.is_sink_state
         assert valid_states_idx.shape == states.batch_shape
         assert valid_states_idx.dtype == torch.bool
@@ -262,7 +262,7 @@ class Env(ABC):
         states and a boolean tensor indicating initial states in the new batch.
         """
         assert states.batch_shape == actions.batch_shape
-        new_states = states.clone()  # TODO: Ensure this is efficient!
+        new_states = states.clone()
         valid_states_idx: torch.Tensor = ~new_states.is_initial_state
         assert valid_states_idx.shape == states.batch_shape
         assert valid_states_idx.dtype == torch.bool
@@ -358,10 +358,20 @@ class DiscreteEnv(Env, ABC):
         if dummy_action is not None or exit_action is not None or sf is not None:
             import warnings
 
+            expert_parameters_used = []
+            if dummy_action is not None:
+                expert_parameters_used.append("dummy_action")
+            if exit_action is not None:
+                expert_parameters_used.append("exit_action")
+            if sf is not None:
+                expert_parameters_used.append("sf")
+
             warnings.warn(
-                "You're using advanced parameters (dummy_action/exit_action/sf). "
+                "You're using advanced parameters: ({}). "
                 "These are only needed for custom action handling. "
-                "For basic environments, you can omit these.",
+                "For basic environments, you can omit these.".format(
+                    ", ".join(expert_parameters_used)
+                ),
                 UserWarning,
             )
 
@@ -577,6 +587,8 @@ class GraphEnv(Env):
         self.sf = sf
 
         assert s0.x is not None
+        assert sf.x is not None
+        assert s0.x.shape[-1] == sf.x.shape[-1]
         self.features_dim = s0.x.shape[-1]
 
         self.States = self.make_states_class()

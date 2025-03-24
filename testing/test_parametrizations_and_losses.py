@@ -22,9 +22,8 @@ from gfn.gym.helpers.box_utils import (
     BoxPFEstimator,
     BoxPFMLP,
 )
-from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
-from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
+from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor, KHotPreprocessor
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 
 N = 10  # Number of trajectories from sample_trajectories (changes tests globally).

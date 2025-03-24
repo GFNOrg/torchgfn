@@ -189,9 +189,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_rewards = trajectories.log_rewards[trajectories.terminating_idx >= i]
 
         if math.isfinite(self.log_reward_clip_min):
-            log_rewards.clamp_min(
-                self.log_reward_clip_min
-            )  # TODO: clamping - check this.
+            log_rewards.clamp_min(self.log_reward_clip_min)
 
         targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
 

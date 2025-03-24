@@ -139,8 +139,9 @@ reportAttributeAccessIssue = false
 
 [tool.pytest.ini_options]
 reportOptionalMemberAccess = "error"
-reportArgumentType = "error" #This setting doesn't exist, removed.
-
+filterwarnings = [
+    "ignore::pytest.PytestConfigWarning",
+]
 # Add some useful, commonly used settings.
 reportUnusedImport = true
 reportUnusedVariable = true

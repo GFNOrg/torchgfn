@@ -230,7 +230,7 @@ def test_setitem_1d(datas):
     assert states.tensor.batch_shape == (3,)  # Batch shape should not change
 
     # Set the new graph in the second and third positions
-    states[1:] = new_states  # pyright: ignore  # TODO: Fix pyright issue
+    states[1:] = new_states
 
     # Check that the second and third graphs are now the new graph
     second_graph = states[1].tensor
@@ -248,7 +248,7 @@ def test_setitem_1d(datas):
     with pytest.raises(AssertionError):
         states[0] = new_states
     with pytest.raises(AssertionError):
-        states[1:] = new_states[0]  # pyright: ignore
+        states[1:] = new_states[0]
 
 
 def test_setitem_2d(datas):
