@@ -8,7 +8,9 @@ from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
+from gfn.gym.helpers.preprocessors import KHotPreprocessor, OneHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator, GFNModule
+from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.modules import MLP, GraphEdgeActionGNN
 from gfn.utils.prob_calculations import get_trajectory_pfs
@@ -23,7 +25,7 @@ def trajectory_sampling_with_return(
     n_components: int,
 ) -> Tuple[Trajectories, Trajectories, GFNModule, GFNModule]:
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=2, height=8, preprocessor_name=preprocessor_name)
+        env = HyperGrid(ndim=2, height=8)
     elif env_name == "DiscreteEBM":
         if preprocessor_name != "Identity" or delta != 0.1:
             pytest.skip("Useless tests")
@@ -56,23 +58,32 @@ def trajectory_sampling_with_return(
     else:
         raise ValueError("Unknown environment name")
 
+    if preprocessor_name == "KHot":
+        preprocessor = KHotPreprocessor(env.height, env.ndim)
+    elif preprocessor_name == "OneHot":
+        preprocessor = OneHotPreprocessor(
+            n_states=env.n_states, get_states_indices=env.get_states_indices
+        )
+    elif preprocessor_name == "Identity":
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+    elif preprocessor_name == "Enum":
+        preprocessor = EnumPreprocessor(env.get_states_indices)
+
     if env_name != "Box":
         assert not isinstance(env, Box)
-        pf_module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
-        pb_module = MLP(
-            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
-        )
+        pf_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
+        pb_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
             is_backward=False,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
         pb_estimator = DiscretePolicyEstimator(
             module=pb_module,
             n_actions=env.n_actions,
             is_backward=True,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
 
     sampler = Sampler(estimator=pf_estimator)
@@ -209,26 +220,28 @@ def test_local_search_for_loop_equivalence(env_name):
     is_discrete = env_name in ["HyperGrid", "DiscreteEBM"]
     if is_discrete:
         if env_name == "HyperGrid":
-            env = HyperGrid(ndim=2, height=5, preprocessor_name="KHot")
+            env = HyperGrid(ndim=2, height=5)
+            preprocessor = KHotPreprocessor(env.height, env.ndim)
         elif env_name == "DiscreteEBM":
             env = DiscreteEBM(ndim=5)
+            preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
         else:
             raise ValueError("Unknown environment name")
 
         # Build pf & pb
-        pf_module = MLP(env.preprocessor.output_dim, env.n_actions)
-        pb_module = MLP(env.preprocessor.output_dim, env.n_actions - 1)
+        pf_module = MLP(preprocessor.output_dim, env.n_actions)
+        pb_module = MLP(preprocessor.output_dim, env.n_actions - 1)
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
             is_backward=False,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
         pb_estimator = DiscretePolicyEstimator(
             module=pb_module,
             n_actions=env.n_actions,
             is_backward=True,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
 
     else:
@@ -391,7 +404,7 @@ def test_graph_building_on_edges():
         module=estimator_fwd,
         n_actions=env.n_actions,
         is_backward=False,
-        preprocessor=env.preprocessor,
+        preprocessor=IdentityPreprocessor(output_dim=1),
     )
     module_fwd.to(device=env.device)
 
@@ -416,7 +429,7 @@ def test_graph_building_on_edges():
         module=estimator_bwd,
         n_actions=env.n_actions,
         is_backward=True,
-        preprocessor=env.preprocessor,
+        preprocessor=IdentityPreprocessor(output_dim=1),
     )
     module_bwd.to(device=env.device)
 

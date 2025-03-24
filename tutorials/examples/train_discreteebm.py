@@ -51,7 +51,7 @@ def main(args):  # noqa: C901
         module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
     else:
         module = MLP(
-            input_dim=env.preprocessor.output_dim,
+            input_dim=env.ndim,
             output_dim=env.n_actions,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
@@ -59,7 +59,6 @@ def main(args):  # noqa: C901
     estimator = DiscretePolicyEstimator(
         module=module,
         n_actions=env.n_actions,
-        preprocessor=env.preprocessor,
     )
     gflownet = FMGFlowNet(estimator)
     gflownet = gflownet.to(device)

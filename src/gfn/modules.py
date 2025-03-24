@@ -87,9 +87,9 @@ class GFNModule(ABC, nn.Module):
 
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        if isinstance(input, States):
-            input = self.preprocessor(input)
-        return self.module(input)
+        # If the input is a States object, preprocess it.
+        out = self.preprocessor(input) if isinstance(input, States) else input
+        return self.module(out)
 
     def __repr__(self):
         return f"{self.__class__.__name__} module"
@@ -196,10 +196,9 @@ class ScalarEstimator(GFNModule):
 
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        if isinstance(input, States):
-            input = self.preprocessor(input)
-
-        out = self.module(input)
+        # If the input is a States object, preprocess it.
+        out = self.preprocessor(input) if isinstance(input, States) else input
+        out = self.module(out)
 
         # Ensures estimator outputs are always scalar.
         if out.shape[-1] != 1:

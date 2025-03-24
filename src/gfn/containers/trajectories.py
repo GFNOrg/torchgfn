@@ -94,7 +94,7 @@ class Trajectories(Container):
             log_probs,
             estimator_outputs,
         ]:
-            assert tensor.device == device if tensor is not None else True
+            assert tensor.device.type == device.type if tensor is not None else True
 
         self.states = (
             states if states is not None else env.states_from_batch_shape((0, 0))

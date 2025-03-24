@@ -9,8 +9,6 @@ from einops import rearrange
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
-from gfn.gym.helpers.preprocessors import KHotPreprocessor, OneHotPreprocessor
-from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
 from gfn.states import DiscreteStates
 
 
@@ -24,13 +22,10 @@ class HyperGrid(DiscreteEnv):
         R2: float = 2.0,
         reward_cos: bool = False,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
-        preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"] = "KHot",
     ):
         """HyperGrid environment from the GFlowNets paper.
         The states are represented as 1-d tensors of length `ndim` with values in
         {0, 1, ..., height - 1}.
-        A preprocessor transforms the states to the input of the neural network,
-        which can be a one-hot, a K-hot, or an identity encoding.
 
         Args:
             ndim: dimension of the grid. Defaults to 2.
@@ -40,7 +35,6 @@ class HyperGrid(DiscreteEnv):
             R2: reward parameter R1. Defaults to 2.0.
             reward_cos: Which version of the reward to use. Defaults to False.
             device: The device to use for the environment.
-            preprocessor_name: Preprocessor to use. Defaults to "KHot".
         """
         self.ndim = ndim
         self.height = height
@@ -56,22 +50,6 @@ class HyperGrid(DiscreteEnv):
         sf = torch.full((ndim,), fill_value=-1, dtype=torch.long, device=device)
         n_actions = ndim + 1
 
-        if preprocessor_name == "Identity":
-            preprocessor = IdentityPreprocessor(output_dim=ndim)
-        elif preprocessor_name == "KHot":
-            preprocessor = KHotPreprocessor(height=height, ndim=ndim)
-        elif preprocessor_name == "OneHot":
-            preprocessor = OneHotPreprocessor(
-                n_states=self.n_states,
-                get_states_indices=self.get_states_indices,
-            )
-        elif preprocessor_name == "Enum":
-            preprocessor = EnumPreprocessor(
-                get_states_indices=self.get_states_indices,
-            )
-        else:
-            raise ValueError(f"Unknown preprocessor {preprocessor_name}")
-
         state_shape = (self.ndim,)
 
         super().__init__(
@@ -79,7 +57,6 @@ class HyperGrid(DiscreteEnv):
             s0=s0,
             state_shape=state_shape,
             sf=sf,
-            preprocessor=preprocessor,
         )
 
     def update_masks(self, states: DiscreteStates) -> None:

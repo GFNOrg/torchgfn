@@ -6,7 +6,6 @@ from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import Actions, GraphActions
-from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import set_seed
 
@@ -26,7 +25,6 @@ class Env(ABC):
         dummy_action: torch.Tensor,
         exit_action: torch.Tensor,
         sf: Optional[torch.Tensor | GeometricData] = None,
-        preprocessor: Optional[Preprocessor] = None,
     ):
         """Initializes an environment.
 
@@ -39,9 +37,6 @@ class Env(ABC):
             exit_action: Tensor of shape "action_shape" representing the exit action.
             sf: Tensor of shape "state_shape" representing the final state.
                 Only used for a human readable representation of the states or trajectories.
-            preprocessor: a Preprocessor object that converts raw states to a tensor
-                that can be fed into a neural network. Defaults to None, in which case
-                the IdentityPreprocessor is used.
         """
         self.device = s0.device
         self.s0 = s0
@@ -64,15 +59,6 @@ class Env(ABC):
         # Use self.states_from_tensor or self.actions_from_tensor instead.
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
-
-        if preprocessor is None:
-            assert (
-                s0.ndim == 1
-            ), "The default preprocessor can only be used for uni-dimensional states."
-            output_dim = s0.shape[0]
-            preprocessor = IdentityPreprocessor(output_dim=output_dim)
-
-        self.preprocessor = preprocessor
         self.is_discrete = False
 
     def states_from_tensor(self, tensor: torch.Tensor) -> States:
@@ -356,7 +342,6 @@ class DiscreteEnv(Env, ABC):
         dummy_action: Optional[torch.Tensor] = None,
         exit_action: Optional[torch.Tensor] = None,
         sf: Optional[torch.Tensor] = None,
-        preprocessor: Optional[Preprocessor] = None,
     ):
         """Initializes a discrete environment.
         Args:
@@ -368,15 +353,9 @@ class DiscreteEnv(Env, ABC):
             exit_action: Optional tensor of shape "action_shape" representing the exit action.
             sf: Tensor of shape "state_shape" representing the final state tensor (shared among all trajectories).
             device_str: String representation of a torch.device.
-            preprocessor: An optional preprocessor for intermediate states.
         """
         # Add validation/warnings for advanced usage
-        if (
-            dummy_action is not None
-            or exit_action is not None
-            or sf is not None
-            or preprocessor is not None
-        ):
+        if dummy_action is not None or exit_action is not None or sf is not None:
             import warnings
 
             expert_parameters_used = []
@@ -386,8 +365,6 @@ class DiscreteEnv(Env, ABC):
                 expert_parameters_used.append("exit_action")
             if sf is not None:
                 expert_parameters_used.append("sf")
-            if preprocessor is not None:
-                expert_parameters_used.append("preprocessor")
 
             warnings.warn(
                 "You're using advanced parameters: ({}). "
@@ -427,7 +404,6 @@ class DiscreteEnv(Env, ABC):
             dummy_action,
             exit_action,
             sf,
-            preprocessor,
         )
 
         self.is_discrete = True  # After init, else it will be overwritten.
@@ -596,7 +572,6 @@ class GraphEnv(Env):
         self,
         s0: GeometricData,
         sf: GeometricData,
-        preprocessor: Optional[Preprocessor] = None,
     ):
         """Initializes a graph-based environment.
 
@@ -604,9 +579,6 @@ class GraphEnv(Env):
             s0: The initial graph state.
             sf: The sink graph state.
             device_str: String representation of the device.
-            preprocessor: a Preprocessor object that converts raw graph states to a tensor
-                that can be fed into a neural network. Defaults to None, in which case
-                the IdentityPreprocessor is used.
         """
         assert s0.device == sf.device
         self.device = s0.device
@@ -615,12 +587,12 @@ class GraphEnv(Env):
         self.sf = sf
 
         assert s0.x is not None
+        assert sf.x is not None
+        assert s0.x.shape[-1] == sf.x.shape[-1]
         self.features_dim = s0.x.shape[-1]
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
-
-        self.preprocessor = preprocessor
 
     def make_states_class(self) -> type[GraphStates]:
         env = self

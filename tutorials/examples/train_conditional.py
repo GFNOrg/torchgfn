@@ -37,12 +37,12 @@ def build_conditional_pf_pb(
     """
     CONCAT_SIZE = 16
     module_PF = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=env.n_states,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
     )
     module_PB = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=env.n_states,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
         trunk=module_PF.trunk,
@@ -72,7 +72,6 @@ def build_conditional_pf_pb(
         module_final_PF,
         env.n_actions,
         is_backward=False,
-        preprocessor=env.preprocessor,
     )
     pb_estimator = ConditionalDiscretePolicyEstimator(
         module_PB,
@@ -80,7 +79,6 @@ def build_conditional_pf_pb(
         module_final_PB,
         env.n_actions,
         is_backward=True,
-        preprocessor=env.preprocessor,
     )
 
     return pf_estimator, pb_estimator
@@ -99,7 +97,7 @@ def build_conditional_logF_scalar_estimator(
     """
     CONCAT_SIZE = 16
     module_state_logF = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=env.n_states,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
         n_hidden_layers=1,
@@ -121,7 +119,6 @@ def build_conditional_logF_scalar_estimator(
         module_state_logF,
         module_conditioning_logF,
         module_final_logF,
-        preprocessor=env.preprocessor,
     )
 
     return logF_estimator
@@ -170,7 +167,7 @@ def build_db_mod_gflownet(env):
 def build_fm_gflownet(env):
     CONCAT_SIZE = 16
     module_logF = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=env.n_states,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
     )
@@ -189,7 +186,6 @@ def build_fm_gflownet(env):
         module_final_logF,
         env.n_actions,
         is_backward=False,
-        preprocessor=env.preprocessor,
     )
 
     gflownet = FMGFlowNet(logF=logF_estimator)
