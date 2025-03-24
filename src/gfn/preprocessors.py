@@ -30,9 +30,10 @@ class Preprocessor(ABC):
         """Transform the states to the input of the neural network, calling the preprocess method."""
         out = self.preprocess(states)
         if isinstance(out, GeometricBatch):
-            assert out.x.shape[-1] == self.output_dim
-        else:
-            assert out.shape[-1] == self.output_dim
+            raise ValueError(
+                "The preprocessor is not compatible with GeometricBatch objects."
+            )
+        assert out.shape[-1] == self.output_dim
 
         return out
 
@@ -95,4 +96,6 @@ class GraphPreprocessor(Preprocessor):
         return states.tensor
 
     def __call__(self, states: GraphStates) -> GeometricBatch:
-        return self.preprocess(states)
+        out = self.preprocess(states)
+        assert out.x.shape[-1] == self.output_dim
+        return out

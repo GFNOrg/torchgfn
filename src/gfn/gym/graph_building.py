@@ -7,6 +7,7 @@ from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import Actions, GraphActions, GraphActionType
 from gfn.env import GraphEnv
+from gfn.preprocessors import Preprocessor
 from gfn.states import GraphStates
 
 
@@ -29,6 +30,7 @@ class GraphBuilding(GraphEnv):
         self,
         feature_dim: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
+        preprocessor: Optional[Preprocessor] = None,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
         s0 = GeometricData(
@@ -52,6 +54,7 @@ class GraphBuilding(GraphEnv):
         super().__init__(
             s0=s0,
             sf=sf,
+            preprocessor=preprocessor,
         )
 
     def reset(
@@ -342,6 +345,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         state_evaluator: callable,
         directed: bool,
         device: torch.device,
+        preprocessor: Optional[Preprocessor] = None,
     ):
         self.n_nodes = n_nodes
         if directed:
@@ -350,7 +354,12 @@ class GraphBuildingOnEdges(GraphBuilding):
         else:
             # bottom triangle + exit.
             self.n_actions = ((n_nodes**2 - n_nodes) // 2) + 1
-        super().__init__(feature_dim=n_nodes, state_evaluator=state_evaluator)
+        super().__init__(
+            feature_dim=n_nodes,
+            state_evaluator=state_evaluator,
+            preprocessor=preprocessor,
+            device=device,
+        )
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
         self.is_directed = directed
         self.device = device

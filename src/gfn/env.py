@@ -6,7 +6,7 @@ from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import Actions, GraphActions
-from gfn.preprocessors import IdentityPreprocessor, Preprocessor
+from gfn.preprocessors import GraphPreprocessor, IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import set_seed
 
@@ -606,7 +606,7 @@ class GraphEnv(Env):
             device_str: String representation of the device.
             preprocessor: a Preprocessor object that converts raw graph states to a tensor
                 that can be fed into a neural network. Defaults to None, in which case
-                the IdentityPreprocessor is used.
+                the GrtaphPreprocessor is used.
         """
         assert s0.device == sf.device
         self.device = s0.device
@@ -615,12 +615,18 @@ class GraphEnv(Env):
         self.sf = sf
 
         assert s0.x is not None
+        assert sf.x is not None
+        assert s0.x.shape[-1] == sf.x.shape[-1]
         self.features_dim = s0.x.shape[-1]
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
 
-        self.preprocessor = preprocessor
+        if preprocessor is None:
+            output_dim = max((s0.x.shape[0], sf.x.shape[0]))
+            self.preprocessor = GraphPreprocessor(feature_dim=output_dim)
+        else:
+            self.preprocessor = preprocessor
 
     def make_states_class(self) -> type[GraphStates]:
         env = self
