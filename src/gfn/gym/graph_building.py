@@ -535,7 +535,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                     # Convert action indices to source-target node pairs.
                     ei0, ei1 = get_edge_indices(
                         self.n_nodes,
-                        self.is_directed,
+                        env.is_directed,
                         self.device,
                     )
 
