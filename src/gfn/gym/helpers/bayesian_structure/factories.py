@@ -75,8 +75,11 @@ def get_scorer(
     graph, data, score = get_data(
         graph_name, num_nodes, num_edges, num_samples, node_names, rng=rng
     )
+
     # Get the prior
     prior = get_prior(name=prior_name)
+
+    # Get the scorer
     scores = {"bge": BGeScore}
     scorer = scores[score](data=data, prior=prior)
 

@@ -1,9 +1,9 @@
 import pandas as pd
 import torch
-from torch_geometric.data import Data
+from torch_geometric.data import Data as GeometricData
 
 
-def topological_sort_data(graph: Data) -> list[int]:
+def topological_sort_data(graph: GeometricData) -> list[int]:
     # Compute topological order for a torch_geometric graph DAG
     assert graph.num_nodes is not None, "Graph must have nodes"
     indegree = torch.zeros(graph.num_nodes, dtype=torch.int)
@@ -27,7 +27,7 @@ def topological_sort_data(graph: Data) -> list[int]:
 
 
 def sample_from_linear_gaussian(
-    graph: Data,
+    graph: GeometricData,
     num_samples: int,
     rng: torch.Generator,
     obs_noise=0.1,

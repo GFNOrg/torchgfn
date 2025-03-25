@@ -99,6 +99,8 @@ def main(args):
 
         new_dones = next_states.is_sink_state & ~dones
         trajectories_terminating_idx[new_dones] = step
+        # Note: next_states[new_dones] are the dummy states, so we should pass
+        # states[new_dones], which are the terminating states to get the log rewards.
         trajectories_log_rewards[new_dones] = env.log_reward(states[new_dones])
         dones = dones | new_dones
 
@@ -111,11 +113,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     # Environment parameters
-    parser.add_argument("--num_nodes", type=int, default=4)
+    parser.add_argument("--num_nodes", type=int, default=5)
     parser.add_argument(
         "--num_edges",
         type=int,
-        default=6,
+        default=5,
         help="Number of edges in the sampled erdos renyi graph",
     )
     parser.add_argument(

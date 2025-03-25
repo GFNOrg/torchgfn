@@ -355,7 +355,7 @@ class BayesianStructure(GraphEnv):
         # TODO
         return True
 
-    def reward(self, final_states: GraphStates) -> torch.Tensor:
+    def log_reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
         This or log_reward must be implemented.
 

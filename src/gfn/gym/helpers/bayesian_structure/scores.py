@@ -117,26 +117,31 @@ class BGeScore(BaseScore):
             * math.log(self.t)
         )
 
-    def state_evaluator(self, state: GraphStates) -> torch.Tensor:
+    def state_evaluator(self, states: GraphStates) -> torch.Tensor:
         """
-        Evaluate the BGe score for the given state.
+        Evaluate the BGe score for the given states.
         Expecting state.tensor.to_data_list() to return a list of graph objects,
         each of which has attributes 'edge_index' and a method to convert the
         sparse representation to an adjacency matrix.
         """
-        batch_size = state.batch_shape[0]
+        batch_size = states.batch_shape[0]
         scores = []
 
         for i in range(batch_size):
-            graph = state[i].tensor
+            graph = states[i].tensor
             # Convert the graph object to an adjacency matrix.
             # Here we assume a helper function 'to_dense_adj' is available.
+            if graph.edge_index.shape[1] == 0:  # No edges
+                scores.append(0.0)
+                continue
+
             adj_matrix = to_dense_adj(
                 graph.edge_index, max_num_nodes=len(self.column_names)
             ).squeeze(0)
             score = self._calculate_bge_score(adj_matrix)
             scores.append(score)
-        return torch.tensor(scores, dtype=torch.float32, device=state.device)
+
+        return torch.tensor(scores, dtype=torch.float32, device=states.device)
 
     def _calculate_bge_score(self, adj_matrix: torch.Tensor) -> float:
         """
@@ -144,34 +149,56 @@ class BGeScore(BaseScore):
         The score is computed as the sum of local scores over all nodes.
         """
         total_score = 0.0
-        for i in range(self.num_nodes):  # i is the target node index
-            parents = torch.where(adj_matrix[:, i] == 1)[0].tolist()
-            num_parents = len(parents)
-            # self.prior.num_variables = num_parents
 
-            if num_parents > 0:
-                variables = [i] + parents
-                R_parents = self.R[parents, :][:, parents]
-                R_all = self.R[variables, :][:, variables]
-                # torch.linalg.slogdet returns (sign, logdet)
-                _, logdet_Rp = torch.linalg.slogdet(R_parents)
-                _, logdet_Rall = torch.linalg.slogdet(R_all)
+        _adj_matrix = torch.zeros_like(adj_matrix)
+        for indices in adj_matrix.nonzero():
+            source, target = indices.tolist()
 
-                tmp_var = self.num_samples + self.alpha_w - self.num_nodes + num_parents
-                log_term_r = (
-                    0.5 * (tmp_var) * logdet_Rp - 0.5 * (tmp_var + 1) * logdet_Rall
-                )
-            else:
-                log_term_r = (
-                    -0.5
-                    * (self.num_samples + self.alpha_w - self.num_nodes + 1)
-                    * torch.log(torch.abs(self.R[i, i]))
-                )
+            # Score before adding the edge
+            parents_before = _adj_matrix[:, target].nonzero().flatten().tolist()
+            local_score_before = self.local_score(target, parents_before)
 
-            local_score = (
-                self.log_gamma_term[num_parents].item()
-                + log_term_r.item()
-                + self.prior(num_parents)
-            )
-            total_score += local_score
+            # Score after adding the edge
+            parents_after = parents_before + [source]
+            local_score_after = self.local_score(target, parents_after)
+
+            _adj_matrix[source, target] = 1
+            total_score += local_score_after - local_score_before
+
         return total_score
+
+    def local_score(self, target: int, parents: list[int]) -> float:
+        """
+        Calculate the local BGe score.
+
+        Args:
+            target (int): The target node index.
+            parents (list[int]): The indices of the parents of the target node.
+        """
+        num_parents = len(parents)
+        # self.prior.num_variables = num_parents
+
+        if num_parents > 0:
+            variables = [target] + parents
+            R_parents = self.R[parents, :][:, parents]
+            R_all = self.R[variables, :][:, variables]
+            # torch.linalg.slogdet returns (sign, logdet)
+            _, logdet_Rp = torch.linalg.slogdet(R_parents)
+            _, logdet_Rall = torch.linalg.slogdet(R_all)
+
+            tmp_var = self.num_samples + self.alpha_w - self.num_nodes + num_parents
+            log_term_r = 0.5 * (tmp_var) * logdet_Rp - 0.5 * (tmp_var + 1) * logdet_Rall
+        else:
+            log_term_r = (
+                -0.5
+                * (self.num_samples + self.alpha_w - self.num_nodes + 1)
+                * torch.log(torch.abs(self.R[target, target]))
+            )
+
+        local_score = (
+            self.log_gamma_term[num_parents].item()
+            + log_term_r.item()
+            + self.prior(num_parents)
+        )
+
+        return local_score

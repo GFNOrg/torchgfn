@@ -34,7 +34,8 @@ def sample_erdos_renyi_graph(
     if p is None:
         if num_edges is None:
             raise ValueError("One of p or num_edges must be specified.")
-        p = num_edges / (num_nodes * (num_nodes - 1))
+        p = num_edges / (num_nodes * (num_nodes - 1) / 2.0)
+
     # Generate node names if not provided
     if node_names is None:
         uppercase = string.ascii_uppercase
@@ -97,21 +98,25 @@ def sample_erdos_renyi_linear_gaussian(
     )
     # Create CPD factors for each node
     factors = []
-    # For each node, its parents are those nodes j such that edge_index[1]==i
     for i, node in enumerate(graph.node_names):
+        # For each node, its parents are those nodes j such that edge_index[1]==i
         if graph.edge_index is not None:
             parents_tensor = graph.edge_index[0][graph.edge_index[1] == i]
             parents = parents_tensor.tolist()
         else:
             parents = []
-        num_parents = len(parents)
+
+        # Sample random parameters (from Normal distribution)
         theta = torch.normal(
-            mean=torch.full((num_parents + 1,), loc_edges),
+            mean=torch.full((len(parents) + 1,), loc_edges),
             std=scale_edges,
             generator=rng,
         )
-        theta[0] = 0.0
+        theta[0] = 0.0  # There is no bias term
+
+        # Create LinearGaussianCPD factor
         factor = LinearGaussianCPD(node, theta, obs_noise, parents)
         factors.append(factor)
+
     graph.cpds = factors
     return graph
