@@ -2,10 +2,11 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple, cast
 
 import torch
+from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
-from gfn.actions import Actions, GraphActions
+from gfn.actions import Actions, GraphActionType, GraphActions
 from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import set_seed
 
@@ -619,11 +620,54 @@ class GraphEnv(Env):
         return DefaultGraphAction
 
     @abstractmethod
-    def step(self, states: GraphStates, actions: Actions) -> torch.Tensor:
+    def step(self, states: GraphStates, actions: GraphActions) -> torch.Tensor:
         """Function that takes a batch of graph states and actions and returns a batch of next
         graph states."""
 
     @abstractmethod
-    def backward_step(self, states: GraphStates, actions: Actions) -> torch.Tensor:
+    def backward_step(self, states: GraphStates, actions: GraphActions) -> torch.Tensor:
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""
+    
+    
+    def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Take a step in the environment by applying actions to states.
+
+        Args:
+            states: Current states batch
+            actions: Actions to apply
+
+        Returns:
+            New states after applying the actions
+        """
+        actions = self.Actions.from_tensor(actions.tensor)
+        new_states = super()._step(states, actions)
+        assert isinstance(new_states, GraphStates)
+        return new_states
+
+    def _backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Take a backward step in the environment.
+
+        Args:
+            states: Current states batch
+            actions: Actions to apply in reverse
+
+        Returns:
+            New states after applying the backward actions
+        """
+        actions = self.Actions.from_tensor(actions.tensor)
+        new_states = super()._backward_step(states, actions)
+        assert isinstance(new_states, GraphStates)
+        return new_states
+    
+    def update_masks(self, states: GraphStates, masks: TensorDict) -> None:
+        """Updates the masks in States.
+
+        This method converts the masks from the TensorDict format to the flat Tensor format
+        before adding them to the States.
+
+        Args:
+            states: The states to update the masks for.
+            masks: A TensorDict containing the masks to update.
+        """
+        ... # TODO: implement this (convert and add attribute to states)
