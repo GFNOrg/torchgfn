@@ -25,15 +25,16 @@ def ensure_same_device(device1: torch.device, device2: torch.device) -> None:
     if device1 == device2:
         return
 
-    # Devices are different due to the different indices.
-    if device1.type == device2.type:
-        index1, index2 = device1.index, device2.index
+    if device1.type != device2.type:
+        raise ValueError(f"The devices have different types: {device1}, {device2}")
 
-        # Case 1: They have different indices, which is problematic.
-        if index1 is not None and index2 is not None:
-            raise ValueError(f"The devices have different indices: {device1}, {device2}")
-        # Case 2: At least one of them has None index, which is fine for now.
-        else:
-            return  # FIXME: This could be problematic if we use multiple GPUs.
+    # Same type but different indices or one is None.
+    index1, index2 = device1.index, device2.index
+    if index1 == index2:
+        return
 
-    raise ValueError(f"The devices are different: {device1}, {device2}")
+    current_device = torch.cuda.current_device()
+    # Any non-None index must match the current device.
+    for idx in (index1, index2):
+        if idx is not None and idx != current_device:
+            raise ValueError(f"Device index mismatch: {device1}, {device2}")
