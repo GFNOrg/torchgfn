@@ -7,7 +7,7 @@ from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import Actions, GraphActions
 from gfn.states import DiscreteStates, GraphStates, States
-from gfn.utils.common import set_seed
+from gfn.utils.common import ensure_same_device, set_seed
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
@@ -38,25 +38,29 @@ class Env(ABC):
             sf: Tensor of shape "state_shape" representing the final state.
                 Only used for a human readable representation of the states or trajectories.
         """
+        if isinstance(s0.device, str):  # This can happen when s0 is a GeometricData.
+            s0.device = torch.device(s0.device)
+        assert isinstance(s0.device, torch.device)
+
         self.device = s0.device
         self.s0 = s0
-        assert s0.shape == state_shape
 
         if sf is None:
-            sf = torch.full(s0.shape, -float("inf")).to(self.device)
+            sf = torch.full(s0.shape, -float("inf"))
+        self.sf = sf.to(
+            self.device  # pyright: ignore / torch_geometric has weird type hints.
+        )
 
-        self.sf = sf
-        assert self.sf is not None
-        assert self.sf.device == self.device
-        assert self.sf.shape == state_shape
+        assert self.s0.shape == self.sf.shape == state_shape
+        ensure_same_device(s0.device, sf.device)
 
         self.state_shape = state_shape
         self.action_shape = action_shape
         self.dummy_action = dummy_action.to(self.device)
         self.exit_action = exit_action.to(self.device)
 
-        # Warning: don't use self.States or self.Actions to initialize an instance of the class.
-        # Use self.states_from_tensor or self.actions_from_tensor instead.
+        # Warning: don't use self.States or self.Actions to initialize an instance of
+        # the class. Use self.states_from_tensor or self.actions_from_tensor instead.
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
         self.is_discrete = False
@@ -352,7 +356,6 @@ class DiscreteEnv(Env, ABC):
             dummy_action: Optional tensor of shape "action_shape" representing the dummy (padding) action.
             exit_action: Optional tensor of shape "action_shape" representing the exit action.
             sf: Tensor of shape "state_shape" representing the final state tensor (shared among all trajectories).
-            device_str: String representation of a torch.device.
         """
         # Add validation/warnings for advanced usage
         if dummy_action is not None or exit_action is not None or sf is not None:
@@ -580,7 +583,7 @@ class GraphEnv(Env):
             sf: The sink graph state.
             device_str: String representation of the device.
         """
-        assert s0.device == sf.device
+        ensure_same_device(s0.device, sf.device)
         self.device = s0.device
 
         self.s0 = s0
