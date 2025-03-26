@@ -221,7 +221,6 @@ class Sampler:
                 new_states = env._backward_step(states, actions)
             else:
                 new_states = env._step(states, actions)
-            sink_states_mask = new_states.is_sink_state
 
             # Increment the step, determine which trajectories are finished, and eval
             # rewards.
@@ -233,16 +232,14 @@ class Sampler:
             new_dones = (
                 new_states.is_initial_state
                 if self.estimator.is_backward
-                else sink_states_mask
+                else new_states.is_sink_state
             ) & ~dones
-            trajectories_terminating_idx[new_dones & ~dones] = step
+            trajectories_terminating_idx[new_dones] = step
             try:
-                trajectories_log_rewards[new_dones & ~dones] = env.log_reward(
-                    states[new_dones & ~dones]
-                )
+                trajectories_log_rewards[new_dones] = env.log_reward(states[new_dones])
             except NotImplementedError:
-                trajectories_log_rewards[new_dones & ~dones] = torch.log(
-                    env.reward(states[new_dones & ~dones])
+                trajectories_log_rewards[new_dones] = torch.log(
+                    env.reward(states[new_dones])
                 )
             states = new_states
             dones = dones | new_dones
