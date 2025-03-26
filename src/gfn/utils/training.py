@@ -64,7 +64,7 @@ def validate(
     else:
         # The environment does not implement a true_dist_pmf property, nor a log_partition property
         # We cannot validate the gflownet
-        return {}, None
+        return {}, visited_terminating_states
 
     logZ = None
     if isinstance(gflownet, TBGFlowNet):

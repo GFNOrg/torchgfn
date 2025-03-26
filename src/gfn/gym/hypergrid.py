@@ -350,7 +350,7 @@ class HyperGrid(DiscreteEnv):
 
     # These properties are optionally available according to the flags set in init.
     @property
-    def true_dist_pmf(self) -> torch.Tensor:
+    def true_dist_pmf(self) -> torch.Tensor | None:
         """Returns the pmf over all states in the hypergrid."""
         if self._true_dist_pmf is None and self.calculate_all_states:
             assert torch.all(
@@ -360,7 +360,6 @@ class HyperGrid(DiscreteEnv):
             self._true_dist_pmf = self.reward(self.all_states)
             self._true_dist_pmf /= self._true_dist_pmf.sum()
 
-        assert self._true_dist_pmf is not None
         return self._true_dist_pmf
 
     @property
