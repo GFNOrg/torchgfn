@@ -565,8 +565,6 @@ def main(args):  # noqa: C901
     ]
     optimizer = torch.optim.Adam(params)
 
-    visited_terminating_states = env.states_from_batch_shape((0,))
-
     states_visited = 0
     n_iterations = ceil(args.n_trajectories / args.batch_size)
     per_node_batch_size = args.batch_size // world_size
@@ -615,6 +613,9 @@ def main(args):  # noqa: C901
         world_size = torch.distributed.get_world_size()
 
     for iteration in trange(n_iterations):
+
+        # Keep track of visited terminating states on this node.
+        visited_terminating_states = env.states_from_batch_shape((0,))
 
         iteration_start = time.time()
 
@@ -736,6 +737,7 @@ def main(args):  # noqa: C901
         )
         if args.distributed and log_this_iter:
             try:
+                # Gather all visited terminating states from all nodes.
                 all_visited_terminating_states = gather_distributed_data(
                     visited_terminating_states.tensor
                 )
@@ -744,6 +746,7 @@ def main(args):  # noqa: C901
                 # handler.signal_error()
                 sys.exit(1)
         else:
+            # Just use the visited terminating states from this node.
             all_visited_terminating_states = visited_terminating_states.tensor
 
         if my_rank == 0:
@@ -859,8 +862,11 @@ def validate_hypergrid(
     modes = visited_terminating_states[
         env.reward(visited_terminating_states) >= mode_reward_threshold
     ].tensor
+
+    # Finds all the unique modes in visited_terminating_states.
     modes_found = set([tuple(s.tolist()) for s in modes])
     discovered_modes.update(modes_found)
+    # torch.tensor(list(modes_found)).shape ==[batch_size, 2]
     validation_info["n_modes_found"] = len(discovered_modes)
     print(len(discovered_modes))
 
