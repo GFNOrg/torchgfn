@@ -13,18 +13,177 @@ Key components:
 - ModifiedDBGFlowNet: GFlowNet with modified detailed balance loss
 """
 
-from copy import deepcopy
 from typing import cast
 
 import torch
+from torch import nn
+from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.utils import to_dense_adj
+from tqdm import trange
 
 from gfn.actions import Actions
+from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.bayesian_structure import BayesianStructure
 from gfn.gym.helpers.bayesian_structure.factories import get_scorer
+from gfn.modules import DiscretePolicyEstimator
+from gfn.preprocessors import Preprocessor
 from gfn.states import GraphStates
 from gfn.utils.common import set_seed
+from gfn.utils.modules import MLP
 
 DEFAULT_SEED = 4444
+
+
+class AdjacencyPolicyModule(nn.Module):
+    """Policy network that processes flattened adjacency matrices to predict graph actions.
+
+    Unlike the GNN-based RingPolicyModule, this module uses standard MLPs to process
+    the entire adjacency matrix as a flattened vector. This approach:
+
+    1. Can directly process global graph structure without message passing
+    2. May be more effective for small graphs where global patterns are important
+    3. Does not require complex graph neural network operations
+
+    The module architecture consists of:
+    - An MLP to process the flattened adjacency matrix into an embedding
+    - An edge MLP that predicts logits for each possible edge action
+    - An exit MLP that predicts a logit for the exit action
+
+    Args:
+        num_nodes: Number of nodes in the graph
+        directed: Whether the graph is directed or undirected
+        embedding_dim: Dimension of internal embeddings (default: 128)
+        is_backward: Whether this is a backward policy (default: False)
+    """
+
+    def __init__(self, num_nodes: int, embedding_dim=128, is_backward=False):
+        super().__init__()
+        self.num_nodes = num_nodes
+        self.is_backward = is_backward
+        self.hidden_dim = embedding_dim
+
+        # MLP for processing the flattened adjacency matrix
+        self.mlp = MLP(
+            input_dim=num_nodes * num_nodes,  # Flattened adjacency matrix
+            output_dim=embedding_dim,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=2,
+            add_layer_norm=True,
+        )
+
+        # Exit action MLP
+        self.exit_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=1,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+        self.edge_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=num_nodes**2,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+        """Forward pass to compute action logits from graph states.
+
+        Process:
+        1. Convert the graph representation to adjacency matrices
+        2. Process the flattened adjacency matrices through the main MLP
+        3. Predict logits for edge actions and exit action
+
+        Args:
+            states_tensor: A GeometricBatch containing graph state information
+
+        Returns:
+            A tensor of logits for all possible actions
+        """
+        # Convert the graph to adjacency matrix
+        batch_size = int(states_tensor.batch_size)
+
+        adj_matrix_list = []
+        for i in range(batch_size):
+            graph = states_tensor[i]
+            adj_matrix_list.append(
+                to_dense_adj(graph.edge_index, max_num_nodes=self.num_nodes)
+            )
+        adj_matrices = torch.cat(adj_matrix_list, dim=0)
+        # (batch_size, num_nodes, num_nodes)
+
+        # Flatten the adjacency matrices for the MLP
+        adj_matrices_flat = adj_matrices.view(batch_size, -1)
+
+        # Process with MLP
+        embedding = self.mlp(adj_matrices_flat)
+
+        # Generate edge and exit actions
+        edge_actions = self.edge_mlp(embedding)
+        exit_action = self.exit_mlp(embedding)
+
+        if self.is_backward:
+            return edge_actions
+        else:
+            return torch.cat([edge_actions, exit_action], dim=-1)
+
+
+class GeometricDiscreteUniform(nn.Module):
+    """Implements a uniform distribution over discrete actions given a graph state.
+
+    It uses a zero function approximator (a function that always outputs 0) to be used as
+    logits by a DiscretePBEstimator.
+
+    Attributes:
+        output_dim: The size of the output space.
+    """
+
+    def __init__(self, output_dim: int) -> None:
+        """Initializes the uniform function approximiator.
+
+        Args:
+            output_dim (int): Output dimension. This is typically n_actions if it
+                implements a Uniform PF, or n_actions-1 if it implements a Uniform PB.
+        """
+        super().__init__()
+        self.output_dim = output_dim
+
+    def forward(self, preprocessed_states: GeometricBatch) -> torch.Tensor:
+        """Forward method for the uniform distribution.
+
+        Args:
+            preprocessed_states: a batch of states appropriately preprocessed for
+                ingestion by the uniform distribution. The shape of the tensor should be (*batch_shape, input_dim).
+
+        Returns: a tensor of shape (*batch_shape, output_dim).
+        """
+        out = torch.zeros(*preprocessed_states.batch_shape, self.output_dim).to(
+            preprocessed_states.x.device
+        )
+        return out
+
+
+class GraphPreprocessor(Preprocessor):
+    """Preprocessor for graph states to extract the tensor representation.
+
+    This simple preprocessor extracts the GeometricBatch from GraphStates to make
+    it compatible with the policy networks. It doesn't perform any complex
+    transformations, just ensuring the tensors are accessible in the right format.
+
+    Args:
+        feature_dim: The dimension of features in the graph (default: 1)
+    """
+
+    def __init__(self, feature_dim: int = 1):
+        super().__init__(output_dim=feature_dim)
+
+    def preprocess(self, states: GraphStates) -> GeometricBatch:
+        return states.tensor
+
+    def __call__(self, states: GraphStates) -> GeometricBatch:
+        return self.preprocess(states)
 
 
 def get_random_action(env: BayesianStructure, states: GraphStates) -> Actions:
@@ -68,44 +227,66 @@ def main(args):
         device=device,
     )
 
-    states = env.reset(args.batch_size)
-    dummy_actions = env.actions_from_batch_shape((args.batch_size,))
-    dummy_logprobs = torch.full(
-        (args.batch_size,), fill_value=0, dtype=torch.float32, device=device
+    pf_module = AdjacencyPolicyModule(env.num_nodes, args.embedding_dim)
+    pb_module = GeometricDiscreteUniform(env.n_actions - 1)
+    pf = DiscretePolicyEstimator(
+        module=pf_module, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
     )
-    trajectories_states: list[GraphStates] = [deepcopy(states)]
-    trajectories_actions: list[Actions] = [dummy_actions]  # type: ignore
-    trajectories_logprobs: list[torch.Tensor] = [dummy_logprobs]
-    trajectories_terminating_idx = torch.zeros(
-        args.batch_size, dtype=torch.long, device=device
+    pb = DiscretePolicyEstimator(
+        module=pb_module,
+        n_actions=env.n_actions,
+        preprocessor=GraphPreprocessor(),
+        is_backward=True,
     )
-    trajectories_log_rewards = torch.zeros(
-        args.batch_size, dtype=torch.float32, device=device
-    )
+    gflownet = TBGFlowNet(pf, pb)
+    gflownet = gflownet.to(device)
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
 
-    dones = states.is_sink_state
-    step = 0
-    while not dones.all():
-        actions: Actions = deepcopy(dummy_actions)
+    # Replay buffer
+    # replay_buffer = ReplayBuffer(  # TODO
+    #     env,
+    #     capacity=args.buffer_capacity,
+    #     prioritized=args.buffer_prioritize,
+    # )
 
-        valid_actions: Actions = get_random_action(env, states[~dones])
+    pbar = trange(args.n_iterations, dynamic_ncols=True)
+    for iteration in pbar:
+        trajectories = gflownet.sample_trajectories(
+            env,
+            n=args.batch_size,
+            save_logprobs=True,
+            epsilon=args.min_epsilon
+            + (
+                (args.max_epsilon - args.min_epsilon)
+                * min(0.0, 1.0 - iteration / (args.n_iterations / 2))
+            ),  # Schedule for the first half of training
+        )
+        training_samples = gflownet.to_training_samples(trajectories)
 
-        actions[~dones] = valid_actions
-        trajectories_actions.append(actions)
-        trajectories_logprobs.append(dummy_logprobs)
+        # if args.use_buffer:  # TODO
+        #     with torch.no_grad():
+        #         replay_buffer.add(training_samples)
+        #         if iteration >= args.prefill:
+        #             training_samples = training_samples[: args.batch_size // 2]
+        #             buffer_samples = replay_buffer.sample(
+        #                 n_trajectories=args.batch_size // 2
+        #             )
+        #             training_samples.extend(buffer_samples)  # type: ignore
 
-        next_states = env._step(states, actions)
-        step += 1
+        optimizer.zero_grad()
+        loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
+        loss.backward()
+        optimizer.step()
 
-        new_dones = next_states.is_sink_state & ~dones
-        trajectories_terminating_idx[new_dones] = step
-        # Note: next_states[new_dones] are the dummy states, so we should pass
-        # states[new_dones], which are the terminating states to get the log rewards.
-        trajectories_log_rewards[new_dones] = env.log_reward(states[new_dones])
-        dones = dones | new_dones
+        assert training_samples.log_rewards is not None
+        pbar.set_postfix(
+            {
+                "Loss": loss.item(),
+                "log_r_mean": training_samples.log_rewards.mean().item(),
+            },
+        )
 
-        states = next_states
-        trajectories_states.append(deepcopy(states))
+        # TODO: Add metrics
 
 
 if __name__ == "__main__":
@@ -113,11 +294,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     # Environment parameters
-    parser.add_argument("--num_nodes", type=int, default=5)
+    parser.add_argument("--num_nodes", type=int, default=4)
     parser.add_argument(
         "--num_edges",
         type=int,
-        default=5,
+        default=4,
         help="Number of edges in the sampled erdos renyi graph",
     )
     parser.add_argument(
@@ -132,7 +313,18 @@ if __name__ == "__main__":
         default=None,
         help="Optional list of node names.",
     )
-    parser.add_argument("--batch_size", type=int, default=8)
+
+    # GFlowNet and policy parameters
+    parser.add_argument("--embedding_dim", type=int, default=128)
+    parser.add_argument("--max_epsilon", type=float, default=0.5)
+    parser.add_argument("--min_epsilon", type=float, default=0.1)
+
+    # Training parameters
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--n_iterations", type=int, default=1000)
+    parser.add_argument("--batch_size", type=int, default=32)
+
+    # Misc parameters
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--no_cuda", action="store_true")
     args = parser.parse_args()

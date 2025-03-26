@@ -37,15 +37,15 @@ class BayesianStructure(GraphEnv):
         self.n_actions = num_nodes**2 + 1
 
         s0 = GeometricData(
-            x=torch.arange(num_nodes, dtype=torch.float)[:, None],  # Node ids
-            edge_attr=torch.ones((0, 1)),
-            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            x=torch.arange(num_nodes, dtype=torch.float)[:, None].to(device),
+            edge_attr=torch.ones((0, 1)).to(device),
+            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )
         sf = GeometricData(
-            x=-torch.ones(num_nodes, dtype=torch.float)[:, None],
-            edge_attr=torch.zeros((0, 1)),
-            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            x=-torch.ones(num_nodes, dtype=torch.float)[:, None].to(device),
+            edge_attr=torch.zeros((0, 1)).to(device),
+            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )
 
@@ -70,8 +70,8 @@ class BayesianStructure(GraphEnv):
             """
 
             action_shape = (1,)
-            exit_action = torch.tensor([env.n_actions - 1])
-            dummy_action = torch.tensor([env.n_actions])
+            exit_action = torch.tensor([env.n_actions - 1]).to(env.device)
+            dummy_action = torch.tensor([env.n_actions]).to(env.device)
 
         return BayesianStructureActions
 
@@ -119,7 +119,9 @@ class BayesianStructure(GraphEnv):
                 ).all(), "No valid forward actions for sink states."
 
                 # Allow all actions.
-                forward_mask = torch.ones(len(self), self.n_actions, dtype=torch.bool)
+                forward_mask = torch.ones(
+                    len(self), self.n_actions, dtype=torch.bool, device=self.device
+                )
 
                 # For each graph in the batch
                 for i, data in enumerate(self.tensor.to_data_list()):
@@ -164,7 +166,7 @@ class BayesianStructure(GraphEnv):
 
                 # Disable all actions.
                 backward_masks = torch.zeros(
-                    len(self), self.n_actions - 1, dtype=torch.bool
+                    len(self), self.n_actions - 1, dtype=torch.bool, device=self.device
                 )
 
                 # Get the data list from the batch
@@ -216,12 +218,14 @@ class BayesianStructure(GraphEnv):
 
         is_exit = action_tensor == (self.n_actions - 1)
         action_type = torch.where(
-            is_exit, GraphActionType.EXIT, GraphActionType.ADD_EDGE
+            is_exit,
+            GraphActionType.EXIT,
+            GraphActionType.ADD_EDGE,
         )
         action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
 
         edge_index = torch.zeros(
-            (action_type.shape[0], 2), dtype=torch.long, device=action_type.device
+            (action_type.shape[0], 2), dtype=torch.long, device=self.device
         )
         edge_index[~is_exit, 0] = action_tensor[~is_exit] // self.num_nodes
         edge_index[~is_exit, 1] = action_tensor[~is_exit] % self.num_nodes
@@ -234,6 +238,7 @@ class BayesianStructure(GraphEnv):
                     "edge_index": edge_index,
                 },
                 batch_size=action_type.shape,
+                device=self.device,
             )
         )
         return graph_actions
