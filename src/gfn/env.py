@@ -42,13 +42,12 @@ class Env(ABC):
             s0.device = torch.device(s0.device)
         assert isinstance(s0.device, torch.device)
 
-        self.device = s0.device
         self.s0 = s0
 
         if sf is None:
             sf = torch.full(s0.shape, -float("inf"))
         self.sf = sf.to(
-            self.device  # pyright: ignore / torch_geometric has weird type hints.
+            s0.device  # pyright: ignore / torch_geometric has weird type hints.
         )
 
         assert self.s0.shape == self.sf.shape == state_shape
@@ -56,14 +55,18 @@ class Env(ABC):
 
         self.state_shape = state_shape
         self.action_shape = action_shape
-        self.dummy_action = dummy_action.to(self.device)
-        self.exit_action = exit_action.to(self.device)
+        self.dummy_action = dummy_action.to(s0.device)
+        self.exit_action = exit_action.to(s0.device)
 
         # Warning: don't use self.States or self.Actions to initialize an instance of
         # the class. Use self.states_from_tensor or self.actions_from_tensor instead.
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
         self.is_discrete = False
+
+    @property
+    def device(self) -> torch.device:
+        return self.s0.device
 
     def states_from_tensor(self, tensor: torch.Tensor) -> States:
         """Wraps the supplied Tensor in a States instance.
@@ -584,7 +587,6 @@ class GraphEnv(Env):
             device_str: String representation of the device.
         """
         ensure_same_device(s0.device, sf.device)
-        self.device = s0.device
 
         self.s0 = s0
         self.sf = sf
@@ -596,6 +598,10 @@ class GraphEnv(Env):
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
+
+    @property
+    def device(self) -> torch.device:
+        return self.s0.device  # You should initialize s0 with a device.
 
     def make_states_class(self) -> type[GraphStates]:
         env = self
