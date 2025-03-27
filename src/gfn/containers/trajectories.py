@@ -12,6 +12,7 @@ from gfn.containers.states_container import StatesContainer
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 from gfn.states import DiscreteStates, GraphStates, States
+from gfn.utils.common import ensure_same_device
 
 
 # TODO: remove env from this class?
@@ -76,17 +77,15 @@ class Trajectories(Container):
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
-        if isinstance(device, str):
-            device = torch.device(device)
 
         for obj in [states, actions]:
             if obj is not None:
                 if isinstance(obj.tensor, GeometricBatch):
-                    assert obj.tensor.x.device == device
+                    ensure_same_device(obj.tensor.x.device, device)
                 elif isinstance(obj.tensor, TensorDict):
-                    assert obj.tensor["x"].device == device
+                    ensure_same_device(obj.tensor["x"].device, device)
                 else:
-                    assert obj.tensor.device == device
+                    ensure_same_device(obj.tensor.device, device)
         for tensor in [
             conditioning,
             terminating_idx,
@@ -94,6 +93,8 @@ class Trajectories(Container):
             log_probs,
             estimator_outputs,
         ]:
+            if tensor is not None:
+                ensure_same_device(tensor.device, device)
             assert tensor.device.type == device.type if tensor is not None else True
 
         self.states = (

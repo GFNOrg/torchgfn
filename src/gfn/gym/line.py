@@ -27,19 +27,14 @@ class Line(Env):
         self.n_steps_per_trajectory = n_steps_per_trajectory
         self.mixture = [Normal(m, s) for m, s in zip(self.mus, self.sigmas)]
 
-        if isinstance(device, str):
-            device = torch.device(device)
-
-        self.device = device
-
         self.init_value = init_value  # Used in s0.
         lb = torch.min(self.mus) - self.n_sd * torch.max(self.sigmas)
         ub = torch.max(self.mus) + self.n_sd * torch.max(self.sigmas)
         assert lb < self.init_value < ub
 
-        s0 = torch.tensor([self.init_value, 0.0], device=self.device)
-        dummy_action = torch.tensor([float("inf")], device=self.device)
-        exit_action = torch.tensor([-float("inf")], device=self.device)
+        s0 = torch.tensor([self.init_value, 0.0], device=device)
+        dummy_action = torch.tensor([float("inf")], device=device)
+        exit_action = torch.tensor([-float("inf")], device=device)
         super().__init__(
             s0=s0,
             state_shape=(2,),  # [x_pos, step_counter].

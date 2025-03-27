@@ -8,6 +8,7 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.states import States
+from gfn.utils.common import ensure_same_device
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -148,7 +149,7 @@ class Sampler:
 
         if conditioning is not None:
             assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
-            assert conditioning.device == device
+            ensure_same_device(states.device, conditioning.device)
 
         dones = (
             states.is_initial_state
