@@ -13,15 +13,15 @@ Key components:
 - ModifiedDBGFlowNet: GFlowNet with modified detailed balance loss
 """
 
-from typing import cast
-
 import torch
 from torch import nn
 from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.nn import DirGNNConv, GCNConv
 from torch_geometric.utils import to_dense_adj
 from tqdm import trange
 
-from gfn.actions import Actions
+from gfn.containers.replay_buffer import ReplayBuffer
+from gfn.containers.trajectories import Trajectories
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.bayesian_structure import BayesianStructure
 from gfn.gym.helpers.bayesian_structure.factories import get_scorer
@@ -130,6 +130,122 @@ class AdjacencyPolicyModule(nn.Module):
             return torch.cat([edge_actions, exit_action], dim=-1)
 
 
+class GNNPolicyModule(nn.Module):
+    """Simple module which outputs a fixed logits for the actions, depending on the number of nodes.
+
+    Args:
+        num_nodes: The number of nodes in the graph.
+    """
+
+    def __init__(
+        self,
+        num_nodes: int,
+        num_conv_layers: int = 1,
+        embedding_dim: int = 128,
+        is_backward: bool = False,
+    ):
+        super().__init__()
+        self.hidden_dim = self.embedding_dim = embedding_dim
+        self.is_backward = is_backward
+        self.num_nodes = num_nodes
+        self.num_conv_layers = num_conv_layers
+
+        # Node embedding layer.
+        self.embedding = nn.Embedding(num_nodes, self.embedding_dim)
+        self.conv_blks = nn.ModuleList()
+        self.exit_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=1,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+        for i in range(num_conv_layers):
+            self.conv_blks.extend(
+                [
+                    DirGNNConv(
+                        GCNConv(
+                            self.embedding_dim if i == 0 else self.hidden_dim,
+                            self.hidden_dim,
+                        ),
+                        alpha=0.5,
+                        root_weight=True,
+                    ),
+                    # Process in/out components separately
+                    nn.ModuleList(
+                        [
+                            nn.Sequential(
+                                nn.Linear(self.hidden_dim // 2, self.hidden_dim // 2),
+                                nn.ReLU(),
+                                nn.Linear(self.hidden_dim // 2, self.hidden_dim // 2),
+                            )
+                            for _ in range(
+                                2
+                            )  # One for in-features, one for out-features.
+                        ]
+                    ),
+                ]
+            )
+
+        self.norm = nn.LayerNorm(self.hidden_dim)
+
+    def _group_mean(self, tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
+        cumsum = torch.zeros(
+            (len(tensor) + 1, *tensor.shape[1:]),
+            dtype=tensor.dtype,
+            device=tensor.device,
+        )
+        cumsum[1:] = torch.cumsum(tensor, dim=0)
+
+        # Subtract the end val from each batch idx fom the start val of each batch idx.
+        size = batch_ptr[1:] - batch_ptr[:-1]
+        return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
+
+    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+        node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
+
+        # Multiple action type convolutions with residual connections.
+        x = self.embedding(node_features.squeeze().int())
+        for i in range(0, len(self.conv_blks), 2):
+            x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
+            assert isinstance(self.conv_blks[i + 1], nn.ModuleList)
+            x_in, x_out = torch.chunk(x_new, 2, dim=-1)
+
+            # Process each component separately through its own MLP.
+            mlp_in, mlp_out = self.conv_blks[i + 1]
+            x_in = mlp_in(x_in)
+            x_out = mlp_out(x_out)
+            x_new = torch.cat([x_in, x_out], dim=-1)
+
+            x = x_new + x if i > 0 else x_new  # Residual connection.
+            x = self.norm(x)  # Layernorm.
+
+        # This MLP computes the exit action.
+        node_feature_means = self._group_mean(x, batch_ptr)
+        exit_action = self.exit_mlp(node_feature_means)
+
+        x = x.reshape(*states_tensor.batch_shape, self.num_nodes, self.hidden_dim)
+
+        feature_dim = self.hidden_dim // 2
+        source_features = x[..., :feature_dim]
+        target_features = x[..., feature_dim:]
+
+        # Dot product between source and target features (asymmetric).
+        edgewise_dot_prod = torch.einsum(
+            "bnf,bmf->bnm", source_features, target_features
+        )
+        edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(feature_dim))
+
+        # Grab the needed elems from the adjacency matrix and reshape.
+        edge_actions = edgewise_dot_prod.flatten(1, 2)
+
+        if self.is_backward:
+            return edge_actions
+        else:
+            return torch.cat([edge_actions, exit_action], dim=-1)
+
+
 class GeometricDiscreteUniform(nn.Module):
     """Implements a uniform distribution over discrete actions given a graph state.
 
@@ -186,27 +302,12 @@ class GraphPreprocessor(Preprocessor):
         return self.preprocess(states)
 
 
-def get_random_action(env: BayesianStructure, states: GraphStates) -> Actions:
-    """Perform a random action in the environment."""
-    assert isinstance(states, env.States)
-
-    action_masks = cast(torch.Tensor, states.forward_masks)
-    # shape: (batch_size, n_actions) where n_actions = num_nodes^2 + 1
-
-    action_probs = torch.rand(action_masks.shape, device=action_masks.device)
-    action_probs = action_probs * action_masks
-    action_probs = action_probs / action_probs.sum(dim=-1, keepdim=True)
-    action_tensor = torch.multinomial(action_probs, num_samples=1)
-
-    return env.Actions(action_tensor)  # type: ignore
-
-
 def main(args):
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
     device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
 
-    rng = torch.Generator(device="cpu")  # The device should be cpu
+    rng = torch.Generator(device="cpu")  # This should be cpu
     rng.manual_seed(seed)
 
     # Create the scorer
@@ -227,7 +328,11 @@ def main(args):
         device=device,
     )
 
-    pf_module = AdjacencyPolicyModule(env.num_nodes, args.embedding_dim)
+    pf_module = GNNPolicyModule(
+        env.num_nodes,
+        args.num_conv_layers,
+        args.embedding_dim,
+    )
     pb_module = GeometricDiscreteUniform(env.n_actions - 1)
     pf = DiscretePolicyEstimator(
         module=pf_module, n_actions=env.n_actions, preprocessor=GraphPreprocessor()
@@ -243,35 +348,35 @@ def main(args):
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
 
     # Replay buffer
-    # replay_buffer = ReplayBuffer(  # TODO
-    #     env,
-    #     capacity=args.buffer_capacity,
-    #     prioritized=args.buffer_prioritize,
-    # )
+    replay_buffer = ReplayBuffer(
+        env,
+        capacity=args.buffer_capacity,
+        prioritized=args.buffer_prioritize,
+    )
 
     pbar = trange(args.n_iterations, dynamic_ncols=True)
-    for iteration in pbar:
+    for it in pbar:
         trajectories = gflownet.sample_trajectories(
             env,
-            n=args.batch_size,
-            save_logprobs=True,
+            n=args.sampling_batch_size,
+            save_logprobs=True if not args.use_buffer else False,
             epsilon=args.min_epsilon
             + (
                 (args.max_epsilon - args.min_epsilon)
-                * min(0.0, 1.0 - iteration / (args.n_iterations / 2))
+                * min(0.0, 1.0 - it / (args.n_iterations / 2))
             ),  # Schedule for the first half of training
         )
-        training_samples = gflownet.to_training_samples(trajectories)
+        _training_samples = gflownet.to_training_samples(trajectories)
 
-        # if args.use_buffer:  # TODO
-        #     with torch.no_grad():
-        #         replay_buffer.add(training_samples)
-        #         if iteration >= args.prefill:
-        #             training_samples = training_samples[: args.batch_size // 2]
-        #             buffer_samples = replay_buffer.sample(
-        #                 n_trajectories=args.batch_size // 2
-        #             )
-        #             training_samples.extend(buffer_samples)  # type: ignore
+        if args.use_buffer:
+            with torch.no_grad():
+                replay_buffer.add(_training_samples)
+            if it < args.prefill:
+                continue
+            training_samples = replay_buffer.sample(n_trajectories=args.batch_size)
+        else:
+            training_samples = _training_samples
+        assert isinstance(training_samples, Trajectories)  # TODO: Other containers
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
@@ -315,18 +420,29 @@ if __name__ == "__main__":
     )
 
     # GFlowNet and policy parameters
+    parser.add_argument("--num_conv_layers", type=int, default=1)
     parser.add_argument("--embedding_dim", type=int, default=128)
     parser.add_argument("--max_epsilon", type=float, default=0.5)
     parser.add_argument("--min_epsilon", type=float, default=0.1)
 
+    # Replay buffer parameters
+    parser.add_argument("--no_buffer", dest="use_buffer", action="store_false")
+    parser.add_argument("--buffer_capacity", type=int, default=1000)
+    parser.add_argument("--buffer_prioritize", action="store_true")
+    parser.add_argument("--prefill", type=int, default=30)
+    parser.add_argument("--sampling_batch_size", type=int, default=32)
+
     # Training parameters
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--n_iterations", type=int, default=1000)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=256)
 
     # Misc parameters
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--no_cuda", action="store_true")
     args = parser.parse_args()
+
+    if not args.use_buffer:
+        assert args.sampling_batch_size == args.batch_size
 
     main(args)
