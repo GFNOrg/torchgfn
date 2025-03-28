@@ -1,4 +1,19 @@
 #!/usr/bin/env python
+r"""
+A version of GFlowNet training that implements local search sampling strategies on the HyperGrid environment.
+This demonstrates how to use more sophisticated sampling approaches like local search and Metropolis-Hastings.
+
+Example usage:
+python train_hypergrid_simple_ls.py --ndim 2 --height 8 --n_local_search_loops 2 --back_ratio 0.5 --use_metropolis_hastings
+
+Key features:
+- Implements local search sampling
+- Configurable number of local search loops
+- Adjustable backward step ratio
+- Optional Metropolis-Hastings acceptance criterion
+- Based on TB loss like the simple version
+"""
+
 import argparse
 from typing import cast
 
@@ -8,6 +23,7 @@ from tqdm import tqdm
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator
+from gfn.preprocessors import KHotPreprocessor
 from gfn.samplers import LocalSearchSampler
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
@@ -17,26 +33,29 @@ from gfn.utils.training import validate
 
 def main(args):
     set_seed(args.seed)
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
 
     # Setup the Environment.
-    env = HyperGrid(ndim=args.ndim, height=args.height, device_str=device_str)
+    env = HyperGrid(ndim=args.ndim, height=args.height, device=device)
+    preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Build the GFlowNet.
     module_PF = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=preprocessor.output_dim,
         output_dim=env.n_actions,
     )
     module_PB = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=preprocessor.output_dim,
         output_dim=env.n_actions - 1,
         trunk=module_PF.trunk,
     )
     pf_estimator = DiscretePolicyEstimator(
-        module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor
+        module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
     )
     pb_estimator = DiscretePolicyEstimator(
-        module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor
+        module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
     )
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
 
@@ -44,7 +63,7 @@ def main(args):
     sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)
 
     # Move the gflownet to the GPU.
-    gflownet = gflownet.to(device_str)
+    gflownet = gflownet.to(device)
 
     # Policy parameters have their own LR. Log Z gets dedicated learning rate
     # (typically higher).
@@ -64,12 +83,12 @@ def main(args):
             back_ratio=args.back_ratio,
             use_metropolis_hastings=args.use_metropolis_hastings,
         )
-        last_states = trajectories.last_states
-        last_states = cast(DiscreteStates, last_states)
-        visited_terminating_states.extend(last_states)
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, trajectories)
+        loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
         loss.backward()
         optimizer.step()
         if (it + 1) % args.validation_interval == 0:

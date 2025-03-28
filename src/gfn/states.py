@@ -71,7 +71,7 @@ class States(ABC):
     )
 
     def __init__(self, tensor: torch.Tensor):
-        """Initalize the State container with a batch of states.
+        """Initialize the State container with a batch of states.
         Args:
             tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of states.
         """
@@ -80,18 +80,13 @@ class States(ABC):
         assert tensor.shape[-len(self.state_shape) :] == self.state_shape
 
         self.tensor = tensor
-        self._batch_shape = tuple(self.tensor.shape)[: -len(self.state_shape)]
         self._log_rewards = (
             None  # Useful attribute if we want to store the log-reward of the states
         )
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return self._batch_shape
-
-    @batch_shape.setter
-    def batch_shape(self, batch_shape: tuple[int, ...]) -> None:
-        self._batch_shape = batch_shape
+        return tuple(self.tensor.shape)[: -len(self.state_shape)]
 
     @classmethod
     def from_batch_shape(
@@ -174,10 +169,7 @@ class States(ABC):
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> States:
         """Access particular states of the batch."""
-        out = self.__class__(
-            self.tensor[index]
-        )  # TODO: Inefficient - this might make a copy of the tensor!
-        return out
+        return self.__class__(self.tensor[index])
 
     def __setitem__(
         self,
@@ -212,28 +204,22 @@ class States(ABC):
             ValueError: if `self.batch_shape != other.batch_shape` or if
             `self.batch_shape != (1,) or (2,)`.
         """
-        other_batch_shape = other.batch_shape
-        if len(other_batch_shape) == len(self.batch_shape) == 1:
+        if len(other.batch_shape) == len(self.batch_shape) == 1:
             # This corresponds to adding a state to a trajectory
-            self.batch_shape = (self.batch_shape[0] + other_batch_shape[0],)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
 
-        elif len(other_batch_shape) == len(self.batch_shape) == 2:
+        elif len(other.batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
             self.extend_with_sf(
-                required_first_dim=max(self.batch_shape[0], other_batch_shape[0])
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
             other.extend_with_sf(
-                required_first_dim=max(self.batch_shape[0], other_batch_shape[0])
-            )
-            self.batch_shape = (
-                self.batch_shape[0],
-                self.batch_shape[1] + other_batch_shape[1],
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
             self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
         else:
             raise ValueError(
-                f"extend is not implemented for batch shapes {self.batch_shape} and {other_batch_shape}"
+                f"extend is not implemented for batch shapes {self.batch_shape} and {other.batch_shape}"
             )
 
     def extend_with_sf(self, required_first_dim: int) -> None:
@@ -259,7 +245,6 @@ class States(ABC):
                 ),
                 dim=0,
             )
-            self.batch_shape = (required_first_dim, self.batch_shape[1])
         else:
             raise ValueError(
                 f"extend_with_sf is not implemented for graph states nor for batch shapes {self.batch_shape}"
@@ -299,7 +284,6 @@ class States(ABC):
     @property
     def is_sink_state(self) -> torch.Tensor:
         """Returns a tensor of shape `batch_shape` that is True for states that are $s_f$ of the DAG."""
-        # TODO: self.__class__.sf == self.tensor -- or something similar?
         if isinstance(self.__class__.sf, torch.Tensor):
             sink_states = self.__class__.sf.repeat(
                 *self.batch_shape, *((1,) * len(self.__class__.state_shape))
@@ -346,11 +330,6 @@ class States(ABC):
                     raise ValueError("Some states have no log rewards.")
                 log_rewards.append(s._log_rewards)
             stacked_states._log_rewards = torch.stack(log_rewards, dim=0)
-
-        # Adds the trajectory dimension.
-        stacked_states.batch_shape = (
-            stacked_states.tensor.shape[0],
-        ) + state_example.batch_shape
 
         return stacked_states
 
@@ -411,7 +390,7 @@ class DiscreteStates(States, ABC):
     def clone(self) -> DiscreteStates:
         """Returns a clone of the current instance."""
         return self.__class__(
-            self.tensor.detach().clone(),  # TODO: Are States carrying gradients?
+            self.tensor.clone(),
             self.forward_masks,
             self.backward_masks,
         )
@@ -576,7 +555,10 @@ class GraphStates(States):
         """
         self.tensor = tensor
         if not hasattr(self.tensor, "batch_shape"):
-            self.tensor.batch_shape = self.tensor.batch_size
+            if isinstance(self.tensor.batch_size, tuple):
+                self.tensor.batch_shape = self.tensor.batch_size
+            else:
+                self.tensor.batch_shape = (self.tensor.batch_size,)
 
         if tensor.x.size(0) > 0:
             assert tensor.num_graphs == prod(tensor.batch_shape)
@@ -586,7 +568,7 @@ class GraphStates(States):
     @property
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
-        return self.tensor.batch_shape
+        return tuple(self.tensor.batch_shape)
 
     @classmethod
     def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> GeometricBatch:
@@ -760,7 +742,9 @@ class GraphStates(States):
         ), "We can't index on a Batch with 0-dimensional batch shape."
 
         # Convert the index to a list of indices.
-        tensor_idx = torch.arange(len(self)).view(*self.batch_shape)[index]
+        tensor_idx = torch.arange(len(self), device=self.device).view(*self.batch_shape)[
+            index
+        ]
         new_shape = tuple(tensor_idx.shape)
         flat_idx = tensor_idx.flatten()
 
@@ -768,7 +752,9 @@ class GraphStates(States):
         selected_graphs = self.tensor.index_select(flat_idx)
         if len(selected_graphs) == 0:
             assert np.prod(new_shape) == 0 and len(new_shape) > 0
-            selected_graphs = [  # TODO: Is this the best way to create an empty Batch?
+            # Ensures all the expected attributes are properly initialized with the
+            # correct dimensions.
+            selected_graphs = [
                 GeometricData(
                     x=torch.zeros(*new_shape, self.tensor.x.size(1)),
                     edge_index=torch.zeros(2, 0, dtype=torch.long),
@@ -777,7 +763,6 @@ class GraphStates(States):
             ]
 
         # Create a new batch from the selected graphs.
-        # TODO: is there any downside to always using GeometricBatch even when the batch dimension is empty.
         new_batch = GeometricBatch.from_data_list(cast(List[BaseData], selected_graphs))
         new_batch.batch_shape = new_shape
 
@@ -806,10 +791,8 @@ class GraphStates(States):
         if isinstance(index, int) and len(batch_shape) == 1:
             indices = [index]
         else:
-            tensor_idx = torch.arange(len(self)).view(*batch_shape)
-            indices = (
-                tensor_idx[index].flatten().tolist()
-            )  # TODO: is .flatten() necessary?
+            tensor_idx = torch.arange(len(self), device=self.device).view(*batch_shape)
+            indices = tensor_idx[index].flatten().tolist()
 
         assert len(indices) == len(graph)
 
@@ -949,9 +932,9 @@ class GraphStates(States):
         # Get the data list from the batch
         data_list = self.tensor.to_data_list()
 
-        assert other.edge_index is not None  # TODO: is allowing None here a good idea?
-        assert other.edge_attr is not None  #
-        assert other.num_nodes is not None  #
+        assert other.edge_index is not None
+        assert other.edge_attr is not None
+        assert other.num_nodes is not None
 
         for i, data in enumerate(data_list):
             # Check if the number of nodes is the same

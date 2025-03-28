@@ -23,6 +23,7 @@ from gfn.gym.helpers.box_utils import (
     BoxPFMLP,
 )
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor, KHotPreprocessor
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 
 N = 10  # Number of trajectories from sample_trajectories (changes tests globally).
@@ -36,19 +37,22 @@ N = 10  # Number of trajectories from sample_trajectories (changes tests globall
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 def test_FM(env_name: str, ndim: int, module_name: str):
     if env_name == "HyperGrid":
-        env = HyperGrid(
-            ndim=ndim, preprocessor_name="Enum" if module_name == "Tabular" else "KHot"
-        )
+        env = HyperGrid(ndim=ndim)
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBM(
-            ndim=ndim,
-            preprocessor_name="Enum" if module_name == "Tabular" else "Identity",
-        )
+        env = DiscreteEBM(ndim=ndim)
     else:
         raise ValueError("Unknown environment name")
 
+    if module_name == "Tabular":
+        preprocessor = EnumPreprocessor(env.get_states_indices)
+    else:
+        if env_name == "HyperGrid":
+            preprocessor = KHotPreprocessor(env.height, env.ndim)
+        else:
+            preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+
     if module_name == "MLP":
-        module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
+        module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     elif module_name == "Tabular":
         module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
     else:
@@ -57,13 +61,13 @@ def test_FM(env_name: str, ndim: int, module_name: str):
     log_F_edge = DiscretePolicyEstimator(
         module=module,
         n_actions=env.n_actions,
-        preprocessor=env.preprocessor,
+        preprocessor=preprocessor,
     )
 
     gflownet = FMGFlowNet(log_F_edge)  # forward looking by default.
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    states_tuple = trajectories.to_state_pairs()
-    loss = gflownet.loss(env, states_tuple)
+    states_container = trajectories.to_states_container()
+    loss = gflownet.loss(env, states_container, recalculate_all_logprobs=False)
     assert loss >= 0
 
 
@@ -84,7 +88,7 @@ def test_get_pfs_and_pbs(
     gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
 
-    _ = gflownet_on.get_pfs_and_pbs(trajectories)
+    _ = gflownet_on.get_pfs_and_pbs(trajectories, recalculate_all_logprobs=False)
     _ = gflownet_off.get_pfs_and_pbs(trajectories, recalculate_all_logprobs=True)
 
 
@@ -104,7 +108,9 @@ def test_get_scores(
     )
     gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
-    scores_on = gflownet_on.get_trajectories_scores(trajectories)
+    scores_on = gflownet_on.get_trajectories_scores(
+        trajectories, recalculate_all_logprobs=False
+    )
     scores_off = gflownet_off.get_trajectories_scores(
         trajectories, recalculate_all_logprobs=True
     )
@@ -135,26 +141,23 @@ def PFBasedGFlowNet_with_return(
     zero_logF: bool,
 ):
     if env_name == "HyperGrid":
-        env = HyperGrid(
-            ndim=ndim,
-            height=4,
-            preprocessor_name="Enum" if module_name == "Tabular" else "KHot",
-        )
+        env = HyperGrid(ndim=ndim, height=4)
+        preprocessor = KHotPreprocessor(env.height, env.ndim)
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBM(
-            ndim=ndim,
-            preprocessor_name="Enum" if module_name == "Tabular" else "Identity",
-        )
+        env = DiscreteEBM(ndim=ndim)
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
     elif env_name == "Box":
         if module_name == "Tabular":
             pytest.skip("Tabular module impossible for Box")
         env = Box(delta=1.0 / ndim)
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
     else:
         raise ValueError("Unknown environment name")
 
     if module_name == "Tabular":
         # Cannot be the Box environment
         assert isinstance(env, HyperGrid) or isinstance(env, DiscreteEBM)
+        preprocessor = EnumPreprocessor(env.get_states_indices)
         pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
         pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
         logF_module = Tabular(n_states=env.n_states, output_dim=1)
@@ -169,7 +172,7 @@ def PFBasedGFlowNet_with_return(
 
         else:
             pf_module = MLP(
-                input_dim=env.preprocessor.output_dim,
+                input_dim=preprocessor.output_dim,
                 output_dim=env.n_actions,
             )
 
@@ -182,7 +185,7 @@ def PFBasedGFlowNet_with_return(
             )
         elif module_name == "MLP" and not isinstance(env, Box):
             pb_module = MLP(
-                input_dim=env.preprocessor.output_dim,
+                input_dim=preprocessor.output_dim,
                 output_dim=env.n_actions - 1,
             )
         elif module_name == "Uniform" and not isinstance(env, Box):
@@ -193,7 +196,7 @@ def PFBasedGFlowNet_with_return(
         if zero_logF:
             logF_module = DiscreteUniform(output_dim=1)
         else:
-            logF_module = MLP(input_dim=env.preprocessor.output_dim, output_dim=1)
+            logF_module = MLP(input_dim=preprocessor.output_dim, output_dim=1)
 
     if isinstance(env, Box):
         pf = BoxPFEstimator(
@@ -208,16 +211,14 @@ def PFBasedGFlowNet_with_return(
             n_components=ndim + 1 if module_name != "Uniform" else 1,
         )
     else:
-        pf = DiscretePolicyEstimator(
-            pf_module, env.n_actions, preprocessor=env.preprocessor
-        )
+        pf = DiscretePolicyEstimator(pf_module, env.n_actions, preprocessor=preprocessor)
         pb = DiscretePolicyEstimator(
             pb_module,
             env.n_actions,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
             is_backward=True,
         )
-    logF = ScalarEstimator(module=logF_module, preprocessor=env.preprocessor)
+    logF = ScalarEstimator(module=logF_module, preprocessor=preprocessor)
 
     if gflownet_name == "DB":
         gflownet = DBGFlowNet(
@@ -245,14 +246,16 @@ def PFBasedGFlowNet_with_return(
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
     training_objects = gflownet.to_training_samples(trajectories)
     gflownet = cast(GFlowNet, gflownet)
-    _ = gflownet.loss(env, training_objects)
+    _ = gflownet.loss(env, training_objects, recalculate_all_logprobs=False)
 
     if isinstance(gflownet, TBGFlowNet):
         assert isinstance(training_objects, Trajectories)
         assert training_objects.log_probs is not None
         assert torch.all(
             torch.abs(
-                gflownet.get_pfs_and_pbs(training_objects)[0]
+                gflownet.get_pfs_and_pbs(
+                    training_objects, recalculate_all_logprobs=False
+                )[0]
                 - training_objects.log_probs
             )
             < 1e-5
@@ -354,33 +357,35 @@ def test_subTB_vs_TB(
     )
 
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    subtb_loss = gflownet.loss(env, trajectories)
+    subtb_loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
 
     if weighting == "TB":
         tb_loss = TBGFlowNet(pf=pf, pb=pb).loss(
-            env, trajectories
+            env, trajectories, recalculate_all_logprobs=False
         )  # LogZ is default 0.0.
         assert (tb_loss - subtb_loss).abs() < 1e-4
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 @pytest.mark.parametrize("ndim", [2, 3])
-def test_flow_matching_state_pairs(env_name: str, ndim: int):
+def test_flow_matching_states_container(env_name: str, ndim: int):
     """Test that flow matching correctly processes state pairs from trajectories."""
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim, preprocessor_name="KHot")
+        env = HyperGrid(ndim=ndim)
+        preprocessor = KHotPreprocessor(env.height, env.ndim)
     else:
-        env = DiscreteEBM(ndim=ndim, preprocessor_name="Identity")
+        env = DiscreteEBM(ndim=ndim)
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
-    module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
+    module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     log_F_edge = DiscretePolicyEstimator(
         module=module,
         n_actions=env.n_actions,
-        preprocessor=env.preprocessor,
+        preprocessor=preprocessor,
     )
 
     gflownet = FMGFlowNet(log_F_edge)
     trajectories = gflownet.sample_trajectories(env, n=N, save_logprobs=True)
-    states_pairs = trajectories.to_state_pairs()
+    states_pairs = trajectories.to_states_container()
     loss = gflownet.loss(env, states_pairs)
     assert loss >= 0

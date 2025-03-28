@@ -9,14 +9,12 @@ from decimal import Decimal
 from functools import reduce
 from math import gcd, log
 from time import time
-from typing import Literal, Tuple
+from typing import List, Literal, Tuple
 
 import torch
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
-from gfn.gym.helpers.preprocessors import KHotPreprocessor, OneHotPreprocessor
-from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
 from gfn.states import DiscreteStates
 
 multiprocessing.set_start_method("fork")  # multiprocessing-torch compatibility.
@@ -55,26 +53,22 @@ class HyperGrid(DiscreteEnv):
         R1: float = 0.5,
         R2: float = 2.0,
         reward_cos: bool = False,
-        device_str: Literal["cpu", "cuda"] = "cpu",
-        preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"] = "KHot",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
         calculate_partition: bool = False,
         calculate_all_states: bool = False,
     ):
         """HyperGrid environment from the GFlowNets paper.
         The states are represented as 1-d tensors of length `ndim` with values in
         {0, 1, ..., height - 1}.
-        A preprocessor transforms the states to the input of the neural network,
-        which can be a one-hot, a K-hot, or an identity encoding.
 
         Args:
-            ndim (int, optional): dimension of the grid. Defaults to 2.
-            height (int, optional): height of the grid. Defaults to 8. TODO: This seems like a bad default - the modes are not accessible.
-            R0 (float, optional): reward parameter R0. Defaults to 0.1.
-            R1 (float, optional): reward parameter R1. Defaults to 0.5.
-            R2 (float, optional): reward parameter R1. Defaults to 2.0.
-            reward_cos (bool, optional): Which version of the reward to use. Defaults to False.
-            device_str (str, optional): "cpu" or "cuda". Defaults to "cpu".
-            preprocessor_name (str, optional): "KHot" or "OneHot" or "Identity". Defaults to "KHot".
+            ndim (int, optional): dimension of the grid.
+            height (int, optional): height of the grid.
+            R0 (float, optional): reward parameter R0.
+            R1 (float, optional): reward parameter R1.
+            R2 (float, optional): reward parameter R1.
+            reward_cos (bool, optional): Which version of the reward to use.
+            device: The device to use for the environment.
             calculate_partition: If True, calculates the true log partition function,
                 which requires enumerating all states of the hypergrid. Might have
                 intractable time complexity for very large problems.
@@ -110,27 +104,12 @@ class HyperGrid(DiscreteEnv):
         # self.scale_factor = smallest_multiplier_to_integers([R0, R1, R2])
         self.scale_factor = 1
 
-        s0 = torch.zeros(ndim, dtype=torch.long, device=torch.device(device_str))
-        sf = torch.full(
-            (ndim,), fill_value=-1, dtype=torch.long, device=torch.device(device_str)
-        )
-        n_actions = ndim + 1
+        if isinstance(device, str):
+            device = torch.device(device)
 
-        if preprocessor_name == "Identity":
-            preprocessor = IdentityPreprocessor(output_dim=ndim)
-        elif preprocessor_name == "KHot":
-            preprocessor = KHotPreprocessor(height=height, ndim=ndim)
-        elif preprocessor_name == "OneHot":
-            preprocessor = OneHotPreprocessor(
-                n_states=self.n_states,
-                get_states_indices=self.get_states_indices,
-            )
-        elif preprocessor_name == "Enum":
-            preprocessor = EnumPreprocessor(
-                get_states_indices=self.get_states_indices,
-            )
-        else:
-            raise ValueError(f"Unknown preprocessor {preprocessor_name}")
+        s0 = torch.zeros(ndim, dtype=torch.long, device=device)
+        sf = torch.full((ndim,), fill_value=-1, dtype=torch.long, device=device)
+        n_actions = ndim + 1
 
         state_shape = (self.ndim,)
 
@@ -139,7 +118,6 @@ class HyperGrid(DiscreteEnv):
             s0=s0,
             state_shape=state_shape,
             sf=sf,
-            preprocessor=preprocessor,
         )
 
     def update_masks(self, states: DiscreteStates) -> None:
@@ -362,6 +340,22 @@ class HyperGrid(DiscreteEnv):
 
         return self._true_dist_pmf
 
+    def all_indices(self) -> List[Tuple[int, ...]]:
+        """Generate all possible indices for the grid.
+
+        Returns:
+            List of index tuples representing all possible grid positions
+        """
+
+        def _all_indices(dim: int, height: int) -> List[Tuple[int, ...]]:
+            if dim == 1:
+                return [(i,) for i in range(height)]
+            return [
+                (i, *j) for i in range(height) for j in _all_indices(dim - 1, height)
+            ]
+
+        return _all_indices(self.ndim, self.height)
+
     @property
     def log_partition(self) -> float | None:
         return self._log_partition
@@ -369,6 +363,9 @@ class HyperGrid(DiscreteEnv):
     @property
     def all_states(self) -> DiscreteStates:
         """Returns a tensor of all hypergrid states as a States instance."""
+        if self.calculate_all_states and not isinstance(self._all_states, torch.Tensor):
+            self._calculate_all_states_tensor()
+
         assert self._all_states is not None
         all_states = self.States(self._all_states)
         assert isinstance(all_states, DiscreteStates)

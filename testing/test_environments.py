@@ -9,6 +9,7 @@ from gfn.actions import GraphActionType
 from gfn.env import NonValidActionsError
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuilding
+from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.states import GraphStates
 
 
@@ -30,9 +31,9 @@ def format_random_tensor(env, n, h):
 
 
 # Tests.
-@pytest.mark.parametrize("preprocessor", ["Identity", "OneHot", "KHot"])
+@pytest.mark.parametrize("preprocessor_name", ["Identity", "OneHot", "KHot"])
 def test_HyperGrid_preprocessors(
-    preprocessor: Literal["Identity", "OneHot", "KHot"],
+    preprocessor_name: Literal["Identity", "OneHot", "KHot"],
 ):
     NDIM = 2
     ENV_HEIGHT = 3
@@ -40,43 +41,36 @@ def test_HyperGrid_preprocessors(
     ND_BATCH_SHAPE = (4, 2)
     SEED = 1234
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
+
+    if preprocessor_name == "Identity":
+        preprocessor = IdentityPreprocessor(output_dim=NDIM)
+        expected_shape = BATCH_SHAPE, NDIM
+    elif preprocessor_name == "OneHot":
+        preprocessor = OneHotPreprocessor(
+            n_states=env.n_states, get_states_indices=env.get_states_indices
+        )
+        expected_shape = BATCH_SHAPE, ENV_HEIGHT**NDIM
+    elif preprocessor_name == "KHot":
+        preprocessor = KHotPreprocessor(ndim=NDIM, height=ENV_HEIGHT)
+        expected_shape = BATCH_SHAPE, ENV_HEIGHT * NDIM
 
     # Test with a 1-d batch size.
     random_states = env.reset(batch_shape=BATCH_SHAPE, random=True, seed=SEED)
-    preprocessed_grid = env.preprocessor.preprocess(random_states)
-
-    if preprocessor == "Identity":
-        assert tuple(preprocessed_grid.shape) == (BATCH_SHAPE, NDIM)
-    elif preprocessor == "OneHot":
-        assert tuple(preprocessed_grid.shape) == (BATCH_SHAPE, ENV_HEIGHT**NDIM)
-    elif preprocessor == "KHot":
-        assert tuple(preprocessed_grid.shape) == (BATCH_SHAPE, ENV_HEIGHT * NDIM)
+    preprocessed_grid = preprocessor.preprocess(random_states)
+    assert tuple(preprocessed_grid.shape) == expected_shape
 
     # Test with a n-d batch size.
     random_states = env.reset(batch_shape=ND_BATCH_SHAPE, random=True, seed=SEED)
-    preprocessed_grid = env.preprocessor.preprocess(random_states)
-
-    if preprocessor == "Identity":
-        assert tuple(preprocessed_grid.shape) == ND_BATCH_SHAPE + tuple([NDIM])
-    elif preprocessor == "OneHot":
-        assert tuple(preprocessed_grid.shape) == ND_BATCH_SHAPE + tuple(
-            [ENV_HEIGHT**NDIM]
-        )
-    elif preprocessor == "KHot":
-        assert tuple(preprocessed_grid.shape) == ND_BATCH_SHAPE + tuple(
-            [ENV_HEIGHT * NDIM]
-        )
+    preprocessed_grid = preprocessor.preprocess(random_states)
+    assert tuple(preprocessed_grid.shape) == ND_BATCH_SHAPE + expected_shape[1:]
 
 
-@pytest.mark.parametrize("preprocessor", ["Identity", "OneHot", "KHot"])
-def test_HyperGrid_fwd_step_with_preprocessors(
-    preprocessor: Literal["Identity", "OneHot", "KHot"],
-):
+def test_HyperGrid_fwd_step():
     NDIM = 2
     ENV_HEIGHT = BATCH_SIZE = 3
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, NDIM)
 
@@ -102,16 +96,13 @@ def test_HyperGrid_fwd_step_with_preprocessors(
     assert (torch.round(env.reward(states), decimals=7) == expected_rewards).all()
 
 
-@pytest.mark.parametrize("preprocessor", ["Identity", "OneHot", "KHot"])
-def test_HyperGrid_bwd_step_with_preprocessors(
-    preprocessor: Literal["Identity", "OneHot", "KHot"],
-):
+def test_HyperGrid_bwd_step():
     NDIM = 2
     ENV_HEIGHT = 3
     SEED = 1234
 
     # Testing the backward method from a batch of random (seeded) state.
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, preprocessor_name=preprocessor)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
     states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED)
 
     passing_actions_lists = [

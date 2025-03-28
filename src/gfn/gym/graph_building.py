@@ -1,12 +1,42 @@
 from typing import Callable, Literal, Optional, Tuple
 
 import torch
+from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
-from gfn.actions import GraphActions, GraphActionType
+from gfn.actions import Actions, GraphActions, GraphActionType
 from gfn.env import GraphEnv
 from gfn.states import GraphStates
+
+
+def get_edge_indices(
+    n_nodes: int,
+    is_directed: bool,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Get the source and target node indices for the edges.
+
+    Args:
+        n_nodes: The number of nodes in the graph.
+        is_directed: Whether the graph is directed.
+        device: The device to run the computation on.
+
+    Returns:
+        A tuple of two tensors, the source and target node indices.
+    """
+    if is_directed:
+        # Upper triangle.
+        i_up, j_up = torch.triu_indices(n_nodes, n_nodes, offset=1, device=device)
+        # Lower triangle.
+        i_lo, j_lo = torch.tril_indices(n_nodes, n_nodes, offset=-1, device=device)
+
+        ei0 = torch.cat([i_up, i_lo])  # Combine them
+        ei1 = torch.cat([j_up, j_lo])
+    else:
+        ei0, ei1 = torch.triu_indices(n_nodes, n_nodes, offset=1, device=device)
+
+    return ei0, ei1
 
 
 class GraphBuilding(GraphEnv):
@@ -28,19 +58,25 @@ class GraphBuilding(GraphEnv):
         self,
         feature_dim: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
-        device_str: Literal["cpu", "cuda"] = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
+        if isinstance(device, str):
+            device = torch.device(device)
+        self.device = device
+
         s0 = GeometricData(
-            x=torch.zeros((0, feature_dim), dtype=torch.float32),
-            edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32),
-            edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,
+            x=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
+            edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
+            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+            device=device,
         )
         sf = GeometricData(
-            x=torch.ones((1, feature_dim), dtype=torch.float32) * float("inf"),
-            edge_attr=torch.ones((0, feature_dim), dtype=torch.float32) * float("inf"),
-            edge_index=torch.zeros((2, 0), dtype=torch.long),
-            device=device_str,
+            x=torch.ones((1, feature_dim), dtype=torch.float32).to(device)
+            * float("inf"),
+            edge_attr=torch.ones((0, feature_dim), dtype=torch.float32).to(device)
+            * float("inf"),
+            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+            device=device,
         )
 
         self.state_evaluator = state_evaluator
@@ -49,7 +85,6 @@ class GraphBuilding(GraphEnv):
         super().__init__(
             s0=s0,
             sf=sf,
-            device_str=device_str,
         )
 
     def reset(
@@ -313,3 +348,292 @@ class GraphBuilding(GraphEnv):
         random_states_tensor = self.States.from_batch_shape(batch_shape)
         assert isinstance(random_states_tensor, GraphStates)
         return random_states_tensor
+
+
+class GraphBuildingOnEdges(GraphBuilding):
+    """Environment for building graphs edge by edge with discrete action space.
+
+    The environment supports both directed and undirected graphs.
+
+    In each state, the policy can:
+    1. Add an edge between existing nodes.
+    2. Use the exit action to terminate graph building.
+
+    The action space is discrete, with size:
+    - For directed graphs: n_nodes^2 - n_nodes + 1 (all possible directed edges + exit).
+    - For undirected graphs: (n_nodes^2 - n_nodes)/2 + 1 (upper triangle + exit).
+
+    Args:
+        n_nodes: The number of nodes in the graph.
+        state_evaluator: A function that evaluates a state and returns a reward.
+        directed: Whether the graph should be directed.
+    """
+
+    def __init__(
+        self,
+        n_nodes: int,
+        state_evaluator: callable,
+        directed: bool,
+        device: torch.device | str,
+    ):
+        self.n_nodes = n_nodes
+        if directed:
+            # all off-diagonal edges + exit.
+            self.n_actions = (n_nodes**2 - n_nodes) + 1
+        else:
+            # bottom triangle + exit.
+            self.n_actions = ((n_nodes**2 - n_nodes) // 2) + 1
+        super().__init__(
+            feature_dim=n_nodes,
+            state_evaluator=state_evaluator,
+            device=device,  # type: ignore
+        )
+        self.is_discrete = True  # actions here are discrete, needed for FlowMatching
+        self.is_directed = directed
+
+    def make_actions_class(self) -> type[Actions]:
+        env = self
+
+        class EdgeActions(Actions):
+            """Actions for building graphs with a fixed number of nodes.
+
+            Actions are represented as discrete indices where:
+            - 0 to n_actions-2: Adding an edge between specific nodes
+            - n_actions-1: EXIT action to terminate the trajectory
+            - n_actions: DUMMY action (used for padding)
+            """
+
+            action_shape = (1,)
+            dummy_action = torch.tensor([env.n_actions]).to(env.device)
+            exit_action = torch.tensor([env.n_actions - 1]).to(env.device)
+
+        return EdgeActions
+
+    def make_states_class(self) -> type[GraphStates]:
+        env = self
+
+        class GraphBuildingOnEdgesStates(GraphStates):
+            """Represents the state of an edge-by-edge graph building process.
+
+            This class extends GraphStates to specifically handle edge-by-edge graph
+            building states. Each state represents a graph with a fixed number of nodes
+            where edges are being added incrementally.
+
+            The state representation consists of:
+            - node_feature: Node IDs for each node in the graph (shape: [n_nodes, 1])
+            - edge_feature: Features for each edge (shape: [n_edges, 1])
+            - edge_index: Indices representing the source and target nodes for each edge
+                (shape: [n_edges, 2])
+
+            Special states:
+            - s0: Initial state with n_nodes and no edges
+            - sf: Terminal state (used as a placeholder)
+
+            The class provides masks for both forward and backward actions to determine
+            which actions are valid from the current state.
+            """
+
+            s0 = GeometricData(
+                x=torch.arange(env.n_nodes)[:, None].to(env.device),
+                edge_attr=torch.ones((0, 1), device=env.device),
+                edge_index=torch.ones((2, 0), dtype=torch.long, device=env.device),
+            )
+            sf = GeometricData(
+                x=-torch.ones(env.n_nodes)[:, None].to(env.device),
+                edge_attr=torch.zeros((0, 1), device=env.device),
+                edge_index=torch.zeros((2, 0), dtype=torch.long, device=env.device),
+            )
+
+            def __init__(self, tensor: GeometricBatch):
+                self.tensor = tensor.to(env.device)
+                self.node_features_dim = tensor.x.shape[-1]
+                self.edge_features_dim = tensor.edge_attr.shape[-1]
+                self._log_rewards: Optional[float] = None
+
+                self.n_nodes = env.n_nodes
+                self.n_actions = env.n_actions
+
+            @property
+            def forward_masks(self):
+                """Compute masks for valid forward actions from the current state.
+
+                A forward action is valid if:
+                1. The edge doesn't already exist in the graph
+                2. The edge connects two distinct nodes
+
+                For directed graphs, all possible src->dst edges are considered.
+                For undirected graphs, only the upper triangular portion of the
+                    adjacency matrix is used.
+
+                The last action is always the EXIT action, which is always valid.
+
+                Returns:
+                    Tensor: Boolean mask of shape [batch_size, n_actions] where
+                        True indicates valid actions
+                """
+                # Allow all actions.
+                forward_masks = torch.ones(
+                    len(self), self.n_actions, dtype=torch.bool, device=self.device
+                )
+
+                # Convert action indices to source-target node pairs
+                ei0, ei1 = get_edge_indices(self.n_nodes, env.is_directed, self.device)
+
+                # Remove existing edges.
+                for i in range(len(self)):
+                    existing_edges = self[i].tensor.edge_index
+                    assert torch.all(existing_edges >= 0)  # TODO: convert to test.
+
+                    if existing_edges.numel() == 0:
+                        edge_idx = torch.zeros(0, dtype=torch.bool, device=self.device)
+                    else:
+                        edge_idx = torch.logical_and(
+                            existing_edges[0][..., None] == ei0[None],
+                            existing_edges[1][..., None] == ei1[None],
+                        ).to(self.device)
+
+                        # Collapse across the edge dimension.
+                        if len(edge_idx.shape) == 2:
+                            edge_idx = edge_idx.sum(0).bool()
+
+                        # Adds an unmasked exit action.
+                        edge_idx = torch.cat(
+                            (edge_idx, torch.tensor([False], device=self.device))
+                        )
+                        forward_masks[i, edge_idx] = (
+                            False  # Disallow the addition of this edge.
+                        )
+
+                return forward_masks.view(*self.batch_shape, self.n_actions)
+
+            @forward_masks.setter
+            def forward_masks(self, value: torch.Tensor):
+                pass  # fwd masks is computed on the fly
+
+            @property
+            def backward_masks(self):
+                """Compute masks for valid backward actions from the current state.
+
+                A backward action is valid if:
+                1. The edge exists in the current graph (i.e., can be removed)
+
+                For directed graphs, all existing edges are considered for removal.
+                For undirected graphs, only the upper triangular edges are considered.
+
+                The EXIT action is not included in backward masks.
+
+                Returns:
+                    Tensor: Boolean mask of shape [batch_size, n_actions-1] where True indicates valid actions
+                """
+                # Disallow all actions.
+                backward_masks = torch.zeros(
+                    len(self), self.n_actions - 1, dtype=torch.bool, device=self.device
+                )
+
+                for i in range(len(self)):
+                    existing_edges = self[i].tensor.edge_index
+                    # Convert action indices to source-target node pairs.
+                    ei0, ei1 = get_edge_indices(
+                        self.n_nodes,
+                        env.is_directed,
+                        self.device,
+                    )
+
+                    if len(existing_edges) == 0:
+                        edge_idx = torch.zeros(0, dtype=torch.bool)
+                    else:
+                        edge_idx = torch.logical_and(
+                            existing_edges[0][..., None] == ei0[None],
+                            existing_edges[1][..., None] == ei1[None],
+                        )
+                        # Collapse across the edge dimension.
+                        if len(edge_idx.shape) == 2:
+                            edge_idx = edge_idx.sum(0).bool()
+
+                        # Allow the removal of this edge.
+                        backward_masks[i, edge_idx] = True
+
+                return backward_masks.view(*self.batch_shape, self.n_actions - 1)
+
+            @backward_masks.setter
+            def backward_masks(self, value: torch.Tensor):
+                pass  # bwd masks is computed on the fly
+
+        return GraphBuildingOnEdgesStates
+
+    def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Take a step in the environment by applying actions to states.
+
+        Args:
+            states: Current states batch
+            actions: Actions to apply
+
+        Returns:
+            New states after applying the actions
+        """
+        actions = self.convert_actions(states, actions)
+        new_states = super()._step(states, actions)
+        assert isinstance(new_states, GraphStates)
+        return new_states
+
+    def _backward_step(self, states: GraphStates, actions: Actions) -> GraphStates:
+        """Take a backward step in the environment.
+
+        Args:
+            states: Current states batch
+            actions: Actions to apply in reverse
+
+        Returns:
+            New states after applying the backward actions
+        """
+        actions = self.convert_actions(states, actions)
+        new_states = super()._backward_step(states, actions)
+        assert isinstance(new_states, GraphStates)
+        return new_states
+
+    def convert_actions(self, states: GraphStates, actions: Actions) -> GraphActions:
+        """Converts the action from discrete space to graph action space.
+
+        This method maps discrete action indices to specific graph operations:
+        - GraphActionType.ADD_EDGE: Add an edge between specific nodes
+        - GraphActionType.EXIT: Terminate trajectory
+        - GraphActionType.DUMMY: No-op action (for padding)
+
+        Args:
+            states: Current states batch
+            actions: Discrete actions to convert
+
+        Returns:
+            Equivalent actions in the GraphActions format
+        """
+        # TODO: factor out into utility function.
+        action_tensor = actions.tensor.squeeze(-1).clone()
+        action_type = torch.where(
+            action_tensor == self.n_actions - 1,
+            GraphActionType.EXIT,
+            GraphActionType.ADD_EDGE,
+        )
+        action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
+
+        # Convert action indices to source-target node pairs
+        ei0, ei1 = get_edge_indices(self.n_nodes, self.is_directed, self.device)
+
+        # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
+        ei0 = torch.cat((ei0, torch.tensor([-1, -2])), dim=0).to(self.device)
+        ei1 = torch.cat((ei1, torch.tensor([-1, -2])), dim=0).to(self.device)
+
+        # Indexes either the second last element (exit) or la
+        # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
+        ei0, ei1 = ei0[action_tensor], ei1[action_tensor]
+
+        out = GraphActions(
+            TensorDict(
+                {
+                    "action_type": action_type,
+                    "features": torch.ones(action_tensor.shape + (1,)),
+                    "edge_index": torch.stack([ei0, ei1], dim=-1),
+                },
+                batch_size=action_tensor.shape,
+            ).to(self.device)
+        )
+        return out

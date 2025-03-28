@@ -6,7 +6,6 @@ import torch.nn as nn
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
-from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor
 from gfn.states import DiscreteStates, States
 
 
@@ -62,8 +61,7 @@ class DiscreteEBM(DiscreteEnv):
         ndim: int,
         energy: EnergyFunction | None = None,
         alpha: float = 1.0,
-        device_str: Literal["cpu", "cuda"] = "cpu",
-        preprocessor_name: Literal["Identity", "Enum"] = "Identity",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
         """Discrete EBM environment.
 
@@ -79,33 +77,22 @@ class DiscreteEBM(DiscreteEnv):
             energy: energy function of the EBM. Defaults to None. If
                 None, the Ising model with Identity matrix is used.
             alpha: interaction strength the EBM. Defaults to 1.0.
-            device_str: "cpu" or "cuda". Defaults to "cpu".
-            preprocessor_name: "KHot" or "OneHot" or "Identity".
-                Defaults to "KHot".
+            device: Device to use for the environment.
         """
         self.ndim = ndim
+        if isinstance(device, str):
+            device = torch.device(device)
 
-        s0 = torch.full((ndim,), -1, dtype=torch.long, device=torch.device(device_str))
-        sf = torch.full((ndim,), 2, dtype=torch.long, device=torch.device(device_str))
+        s0 = torch.full((ndim,), -1, dtype=torch.long, device=device)
+        sf = torch.full((ndim,), 2, dtype=torch.long, device=device)
 
         if energy is None:
-            energy = IsingModel(
-                torch.ones((ndim, ndim), device=torch.device(device_str))
-            )
+            energy = IsingModel(torch.ones((ndim, ndim), device=device))
         self.energy: EnergyFunction = energy
         self.alpha = alpha
 
         n_actions = 2 * ndim + 1
         # the last action is the exit action that is only available for complete states
-
-        if preprocessor_name == "Identity":
-            preprocessor = IdentityPreprocessor(output_dim=ndim)
-        elif preprocessor_name == "Enum":
-            preprocessor = EnumPreprocessor(
-                get_states_indices=self.get_states_indices,
-            )
-        else:
-            raise ValueError(f"Unknown preprocessor {preprocessor_name}")
 
         super().__init__(
             s0=s0,
@@ -114,7 +101,6 @@ class DiscreteEBM(DiscreteEnv):
             # exit_action=,
             n_actions=n_actions,
             sf=sf,
-            preprocessor=preprocessor,
         )
 
     def update_masks(self, states: DiscreteStates) -> None:

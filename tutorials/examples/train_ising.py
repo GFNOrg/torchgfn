@@ -19,7 +19,7 @@ def main(args):
         wandb.init(project=args.wandb_project)
         wandb.config.update(args)
 
-    device = "cpu"
+    device = torch.device(args.device)
     torch.set_num_threads(args.n_threads)
     hidden_dim = 512
 
@@ -36,7 +36,7 @@ def main(args):
             return (i, j)
 
         N = L**2
-        J = torch.zeros((N, N), device=torch.device(device))
+        J = torch.zeros((N, N), device=device)
         for k in range(N):
             for m in range(k):
                 x1, y1 = ising_n_to_ij(L, k)
@@ -60,36 +60,34 @@ def main(args):
     N = args.L**2
     J = make_J(args.L, args.J)
     ising_energy = IsingModel(J)
-    env = DiscreteEBM(N, alpha=1, energy=ising_energy, device_str=device)
+    env = DiscreteEBM(N, alpha=1, energy=ising_energy, device=device)
 
     # Parametrization and losses
     pf_module = MLP(
-        input_dim=env.preprocessor.output_dim,
+        input_dim=env.ndim,
         output_dim=env.n_actions,
         hidden_dim=hidden_dim,
         n_hidden_layers=n_hidden,
         activation_fn=acc_fn,
     )
 
-    pf_estimator = DiscretePolicyEstimator(
-        pf_module, env.n_actions, env.preprocessor, is_backward=False
-    )
-    gflownet = FMGFlowNet(pf_estimator)
+    pf_estimator = DiscretePolicyEstimator(pf_module, env.n_actions, is_backward=False)
+    gflownet = FMGFlowNet(pf_estimator).to(device)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=lr)
 
     # Learning
     states_visited = 0
 
-    for i in tqdm(range(10000)):
+    for i in tqdm(range(args.n_iterations)):
         trajectories = gflownet.sample_trajectories(
             env,
-            n=8,
+            n=args.batch_size,
             save_estimator_outputs=False,
             save_logprobs=False,
         )
         training_samples = gflownet.to_training_samples(trajectories)
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
+        loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
         loss.backward()
         optimizer.step()
 
@@ -101,8 +99,14 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # Comand-line arguments
     parser = ArgumentParser()
+
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        help="Device to run the model on",
+    )
 
     parser.add_argument(
         "--n_threads",
@@ -130,6 +134,18 @@ if __name__ == "__main__":
         type=str,
         default="",
         help="Name of the wandb project. If empty, don't use wandb",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=8,
+        help="Batch size",
+    )
+    parser.add_argument(
+        "--n_iterations",
+        type=int,
+        default=10000,
+        help="Number of iterations",
     )
 
     args = parser.parse_args()

@@ -1,5 +1,4 @@
 import math
-import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Tuple, TypeVar
 
@@ -11,7 +10,6 @@ from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.samplers import Sampler
 from gfn.states import States
-from gfn.utils.common import has_log_probs
 from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
 
 TrainingSampleType = TypeVar("TrainingSampleType", bound=Container)
@@ -72,7 +70,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         trajectories = self.sample_trajectories(
             env, n, save_estimator_outputs=False, save_logprobs=False
         )
-        return trajectories.last_states
+        return trajectories.terminating_states
 
     def logz_named_parameters(self):
         return {k: v for k, v in dict(self.named_parameters()).items() if "logZ" in k}
@@ -86,12 +84,25 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
     @abstractmethod
     def loss(
-        self, env: Env, training_objects: Any, reduction: str | None = None
+        self,
+        env: Env,
+        training_objects: Any,
+        recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
-        """Computes the loss given the training objects."""
+        """Computes the loss given the training objects.
+
+        Args:
+            env: The environment to compute the loss for
+            training_objects: The objects to compute the loss on
+            recalculate_all_logprobs: If True, always recalculate logprobs even
+                if they exist. If False, use existing logprobs when available.
+        """
 
     def loss_from_trajectories(
-        self, env: Env, trajectories: Trajectories
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
         """Helper method to compute loss directly from trajectories.
 
@@ -101,24 +112,19 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         Args:
             env: The environment to compute the loss for
             trajectories: The trajectories to compute the loss from
+            recalculate_all_logprobs: If True, always recalculate logprobs even
+                if they exist. If False, use existing logprobs when available.
 
         Returns:
             torch.Tensor: The computed loss
         """
         training_samples = self.to_training_samples(trajectories)
-        if isinstance(self, PFBasedGFlowNet):
-            # Check if trajectories already have log_probs
-            if has_log_probs(trajectories):
-                warnings.warn(
-                    "Recalculating logprobs for trajectories that already have them. "
-                    "This may be inefficient for on-policy trajectories. "
-                    "If the training is done on-policy, you should call loss() directly "
-                    "with recalculate_all_logprobs=False instead of loss_from_trajectories()."
-                )
 
-            # We know this is safe because PFBasedGFlowNet's loss accepts these arguments
-            return self.loss(env, training_samples, recalculate_all_logprobs=True)
-        return self.loss(env, training_samples)
+        return self.loss(
+            env,
+            training_samples,
+            recalculate_all_logprobs=recalculate_all_logprobs,
+        )
 
 
 class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
@@ -157,32 +163,13 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     def pf_pb_parameters(self):
         return [v for k, v in self.named_parameters() if "pb" in k or "pf" in k]
 
-    @abstractmethod
-    def loss(
-        self,
-        env: Env,
-        training_objects: Any,
-        recalculate_all_logprobs: bool = False,
-        reduction: str | None = None,
-    ) -> torch.Tensor:
-        """Computes the loss given the training objects.
-
-        Args:
-            env: The environment to compute the loss for
-            training_objects: The objects to compute the loss on
-            recalculate_all_logprobs: If True, always recalculate logprobs even if they exist.
-                                     If False, use existing logprobs when available.
-            reduction: The reduction to apply to the loss.
-            **kwargs: Additional arguments specific to the loss
-        """
-
 
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
         fill_value: float = 0.0,
-        recalculate_all_logprobs: bool = False,
+        recalculate_all_logprobs: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""Evaluates logprobs for each transition in each trajectory in the batch.
 
@@ -217,7 +204,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
     def get_trajectories_scores(
         self,
         trajectories: Trajectories,
-        recalculate_all_logprobs: bool = False,
+        recalculate_all_logprobs: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Given a batch of trajectories, calculate forward & backward policy scores.
 

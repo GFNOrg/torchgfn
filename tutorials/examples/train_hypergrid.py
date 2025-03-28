@@ -9,6 +9,9 @@ python train_hypergrid.py --ndim 2 --height 64 --R0 {0.1, 0.01, 0.001} --tied {-
 And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
+
+This script also provides a function `get_exact_P_T` that computes the exact terminating state
+distribution for the HyperGrid environment, which is useful for evaluation and visualization.
 """
 
 import datetime
@@ -21,23 +24,27 @@ from argparse import ArgumentParser
 from math import ceil
 from typing import Callable, Optional, cast
 
+import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
+from matplotlib.gridspec import GridSpec
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.profiler import ProfilerActivity, profile
-from tqdm import tqdm, trange
+from tqdm import trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
+    GFlowNet,
     LogPartitionVarianceGFlowNet,
     ModifiedDBGFlowNet,
     SubTBGFlowNet,
     TBGFlowNet,
 )
 from gfn.gym import HyperGrid
-from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
+from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
+from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
@@ -141,7 +148,7 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
 class DistributedErrorHandler:
     def __init__(
         self,
-        device_str: str,
+        device: torch.device,
         rank: int,
         world_size: int,
         error_check_interval: float = 1.0,
@@ -151,19 +158,19 @@ class DistributedErrorHandler:
         Initialize error handler for distributed training.
 
         Args:
-            device_str: String representing the current device.
+            device: String representing the current device.
             rank: Current process rank
             world_size: Total number of processes
             error_check_interval: How often to check for errors (in seconds)
             cleanup_callback: Optional function to call before shutdown
         """
-        self.device_str = device_str
+        self.device = device
         self.rank = rank
         self.world_size = world_size
         self.error_check_interval = error_check_interval
         self.cleanup_callback = cleanup_callback
         self.shutdown_flag = threading.Event()
-        self.error_tensor = torch.zeros(1, dtype=torch.uint8, device=self.device_str)
+        self.error_tensor = torch.zeros(1, dtype=torch.uint8, device=self.device)
 
         # Set up error checking thread
         self.checker_thread = threading.Thread(target=self._error_checker, daemon=True)
@@ -342,501 +349,83 @@ def gather_distributed_data(
     return None  # For all non-zero ranks.
 
 
-def main(args):  # noqa: C901
-    seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
+    r"""Evaluates the exact terminating state distribution P_T for HyperGrid.
 
-    use_wandb = args.wandb_project != ""
-    if use_wandb:
+    For each state s', the terminating state probability is computed as:
 
-        if args.wandb_local:
-            os.environ["WANDB_MODE"] = "offline"
+    .. math::
+        P_T(s') = u(s') P_F(s_f | s')
 
-        import wandb
+    where u(s') satisfies the recursion:
 
-        wandb.init(project=args.wandb_project)
-        wandb.config.update(args)
+    .. math::
+        u(s') = \sum_{s \in \text{Par}(s')} u(s) P_F(s' | s)
 
-    if args.distributed:
-        my_rank, my_size, agent_group_size, agent_group_list = (
-            initialize_distributed_compute()
-        )
-        my_rank = dist.get_rank()
-        world_size = torch.distributed.get_world_size()
-        my_agent_group_id = my_rank // agent_group_size
-        print(f"Running with DDP on rank {my_rank}/{world_size}.")
-        print(
-            f"agent_group_size, my_agent_group_id = {agent_group_size, my_agent_group_id}"
-        )
-    else:
-        world_size = 1  # Single machine.
-        my_rank = 0  # Single machine.
+    with the base case u(s_0) = 1.
 
-    set_seed(seed + my_rank)
+    Args:
+        env: The HyperGrid environment
+        gflownet: The GFlowNet model
 
-    # 1. Create the environment
-    env = HyperGrid(
-        args.ndim,
-        args.height,
-        args.R0,
-        args.R1,
-        args.R2,
-        device_str=device_str,
-        calculate_partition=args.calculate_partition,
-        calculate_all_states=args.calculate_all_states,
-    )
+    Returns:
+        The exact terminating state distribution as a tensor
+    """
+    if env.ndim != 2:
+        raise ValueError("plotting is only supported for 2D environments")
 
-    # 2. Create the gflownets.
-    #    For this we need modules and estimators.
-    #    Depending on the loss, we may need several estimators:
-    #       one (forward only) for FM loss,
-    #       two (forward and backward) or other losses
-    #       three (same, + logZ) estimators for TB.
-    gflownet, pf_module, pb_module = None, None, None
-    pf_estimator, pb_estimator = None, None
+    grid = env.all_states
 
-    if args.loss == "FM":
-        # We need a LogEdgeFlowEstimator.
-        if args.tabular:
-            module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
-        else:
-            module = MLP(
-                input_dim=env.preprocessor.output_dim,
-                output_dim=env.n_actions,
-                hidden_dim=args.hidden_dim,
-                n_hidden_layers=args.n_hidden,
-            )
-
-        if args.distributed:
-            module = DDP(module, process_group=agent_group_list[my_agent_group_id])
-
-        estimator = DiscretePolicyEstimator(
-            module=module,
-            n_actions=env.n_actions,
-            preprocessor=env.preprocessor,
-        )
-        gflownet = FMGFlowNet(estimator)
-    else:
-        # We need a DiscretePFEstimator and a DiscretePBEstimator.
-        if args.tabular:
-            pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
-            if not args.uniform_pb:
-                pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
-        else:
-            pf_module = MLP(
-                input_dim=env.preprocessor.output_dim,
-                output_dim=env.n_actions,
-                hidden_dim=args.hidden_dim,
-                n_hidden_layers=args.n_hidden,
-            )
-            if not args.uniform_pb:
-                pb_module = MLP(
-                    input_dim=env.preprocessor.output_dim,
-                    output_dim=env.n_actions - 1,
-                    hidden_dim=args.hidden_dim,
-                    n_hidden_layers=args.n_hidden,
-                    trunk=(
-                        pf_module.trunk
-                        if args.tied and isinstance(pf_module.trunk, torch.nn.Module)
-                        else None
-                    ),
-                )
-        if args.uniform_pb:
-            pb_module = DiscreteUniform(env.n_actions - 1)
-
-        for v in ["pf_module", "pb_module"]:
-            assert locals()[v] is not None, f"{v} is None, Args: {args}"
-
-        if args.distributed:
-            pf_module = DDP(pf_module, process_group=agent_group_list[my_agent_group_id])
-            pb_module = DDP(pb_module, process_group=agent_group_list[my_agent_group_id])
-
-        assert pf_module is not None
-        assert pb_module is not None
-        pf_estimator = DiscretePolicyEstimator(
-            module=pf_module,
-            n_actions=env.n_actions,
-            preprocessor=env.preprocessor,
-        )
-        pb_estimator = DiscretePolicyEstimator(
-            module=pb_module,
-            n_actions=env.n_actions,
-            is_backward=True,
-            preprocessor=env.preprocessor,
+    # Get the forward policy distribution for all states
+    with torch.no_grad():
+        # Handle both FM and other GFlowNet types
+        policy: GFNModule = cast(
+            GFNModule, gflownet.logF if isinstance(gflownet, FMGFlowNet) else gflownet.pf
         )
 
-        if args.loss == "ModifiedDB":
-            for v in ["pf_estimator", "pb_estimator"]:
-                assert locals()[v] is not None, f"{v} is None, Args: {args}"
-            gflownet = ModifiedDBGFlowNet(pf_estimator, pb_estimator)
+        estimator_outputs = policy(grid)
+        dist = policy.to_probability_distribution(grid, estimator_outputs)
+        probabilities = torch.exp(dist.logits)  # Get raw probabilities
 
-        elif args.loss in ("DB", "SubTB"):
-            # We need a LogStateFlowEstimator.
-            for v in ["pf_estimator", "pb_estimator"]:
-                assert locals()[v] is not None, f"{v} is None, Args: {args}"
+    u = torch.ones(grid.batch_shape)
 
-            # We also need a LogStateFlowEstimator.
-            if args.tabular:
-                module = Tabular(n_states=env.n_states, output_dim=1)
-            else:
-                module = MLP(
-                    input_dim=env.preprocessor.output_dim,
-                    output_dim=1,
-                    hidden_dim=args.hidden_dim,
-                    n_hidden_layers=args.n_hidden,
-                    trunk=(
-                        pf_module.trunk
-                        if args.tied and isinstance(pf_module.trunk, torch.nn.Module)
-                        else None
-                    ),
-                )
-
-            if args.distributed:
-                module = DDP(module, process_group=agent_group_list[my_agent_group_id])
-
-            logF_estimator = ScalarEstimator(
-                module=module, preprocessor=env.preprocessor
-            )
-            if args.loss == "DB":
-                gflownet = DBGFlowNet(
-                    pf=pf_estimator,
-                    pb=pb_estimator,
-                    logF=logF_estimator,
-                )
-            else:
-                gflownet = SubTBGFlowNet(
-                    pf=pf_estimator,
-                    pb=pb_estimator,
-                    logF=logF_estimator,
-                    weighting=args.subTB_weighting,
-                    lamda=args.subTB_lambda,
-                )
-        elif args.loss == "TB":
-            for v in ["pf_estimator", "pb_estimator"]:
-                assert locals()[v] is not None, f"{v} is None, Args: {args}"
-            gflownet = TBGFlowNet(
-                pf=pf_estimator,
-                pb=pb_estimator,
-            )
-        elif args.loss == "ZVar":
-            for v in ["pf_estimator", "pb_estimator"]:
-                assert locals()[v] is not None, f"{v} is None, Args: {args}"
-            gflownet = LogPartitionVarianceGFlowNet(
-                pf=pf_estimator,
-                pb=pb_estimator,
-            )
-
-        assert gflownet is not None, f"gflownet is None, Args: {args}"
-
-    # Create replay buffer if needed
-    replay_buffer = None
-
-    if args.replay_buffer_size > 0:
-        if args.diverse_replay_buffer:
-            replay_buffer = NormBasedDiversePrioritizedReplayBuffer(
-                env,
-                capacity=args.replay_buffer_size,
-                cutoff_distance=args.cutoff_distance,
-                p_norm_distance=args.p_norm_distance,
-            )
-        else:
-            replay_buffer = ReplayBuffer(
-                env,
-                capacity=args.replay_buffer_size,
-                prioritized=False,
-            )
-
-    # Move the gflownet to the GPU.
-    gflownet = gflownet.to(device_str)
-
-    # 3. Create the optimizer
-    non_logz_params = [
-        v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
-    ]
-    if "logZ" in dict(gflownet.named_parameters()):
-        logz_params = [dict(gflownet.named_parameters())["logZ"]]
-    else:
-        logz_params = []
-
-    params = [
-        {"params": non_logz_params, "lr": args.lr},
-        # Log Z gets dedicated learning rate (typically higher).
-        {"params": logz_params, "lr": args.lr_Z},
-    ]
-    optimizer = torch.optim.Adam(params)
-
-    states_visited = 0
-    n_iterations = ceil(args.n_trajectories / args.batch_size)
-    per_node_batch_size = args.batch_size // world_size
-    validation_info = {"l1_dist": float("inf")}
-    discovered_modes = set()
-    is_on_policy = args.replay_buffer_size == 0
-    print("+ n_iterations = ", n_iterations)
-    print("+ per_node_batch_size = ", per_node_batch_size)
-
-    # Timing.
-    total_sample_time, total_to_train_samples_time = 0, 0
-    total_loss_time, total_loss_backward_time = 0, 0
-    total_opt_time, total_rest_time = 0, 0
-    total_average_time = 0
-    total_bar0_time, total_bar1_time = 0, 0
-    time_start = time.time()
-
-    if args.profile:
-        keep_active = args.trajectories_to_profile // args.batch_size
-        prof = profile(
-            schedule=torch.profiler.schedule(
-                wait=1, warmup=1, active=keep_active, repeat=1
-            ),
-            activities=[ProfilerActivity.CPU],
-            record_shapes=True,
-            with_stack=True,
-        )
-        prof.start()
-
-    if args.distributed:
-        # Create and start error handler.
-        def cleanup():
-            print(f"Process {rank}: Cleaning up...")
-
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ["WORLD_SIZE"])
-        handler = DistributedErrorHandler(
-            device_str,
-            rank,
-            world_size,
-            cleanup_callback=cleanup,
-        )
-        # handler.start()  # TODO: remove this?
-
-    if args.distributed:
-        world_size = torch.distributed.get_world_size()
-
-    for iteration in trange(n_iterations):
-
-        # Keep track of visited terminating states on this node.
-        visited_terminating_states = env.states_from_batch_shape((0,))
-
-        iteration_start = time.time()
-
-        # Time sample_trajectories method.
-        sample_start = time.time()
-
-        # Use the optional profiler.
-        if args.profile:
-            prof.step()
-            if iteration >= 1 + 1 + keep_active:
-                break
-
-        trajectories = gflownet.sample_trajectories(
-            env,
-            n=args.batch_size,
-            save_logprobs=is_on_policy,
-            save_estimator_outputs=False,
-        )
-        sample_end = time.time()
-        sample_time = sample_end - sample_start
-        total_sample_time += sample_time
-
-        # Time to_training_samples method.
-        to_train_samples_start = time.time()
-        training_samples = gflownet.to_training_samples(trajectories)
-
-        if replay_buffer is not None:
-            with torch.no_grad():
-                replay_buffer.add(training_samples)
-                training_objects = replay_buffer.sample(
-                    n_trajectories=per_node_batch_size
-                )
-        else:
-            training_objects = training_samples
-        to_train_samples_end = time.time()
-        to_train_samples_time = to_train_samples_end - to_train_samples_start
-        total_to_train_samples_time += to_train_samples_time
-
-        optimizer.zero_grad()
-
-        # Time the loss computation
-        loss_start = time.time()
-
-        loss = gflownet.loss(
-            env,
-            training_objects,  # type: ignore
-            reduction="sum" if args.distributed or args.loss == "SubTB" else "mean",
-        )
-
-        # Normalize the loss by the local batch size if distributed
-        if args.distributed:
-            loss = loss / (per_node_batch_size)
-        loss_end = time.time()
-        loss_time = loss_end - loss_start
-        total_loss_time += loss_time
-
-        bar0_start = time.time()
-        if args.distributed:
-            dist.barrier()
-        bar0_end = time.time()
-        total_bar0_time += bar0_end - bar0_start
-
-        # Time backpropagation computation.
-        loss_backward_start = time.time()
-        loss.backward()
-        loss_backward_end = time.time()
-        loss_backward_time = loss_backward_end - loss_backward_start
-        total_loss_backward_time += loss_backward_time
-
-        # Time optimizer step.
-        opt_start = time.time()
-        optimizer.step()
-        opt_end = time.time()
-        opt_time = opt_end - opt_start
-        total_opt_time += opt_time
-
-        bar1_start = time.time()
-        if args.distributed:
-            dist.barrier()
-        bar1_end = time.time()
-        total_bar1_time += bar1_end - bar1_start
-
-        average_start = time.time()
-        if args.distributed and (iteration % args.average_every == 0):
-            print("before averaging model, iteration = ", iteration)
-            average_models(gflownet)
-            print("after averaging model, iteration = ", iteration)
-        average_end = time.time()
-        average_time = average_end - average_start
-        total_average_time += average_time
-
-        # Keep track of trajectories / states.
-        last_states = trajectories.last_states
-        last_states = cast(DiscreteStates, last_states)
-        visited_terminating_states.extend(last_states)
-        states_visited += len(trajectories)
-
-        # Calculate how long this iteration took.
-        iteration_time = time.time() - iteration_start
-        rest_time = iteration_time - sum(
-            [
-                sample_time,
-                to_train_samples_time,
-                loss_time,
-                loss_backward_time,
-                opt_time,
-                average_time,
-            ]
-        )
-
-        log_this_iter = (
-            iteration % args.validation_interval == 0
-        ) or iteration == n_iterations - 1
-
-        print(
-            "before distributed -- orig_shape={}".format(
-                visited_terminating_states.tensor.shape
-            )
-        )
-        if args.distributed and log_this_iter:
-            try:
-                # Gather all visited terminating states from all nodes.
-                all_visited_terminating_states = gather_distributed_data(
-                    visited_terminating_states.tensor
-                )
-            except Exception as e:
-                print("Process {}: Caught error: {}".format(my_rank, e))
-                # handler.signal_error()
-                sys.exit(1)
-        else:
-            # Just use the visited terminating states from this node.
-            all_visited_terminating_states = visited_terminating_states.tensor
-
-        if my_rank == 0:
-            assert all_visited_terminating_states is not None
-            print(
-                "after distributed -- gathered_shape={}, orig_shape={}".format(
-                    all_visited_terminating_states.shape,
-                    visited_terminating_states.tensor.shape,
-                )
-            )
-
-        # If we are on the master node, calculate the validation metrics.
-        if my_rank == 0:
-            to_log = {
-                "loss": loss.item(),
-                "states_visited": states_visited,
-                "sample_time": sample_time,
-                "to_train_samples_time": to_train_samples_time,
-                "loss_time": loss_time,
-                "loss_backward_time": loss_backward_time,
-                "opt_time": opt_time,
-                "average_time": average_time,
-                "rest_time": rest_time,
-            }
-
-            if use_wandb:
-                wandb.log(to_log, step=iteration)
-
-            if log_this_iter:
-                assert all_visited_terminating_states is not None
-                print("logging thjs iteration!")
-                visited_terminating_states = env.States(all_visited_terminating_states)
-                assert isinstance(visited_terminating_states, DiscreteStates)
-                validation_info, discovered_modes = validate_hypergrid(
-                    env,
-                    gflownet,
-                    args.validation_samples,
-                    visited_terminating_states,
-                    discovered_modes,
-                )
-
-                if use_wandb:
-                    wandb.log(validation_info, step=iteration)
-
-                to_log.update(validation_info)
-                tqdm.write(f"{iteration}: {to_log}")
-
-    time_end = time.time()
-    total_time = time_end - time_start
-    total_rest_time = total_time - sum(
-        [
-            total_sample_time,
-            total_to_train_samples_time,
-            total_loss_time,
-            total_loss_backward_time,
-            total_opt_time,
-            total_average_time,
+    indices = env.all_indices()
+    for index in indices[1:]:
+        parents = [
+            tuple(list(index[:i]) + [index[i] - 1] + list(index[i + 1 :]) + [i])
+            for i in range(len(index))
+            if index[i] > 0
         ]
-    )
+        parents_tensor = torch.tensor(parents)
+        parents_indices = parents_tensor[:, :-1].long()  # All but last column for u
+        action_indices = parents_tensor[:, -1].long()  # Last column for probabilities
 
-    if args.distributed:
-        dist.barrier()
+        # Compute u values for parent states.
+        parent_u_values = []
+        for p in parents_indices:
+            grid_idx = torch.all(grid.tensor == p, 1)  # index along flattened grid.
+            parent_u_values.append(u[grid_idx])
+            # parent_u_values.append(u[tuple(p.tolist())])
+            # # torch.all(grid.tensor == p, 1)
+        parent_u_values = torch.stack(parent_u_values)
+        # parent_u_values = torch.stack([u[tuple(p.tolist())] for p in parents_indices])
 
-    if my_rank == 0:
-        to_log = {
-            "total_sample_time": total_sample_time,
-            "total_to_train_samples_time": total_to_train_samples_time,
-            "total_loss_time": total_loss_time,
-            "total_actor_barrier_time": total_bar0_time,
-            "total_loss_backward_time": total_loss_backward_time,
-            "total_opt_time": total_opt_time,
-            "total_average_time": total_average_time,
-            "total_learner_barrier_time": total_bar1_time,
-            "total_rest_time": total_rest_time,
-            "total_time": total_time,
-        }
+        # Compute probabilities for parent transitions.
+        parent_probs = []
+        for p, a in zip(parents_indices, action_indices):
+            grid_idx = torch.all(grid.tensor == p, 1)  # index along flattened grid.
+            parent_probs.append(probabilities[grid_idx, a])
+        parent_probs = torch.stack(parent_probs)
 
-        print("+ Final timing.")
-        for k, v in to_log.items():
-            print("  {}: {:.6f}".format(k, v))
+        #     [
+        #         probabilities[tuple(list(p.tolist()) + [a.item()])]
+        #         for p, a in zip(parents_indices, action_indices)
+        #     ]
+        # )
 
-    if args.profile:
-        prof.stop()
-        print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=20))
-        prof.export_chrome_trace("trace.json")
-    try:
-        return validation_info["l1_dist"]
-    except KeyError:
-        print(validation_info.keys())
-        return validation_info["n_modes_found"]
+        u[indices.index(index)] = torch.sum(parent_u_values * parent_probs)
+
+    return (u * probabilities[..., -1]).detach().cpu()
 
 
 def validate_hypergrid(
@@ -868,7 +457,6 @@ def validate_hypergrid(
     discovered_modes.update(modes_found)
     # torch.tensor(list(modes_found)).shape ==[batch_size, 2]
     validation_info["n_modes_found"] = len(discovered_modes)
-    print(len(discovered_modes))
 
     # Old way of counting modes -- potentially buggy - to be removed.
     # # Add the mode counting metric.
@@ -887,6 +475,633 @@ def validate_hypergrid(
     return validation_info, discovered_modes
 
 
+def set_up_fm_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id):
+    """Returns a FM GFlowNet."""
+    # We need a LogEdgeFlowEstimator.
+    if args.tabular:
+        module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
+    else:
+        module = MLP(
+            input_dim=preprocessor.output_dim,
+            output_dim=env.n_actions,
+            hidden_dim=args.hidden_dim,
+            n_hidden_layers=args.n_hidden,
+        )
+
+    if args.distributed:
+        module = DDP(module, process_group=agent_group_list[my_agent_group_id])
+
+    estimator = DiscretePolicyEstimator(
+        module=module,
+        n_actions=env.n_actions,
+        preprocessor=preprocessor,
+    )
+    return FMGFlowNet(estimator)
+
+
+def set_up_pb_pf_estimators(
+    args, env, preprocessor, agent_group_list, my_agent_group_id
+):
+    """Returns a pair of estimators for the forward and backward policies."""
+    if args.tabular:
+        pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
+        if not args.uniform_pb:
+            pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
+    else:
+        pf_module = MLP(
+            input_dim=preprocessor.output_dim,
+            output_dim=env.n_actions,
+            hidden_dim=args.hidden_dim,
+            n_hidden_layers=args.n_hidden,
+        )
+        if not args.uniform_pb:
+            pb_module = MLP(
+                input_dim=preprocessor.output_dim,
+                output_dim=env.n_actions - 1,
+                hidden_dim=args.hidden_dim,
+                n_hidden_layers=args.n_hidden,
+                trunk=(
+                    pf_module.trunk
+                    if args.tied and isinstance(pf_module.trunk, torch.nn.Module)
+                    else None
+                ),
+            )
+    if args.uniform_pb:
+        pb_module = DiscreteUniform(env.n_actions - 1)
+
+    for v in ["pf_module", "pb_module"]:
+        assert locals()[v] is not None, f"{v} is None, Args: {args}"
+
+    if args.distributed:
+        pf_module = DDP(pf_module, process_group=agent_group_list[my_agent_group_id])
+        pb_module = DDP(pb_module, process_group=agent_group_list[my_agent_group_id])
+
+    assert pf_module is not None
+    assert pb_module is not None
+    pf_estimator = DiscretePolicyEstimator(
+        module=pf_module,
+        n_actions=env.n_actions,
+        preprocessor=preprocessor,
+    )
+    pb_estimator = DiscretePolicyEstimator(
+        module=pb_module,
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=preprocessor,
+    )
+
+    return (pf_estimator, pb_estimator)
+
+
+def set_up_logF_estimator(
+    args, env, preprocessor, agent_group_list, my_agent_group_id, pf_module
+):
+    """Returns a LogStateFlowEstimator."""
+    if args.tabular:
+        module = Tabular(n_states=env.n_states, output_dim=1)
+    else:
+        module = MLP(
+            input_dim=preprocessor.output_dim,
+            output_dim=1,
+            hidden_dim=args.hidden_dim,
+            n_hidden_layers=args.n_hidden,
+            trunk=(
+                pf_module.trunk
+                if args.tied and isinstance(pf_module.trunk, torch.nn.Module)
+                else None
+            ),
+        )
+
+    if args.distributed:
+        module = DDP(module, process_group=agent_group_list[my_agent_group_id])
+
+    return ScalarEstimator(module=module, preprocessor=preprocessor)
+
+
+def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id):
+    """Returns a GFlowNet complete with the required estimators."""
+    #    Depending on the loss, we may need several estimators:
+    #       one (forward only) for FM loss,
+    #       two (forward and backward) or other losses
+    #       three (forward, backward, logZ/logF) estimators for DB, TB.
+
+    if args.loss == "FM":
+        return set_up_fm_gflownet(
+            args,
+            env,
+            preprocessor,
+            agent_group_list,
+            my_agent_group_id,
+        )
+    else:
+        # We need a DiscretePFEstimator and a DiscretePBEstimator.
+        pf_estimator, pb_estimator = set_up_pb_pf_estimators(
+            args,
+            env,
+            preprocessor,
+            agent_group_list,
+            my_agent_group_id,
+        )
+        assert pf_estimator is not None
+        assert pb_estimator is not None
+
+        if args.loss == "ModifiedDB":
+            return ModifiedDBGFlowNet(pf_estimator, pb_estimator)
+
+        elif args.loss == "TB":
+            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
+
+        elif args.loss == "ZVar":
+            return LogPartitionVarianceGFlowNet(pf=pf_estimator, pb=pb_estimator)
+
+        elif args.loss in ("DB", "SubTB"):
+            # We also need a LogStateFlowEstimator.
+            logF_estimator = set_up_logF_estimator(
+                args,
+                env,
+                preprocessor,
+                agent_group_list,
+                my_agent_group_id,
+                pf_estimator,
+            )
+
+            if args.loss == "DB":
+                return DBGFlowNet(
+                    pf=pf_estimator,
+                    pb=pb_estimator,
+                    logF=logF_estimator,
+                )
+            elif args.loss == "SubTB":
+                return SubTBGFlowNet(
+                    pf=pf_estimator,
+                    pb=pb_estimator,
+                    logF=logF_estimator,
+                    weighting=args.subTB_weighting,
+                    lamda=args.subTB_lambda,
+                )
+
+
+def plot_results(env, gflownet, l1_distances, validation_steps):
+    # Create figure with 3 subplots with proper spacing
+    fig = plt.figure(figsize=(15, 5))
+    gs = GridSpec(1, 4, width_ratios=[1, 1, 0.1, 1.2])
+
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1])
+    cax = fig.add_subplot(gs[2])  # Colorbar axis
+    ax3 = fig.add_subplot(gs[3])
+
+    # Get distributions and find global min/max for consistent color scaling
+    true_dist = env.true_dist_pmf.reshape(args.height, args.height).cpu().numpy()
+    learned_dist = get_exact_P_T(env, gflownet).reshape(args.height, args.height).numpy()
+
+    # Ensure consistent orientation by transposing
+    true_dist = true_dist.T
+    learned_dist = learned_dist.T
+
+    vmin = min(true_dist.min(), learned_dist.min())
+    vmax = max(true_dist.max(), learned_dist.max())
+
+    # True reward distribution
+    im1 = ax1.imshow(
+        true_dist,
+        cmap="viridis",
+        interpolation="none",
+        origin="lower",
+        vmin=vmin,
+        vmax=vmax,
+    )
+    ax1.set_title("True Distribution")
+
+    # Learned reward distribution
+    _ = ax2.imshow(
+        learned_dist,
+        cmap="viridis",
+        interpolation="none",
+        origin="lower",
+        vmin=vmin,
+        vmax=vmax,
+    )
+    ax2.set_title("Learned Distribution")
+
+    # Add colorbar in its own axis
+    plt.colorbar(im1, cax=cax)
+
+    # L1 distances over time
+    states_per_validation = args.batch_size * args.validation_interval
+    validation_states = [i * states_per_validation for i in range(len(l1_distances))]
+    ax3.plot(validation_states, l1_distances)
+    ax3.set_xlabel("States Visited")
+    ax3.set_ylabel("L1 Distance")
+    ax3.set_title("L1 Distance Evolution")
+    ax3.set_yscale("log")  # Set log scale for y-axis
+
+    plt.tight_layout()
+    plt.show()
+    plt.close()
+
+
+def main(args):  # noqa: C901
+    """Trains a GFlowNet on the Hypergrid Environment, potentially distributed."""
+    seed = args.seed if args.seed != 0 else DEFAULT_SEED
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
+
+    # Check if plotting is allowed.
+    if args.plot:
+        if args.wandb_project:
+            raise ValueError("plot argument is incompatible with wandb_project")
+        if args.ndim != 2:
+            raise ValueError("plotting is only supported for 2D environments")
+
+    # Initialize WandB.
+    use_wandb = args.wandb_project != ""
+    if use_wandb:
+
+        if args.wandb_local:
+            os.environ["WANDB_MODE"] = "offline"
+
+        import wandb
+
+        wandb.init(project=args.wandb_project)
+        wandb.config.update(args)
+
+    # Initialize distributed compute.
+    if args.distributed:
+        my_rank, my_size, agent_group_size, agent_group_list = (
+            initialize_distributed_compute()
+        )
+        my_rank = dist.get_rank()
+        world_size = torch.distributed.get_world_size()
+        my_agent_group_id = my_rank // agent_group_size
+        print(f"Running with DDP on rank {my_rank}/{world_size}.")
+        print(
+            f"agent_group_size, my_agent_group_id = {agent_group_size, my_agent_group_id}"
+        )
+    else:
+        world_size = 1  # Single machine.
+        my_rank = 0  # Single machine.
+
+    set_seed(seed + my_rank)
+
+    # Initialize the environment.
+    env = HyperGrid(
+        args.ndim,
+        args.height,
+        args.R0,
+        args.R1,
+        args.R2,
+        device=device,
+        calculate_partition=args.calculate_partition,
+        calculate_all_states=args.calculate_all_states,
+    )
+
+    # Initialize the preprocessor.
+    preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
+
+    # 2. Create the gflownets: need pairs of modules and estimators.
+    gflownet = set_up_gflownet(
+        args, env, preprocessor, agent_group_list, my_agent_group_id
+    )
+    assert gflownet is not None, f"gflownet is None, Args: {args}"
+
+    # Create replay buffer if needed
+    replay_buffer = None
+
+    if args.replay_buffer_size > 0:
+        if args.diverse_replay_buffer:
+            replay_buffer = NormBasedDiversePrioritizedReplayBuffer(
+                env,
+                capacity=args.replay_buffer_size,
+                cutoff_distance=args.cutoff_distance,
+                p_norm_distance=args.p_norm_distance,
+            )
+        else:
+            replay_buffer = ReplayBuffer(
+                env,
+                capacity=args.replay_buffer_size,
+                prioritized=False,
+            )
+
+    gflownet = gflownet.to(device)
+
+    # 3. Create the optimizer
+    non_logz_params = [
+        v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
+    ]
+    if "logZ" in dict(gflownet.named_parameters()):
+        logz_params = [dict(gflownet.named_parameters())["logZ"]]
+    else:
+        logz_params = []
+
+    params = [
+        {"params": non_logz_params, "lr": args.lr},
+        # Log Z gets dedicated learning rate (typically higher).
+        {"params": logz_params, "lr": args.lr_Z},
+    ]
+    optimizer = torch.optim.Adam(params)
+
+    states_visited = 0
+    n_iterations = ceil(args.n_trajectories / args.batch_size)
+    per_node_batch_size = args.batch_size // world_size
+    validation_info = {"l1_dist": float("inf")}
+    discovered_modes = set()
+    is_on_policy = args.replay_buffer_size == 0
+
+    print("+ n_iterations = ", n_iterations)
+    print("+ per_node_batch_size = ", per_node_batch_size)
+
+    # Initialize the profiler.
+    if args.profile:
+        keep_active = args.trajectories_to_profile // args.batch_size
+        prof = profile(
+            schedule=torch.profiler.schedule(
+                wait=1, warmup=1, active=keep_active, repeat=1
+            ),
+            activities=[ProfilerActivity.CPU],
+            record_shapes=True,
+            with_stack=True,
+        )
+        prof.start()
+
+    if args.distributed:
+        # Create and start error handler.
+        def cleanup():
+            print(f"Process {rank}: Cleaning up...")
+
+        rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
+
+        # TODO: remove this or fix it - it's buggy.
+        # handler = DistributedErrorHandler(
+        #     device_str,
+        #     rank,
+        #     world_size,
+        #     cleanup_callback=cleanup,
+        # )
+        # handler.start()
+
+    # Initialize some variables before the training loop.
+    timing = {}
+    for n in [
+        "total_sample_time",
+        "total_to_train_samples_time",
+        "total_loss_time",
+        "total_loss_backward_time",
+        "total_opt_time",
+        "total_rest_time",
+        "total_average_time",
+        "total_bar0_time",
+        "total_bar1_time",
+    ]:
+        timing[n] = 0
+
+    time_start = time.time()
+    l1_distances, validation_steps = [], []
+
+    # Training loop.
+    pbar = trange(n_iterations)
+    for iteration in pbar:
+
+        # Keep track of visited terminating states on this node.
+        visited_terminating_states = env.states_from_batch_shape((0,))
+
+        iteration_start = time.time()
+
+        # Time sample_trajectories method.
+        sample_start = time.time()
+
+        # Use the optional profiler.
+        if args.profile:
+            prof.step()
+            if iteration >= 1 + 1 + keep_active:
+                break
+
+        trajectories = gflownet.sample_trajectories(
+            env,
+            n=args.batch_size,
+            save_logprobs=is_on_policy,
+            save_estimator_outputs=False,
+        )
+        sample_time = time.time() - sample_start
+        timing["total_sample_time"] += sample_time
+
+        # Time to_training_samples method.
+        to_train_samples_start = time.time()
+        training_samples = gflownet.to_training_samples(trajectories)
+
+        if replay_buffer is not None:
+            with torch.no_grad():
+                replay_buffer.add(training_samples)
+                training_objects = replay_buffer.sample(
+                    n_trajectories=per_node_batch_size
+                )
+        else:
+            training_objects = training_samples
+
+        to_train_samples_time = time.time() - to_train_samples_start
+        timing["total_to_train_samples_time"] += to_train_samples_time
+
+        optimizer.zero_grad()
+
+        # Time the loss computation.
+        loss_start = time.time()
+        gflownet = cast(GFlowNet, gflownet)
+        loss = gflownet.loss(
+            env,
+            training_objects,  # type: ignore
+            recalculate_all_logprobs=args.replay_buffer_size > 0,
+            reduction="sum" if args.distributed or args.loss == "SubTB" else "mean",  # type: ignore
+        )
+
+        # Normalize the loss by the local batch size if distributed.
+        if args.distributed:
+            loss = loss / (per_node_batch_size)
+        loss_time = time.time() - loss_start
+        timing["total_loss_time"] += time.time() - loss_start
+
+        bar0_start = time.time()
+        if args.distributed:
+            dist.barrier()
+        bar0_time = time.time() - bar0_start
+        timing["total_bar0_time"] += bar0_time
+
+        # Time backpropagation computation.
+        loss_backward_start = time.time()
+        loss.backward()
+        loss_backward_time = time.time() - loss_backward_start
+        timing["total_loss_backward_time"] += loss_backward_time
+
+        # Time optimizer step.
+        opt_start = time.time()
+        optimizer.step()
+        opt_time = time.time() - opt_start
+        timing["total_opt_time"] += opt_time
+
+        bar1_start = time.time()
+        if args.distributed:
+            dist.barrier()
+        timing["total_bar1_time"] += time.time() - bar1_start
+
+        average_start = time.time()
+        if args.distributed and (iteration % args.average_every == 0):
+            print("before averaging model, iteration = ", iteration)
+            average_models(gflownet)
+            print("after averaging model, iteration = ", iteration)
+
+        average_time = time.time() - average_start
+        timing["total_average_time"] += average_time
+
+        # Keep track of trajectories / states.
+        last_states = cast(DiscreteStates, trajectories.terminating_states)
+        visited_terminating_states.extend(last_states)
+        states_visited += len(trajectories)
+
+        # Calculate how long this iteration took.
+        iteration_time = time.time() - iteration_start
+        rest_time = iteration_time - sum(
+            [
+                timing["total_sample_time"],
+                timing["total_to_train_samples_time"],
+                timing["total_loss_time"],
+                timing["total_loss_backward_time"],
+                timing["total_opt_time"],
+                timing["total_average_time"],
+            ]
+        )
+
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
+
+        states_visited += len(trajectories)
+
+        to_log = {"loss": loss.item(), "states_visited": states_visited}
+        if use_wandb:
+            wandb.log(to_log, step=iteration)
+
+        if iteration % args.validation_interval == 0:
+            validation_info, visited_terminating_states = validate(
+                env,
+                gflownet,
+                args.validation_samples,
+                visited_terminating_states,
+            )
+
+            if use_wandb:
+                wandb.log(validation_info, step=iteration)
+
+            to_log.update(validation_info)
+
+            if "l1_dist" in validation_info:
+                l1_distances.append(validation_info["l1_dist"])
+            validation_steps.append(iteration)  # Store corresponding step
+
+        log_this_iter = (
+            iteration % args.validation_interval == 0
+        ) or iteration == n_iterations - 1
+
+        if args.distributed and log_this_iter:
+            try:
+                assert visited_terminating_states is not None
+                # Gather all visited terminating states from all nodes.
+                all_visited_terminating_states = gather_distributed_data(
+                    visited_terminating_states.tensor
+                )
+            except Exception as e:
+                print("Process {}: Caught error: {}".format(my_rank, e))
+                # handler.signal_error()
+                sys.exit(1)
+        else:
+            # Just use the visited terminating states from this node.
+            assert visited_terminating_states is not None
+            all_visited_terminating_states = visited_terminating_states.tensor
+
+        if my_rank == 0:
+            assert all_visited_terminating_states is not None
+
+        # If we are on the master node, calculate the validation metrics.
+        if my_rank == 0:
+            to_log = {
+                "loss": loss.item(),
+                "states_visited": states_visited,
+                "sample_time": sample_time,
+                "to_train_samples_time": to_train_samples_time,
+                "loss_time": loss_time,
+                "loss_backward_time": loss_backward_time,
+                "opt_time": opt_time,
+                "average_time": average_time,
+                "rest_time": rest_time,
+            }
+
+            if use_wandb:
+                wandb.log(to_log, step=iteration)
+
+            if log_this_iter:
+                assert all_visited_terminating_states is not None
+                visited_terminating_states = env.States(all_visited_terminating_states)
+                assert isinstance(visited_terminating_states, DiscreteStates)
+                validation_info, discovered_modes = validate_hypergrid(
+                    env,
+                    gflownet,
+                    args.validation_samples,
+                    visited_terminating_states,
+                    discovered_modes,
+                )
+
+                if use_wandb:
+                    wandb.log(validation_info, step=iteration)
+
+                to_log.update(validation_info)
+                pbar.set_postfix(
+                    loss=to_log["loss"],
+                    l1_dist=to_log[
+                        "l1_dist"
+                    ],  # only logged if calculate_partition is True.
+                    n_modes_found=to_log["n_modes_found"],
+                )
+
+    timing["total_time"] = time.time() - time_start
+    timing["total_rest_time"] = timing["total_time"] - sum(
+        [
+            timing["total_sample_time"],
+            timing["total_to_train_samples_time"],
+            timing["total_loss_time"],
+            timing["total_loss_backward_time"],
+            timing["total_opt_time"],
+            timing["total_average_time"],
+        ]
+    )
+
+    if args.distributed:
+        dist.barrier()
+
+    # Log the final timing results.
+    if my_rank == 0:
+        to_log = {k: v for k, v in timing.items()}
+        print("+ Final timing.")
+        for k, v in to_log.items():
+            print("  {}: {:.6f}".format(k, v))
+
+    # Stop the profiler if it's active.
+    if args.profile:
+        prof.stop()
+        print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=20))
+        prof.export_chrome_trace("trace.json")
+
+    # Plot the results if requested & possible.
+    if args.plot:
+        # Create figure with 3 subplots with proper spacing.
+        plot_results(env, gflownet, l1_distances, validation_steps)
+
+    try:
+        return validation_info["l1_dist"]
+    except KeyError:
+        print(validation_info.keys())
+        return validation_info["n_modes_found"]
+
+
 if __name__ == "__main__":
     parser = ArgumentParser()
 
@@ -902,26 +1117,24 @@ if __name__ == "__main__":
         action="store_true",
         help="Prevent CUDA usage",
     )
-    parser.add_argument(
-        "--distributed",
-        action="store_true",
-        help="Initalizes distributed computation (torch.distributed)",
-    )
 
-    # Environment settings.
+    # Distributed settings.
+    parser.add_argument(
+        "--average_every",
+        type=int,
+        default=20,
+        help="Number of epochs after which we average model across all agents",
+    )
     parser.add_argument(
         "--num_agent_groups",
         type=int,
         default=1,
         help="Number of agents learning together",
     )
-
-    # Environment settings.
     parser.add_argument(
-        "--average_every",
-        type=int,
-        default=20,
-        help="Number of epochs after which we average model across all agents",
+        "--distributed",
+        action="store_true",
+        help="Initializes distributed computation (torch.distributed)",
     )
 
     # Environment settings.
@@ -956,7 +1169,7 @@ if __name__ == "__main__":
         help="Environment's R2",
     )
 
-    # Misc settings.
+    # Training settings.
     parser.add_argument(
         "--batch_size",
         type=int,
@@ -974,8 +1187,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Use a diverse replay buffer",
     )
-
-    # Loss settings.
     parser.add_argument(
         "--loss",
         type=str,
@@ -991,6 +1202,28 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--subTB_lambda", type=float, default=0.9, help="Lambda parameter for SubTB"
+    )
+
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-3,
+        help="Learning rate for the estimators' modules",
+    )
+    parser.add_argument(
+        "--lr_Z",
+        type=float,
+        default=0.1,
+        help="Specific learning rate for Z (only used for TB loss)",
+    )
+    parser.add_argument(
+        "--n_trajectories",
+        type=int,
+        default=int(1e6),
+        help=(
+            "Total budget of trajectories to train on. "
+            "Training iterations = n_trajectories // batch_size"
+        ),
     )
 
     # Policy architecture.
@@ -1025,29 +1258,6 @@ if __name__ == "__main__":
         ),
     )
 
-    # Training settings.
-    parser.add_argument(
-        "--lr",
-        type=float,
-        default=1e-3,
-        help="Learning rate for the estimators' modules",
-    )
-    parser.add_argument(
-        "--lr_Z",
-        type=float,
-        default=0.1,
-        help="Specific learning rate for Z (only used for TB loss)",
-    )
-    parser.add_argument(
-        "--n_trajectories",
-        type=int,
-        default=int(1e6),
-        help=(
-            "Total budget of trajectories to train on. "
-            "Training iterations = n_trajectories // batch_size"
-        ),
-    )
-
     # Validation settings.
     parser.add_argument(
         "--validation_interval",
@@ -1066,7 +1276,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="torchgfn_multinode_hypergrid",
+        default="",
         help="Name of the wandb project. If empty, don't use wandb",
     )
     parser.add_argument(
@@ -1079,11 +1289,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--calculate_all_states",
         action="store_true",
+        default=True,
         help="Enumerates all states.",
     )
     parser.add_argument(
         "--calculate_partition",
         action="store_true",
+        default=True,
         help="Calculates the true partition function.",
     )
     parser.add_argument(
@@ -1099,6 +1311,13 @@ if __name__ == "__main__":
             "Number of trajectories to profile using the Pytorch Profiler. "
             "Preferably, a multiple of batch size."
         ),
+    )
+
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        default=True,
+        help="Generate plots of true and learned distributions (only works for 2D, incompatible with wandb)",
     )
 
     args = parser.parse_args()

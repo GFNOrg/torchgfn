@@ -1,8 +1,9 @@
+import warnings
 from typing import Any
 
 import torch
 
-from gfn.containers import StatePairs, Trajectories
+from gfn.containers import StatesContainer, Trajectories
 from gfn.env import DiscreteEnv
 from gfn.gflownet.base import GFlowNet, loss_reduce
 from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
@@ -13,8 +14,10 @@ from gfn.utils.handlers import (
     no_conditioning_exception_handler,
 )
 
+warnings.filterwarnings("once", message="recalculate_all_logprobs is not used for FM.*")
 
-class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
+
+class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
     r"""Flow Matching GFlowNet, with edge flow estimator.
 
     $\mathcal{O}_{edge}$ is the set of functions from the non-terminating edges
@@ -82,6 +85,8 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
             AssertionError: If the batch shape is not linear.
             AssertionError: If any state is at $s_0$.
         """
+        if len(states) == 0:
+            return torch.tensor(0.0, device=states.device)
 
         assert len(states.batch_shape) == 1
         assert not torch.any(states.is_initial_state)
@@ -164,6 +169,8 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
+        if len(terminating_states) == 0:
+            return torch.tensor(0.0, device=terminating_states.device)
         del env  # Unused
         if conditioning is not None:
             with has_conditioning_exception_handler("logF", self.logF):
@@ -181,33 +188,37 @@ class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
     def loss(
         self,
         env: DiscreteEnv,
-        state_pairs: StatePairs[DiscreteStates],
+        states_container: StatesContainer[DiscreteStates],
+        recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.
 
         Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
-        StatePairs container that holds both the internal states of the trajectories
+        StatesContainer container that holds both the internal states of the trajectories
         (i.e. non-terminal states) and the terminal states."""
-        assert isinstance(state_pairs.intermediary_states, DiscreteStates)
-        assert isinstance(state_pairs.terminating_states, DiscreteStates)
+        assert isinstance(states_container.intermediary_states, DiscreteStates)
+        assert isinstance(states_container.terminating_states, DiscreteStates)
+        if recalculate_all_logprobs:
+            warnings.warn(
+                "recalculate_all_logprobs is not used for FM. " "Ignoring the argument."
+            )
+        del recalculate_all_logprobs  # Unused for FM.
         fm_loss = self.flow_matching_loss(
             env,
-            state_pairs.intermediary_states,
-            state_pairs.intermediary_conditioning,
-            reduction=reduction,
+            states_container.intermediary_states,
+            states_container.intermediary_conditioning,
         )
         rm_loss = self.reward_matching_loss(
             env,
-            state_pairs.terminating_states,
-            state_pairs.terminating_conditioning,
-            state_pairs.log_rewards,
-            reduction=reduction,
+            states_container.terminating_states,
+            states_container.terminating_conditioning,
+            states_container.terminating_log_rewards,
         )
         return fm_loss + self.alpha * rm_loss
 
     def to_training_samples(
         self, trajectories: Trajectories
-    ) -> StatePairs[DiscreteStates]:
+    ) -> StatesContainer[DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        return trajectories.to_state_pairs()
+        return trajectories.to_states_container()

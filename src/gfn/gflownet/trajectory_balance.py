@@ -12,7 +12,10 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.modules import GFNModule, ScalarEstimator
-from gfn.utils.handlers import is_callable_exception_handler
+from gfn.utils.handlers import (
+    is_callable_exception_handler,
+    warn_about_recalculating_logprobs,
+)
 
 
 class TBGFlowNet(TrajectoryBasedGFlowNet):
@@ -52,7 +55,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        recalculate_all_logprobs: bool = False,
+        recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Trajectory balance loss.
@@ -64,6 +67,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             ValueError: if the loss is NaN.
         """
         del env  # unused
+        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         _, _, scores = self.get_trajectories_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
@@ -109,7 +113,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        recalculate_all_logprobs: bool = False,
+        recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Log Partition Variance loss.
@@ -118,6 +122,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         [ROBUST SCHEDULING WITH GFLOWNETS](https://arxiv.org/abs/2302.05446))
         """
         del env  # unused
+        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         _, _, scores = self.get_trajectories_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )

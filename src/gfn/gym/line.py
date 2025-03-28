@@ -18,7 +18,7 @@ class Line(Env):
         init_value: float,
         n_sd: float = 4.5,
         n_steps_per_trajectory: int = 5,
-        device_str: Literal["cpu", "cuda"] = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
         assert len(mus) == len(sigmas)
         self.mus = torch.tensor(mus)
@@ -27,14 +27,19 @@ class Line(Env):
         self.n_steps_per_trajectory = n_steps_per_trajectory
         self.mixture = [Normal(m, s) for m, s in zip(self.mus, self.sigmas)]
 
+        if isinstance(device, str):
+            device = torch.device(device)
+
+        self.device = device
+
         self.init_value = init_value  # Used in s0.
         lb = torch.min(self.mus) - self.n_sd * torch.max(self.sigmas)
         ub = torch.max(self.mus) + self.n_sd * torch.max(self.sigmas)
         assert lb < self.init_value < ub
 
-        s0 = torch.tensor([self.init_value, 0.0], device=torch.device(device_str))
-        dummy_action = torch.tensor([float("inf")], device=torch.device(device_str))
-        exit_action = torch.tensor([-float("inf")], device=torch.device(device_str))
+        s0 = torch.tensor([self.init_value, 0.0], device=self.device)
+        dummy_action = torch.tensor([float("inf")], device=self.device)
+        exit_action = torch.tensor([-float("inf")], device=self.device)
         super().__init__(
             s0=s0,
             state_shape=(2,),  # [x_pos, step_counter].
@@ -104,5 +109,5 @@ class Line(Env):
     @property
     def log_partition(self) -> torch.Tensor:
         """Log Partition log of the number of gaussians."""
-        partition = len(self.mus).log().item()
-        return torch.tensor(partition)
+        n_modes = torch.tensor(len(self.mus), device=self.device)
+        return n_modes.log()

@@ -19,7 +19,7 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
         R0=0.1,
         R1=0.5,
         R2=2.0,
-        device_str="cpu",
+        device="cpu",
     )
     States = environment.make_states_class()
 

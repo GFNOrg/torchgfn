@@ -6,10 +6,17 @@ import torch
 from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator, GFNModule
+from gfn.preprocessors import (
+    EnumPreprocessor,
+    IdentityPreprocessor,
+    KHotPreprocessor,
+    OneHotPreprocessor,
+)
 from gfn.samplers import LocalSearchSampler, Sampler
-from gfn.utils.modules import MLP
+from gfn.utils.modules import MLP, GraphEdgeActionGNN
 from gfn.utils.prob_calculations import get_trajectory_pfs
 from gfn.utils.training import states_actions_tns_to_traj
 
@@ -22,7 +29,7 @@ def trajectory_sampling_with_return(
     n_components: int,
 ) -> Tuple[Trajectories, Trajectories, GFNModule, GFNModule]:
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=2, height=8, preprocessor_name=preprocessor_name)
+        env = HyperGrid(ndim=2, height=8)
     elif env_name == "DiscreteEBM":
         if preprocessor_name != "Identity" or delta != 0.1:
             pytest.skip("Useless tests")
@@ -55,23 +62,32 @@ def trajectory_sampling_with_return(
     else:
         raise ValueError("Unknown environment name")
 
+    if preprocessor_name == "KHot":
+        preprocessor = KHotPreprocessor(env.height, env.ndim)
+    elif preprocessor_name == "OneHot":
+        preprocessor = OneHotPreprocessor(
+            n_states=env.n_states, get_states_indices=env.get_states_indices
+        )
+    elif preprocessor_name == "Identity":
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+    elif preprocessor_name == "Enum":
+        preprocessor = EnumPreprocessor(env.get_states_indices)
+
     if env_name != "Box":
         assert not isinstance(env, Box)
-        pf_module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
-        pb_module = MLP(
-            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
-        )
+        pf_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
+        pb_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
             is_backward=False,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
         pb_estimator = DiscretePolicyEstimator(
             module=pb_module,
             n_actions=env.n_actions,
             is_backward=True,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
 
     sampler = Sampler(estimator=pf_estimator)
@@ -208,26 +224,28 @@ def test_local_search_for_loop_equivalence(env_name):
     is_discrete = env_name in ["HyperGrid", "DiscreteEBM"]
     if is_discrete:
         if env_name == "HyperGrid":
-            env = HyperGrid(ndim=2, height=5, preprocessor_name="KHot")
+            env = HyperGrid(ndim=2, height=5)
+            preprocessor = KHotPreprocessor(env.height, env.ndim)
         elif env_name == "DiscreteEBM":
             env = DiscreteEBM(ndim=5)
+            preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
         else:
             raise ValueError("Unknown environment name")
 
         # Build pf & pb
-        pf_module = MLP(env.preprocessor.output_dim, env.n_actions)
-        pb_module = MLP(env.preprocessor.output_dim, env.n_actions - 1)
+        pf_module = MLP(preprocessor.output_dim, env.n_actions)
+        pb_module = MLP(preprocessor.output_dim, env.n_actions - 1)
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
             is_backward=False,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
         pb_estimator = DiscretePolicyEstimator(
             module=pb_module,
             n_actions=env.n_actions,
             is_backward=True,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
 
     else:
@@ -296,7 +314,9 @@ def test_to_transition(env_name: str):
         bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
         # evaluate with pf_estimator
         backward_traj_pfs = get_trajectory_pfs(
-            pf=pf_estimator, trajectories=bwd_trajectories
+            pf=pf_estimator,
+            trajectories=bwd_trajectories,
+            recalculate_all_logprobs=False,
         )
         bwd_trajectories.log_probs = backward_traj_pfs
         _ = bwd_trajectories.to_transitions()
@@ -333,7 +353,7 @@ def test_replay_buffer(
             # Filter out trajectories that are at max length
             training_objects = trajectories
             training_objects_2 = trajectories[
-                trajectories.when_is_done != trajectories.max_length
+                trajectories.terminating_idx != trajectories.max_length
             ]
             replay_buffer.add(training_objects_2)
 
@@ -369,63 +389,59 @@ def test_states_actions_tns_to_traj():
     replay_buffer.add(trajs)
 
 
-# ------ GRAPH TESTS ------
+def test_graph_building_on_edges():
+    env = GraphBuildingOnEdges(
+        n_nodes=10,
+        directed=False,
+        device=torch.device("cpu"),
+        state_evaluator=lambda s: torch.zeros(s.batch_shape),
+    )
+    # Test forward sampler.
+    estimator_fwd = GraphEdgeActionGNN(
+        n_nodes=env.n_nodes,
+        directed=env.is_directed,
+        num_conv_layers=1,
+        embedding_dim=128,
+        is_backward=False,
+    )
+    module_fwd = DiscretePolicyEstimator(
+        module=estimator_fwd,
+        n_actions=env.n_actions,
+        is_backward=False,
+        preprocessor=IdentityPreprocessor(output_dim=1),
+    )
+    module_fwd.to(device=env.device)
 
-# TODO: This test fails randomly. it should not rely on a custom GraphActionNet.
-# def test_graph_building():
-#     feature_dim = 8
-#     env = GraphBuilding(
-#         feature_dim=feature_dim, state_evaluator=lambda s: torch.zeros(s.batch_shape)
-#     )
+    sampler = Sampler(estimator=module_fwd)
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=7,
+        save_logprobs=True,
+        save_estimator_outputs=False,
+    )
+    assert len(trajectories) == 7
 
-#     module = GraphActionNet(feature_dim)
-#     pf_estimator = GraphActionPolicyEstimator(module=module)
+    # Test backward sampler.
+    estimator_bwd = GraphEdgeActionGNN(
+        n_nodes=env.n_nodes,
+        directed=env.is_directed,
+        num_conv_layers=1,
+        embedding_dim=128,
+        is_backward=True,
+    )
+    module_bwd = DiscretePolicyEstimator(
+        module=estimator_bwd,
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=IdentityPreprocessor(output_dim=1),
+    )
+    module_bwd.to(device=env.device)
 
-#     sampler = Sampler(estimator=pf_estimator)
-#     trajectories = sampler.sample_trajectories(
-#         env,
-#         n=7,
-#         save_logprobs=True,
-#         save_estimator_outputs=False,
-#     )
-
-#     assert len(trajectories) == 7
-
-
-# class GraphActionNet(nn.Module):
-#     def __init__(self, feature_dim: int):
-#         super().__init__()
-#         self.feature_dim = feature_dim
-#         self.action_type_conv = GCNConv(feature_dim, 3)
-#         self.features_conv = GCNConv(feature_dim, feature_dim)
-#         self.edge_index_conv = GCNConv(feature_dim, 8)
-
-#     def forward(self, states: GraphStates) -> TensorDict:
-#         node_feature = states.tensor.x.reshape(-1, self.feature_dim)
-
-#         if states.tensor.x.shape[0] == 0:
-#             action_type = torch.zeros((len(states), 3))
-#             action_type[:, GraphActionType.ADD_NODE] = 1
-#             features = torch.zeros((len(states), self.feature_dim))
-#         else:
-#             action_type = self.action_type_conv(node_feature, states.tensor.edge_index)
-#             action_type = action_type.reshape(
-#                 len(states), -1, action_type.shape[-1]
-#             ).mean(dim=1)
-#             features = self.features_conv(node_feature, states.tensor.edge_index)
-#             features = features.reshape(len(states), -1, features.shape[-1]).mean(dim=1)
-
-#         edge_index = self.edge_index_conv(node_feature, states.tensor.edge_index)
-#         edge_index = torch.einsum("nf,mf->nm", edge_index, edge_index)
-#         edge_index = edge_index[None].repeat(len(states), 1, 1)
-
-#         return TensorDict(
-#             {
-#                 "action_type": action_type,
-#                 "features": features,
-#                 "edge_index": edge_index.reshape(
-#                     states.batch_shape + edge_index.shape[1:]
-#                 ),
-#             },
-#             batch_size=states.batch_shape,
-#         )
+    sampler = Sampler(estimator=module_bwd)
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=8,
+        save_logprobs=True,
+        save_estimator_outputs=False,
+    )
+    assert len(trajectories) == 8
