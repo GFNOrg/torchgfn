@@ -1,11 +1,12 @@
 import math
+import warnings
 from typing import List, Literal, Tuple
 
 import torch
 
 from gfn.containers import Trajectories
 from gfn.env import Env
-from gfn.gflownet.base import TrajectoryBasedGFlowNet
+from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -514,6 +515,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         env: Env,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         # Get all scores and masks from the trajectories.
@@ -524,8 +526,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         all_scores = torch.cat(scores, 0)
 
         if self.weighting == "DB":
-            # Longer trajectories contribute more to the loss
-            return scores[0][~flattening_masks[0]].pow(2).mean()
+            # Longer trajectories contribute more to the loss.
+            # TODO: is this correct with `loss_reduce`?
+            final_scores = scores[0][~flattening_masks[0]].pow(2)
+            return loss_reduce(final_scores, reduction)
 
         elif self.weighting == "geometric":
             # The position i of the following 1D tensor represents the number of sub-
@@ -552,6 +556,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
 
+        # TODO: we need to know what reductions are valid for each weighting method.
         weight_functions = {
             "equal_within": self.get_equal_within_contributions,
             "equal": self.get_equal_contributions,
@@ -568,5 +573,13 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         assert (
             flat_contributions.sum() - 1.0
         ).abs() < 1e-5, f"{flat_contributions.sum()}"
-        losses = flat_contributions * all_scores[~flattening_mask].pow(2)
-        return losses.sum()
+        final_scores = flat_contributions * all_scores[~flattening_mask].pow(2)
+
+        # TODO: default was sum, should we allow mean?
+        if reduction == "mean":
+            warnings.warn(
+                "Mean reduction is not supported for SubTBGFlowNet with geometric weighting, using sum instead."
+            )
+            reduction = "sum"
+
+        return loss_reduce(final_scores, reduction)

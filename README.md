@@ -43,6 +43,53 @@ cd torchgfn
 pip install -e ".[all]"
 ```
 
+## Installing `oneccl` bindings for multinode training.
+
+You can determine the version of `pytorch` installed using the command
+
+```
+echo $(python -c $"import torch; print(torch.__version__)")
+```
+
+after which you can install the closest matching version from [this table](https://github.com/intel/torch-ccl?tab=readme-ov-file#install-prebuilt-wheel) (otherwise, you must build from source). You can see the specific wheels [here](https://pytorch-extension.intel.com/release-whl/stable/cpu/us/oneccl-bind-pt/).
+
+```
+pip install oneccl_bind_pt=={pytorch_version} -f https://pytorch-extension.intel.com/release-whl/stable/cpu/us/
+```
+
+for example, if your pytorch version is `2.0.1+cu117`, you would run `python -m pip install oneccl_bind_pt==2.0.0+cpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/cpu/us/`.
+
+
+***TODO: Rough instructions - to integrate into docs (just moving them here from email) -
+```
+# Create & activate conda env.
+conda create -n gfn python=3.10
+conda activate gfn
+
+# Install the package.
+pip install .[scripts]  # Includes `tqdm`.
+
+# We will use torch-ccl library for multinode implementation. The latest torch-ccl is compatible with PyTorch 2.2.0. The above command installs the latest torch. So, we need to uninstall it and install latest torch. If you agree that we can make it the default version, I can update it in pyproject.toml.
+pip uninstall torch -y
+conda install pytorch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 cpuonly -c pytorch
+
+# Install torch-ccl
+git clone https://github.com/intel/torch-ccl.git torch-ccl && cd torch-ccl
+git checkout tags/v2.2.0+cpu
+git submodule sync
+git submodule update --init --recursive
+
+# TODO: this didn't work for me -- I had to use a prebuilt wheel.
+# ONECCL_BINDINGS_FOR_PYTORCH_BACKEND=cpu python setup.py install
+python -m pip install oneccl_bind_pt --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/cpu/us/
+
+# Installation is complete now.
+
+You can submit a job by modifying one of the slurm scripts and submitting. For example, ddp_gfn.small.8.slurm. Please note that you need to modify the conda env name in the slurm script to the name of your env. Also, change the paths and dimensions if needed. I submit the script using the following command:
+
+sbatch ddp_gfn.small.4.mila.slurm
+```
+
 
 ## About this repo
 

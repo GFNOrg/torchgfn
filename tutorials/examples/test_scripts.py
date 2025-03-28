@@ -1,7 +1,8 @@
-# This file includes tests for the three examples in the tutorials folder.
-# The tests ensure that after a certain number of iterations, the final L1 distance
-# or JSD between the learned distribution and the target distribution is below a
-# certain threshold.
+"""Includes tests for some examples in the tutorials folder.
+The tests ensure that after a certain number of iterations, the final L1
+distance or JSD between the learned distribution and the target distribution is
+below a certain threshold.
+"""
 
 from argparse import Namespace
 from dataclasses import asdict, dataclass
@@ -33,7 +34,7 @@ class CommonArgs:
     p_norm_distance: float = 2.0
     replay_buffer_prioritized: bool = False
     replay_buffer_size: int = 0
-    seed: int = 1  # We fix the seed for reproducibility
+    seed: int = 1  # We fix the seed for reproducibility.
     subTB_lambda: float = 0.9
     subTB_weighting: str = "geometric_within"
     tabular: bool = False
@@ -53,6 +54,10 @@ class DiscreteEBMArgs(CommonArgs):
 @dataclass
 class HypergridArgs(CommonArgs):
     back_ratio: float = 0.5
+    calculate_all_states: bool = True
+    calculate_partition: bool = True
+    distributed: bool = False
+    diverse_replay_buffer: bool = False
     epsilon: float = 0.1
     height: int = 8
     loss: str = "TB"
@@ -62,6 +67,7 @@ class HypergridArgs(CommonArgs):
     n_threads: int = 1
     ndim: int = 2
     plot: bool = False
+    profile: bool = False
     R0: float = 0.1
     R1: float = 0.5
     R2: float = 2.0
@@ -135,6 +141,8 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
         replay_buffer_size=replay_buffer_size,
     )
     final_l1_dist = train_hypergrid_main(args)
+    assert final_l1_dist is not None
+
     if ndim == 2 and height == 8:
         if replay_buffer_size == 0:
             assert np.isclose(
@@ -200,15 +208,15 @@ def test_hypergrid_fm(ndim: int, replay_buffer_size: int):
 
 
 @pytest.mark.parametrize("loss", ["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"])
-@pytest.mark.parametrize("replay_buffer_size", [0, 10, 100])
+@pytest.mark.parametrize("replay_buffer_size", [0, 100, 10000])
 def test_hypergrid_losses_and_replay_buffer(loss: str, replay_buffer_size: int):
-    n_trajectories = 1000
     args = HypergridArgs(
         ndim=2,
         height=8,
-        n_trajectories=n_trajectories,
+        n_trajectories=1000,
         loss=loss,
         replay_buffer_size=replay_buffer_size,
+        diverse_replay_buffer=False,
     )
     final_l1_dist = train_hypergrid_main(args)
     if loss == "TB" and replay_buffer_size == 0:
@@ -218,8 +226,7 @@ def test_hypergrid_losses_and_replay_buffer(loss: str, replay_buffer_size: int):
 @pytest.mark.parametrize("ndim", [2, 4])
 @pytest.mark.parametrize("alpha", [0.1, 1.0])
 def test_discreteebm(ndim: int, alpha: float):
-    n_trajectories = 16000
-    args = DiscreteEBMArgs(ndim=ndim, alpha=alpha, n_trajectories=n_trajectories)
+    args = DiscreteEBMArgs(ndim=ndim, alpha=alpha, n_trajectories=16000)
     final_l1_dist = train_discreteebm_main(args)
     if ndim == 2 and alpha == 0.1:
         assert np.isclose(
