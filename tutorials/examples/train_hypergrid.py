@@ -742,6 +742,7 @@ def main(args):  # noqa: C901
     else:
         world_size = 1  # Single machine.
         my_rank = 0  # Single machine.
+        agent_group_list = my_agent_group_id = None
 
     set_seed(seed + my_rank)
 
