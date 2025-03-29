@@ -528,7 +528,7 @@ class DiscreteStates(States, ABC):
             self.forward_masks = torch.zeros(shape).bool()
 
     @classmethod
-    def stack(cls, states: List[DiscreteStates]) -> DiscreteStates:
+    def stack(cls, states: Sequence[DiscreteStates]) -> DiscreteStates:
         """Stacks a list of DiscreteStates objects along a new dimension (0)."""
         out = super().stack(states)
         assert isinstance(out, DiscreteStates)

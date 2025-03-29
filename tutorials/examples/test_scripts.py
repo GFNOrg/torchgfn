@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import pytest
 
+from .train_bit_sequences import main as train_bitsequence_main
 from .train_box import main as train_box_main
 from .train_discreteebm import main as train_discreteebm_main
 from .train_graph_ring import main as train_graph_ring_main
@@ -104,6 +105,14 @@ class BoxArgs(CommonArgs):
     n_components: int = 2
     scheduler_milestone: int = 2500
     use_local_search: bool = False
+
+
+@dataclass
+class BitSequenceArgs(CommonArgs):
+    n_iterations: int = 1000
+    word_size: int = 1
+    seq_size: int = 4
+    n_modes: int = 2
 
 
 @dataclass
@@ -328,3 +337,22 @@ def test_line_smoke():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_line_main(namespace_args)  # Just ensure it runs without errors.
+
+
+@pytest.mark.parametrize("seq_size", [4, 8])
+@pytest.mark.parametrize("n_modes", [2, 4])
+def test_bitsequence(seq_size: int, n_modes: int):
+    n_iterations = 1000
+    args = BitSequenceArgs(
+        seq_size=seq_size, n_modes=n_modes, n_iterations=n_iterations, seed=0
+    )
+    final_l1_dist = train_bitsequence_main(args)
+    assert final_l1_dist is not None
+    if seq_size == 4 and n_modes == 2:
+        assert final_l1_dist <= 1e-4
+    if seq_size == 4 and n_modes == 4:
+        assert final_l1_dist <= 1e-4
+    if seq_size == 8 and n_modes == 2:
+        assert final_l1_dist <= 1e-3
+    if seq_size == 8 and n_modes == 4:
+        assert final_l1_dist <= 1e-3
