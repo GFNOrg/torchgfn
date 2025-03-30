@@ -7,7 +7,6 @@ import torch
 from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import DiscreteEnv
-from gfn.preprocessors import Preprocessor
 from gfn.states import DiscreteStates
 
 # This environment is the torchgfn implmentation of the bit sequences task presented in :Malkin, Nikolay & Jain, Moksh & Bengio, Emmanuel & Sun, Chen & Bengio, Yoshua. (2022).
@@ -171,7 +170,6 @@ class BitSequence(DiscreteEnv):
     Append-only BitSequence is a custom environment that inherits from DiscreteEnv. It represents a sequence of binary words and
     provides methods to manipulate and evaluate these sequences.
     The possible actions are adding binary words at once. Each binary word is represented as its decimal representation in both states and actions.
-    If the user wants to use the binary representation during a GFlowNet training, he can create a custom preprocessor.
 
     Attributes:
         word_size (int): The size of each binary word in the sequence.
@@ -180,7 +178,6 @@ class BitSequence(DiscreteEnv):
         temperature (float): The temperature parameter for reward calculation.
         H (Optional[torch.Tensor]): A tensor used to create the modes. (For more details, please see make_modes_set method)
         device_str (str): The device to run the computations on ("cpu" or "cuda").
-        preprocessor (Optional[Preprocessor]): An optional preprocessor for the environment.
         words_per_seq (int): The number of words per sequence.
         modes (torch.Tensor): The set of modes written as binary.
         s0 (torch.Tensor): The initial state tensor.
@@ -200,7 +197,6 @@ class BitSequence(DiscreteEnv):
         temperature: float = 1.0,
         H: Optional[torch.Tensor] = None,
         device_str: str = "cpu",
-        preprocessor: Optional[Preprocessor] = None,
         seed: int = 0,
     ):
         assert seq_size % word_size == 0, "word_size must divide seq_size."
@@ -227,7 +223,6 @@ class BitSequence(DiscreteEnv):
             dummy_action,
             exit_action,
             sf,
-            preprocessor,
         )
         self.H = H
         self.modes = self.make_modes_set(seed)  # set of modes written as binary
@@ -697,7 +692,6 @@ class BitSequencePlus(BitSequence):
         temperature: float = 1.0,
         H: Optional[torch.Tensor] = None,
         device_str: str = "cpu",
-        preprocessor: Optional[Preprocessor] = None,
         seed: int = 0,
     ):
         assert seq_size % word_size == 0, "word_size must divide seq_size."
@@ -725,7 +719,6 @@ class BitSequencePlus(BitSequence):
             dummy_action,
             exit_action,
             sf,
-            preprocessor,
         )
         self.H = H
         self.modes = self.make_modes_set(seed)  # set of modes written as binary

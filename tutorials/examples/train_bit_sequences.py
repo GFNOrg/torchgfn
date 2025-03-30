@@ -56,7 +56,6 @@ def main(args):
         estimator = DiscretePolicyEstimator(
             module=logF,
             n_actions=env.n_actions,
-            preprocessor=env.preprocessor,
         )
         gflownet = FMGFlowNet(estimator)
         optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
@@ -76,7 +75,7 @@ def main(args):
             pb, n_actions=env.n_actions, is_backward=True
         )
 
-        logF_estimator = ScalarEstimator(module=logF, preprocessor=env.preprocessor)
+        logF_estimator = ScalarEstimator(module=logF)
         gflownet = DBGFlowNet(
             pf=pf_estimator,
             pb=pb_estimator,
