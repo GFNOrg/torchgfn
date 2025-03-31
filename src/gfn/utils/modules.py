@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
-
+from tensordict import TensorDict
 
 class MLP(nn.Module):
     """Implements a basic MLP."""
@@ -307,7 +307,7 @@ class GraphEdgeActionGNN(nn.Module):
     def edges_dim(self) -> int:
         return self._edges_dim
 
-    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+    def forward(self, states_tensor: GeometricBatch) -> TensorDict:
         node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
         batch_size = int(math.prod(states_tensor.batch_shape))
 
@@ -383,9 +383,16 @@ class GraphEdgeActionGNN(nn.Module):
         )
 
         if self.is_backward:
-            return edge_actions
+            action_type = torch.zeros(*states_tensor["batch_shape"], 3)
+            action_type[..., 1] = 1
         else:
-            return torch.cat([edge_actions, exit_action], dim=-1)
+            action_type = torch.cat([torch.zeros_like(exit_action), 1 - exit_action, exit_action], dim=-1)
+        return TensorDict({
+            "action_type": action_type,
+            "edge_class": torch.zeros(*states_tensor["batch_shape"], 1),
+            "node_class": torch.zeros(*states_tensor["batch_shape"], 0),
+            "edge_index": edge_actions,
+        }, batch_size=states_tensor["batch_shape"])
 
 
 class GraphEdgeActionMLP(nn.Module):
@@ -488,7 +495,7 @@ class GraphEdgeActionMLP(nn.Module):
     def edges_dim(self) -> int:
         return self._edges_dim
 
-    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+    def forward(self, states_tensor: GeometricBatch) -> TensorDict:
         """Forward pass to compute action logits from graph states.
 
         Process:
@@ -526,6 +533,14 @@ class GraphEdgeActionMLP(nn.Module):
         exit_action = self.exit_mlp(embedding)
 
         if self.is_backward:
-            return edge_actions
+            action_type = torch.zeros(*states_tensor["batch_shape"], 3)
+            action_type[..., 1] = 1
         else:
-            return torch.cat([edge_actions, exit_action], dim=-1)
+            action_type = torch.cat([torch.zeros_like(exit_action), 1 - exit_action, exit_action], dim=-1)
+        return TensorDict({
+            "action_type": action_type,
+            "edge_class": torch.zeros(*states_tensor["batch_shape"], 1),
+            "node_class": torch.zeros(*states_tensor["batch_shape"], 0),
+            "edge_index": edge_actions,
+        }, batch_size=states_tensor["batch_shape"])
+

@@ -375,10 +375,10 @@ class GraphBuildingOnEdges(GraphBuilding):
         self.n_nodes = n_nodes
         if directed:
             # all off-diagonal edges + exit.
-            self.n_actions = (n_nodes**2 - n_nodes) + 1
+            self.n_actions = (n_nodes**2 - n_nodes)
         else:
             # bottom triangle + exit.
-            self.n_actions = ((n_nodes**2 - n_nodes) // 2) + 1
+            self.n_actions = ((n_nodes**2 - n_nodes) // 2)
         super().__init__(
             feature_dim=n_nodes,
             state_evaluator=state_evaluator,
@@ -387,21 +387,13 @@ class GraphBuildingOnEdges(GraphBuilding):
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
         self.is_directed = directed
 
-    def make_actions_class(self) -> type[Actions]:
-        env = self
+    def make_actions_class(self) -> type[GraphActions]:
 
-        class EdgeActions(Actions):
-            """Actions for building graphs with a fixed number of nodes.
+        class EdgeActions(GraphActions):
+            """Actions for building graphs with a fixed number of nodes."""
 
-            Actions are represented as discrete indices where:
-            - 0 to n_actions-2: Adding an edge between specific nodes
-            - n_actions-1: EXIT action to terminate the trajectory
-            - n_actions: DUMMY action (used for padding)
-            """
-
-            action_shape = (1,)
-            dummy_action = torch.tensor([env.n_actions]).to(env.device)
-            exit_action = torch.tensor([env.n_actions - 1]).to(env.device)
+            node_features_dim = 0
+            edge_features_dim = 1
 
         return EdgeActions
 
@@ -452,7 +444,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                 self.n_actions = env.n_actions
 
             @property
-            def forward_masks(self):
+            def forward_masks(self) -> TensorDict:
                 """Compute masks for valid forward actions from the current state.
 
                 A forward action is valid if:
@@ -463,14 +455,10 @@ class GraphBuildingOnEdges(GraphBuilding):
                 For undirected graphs, only the upper triangular portion of the
                     adjacency matrix is used.
 
-                The last action is always the EXIT action, which is always valid.
-
                 Returns:
-                    Tensor: Boolean mask of shape [batch_size, n_actions] where
-                        True indicates valid actions
+                    TensorDict: Boolean mask where True indicates valid actions
                 """
-                # Allow all actions.
-                forward_masks = torch.ones(
+                edge_masks = torch.ones(
                     len(self), self.n_actions, dtype=torch.bool, device=self.device
                 )
 
@@ -494,22 +482,27 @@ class GraphBuildingOnEdges(GraphBuilding):
                         if len(edge_idx.shape) == 2:
                             edge_idx = edge_idx.sum(0).bool()
 
-                        # Adds an unmasked exit action.
-                        edge_idx = torch.cat(
-                            (edge_idx, torch.tensor([False], device=self.device))
-                        )
-                        forward_masks[i, edge_idx] = (
-                            False  # Disallow the addition of this edge.
-                        )
+                        edge_masks[i, edge_idx] = False
 
-                return forward_masks.view(*self.batch_shape, self.n_actions)
+                action_type = torch.zeros(*self.batch_shape, 3, dtype=torch.bool, device=self.device)
+                action_type[:, 1] = torch.any(edge_masks, dim=-1)
+                action_type[:, 2] = True
+                return TensorDict(
+                    {
+                        "action_type": action_type,
+                        "node_class": torch.ones(*self.batch_shape, 0, dtype=torch.int, device=self.device),
+                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.int, device=self.device),
+                        "edge_index": edge_masks,
+                    },
+                    batch_size=self.batch_shape,
+                )
 
             @forward_masks.setter
             def forward_masks(self, value: torch.Tensor):
                 pass  # fwd masks is computed on the fly
 
             @property
-            def backward_masks(self):
+            def backward_masks(self) -> TensorDict:
                 """Compute masks for valid backward actions from the current state.
 
                 A backward action is valid if:
@@ -521,10 +514,10 @@ class GraphBuildingOnEdges(GraphBuilding):
                 The EXIT action is not included in backward masks.
 
                 Returns:
-                    Tensor: Boolean mask of shape [batch_size, n_actions-1] where True indicates valid actions
+                    TensorDict: Boolean mask where True indicates valid actions
                 """
                 # Disallow all actions.
-                backward_masks = torch.zeros(
+                edge_masks = torch.zeros(
                     len(self), self.n_actions - 1, dtype=torch.bool, device=self.device
                 )
 
@@ -549,9 +542,19 @@ class GraphBuildingOnEdges(GraphBuilding):
                             edge_idx = edge_idx.sum(0).bool()
 
                         # Allow the removal of this edge.
-                        backward_masks[i, edge_idx] = True
+                        edge_masks[i, edge_idx] = True
 
-                return backward_masks.view(*self.batch_shape, self.n_actions - 1)
+                action_type = torch.zeros(*self.batch_shape, 3, dtype=torch.bool, device=self.device)
+                action_type[:, 1] = torch.any(edge_masks, dim=-1)
+                return TensorDict(
+                    {
+                        "action_type": action_type,
+                        "node_class": torch.ones(*self.batch_shape, 0, dtype=torch.int, device=self.device),
+                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.int, device=self.device),
+                        "edge_index": edge_masks,
+                    },
+                    batch_size=self.batch_shape,
+                )
 
             @backward_masks.setter
             def backward_masks(self, value: torch.Tensor):

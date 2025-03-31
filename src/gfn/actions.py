@@ -187,49 +187,30 @@ class GraphActions(Actions):
     - EXIT: Terminate the trajectory
 
     Attributes:
-        features_dim: Dimension of node/edge features
-        tensor: TensorDict containing:
-            - action_type: Type of action (GraphActionType)
-            - features: Features for nodes/edges
-            - edge_index: Source/target nodes for edges
+        num_node_classes: Number of node classes
+        num_edge_classes: Number of edge classes
     """
 
-    features_dim: ClassVar[int]
+    num_node_classes: ClassVar[int]
+    num_edge_classes: ClassVar[int]
 
     def __init__(self, tensor: TensorDict):
         """Initializes a GraphAction object.
 
         Args:
-            action: a GraphActionType indicating the type of action.
-            features: a tensor of shape (batch_shape, feature_shape) representing the features
-                of the nodes or of the edges, depending on the action type. In case of EXIT
-                action, this can be None.
-            edge_index: an tensor of shape (batch_shape, 2) representing the edge to add.
-                This must defined if and only if the action type is GraphActionType.AddEdge.
+            tensor: A TensorDict containing the action type, node features, edge features, and edge index.
         """
         self._batch_shape = tensor["action_type"].shape
 
-        features = tensor.get("features", None)
-        if features is None:
-            assert torch.all(
-                torch.logical_or(
-                    tensor["action_type"] == GraphActionType.EXIT,
-                    tensor["action_type"] == GraphActionType.DUMMY,
-                )
-            )
-            features = torch.zeros((*self.batch_shape, self.features_dim))
-        edge_index = tensor.get("edge_index", None)
-        if edge_index is None:
-            assert torch.all(tensor["action_type"] != GraphActionType.ADD_EDGE)
-            edge_index = torch.zeros((*self.batch_shape, 2), dtype=torch.long)
-
-        self.tensor = TensorDict(
-            {
-                "action_type": tensor["action_type"],
-                "features": features,
-                "edge_index": edge_index,
-            },
-            batch_size=self.batch_shape,
+        self._tensor_dict = tensor
+        self.tensor = torch.cat(
+            [
+                tensor["action_type"].unsqueeze(-1),
+                tensor["node_class"].unsqueeze(-1),
+                tensor["edge_class"].unsqueeze(-1),
+                tensor["edge_index"],
+            ],
+            dim=-1
         )
 
     @property
@@ -248,42 +229,48 @@ class GraphActions(Actions):
         Returns: boolean tensor of shape batch_shape indicating whether the actions are equal.
         """
         action_compare = torch.all(
-            self.tensor["action_type"] == other.tensor["action_type"]
+            self._tensor_dict["action_type"] == other._tensor_dict["action_type"]
         )
-        exit_compare = (
-            torch.all(self.tensor["features"] == other.tensor["features"])
-            | action_compare
-            == GraphActionType.EXIT
+        node_compare = (
+            torch.all(self._tensor_dict["node_class"] == other._tensor_dict["node_class"])
         )
-        edge_compare = (action_compare != GraphActionType.ADD_EDGE) | (
-            torch.all(self.tensor["edge_index"] == other.tensor["edge_index"])
+        edge_compare = (
+            torch.all(self._tensor_dict["edge_class"] == other._tensor_dict["edge_class"])
+            & torch.all(self._tensor_dict["edge_index"] == other._tensor_dict["edge_index"])
         )
-        return action_compare & exit_compare & edge_compare
+        return action_compare & (
+            node_compare | (self._tensor_dict["action_type"] != GraphActionType.ADD_NODE)
+        ) & (edge_compare | (self._tensor_dict["action_type"] != GraphActionType.ADD_EDGE))
 
     @property
     def is_exit(self) -> torch.Tensor:
         """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are exit actions."""
-        return self.action_type == GraphActionType.EXIT
+        return self._tensor_dict["action_type"] == GraphActionType.EXIT
 
     @property
     def is_dummy(self) -> torch.Tensor:
         """Returns a boolean tensor of shape `batch_shape` indicating whether the actions are dummy actions."""
-        return self.action_type == GraphActionType.DUMMY
+        return self._tensor_dict["action_type"] == GraphActionType.DUMMY
 
     @property
     def action_type(self) -> torch.Tensor:
         """Returns the action type tensor."""
-        return self.tensor["action_type"]
+        return self._tensor_dict["action_type"]
 
     @property
-    def features(self) -> torch.Tensor:
-        """Returns the features tensor."""
-        return self.tensor["features"]
+    def node_class(self) -> torch.Tensor:
+        """Returns the node class tensor."""
+        return self._tensor_dict["node_class"]
 
     @property
     def edge_index(self) -> torch.Tensor:
         """Returns the edge index tensor."""
-        return self.tensor["edge_index"]
+        return self._tensor_dict["edge_index"]
+
+    @property
+    def edge_class(self) -> torch.Tensor:
+        """Returns the edge class tensor."""
+        return self._tensor_dict["edge_class"]
 
     @classmethod
     def make_dummy_actions(cls, batch_shape: tuple[int]) -> GraphActions:
@@ -291,9 +278,10 @@ class GraphActions(Actions):
         return cls(
             TensorDict(
                 {
-                    "action_type": torch.full(
-                        batch_shape, fill_value=GraphActionType.DUMMY
-                    ),
+                    "action_type": torch.full(batch_shape, fill_value=GraphActionType.DUMMY),
+                    "node_class": torch.zeros(batch_shape),
+                    "edge_class": torch.zeros(batch_shape),
+                    "edge_index": torch.zeros(*batch_shape, 2),
                 },
                 batch_size=batch_shape,
             )
@@ -305,9 +293,10 @@ class GraphActions(Actions):
         return cls(
             TensorDict(
                 {
-                    "action_type": torch.full(
-                        batch_shape, fill_value=GraphActionType.EXIT
-                    ),
+                    "action_type": torch.full(batch_shape, fill_value=GraphActionType.EXIT),
+                    "node_class": torch.zeros(batch_shape),
+                    "edge_class": torch.zeros(batch_shape),
+                    "edge_index": torch.zeros(*batch_shape, 2),
                 },
                 batch_size=batch_shape,
             )

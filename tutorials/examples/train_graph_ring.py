@@ -21,7 +21,7 @@ from matplotlib import patches
 from gfn.containers import ReplayBuffer
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
-from gfn.modules import DiscretePolicyEstimator
+from gfn.modules import GraphPolicyEstimator
 from gfn.preprocessors import IdentityPreprocessor
 from gfn.states import GraphStates
 from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
@@ -312,14 +312,12 @@ def main(args: Namespace):
         module_pf = GraphEdgeActionMLP(env.n_nodes, args.directed)
         module_pb = GraphEdgeActionMLP(env.n_nodes, args.directed, is_backward=True)
 
-    pf = DiscretePolicyEstimator(
+    pf = GraphPolicyEstimator(
         module=module_pf,
-        n_actions=env.n_actions,
         preprocessor=IdentityPreprocessor(output_dim=1),
     )
-    pb = DiscretePolicyEstimator(
+    pb = GraphPolicyEstimator(
         module=module_pb,
-        n_actions=env.n_actions,
         preprocessor=IdentityPreprocessor(output_dim=1),
         is_backward=True,
     )
@@ -341,7 +339,7 @@ def main(args: Namespace):
             env,
             n=args.batch_size,
             save_logprobs=True,
-            epsilon=0.2 * (1 - iteration / args.n_iterations),
+            # epsilon=0.2 * (1 - iteration / args.n_iterations),
         )
         training_samples = gflownet.to_training_samples(trajectories)
 

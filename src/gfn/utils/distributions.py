@@ -1,6 +1,5 @@
-from typing import Dict, Literal
-
 import torch
+from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
 
 
@@ -43,71 +42,51 @@ class UnsqueezedCategorical(Categorical):
         return super().log_prob(sample.squeeze(-1))
 
 
-class CompositeDistribution(
-    Distribution
-):  # TODO: may use CompositeDistribution in TensorDict
+class GraphActionDistribution(Distribution):
     """A mixture distribution."""
 
-    def __init__(self, dists: Dict[str, Distribution]):
+    def __init__(self, logits: TensorDict):
         """Initializes the mixture distribution.
 
         Args:
-            dists: A dictionary of distributions.
+            logits: A TensorDict of logits.
         """
         super().__init__()
-        self.dists = dists
 
-    def sample(self, sample_shape=torch.Size()) -> Dict[str, torch.Tensor]:
-        return {k: v.sample(sample_shape) for k, v in self.dists.items()}
+        assert "action_type" in logits
+        assert "edge_class" in logits
+        assert "node_class" in logits
+        assert "edge_index" in logits
 
-    def log_prob(self, sample: Dict[str, torch.Tensor]) -> torch.Tensor | Literal[0]:
-        log_probs = [
-            v.log_prob(sample[k]).reshape(sample[k].shape[0], -1).sum(dim=-1)
-            for k, v in self.dists.items()
-        ]
-        # Note: this returns the sum of the log_probs over all the components
-        # as it is a uniform mixture distribution.
-        return sum(log_probs)
-
-
-class CategoricalIndexes(Categorical):
-    """Samples indexes from a categorical distribution."""
-
-    def __init__(self, probs: torch.Tensor, n_nodes: int):
-        """Initializes the distribution.
+        self.dists = {
+            "action_type": Categorical(logits=logits["action_type"]),
+            "edge_class": Categorical(logits=logits["edge_class"]),
+            "node_class": Categorical(logits=logits["node_class"]),
+            "edge_index": Categorical(logits=logits["edge_index"]),
+        }
+    
+    def sample(self, sample_shape=torch.Size()) -> TensorDict:
+        """Samples from the distribution.
 
         Args:
-            probs: The probabilities of the categorical distribution.
-            n: The number of nodes in the graph.
+            sample_shape: The shape of the sample.
+
+        Returns the sampled actions as a tensor of shape (*sample_shape, *batch_shape, 1).
         """
-        assert probs.shape == (probs.shape[0], n_nodes * n_nodes)
-        self.n_nodes = n_nodes
-        super().__init__(probs)
-
-    def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
-        samples = super().sample(sample_shape)
-        out = torch.stack(
-            [
-                samples // self.n_nodes,
-                samples % self.n_nodes,
-            ],
-            dim=-1,
+        return TensorDict(
+            {
+                key: dist.sample(sample_shape) for key, dist in self.dists.items()
+            },
+            batch_size=sample_shape + self.logits.batch_size,
         )
-        return out
 
-    def log_prob(self, value):
-        value = value[..., 0] * self.n_nodes + value[..., 1]
-        return super().log_prob(value)
+    def log_prob(self, sample: TensorDict) -> torch.Tensor:
+        """Returns the log probabilities of a sample.
 
-
-class CategoricalActionType(Categorical):  # TODO: remove, just to sample 1 action_type
-    def __init__(self, probs: torch.Tensor):
-        self.batch_len = len(probs)
-        super().__init__(probs[0])
-
-    def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
-        samples = super().sample(sample_shape)
-        return samples.repeat(self.batch_len)
-
-    def log_prob(self, value):
-        return super().log_prob(value[0]).repeat(self.batch_len)
+        Args:
+            sample: The sample of for which to compute the log probabilities.
+        """
+        log_prob = torch.zeros(sample.batch_size)
+        for key, dist in self.dists.items():
+            log_prob += dist.log_prob(sample[key])
+        return log_prob
