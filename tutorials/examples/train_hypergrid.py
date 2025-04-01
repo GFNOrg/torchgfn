@@ -1317,7 +1317,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--plot",
         action="store_true",
-        default=True,
         help="Generate plots of true and learned distributions (only works for 2D, incompatible with wandb)",
     )
 
