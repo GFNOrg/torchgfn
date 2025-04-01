@@ -202,13 +202,18 @@ class GraphActions(Actions):
         """
         self._batch_shape = tensor["action_type"].shape
 
+        action_type = tensor["action_type"].reshape(*self.batch_shape, 1)
+        node_class = tensor["node_class"].reshape(*self.batch_shape, 1)
+        edge_class = tensor["edge_class"].reshape(*self.batch_shape, 1)
+        edge_index = tensor["edge_index"].reshape(*self.batch_shape, 1)
+
         self._tensor_dict = tensor
         self.tensor = torch.cat(
             [
-                tensor["action_type"].unsqueeze(-1),
-                tensor["node_class"].unsqueeze(-1),
-                tensor["edge_class"].unsqueeze(-1),
-                tensor["edge_index"],
+                action_type,
+                node_class,
+                edge_class,
+                edge_index,
             ],
             dim=-1
         )
@@ -216,6 +221,18 @@ class GraphActions(Actions):
     @property
     def batch_shape(self) -> tuple[int, ...]:
         return self._batch_shape
+    
+    def __getitem__(self, index: int | slice | tuple | torch.Tensor) -> Actions:
+        actions = self._tensor_dict[index]
+        return self.__class__(actions)
+
+    def __setitem__(
+        self,
+        index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor,
+        actions: Actions,
+    ) -> None:
+        """Set particular actions of the batch."""
+        self.tensor[index] = actions.tensor
 
     def __repr__(self):
         return f"""GraphAction object with {self.batch_shape} actions."""
@@ -279,9 +296,9 @@ class GraphActions(Actions):
             TensorDict(
                 {
                     "action_type": torch.full(batch_shape, fill_value=GraphActionType.DUMMY),
-                    "node_class": torch.zeros(batch_shape),
-                    "edge_class": torch.zeros(batch_shape),
-                    "edge_index": torch.zeros(*batch_shape, 2),
+                    "node_class": torch.zeros(batch_shape, dtype=torch.int),
+                    "edge_class": torch.zeros(batch_shape, dtype=torch.int),
+                    "edge_index": torch.zeros(batch_shape, dtype=torch.int),
                 },
                 batch_size=batch_shape,
             )
@@ -294,9 +311,9 @@ class GraphActions(Actions):
             TensorDict(
                 {
                     "action_type": torch.full(batch_shape, fill_value=GraphActionType.EXIT),
-                    "node_class": torch.zeros(batch_shape),
-                    "edge_class": torch.zeros(batch_shape),
-                    "edge_index": torch.zeros(*batch_shape, 2),
+                    "node_class": torch.zeros(batch_shape, dtype=torch.int),
+                    "edge_class": torch.zeros(batch_shape, dtype=torch.int),
+                    "edge_index": torch.zeros(batch_shape, dtype=torch.int),
                 },
                 batch_size=batch_shape,
             )

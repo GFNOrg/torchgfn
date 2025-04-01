@@ -490,8 +490,8 @@ class GraphBuildingOnEdges(GraphBuilding):
                 return TensorDict(
                     {
                         "action_type": action_type,
-                        "node_class": torch.ones(*self.batch_shape, 0, dtype=torch.int, device=self.device),
-                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.int, device=self.device),
+                        "node_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
+                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
                         "edge_index": edge_masks,
                     },
                     batch_size=self.batch_shape,
@@ -549,8 +549,8 @@ class GraphBuildingOnEdges(GraphBuilding):
                 return TensorDict(
                     {
                         "action_type": action_type,
-                        "node_class": torch.ones(*self.batch_shape, 0, dtype=torch.int, device=self.device),
-                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.int, device=self.device),
+                        "node_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
+                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
                         "edge_index": edge_masks,
                     },
                     batch_size=self.batch_shape,
@@ -572,7 +572,6 @@ class GraphBuildingOnEdges(GraphBuilding):
         Returns:
             New states after applying the actions
         """
-        actions = self.convert_actions(states, actions)
         new_states = super()._step(states, actions)
         assert isinstance(new_states, GraphStates)
         return new_states
@@ -587,55 +586,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         Returns:
             New states after applying the backward actions
         """
-        actions = self.convert_actions(states, actions)
         new_states = super()._backward_step(states, actions)
         assert isinstance(new_states, GraphStates)
         return new_states
 
-    def convert_actions(self, states: GraphStates, actions: Actions) -> GraphActions:
-        """Converts the action from discrete space to graph action space.
-
-        This method maps discrete action indices to specific graph operations:
-        - GraphActionType.ADD_EDGE: Add an edge between specific nodes
-        - GraphActionType.EXIT: Terminate trajectory
-        - GraphActionType.DUMMY: No-op action (for padding)
-
-        Args:
-            states: Current states batch
-            actions: Discrete actions to convert
-
-        Returns:
-            Equivalent actions in the GraphActions format
-        """
-        # TODO: factor out into utility function.
-        action_tensor = actions.tensor.squeeze(-1).clone()
-        action_type = torch.where(
-            action_tensor == self.n_actions - 1,
-            GraphActionType.EXIT,
-            GraphActionType.ADD_EDGE,
-        )
-        action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
-
-        # Convert action indices to source-target node pairs
-        ei0, ei1 = get_edge_indices(self.n_nodes, self.is_directed, self.device)
-
-        # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
-        ei0 = torch.cat((ei0, torch.tensor([-1, -2], device=self.device)), dim=0)
-        ei1 = torch.cat((ei1, torch.tensor([-1, -2], device=self.device)), dim=0)
-
-        # Indexes either the second last element (exit) or la
-        # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
-        ei0, ei1 = ei0[action_tensor], ei1[action_tensor]
-
-        out = GraphActions(
-            TensorDict(
-                {
-                    "action_type": action_type,
-                    "features": torch.ones(action_tensor.shape + (1,)),
-                    "edge_index": torch.stack([ei0, ei1], dim=-1),
-                },
-                batch_size=action_tensor.shape,
-                device=self.device,
-            )
-        )
-        return out

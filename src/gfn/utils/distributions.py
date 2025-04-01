@@ -58,6 +58,7 @@ class GraphActionDistribution(Distribution):
         assert "node_class" in logits
         assert "edge_index" in logits
 
+        self._batch_size = logits["action_type"].shape[:-1]
         self.dists = {
             "action_type": Categorical(logits=logits["action_type"]),
             "edge_class": Categorical(logits=logits["edge_class"]),
@@ -77,7 +78,7 @@ class GraphActionDistribution(Distribution):
             {
                 key: dist.sample(sample_shape) for key, dist in self.dists.items()
             },
-            batch_size=sample_shape + self.logits.batch_size,
+            batch_size=sample_shape + self._batch_size,
         )
 
     def log_prob(self, sample: TensorDict) -> torch.Tensor:

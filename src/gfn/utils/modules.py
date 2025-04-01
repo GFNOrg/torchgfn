@@ -390,7 +390,7 @@ class GraphEdgeActionGNN(nn.Module):
         return TensorDict({
             "action_type": action_type,
             "edge_class": torch.zeros(*states_tensor["batch_shape"], 1),
-            "node_class": torch.zeros(*states_tensor["batch_shape"], 0),
+            "node_class": torch.zeros(*states_tensor["batch_shape"], 1),
             "edge_index": edge_actions,
         }, batch_size=states_tensor["batch_shape"])
 
@@ -540,7 +540,7 @@ class GraphEdgeActionMLP(nn.Module):
         return TensorDict({
             "action_type": action_type,
             "edge_class": torch.zeros(*states_tensor["batch_shape"], 1),
-            "node_class": torch.zeros(*states_tensor["batch_shape"], 0),
+            "node_class": torch.zeros(*states_tensor["batch_shape"], 1),
             "edge_index": edge_actions,
         }, batch_size=states_tensor["batch_shape"])
 

@@ -412,7 +412,7 @@ if __name__ == "__main__":
         "--lr", type=float, default=0.001, help="Learning rate for optimizer"
     )
     parser.add_argument(
-        "--batch_size", type=int, default=1024, help="Batch size for training"
+        "--batch_size", type=int, default=128, help="Batch size for training"
     )
     parser.add_argument(
         "--use_buffer",
