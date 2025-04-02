@@ -345,7 +345,30 @@ def main(args):
     )
     gflownet = TBGFlowNet(pf, pb)
     gflownet = gflownet.to(device)
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
+
+    # Log Z gets dedicated learning rate (typically higher).
+    params = [
+        {
+            "params": [
+                v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
+            ],
+            "lr": args.lr,
+        }
+    ]
+    if "logZ" in dict(gflownet.named_parameters()):
+        params.append(
+            {
+                "params": [dict(gflownet.named_parameters())["logZ"]],
+                "lr": args.lr_Z,
+            }
+        )
+
+    optimizer = torch.optim.Adam(params)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        milestones=[int(args.n_iterations * 0.5), int(args.n_iterations * 0.8)],
+        gamma=0.1,
+    )
 
     # Replay buffer
     replay_buffer = ReplayBuffer(
@@ -363,7 +386,7 @@ def main(args):
             epsilon=args.min_epsilon
             + (
                 (args.max_epsilon - args.min_epsilon)
-                * min(0.0, 1.0 - it / (args.n_iterations / 2))
+                * max(0.0, 1.0 - it / (args.n_iterations / 2))
             ),  # Schedule for the first half of training
         )
         _training_samples = gflownet.to_training_samples(trajectories)
@@ -382,6 +405,7 @@ def main(args):
         loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
         assert training_samples.log_rewards is not None
         pbar.set_postfix(
@@ -399,11 +423,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     # Environment parameters
-    parser.add_argument("--num_nodes", type=int, default=4)
+    parser.add_argument("--num_nodes", type=int, default=3)
     parser.add_argument(
         "--num_edges",
         type=int,
-        default=4,
+        default=3,
         help="Number of edges in the sampled erdos renyi graph",
     )
     parser.add_argument(
@@ -423,7 +447,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_conv_layers", type=int, default=1)
     parser.add_argument("--embedding_dim", type=int, default=128)
     parser.add_argument("--max_epsilon", type=float, default=0.5)
-    parser.add_argument("--min_epsilon", type=float, default=0.1)
+    parser.add_argument("--min_epsilon", type=float, default=0.0)
 
     # Replay buffer parameters
     parser.add_argument("--no_buffer", dest="use_buffer", action="store_false")
@@ -433,7 +457,8 @@ if __name__ == "__main__":
     parser.add_argument("--sampling_batch_size", type=int, default=32)
 
     # Training parameters
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr_Z", type=float, default=1.0)
     parser.add_argument("--n_iterations", type=int, default=1000)
     parser.add_argument("--batch_size", type=int, default=256)
 
