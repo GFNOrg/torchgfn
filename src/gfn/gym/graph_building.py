@@ -127,7 +127,10 @@ class GraphBuilding(GraphEnv):
             data_list = states.tensor.to_data_list()
 
             # Add edges to each graph
-            for i, (src, dst) in enumerate(actions.edge_index):
+            for i, action_tensor in enumerate(actions.edge_index):
+                src, dst = get_edge_indices(self.n_nodes, self.is_directed, self.device)
+                src, dst = src[action_tensor], dst[action_tensor]
+
                 # Get the graph to modify
                 graph = data_list[i]
 
@@ -142,7 +145,7 @@ class GraphBuilding(GraphEnv):
 
                 # Add the edge feature
                 graph.edge_attr = torch.cat(
-                    [graph.edge_attr, actions.features[i].unsqueeze(0)], dim=0
+                    [graph.edge_attr, actions.edge_class[i][None, None]], dim=0
                 )
 
             # Create a new batch from the updated data list
@@ -254,7 +257,9 @@ class GraphBuilding(GraphEnv):
                         return False
 
             elif actions.action_type[i] == GraphActionType.ADD_EDGE:
-                src, dst = actions.edge_index[i]
+                action_tensor = actions.edge_index[i]
+                src, dst = get_edge_indices(self.n_nodes, self.is_directed, self.device)
+                src, dst = src[action_tensor], dst[action_tensor]
 
                 # Check if src and dst are valid node indices
                 if src >= graph.num_nodes or dst >= graph.num_nodes or src == dst:
