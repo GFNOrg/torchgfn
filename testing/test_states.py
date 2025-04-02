@@ -123,7 +123,6 @@ def empty_tensor_state():
     tensor = torch.zeros((0, 2))
     return SimpleTensorStates(tensor)
 
-
 def test_getitem_1d(datas):
     """Test indexing into GraphStates
 
@@ -347,6 +346,53 @@ def test_is_sink_state(state_fixture, request):
     # Check type
     assert isinstance(is_sink, torch.Tensor)
     assert is_sink.dtype == torch.bool
+
+    sink_states = state.make_sink_states_tensor(state.batch_shape)
+    assert torch.all(state.__class__(sink_states).is_sink_state)
+
+
+@pytest.mark.parametrize(
+    "state_fixture",
+    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+)
+def test_is_initial_state(state_fixture, request):
+    """Test is_initial_state property for different state types"""
+    state = request.getfixturevalue(state_fixture)
+
+    # Get is_initial_state
+    is_initial = state.is_initial_state
+
+    # Check shape matches batch shape
+    assert is_initial.shape == state.batch_shape
+
+    # Check type
+    assert isinstance(is_initial, torch.Tensor)
+    assert is_initial.dtype == torch.bool
+
+    initial_states = state.make_initial_states_tensor(state.batch_shape)
+    assert torch.all(state.__class__(initial_states).is_initial_state)
+
+
+@pytest.mark.parametrize(
+    "state_fixture",
+    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+)
+def test_is_dummy_state(state_fixture, request):
+    """Test is_dummy_state property for different state types"""
+    state = request.getfixturevalue(state_fixture)
+
+    # Get is_dummy_state
+    is_dummy = state.is_dummy_state
+
+    # Check shape matches batch shape
+    assert is_dummy.shape == state.batch_shape
+
+    # Check type
+    assert isinstance(is_dummy, torch.Tensor)
+    assert is_dummy.dtype == torch.bool
+
+    dummy_states = state.make_dummy_states_tensor(state.batch_shape)
+    assert torch.all(state.__class__(dummy_states).is_dummy_state)
 
 
 @pytest.mark.parametrize(
