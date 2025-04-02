@@ -24,6 +24,12 @@ from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.containers.trajectories import Trajectories
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.bayesian_structure import BayesianStructure
+from gfn.gym.helpers.bayesian_structure.evaluation import (
+    expected_edges,
+    expected_shd,
+    posterior_estimate,
+    threshold_metrics,
+)
 from gfn.gym.helpers.bayesian_structure.factories import get_scorer
 from gfn.modules import DiscretePolicyEstimator
 from gfn.preprocessors import Preprocessor
@@ -311,7 +317,7 @@ def main(args):
     rng.manual_seed(seed)
 
     # Create the scorer
-    scorer, _, _ = get_scorer(
+    scorer, _, gt_graph = get_scorer(
         args.graph_name,
         args.prior_name,
         args.num_nodes,
@@ -415,7 +421,20 @@ def main(args):
             },
         )
 
-        # TODO: Add metrics
+    # Compute the metrics
+    with torch.no_grad():
+        posterior_samples = posterior_estimate(
+            gflownet,
+            env,
+            num_samples=args.num_samples_posterior,
+            batch_size=args.sampling_batch_size,
+        )
+
+    print(f"Expected SHD: {expected_shd(posterior_samples, gt_graph)}")
+    print(f"Expected edges: {expected_edges(posterior_samples)}")
+    thres_metrics = threshold_metrics(posterior_samples, gt_graph)
+    for k, v in thres_metrics.items():
+        print(f"{k}: {v}")
 
 
 if __name__ == "__main__":
@@ -441,6 +460,12 @@ if __name__ == "__main__":
         nargs="+",
         default=None,
         help="Optional list of node names.",
+    )
+    parser.add_argument(
+        "--num_samples_posterior",
+        type=int,
+        default=1000,
+        help="Number of samples for posterior approximation.",
     )
 
     # GFlowNet and policy parameters
