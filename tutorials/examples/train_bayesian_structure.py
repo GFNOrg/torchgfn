@@ -400,7 +400,7 @@ def main(args):
         if args.use_buffer:
             with torch.no_grad():
                 replay_buffer.add(_training_samples)
-            if it < args.prefill:
+            if it < args.prefill or len(replay_buffer) < args.batch_size:
                 continue
             training_samples = replay_buffer.sample(n_trajectories=args.batch_size)
         else:
@@ -442,11 +442,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     # Environment parameters
-    parser.add_argument("--num_nodes", type=int, default=3)
+    parser.add_argument("--num_nodes", type=int, default=4)
     parser.add_argument(
         "--num_edges",
         type=int,
-        default=3,
+        default=4,
         help="Number of edges in the sampled erdos renyi graph",
     )
     parser.add_argument(
@@ -471,8 +471,8 @@ if __name__ == "__main__":
     # GFlowNet and policy parameters
     parser.add_argument("--num_conv_layers", type=int, default=1)
     parser.add_argument("--embedding_dim", type=int, default=128)
-    parser.add_argument("--max_epsilon", type=float, default=0.5)
-    parser.add_argument("--min_epsilon", type=float, default=0.0)
+    parser.add_argument("--max_epsilon", type=float, default=0.9)
+    parser.add_argument("--min_epsilon", type=float, default=0.1)
 
     # Replay buffer parameters
     parser.add_argument("--no_buffer", dest="use_buffer", action="store_false")
