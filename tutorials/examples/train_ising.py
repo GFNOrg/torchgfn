@@ -19,7 +19,9 @@ def main(args):
         wandb.init(project=args.wandb_project)
         wandb.config.update(args)
 
-    device = torch.device(args.device)
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
     torch.set_num_threads(args.n_threads)
     hidden_dim = 512
 
@@ -101,12 +103,7 @@ def main(args):
 if __name__ == "__main__":
     parser = ArgumentParser()
 
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cpu",
-        help="Device to run the model on",
-    )
+    parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
 
     parser.add_argument(
         "--n_threads",

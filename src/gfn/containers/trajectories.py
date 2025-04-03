@@ -77,8 +77,6 @@ class Trajectories(Container):
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
-        if isinstance(device, str):
-            device = torch.device(device)
 
         for obj in [states, actions]:
             if obj is not None:

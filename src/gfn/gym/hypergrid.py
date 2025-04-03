@@ -43,9 +43,6 @@ class HyperGrid(DiscreteEnv):
         self.R2 = R2
         self.reward_cos = reward_cos
 
-        if isinstance(device, str):
-            device = torch.device(device)
-
         s0 = torch.zeros(ndim, dtype=torch.long, device=device)
         sf = torch.full((ndim,), fill_value=-1, dtype=torch.long, device=device)
         n_actions = ndim + 1

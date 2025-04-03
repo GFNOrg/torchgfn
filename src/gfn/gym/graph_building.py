@@ -60,10 +60,6 @@ class GraphBuilding(GraphEnv):
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
-        if isinstance(device, str):
-            device = torch.device(device)
-        self.device = device
-
         s0 = GeometricData(
             x=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
             edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
@@ -374,7 +370,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         n_nodes: int,
         state_evaluator: callable,
         directed: bool,
-        device: torch.device | str,
+        device: Literal["cpu", "cuda"] | torch.device,
     ):
         self.n_nodes = n_nodes
         if directed:
@@ -386,7 +382,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         super().__init__(
             feature_dim=n_nodes,
             state_evaluator=state_evaluator,
-            device=device,  # type: ignore
+            device=device,
         )
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
         self.is_directed = directed
@@ -437,11 +433,13 @@ class GraphBuildingOnEdges(GraphBuilding):
                 x=torch.arange(env.n_nodes)[:, None].to(env.device),
                 edge_attr=torch.ones((0, 1), device=env.device),
                 edge_index=torch.ones((2, 0), dtype=torch.long, device=env.device),
+                device=env.device,
             )
             sf = GeometricData(
                 x=-torch.ones(env.n_nodes)[:, None].to(env.device),
                 edge_attr=torch.zeros((0, 1), device=env.device),
                 edge_index=torch.zeros((2, 0), dtype=torch.long, device=env.device),
+                device=env.device,
             )
 
             def __init__(self, tensor: GeometricBatch):
@@ -619,8 +617,8 @@ class GraphBuildingOnEdges(GraphBuilding):
         ei0, ei1 = get_edge_indices(self.n_nodes, self.is_directed, self.device)
 
         # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
-        ei0 = torch.cat((ei0, torch.tensor([-1, -2])), dim=0).to(self.device)
-        ei1 = torch.cat((ei1, torch.tensor([-1, -2])), dim=0).to(self.device)
+        ei0 = torch.cat((ei0, torch.tensor([-1, -2], device=self.device)), dim=0)
+        ei1 = torch.cat((ei1, torch.tensor([-1, -2], device=self.device)), dim=0)
 
         # Indexes either the second last element (exit) or la
         # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
@@ -634,6 +632,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                     "edge_index": torch.stack([ei0, ei1], dim=-1),
                 },
                 batch_size=action_tensor.shape,
-            ).to(self.device)
+                device=self.device,
+            )
         )
         return out

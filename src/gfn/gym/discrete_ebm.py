@@ -80,8 +80,6 @@ class DiscreteEBM(DiscreteEnv):
             device: Device to use for the environment.
         """
         self.ndim = ndim
-        if isinstance(device, str):
-            device = torch.device(device)
 
         s0 = torch.full((ndim,), -1, dtype=torch.long, device=device)
         sf = torch.full((ndim,), 2, dtype=torch.long, device=device)

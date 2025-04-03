@@ -157,7 +157,7 @@ class States(ABC):
             f"{self.__class__.__name__}(",
             f"batch={self.batch_shape},",
             f"state={self.state_shape},",
-            f"dev={self.device})",
+            f"device={self.device})",
         ]
         return " ".join(parts)
 
@@ -405,7 +405,7 @@ class DiscreteStates(States, ABC):
             f"batch={self.batch_shape},",
             f"state={self.state_shape},",
             f"actions={self.n_actions},",
-            f"dev={self.device},",
+            f"device={self.device},",
             f"masks={tuple(self.forward_masks.shape)})",
         ]
         return " ".join(parts)
@@ -528,7 +528,7 @@ class DiscreteStates(States, ABC):
             self.forward_masks = torch.zeros(shape).bool()
 
     @classmethod
-    def stack(cls, states: List[DiscreteStates]) -> DiscreteStates:
+    def stack(cls, states: Sequence[DiscreteStates]) -> DiscreteStates:
         """Stacks a list of DiscreteStates objects along a new dimension (0)."""
         out = super().stack(states)
         assert isinstance(out, DiscreteStates)
@@ -719,8 +719,9 @@ class GraphStates(States):
             f"state x={self.tensor.x.shape},",
             f"state edge_index={self.tensor.edge_index.shape},",
             f"state edge_attr={self.tensor.edge_attr.shape},",
-            f"dev={self.device},",
-            # f"masks={tuple(self.forward_masks.shape)})",  # TODO: file an issue
+            f"actions={self.n_actions},",
+            f"device={self.device},",
+            f"masks={tuple(self.forward_masks.shape)})",
         ]
         return " ".join(parts)
 
