@@ -368,7 +368,6 @@ def main(args):
                 "lr": args.lr_Z,
             }
         )
-
     optimizer = torch.optim.Adam(params)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,

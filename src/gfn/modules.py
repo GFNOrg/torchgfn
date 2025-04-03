@@ -270,6 +270,8 @@ class DiscretePolicyEstimator(GFNModule):
             epsilon: with probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy."""
         assert module_output.shape[-1] == self.expected_output_dim
+        assert temperature > 0.0
+        assert 0.0 <= epsilon <= 1.0
 
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
