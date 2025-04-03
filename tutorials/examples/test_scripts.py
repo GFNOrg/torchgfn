@@ -145,34 +145,46 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
 
     if ndim == 2 and height == 8:
         if replay_buffer_size == 0:
+            tgt = 8.78e-4
+            atol = 1e-3
             assert np.isclose(
-                final_l1_dist, 8.78e-4, atol=1e-3
-            ), f"final_l1_dist: {final_l1_dist}"
+                final_l1_dist, tgt, atol=atol
+            ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
+            tgt = 6.68e-4
+            atol = 1e-3
             assert np.isclose(
-                final_l1_dist, 6.68e-4, atol=1e-3
-            ), f"final_l1_dist: {final_l1_dist}"
+                final_l1_dist, tgt, atol=atol
+            ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 2 and height == 16:
+        tgt = 2.62e-4
+        atol = 1e-3
         if replay_buffer_size != 0:
             pytest.skip("Skipping test for replay buffer size != 0")
         assert np.isclose(
-            final_l1_dist, 2.62e-4, atol=1e-3
-        ), f"final_l1_dist: {final_l1_dist}"
+            final_l1_dist, tgt, atol=atol
+        ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and height == 8:
+        tgt = 1.6e-4
+        atol = 1e-3
         if replay_buffer_size == 0:
             assert np.isclose(
-                final_l1_dist, 1.6e-4, atol=1e-3
-            ), f"final_l1_dist: {final_l1_dist}"
+                final_l1_dist, tgt, atol=atol
+            ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
+            tgt = 6.65e-5
+            atol = 1e-3
             assert np.isclose(
-                final_l1_dist, 6.65e-5, atol=1e-3
-            ), f"final_l1_dist: {final_l1_dist}"
+                final_l1_dist, tgt, atol=atol
+            ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and height == 16:
         if replay_buffer_size != 0:
             pytest.skip("Skipping test for replay buffer size != 0")
+        tgt = 6.89e-6
+        atol = 1e-5
         assert np.isclose(
-            final_l1_dist, 6.89e-6, atol=1e-5
-        ), f"final_l1_dist: {final_l1_dist}"
+            final_l1_dist, tgt, atol=atol
+        ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
 
 
 @pytest.mark.parametrize("ndim", [2, 4])
@@ -189,22 +201,30 @@ def test_hypergrid_fm(ndim: int, replay_buffer_size: int):
     final_l1_dist = train_hypergrid_main(args)
     if ndim == 2:
         if replay_buffer_size == 0:
+            tgt = 5.1e-4
+            atol = 1e-3
             assert np.isclose(
-                final_l1_dist, 5.1e-4, atol=1e-3
-            ), f"final_l1_dist: {final_l1_dist}"
+                final_l1_dist, tgt, atol=atol
+            ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
+            tgt = 9.85e-4
+            atol = 1e-3
             assert np.isclose(
-                final_l1_dist, 9.85e-4, atol=1e-3
-            ), f"final_l1_dist: {final_l1_dist}"
+                final_l1_dist, tgt, atol=atol
+            ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4:
         if replay_buffer_size == 0:
+            tgt = 6.28e-5
+            atol = 1e-3
             assert np.isclose(
-                final_l1_dist, 6.28e-5, atol=1e-3
-            ), f"final_l1_dist: {final_l1_dist}"
+                final_l1_dist, tgt, atol=atol
+            ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
+            tgt = 9.47e-5
+            atol = 1e-3
             assert np.isclose(
-                final_l1_dist, 9.47e-5, atol=1e-3
-            ), f"final_l1_dist: {final_l1_dist}"
+                final_l1_dist, tgt, atol=atol
+            ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
 
 
 @pytest.mark.parametrize("loss", ["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"])
