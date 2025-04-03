@@ -51,6 +51,7 @@ wandb = { version = "*", optional = true }
 scikit-learn = {version = "*", optional = true }
 scipy = { version = "*", optional = true }
 matplotlib = { version = "*", optional = true }
+pgmpy = { version = "<1.0.0", optional = true }
 
 [tool.poetry.extras]
 dev = [
@@ -78,6 +79,7 @@ all = [
     "pyright",
     "matplotlib",
     "myst-parser",
+    "pgmpy",
     "pre-commit",
     "pytest",
     "renku-sphinx-theme",
