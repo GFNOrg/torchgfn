@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
+from linear_attention_transformer import LinearAttentionTransformer
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
@@ -183,6 +184,74 @@ class DiscreteUniform(nn.Module):
             preprocessed_states.device
         )
         return out
+
+
+class LinearTransformer(nn.Module):
+    """The Linear Transformer module.
+
+    Implements Transformers are RNNs: Fast Autoregressive Transformers with Linear
+        Attention. Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, François
+        Fleuret, ICML 2020.
+
+    Expresses self-attention as a linear dot-product of kernel feature maps and makes
+    use the associativity property of matrix products to reduce the complexity of the
+    attention computation from O(n^2) to O(n).
+
+    Implementation from https://github.com/lucidrains/linear-attention-transformer.
+
+    Args:
+        dim: The dimension of the input.
+        depth: The depth of the transformer.
+        max_seq_len: The maximum sequence length.
+        n_heads: The number of attention heads.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        depth: int,
+        max_seq_len: int,
+        n_heads: int = 8,
+        causal: bool = False,
+    ):
+        super().__init__()
+        assert isinstance(dim, int) and dim > 0, "dim must be a positive integer"
+        assert isinstance(depth, int) and depth > 0, "depth must be a positive integer"
+        assert (
+            isinstance(max_seq_len, int) and max_seq_len > 0
+        ), "max_seq_len must be a positive integer"
+
+        self.module = LinearAttentionTransformer(
+            dim,
+            depth,
+            max_seq_len,
+            heads=n_heads,
+            causal=causal,
+            dim_head=None,
+            bucket_size=64,
+            ff_chunks=1,
+            ff_glu=False,
+            ff_dropout=0.0,
+            attn_layer_dropout=0.0,
+            attn_dropout=0.0,
+            reversible=False,
+            blindspot_size=1,
+            n_local_attn_heads=0,
+            local_attn_window_size=128,
+            receives_context=False,
+            attend_axially=False,
+            pkm_layers=tuple(),
+            pkm_num_keys=128,
+            linformer_settings=None,
+            context_linformer_settings=None,
+            shift_tokens=False,
+        )
+        # TODO: Should we have a final linear layer as part of this module?
+        # The output dimension is the same as the embedding dimension.
+        self.output_dim = dim
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.module(x)
 
 
 class GraphEdgeActionGNN(nn.Module):
