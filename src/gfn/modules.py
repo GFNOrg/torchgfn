@@ -4,10 +4,12 @@ from typing import Any
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
+from tensordict import TensorDict
 
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
-from gfn.utils.distributions import UnsqueezedCategorical
+from gfn.utils.distributions import UnsqueezedCategorical, GraphActionDistribution
+
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -450,54 +452,46 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-# class GraphEdgeEstimator(DiscretePolicyEstimator):
-#     """A module which outputs a fixed logits for the actions (edge actions, exit action).
+class GraphPolicyEstimator(GFNModule):
 
-#     Args:
-#         n_nodes: The number of nodes in the graph.
-#     """
+    def __init__(
+        self,
+        module: nn.Module,
+        preprocessor: Preprocessor | None = None,
+        is_backward: bool = False,
+    ):
+        super().__init__(module, preprocessor, is_backward)
 
-#     def __init__(
-#         self,
-#         module: nn.Module,
-#         preprocessor: Preprocessor | None = None,
-#         is_backward: bool = False,
-#     ):
-#         assert hasattr(module, "n_nodes"), "module must have a `n_nodes` attribute"
-#         assert isinstance(module.n_nodes, int), "n_nodes must be an integer"
-#         assert hasattr(module, "output_dim"), "module must have a `output_dim` attribute"
-#         assert isinstance(module.output_dim, int), "output_dim must be an integer"
+    def forward(self, input: States | torch.Tensor) -> torch.Tensor:
+        """Forward pass of the module.
 
-#         super().__init__(
-#             module=module,
-#             n_actions=module.output_dim,  # type: ignore
-#             preprocessor=preprocessor,
-#             is_backward=is_backward,
-#         )
+        Args:
+            input: The input to the module, as states or a tensor.
 
-#     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
-#         """Forward pass of the module.
+        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        if isinstance(input, States):
+            input = self.preprocessor(input)
 
-#         Args:
-#             input: The input to the module, as states or a tensor.
+        out = self.module(input)
 
-#         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
-#         """
-#         if isinstance(input, States):
-#             input = self.preprocessor(input)
+        return out
 
-#         out = self.module(input)
+    def to_probability_distribution(
+        self,
+        states: States,
+        module_output: TensorDict,
+    ) -> Distribution:
+        masks = states.backward_masks if self.is_backward else states.forward_masks
+        logits = module_output
+        logits["action_type"][~masks["action_type"]] = -float("inf")
+        logits["edge_class"][~masks["edge_class"]] = -float("inf")
+        logits["node_class"][~masks["node_class"]] = -float("inf")
+        logits["edge_index"][~masks["edge_index"]] = -float("inf")
 
-#         assert out.shape[-1] == self.expected_output_dim
-#         return out
+        return GraphActionDistribution(logits=logits)
 
-#     @property
-#     def n_nodes(self):
-#         return self.module.n_nodes
 
-#     @property
-#     def expected_output_dim(self) -> int:
-#         if not isinstance(self.module.output_dim, int):
-#             return int(self.module.output_dim)  # type: ignore
-#         else:
-#             return self.module.output_dim
+    @property
+    def expected_output_dim(self) -> int:
+        return -1  # TODO: fix this

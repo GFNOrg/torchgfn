@@ -127,7 +127,10 @@ class GraphBuilding(GraphEnv):
             data_list = states.tensor.to_data_list()
 
             # Add edges to each graph
-            for i, (src, dst) in enumerate(actions.edge_index):
+            for i, action_tensor in enumerate(actions.edge_index):
+                src, dst = get_edge_indices(self.n_nodes, self.is_directed, self.device)
+                src, dst = src[action_tensor], dst[action_tensor]
+
                 # Get the graph to modify
                 graph = data_list[i]
 
@@ -142,7 +145,7 @@ class GraphBuilding(GraphEnv):
 
                 # Add the edge feature
                 graph.edge_attr = torch.cat(
-                    [graph.edge_attr, actions.features[i].unsqueeze(0)], dim=0
+                    [graph.edge_attr, actions.edge_class[i][None, None]], dim=0
                 )
 
             # Create a new batch from the updated data list
@@ -254,7 +257,9 @@ class GraphBuilding(GraphEnv):
                         return False
 
             elif actions.action_type[i] == GraphActionType.ADD_EDGE:
-                src, dst = actions.edge_index[i]
+                action_tensor = actions.edge_index[i]
+                src, dst = get_edge_indices(self.n_nodes, self.is_directed, self.device)
+                src, dst = src[action_tensor], dst[action_tensor]
 
                 # Check if src and dst are valid node indices
                 if src >= graph.num_nodes or dst >= graph.num_nodes or src == dst:
@@ -375,10 +380,10 @@ class GraphBuildingOnEdges(GraphBuilding):
         self.n_nodes = n_nodes
         if directed:
             # all off-diagonal edges + exit.
-            self.n_actions = (n_nodes**2 - n_nodes) + 1
+            self.n_actions = (n_nodes**2 - n_nodes)
         else:
             # bottom triangle + exit.
-            self.n_actions = ((n_nodes**2 - n_nodes) // 2) + 1
+            self.n_actions = ((n_nodes**2 - n_nodes) // 2)
         super().__init__(
             feature_dim=n_nodes,
             state_evaluator=state_evaluator,
@@ -387,21 +392,13 @@ class GraphBuildingOnEdges(GraphBuilding):
         self.is_discrete = True  # actions here are discrete, needed for FlowMatching
         self.is_directed = directed
 
-    def make_actions_class(self) -> type[Actions]:
-        env = self
+    def make_actions_class(self) -> type[GraphActions]:
 
-        class EdgeActions(Actions):
-            """Actions for building graphs with a fixed number of nodes.
+        class EdgeActions(GraphActions):
+            """Actions for building graphs with a fixed number of nodes."""
 
-            Actions are represented as discrete indices where:
-            - 0 to n_actions-2: Adding an edge between specific nodes
-            - n_actions-1: EXIT action to terminate the trajectory
-            - n_actions: DUMMY action (used for padding)
-            """
-
-            action_shape = (1,)
-            dummy_action = torch.tensor([env.n_actions]).to(env.device)
-            exit_action = torch.tensor([env.n_actions - 1]).to(env.device)
+            node_features_dim = 0
+            edge_features_dim = 1
 
         return EdgeActions
 
@@ -452,7 +449,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                 self.n_actions = env.n_actions
 
             @property
-            def forward_masks(self):
+            def forward_masks(self) -> TensorDict:
                 """Compute masks for valid forward actions from the current state.
 
                 A forward action is valid if:
@@ -463,14 +460,10 @@ class GraphBuildingOnEdges(GraphBuilding):
                 For undirected graphs, only the upper triangular portion of the
                     adjacency matrix is used.
 
-                The last action is always the EXIT action, which is always valid.
-
                 Returns:
-                    Tensor: Boolean mask of shape [batch_size, n_actions] where
-                        True indicates valid actions
+                    TensorDict: Boolean mask where True indicates valid actions
                 """
-                # Allow all actions.
-                forward_masks = torch.ones(
+                edge_masks = torch.ones(
                     len(self), self.n_actions, dtype=torch.bool, device=self.device
                 )
 
@@ -494,22 +487,27 @@ class GraphBuildingOnEdges(GraphBuilding):
                         if len(edge_idx.shape) == 2:
                             edge_idx = edge_idx.sum(0).bool()
 
-                        # Adds an unmasked exit action.
-                        edge_idx = torch.cat(
-                            (edge_idx, torch.tensor([False], device=self.device))
-                        )
-                        forward_masks[i, edge_idx] = (
-                            False  # Disallow the addition of this edge.
-                        )
+                        edge_masks[i, edge_idx] = False
 
-                return forward_masks.view(*self.batch_shape, self.n_actions)
+                action_type = torch.zeros(*self.batch_shape, 3, dtype=torch.bool, device=self.device)
+                action_type[:, 1] = torch.any(edge_masks, dim=-1)
+                action_type[:, 2] = True
+                return TensorDict(
+                    {
+                        "action_type": action_type,
+                        "node_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
+                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
+                        "edge_index": edge_masks,
+                    },
+                    batch_size=self.batch_shape,
+                )
 
             @forward_masks.setter
             def forward_masks(self, value: torch.Tensor):
                 pass  # fwd masks is computed on the fly
 
             @property
-            def backward_masks(self):
+            def backward_masks(self) -> TensorDict:
                 """Compute masks for valid backward actions from the current state.
 
                 A backward action is valid if:
@@ -521,10 +519,10 @@ class GraphBuildingOnEdges(GraphBuilding):
                 The EXIT action is not included in backward masks.
 
                 Returns:
-                    Tensor: Boolean mask of shape [batch_size, n_actions-1] where True indicates valid actions
+                    TensorDict: Boolean mask where True indicates valid actions
                 """
                 # Disallow all actions.
-                backward_masks = torch.zeros(
+                edge_masks = torch.zeros(
                     len(self), self.n_actions - 1, dtype=torch.bool, device=self.device
                 )
 
@@ -549,9 +547,19 @@ class GraphBuildingOnEdges(GraphBuilding):
                             edge_idx = edge_idx.sum(0).bool()
 
                         # Allow the removal of this edge.
-                        backward_masks[i, edge_idx] = True
+                        edge_masks[i, edge_idx] = True
 
-                return backward_masks.view(*self.batch_shape, self.n_actions - 1)
+                action_type = torch.zeros(*self.batch_shape, 3, dtype=torch.bool, device=self.device)
+                action_type[:, 1] = torch.any(edge_masks, dim=-1)
+                return TensorDict(
+                    {
+                        "action_type": action_type,
+                        "node_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
+                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
+                        "edge_index": edge_masks,
+                    },
+                    batch_size=self.batch_shape,
+                )
 
             @backward_masks.setter
             def backward_masks(self, value: torch.Tensor):
@@ -569,7 +577,6 @@ class GraphBuildingOnEdges(GraphBuilding):
         Returns:
             New states after applying the actions
         """
-        actions = self.convert_actions(states, actions)
         new_states = super()._step(states, actions)
         assert isinstance(new_states, GraphStates)
         return new_states
@@ -584,55 +591,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         Returns:
             New states after applying the backward actions
         """
-        actions = self.convert_actions(states, actions)
         new_states = super()._backward_step(states, actions)
         assert isinstance(new_states, GraphStates)
         return new_states
 
-    def convert_actions(self, states: GraphStates, actions: Actions) -> GraphActions:
-        """Converts the action from discrete space to graph action space.
-
-        This method maps discrete action indices to specific graph operations:
-        - GraphActionType.ADD_EDGE: Add an edge between specific nodes
-        - GraphActionType.EXIT: Terminate trajectory
-        - GraphActionType.DUMMY: No-op action (for padding)
-
-        Args:
-            states: Current states batch
-            actions: Discrete actions to convert
-
-        Returns:
-            Equivalent actions in the GraphActions format
-        """
-        # TODO: factor out into utility function.
-        action_tensor = actions.tensor.squeeze(-1).clone()
-        action_type = torch.where(
-            action_tensor == self.n_actions - 1,
-            GraphActionType.EXIT,
-            GraphActionType.ADD_EDGE,
-        )
-        action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
-
-        # Convert action indices to source-target node pairs
-        ei0, ei1 = get_edge_indices(self.n_nodes, self.is_directed, self.device)
-
-        # Adds -1 "edge" representing exit, -2 "edge" representing dummy.
-        ei0 = torch.cat((ei0, torch.tensor([-1, -2], device=self.device)), dim=0)
-        ei1 = torch.cat((ei1, torch.tensor([-1, -2], device=self.device)), dim=0)
-
-        # Indexes either the second last element (exit) or la
-        # action_tensor[action_tensor >= (self.n_actions - 1)] = 0
-        ei0, ei1 = ei0[action_tensor], ei1[action_tensor]
-
-        out = GraphActions(
-            TensorDict(
-                {
-                    "action_type": action_type,
-                    "features": torch.ones(action_tensor.shape + (1,)),
-                    "edge_index": torch.stack([ei0, ei1], dim=-1),
-                },
-                batch_size=action_tensor.shape,
-                device=self.device,
-            )
-        )
-        return out

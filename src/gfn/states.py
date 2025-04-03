@@ -1034,7 +1034,8 @@ class GraphStates(States):
         return out
 
     @property
-    def forward_masks(self) -> dict:
+    def forward_masks(self) -> dict:  
+        # TODO(younik): fix me following GraphOnEdges example
         """Returns masks denoting allowed forward actions.
 
         Returns:
