@@ -32,6 +32,8 @@ class BayesianStructure(GraphEnv):
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
+        if isinstance(device, str):
+            device = torch.device(device)
 
         self.num_nodes = num_nodes
         self.n_actions = num_nodes**2 + 1
