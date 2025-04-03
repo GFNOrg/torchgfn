@@ -50,8 +50,6 @@ from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
 
-DEFAULT_SEED = 4444
-
 
 def average_gradients(model):
     """All-Reduce gradients across all models."""
@@ -417,12 +415,6 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
             parent_probs.append(probabilities[grid_idx, a])
         parent_probs = torch.stack(parent_probs)
 
-        #     [
-        #         probabilities[tuple(list(p.tolist()) + [a.item()])]
-        #         for p, a in zip(parents_indices, action_indices)
-        #     ]
-        # )
-
         u[indices.index(index)] = torch.sum(parent_u_values * parent_probs)
 
     return (u * probabilities[..., -1]).detach().cpu()
@@ -472,7 +464,7 @@ def validate_hypergrid(
     # discovered_modes.update(modes_found)
     # validation_info["n_modes_found"] = len(discovered_modes)
 
-    return validation_info, discovered_modes
+    return validation_info, visited_terminating_states, discovered_modes
 
 
 def set_up_fm_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id):
@@ -703,7 +695,6 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
 
 def main(args):  # noqa: C901
     """Trains a GFlowNet on the Hypergrid Environment, potentially distributed."""
-    seed = args.seed if args.seed != 0 else DEFAULT_SEED
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
@@ -744,7 +735,7 @@ def main(args):  # noqa: C901
         my_rank = 0  # Single machine.
         agent_group_list = my_agent_group_id = None
 
-    set_seed(seed + my_rank)
+    set_seed(args.seed + my_rank)
 
     # Initialize the environment.
     env = HyperGrid(
@@ -861,6 +852,9 @@ def main(args):  # noqa: C901
     time_start = time.time()
     l1_distances, validation_steps = [], []
 
+    # Used for calculating the L1 distance across all nodes.
+    all_visited_terminating_states = env.states_from_batch_shape((0,))
+
     # Training loop.
     pbar = trange(n_iterations)
     for iteration in pbar:
@@ -870,25 +864,24 @@ def main(args):  # noqa: C901
 
         iteration_start = time.time()
 
-        # Time sample_trajectories method.
-        sample_start = time.time()
-
-        # Use the optional profiler.
+        # Profiler.
         if args.profile:
             prof.step()
             if iteration >= 1 + 1 + keep_active:
                 break
 
+        # Sample trajectories.
+        sample_start = time.time()
         trajectories = gflownet.sample_trajectories(
             env,
             n=args.batch_size,
-            save_logprobs=is_on_policy,
-            save_estimator_outputs=False,
+            save_logprobs=is_on_policy,  # Can be re-used if on-policy.
+            save_estimator_outputs=not is_on_policy,  # Only used if off-policy.
         )
         sample_time = time.time() - sample_start
         timing["total_sample_time"] += sample_time
 
-        # Time to_training_samples method.
+        # Training objects (incl. possible replay buffer sampling).
         to_train_samples_start = time.time()
         training_samples = gflownet.to_training_samples(trajectories)
 
@@ -904,9 +897,8 @@ def main(args):  # noqa: C901
         to_train_samples_time = time.time() - to_train_samples_start
         timing["total_to_train_samples_time"] += to_train_samples_time
 
+        # Loss.
         optimizer.zero_grad()
-
-        # Time the loss computation.
         loss_start = time.time()
         gflownet = cast(GFlowNet, gflownet)
         loss = gflownet.loss(
@@ -922,19 +914,20 @@ def main(args):  # noqa: C901
         loss_time = time.time() - loss_start
         timing["total_loss_time"] += time.time() - loss_start
 
+        # Barrier.
         bar0_start = time.time()
         if args.distributed:
             dist.barrier()
         bar0_time = time.time() - bar0_start
         timing["total_bar0_time"] += bar0_time
 
-        # Time backpropagation computation.
+        # Backpropagation.
         loss_backward_start = time.time()
         loss.backward()
         loss_backward_time = time.time() - loss_backward_start
         timing["total_loss_backward_time"] += loss_backward_time
 
-        # Time optimizer step.
+        # Optimization.
         opt_start = time.time()
         optimizer.step()
         opt_time = time.time() - opt_start
@@ -945,19 +938,14 @@ def main(args):  # noqa: C901
             dist.barrier()
         timing["total_bar1_time"] += time.time() - bar1_start
 
+        # Model averaging.
         average_start = time.time()
         if args.distributed and (iteration % args.average_every == 0):
             print("before averaging model, iteration = ", iteration)
             average_models(gflownet)
             print("after averaging model, iteration = ", iteration)
-
         average_time = time.time() - average_start
         timing["total_average_time"] += average_time
-
-        # Keep track of trajectories / states.
-        last_states = cast(DiscreteStates, trajectories.terminating_states)
-        visited_terminating_states.extend(last_states)
-        states_visited += len(trajectories)
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
@@ -972,42 +960,21 @@ def main(args):  # noqa: C901
             ]
         )
 
-        visited_terminating_states.extend(
-            cast(DiscreteStates, trajectories.terminating_states)
-        )
-
-        states_visited += len(trajectories)
-
-        to_log = {"loss": loss.item(), "states_visited": states_visited}
-        if use_wandb:
-            wandb.log(to_log, step=iteration)
-
-        if iteration % args.validation_interval == 0:
-            validation_info, visited_terminating_states = validate(
-                env,
-                gflownet,
-                args.validation_samples,
-                visited_terminating_states,
-            )
-
-            if use_wandb:
-                wandb.log(validation_info, step=iteration)
-
-            to_log.update(validation_info)
-
-            if "l1_dist" in validation_info:
-                l1_distances.append(validation_info["l1_dist"])
-            validation_steps.append(iteration)  # Store corresponding step
-
         log_this_iter = (
             iteration % args.validation_interval == 0
         ) or iteration == n_iterations - 1
 
+        # Keep track of trajectories / states.
+        visited_terminating_states.extend(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
+
+        # If distributed, gather all visited terminating states from all nodes.
         if args.distributed and log_this_iter:
             try:
                 assert visited_terminating_states is not None
                 # Gather all visited terminating states from all nodes.
-                all_visited_terminating_states = gather_distributed_data(
+                gathered_visited_terminating_states = gather_distributed_data(
                     visited_terminating_states.tensor
                 )
             except Exception as e:
@@ -1017,13 +984,19 @@ def main(args):  # noqa: C901
         else:
             # Just use the visited terminating states from this node.
             assert visited_terminating_states is not None
-            all_visited_terminating_states = visited_terminating_states.tensor
-
-        if my_rank == 0:
-            assert all_visited_terminating_states is not None
+            gathered_visited_terminating_states = visited_terminating_states.tensor
 
         # If we are on the master node, calculate the validation metrics.
         if my_rank == 0:
+
+            # Extend `all_visited_terminating_states` with the gathered data.
+            assert gathered_visited_terminating_states is not None
+            gathered_visited_terminating_states = cast(
+                DiscreteStates, env.States(gathered_visited_terminating_states)
+            )
+            states_visited += len(gathered_visited_terminating_states)
+            all_visited_terminating_states.extend(gathered_visited_terminating_states)
+
             to_log = {
                 "loss": loss.item(),
                 "states_visited": states_visited,
@@ -1040,26 +1013,31 @@ def main(args):  # noqa: C901
                 wandb.log(to_log, step=iteration)
 
             if log_this_iter:
-                assert all_visited_terminating_states is not None
-                visited_terminating_states = env.States(all_visited_terminating_states)
-                assert isinstance(visited_terminating_states, DiscreteStates)
-                validation_info, discovered_modes = validate_hypergrid(
-                    env,
-                    gflownet,
-                    args.validation_samples,
-                    visited_terminating_states,
-                    discovered_modes,
+
+                validation_info, all_visited_terminating_states, discovered_modes = (
+                    validate_hypergrid(
+                        env,
+                        gflownet,
+                        args.validation_samples,
+                        all_visited_terminating_states,
+                        discovered_modes,
+                    )
                 )
+
+                print(
+                    "all_visited_terminating_states = ",
+                    len(all_visited_terminating_states),
+                )
+                print("visited_terminating_states = ", len(visited_terminating_states))
 
                 if use_wandb:
                     wandb.log(validation_info, step=iteration)
 
                 to_log.update(validation_info)
+
                 pbar.set_postfix(
                     loss=to_log["loss"],
-                    l1_dist=to_log[
-                        "l1_dist"
-                    ],  # only logged if calculate_partition is True.
+                    l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
                     n_modes_found=to_log["n_modes_found"],
                 )
 
@@ -1107,12 +1085,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
 
     # Machine setting.
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="Random seed, if 0 then a random seed is used",
-    )
+    parser.add_argument("--seed", type=int, default=4444, help="Random seed.")
     parser.add_argument(
         "--no_cuda",
         action="store_true",
@@ -1180,7 +1153,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=10000,
+        default=1000,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
     )
     parser.add_argument(
