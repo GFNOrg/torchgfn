@@ -1,3 +1,6 @@
+# Never add this dependency the user might install manually here.
+torch-ccl/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

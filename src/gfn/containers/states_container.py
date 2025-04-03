@@ -9,7 +9,6 @@ if TYPE_CHECKING:
     from gfn.states import States
 
 from gfn.containers.base import Container
-from gfn.utils.common import ensure_same_device
 
 StateType = TypeVar("StateType", bound="States")
 
@@ -48,11 +47,9 @@ class StatesContainer(Container, Generic[StateType]):
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
-        if states is not None:
-            ensure_same_device(states.device, device)
+        assert states.tensor.device == device if states is not None else True
         for tensor in [is_terminating, conditioning, log_rewards]:
-            if tensor is not None:
-                ensure_same_device(tensor.device, device)
+            assert tensor.device == device if tensor is not None else True
 
         self.states = (
             states
@@ -85,7 +82,7 @@ class StatesContainer(Container, Generic[StateType]):
         else:  # if log_rewards is None, there are two cases
             if self.states.tensor.nelement() == 0:  # 1) initializing with empty states
                 self._log_rewards = torch.full(
-                    size=(0,), fill_value=0, dtype=torch.float, device=device
+                    size=(0,), fill_value=-float("inf"), dtype=torch.float, device=device
                 )
             else:  # 2) we don't have log_rewards and need to compute them on the fly
                 self._log_rewards = None
