@@ -34,8 +34,8 @@ from gfn.gflownet import (
     TBGFlowNet,
 )
 from gfn.gym import HyperGrid
-from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
+from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular

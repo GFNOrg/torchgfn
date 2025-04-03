@@ -22,8 +22,8 @@ from tqdm import tqdm
 
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
-from gfn.gym.helpers.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator
+from gfn.preprocessors import KHotPreprocessor
 from gfn.samplers import LocalSearchSampler
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed

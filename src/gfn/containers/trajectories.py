@@ -103,18 +103,19 @@ class Trajectories(Container):
             states if states is not None else env.states_from_batch_shape((0, 0))
         )
         assert len(self.states.batch_shape) == 2
-        batch_shape = self.states.batch_shape
 
         self.conditioning = conditioning
         assert self.conditioning is None or (
-            self.conditioning.shape[: len(batch_shape)] == batch_shape
+            self.conditioning.shape[: len(self.states.batch_shape)]
+            == self.states.batch_shape
         )
 
         self.actions = (
             actions if actions is not None else env.actions_from_batch_shape((0, 0))
         )
-        assert (self.actions.batch_shape == batch_shape == (0, 0)) or (
-            self.actions.batch_shape == (batch_shape[0] - 1, batch_shape[1])
+        assert (self.actions.batch_shape == self.states.batch_shape == (0, 0)) or (
+            self.actions.batch_shape
+            == (self.states.batch_shape[0] - 1, self.states.batch_shape[1])
         )
 
         self.terminating_idx = (
@@ -159,8 +160,10 @@ class Trajectories(Container):
 
         self.estimator_outputs = estimator_outputs
         if self.estimator_outputs is not None:
-            #  TODO: check why this fails.
-            # assert self.estimator_outputs.shape[:len(batch_shape)] == batch_shape
+            assert (
+                self.estimator_outputs.shape[: len(self.states.batch_shape)]
+                == self.actions.batch_shape
+            )
             assert self.estimator_outputs.dtype == torch.float
 
     def __repr__(self) -> str:
@@ -365,8 +368,7 @@ class Trajectories(Container):
         if self.estimator_outputs is None and other.estimator_outputs is not None:
             self.estimator_outputs = other.estimator_outputs
         elif self.estimator_outputs is not None and other.estimator_outputs is not None:
-            batch_shape = self.actions.batch_shape
-            n_bs = len(batch_shape)
+            n_bs = len(self.actions.batch_shape)
 
             # Cast other to match self.
             output_dtype = self.estimator_outputs.dtype
@@ -405,8 +407,7 @@ class Trajectories(Container):
                     dim=1,
                 )
 
-            # Sanity check. TODO: Remove?
-            assert self.estimator_outputs.shape[:n_bs] == batch_shape
+            assert self.estimator_outputs.shape[:n_bs] == self.actions.batch_shape
 
     def to_transitions(self) -> Transitions:
         """Returns a `Transitions` object from the trajectories."""
@@ -643,7 +644,7 @@ def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:
     output_padding = torch.full(
         pad_dim_full,
         fill_value=-float("inf"),
-        dtype=a.dtype,  # TODO: This isn't working! Hence the cast below...
+        dtype=a.dtype,
         device=a.device,
     )
     return torch.cat((a, output_padding), dim=0)
