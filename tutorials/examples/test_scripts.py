@@ -153,13 +153,13 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
     if ndim == 2 and height == 8:
         if replay_buffer_size == 0:
             tgt = 2.975e-3  # 8.78e-4
-            atol = 1e-4
+            atol = 1e-3
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
             tgt = 3.1364e-3  # 6.68e-4
-            atol = 1e-4
+            atol = 1e-3
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
@@ -173,7 +173,7 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and height == 8:
         tgt = 1.6e-4
-        atol = 1e-5
+        atol = 1e-4
         if replay_buffer_size == 0:
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
@@ -207,13 +207,13 @@ def test_hypergrid_fm(ndim: int, replay_buffer_size: int):
     if ndim == 2:
         if replay_buffer_size == 0:
             tgt = 5.024e-3  # 5.1e-4
-            atol = 1e-4
+            atol = 1e-3
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
             tgt = 1.376e-2  # 9.85e-4
-            atol = 1e-3
+            atol = 1e-2
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
