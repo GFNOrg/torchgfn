@@ -62,12 +62,12 @@ class HyperGrid(DiscreteEnv):
         {0, 1, ..., height - 1}.
 
         Args:
-            ndim (int, optional): dimension of the grid.
-            height (int, optional): height of the grid.
-            R0 (float, optional): reward parameter R0.
-            R1 (float, optional): reward parameter R1.
-            R2 (float, optional): reward parameter R1.
-            reward_cos (bool, optional): Which version of the reward to use.
+            ndim: dimension of the grid.
+            height: height of the grid.
+            R0: reward parameter R0.
+            R1: reward parameter R1.
+            R2: reward parameter R1.
+            reward_cos: Which version of the reward to use.
             device: The device to use for the environment.
             calculate_partition: If True, calculates the true log partition function,
                 which requires enumerating all states of the hypergrid. Might have

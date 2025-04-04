@@ -280,7 +280,9 @@ def train(
 
 
 def main(args: Namespace):
-    device = torch.device(args.device) if isinstance(args.device, str) else args.device
+    if not isinstance(args.device, torch.device):
+        device = torch.device(args.device)
+
     environment = Line(
         mus=[2, 5],
         sigmas=[0.5, 0.5],

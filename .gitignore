@@ -178,6 +178,7 @@ cython_debug/
 
 # wandb
 wandb/
+wandb
 
 # slurm-specific stuff
 *.sh
