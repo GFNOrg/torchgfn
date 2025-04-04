@@ -30,6 +30,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         n: int,
         save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
+        **policy_kwargs: Any,
     ) -> Trajectories:
         """Sample a specific number of complete trajectories.
 

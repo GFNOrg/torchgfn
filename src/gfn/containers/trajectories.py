@@ -86,6 +86,7 @@ class Trajectories(Container):
                     ensure_same_device(obj.tensor["x"].device, device)
                 else:
                     ensure_same_device(obj.tensor.device, device)
+
         for tensor in [
             conditioning,
             terminating_idx,
@@ -95,7 +96,6 @@ class Trajectories(Container):
         ]:
             if tensor is not None:
                 ensure_same_device(tensor.device, device)
-            assert tensor.device.type == device.type if tensor is not None else True
 
         self.states = (
             states if states is not None else env.states_from_batch_shape((0, 0))
