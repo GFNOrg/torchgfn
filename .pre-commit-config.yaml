@@ -20,7 +20,7 @@ repos:
     rev: 6.0.1
     hooks:
       - id: isort
-        args: ["--verbose"]
+        args: ["--verbose", "--profile", "black", "--line-length", "89"]
   - repo: https://github.com/python/black
     rev: 24.10.0
     hooks:
