@@ -83,6 +83,8 @@ scripts = [
 all = [
     "black",
     "flake8",
+    "gitmopy",
+    "isort",
     "matplotlib",
     "myst-parser",
     "nbmake",
