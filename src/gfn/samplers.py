@@ -8,6 +8,7 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.states import States
+from gfn.utils.common import ensure_same_device
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -148,7 +149,7 @@ class Sampler:
 
         if conditioning is not None:
             assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
-            assert conditioning.device == device
+            ensure_same_device(states.device, conditioning.device)
 
         dones = (
             states.is_initial_state
@@ -221,7 +222,6 @@ class Sampler:
                 new_states = env._backward_step(states, actions)
             else:
                 new_states = env._step(states, actions)
-            sink_states_mask = new_states.is_sink_state
 
             # Increment the step, determine which trajectories are finished, and eval
             # rewards.
@@ -233,16 +233,14 @@ class Sampler:
             new_dones = (
                 new_states.is_initial_state
                 if self.estimator.is_backward
-                else sink_states_mask
+                else new_states.is_sink_state
             ) & ~dones
-            trajectories_terminating_idx[new_dones & ~dones] = step
+            trajectories_terminating_idx[new_dones] = step
             try:
-                trajectories_log_rewards[new_dones & ~dones] = env.log_reward(
-                    states[new_dones & ~dones]
-                )
+                trajectories_log_rewards[new_dones] = env.log_reward(states[new_dones])
             except NotImplementedError:
-                trajectories_log_rewards[new_dones & ~dones] = torch.log(
-                    env.reward(states[new_dones & ~dones])
+                trajectories_log_rewards[new_dones] = torch.log(
+                    env.reward(states[new_dones])
                 )
             states = new_states
             dones = dones | new_dones

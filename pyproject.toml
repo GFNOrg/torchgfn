@@ -23,7 +23,7 @@ classifiers = [
 [tool.poetry.dependencies]
 # core dependencies.
 einops = ">=0.6.1"
-numpy = ">=1.21.2"
+numpy = "<2.*"
 python = "^3.10"
 torch = ">=2.6.0"
 tensordict = ">=0.6.1"
@@ -33,10 +33,12 @@ linear-attention-transformer = ">=0.19.1"
 # dev dependencies.
 black = { version = "24.3", optional = true }
 flake8 = { version = "*", optional = true }
-pyright = {version = "1.1.395", optional = true}
 gitmopy = { version = "*", optional = true }
+isort = { version = "6.0.1", optional = true }
 myst-parser = { version = "*", optional = true }
+nbmake = { version = "*", optional = true }
 pre-commit = { version = "*", optional = true }
+pyright = {version = "1.1.395", optional = true}
 pytest = { version = "*", optional = true }
 renku-sphinx-theme = { version = "*", optional = true }
 sphinx = { version = ">=6.2.1", optional = true }
@@ -47,19 +49,22 @@ tox = { version = "*", optional = true }
 nbmake = { version = "*", optional = true }
 
 # scripts dependencies.
-tqdm = { version = "*", optional = true }
-wandb = { version = "*", optional = true }
+matplotlib = { version = "*", optional = true }
 scikit-learn = {version = "*", optional = true }
 scipy = { version = "*", optional = true }
-matplotlib = { version = "*", optional = true }
+tqdm = { version = "*", optional = true }
+wandb = { version = "*", optional = true }
 
 [tool.poetry.extras]
 dev = [
     "black",
-    "pyright",
+    "flake8",
     "gitmopy",
+    "isort",
     "myst-parser",
+    "nbmake",
     "pre-commit",
+    "pyright",
     "pytest",
     "renku-sphinx-theme",
     "sphinx_rtd_theme",
@@ -67,19 +72,26 @@ dev = [
     "sphinx-math-dollar",
     "sphinx",
     "tox",
-    "flake8",
-    "nbmake",
 ]
 
-scripts = ["tqdm", "wandb", "scikit-learn", "scipy", "matplotlib"]
+scripts = [
+    "matplotlib",
+    "scikit-learn",
+    "scipy",
+    "tqdm",
+    "wandb",
+]
 
 all = [
     "black",
     "flake8",
-    "pyright",
+    "gitmopy",
+    "isort",
     "matplotlib",
     "myst-parser",
+    "nbmake",
     "pre-commit",
+    "pyright",
     "pytest",
     "renku-sphinx-theme",
     "scikit-learn",
@@ -91,7 +103,6 @@ all = [
     "tox",
     "tqdm",
     "wandb",
-    "nbmake",
 ]
 
 [tool.poetry.urls]
@@ -171,3 +182,9 @@ include_trailing_comma = true
 force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
+
+[tool.pytest]
+pythonpath = [
+    "tutorials",
+    "testing"
+]

@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 from tqdm import trange
@@ -38,7 +38,7 @@ def validate(
     gflownet: GFlowNet,
     n_validation_samples: int = 1000,
     visited_terminating_states: Optional[DiscreteStates] = None,
-) -> Dict[str, float]:
+) -> Tuple[Dict[str, float], DiscreteStates | None]:
     """Evaluates the current gflownet on the given environment.
 
     This is for environments with known target reward. The validation is done by
@@ -49,12 +49,15 @@ def validate(
         env: The environment to evaluate the gflownet on.
         gflownet: The gflownet to evaluate.
         n_validation_samples: The number of samples to use to evaluate the pmf.
-        visited_terminating_states: The terminating states visited during training. If given, the pmf is obtained from
-            these last n_validation_samples states. Otherwise, n_validation_samples are resampled for evaluation.
+        visited_terminating_states: The terminating states visited during training.
+            If given, the pmf is obtained from the last n_validation_samples states.
+            Otherwise, n_validation_samples are resampled directly from the gflownet for
+            evaluation.
 
     Returns: A dictionary containing the l1 validation metric. If the gflownet
         is a TBGFlowNet, i.e. contains LogZ, then the (absolute) difference
-        between the learned and the target LogZ is also returned in the dictionary.
+        between the learned and the target LogZ is also returned in the dictionary, and
+        the sampled terminating states are returned.
     """
 
     true_logZ = env.log_partition
@@ -64,26 +67,30 @@ def validate(
     else:
         # The environment does not implement a true_dist_pmf property, nor a log_partition property
         # We cannot validate the gflownet
-        return {}
+        return {}, visited_terminating_states
 
     logZ = None
     if isinstance(gflownet, TBGFlowNet):
         assert isinstance(gflownet.logZ, torch.Tensor)
         logZ = gflownet.logZ.item()
     if visited_terminating_states is None:
-        terminating_states = gflownet.sample_terminating_states(
+        sampled_terminating_states = gflownet.sample_terminating_states(
             env, n_validation_samples
         )
-        assert isinstance(terminating_states, DiscreteStates)
+        assert isinstance(sampled_terminating_states, DiscreteStates)
     else:
-        terminating_states = visited_terminating_states[-n_validation_samples:]
+        # Only keep the most recent n_validation_samples states.
+        sampled_terminating_states = visited_terminating_states[-n_validation_samples:]
 
-    final_states_dist_pmf = get_terminating_state_dist_pmf(env, terminating_states)
+    final_states_dist_pmf = get_terminating_state_dist_pmf(
+        env, sampled_terminating_states
+    )
     l1_dist = (final_states_dist_pmf - true_dist_pmf).abs().mean().item()
     validation_info = {"l1_dist": l1_dist}
     if logZ is not None:
         validation_info["logZ_diff"] = abs(logZ - true_logZ)
-    return validation_info
+
+    return (validation_info, sampled_terminating_states)
 
 
 def states_actions_tns_to_traj(

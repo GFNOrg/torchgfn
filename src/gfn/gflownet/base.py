@@ -15,6 +15,21 @@ from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
 TrainingSampleType = TypeVar("TrainingSampleType", bound=Container)
 
 
+def loss_reduce(loss: torch.Tensor, method: str) -> torch.Tensor:
+    """Utility function to handle loss aggregation strategies."""
+    reduction_methods = {
+        "mean": torch.mean,
+        "sum": torch.sum,
+        "none": lambda x: x,
+    }
+    if method in reduction_methods:
+        return reduction_methods[method](loss)
+    else:
+        raise ValueError(
+            f"Invalid loss reduction method: {method} not in {reduction_methods.keys()}"
+        )
+
+
 class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
     """Abstract Base Class for GFlowNets.
 

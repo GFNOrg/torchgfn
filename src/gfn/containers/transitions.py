@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from gfn.states import States
 
 from gfn.containers.base import Container
+from gfn.utils.common import ensure_same_device
 
 
 class Transitions(Container):
@@ -65,20 +66,20 @@ class Transitions(Container):
                 `batch_shapes`.
         """
         self.env = env
+        self.conditioning = conditioning
         self.is_backward = is_backward
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
         for obj in [states, actions, next_states]:
-            assert obj.tensor.device == device if obj is not None else True
+            ensure_same_device(obj.device, device) if obj is not None else True
         for tensor in [conditioning, is_terminating, log_rewards, log_probs]:
-            assert tensor.device == device if tensor is not None else True
+            ensure_same_device(tensor.device, device) if tensor is not None else True
 
         self.states = states if states is not None else env.states_from_batch_shape((0,))
         assert len(self.states.batch_shape) == 1
         batch_shape = self.states.batch_shape
 
-        self.conditioning = conditioning
         assert self.conditioning is None or (
             self.conditioning.shape[: len(batch_shape)] == batch_shape
         )
