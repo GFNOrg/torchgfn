@@ -3,13 +3,13 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from torch.distributions import Categorical, Distribution
 from tensordict import TensorDict
+from torch.distributions import Categorical, Distribution
+from torch_geometric.data import Batch as GeometricBatch
 
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
-from gfn.utils.distributions import UnsqueezedCategorical, GraphActionDistribution
-
+from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -271,7 +271,9 @@ class DiscretePolicyEstimator(GFNModule):
                 on policy.
             epsilon: with probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy."""
-        assert module_output.shape[-1] == self.expected_output_dim
+        assert (
+            module_output.shape[-1] == self.expected_output_dim
+        ), f"module_output.shape[-1] = {module_output.shape[-1]}, expected_output_dim = {self.expected_output_dim}"
 
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
@@ -462,7 +464,7 @@ class GraphPolicyEstimator(GFNModule):
     ):
         super().__init__(module, preprocessor, is_backward)
 
-    def forward(self, input: States | torch.Tensor) -> torch.Tensor:
+    def forward(self, input: States | torch.Tensor | GeometricBatch) -> torch.Tensor:
         """Forward pass of the module.
 
         Args:
@@ -490,7 +492,6 @@ class GraphPolicyEstimator(GFNModule):
         logits["edge_index"][~masks["edge_index"]] = -float("inf")
 
         return GraphActionDistribution(logits=logits)
-
 
     @property
     def expected_output_dim(self) -> int:

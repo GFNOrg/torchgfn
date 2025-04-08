@@ -56,28 +56,25 @@ class GraphBuilding(GraphEnv):
 
     def __init__(
         self,
-        feature_dim: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
+        is_directed: bool = True,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
         s0 = GeometricData(
-            x=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
-            edge_attr=torch.zeros((0, feature_dim), dtype=torch.float32).to(device),
+            x=torch.zeros((0, 1), dtype=torch.int64).to(device),
+            edge_attr=torch.zeros((0, 1), dtype=torch.int64).to(device),
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )
         sf = GeometricData(
-            x=torch.ones((1, feature_dim), dtype=torch.float32).to(device)
-            * float("inf"),
-            edge_attr=torch.ones((0, feature_dim), dtype=torch.float32).to(device)
-            * float("inf"),
+            x=torch.full((1, 1), -1, dtype=torch.int64).to(device),
+            edge_attr=torch.full((0, 1), -1, dtype=torch.int64).to(device),
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )
 
         self.state_evaluator = state_evaluator
-        self.feature_dim = feature_dim
-
+        self.is_directed = is_directed
         super().__init__(
             s0=s0,
             sf=sf,
@@ -119,7 +116,7 @@ class GraphBuilding(GraphEnv):
                 actions.action_type == GraphActionType.ADD_NODE
             ]
             states.tensor = self._add_node(
-                states.tensor, batch_indices, actions.features
+                states.tensor, batch_indices, actions.node_class
             )
 
         if action_type == GraphActionType.ADD_EDGE:
@@ -128,11 +125,12 @@ class GraphBuilding(GraphEnv):
 
             # Add edges to each graph
             for i, action_tensor in enumerate(actions.edge_index):
-                src, dst = get_edge_indices(self.n_nodes, self.is_directed, self.device)
-                src, dst = src[action_tensor], dst[action_tensor]
-
-                # Get the graph to modify
                 graph = data_list[i]
+                assert isinstance(graph.num_nodes, int)
+                src, dst = get_edge_indices(
+                    graph.num_nodes, self.is_directed, self.device
+                )
+                src, dst = src[action_tensor], dst[action_tensor]
 
                 # Add the new edge
                 graph.edge_index = torch.cat(
@@ -177,12 +175,12 @@ class GraphBuilding(GraphEnv):
 
         if action_type == GraphActionType.ADD_NODE:
             # Remove nodes with matching features
-            for i, features in enumerate(actions.features):
+            for i, node_class in enumerate(actions.node_class):
                 graph = data_list[i]
                 assert isinstance(graph.num_nodes, int)
 
                 # Find nodes with matching features
-                is_equal = torch.all(graph.x == features.unsqueeze(0), dim=1)
+                is_equal = torch.all(graph.x == node_class.unsqueeze(0), dim=1)
 
                 if torch.any(is_equal):
                     # Remove the first matching node
@@ -201,8 +199,13 @@ class GraphBuilding(GraphEnv):
 
         elif action_type == GraphActionType.ADD_EDGE:
             # Remove edges with matching indices
-            for i, (src, dst) in enumerate(actions.edge_index):
+            for i, action_tensor in enumerate(actions.edge_index):
                 graph = data_list[i]
+                assert isinstance(graph.num_nodes, int)
+                src, dst = get_edge_indices(
+                    graph.num_nodes, self.is_directed, self.device
+                )
+                src, dst = src[action_tensor], dst[action_tensor]
 
                 # Find the edge to remove
                 edge_mask = ~(
@@ -244,7 +247,7 @@ class GraphBuilding(GraphEnv):
             if actions.action_type[i] == GraphActionType.ADD_NODE:
                 # Check if a node with these features already exists
                 equal_nodes = torch.all(
-                    graph.x == actions.features[i].unsqueeze(0), dim=1
+                    graph.x == actions.node_class[i].unsqueeze(0), dim=1
                 )
 
                 if backward:
@@ -258,12 +261,12 @@ class GraphBuilding(GraphEnv):
 
             elif actions.action_type[i] == GraphActionType.ADD_EDGE:
                 action_tensor = actions.edge_index[i]
-                src, dst = get_edge_indices(self.n_nodes, self.is_directed, self.device)
-                src, dst = src[action_tensor], dst[action_tensor]
-
-                # Check if src and dst are valid node indices
-                if src >= graph.num_nodes or dst >= graph.num_nodes or src == dst:
+                src, dst = get_edge_indices(
+                    graph.num_nodes, self.is_directed, self.device
+                )
+                if action_tensor >= len(src) or action_tensor >= len(dst):
                     return False
+                src, dst = src[action_tensor], dst[action_tensor]
 
                 # Check if the edge already exists
                 edge_exists = torch.any(
@@ -285,14 +288,14 @@ class GraphBuilding(GraphEnv):
         self,
         tensor: GeometricBatch,
         batch_indices: torch.Tensor | list[int],
-        nodes_to_add: torch.Tensor,
+        node_class: torch.Tensor,
     ) -> GeometricBatch:
         """Add nodes to graphs in a batch.
 
         Args:
             tensor_dict: The current batch of graphs.
             batch_indices: Indices of graphs to add nodes to.
-            nodes_to_add: Features of nodes to add.
+            node_class: Class of nodes to add.
 
         Returns:
             Updated batch of graphs.
@@ -302,7 +305,7 @@ class GraphBuilding(GraphEnv):
             if isinstance(batch_indices, list)
             else batch_indices
         )
-        if len(batch_indices) != len(nodes_to_add):
+        if len(batch_indices) != len(node_class):
             raise ValueError(
                 "Number of batch indices must match number of node feature lists"
             )
@@ -311,19 +314,19 @@ class GraphBuilding(GraphEnv):
         data_list = tensor.to_data_list()
 
         # Add nodes to the specified graphs
-        for graph_idx, new_nodes in zip(batch_indices, nodes_to_add):
+        for graph_idx, new_node_class in zip(batch_indices, node_class):
             # Get the graph to modify
             graph = data_list[graph_idx]
 
             # Ensure new_nodes is 2D
-            new_nodes = torch.atleast_2d(new_nodes)
+            new_node_class = torch.atleast_2d(new_node_class)
 
             # Check feature dimension
-            if new_nodes.shape[1] != graph.x.shape[1]:
+            if new_node_class.shape[1] != graph.x.shape[1]:
                 raise ValueError(f"Node features must have dimension {graph.x.shape[1]}")
 
             # Add new nodes to the graph
-            graph.x = torch.cat([graph.x, new_nodes], dim=0)
+            graph.x = torch.cat([graph.x, new_node_class], dim=0)
 
         # Create a new batch from the updated data list
         new_batch = GeometricBatch.from_data_list(data_list)
@@ -380,17 +383,15 @@ class GraphBuildingOnEdges(GraphBuilding):
         self.n_nodes = n_nodes
         if directed:
             # all off-diagonal edges + exit.
-            self.n_actions = (n_nodes**2 - n_nodes)
+            self.n_actions = n_nodes**2 - n_nodes
         else:
             # bottom triangle + exit.
-            self.n_actions = ((n_nodes**2 - n_nodes) // 2)
+            self.n_actions = (n_nodes**2 - n_nodes) // 2
         super().__init__(
-            feature_dim=n_nodes,
             state_evaluator=state_evaluator,
+            is_directed=directed,
             device=device,
         )
-        self.is_discrete = True  # actions here are discrete, needed for FlowMatching
-        self.is_directed = directed
 
     def make_actions_class(self) -> type[GraphActions]:
 
@@ -489,14 +490,20 @@ class GraphBuildingOnEdges(GraphBuilding):
 
                         edge_masks[i, edge_idx] = False
 
-                action_type = torch.zeros(*self.batch_shape, 3, dtype=torch.bool, device=self.device)
+                action_type = torch.zeros(
+                    *self.batch_shape, 3, dtype=torch.bool, device=self.device
+                )
                 action_type[:, 1] = torch.any(edge_masks, dim=-1)
                 action_type[:, 2] = True
                 return TensorDict(
                     {
                         "action_type": action_type,
-                        "node_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
-                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
+                        "node_class": torch.ones(
+                            *self.batch_shape, 1, dtype=torch.bool, device=self.device
+                        ),
+                        "edge_class": torch.ones(
+                            *self.batch_shape, 1, dtype=torch.bool, device=self.device
+                        ),
                         "edge_index": edge_masks,
                     },
                     batch_size=self.batch_shape,
@@ -523,7 +530,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                 """
                 # Disallow all actions.
                 edge_masks = torch.zeros(
-                    len(self), self.n_actions - 1, dtype=torch.bool, device=self.device
+                    len(self), self.n_actions, dtype=torch.bool, device=self.device
                 )
 
                 for i in range(len(self)):
@@ -549,13 +556,19 @@ class GraphBuildingOnEdges(GraphBuilding):
                         # Allow the removal of this edge.
                         edge_masks[i, edge_idx] = True
 
-                action_type = torch.zeros(*self.batch_shape, 3, dtype=torch.bool, device=self.device)
+                action_type = torch.zeros(
+                    *self.batch_shape, 3, dtype=torch.bool, device=self.device
+                )
                 action_type[:, 1] = torch.any(edge_masks, dim=-1)
                 return TensorDict(
                     {
                         "action_type": action_type,
-                        "node_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
-                        "edge_class": torch.ones(*self.batch_shape, 1, dtype=torch.bool, device=self.device),
+                        "node_class": torch.ones(
+                            *self.batch_shape, 1, dtype=torch.bool, device=self.device
+                        ),
+                        "edge_class": torch.ones(
+                            *self.batch_shape, 1, dtype=torch.bool, device=self.device
+                        ),
                         "edge_index": edge_masks,
                     },
                     batch_size=self.batch_shape,
@@ -594,4 +607,3 @@ class GraphBuildingOnEdges(GraphBuilding):
         new_states = super()._backward_step(states, actions)
         assert isinstance(new_states, GraphStates)
         return new_states
-

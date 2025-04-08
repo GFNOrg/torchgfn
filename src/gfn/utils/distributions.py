@@ -1,6 +1,10 @@
+from typing import OrderedDict
+
 import torch
 from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
+
+from gfn.actions import GraphActionType
 
 
 class UnsqueezedCategorical(Categorical):
@@ -58,15 +62,35 @@ class GraphActionDistribution(Distribution):
         assert "node_class" in logits
         assert "edge_index" in logits
 
+        no_possible_edge_index = torch.isneginf(logits["edge_index"]).all(-1)
+        assert torch.isneginf(
+            logits["action_type"][no_possible_edge_index, GraphActionType.ADD_EDGE]
+        ).all()
+        logits["edge_index"][no_possible_edge_index] = 0
+
+        no_possible_edge_class = torch.isneginf(logits["edge_class"]).all(-1)
+        assert torch.isneginf(
+            logits["action_type"][no_possible_edge_class, GraphActionType.ADD_EDGE]
+        ).all()
+        logits["edge_class"][no_possible_edge_class] = 0
+
+        no_possible_node = torch.isneginf(logits["node_class"]).all(-1)
+        assert torch.isneginf(
+            logits["action_type"][no_possible_node, GraphActionType.ADD_NODE]
+        ).all()
+        logits["node_class"][no_possible_node] = 0
+
         self._batch_size = logits["action_type"].shape[:-1]
-        self.dists = {
-            "action_type": Categorical(logits=logits["action_type"]),
-            "edge_class": Categorical(logits=logits["edge_class"]),
-            "node_class": Categorical(logits=logits["node_class"]),
-            "edge_index": Categorical(logits=logits["edge_index"]),
-        }
-    
-    def sample(self, sample_shape=torch.Size()) -> TensorDict:
+        self.dists = OrderedDict(
+            [
+                ("action_type", Categorical(logits=logits["action_type"])),
+                ("node_class", Categorical(logits=logits["node_class"])),
+                ("edge_class", Categorical(logits=logits["edge_class"])),
+                ("edge_index", Categorical(logits=logits["edge_index"])),
+            ]
+        )
+
+    def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         """Samples from the distribution.
 
         Args:
@@ -74,20 +98,18 @@ class GraphActionDistribution(Distribution):
 
         Returns the sampled actions as a tensor of shape (*sample_shape, *batch_shape, 1).
         """
-        return TensorDict(
-            {
-                key: dist.sample(sample_shape) for key, dist in self.dists.items()
-            },
-            batch_size=sample_shape + self._batch_size,
+        return torch.cat(
+            [dist.sample(sample_shape).unsqueeze(-1) for dist in self.dists.values()],
+            dim=-1,
         )
 
-    def log_prob(self, sample: TensorDict) -> torch.Tensor:
+    def log_prob(self, sample: torch.Tensor) -> torch.Tensor:
         """Returns the log probabilities of a sample.
 
         Args:
             sample: The sample of for which to compute the log probabilities.
         """
-        log_prob = torch.zeros(sample.batch_size)
-        for key, dist in self.dists.items():
-            log_prob += dist.log_prob(sample[key])
+        log_prob = torch.zeros(sample.shape[:-1])
+        for i, dist in enumerate(self.dists.values()):
+            log_prob += dist.log_prob(sample[..., i])
         return log_prob

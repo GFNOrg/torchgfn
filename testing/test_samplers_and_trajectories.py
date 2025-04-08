@@ -8,7 +8,7 @@ from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
-from gfn.modules import DiscretePolicyEstimator, GFNModule
+from gfn.modules import DiscretePolicyEstimator, GFNModule, GraphPolicyEstimator
 from gfn.preprocessors import (
     EnumPreprocessor,
     IdentityPreprocessor,
@@ -404,11 +404,9 @@ def test_graph_building_on_edges():
         embedding_dim=128,
         is_backward=False,
     )
-    module_fwd = DiscretePolicyEstimator(
+    module_fwd = GraphPolicyEstimator(
         module=estimator_fwd,
-        n_actions=env.n_actions,
         is_backward=False,
-        preprocessor=IdentityPreprocessor(output_dim=1),
     )
     module_fwd.to(device=env.device)
 
