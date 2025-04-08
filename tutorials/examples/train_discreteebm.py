@@ -92,7 +92,7 @@ def main(args):  # noqa: C901
         if use_wandb:
             wandb.log(to_log, step=iteration)
         if iteration % args.validation_interval == 0:
-            validation_info = validate(
+            validation_info, _ = validate(
                 env,
                 gflownet,
                 args.validation_samples,
