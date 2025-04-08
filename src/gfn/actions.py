@@ -1,5 +1,4 @@
-from __future__ import \
-    annotations  # This allows to use the class name in type hints
+from __future__ import annotations  # This allows to use the class name in type hints
 
 import enum
 from abc import ABC

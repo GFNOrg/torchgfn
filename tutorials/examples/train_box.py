@@ -18,12 +18,21 @@ from scipy.special import logsumexp
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm, trange
 
-from gfn.gflownet import (DBGFlowNet, LogPartitionVarianceGFlowNet,
-                          SubTBGFlowNet, TBGFlowNet)
+from gfn.gflownet import (
+    DBGFlowNet,
+    LogPartitionVarianceGFlowNet,
+    SubTBGFlowNet,
+    TBGFlowNet,
+)
 from gfn.gym import Box
-from gfn.gym.helpers.box_utils import (BoxPBEstimator, BoxPBMLP, BoxPBUniform,
-                                       BoxPFEstimator, BoxPFMLP,
-                                       BoxStateFlowModule)
+from gfn.gym.helpers.box_utils import (
+    BoxPBEstimator,
+    BoxPBMLP,
+    BoxPBUniform,
+    BoxPFEstimator,
+    BoxPFMLP,
+    BoxStateFlowModule,
+)
 from gfn.modules import ScalarEstimator
 from gfn.preprocessors import IdentityPreprocessor
 from gfn.samplers import LocalSearchSampler, Sampler

@@ -9,8 +9,7 @@ from gfn.actions import GraphActionType
 from gfn.env import NonValidActionsError
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuilding
-from gfn.preprocessors import (IdentityPreprocessor, KHotPreprocessor,
-                               OneHotPreprocessor)
+from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.states import GraphStates
 
 

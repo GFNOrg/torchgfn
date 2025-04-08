@@ -4,7 +4,9 @@ import pytest
 import torch
 
 from gfn.containers.replay_buffer import (
-    NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer)
+    NormBasedDiversePrioritizedReplayBuffer,
+    ReplayBuffer,
+)
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions

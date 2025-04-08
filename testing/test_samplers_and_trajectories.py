@@ -7,11 +7,14 @@ from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
-from gfn.gym.helpers.box_utils import (BoxPBEstimator, BoxPBMLP,
-                                       BoxPFEstimator, BoxPFMLP)
+from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator, GFNModule
-from gfn.preprocessors import (EnumPreprocessor, IdentityPreprocessor,
-                               KHotPreprocessor, OneHotPreprocessor)
+from gfn.preprocessors import (
+    EnumPreprocessor,
+    IdentityPreprocessor,
+    KHotPreprocessor,
+    OneHotPreprocessor,
+)
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.modules import MLP, GraphEdgeActionGNN
 from gfn.utils.prob_calculations import get_trajectory_pfs

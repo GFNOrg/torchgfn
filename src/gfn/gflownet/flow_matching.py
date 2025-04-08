@@ -6,12 +6,13 @@ import torch
 from gfn.containers import StatesContainer, Trajectories
 from gfn.env import DiscreteEnv
 from gfn.gflownet.base import GFlowNet, loss_reduce
-from gfn.modules import (ConditionalDiscretePolicyEstimator,
-                         DiscretePolicyEstimator)
+from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
-from gfn.utils.handlers import (has_conditioning_exception_handler,
-                                no_conditioning_exception_handler)
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
 
 warnings.filterwarnings("once", message="recalculate_all_logprobs is not used for FM.*")
 
