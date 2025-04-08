@@ -5,25 +5,15 @@ import torch
 from test_samplers_and_trajectories import trajectory_sampling_with_return
 
 from gfn.containers import Trajectories
-from gfn.gflownet import (
-    DBGFlowNet,
-    FMGFlowNet,
-    GFlowNet,
-    LogPartitionVarianceGFlowNet,
-    ModifiedDBGFlowNet,
-    SubTBGFlowNet,
-    TBGFlowNet,
-)
+from gfn.gflownet import (DBGFlowNet, FMGFlowNet, GFlowNet,
+                          LogPartitionVarianceGFlowNet, ModifiedDBGFlowNet,
+                          SubTBGFlowNet, TBGFlowNet)
 from gfn.gym import Box, DiscreteEBM, HyperGrid
-from gfn.gym.helpers.box_utils import (
-    BoxPBEstimator,
-    BoxPBMLP,
-    BoxPBUniform,
-    BoxPFEstimator,
-    BoxPFMLP,
-)
+from gfn.gym.helpers.box_utils import (BoxPBEstimator, BoxPBMLP, BoxPBUniform,
+                                       BoxPFEstimator, BoxPFMLP)
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
-from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor, KHotPreprocessor
+from gfn.preprocessors import (EnumPreprocessor, IdentityPreprocessor,
+                               KHotPreprocessor)
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 
 N = 10  # Number of trajectories from sample_trajectories (changes tests globally).

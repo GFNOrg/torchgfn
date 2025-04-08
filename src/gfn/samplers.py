@@ -9,10 +9,8 @@ from gfn.env import Env
 from gfn.modules import GFNModule
 from gfn.states import States
 from gfn.utils.common import ensure_same_device
-from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
-)
+from gfn.utils.handlers import (has_conditioning_exception_handler,
+                                no_conditioning_exception_handler)
 from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 
 

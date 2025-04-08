@@ -1,19 +1,11 @@
-from __future__ import annotations  # This allows to use the class name in type hints
+from __future__ import \
+    annotations  # This allows to use the class name in type hints
 
 from abc import ABC
 from copy import deepcopy
 from math import prod
-from typing import (
-    Callable,
-    ClassVar,
-    List,
-    Literal,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import (Callable, ClassVar, List, Literal, Optional, Sequence,
+                    Tuple, Union, cast)
 
 import numpy as np
 import torch

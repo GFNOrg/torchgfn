@@ -6,7 +6,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch import Size, Tensor
-from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
+from torch.distributions import (Beta, Categorical, Distribution,
+                                 MixtureSameFamily)
 
 from gfn.gym import Box
 from gfn.modules import GFNModule

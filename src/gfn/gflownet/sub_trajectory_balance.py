@@ -8,11 +8,9 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
-from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
-    warn_about_recalculating_logprobs,
-)
+from gfn.utils.handlers import (has_conditioning_exception_handler,
+                                no_conditioning_exception_handler,
+                                warn_about_recalculating_logprobs)
 
 ContributionsTensor = (
     torch.Tensor

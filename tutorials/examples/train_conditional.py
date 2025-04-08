@@ -6,19 +6,11 @@ import torch
 from torch.optim import Adam
 from tqdm import tqdm
 
-from gfn.gflownet import (
-    DBGFlowNet,
-    FMGFlowNet,
-    ModifiedDBGFlowNet,
-    SubTBGFlowNet,
-    TBGFlowNet,
-)
+from gfn.gflownet import (DBGFlowNet, FMGFlowNet, ModifiedDBGFlowNet,
+                          SubTBGFlowNet, TBGFlowNet)
 from gfn.gym import HyperGrid
-from gfn.modules import (
-    ConditionalDiscretePolicyEstimator,
-    ConditionalScalarEstimator,
-    ScalarEstimator,
-)
+from gfn.modules import (ConditionalDiscretePolicyEstimator,
+                         ConditionalScalarEstimator, ScalarEstimator)
 from gfn.utils.modules import MLP
 
 DEFAULT_SEED: int = 4444

@@ -32,16 +32,11 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 
-from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
-from gfn.gflownet import (
-    DBGFlowNet,
-    FMGFlowNet,
-    GFlowNet,
-    LogPartitionVarianceGFlowNet,
-    ModifiedDBGFlowNet,
-    SubTBGFlowNet,
-    TBGFlowNet,
-)
+from gfn.containers import (NormBasedDiversePrioritizedReplayBuffer,
+                            ReplayBuffer)
+from gfn.gflownet import (DBGFlowNet, FMGFlowNet, GFlowNet,
+                          LogPartitionVarianceGFlowNet, ModifiedDBGFlowNet,
+                          SubTBGFlowNet, TBGFlowNet)
 from gfn.gym import HyperGrid
 from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
 from gfn.preprocessors import KHotPreprocessor

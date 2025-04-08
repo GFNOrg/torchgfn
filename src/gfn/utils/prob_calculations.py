@@ -5,10 +5,8 @@ import torch
 from gfn.containers import Trajectories, Transitions
 from gfn.modules import GFNModule
 from gfn.states import States
-from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
-)
+from gfn.utils.handlers import (has_conditioning_exception_handler,
+                                no_conditioning_exception_handler)
 
 
 def check_cond_forward(

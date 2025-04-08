@@ -12,10 +12,8 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.modules import GFNModule, ScalarEstimator
-from gfn.utils.handlers import (
-    is_callable_exception_handler,
-    warn_about_recalculating_logprobs,
-)
+from gfn.utils.handlers import (is_callable_exception_handler,
+                                warn_about_recalculating_logprobs)
 
 
 class TBGFlowNet(TrajectoryBasedGFlowNet):
