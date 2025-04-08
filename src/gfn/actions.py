@@ -223,32 +223,10 @@ class GraphActions(Actions):
             )
         )
 
-    @staticmethod
-    def _edge_index_to_tensor(edge_index: torch.Tensor) -> torch.Tensor:
-        return torch.cat(
-            [
-                edge_index[0].reshape(*edge_index[0].shape, 1),
-                edge_index[1].reshape(*edge_index[1].shape, 1),
-            ],
-            dim=-1,
-        )
-
     @property
     def batch_shape(self) -> tuple[int, ...]:
         assert self.tensor.shape[-1] == 4
         return self.tensor.shape[:-1]
-
-    def __getitem__(self, index: int | slice | tuple | torch.Tensor) -> Actions:
-        actions = self.tensor[index]
-        return self.__class__(actions)
-
-    def __setitem__(
-        self,
-        index: int | slice | tuple | torch.Tensor,
-        actions: Actions,
-    ) -> None:
-        """Set particular actions of the batch."""
-        self.tensor[index] = actions.tensor
 
     def __repr__(self):
         return f"""GraphAction object with {self.batch_shape} actions."""
