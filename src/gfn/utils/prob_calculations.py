@@ -5,7 +5,6 @@ import torch
 from gfn.containers import Trajectories, Transitions
 from gfn.modules import GFNModule
 from gfn.states import States
-from gfn.utils.common import has_log_probs
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -26,9 +25,9 @@ def check_cond_forward(
             return module(states)
 
 
-#########################
-##### Trajectories  #####
-#########################
+# ------------
+# Trajectories
+# ------------
 
 
 def get_trajectory_pfs_and_pbs(
@@ -36,7 +35,7 @@ def get_trajectory_pfs_and_pbs(
     pb: GFNModule,
     trajectories: Trajectories,
     fill_value: float = 0.0,
-    recalculate_all_logprobs: bool = False,
+    recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     # fill value is the value used for invalid states (sink state usually)
 
@@ -58,7 +57,7 @@ def get_trajectory_pfs(
     pf: GFNModule,
     trajectories: Trajectories,
     fill_value: float = 0.0,
-    recalculate_all_logprobs: bool = False,
+    recalculate_all_logprobs: bool = True,
 ) -> torch.Tensor:
     if trajectories.is_backward:
         raise ValueError("Backward trajectories are not supported")
@@ -72,8 +71,9 @@ def get_trajectory_pfs(
     if valid_states.batch_shape != tuple(valid_actions.batch_shape):
         raise AssertionError("Something wrong happening with log_pf evaluations")
 
-    if has_log_probs(trajectories) and not recalculate_all_logprobs:
+    if trajectories.has_log_probs and not recalculate_all_logprobs:
         log_pf_trajectories = trajectories.log_probs
+        assert log_pf_trajectories is not None
     else:
         log_pf_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],
@@ -170,16 +170,16 @@ def get_trajectory_pbs(
     return log_pb_trajectories
 
 
-########################
-##### Transitions  #####
-########################
+# -----------
+# Transitions
+# -----------
 
 
 def get_transition_pfs_and_pbs(
     pf: GFNModule,
     pb: GFNModule,
     transitions: Transitions,
-    recalculate_all_logprobs: bool = False,
+    recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if transitions.is_backward:
         raise ValueError("Backward transitions are not supported")
@@ -194,13 +194,14 @@ def get_transition_pfs_and_pbs(
 
 
 def get_transition_pfs(
-    pf: GFNModule, transitions: Transitions, recalculate_all_logprobs: bool = False
+    pf: GFNModule, transitions: Transitions, recalculate_all_logprobs: bool = True
 ) -> torch.Tensor:
     states = transitions.states
     actions = transitions.actions
 
-    if has_log_probs(transitions) and not recalculate_all_logprobs:
+    if transitions.has_log_probs and not recalculate_all_logprobs:
         log_pf_actions = transitions.log_probs
+        assert log_pf_actions is not None
     else:
         # Evaluate the log PF of the actions, with optional conditioning.
         # TODO: Inefficient duplication in case of tempered policy
@@ -220,28 +221,29 @@ def get_transition_pfs(
 
 def get_transition_pbs(pb: GFNModule, transitions: Transitions) -> torch.Tensor:
     # automatically removes invalid transitions (i.e. s_f -> s_f)
-    valid_next_states = transitions.next_states[~transitions.is_done]
+    valid_next_states = transitions.next_states[~transitions.is_terminating]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]
 
     # Evaluate the log PB of the actions, with optional conditioning.
     masked_cond = (
-        transitions.conditioning[~transitions.is_done]
+        transitions.conditioning[~transitions.is_terminating]
         if transitions.conditioning is not None
         else None
     )
     estimator_outputs = check_cond_forward(pb, "pb", valid_next_states, masked_cond)
 
-    valid_log_pb_actions = pb.to_probability_distribution(
-        valid_next_states, estimator_outputs
-    ).log_prob(non_exit_actions.tensor)
-
     # Evaluate the log PB of the actions.
     log_pb_actions = torch.zeros(
         (transitions.n_transitions,),
         dtype=torch.float,
-        device=valid_log_pb_actions.device,
+        device=transitions.states.device,
     )
 
-    log_pb_actions[~transitions.is_done] = valid_log_pb_actions
+    if len(valid_next_states) != 0:
+        valid_log_pb_actions = pb.to_probability_distribution(
+            valid_next_states, estimator_outputs
+        ).log_prob(non_exit_actions.tensor)
+
+        log_pb_actions[~transitions.is_terminating] = valid_log_pb_actions
 
     return log_pb_actions

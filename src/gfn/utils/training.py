@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 from tqdm import trange
@@ -9,10 +9,12 @@ from gfn.env import DiscreteEnv, Env
 from gfn.gflownet import GFlowNet, TBGFlowNet
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
-from gfn.states import States
+from gfn.states import DiscreteStates
 
 
-def get_terminating_state_dist_pmf(env: Env, states: States) -> torch.Tensor:
+def get_terminating_state_dist_pmf(
+    env: DiscreteEnv, states: DiscreteStates
+) -> torch.Tensor:
     """Computes the empirical distribution of the terminating states.
 
     Args:
@@ -21,27 +23,22 @@ def get_terminating_state_dist_pmf(env: Env, states: States) -> torch.Tensor:
 
     Returns the empirical distribution of the terminating states as a tensor of shape (n_terminating_states,).
     """
-    states_indices = (
-        env.get_terminating_states_indices(states)  # pyright: ignore
-        .cpu()
-        .numpy()
-        .tolist()
-    )
-    counter = Counter(states_indices)
+    states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
+    counter = Counter(str(idx) for idx in states_indices)
     counter_list = [
-        counter[state_idx] if state_idx in counter else 0
-        for state_idx in range(env.n_terminating_states)  # pyright: ignore
+        counter[str(state_idx)] if str(state_idx) in counter else 0
+        for state_idx in range(env.n_terminating_states)
     ]
 
     return torch.tensor(counter_list, dtype=torch.float) / len(states_indices)
 
 
 def validate(
-    env: Env,
+    env: DiscreteEnv,
     gflownet: GFlowNet,
     n_validation_samples: int = 1000,
-    visited_terminating_states: Optional[States] = None,
-) -> Dict[str, float]:
+    visited_terminating_states: Optional[DiscreteStates] = None,
+) -> Tuple[Dict[str, float], DiscreteStates | None]:
     """Evaluates the current gflownet on the given environment.
 
     This is for environments with known target reward. The validation is done by
@@ -52,12 +49,15 @@ def validate(
         env: The environment to evaluate the gflownet on.
         gflownet: The gflownet to evaluate.
         n_validation_samples: The number of samples to use to evaluate the pmf.
-        visited_terminating_states: The terminating states visited during training. If given, the pmf is obtained from
-            these last n_validation_samples states. Otherwise, n_validation_samples are resampled for evaluation.
+        visited_terminating_states: The terminating states visited during training.
+            If given, the pmf is obtained from the last n_validation_samples states.
+            Otherwise, n_validation_samples are resampled directly from the gflownet for
+            evaluation.
 
     Returns: A dictionary containing the l1 validation metric. If the gflownet
         is a TBGFlowNet, i.e. contains LogZ, then the (absolute) difference
-        between the learned and the target LogZ is also returned in the dictionary.
+        between the learned and the target LogZ is also returned in the dictionary, and
+        the sampled terminating states are returned.
     """
 
     true_logZ = env.log_partition
@@ -67,24 +67,30 @@ def validate(
     else:
         # The environment does not implement a true_dist_pmf property, nor a log_partition property
         # We cannot validate the gflownet
-        return {}
+        return {}, visited_terminating_states
 
     logZ = None
     if isinstance(gflownet, TBGFlowNet):
+        assert isinstance(gflownet.logZ, torch.Tensor)
         logZ = gflownet.logZ.item()
     if visited_terminating_states is None:
-        terminating_states = gflownet.sample_terminating_states(
-            n_validation_samples
-        )  # pyright: ignore
+        sampled_terminating_states = gflownet.sample_terminating_states(
+            env, n_validation_samples
+        )
+        assert isinstance(sampled_terminating_states, DiscreteStates)
     else:
-        terminating_states = visited_terminating_states[-n_validation_samples:]
+        # Only keep the most recent n_validation_samples states.
+        sampled_terminating_states = visited_terminating_states[-n_validation_samples:]
 
-    final_states_dist_pmf = get_terminating_state_dist_pmf(env, terminating_states)
+    final_states_dist_pmf = get_terminating_state_dist_pmf(
+        env, sampled_terminating_states
+    )
     l1_dist = (final_states_dist_pmf - true_dist_pmf).abs().mean().item()
     validation_info = {"l1_dist": l1_dist}
     if logZ is not None:
         validation_info["logZ_diff"] = abs(logZ - true_logZ)
-    return validation_info
+
+    return (validation_info, sampled_terminating_states)
 
 
 def states_actions_tns_to_traj(
@@ -125,15 +131,13 @@ def states_actions_tns_to_traj(
         )
 
     states = [env.states_from_tensor(s.unsqueeze(0)) for s in states_tns]
-    actions = [
-        env.actions_from_tensor(a.unsqueeze(0).unsqueeze(0)) for a in actions_tns
-    ]
+    actions = [env.actions_from_tensor(a.unsqueeze(0).unsqueeze(0)) for a in actions_tns]
 
     # stack is a class method, so actions[0] is just to access a class instance and is not particularly relevant
     actions = actions[0].stack(actions)
     log_rewards = env.log_reward(states[-2])
-    states = states[0].stack_states(states)
-    when_is_done = torch.tensor([len(states_tns) - 1])
+    states = states[0].stack(states)
+    terminating_idx = torch.tensor([len(states_tns) - 1])
 
     log_probs = None
     estimator_outputs = None
@@ -144,7 +148,7 @@ def states_actions_tns_to_traj(
         conditioning,
         actions,
         log_rewards=log_rewards,
-        when_is_done=when_is_done,
+        terminating_idx=terminating_idx,
         log_probs=log_probs,
         estimator_outputs=estimator_outputs,
     )
@@ -170,7 +174,8 @@ def warm_up(
         env: The environment instance
         n_epochs: Number of epochs for warmup
         batch_size: Number of trajectories to sample from replay buffer
-        recalculate_all_logprobs: For PFBasedGFlowNets only, force recalculating all log probs. Useful trajectories do not already have log probs.
+        recalculate_all_logprobs: For PFBasedGFlowNets only, force recalculating all log probs.
+            Useful trajectories do not already have log probs.
     Returns:
         GFlowNet: A trained GFlowNet
     """
@@ -182,8 +187,8 @@ def warm_up(
             loss = gflownet.loss(
                 env,
                 training_trajs,
-                recalculate_all_logprobs=recalculate_all_logprobs,  # pyright: ignore
-            )  # pyright: ignore
+                recalculate_all_logprobs=recalculate_all_logprobs,
+            )
         else:
             loss = gflownet.loss(env, training_trajs)
 

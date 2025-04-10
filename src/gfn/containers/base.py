@@ -5,9 +5,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-    from gfn.env import Env
+    from gfn.states import States
 
 import torch
+
+from gfn.env import Env
 
 
 class Container(ABC):
@@ -18,7 +20,9 @@ class Container(ABC):
         """Returns the number of elements in the container."""
 
     @abstractmethod
-    def __getitem__(self, index: int | Sequence[int]) -> Container:
+    def __getitem__(
+        self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
+    ) -> Container:
         """Subsets the container."""
 
     @abstractmethod
@@ -52,3 +56,21 @@ class Container(ABC):
                 self.__dict__[key] = torch.load(os.path.join(path, key + ".pt"))
             else:
                 raise ValueError(f"Unexpected {key} of type {type(val)}")
+
+    @property
+    @abstractmethod
+    def terminating_states(self) -> States:
+        """Returns the last states of the container."""
+
+    @property
+    @abstractmethod
+    def log_rewards(self) -> torch.Tensor:
+        """Returns the rewards of the container."""
+
+    @property
+    def has_log_probs(self) -> bool:
+        """Returns whether the trajectories have log probabilities."""
+        if not hasattr(self, "log_probs"):
+            return False
+
+        return self.log_probs is not None and self.log_probs.nelement() > 0

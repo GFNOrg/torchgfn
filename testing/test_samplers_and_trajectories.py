@@ -1,15 +1,24 @@
 from typing import Literal, Tuple
 
-from gfn.utils.prob_calculations import get_trajectory_pfs
 import pytest
+import torch
 
-from gfn.containers import Trajectories
+from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.modules import DiscretePolicyEstimator, GFNModule
+from gfn.preprocessors import (
+    EnumPreprocessor,
+    IdentityPreprocessor,
+    KHotPreprocessor,
+    OneHotPreprocessor,
+)
 from gfn.samplers import LocalSearchSampler, Sampler
-from gfn.utils.modules import MLP
+from gfn.utils.modules import MLP, GraphEdgeActionGNN
+from gfn.utils.prob_calculations import get_trajectory_pfs
+from gfn.utils.training import states_actions_tns_to_traj
 
 
 def trajectory_sampling_with_return(
@@ -20,7 +29,7 @@ def trajectory_sampling_with_return(
     n_components: int,
 ) -> Tuple[Trajectories, Trajectories, GFNModule, GFNModule]:
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=2, height=8, preprocessor_name=preprocessor_name)
+        env = HyperGrid(ndim=2, height=8)
     elif env_name == "DiscreteEBM":
         if preprocessor_name != "Identity" or delta != 0.1:
             pytest.skip("Useless tests")
@@ -53,23 +62,32 @@ def trajectory_sampling_with_return(
     else:
         raise ValueError("Unknown environment name")
 
+    if preprocessor_name == "KHot":
+        preprocessor = KHotPreprocessor(env.height, env.ndim)
+    elif preprocessor_name == "OneHot":
+        preprocessor = OneHotPreprocessor(
+            n_states=env.n_states, get_states_indices=env.get_states_indices
+        )
+    elif preprocessor_name == "Identity":
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+    elif preprocessor_name == "Enum":
+        preprocessor = EnumPreprocessor(env.get_states_indices)
+
     if env_name != "Box":
         assert not isinstance(env, Box)
-        pf_module = MLP(input_dim=env.preprocessor.output_dim, output_dim=env.n_actions)
-        pb_module = MLP(
-            input_dim=env.preprocessor.output_dim, output_dim=env.n_actions - 1
-        )
+        pf_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
+        pb_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
             is_backward=False,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
         pb_estimator = DiscretePolicyEstimator(
             module=pb_module,
             n_actions=env.n_actions,
             is_backward=True,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
 
     sampler = Sampler(estimator=pf_estimator)
@@ -120,12 +138,7 @@ def test_trajectory_sampling(
     else:
         raise ValueError("Unknown environment name")
 
-    (
-        trajectories,
-        bw_trajectories,
-        pf_estimator,
-        pb_estimator,
-    ) = trajectory_sampling_with_return(
+    _ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name,
         delta,
@@ -137,7 +150,7 @@ def test_trajectory_sampling(
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_trajectories_getitem(env_name: str):
     try:
-        trajectories, *_ = trajectory_sampling_with_return(
+        _ = trajectory_sampling_with_return(
             env_name,
             preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
             delta=0.1,
@@ -211,26 +224,28 @@ def test_local_search_for_loop_equivalence(env_name):
     is_discrete = env_name in ["HyperGrid", "DiscreteEBM"]
     if is_discrete:
         if env_name == "HyperGrid":
-            env = HyperGrid(ndim=2, height=5, preprocessor_name="KHot")
+            env = HyperGrid(ndim=2, height=5)
+            preprocessor = KHotPreprocessor(env.height, env.ndim)
         elif env_name == "DiscreteEBM":
             env = DiscreteEBM(ndim=5)
+            preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
         else:
             raise ValueError("Unknown environment name")
 
         # Build pf & pb
-        pf_module = MLP(env.preprocessor.output_dim, env.n_actions)
-        pb_module = MLP(env.preprocessor.output_dim, env.n_actions - 1)
+        pf_module = MLP(preprocessor.output_dim, env.n_actions)
+        pb_module = MLP(preprocessor.output_dim, env.n_actions - 1)
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
             is_backward=False,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
         pb_estimator = DiscretePolicyEstimator(
             module=pb_module,
             n_actions=env.n_actions,
             is_backward=True,
-            preprocessor=env.preprocessor,
+            preprocessor=preprocessor,
         )
 
     else:
@@ -265,9 +280,9 @@ def test_local_search_for_loop_equivalence(env_name):
 
     # Now run local_search in debug mode so that for-loop logic is compared
     # to the vectorized logic.
-    # If there’s any mismatch, local_search() will raise AssertionError
+    # If there's any mismatch, local_search() will raise AssertionError
     try:
-        new_trajectories, is_updated = sampler.local_search(
+        _ = sampler.local_search(
             env,
             trajectories,
             save_logprobs=True,
@@ -299,7 +314,9 @@ def test_to_transition(env_name: str):
         bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
         # evaluate with pf_estimator
         backward_traj_pfs = get_trajectory_pfs(
-            pf=pf_estimator, trajectories=bwd_trajectories
+            pf=pf_estimator,
+            trajectories=bwd_trajectories,
+            recalculate_all_logprobs=False,
         )
         bwd_trajectories.log_probs = backward_traj_pfs
         _ = bwd_trajectories.to_transitions()
@@ -313,6 +330,7 @@ def test_replay_buffer(
     env_name: str,
     objects: Literal["trajectories", "transitions"],
 ):
+    """Test that the replay buffer works correctly with different types of objects."""
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=2, height=4)
     elif env_name == "DiscreteEBM":
@@ -321,8 +339,9 @@ def test_replay_buffer(
         env = Box(delta=0.1)
     else:
         raise ValueError("Unknown environment name")
-    replay_buffer = ReplayBuffer(env, capacity=10, objects_type=objects)
-    training_objects, *_ = trajectory_sampling_with_return(
+
+    replay_buffer = ReplayBuffer(env, capacity=10)
+    trajectories, *_ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="Identity",
         delta=0.1,
@@ -331,16 +350,98 @@ def test_replay_buffer(
     )
     try:
         if objects == "trajectories":
-            replay_buffer.add(
-                training_objects[
-                    training_objects.when_is_done != training_objects.max_length
-                ]
-            )
-        else:
-            training_objects = training_objects.to_transitions()
-            replay_buffer.add(training_objects)
+            # Filter out trajectories that are at max length
+            training_objects = trajectories
+            training_objects_2 = trajectories[
+                trajectories.terminating_idx != trajectories.max_length
+            ]
+            replay_buffer.add(training_objects_2)
 
+        else:
+            training_objects = trajectories.to_transitions()
+
+        # Add objects multiple times to test buffer behavior
         replay_buffer.add(training_objects)
         replay_buffer.add(training_objects)
+        replay_buffer.add(training_objects)
+        replay_buffer.add(training_objects)
+
+        # Test that we can sample from the buffer
+        sampled = replay_buffer.sample(5)
+        assert len(sampled) == 5
+        if objects == "trajectories":
+            assert isinstance(sampled, Trajectories)
+        else:
+            assert isinstance(sampled, Transitions)
+
     except Exception as e:
         raise ValueError(f"Error while testing {env_name}") from e
+
+
+def test_states_actions_tns_to_traj():
+    env = HyperGrid(2, 4)
+    states = torch.tensor([[0, 0], [0, 1], [0, 2], [-1, -1]])
+    actions = torch.tensor([1, 1, 2])
+    trajs = states_actions_tns_to_traj(states, actions, env)
+
+    # Test that we can add the trajectories to a replay buffer
+    replay_buffer = ReplayBuffer(env, capacity=10)
+    replay_buffer.add(trajs)
+
+
+def test_graph_building_on_edges():
+    env = GraphBuildingOnEdges(
+        n_nodes=10,
+        directed=False,
+        device=torch.device("cpu"),
+        state_evaluator=lambda s: torch.zeros(s.batch_shape),
+    )
+    # Test forward sampler.
+    estimator_fwd = GraphEdgeActionGNN(
+        n_nodes=env.n_nodes,
+        directed=env.is_directed,
+        num_conv_layers=1,
+        embedding_dim=128,
+        is_backward=False,
+    )
+    module_fwd = DiscretePolicyEstimator(
+        module=estimator_fwd,
+        n_actions=env.n_actions,
+        is_backward=False,
+        preprocessor=IdentityPreprocessor(output_dim=1),
+    )
+    module_fwd.to(device=env.device)
+
+    sampler = Sampler(estimator=module_fwd)
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=7,
+        save_logprobs=True,
+        save_estimator_outputs=False,
+    )
+    assert len(trajectories) == 7
+
+    # Test backward sampler.
+    estimator_bwd = GraphEdgeActionGNN(
+        n_nodes=env.n_nodes,
+        directed=env.is_directed,
+        num_conv_layers=1,
+        embedding_dim=128,
+        is_backward=True,
+    )
+    module_bwd = DiscretePolicyEstimator(
+        module=estimator_bwd,
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=IdentityPreprocessor(output_dim=1),
+    )
+    module_bwd.to(device=env.device)
+
+    sampler = Sampler(estimator=module_bwd)
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=8,
+        save_logprobs=True,
+        save_estimator_outputs=False,
+    )
+    assert len(trajectories) == 8

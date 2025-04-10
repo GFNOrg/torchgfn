@@ -1,3 +1,5 @@
+from argparse import Namespace
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -55,7 +57,7 @@ def render(env, validation_samples=None):
     for i, mu in enumerate(env.mus):
         idx = abs(x - mu.numpy()) == min(abs(x - mu.numpy()))
         ax1.plot([x[idx]], [d[idx]], "bo")
-        ax1.text(x[idx] + 0.1, d[idx], "Mode {}".format(i + 1), rotation=0)
+        ax1.text(x[idx] + 0.1, d[idx].item(), "Mode {}".format(i + 1), rotation=0)
 
     ax1.spines[["right", "top"]].set_visible(False)
     ax1.set_ylabel("Reward Value")
@@ -72,15 +74,15 @@ class ScaledGaussianWithOptionalExit(Distribution):
 
     def __init__(
         self,
-        states: torch.Tensor,  # Tensor with shape (n_states, 2) with [x position, step counter] for each state.
+        states: States,  # States of which the tensor has shape (n_states, 2) with [x position, step counter] for each state.
         mus: torch.Tensor,  # Tensor with shape (n_states, 1) with mean of Gaussian distribution for each state.
         scales: torch.Tensor,  # Tensor with shape (n_states, 1) with scale of Gaussian distribution for each state.
         backward: bool,
         n_steps: int = 5,
     ):
         # Used to keep track of the "exit" indices for forward/backward trajectories.
-        self.idx_at_final_forward_step = states[..., 1].tensor == n_steps
-        self.idx_at_final_backward_step = states[..., 1].tensor == 1
+        self.idx_at_final_forward_step = states.tensor[..., 1] == n_steps
+        self.idx_at_final_backward_step = states.tensor[..., 1] == 1
         self.dist = Independent(Normal(mus, scales), len(states.batch_shape))
         self.exit_action = torch.FloatTensor([-float("inf")]).to(states.device)
         self.backward = backward
@@ -134,8 +136,8 @@ class GaussianStepMLP(MLP):
         assert policy_std_min < policy_std_max
         self.policy_std_min = policy_std_min
         self.policy_std_max = policy_std_max
-        self.input_dim = 2  # [x_pos, counter].  # pyright: ignore
-        self.output_dim = 2  # [mus, scales].  # pyright: ignore
+        self.input_dim = 2  # [x_pos, counter].
+        self.output_dim = 2  # [mus, scales].
 
         super().__init__(
             input_dim=self.input_dim,
@@ -174,6 +176,7 @@ class StepEstimator(GFNModule):
         self.backward = backward
         self.n_steps_per_trajectory = env.n_steps_per_trajectory
 
+    @property
     def expected_output_dim(self) -> int:
         return 2  # [locs, scales].
 
@@ -248,7 +251,7 @@ def train(
             scale_factor=scale_schedule[iteration],  # Off policy kwargs.
         )
         training_samples = gflownet.to_training_samples(trajectories)
-        loss = gflownet.loss(env, training_samples)
+        loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
         loss.backward()
 
         # Gradient Clipping.
@@ -276,13 +279,17 @@ def train(
     return gflownet
 
 
-if __name__ == "__main__":
+def main(args: Namespace):
+    if not isinstance(args.device, torch.device):
+        device = torch.device(args.device)
+
     environment = Line(
         mus=[2, 5],
         sigmas=[0.5, 0.5],
         init_value=0,
         n_sd=4.5,
         n_steps_per_trajectory=5,
+        device=device,
     )
 
     # Hyperparameters.
@@ -290,7 +297,6 @@ if __name__ == "__main__":
     n_hidden_layers = 2
     policy_std_min = 0.1  # Lower bound of sigma that can be predicted by policy.
     policy_std_max = 1  # Upper bound of sigma that can be predicted by policy.
-    exploration_var_starting_val = 2  # Used for off-policy training.
 
     pf_module = GaussianStepMLP(
         hidden_dim=hid_dim,
@@ -307,16 +313,30 @@ if __name__ == "__main__":
         policy_std_max=policy_std_max,
     )
     pb = StepEstimator(environment, pb_module, backward=True)
-    gflownet = TBGFlowNet(pf=pf, pb=pb, logZ=0.0)
+    gflownet = TBGFlowNet(pf=pf, pb=pb, logZ=0.0).to(device)
 
     gflownet = train(
         gflownet,
         environment,
-        lr_base=1e-3,
-        n_trajectories=1.28e6,
-        batch_size=256,
-        exploration_var_starting_val=exploration_var_starting_val,
+        lr_base=args.lr_base,
+        n_trajectories=args.n_trajectories,
+        batch_size=args.batch_size,
+        gradient_clip_value=args.gradient_clip_value,
+        exploration_var_starting_val=args.exploration_var_starting_val,
     )
 
     validation_samples = gflownet.sample_terminating_states(environment, 10000)
-    render(environment, validation_samples=validation_samples)
+    if args.plot:
+        render(environment, validation_samples=validation_samples)
+
+
+if __name__ == "__main__":
+    args = Namespace(
+        n_trajectories=1.28e6,
+        batch_size=256,
+        lr_base=1e-3,
+        gradient_clip_value=5,
+        exploration_var_starting_val=2,  # Used for off-policy training.
+        device="cpu",
+    )
+    main(args)

@@ -1,16 +1,17 @@
-# type: ignore
 import math
+import warnings
 from typing import List, Literal, Tuple
 
 import torch
 
 from gfn.containers import Trajectories
 from gfn.env import Env
-from gfn.gflownet.base import TrajectoryBasedGFlowNet
+from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
+    warn_about_recalculating_logprobs,
 )
 
 ContributionsTensor = (
@@ -186,12 +187,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         """
         targets = torch.full_like(preds, fill_value=-float("inf"))
         assert trajectories.log_rewards is not None
-        log_rewards = trajectories.log_rewards[trajectories.when_is_done >= i]
+        log_rewards = trajectories.log_rewards[trajectories.terminating_idx >= i]
 
         if math.isfinite(self.log_reward_clip_min):
-            log_rewards.clamp_min(
-                self.log_reward_clip_min
-            )  # TODO: clamping - check this.
+            log_rewards.clamp_min(self.log_reward_clip_min)
 
         targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
 
@@ -277,7 +276,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        recalculate_all_logprobs: bool = False,
+        recalculate_all_logprobs: bool = True,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Scores all submitted trajectories.
 
@@ -328,11 +327,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 i,
             )
 
-            flattening_mask = trajectories.when_is_done.lt(
+            flattening_mask = trajectories.terminating_idx.lt(
                 torch.arange(
                     i,
                     trajectories.max_length + 1,
-                    device=trajectories.when_is_done.device,
+                    device=trajectories.terminating_idx.device,
                 ).unsqueeze(-1)
             )
 
@@ -364,12 +363,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
         max_len = trajectories.max_length
         n_rows = int(max_len * (1 + max_len) / 2)
 
         # the following tensor represents the inverse of how many sub-trajectories there are in each trajectory
-        contributions = 2.0 / (is_done * (is_done + 1)) / len(trajectories)
+        contributions = (
+            2.0 / (terminating_idx * (terminating_idx + 1)) / len(trajectories)
+        )
 
         # if we repeat the previous tensor, we get a tensor of shape
         # (max_len * (max_len + 1) / 2, n_trajectories) that we can multiply with
@@ -393,10 +394,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
         max_len = trajectories.max_length
         n_rows = int(max_len * (1 + max_len) / 2)
-        n_sub_trajectories = int((is_done * (is_done + 1) / 2).sum().item())
+        n_sub_trajectories = int(
+            (terminating_idx * (terminating_idx + 1) / 2).sum().item()
+        )
         contributions = torch.ones(n_rows, len(trajectories)) / n_sub_trajectories
         return contributions
 
@@ -413,11 +416,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         max_len = trajectories.max_length
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
 
         # Each trajectory contributes one element to the loss, equally weighted
         contributions = torch.zeros_like(all_scores)
-        indices = (max_len * (is_done - 1) - (is_done - 1) * (is_done - 2) / 2).long()
+        indices = (
+            max_len * (terminating_idx - 1)
+            - (terminating_idx - 1) * (terminating_idx - 2) / 2
+        ).long()
         contributions.scatter_(0, indices.unsqueeze(0), 1)
         contributions = contributions / len(trajectories)
 
@@ -438,13 +444,13 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Returns: The contributions tensor of shape (max_len * (1 + max_len) / 2, n_trajectories).
         """
         del all_scores
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
         max_len = trajectories.max_length
         n_rows = int(max_len * (1 + max_len) / 2)
 
         # The following tensor represents the inverse of how many transitions
         # there are in each trajectory.
-        contributions = (1.0 / is_done / len(trajectories)).repeat(max_len, 1)
+        contributions = (1.0 / terminating_idx / len(trajectories)).repeat(max_len, 1)
         contributions = torch.cat(
             (
                 contributions,
@@ -474,14 +480,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         del all_scores
         L = self.lamda
         max_len = trajectories.max_length
-        is_done = trajectories.when_is_done
+        terminating_idx = trajectories.terminating_idx
 
         # The following tensor represents the weights given to each possible
         # sub-trajectory length.
-        contributions = (L ** torch.arange(max_len).double()).float()
+        contributions = (
+            L ** torch.arange(max_len, device=terminating_idx.device).double()
+        ).float()
         contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
         contributions = contributions.repeat_interleave(
-            torch.arange(max_len, 0, -1),
+            torch.arange(max_len, 0, -1, device=terminating_idx.device),
             dim=0,
             output_size=int(max_len * (max_len + 1) / 2),
         )
@@ -493,7 +501,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         per_trajectory_denom = (
             1.0
             / (1 - L) ** 2
-            * (L * (L ** is_done.double() - 1) + (1 - L) * is_done.double())
+            * (
+                L * (L ** terminating_idx.double() - 1)
+                + (1 - L) * terminating_idx.double()
+            )
         ).float()
         contributions = contributions / per_trajectory_denom / len(trajectories)
 
@@ -503,8 +514,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        recalculate_all_logprobs: bool = False,
+        recalculate_all_logprobs: bool = True,
+        reduction: str = "mean",
     ) -> torch.Tensor:
+        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
             env, trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -513,14 +526,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         all_scores = torch.cat(scores, 0)
 
         if self.weighting == "DB":
-            # Longer trajectories contribute more to the loss
-            return scores[0][~flattening_masks[0]].pow(2).mean()
+            # Longer trajectories contribute more to the loss.
+            # TODO: is this correct with `loss_reduce`?
+            final_scores = scores[0][~flattening_masks[0]].pow(2)
+            return loss_reduce(final_scores, reduction)
 
         elif self.weighting == "geometric":
             # The position i of the following 1D tensor represents the number of sub-
             # trajectories of length i in the batch.
             # n_sub_trajectories = torch.maximum(
-            #     trajectories.when_is_done - torch.arange(3).unsqueeze(-1),
+            #     trajectories.terminating_idx - torch.arange(3).unsqueeze(-1),
             #     torch.tensor(0),
             # ).sum(1)
 
@@ -541,6 +556,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
 
+        # TODO: we need to know what reductions are valid for each weighting method.
         weight_functions = {
             "equal_within": self.get_equal_within_contributions,
             "equal": self.get_equal_contributions,
@@ -557,5 +573,13 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         assert (
             flat_contributions.sum() - 1.0
         ).abs() < 1e-5, f"{flat_contributions.sum()}"
-        losses = flat_contributions * all_scores[~flattening_mask].pow(2)
-        return losses.sum()
+        final_scores = flat_contributions * all_scores[~flattening_mask].pow(2)
+
+        # TODO: default was sum, should we allow mean?
+        if reduction == "mean":
+            warnings.warn(
+                "Mean reduction is not supported for SubTBGFlowNet with geometric weighting, using sum instead."
+            )
+            reduction = "sum"
+
+        return loss_reduce(final_scores, reduction)

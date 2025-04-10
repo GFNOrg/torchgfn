@@ -71,13 +71,12 @@ class GFNModule(ABC, nn.Module):
         nn.Module.__init__(self)
         self.module = module
         if preprocessor is None:
-            assert hasattr(module, "input_dim"), (
+            assert hasattr(module, "input_dim") and isinstance(module.input_dim, int), (
                 "Module needs to have an attribute `input_dim` specifying the input "
                 + "dimension, in order to use the default IdentityPreprocessor."
             )
             preprocessor = IdentityPreprocessor(module.input_dim)
         self.preprocessor = preprocessor
-        self._output_dim_is_checked = False
         self.is_backward = is_backward
 
     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
@@ -88,16 +87,9 @@ class GFNModule(ABC, nn.Module):
 
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        if isinstance(input, States):
-            input = self.preprocessor(input)
-
-        out = self.module(input)
-
-        if not self._output_dim_is_checked:
-            self.check_output_dim(out)
-            self._output_dim_is_checked = True
-
-        return out
+        # If the input is a States object, preprocess it.
+        out = self.preprocessor(input) if isinstance(input, States) else input
+        return self.module(out)
 
     def __repr__(self):
         return f"{self.__class__.__name__} module"
@@ -110,9 +102,9 @@ class GFNModule(ABC, nn.Module):
     def check_output_dim(self, module_output: torch.Tensor) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
         assert module_output.dtype == torch.float
-        if module_output.shape[-1] != self.expected_output_dim():  # pyright: ignore
+        if module_output.shape[-1] != self.expected_output_dim:
             raise ValueError(
-                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim()}"  # pyright: ignore
+                f"{self.__class__.__name__} output dimension should be {self.expected_output_dim}"
                 + f" but is {module_output.shape[-1]}."
             )
 
@@ -192,6 +184,7 @@ class ScalarEstimator(GFNModule):
         )
         self.reduction_fxn = REDUCTION_FXNS[reduction]
 
+    @property
     def expected_output_dim(self) -> int:
         return 1
 
@@ -203,19 +196,15 @@ class ScalarEstimator(GFNModule):
 
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        if isinstance(input, States):
-            input = self.preprocessor(input)
-
-        out = self.module(input)
+        # If the input is a States object, preprocess it.
+        out = self.preprocessor(input) if isinstance(input, States) else input
+        out = self.module(out)
 
         # Ensures estimator outputs are always scalar.
         if out.shape[-1] != 1:
             out = self.reduction_fxn(out, -1)
 
-        if not self._output_dim_is_checked:
-            # self.check_output_dim(out)
-            self._output_dim_is_checked = True
-
+        assert out.shape[-1] == 1
         return out
 
 
@@ -251,6 +240,7 @@ class DiscretePolicyEstimator(GFNModule):
         super().__init__(module, preprocessor, is_backward=is_backward)
         self.n_actions = n_actions
 
+    @property
     def expected_output_dim(self) -> int:
         if self.is_backward:
             return self.n_actions - 1
@@ -279,7 +269,7 @@ class DiscretePolicyEstimator(GFNModule):
                 on policy.
             epsilon: with probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy."""
-        # self.check_output_dim(module_output)
+        assert module_output.shape[-1] == self.expected_output_dim
 
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
@@ -335,9 +325,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         self.conditioning_module = conditioning_module
         self.final_module = final_module
 
-    def _forward_trunk(
-        self, states: States, conditioning: torch.Tensor
-    ) -> torch.Tensor:
+    def _forward_trunk(self, states: States, conditioning: torch.Tensor) -> torch.Tensor:
         """Forward pass of the trunk of the module.
 
         Args:
@@ -362,11 +350,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
         out = self._forward_trunk(states, conditioning)
-
-        if not self._output_dim_is_checked:
-            # self.check_output_dim(out)
-            self._output_dim_is_checked = True
-
+        assert out.shape[-1] == self.expected_output_dim
         return out
 
 
@@ -450,12 +434,10 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         if out.shape[-1] != 1:
             out = self.reduction_fxn(out, -1)
 
-        if not self._output_dim_is_checked:
-            # self.check_output_dim(out)
-            self._output_dim_is_checked = True
-
+        assert out.shape[-1] == self.expected_output_dim
         return out
 
+    @property
     def expected_output_dim(self) -> int:
         return 1
 
@@ -466,3 +448,56 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         **policy_kwargs: Any,
     ) -> Distribution:
         raise NotImplementedError
+
+
+# class GraphEdgeEstimator(DiscretePolicyEstimator):
+#     """A module which outputs a fixed logits for the actions (edge actions, exit action).
+
+#     Args:
+#         n_nodes: The number of nodes in the graph.
+#     """
+
+#     def __init__(
+#         self,
+#         module: nn.Module,
+#         preprocessor: Preprocessor | None = None,
+#         is_backward: bool = False,
+#     ):
+#         assert hasattr(module, "n_nodes"), "module must have a `n_nodes` attribute"
+#         assert isinstance(module.n_nodes, int), "n_nodes must be an integer"
+#         assert hasattr(module, "output_dim"), "module must have a `output_dim` attribute"
+#         assert isinstance(module.output_dim, int), "output_dim must be an integer"
+
+#         super().__init__(
+#             module=module,
+#             n_actions=module.output_dim,  # type: ignore
+#             preprocessor=preprocessor,
+#             is_backward=is_backward,
+#         )
+
+#     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
+#         """Forward pass of the module.
+
+#         Args:
+#             input: The input to the module, as states or a tensor.
+
+#         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+#         """
+#         if isinstance(input, States):
+#             input = self.preprocessor(input)
+
+#         out = self.module(input)
+
+#         assert out.shape[-1] == self.expected_output_dim
+#         return out
+
+#     @property
+#     def n_nodes(self):
+#         return self.module.n_nodes
+
+#     @property
+#     def expected_output_dim(self) -> int:
+#         if not isinstance(self.module.output_dim, int):
+#             return int(self.module.output_dim)  # type: ignore
+#         else:
+#             return self.module.output_dim

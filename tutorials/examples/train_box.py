@@ -7,11 +7,13 @@ environment. Run one of the following commands to reproduce some of the results 
 python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
+from typing import Optional, Union
 
 import numpy as np
 import torch
 import wandb
+from numpy.typing import NDArray
 from scipy.special import logsumexp
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm, trange
@@ -32,13 +34,14 @@ from gfn.gym.helpers.box_utils import (
     BoxStateFlowModule,
 )
 from gfn.modules import ScalarEstimator
+from gfn.preprocessors import IdentityPreprocessor
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.common import set_seed
 
-DEFAULT_SEED = 4444
+DEFAULT_SEED: int = 4444
 
 
-def sample_from_reward(env: Box, n_samples: int):
+def sample_from_reward(env: Box, n_samples: int) -> NDArray[np.float64]:
     """Samples states from the true reward distribution
 
     Implement rejection sampling, with proposal being uniform distribution in [0, 1]^2
@@ -56,7 +59,7 @@ def sample_from_reward(env: Box, n_samples: int):
     return np.array(samples)
 
 
-def get_test_states(n=100, maxi=1.0):
+def get_test_states(n: int = 100, maxi: float = 1.0) -> NDArray[np.float64]:
     """Create a list of states from [0, 1]^2 by discretizing it into n x n grid.
 
     Returns:
@@ -69,7 +72,7 @@ def get_test_states(n=100, maxi=1.0):
     return test_states
 
 
-def estimate_jsd(kde1, kde2):
+def estimate_jsd(kde1: KernelDensity, kde2: KernelDensity) -> float:
     """Estimate Jensen-Shannon divergence between two distributions defined by KDEs
 
     Returns:
@@ -86,11 +89,13 @@ def estimate_jsd(kde1, kde2):
     return jsd / 2.0
 
 
-def main(args):  # noqa: C901
+def main(args: Namespace) -> float:  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
 
-    device_str = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
 
     use_wandb = len(args.wandb_project) > 0
     if use_wandb:
@@ -100,12 +105,15 @@ def main(args):  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
 
     # 1. Create the environment
-    env = Box(delta=args.delta, epsilon=1e-10, device_str=device_str)
+    env = Box(delta=args.delta, epsilon=1e-10, device=device)
+    preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
     # 2. Create the gflownet.
     #    For this we need modules and estimators.
     #    Depending on the loss, we may need several estimators:
-    gflownet = None
+    gflownet: Optional[
+        Union[DBGFlowNet, TBGFlowNet, SubTBGFlowNet, LogPartitionVarianceGFlowNet]
+    ] = None
     pf_module = BoxPFMLP(
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
@@ -137,22 +145,22 @@ def main(args):  # noqa: C901
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
-    module = None
-    logZ = None
+    module: Optional[BoxStateFlowModule] = None
+    logZ: Optional[torch.Tensor] = None
     if args.loss in ("DB", "SubTB"):
         # We always need a LogZEstimator
         logZ = torch.tensor(0.0, device=env.device, requires_grad=True)
         # We need a LogStateFlowEstimator
 
         module = BoxStateFlowModule(
-            input_dim=env.preprocessor.output_dim,
+            input_dim=preprocessor.output_dim,
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
             trunk=None,  # We do not tie the parameters of the flow function to PF
             logZ_value=logZ,
         )
-        logF_estimator = ScalarEstimator(module=module, preprocessor=env.preprocessor)
+        logF_estimator = ScalarEstimator(module=module, preprocessor=preprocessor)
 
         if args.loss == "DB":
             gflownet = DBGFlowNet(
@@ -180,7 +188,7 @@ def main(args):  # noqa: C901
         )
 
     assert gflownet is not None, f"No gflownet for loss {args.loss}"
-    gflownet = gflownet.to(device_str)
+    gflownet = gflownet.to(device)
 
     if not args.use_local_search:
         sampler = Sampler(estimator=pf_estimator)
@@ -199,6 +207,7 @@ def main(args):  # noqa: C901
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
     if not args.uniform_pb:
+        assert isinstance(pb_module.last_layer, torch.nn.Module)
         optimizer.add_param_group(
             {
                 "params": (
@@ -250,11 +259,10 @@ def main(args):  # noqa: C901
             env, save_logprobs=True, n=args.batch_size, **local_search_params
         )
 
-        training_samples = gflownet.to_training_samples(trajectories)
-
         optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples)
-
+        loss = gflownet.loss_from_trajectories(
+            env, trajectories, recalculate_all_logprobs=False
+        )
         loss.backward()
         for p in gflownet.parameters():
             if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
@@ -274,7 +282,9 @@ def main(args):  # noqa: C901
             wandb.log(to_log, step=iteration)
         if iteration % (args.validation_interval // 5) == 0:
             tqdm.write(
-                f"States: {states_visited}, Loss: {loss.item():.3f}, {logZ_info}true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
+                f"States: {states_visited}, "
+                f"Loss: {loss.item():.3f}, {logZ_info}"
+                f"true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
             )
 
         if iteration % args.validation_interval == 0:

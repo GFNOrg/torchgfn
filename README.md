@@ -43,6 +43,53 @@ cd torchgfn
 pip install -e ".[all]"
 ```
 
+## Installing `oneccl` bindings for multinode training.
+
+You can determine the version of `pytorch` installed using the command
+
+```
+echo $(python -c $"import torch; print(torch.__version__)")
+```
+
+after which you can install the closest matching version from [this table](https://github.com/intel/torch-ccl?tab=readme-ov-file#install-prebuilt-wheel) (otherwise, you must build from source). You can see the specific wheels [here](https://pytorch-extension.intel.com/release-whl/stable/cpu/us/oneccl-bind-pt/).
+
+```
+pip install oneccl_bind_pt=={pytorch_version} -f https://pytorch-extension.intel.com/release-whl/stable/cpu/us/
+```
+
+for example, if your pytorch version is `2.0.1+cu117`, you would run `python -m pip install oneccl_bind_pt==2.0.0+cpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/cpu/us/`.
+
+
+***TODO: Rough instructions - to integrate into docs (just moving them here from email) -
+```
+# Create & activate conda env.
+conda create -n gfn python=3.10
+conda activate gfn
+
+# Install the package.
+pip install .[scripts]  # Includes `tqdm`.
+
+# We will use torch-ccl library for multinode implementation. The latest torch-ccl is compatible with PyTorch 2.2.0. The above command installs the latest torch. So, we need to uninstall it and install latest torch. If you agree that we can make it the default version, I can update it in pyproject.toml.
+pip uninstall torch -y
+conda install pytorch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 cpuonly -c pytorch
+
+# Install torch-ccl
+git clone https://github.com/intel/torch-ccl.git torch-ccl && cd torch-ccl
+git checkout tags/v2.2.0+cpu
+git submodule sync
+git submodule update --init --recursive
+
+# TODO: this didn't work for me -- I had to use a prebuilt wheel.
+# ONECCL_BINDINGS_FOR_PYTORCH_BACKEND=cpu python setup.py install
+python -m pip install oneccl_bind_pt --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/cpu/us/
+
+# Installation is complete now.
+
+You can submit a job by modifying one of the slurm scripts and submitting. For example, ddp_gfn.small.8.slurm. Please note that you need to modify the conda env name in the slurm script to the name of your env. Also, change the paths and dimensions if needed. I submit the script using the following command:
+
+sbatch ddp_gfn.small.4.mila.slurm
+```
+
 
 ## About this repo
 
@@ -65,29 +112,30 @@ from tqdm import tqdm
 
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid  # We use the hyper grid environment
+from gfn.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator
 from gfn.samplers import Sampler
 from gfn.utils.modules import MLP  # is a simple multi-layer perceptron (MLP)
 
 # 1 - We define the environment.
 env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
+preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
 
 # 2 - We define the needed modules (neural networks).
-# The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
 module_PF = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=env.n_actions
 )  # Neural network for the forward policy, with as many outputs as there are actions
 
 module_PB = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=env.n_actions - 1,
     trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
 )
 
 # 3 - We define the estimators.
-pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor)
-pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor)
+pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=preprocessor)
+pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=preprocessor)
 
 # 4 - We define the GFlowNet.
 gfn = TBGFlowNet(logZ=0., pf=pf_estimator, pb=pb_estimator)  # We initialize logZ to 0
@@ -119,40 +167,42 @@ from tqdm import tqdm
 
 from gfn.gflownet import SubTBGFlowNet
 from gfn.gym import HyperGrid  # We use the hyper grid environment
+from gfn.preprocessors import KHotPreprocessor
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.samplers import Sampler
 from gfn.utils.modules import MLP  # MLP is a simple multi-layer perceptron (MLP)
 
 # 1 - We define the environment.
 env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
+preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
 
 # 2 - We define the needed modules (neural networks).
 # The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
 module_PF = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=env.n_actions
 )  # Neural network for the forward policy, with as many outputs as there are actions
 
 module_PB = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=env.n_actions - 1,
     trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
 )
 module_logF = MLP(
-    input_dim=env.preprocessor.output_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=1,  # Important for ScalarEstimators!
 )
 
 # 3 - We define the estimators.
-pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=env.preprocessor)
-pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=env.preprocessor)
+pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=False, preprocessor=preprocessor)
+pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=preprocessor)
 logF_estimator = ScalarEstimator(module=module_logF, preprocessor=env.preprocessor)
 
 # 4 - We define the GFlowNet.
 gfn = SubTBGFlowNet(pf=pf_estimator, pb=pb_estimator, logF=logF_estimator, lamda=0.9)
 
 # 5 - We define the sampler and the optimizer.
-sampler = Sampler(estimator=pf_estimator) 
+sampler = Sampler(estimator=pf_estimator)
 
 # Different policy parameters can have their own LR.
 # Log F gets dedicated learning rate (typically higher).
@@ -161,7 +211,7 @@ optimizer.add_param_group({"params": gfn.logF_parameters(), "lr": 1e-2})
 
 # 6 - We train the GFlowNet for 1000 iterations, with 16 trajectories per iteration
 for i in (pbar := tqdm(range(1000))):
-    # We are going to sample trajectories off policy, by tempering the distribution. 
+    # We are going to sample trajectories off policy, by tempering the distribution.
     # We should not save the sampling logprobs, as we are not using them for training.
     # We should save the estimator outputs to make training faster.
     trajectories = sampler.sample_trajectories(env=env, n=16, save_logprobs=False, save_estimator_outputs=True, temperature=1.5)
@@ -185,7 +235,13 @@ pre-commit run --all-files
 ```
 
 Run `pre-commit` after staging, and before committing. Make sure all the tests pass (By running `pytest`). Note that the `pytest` hook of `pre-commit` only runs the tests in the `testing/` folder. To run all the tests, which take longer, run `pytest` manually.
-The codebase uses `black` formatter.
+
+The codebase uses:
+- `black` formatter for code style
+- `flake8` for linting
+- `pyright` for static type checking
+
+The pre-commit hooks ensure code quality and type safety across the project. The pyright configuration includes all project directories including tutorials/examples and testing.
 
 To make the docs locally:
 
@@ -226,16 +282,22 @@ Additionally, each subclass needs to define two more class variable tensors:
 
 ### Containers
 
-Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Two containers are available:
+Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Three containers are available:
 
 - [Transitions](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/transitions.py), representing a batch of transitions $s \rightarrow s'$.
 - [Trajectories](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
+- [StatePairs](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/state_pairs.py), representing pairs of states with optional conditioning, particularly useful for flow matching algorithms.
 
 These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of the [ReplayBuffer](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/replay_buffer.py) class.
 
 They inherit from the base `Container` [class](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/base.py), indicating some helpful methods.
 
-In most cases, one needs to sample complete trajectories. From a batch of trajectories, a batch of states and batch of transitions can be defined using `Trajectories.to_transitions()` and `Trajectories.to_states()`, in order to train GFlowNets with losses that are edge-decomposable or state-decomposable.  These exclude meaningless transitions and dummy states that were added to the batch of trajectories to allow for efficient batching.
+In most cases, one needs to sample complete trajectories. From a batch of trajectories, various training samples can be generated:
+- Use `Trajectories.to_transitions()` and `Trajectories.to_states()` for edge-decomposable or state-decomposable losses
+- Use `Trajectories.to_state_pairs()` for flow matching losses
+- Use `GFlowNet.loss_from_trajectories()` as a convenience method that handles the conversion internally
+
+These methods exclude meaningless transitions and dummy states that were added to the batch of trajectories to allow for efficient batching.
 
 ### Modules
 
@@ -248,7 +310,7 @@ For non-discrete environments, the user needs to specify their own policies $P_F
 
 In general, (and perhaps obviously) the `to_probability_distribution` method is used to calculate a probability distribution from a policy. Therefore, in order to go off-policy, one needs to modify the computations in this method during sampling. One accomplishes this using `policy_kwargs`, a `dict` of kwarg-value pairs which are used by the `Estimator` when calculating the new policy. In the discrete case, where common settings apply, one can see their use in `DiscretePolicyEstimator`'s `to_probability_distribution` method by passing a softmax `temperature`, `sf_bias` (a scalar to subtract from the exit action logit) or `epsilon` which allows for e-greedy style exploration. In the continuous case, it is not possible to foresee the methods used for off-policy exploration (as it depends on the details of the `to_probability_distribution` method, which is not generic for continuous GFNs), so this must be handled by the user, using custom `policy_kwargs`.
 
-In all `GFNModule`s, note that the input of the `forward` function is a `States` object. Meaning that they first need to be transformed to tensors. However, `states.tensor` does not necessarily include the structure that a neural network can used to generalize. It is common in these scenarios to have a function that transforms these raw tensor states to ones where the structure is clearer, via a `Preprocessor` object, that is part of the environment. More on this [here](https://github.com/saleml/torchgfn/tree/master/tutorials/ENV.md). The default preprocessor of an environment is the identity preprocessor. The `forward` pass thus first calls the `preprocessor` attribute of the environment on `States`, before performing any transformation. The `preprocessor` is thus an attribute of the module. If it is not explicitly defined, it is set to the identity preprocessor.
+In all `GFNModule`s, note that the input of the `forward` function is a `States` object. Meaning that they first need to be transformed to tensors. However, `states.tensor` does not necessarily include the structure that a neural network can used to generalize. It is common in these scenarios to have a function that transforms these raw tensor states to ones where the structure is clearer, via a `Preprocessor` object, that is part of the environment. More on this [here](https://github.com/saleml/torchgfn/tree/master/tutorials/ENV.md). The `forward` pass thus first calls the `preprocessor` attribute of the environment on `States`, before performing any transformation. The `preprocessor` is thus an attribute of the module. If it is not explicitly defined, it is set to the identity preprocessor.
 
 For discrete environments, a `Tabular` module is provided, where a lookup table is used instead of a neural network. Additionally, a `UniformPB` module is provided, implementing a uniform backward policy. These modules are provided [here](https://github.com/saleml/torchgfn/tree/master/src/gfn/utils/modules.py).
 
@@ -291,49 +353,29 @@ class MyGFlowNet(GFlowNet[Trajectories]):
 
 **Example: Flow Matching GFlowNet**
 
-Let's consider the example of the `FMGFlowNet` class, which is a subclass of `GFlowNet` that implements the Flow Matching GFlowNet. The training samples are tuples of discrete states, so the class references the type `Tuple[DiscreteStates, DiscreteStates]` when subclassing `GFlowNet`:
+Let's consider the example of the `FMGFlowNet` class, which is a subclass of `GFlowNet` that implements the Flow Matching GFlowNet. The training samples are pairs of states managed by the `StatePairs` container:
 
 ```python
-class FMGFlowNet(GFlowNet[Tuple[DiscreteStates, DiscreteStates]]):
+class FMGFlowNet(GFlowNet[StatePairs[DiscreteStates]]):
     ...
 
     def to_training_samples(
         self, trajectories: Trajectories
-    ) -> tuple[DiscreteStates, DiscreteStates]:
+    ) -> StatePairs[DiscreteStates]:
         """Converts a batch of trajectories into a batch of training samples."""
-        return trajectories.to_non_initial_intermediary_and_terminating_states()
+        return trajectories.to_state_pairs()
+```
 
+This means that the `loss` method of `FMGFlowNet` will receive a `StatePairs[DiscreteStates]` object as its training samples argument:
+
+```python
+def loss(self, env: DiscreteEnv, states: StatePairs[DiscreteStates]) -> torch.Tensor:
+    ...
 ```
 
 **Adding New Training Sample Types**
 
 If your GFlowNet returns a unique type of training samples, you'll need to expand the `TrainingSampleType` bound. This ensures type-safety and better code clarity.
-
-In the earlier example, the `FMGFlowNet` used:
-
-```python
-GFlowNet[Tuple[DiscreteStates, DiscreteStates]]
-```
-
-This means the method `to_training_samples` should return a tuple of `DiscreteStates`.
-
-If the `to_training_sample` method of your new GFlowNet, for example, returns an `int`, you should expand the `TrainingSampleType` in `src/gfn/gflownet/base.py` to include this type in the `bound` of the `TypeVar`:
-
-Before:
-
-```python
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...]]
-)
-```
-
-After:
-
-```python
-TrainingSampleType = TypeVar(
-    "TrainingSampleType", bound=Union[Container, tuple[States, ...], int]
-)
-```
 
 **Implementing Class Methods**
 
@@ -348,3 +390,65 @@ These methods are defined in `src/gfn/gflownet/base.py` and are abstract methods
 **Testing**
 
 Remember to create unit tests for your new GFlowNet to ensure it works as intended and integrates seamlessly with other parts of the codebase. This ensures maintainability and reliability of the code!
+
+
+## Training Examples
+
+The repository includes several example environments and training scripts. Below are three different implementations of training on the HyperGrid environment, which serve as good starting points for understanding GFlowNets:
+
+1. `tutorials/examples/train_hypergrid.py`: The main training script with full features:
+   - Multiple loss functions (FM, TB, DB, SubTB, ZVar, ModifiedDB)
+   - Weights & Biases integration for experiment tracking
+   - Support for replay buffers (including prioritized)
+   - Visualization capabilities for 2D environments:
+     * True probability distribution
+     * Learned probability distribution
+     * L1 distance evolution over training
+   - Various hyperparameter options
+   - Reproduces results from multiple papers (see script docstring)
+
+2. `tutorials/examples/train_hypergrid_simple.py`: A simplified version focused on core concepts:
+   - Uses only Trajectory Balance (TB) loss
+   - Minimal architecture with shared trunks
+   - No extra features (no replay buffer, no wandb)
+   - Great starting point for understanding GFlowNets
+
+3. `tutorials/examples/train_hypergrid_simple_ls.py`: Demonstrates advanced sampling strategies:
+   - Implements local search sampling
+   - Configurable local search parameters
+   - Optional Metropolis-Hastings acceptance criterion
+   - Shows how to extend basic GFlowNet training with sophisticated sampling
+
+Other environments available in the package include:
+- Discrete Energy Based Model: A simple environment for learning energy-based distributions
+- Box Environment: A continuous environment for sampling from distributions in bounded spaces
+- Custom environments can be added by following the environment creation guide in `tutorials/ENV.md`
+
+## Usage Examples
+
+To train with Weights & Biases tracking:
+```bash
+python tutorials/examples/train_hypergrid.py --ndim 4 --height 8 --wandb_project your_project_name
+```
+
+To train with visualization (2D environments only):
+```bash
+python tutorials/examples/train_hypergrid.py --ndim 2 --height 8 --plot
+```
+
+To try the simple version with epsilon-greedy exploration:
+```bash
+python tutorials/examples/train_hypergrid_simple.py --ndim 2 --height 8 --epsilon 0.1
+```
+
+To experiment with local search:
+```bash
+python tutorials/examples/train_hypergrid_simple_ls.py --ndim 2 --height 8 --n_local_search_loops 2 --back_ratio 0.5 --use_metropolis_hastings
+```
+
+For more options and configurations, check the help of each script:
+```bash
+python tutorials/examples/train_hypergrid.py --help
+python tutorials/examples/train_hypergrid_simple.py --help
+python tutorials/examples/train_hypergrid_simple_ls.py --help
+```

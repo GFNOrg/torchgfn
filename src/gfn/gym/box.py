@@ -18,18 +18,15 @@ class Box(Env):
         R1: float = 0.5,
         R2: float = 2.0,
         epsilon: float = 1e-4,
-        device_str: Literal["cpu", "cuda"] = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
         assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
         self.epsilon = epsilon
-        s0 = torch.tensor([0.0, 0.0], device=torch.device(device_str))
-        exit_action = torch.tensor(
-            [-float("inf"), -float("inf")], device=torch.device(device_str)
-        )
-        dummy_action = torch.tensor(
-            [float("inf"), float("inf")], device=torch.device(device_str)
-        )
+
+        s0 = torch.tensor([0.0, 0.0], device=device)
+        exit_action = torch.tensor([-float("inf"), -float("inf")], device=device)
+        dummy_action = torch.tensor([float("inf"), float("inf")], device=device)
 
         self.R0 = R0
         self.R1 = R1
@@ -128,9 +125,7 @@ class Box(Env):
         """
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states.tensor - 0.5)
-        reward = (
-            R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
-        )
+        reward = R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
 
         assert reward.shape == final_states.batch_shape
         return reward

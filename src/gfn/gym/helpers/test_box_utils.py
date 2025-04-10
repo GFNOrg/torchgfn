@@ -2,10 +2,7 @@ import pytest
 import torch
 
 from gfn.gym import Box
-from gfn.gym.helpers.box_utils import (
-    BoxPFMLP,
-    split_PF_module_output,
-)
+from gfn.gym.helpers.box_utils import BoxPFMLP, split_PF_module_output
 
 
 @pytest.mark.parametrize("n_components", [5, 6])
@@ -22,7 +19,7 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
         R0=0.1,
         R1=0.5,
         R2=2.0,
-        device_str="cpu",
+        device="cpu",
     )
     States = environment.make_states_class()
 
@@ -59,7 +56,7 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
     assert exit_probability > 0
 
     def _assert_correct_parameter_masking(x, mask_val):
-        B, P = x.shape
+        B, _ = x.shape
 
         if n_components_s0 > n_components:
             assert (
@@ -78,7 +75,7 @@ def test_mixed_distributions(n_components: int, n_components_s0: int):
     assert torch.sum(beta_r == 0.5) == max(n_components_s0, n_components)
 
     # Now check the batch of all-intermediate states.
-    B, P = out_intermediate.shape
+    B, _ = out_intermediate.shape
     (
         exit_probability,
         mixture_logits,
