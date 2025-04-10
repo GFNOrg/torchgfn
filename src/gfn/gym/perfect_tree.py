@@ -10,15 +10,19 @@ from gfn.gym.helpers.preprocessors import OneHotPreprocessor
 class PerfectBinaryTree(DiscreteEnv):
     r"""
     Perfect Tree Environment where there is a bijection between trajectories and terminating states.
+    Nodes are represented by integers, starting from 0 for the root.
+    States are represented by a single integer tensor corresponding to the node index.
+    Actions are integers: 0 (left child), 1 (right child), 2 (exit).
+
     e.g.:
 
-               1
+               0 (root)
           /         \
-         2           3
+         1           2
        /   \       /   \
-      4     5     6     7
+      3     4     5     6
      / \   / \   / \   / \
-    8   9 10 11 12 13 14 15
+    7   8  9  10 11 12 13 14 (terminating states if depth=3)
 
     """
 
@@ -35,6 +39,7 @@ class PerfectBinaryTree(DiscreteEnv):
         super().__init__(
             self.n_actions, self.s0, (1,), preprocessor=preprocessor, sf=self.sf
         )
+        self.preprocessor = preprocessor
 
         (
             self.transition_table,
