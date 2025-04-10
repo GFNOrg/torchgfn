@@ -61,11 +61,8 @@ class SetAddition(DiscreteEnv):
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
         return new_states_tensor
 
-    def get_reward(self, final_states: DiscreteStates) -> torch.Tensor:
+    def reward(self, final_states: DiscreteStates) -> torch.Tensor:
         return self.reward_fn(final_states.tensor)
-
-    def log_reward(self, final_states: DiscreteStates) -> torch.Tensor:
-        return torch.log(self.get_reward(final_states))
 
     @property
     def all_states(self) -> DiscreteStates:
