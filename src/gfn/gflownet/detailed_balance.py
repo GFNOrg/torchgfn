@@ -211,7 +211,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         scores = scores**2
         loss = loss_reduce(scores, reduction)
 
-        if torch.isnan(loss):
+        if torch.isnan(loss).any():
             raise ValueError("loss is nan")
 
         return loss
