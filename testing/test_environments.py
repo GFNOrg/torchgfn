@@ -9,6 +9,8 @@ from gfn.actions import GraphActionType
 from gfn.env import NonValidActionsError
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuilding
+from gfn.gym.perfect_tree import PerfectBinaryTree
+from gfn.gym.set_addition import SetAddition
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.states import GraphStates
 
@@ -505,3 +507,178 @@ def test_graph_env():
     )
     states = env._backward_step(states, actions)
     assert states.tensor.x.shape == (0, FEATURE_DIM)
+
+
+def test_set_addition_fwd_step():
+    N_ITEMS = 4
+    MAX_ITEMS = 3
+    BATCH_SIZE = 2
+
+    env = SetAddition(
+        n_items=N_ITEMS, max_items=MAX_ITEMS, reward_fn=lambda s: s.sum(-1)
+    )
+    states = env.reset(batch_shape=BATCH_SIZE)
+    assert states.tensor.shape == (BATCH_SIZE, N_ITEMS)
+
+    # Add item 0 and 1
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Add item 2 and 3
+    actions = env.actions_from_tensor(format_tensor([2, 3]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[1, 0, 1, 0], [0, 1, 0, 1]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Try adding existing items (invalid)
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    with pytest.raises(NonValidActionsError):
+        env._step(states, actions)
+
+    # Add item 3 and 0
+    actions = env.actions_from_tensor(format_tensor([3, 0]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[1, 0, 1, 1], [1, 1, 0, 1]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)  # Now has 3 items
+
+    # Try adding another item (invalid, max_items reached)
+    actions = env.actions_from_tensor(format_tensor([1, 2]))
+    with pytest.raises(NonValidActionsError):
+        env._step(states, actions)
+
+    # Exit action (valid)
+    actions = env.actions_from_tensor(format_tensor([N_ITEMS, N_ITEMS]))
+    final_states = env._step(states, actions)
+    assert torch.all(final_states.is_sink_state)
+
+    # Check rewards
+    rewards = env.reward(states)
+    expected_rewards = torch.tensor([3.0, 3.0])
+    assert torch.allclose(rewards, expected_rewards)
+
+
+def test_set_addition_bwd_step():
+    N_ITEMS = 5
+    MAX_ITEMS = 4
+    BATCH_SIZE = 2
+
+    env = SetAddition(
+        n_items=N_ITEMS, max_items=MAX_ITEMS, reward_fn=lambda s: s.sum(-1)
+    )
+
+    # Start from a state with 3 items
+    initial_tensor = torch.tensor([[1, 1, 0, 1, 0], [0, 1, 1, 0, 1]], dtype=torch.float)
+    states = env.states_from_tensor(initial_tensor)
+
+    # Remove item 1 and 2
+    actions = env.actions_from_tensor(format_tensor([1, 2]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[1, 0, 0, 1, 0], [0, 1, 0, 0, 1]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Try removing non-existent item (invalid)
+    actions = env.actions_from_tensor(format_tensor([2, 0]))
+    with pytest.raises(NonValidActionsError):
+        env._backward_step(states, actions)
+
+    # Remove item 0 and 4
+    actions = env.actions_from_tensor(format_tensor([0, 4]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[0, 0, 0, 1, 0], [0, 1, 0, 0, 0]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Remove item 3 and 1 (last items)
+    actions = env.actions_from_tensor(format_tensor([3, 1]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.zeros((BATCH_SIZE, N_ITEMS), dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+    assert torch.all(states.is_initial_state)
+
+
+def test_perfect_binary_tree_fwd_step():
+    DEPTH = 3
+    BATCH_SIZE = 2
+    N_ACTIONS = 3  # 0=left, 1=right, 2=exit
+
+    env = PerfectBinaryTree(depth=DEPTH, reward_fn=lambda s: s.float() + 1)
+    states = env.reset(batch_shape=BATCH_SIZE)
+    assert states.tensor.shape == (BATCH_SIZE, 1)
+    assert torch.all(states.tensor == 0)
+
+    # Go left, Go right
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[1], [2]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Go right, Go left
+    actions = env.actions_from_tensor(format_tensor([1, 0]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[4], [5]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Go left, Go left
+    actions = env.actions_from_tensor(format_tensor([0, 0]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[9], [11]], dtype=torch.long)  # Leaf nodes
+    assert torch.equal(states.tensor, expected_states)
+    assert torch.all(torch.isin(states.tensor, env.terminating_states.tensor))
+
+    # Try moving from leaf node (invalid)
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    with pytest.raises(NonValidActionsError):
+        env._step(states, actions)
+
+    # Exit action (valid)
+    actions = env.actions_from_tensor(format_tensor([N_ACTIONS - 1, N_ACTIONS - 1]))
+    final_states = env._step(states, actions)
+    assert torch.all(final_states.is_sink_state)
+
+    # Check rewards
+    rewards = env.reward(states)
+    expected_rewards = torch.tensor([[10.0], [12.0]])
+    assert torch.allclose(rewards, expected_rewards)
+
+
+def test_perfect_binary_tree_bwd_step():
+    DEPTH = 3
+    BATCH_SIZE = 2
+
+    env = PerfectBinaryTree(depth=DEPTH, reward_fn=lambda s: s.float() + 1)
+
+    # Start from leaf nodes 8 and 12
+    initial_tensor = torch.tensor([[8], [12]], dtype=torch.long)
+    states = env.states_from_tensor(initial_tensor)
+
+    # Try backward exit action (invalid)
+    actions = env.actions_from_tensor(format_tensor([2, 2]))
+    with pytest.raises(RuntimeError):
+        env._backward_step(states, actions)
+
+    # Go up (from right child, from left child)
+    # Node 8 is right child of 3 (action 1). Node 12 is left child of 5 (action 0)
+    actions = env.actions_from_tensor(format_tensor([1, 0]))
+    # Go up (Node 8 is right child of 3 -> bwd action 1; Node 12 is right child of 5 -> bwd action 1)
+    actions = env.actions_from_tensor(format_tensor([1, 1]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[3], [5]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Go up (from left child, from right child)
+    # Node 3 is left child of 1 (action 0). Node 5 is right child of 2 (action 1)
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    # Go up (Node 3 is left child of 1 -> bwd action 0; Node 5 is left child of 2 -> bwd action 0)
+    actions = env.actions_from_tensor(format_tensor([0, 0]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[1], [2]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Go up to root (from left child, from right child)
+    # Node 1 is left child of 0 (action 0). Node 2 is right child of 0 (action 1)
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[0], [0]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+    assert torch.all(states.is_initial_state)
