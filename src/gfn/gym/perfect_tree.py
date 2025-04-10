@@ -4,7 +4,6 @@ from gfn.states import States
 import torch
 
 from gfn.env import Actions, DiscreteEnv, DiscreteStates
-from gfn.gym.helpers.preprocessors import OneHotPreprocessor
 
 
 class PerfectBinaryTree(DiscreteEnv):
@@ -71,9 +70,10 @@ class PerfectBinaryTree(DiscreteEnv):
         tuples = torch.hstack((states.tensor, actions.tensor)).tolist()
         tuples = tuple((tuple_) for tuple_ in tuples)
         next_states_tns = [
-            self.inverse_transition_table.get(tuple_) for tuple_ in tuples
+            self.inverse_transition_table.get(tuple(tuple_)) for tuple_ in tuples
         ]
         next_states_tns = torch.tensor(next_states_tns).reshape(-1, 1)
+        next_states_tns = torch.tensor(next_states_tns).reshape(-1, 1).long()
         return next_states_tns
 
     def step(self, states: DiscreteStates, actions: Actions) -> torch.Tensor:
