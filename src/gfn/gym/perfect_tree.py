@@ -24,6 +24,7 @@ class PerfectBinaryTree(DiscreteEnv):
      / \   / \   / \   / \
     7   8  9  10 11 12 13 14 (terminating states if depth=3)
 
+    Recommended preprocessor: `OneHotPreprocessor`.
     """
 
     def __init__(self, reward_fn: Callable, depth: int = 4):
@@ -35,11 +36,7 @@ class PerfectBinaryTree(DiscreteEnv):
 
         self.s0 = torch.zeros((1,), dtype=torch.long)
         self.sf = torch.full((1,), fill_value=-1, dtype=torch.long)
-        preprocessor = OneHotPreprocessor(self.n_nodes, self.get_states_indices)
-        super().__init__(
-            self.n_actions, self.s0, (1,), preprocessor=preprocessor, sf=self.sf
-        )
-        self.preprocessor = preprocessor
+        super().__init__(self.n_actions, self.s0, (1,), sf=self.sf)
 
         (
             self.transition_table,

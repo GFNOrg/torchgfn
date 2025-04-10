@@ -12,6 +12,8 @@ class SetAddition(DiscreteEnv):
     The state is a binary vector of length `n_items`, where 1 indicates the presence of an item.
     Actions are integers from 0 to `n_items - 1` to add the corresponding item, or `n_items` to exit.
     Adding an existing item is invalid. The trajectory must end when `max_items` are present.
+
+    Recommended preprocessor: `IdentityPreprocessor`.
     """
 
     def __init__(self, n_items: int, max_items: int, reward_fn: Callable):
