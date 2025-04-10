@@ -644,7 +644,6 @@ def test_perfect_binary_tree_fwd_step():
 
 def test_perfect_binary_tree_bwd_step():
     DEPTH = 3
-    BATCH_SIZE = 2
 
     env = PerfectBinaryTree(depth=DEPTH, reward_fn=lambda s: s.float() + 1)
 

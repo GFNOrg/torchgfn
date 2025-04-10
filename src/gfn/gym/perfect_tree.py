@@ -1,9 +1,9 @@
 from typing import Callable
 
-from gfn.states import States
 import torch
 
 from gfn.env import Actions, DiscreteEnv, DiscreteStates
+from gfn.states import States
 
 
 class PerfectBinaryTree(DiscreteEnv):
