@@ -84,7 +84,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         logZ = cast(torch.Tensor, logZ)
         scores = (scores + logZ.squeeze()).pow(2)
         loss = loss_reduce(scores, reduction)
-        if torch.isnan(loss):
+        if torch.isnan(loss).any():
             raise ValueError("loss is nan")
 
         return loss
