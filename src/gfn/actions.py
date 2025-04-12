@@ -185,22 +185,24 @@ class GraphActions(Actions):
     - ADD_NODE: Add a node with given features
     - ADD_EDGE: Add an edge between two nodes with given features
     - EXIT: Terminate the trajectory
-
-    Attributes:
-        num_node_classes: Number of node classes
-        num_edge_classes: Number of edge classes
     """
 
-    num_node_classes: ClassVar[int]
-    num_edge_classes: ClassVar[int]
+    _ACTION_TYPE_IDX = 0
+    _NODE_CLASS_IDX = 1
+    _EDGE_CLASS_IDX = 2
+    _EDGE_INDEX_IDX = 3
 
     def __init__(self, tensor: torch.Tensor):
         """Initializes a GraphAction object.
 
         Args:
-            tensor: A tensor of shape (*batch_shape, 4) containing the action type, node features, edge features, and edge index.
+            tensor: A tensor of shape (*batch_shape, 4) containing the action type, node class, edge class, and edge index.
         """
-        assert tensor.shape[-1] == 4
+        if tensor.shape[-1] != 4:
+            raise ValueError(
+                f"Expected tensor of shape (*batch_shape, 4), got {tensor.shape}.\n"
+                "The last dimension should contain the action type, node class, edge class, and edge index."
+            )
         self.tensor = tensor
 
     @classmethod
@@ -244,34 +246,34 @@ class GraphActions(Actions):
     @property
     def action_type(self) -> torch.Tensor:
         """Returns the action type tensor."""
-        return self.tensor[..., 0]
+        return self.tensor[..., self._ACTION_TYPE_IDX]
 
     @property
     def node_class(self) -> torch.Tensor:
         """Returns the node class tensor."""
-        return self.tensor[..., 1]
+        return self.tensor[..., self._NODE_CLASS_IDX]
 
     @property
     def edge_class(self) -> torch.Tensor:
         """Returns the edge class tensor."""
-        return self.tensor[..., 2]
+        return self.tensor[..., self._EDGE_CLASS_IDX]
 
     @property
     def edge_index(self) -> torch.Tensor:
         """Returns the edge index tensor."""
-        return self.tensor[..., 3]
+        return self.tensor[..., self._EDGE_INDEX_IDX]
 
     @classmethod
     def make_dummy_actions(cls, batch_shape: tuple[int]) -> GraphActions:
         """Creates a GraphActions object of dummy actions with the given batch shape."""
         # TODO: make default dtype int32
         tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64)
-        tensor[..., 0] = GraphActionType.DUMMY
+        tensor[..., cls._ACTION_TYPE_IDX] = GraphActionType.DUMMY
         return cls(tensor)
 
     @classmethod
     def make_exit_actions(cls, batch_shape: tuple[int]) -> Actions:
         """Creates an GraphActions object of exit actions with the given batch shape."""
         tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64)
-        tensor[..., 0] = GraphActionType.EXIT
+        tensor[..., cls._ACTION_TYPE_IDX] = GraphActionType.EXIT
         return cls(tensor)

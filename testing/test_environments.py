@@ -319,7 +319,11 @@ def test_graph_env():
     BATCH_SIZE = 3
     NUM_NODES = 5
 
-    env = GraphBuilding(state_evaluator=lambda s: torch.zeros(s.batch_shape))
+    env = GraphBuilding(
+        state_evaluator=lambda s: torch.zeros(s.batch_shape),
+        num_node_classes=10,
+        num_edge_classes=10,
+    )
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.batch_shape == (BATCH_SIZE,)
     action_cls = env.make_actions_class()

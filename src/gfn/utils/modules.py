@@ -193,6 +193,7 @@ class GraphEdgeActionGNN(nn.Module):
         self,
         n_nodes: int,
         directed: bool,
+        num_edge_classes: int,
         num_conv_layers: int = 1,
         embedding_dim: int = 128,
         is_backward: bool = False,
@@ -213,6 +214,7 @@ class GraphEdgeActionGNN(nn.Module):
         self.is_backward = is_backward
         self.is_directed = directed
         self.num_conv_layers = num_conv_layers
+        self.num_edge_classes = num_edge_classes
 
         # Output dimension.
         edges_dim = self.n_nodes**2 - self.n_nodes
@@ -393,7 +395,9 @@ class GraphEdgeActionGNN(nn.Module):
         return TensorDict(
             {
                 "action_type": action_type,
-                "edge_class": torch.zeros(*states_tensor["batch_shape"], 1),
+                "edge_class": torch.zeros(
+                    *states_tensor["batch_shape"], self.num_edge_classes
+                ),  # TODO: make it learnable.
                 "node_class": torch.zeros(*states_tensor["batch_shape"], 1),
                 "edge_index": edge_actions,
             },
@@ -429,6 +433,7 @@ class GraphEdgeActionMLP(nn.Module):
         self,
         n_nodes: int,
         directed: bool,
+        num_edge_classes: int,
         n_hidden_layers: int = 2,
         n_hidden_layers_exit: int = 1,
         embedding_dim: int = 128,
@@ -452,6 +457,7 @@ class GraphEdgeActionMLP(nn.Module):
         self.is_directed = directed
         self.is_backward = is_backward
         self.hidden_dim = embedding_dim
+        self.num_edge_classes = num_edge_classes
 
         # MLP for processing the flattened adjacency matrix
         self.mlp = MLP(
@@ -548,7 +554,9 @@ class GraphEdgeActionMLP(nn.Module):
         return TensorDict(
             {
                 "action_type": action_type,
-                "edge_class": torch.zeros(*states_tensor["batch_shape"], 1),
+                "edge_class": torch.zeros(
+                    *states_tensor["batch_shape"], self.num_edge_classes
+                ),  # TODO: make it learnable
                 "node_class": torch.zeros(*states_tensor["batch_shape"], 1),
                 "edge_index": edge_actions,
             },

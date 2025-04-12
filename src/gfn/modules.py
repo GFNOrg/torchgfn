@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -98,13 +98,16 @@ class GFNModule(ABC, nn.Module):
 
     @property
     @abstractmethod
-    def expected_output_dim(self) -> int:
+    def expected_output_dim(self) -> Optional[int]:
         """Expected output dimension of the module."""
 
     def check_output_dim(self, module_output: torch.Tensor) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
         assert module_output.dtype == torch.float
-        if module_output.shape[-1] != self.expected_output_dim:
+        if (
+            self.expected_output_dim is not None
+            and module_output.shape[-1] != self.expected_output_dim
+        ):
             raise ValueError(
                 f"{self.__class__.__name__} output dimension should be {self.expected_output_dim}"
                 + f" but is {module_output.shape[-1]}."
@@ -454,7 +457,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-class GraphPolicyEstimator(GFNModule):
+class DiscreteGraphPolicyEstimator(GFNModule):
 
     def __init__(
         self,
@@ -494,5 +497,5 @@ class GraphPolicyEstimator(GFNModule):
         return GraphActionDistribution(logits=logits)
 
     @property
-    def expected_output_dim(self) -> int:
-        return -1  # TODO: fix this
+    def expected_output_dim(self) -> Optional[int]:
+        return None

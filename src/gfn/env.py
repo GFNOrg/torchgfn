@@ -580,6 +580,9 @@ class GraphEnv(Env):
         self,
         s0: GeometricData,
         sf: GeometricData,
+        num_node_classes: int,
+        num_edge_classes: int,
+        is_directed: bool,
     ):
         """Initializes a graph-based environment.
 
@@ -592,11 +595,12 @@ class GraphEnv(Env):
 
         self.s0 = s0
         self.sf = sf
-
+        self.num_node_classes = num_node_classes
+        self.num_edge_classes = num_edge_classes
+        self.is_directed = is_directed
         assert s0.x is not None
         assert sf.x is not None
         assert s0.x.shape[-1] == sf.x.shape[-1]
-        self.features_dim = s0.x.shape[-1]
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
@@ -606,27 +610,22 @@ class GraphEnv(Env):
         return self.s0.device  # You should initialize s0 with a device.
 
     def make_states_class(self) -> type[GraphStates]:
-        env = self
-
         class GraphEnvStates(GraphStates):
-            s0 = env.s0
-            sf = env.sf
+            """Graph states for the environment."""
+
+            num_node_classes = self.num_node_classes
+            num_edge_classes = self.num_edge_classes
+            is_directed = self.is_directed
+
+            s0 = self.s0
+            sf = self.sf
+            make_random_states_graph = self.make_random_states_tensor
 
         return GraphEnvStates
 
     def make_actions_class(self) -> type[GraphActions]:
-        """The default Actions class factory for all Environments.
-
-        Returns a class that inherits from Actions and implements assumed methods.
-        The make_actions_class method should be overwritten to achieve more
-        environment-specific Actions functionality.
-        """
-        env = self
-
-        class DefaultGraphAction(GraphActions):
-            features_dim = env.features_dim
-
-        return DefaultGraphAction
+        """The default GraphActions class factory for all GraphEnvs."""
+        return GraphActions
 
     @abstractmethod
     def step(self, states: GraphStates, actions: Actions) -> torch.Tensor:

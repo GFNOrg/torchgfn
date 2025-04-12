@@ -8,7 +8,7 @@ from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
-from gfn.modules import DiscretePolicyEstimator, GFNModule, GraphPolicyEstimator
+from gfn.modules import DiscreteGraphPolicyEstimator, DiscretePolicyEstimator, GFNModule
 from gfn.preprocessors import (
     EnumPreprocessor,
     IdentityPreprocessor,
@@ -104,6 +104,7 @@ def trajectory_sampling_with_return(
             num_conv_layers=1,
             embedding_dim=128,
             is_backward=False,
+            num_edge_classes=env.num_edge_classes,
         )
         pb_module = GraphEdgeActionGNN(
             n_nodes=env.n_nodes,
@@ -111,12 +112,13 @@ def trajectory_sampling_with_return(
             num_conv_layers=1,
             embedding_dim=128,
             is_backward=True,
+            num_edge_classes=env.num_edge_classes,
         )
-        pf_estimator = GraphPolicyEstimator(
+        pf_estimator = DiscreteGraphPolicyEstimator(
             module=pf_module,
             is_backward=False,
         )
-        pb_estimator = GraphPolicyEstimator(
+        pb_estimator = DiscreteGraphPolicyEstimator(
             module=pb_module,
             is_backward=True,
         )
@@ -438,3 +440,61 @@ def test_states_actions_tns_to_traj():
     # Test that we can add the trajectories to a replay buffer
     replay_buffer = ReplayBuffer(env, capacity=10)
     replay_buffer.add(trajs)
+
+
+def test_graph_building_on_edges():
+    env = GraphBuildingOnEdges(
+        n_nodes=10,
+        directed=False,
+        device=torch.device("cpu"),
+        state_evaluator=lambda s: torch.zeros(s.batch_shape),
+    )
+    # Test forward sampler.
+    estimator_fwd = GraphEdgeActionGNN(
+        n_nodes=env.n_nodes,
+        directed=env.is_directed,
+        num_conv_layers=1,
+        embedding_dim=128,
+        is_backward=False,
+        num_edge_classes=env.num_edge_classes,
+    )
+    module_fwd = DiscreteGraphPolicyEstimator(
+        module=estimator_fwd,
+        is_backward=False,
+    )
+    module_fwd.to(device=env.device)
+
+    sampler = Sampler(estimator=module_fwd)
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=7,
+        save_logprobs=True,
+        save_estimator_outputs=False,
+    )
+    assert len(trajectories) == 7
+
+    # Test backward sampler.
+    estimator_bwd = GraphEdgeActionGNN(
+        n_nodes=env.n_nodes,
+        directed=env.is_directed,
+        num_conv_layers=1,
+        embedding_dim=128,
+        is_backward=True,
+        num_edge_classes=env.num_edge_classes,
+    )
+    module_bwd = DiscretePolicyEstimator(
+        module=estimator_bwd,
+        n_actions=env.n_possible_edges,
+        is_backward=True,
+        preprocessor=IdentityPreprocessor(output_dim=1),
+    )
+    module_bwd.to(device=env.device)
+
+    sampler = Sampler(estimator=module_bwd)
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=8,
+        save_logprobs=True,
+        save_estimator_outputs=False,
+    )
+    assert len(trajectories) == 8
