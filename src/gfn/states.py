@@ -670,28 +670,17 @@ class GraphStates(States):
 
             # Create random edges (not all possible edges to keep it sparse)
             num_edges = np.random.randint(0, num_nodes * (num_nodes - 1) // 2 + 1)
-            if num_edges > 0 and num_nodes > 1:
-                # Generate random source and target nodes
-                edge_index = torch.zeros(2, num_edges, dtype=torch.long, device=device)
-                for i in range(num_edges):
-                    src, dst = np.random.choice(num_nodes, 2, replace=False)
-                    edge_index[0, i] = src
-                    edge_index[1, i] = dst
-
-                # Create random edge features
-                edge_attr = torch.rand(
-                    num_edges, cls.s0.edge_attr.size(1), device=device
-                )
-
-                data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
-            else:
-                # No edges
-                data = GeometricData(
-                    x=x,
-                    edge_index=torch.zeros(2, 0, dtype=torch.long, device=device),
-                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1), device=device),
-                )
-
+            edge_index = torch.zeros(2, num_edges, dtype=torch.long, device=device)
+            for i in range(num_edges):
+                src, dst = np.random.choice(num_nodes, 2, replace=False)
+                edge_index[0, i] = src
+                edge_index[1, i] = dst
+            edge_attr = torch.rand(num_edges, cls.s0.edge_attr.size(1), device=device)
+            data = GeometricData(
+                x=x,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+            )
             data_list.append(data)
 
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph

@@ -1,9 +1,11 @@
-from typing import Callable, Literal, Optional, Tuple
+from typing import Callable, List, Literal, Optional, Tuple, cast
 
+import numpy as np
 import torch
 from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
+from torch_geometric.data.data import BaseData
 
 from gfn.actions import Actions, GraphActions, GraphActionType
 from gfn.env import GraphEnv
@@ -439,15 +441,15 @@ class GraphBuildingOnEdges(GraphBuilding):
                 edge_index=torch.zeros((2, 0), dtype=torch.long, device=env.device),
                 device=env.device,
             )
+            n_nodes = env.n_nodes
+            n_actions = env.n_actions
+            is_directed = env.is_directed
 
             def __init__(self, tensor: GeometricBatch):
                 self.tensor = tensor.to(env.device)
                 self.node_features_dim = tensor.x.shape[-1]
                 self.edge_features_dim = tensor.edge_attr.shape[-1]
                 self._log_rewards: Optional[float] = None
-
-                self.n_nodes = env.n_nodes
-                self.n_actions = env.n_actions
 
             @property
             def forward_masks(self) -> TensorDict:
@@ -469,7 +471,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                 )
 
                 # Convert action indices to source-target node pairs
-                ei0, ei1 = get_edge_indices(self.n_nodes, env.is_directed, self.device)
+                ei0, ei1 = get_edge_indices(self.n_nodes, self.is_directed, self.device)
 
                 # Remove existing edges.
                 for i in range(len(self)):
@@ -538,7 +540,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                     # Convert action indices to source-target node pairs.
                     ei0, ei1 = get_edge_indices(
                         self.n_nodes,
-                        env.is_directed,
+                        self.is_directed,
                         self.device,
                     )
 
@@ -577,6 +579,80 @@ class GraphBuildingOnEdges(GraphBuilding):
             @backward_masks.setter
             def backward_masks(self, value: torch.Tensor):
                 pass  # bwd masks is computed on the fly
+
+            @classmethod
+            def make_random_states_tensor(
+                cls, batch_shape: int | Tuple
+            ) -> GeometricBatch:
+                """Makes a batch of random graph states with fixed number of nodes.
+
+                Args:
+                    batch_shape: Shape of the batch dimensions.
+
+                Returns:
+                    A PyG Batch object containing random graph states.
+                """
+                assert cls.s0.edge_attr is not None
+                assert cls.s0.x is not None
+
+                batch_shape = (
+                    batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
+                )
+                num_graphs = int(np.prod(batch_shape))
+                device = cls.s0.x.device
+
+                data_list = []
+                for _ in range(num_graphs):
+                    # Create a random graph with random number of nodes
+                    num_nodes = cls.n_nodes
+
+                    # Create random node features
+                    x = cls.s0.x.clone()
+
+                    # Create random edges (not all possible edges to keep it sparse)
+                    num_edges = np.random.randint(
+                        0, num_nodes * (num_nodes - 1) // 2 + 1
+                    )
+                    edge_index = torch.zeros(
+                        2, num_edges, dtype=torch.long, device=device
+                    )
+                    for i in range(num_edges):
+                        src, dst = np.random.choice(num_nodes, 2, replace=False)
+                        if cls.is_directed or src < dst:
+                            edge_index[0, i] = src
+                            edge_index[1, i] = dst
+                        else:
+                            edge_index[0, i] = dst
+                            edge_index[1, i] = src
+
+                    edge_attr = torch.rand(
+                        num_edges, cls.s0.edge_attr.size(1), device=device
+                    )
+                    data = GeometricData(
+                        x=x,
+                        edge_index=edge_index,
+                        edge_attr=edge_attr,
+                    )
+                    data_list.append(data)
+
+                if (
+                    len(data_list) == 0
+                ):  # If batch_shape is 0, create a single empty graph
+                    data_list = [
+                        GeometricData(
+                            x=torch.zeros(0, cls.s0.x.size(1)),
+                            edge_index=torch.zeros(2, 0, dtype=torch.long),
+                            edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1)),
+                        )
+                    ]
+
+                # Create a batch from the list
+                batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
+
+                # Store the batch shape for later reference
+                batch.batch_shape = batch_shape
+
+                return batch
 
         return GraphBuildingOnEdgesStates
 
