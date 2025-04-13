@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 import torch
+from tensordict import TensorDict
+from torch_geometric.data import Batch as GeometricBatch
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
@@ -72,7 +74,12 @@ class Transitions(Container):
         device = self.env.device
         for obj in [states, actions, next_states]:
             if obj is not None:
-                ensure_same_device(obj.tensor.device, device)
+                if isinstance(obj.tensor, GeometricBatch):
+                    ensure_same_device(obj.tensor.x.device, device)
+                elif isinstance(obj.tensor, TensorDict):
+                    ensure_same_device(obj.tensor["x"].device, device)
+                else:
+                    ensure_same_device(obj.tensor.device, device)
         for tensor in [conditioning, is_terminating, log_rewards, log_probs]:
             if tensor is not None:
                 ensure_same_device(tensor.device, device)

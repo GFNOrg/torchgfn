@@ -164,8 +164,12 @@ def test_trajectory_sampling(
     )
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
-def test_trajectories_getitem(env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]):
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+)
+def test_trajectories_getitem(
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+):
     try:
         _ = trajectory_sampling_with_return(
             env_name,
@@ -178,8 +182,12 @@ def test_trajectories_getitem(env_name: Literal["HyperGrid", "DiscreteEBM", "Box
         raise ValueError(f"Error while testing {env_name}") from e
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
-def test_trajectories_extend(env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]):
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+)
+def test_trajectories_extend(
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+):
     trajectories, *_ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
@@ -193,8 +201,12 @@ def test_trajectories_extend(env_name: Literal["HyperGrid", "DiscreteEBM", "Box"
         raise ValueError(f"Error while testing {env_name}") from e
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
-def test_sub_sampling(env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]):
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+)
+def test_sub_sampling(
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+):
     trajectories, *_ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="Identity",
@@ -317,8 +329,12 @@ def test_local_search_for_loop_equivalence(
         ) from e
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
-def test_to_transition(env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]):
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+)
+def test_to_transition(
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+):
     """
     Ensures that the `Trajectories.to_transitions` method works as expected.
     """
@@ -332,6 +348,12 @@ def test_to_transition(env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]):
 
     try:
         _ = trajectories.to_transitions()
+        if env_name == "GraphBuildingOnEdges":
+            pytest.skip(
+                "`reverse_backward_trajectories` is not supported for trajectories of "
+                "type `GraphStates`"
+            )
+
         bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
         # evaluate with pf_estimator
         backward_traj_pfs = get_trajectory_pfs(
@@ -345,10 +367,12 @@ def test_to_transition(env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]):
         raise ValueError(f"Error while testing {env_name}") from e
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+)
 @pytest.mark.parametrize("objects", ["trajectories", "transitions"])
 def test_replay_buffer(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box"],
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
     objects: Literal["trajectories", "transitions"],
 ):
     """Test that the replay buffer works correctly with different types of objects."""
@@ -358,9 +382,15 @@ def test_replay_buffer(
         env = DiscreteEBM(ndim=8)
     elif env_name == "Box":
         env = Box(delta=0.1)
+    elif env_name == "GraphBuildingOnEdges":
+        env = GraphBuildingOnEdges(
+            n_nodes=10,
+            state_evaluator=lambda s: torch.zeros(s.batch_shape),
+            directed=False,
+            device=torch.device("cpu"),
+        )
     else:
         raise ValueError("Unknown environment name")
-
     replay_buffer = ReplayBuffer(env, capacity=10)
     trajectories, *_ = trajectory_sampling_with_return(
         env_name,
