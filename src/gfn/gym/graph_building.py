@@ -483,7 +483,6 @@ class GraphBuildingOnEdges(GraphBuilding):
                 device=env.device,
             )
             n_nodes = env.n_nodes
-            n_actions = env.n_actions
             is_directed = env.is_directed
 
             def __init__(self, tensor: GeometricBatch):
