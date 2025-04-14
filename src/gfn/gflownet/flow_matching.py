@@ -5,7 +5,7 @@ import torch
 
 from gfn.containers import StatesContainer, Trajectories
 from gfn.env import DiscreteEnv
-from gfn.gflownet.base import GFlowNet
+from gfn.gflownet.base import GFlowNet, loss_reduce
 from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
@@ -73,6 +73,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         env: DiscreteEnv,
         states: DiscreteStates,
         conditioning: torch.Tensor | None,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         """Computes the FM for the provided states.
 
@@ -155,8 +156,9 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         log_incoming_flows = torch.logsumexp(incoming_log_flows, dim=-1)
         log_outgoing_flows = torch.logsumexp(outgoing_log_flows, dim=-1)
+        scores = (log_incoming_flows - log_outgoing_flows).pow(2)
 
-        return (log_incoming_flows - log_outgoing_flows).pow(2).mean()
+        return loss_reduce(scores, reduction)
 
     def reward_matching_loss(
         self,
@@ -164,12 +166,12 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         terminating_states: DiscreteStates,
         conditioning: torch.Tensor | None,
         log_rewards: torch.Tensor | None,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         """Calculates the reward matching loss from the terminating states."""
         if len(terminating_states) == 0:
             return torch.tensor(0.0, device=terminating_states.device)
         del env  # Unused
-
         if conditioning is not None:
             with has_conditioning_exception_handler("logF", self.logF):
                 log_edge_flows = self.logF(terminating_states, conditioning)
@@ -179,13 +181,16 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
         terminating_log_edge_flows = log_edge_flows[:, -1]
-        return (terminating_log_edge_flows - log_rewards).pow(2).mean()
+        scores = (terminating_log_edge_flows - log_rewards).pow(2)
+
+        return loss_reduce(scores, reduction)
 
     def loss(
         self,
         env: DiscreteEnv,
         states_container: StatesContainer[DiscreteStates],
         recalculate_all_logprobs: bool = True,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         """Given a batch of non-terminal and terminal states, compute a loss.
 

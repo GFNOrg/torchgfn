@@ -17,7 +17,7 @@ repos:
           - "--remove-all-unused-imports"
           - "--ignore-init-module-imports"
   - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
+    rev: 6.0.1
     hooks:
       - id: isort
   - repo: https://github.com/python/black
@@ -25,7 +25,7 @@ repos:
     hooks:
       - id: black
   - repo: https://github.com/PyCQA/flake8
-    rev: 7.1.1 
+    rev: 7.1.1
     hooks:
       - id: flake8
   - repo: https://github.com/RobertCraigie/pyright-python

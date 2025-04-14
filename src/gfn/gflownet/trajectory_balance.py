@@ -10,7 +10,7 @@ import torch.nn as nn
 
 from gfn.containers import Trajectories
 from gfn.env import Env
-from gfn.gflownet.base import TrajectoryBasedGFlowNet
+from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.modules import GFNModule, ScalarEstimator
 from gfn.utils.handlers import (
     is_callable_exception_handler,
@@ -56,6 +56,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         env: Env,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         """Trajectory balance loss.
 
@@ -81,8 +82,9 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             logZ = self.logZ
 
         logZ = cast(torch.Tensor, logZ)
-        loss = (scores + logZ.squeeze()).pow(2).mean()
-        if torch.isnan(loss):
+        scores = (scores + logZ.squeeze()).pow(2)
+        loss = loss_reduce(scores, reduction)
+        if torch.isnan(loss).any():
             raise ValueError("loss is nan")
 
         return loss
@@ -112,6 +114,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         env: Env,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         """Log Partition Variance loss.
 
@@ -123,8 +126,9 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         _, _, scores = self.get_trajectories_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
-        loss = (scores - scores.mean()).pow(2).mean()
-        if torch.isnan(loss):
+        scores = (scores - scores.mean()).pow(2)
+        loss = loss_reduce(scores, reduction)
+        if torch.isnan(loss).any():
             raise ValueError("loss is NaN.")
 
         return loss

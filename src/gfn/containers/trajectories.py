@@ -73,10 +73,13 @@ class Trajectories(Container):
         is used to compute the rewards, at each call of self.log_rewards
         """
         self.env = env
+        self.conditioning = conditioning
         self.is_backward = is_backward
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
+        if isinstance(device, str):
+            device = torch.device(device)
 
         for obj in [states, actions]:
             if obj is not None:
@@ -95,14 +98,12 @@ class Trajectories(Container):
         ]:
             if tensor is not None:
                 ensure_same_device(tensor.device, device)
-            assert tensor.device.type == device.type if tensor is not None else True
 
         self.states = (
             states if states is not None else env.states_from_batch_shape((0, 0))
         )
         assert len(self.states.batch_shape) == 2
 
-        self.conditioning = conditioning
         assert self.conditioning is None or (
             self.conditioning.shape[: len(self.states.batch_shape)]
             == self.states.batch_shape

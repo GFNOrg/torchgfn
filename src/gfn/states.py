@@ -1030,7 +1030,7 @@ class GraphStates(States):
         else:
             # Handle the case where batch_shape is (T, B)
             # and we want to concatenate along the B dimension
-            assert len(self.batch_shape) == 2
+            assert len(self.batch_shape) == 2 and len(other.batch_shape) == 2
             max_len = max(self.batch_shape[0], other.batch_shape[0])
 
             # We need to extend both batches to the same length T
@@ -1048,7 +1048,17 @@ class GraphStates(States):
 
             # Now both have the same length T, we can concatenate along B
             batch_shape = (max_len, self.batch_shape[1] + other.batch_shape[1])
-            self.tensor = GeometricBatch.from_data_list(self_data_list + other_data_list)
+            new_data_list = []
+            for i in range(max_len):
+                new_data_list.extend(
+                    self_data_list[
+                        i * self.batch_shape[1] : (i + 1) * self.batch_shape[1]
+                    ]
+                    + other_data_list[
+                        i * other.batch_shape[1] : (i + 1) * other.batch_shape[1]
+                    ]
+                )
+            self.tensor = GeometricBatch.from_data_list(new_data_list)
             self.tensor.batch_shape = batch_shape
 
         # Combine log rewards if they exist

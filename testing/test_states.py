@@ -472,6 +472,14 @@ def test_extend_2d(datas):
     assert state1.tensor.num_nodes >= expected_nodes
     assert state1.tensor.num_edges >= expected_edges
 
+    # Check if states are extended as expected
+    assert (state1[0, 0].tensor.x == datas[0].x).all()
+    assert (state1[0, 1].tensor.x == datas[1].x).all()
+    assert (state1[0, 2].tensor.x == datas[4].x).all()
+    assert (state1[0, 3].tensor.x == datas[5].x).all()
+    assert (state1[2, 2].tensor.x == datas[8].x).all()
+    assert (state1[2, 3].tensor.x == datas[9].x).all()
+
 
 def test_forward_masks(datas):
     """Test forward_masks property"""

@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 import torch
-from tensordict import TensorDict
-from torch_geometric.data import Batch as GeometricBatch
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
@@ -68,27 +66,20 @@ class Transitions(Container):
                 `batch_shapes`.
         """
         self.env = env
+        self.conditioning = conditioning
         self.is_backward = is_backward
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
         for obj in [states, actions, next_states]:
-            if obj is not None:
-                if isinstance(obj.tensor, GeometricBatch):
-                    ensure_same_device(obj.tensor.x.device, device)
-                elif isinstance(obj.tensor, TensorDict):
-                    ensure_same_device(obj.tensor["x"].device, device)
-                else:
-                    ensure_same_device(obj.tensor.device, device)
+            ensure_same_device(obj.device, device) if obj is not None else True
         for tensor in [conditioning, is_terminating, log_rewards, log_probs]:
-            if tensor is not None:
-                ensure_same_device(tensor.device, device)
+            ensure_same_device(tensor.device, device) if tensor is not None else True
 
         self.states = states if states is not None else env.states_from_batch_shape((0,))
         assert len(self.states.batch_shape) == 1
         batch_shape = self.states.batch_shape
 
-        self.conditioning = conditioning
         assert self.conditioning is None or (
             self.conditioning.shape[: len(batch_shape)] == batch_shape
         )

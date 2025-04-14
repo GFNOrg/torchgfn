@@ -5,7 +5,7 @@ import torch
 
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
-from gfn.gflownet.base import PFBasedGFlowNet
+from gfn.gflownet.base import PFBasedGFlowNet, loss_reduce
 from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -195,7 +195,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         return (log_pf_actions, log_pb_actions, scores)
 
     def loss(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
+        self,
+        env: Env,
+        transitions: Transitions,
+        recalculate_all_logprobs: bool = True,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         """Detailed balance loss.
 
@@ -204,9 +208,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         """
         warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
         _, _, scores = self.get_scores(env, transitions, recalculate_all_logprobs)
-        loss = torch.mean(scores**2)
+        scores = scores**2
+        loss = loss_reduce(scores, reduction)
 
-        if torch.isnan(loss):
+        if torch.isnan(loss).any():
             raise ValueError("loss is nan")
 
         return loss
@@ -316,14 +321,20 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         return scores
 
     def loss(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
+        self,
+        env: Env,
+        transitions: Transitions,
+        recalculate_all_logprobs: bool = True,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         """Calculates the modified detailed balance loss."""
+        del env
         warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
         scores = self.get_scores(
             transitions, recalculate_all_logprobs=recalculate_all_logprobs
         )
-        return torch.mean(scores**2)
+        scores = scores**2
+        return loss_reduce(scores, reduction)
 
     def to_training_samples(self, trajectories: Trajectories) -> Transitions:
         return trajectories.to_transitions()
