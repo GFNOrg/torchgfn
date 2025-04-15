@@ -7,7 +7,7 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
-from gfn.states import States
+from gfn.states import GraphStates, States
 from gfn.utils.common import ensure_same_device
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -330,6 +330,10 @@ class LocalSearchSampler(Sampler):
             A tuple of Trajectories object and a boolean tensor indicating whether the
             trajectory was updated.
         """
+        # TODO: Implement local search for GraphStates.
+        if isinstance(env.States, GraphStates):
+            raise NotImplementedError("Local search is not implemented for GraphStates.")
+
         save_logprobs = save_logprobs or use_metropolis_hastings
 
         # K-step backward sampling with the backward estimator,

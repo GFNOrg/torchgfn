@@ -17,11 +17,10 @@ from typing import (
 
 import numpy as np
 import torch
+from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 from torch_geometric.data.data import BaseData
-
-from gfn.actions import GraphActionType
 
 
 class States(ABC):
@@ -542,7 +541,19 @@ class GraphStates(States):
     Base class for Graph as a state representation. The `GraphStates` object is a batched
     collection of multiple graph objects. The `GeometricBatch` object is used to
     represent the batch of graph objects as states.
+
+    Attributes:
+        num_node_classes: Number of node classes.
+        num_edge_classes: Number of edge classes.
+        is_directed: Whether the graph is directed.
+        s0: Initial state.
+        sf: Final state.
+        tensor: A PyG Batch object representing a batch of graphs.
     """
+
+    num_node_classes: ClassVar[int]
+    num_edge_classes: ClassVar[int]
+    is_directed: ClassVar[bool]
 
     s0: ClassVar[GeometricData]
     sf: ClassVar[GeometricData]
@@ -643,73 +654,153 @@ class GraphStates(States):
 
         return batch
 
-    @classmethod
-    def make_random_states_tensor(cls, batch_shape: int | Tuple) -> GeometricBatch:
-        """Makes a batch of random graph states.
+    @property
+    def forward_masks(self) -> TensorDict:
+        """Compute masks for valid forward actions from the current state.
 
-        Args:
-            batch_shape: Shape of the batch dimensions.
+        A forward action is valid if:
+        1. The edge doesn't already exist in the graph
+        2. The edge connects two distinct nodes
+
+        For directed graphs, all possible src->dst edges are considered.
+        For undirected graphs, only the upper triangular portion of the
+            adjacency matrix is used.
 
         Returns:
-            A PyG Batch object containing random graph states.
+            TensorDict: Boolean mask where True indicates valid actions
         """
-        assert cls.s0.edge_attr is not None
-        assert cls.s0.x is not None
+        from gfn.gym.graph_building import get_edge_indices
 
-        batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
-        num_graphs = int(np.prod(batch_shape))
-        device = cls.s0.x.device
+        max_nodes = int(torch.max(self.tensor.ptr[1:] - self.tensor.ptr[:-1]))
+        if self.is_directed:
+            max_possible_edges = max_nodes * (max_nodes - 1)
+        else:
+            max_possible_edges = max_nodes * (max_nodes - 1) // 2
+        edge_masks = torch.ones(
+            len(self), max_possible_edges, dtype=torch.bool, device=self.device
+        )
 
-        data_list = []
-        for _ in range(num_graphs):
-            # Create a random graph with random number of nodes
-            num_nodes = np.random.randint(1, 10)
+        # Remove existing edges.
+        for i in range(len(self)):
+            graph = self[i].tensor
+            ei0, ei1 = get_edge_indices(graph.num_nodes, self.is_directed, self.device)
+            edge_masks[i, len(ei0) :] = False
 
-            # Create random node features
-            x = torch.rand(num_nodes, cls.s0.x.size(1), device=device)
+            assert torch.all(graph.edge_index >= 0)  # TODO: convert to test.
 
-            # Create random edges (not all possible edges to keep it sparse)
-            num_edges = np.random.randint(0, num_nodes * (num_nodes - 1) // 2 + 1)
-            if num_edges > 0 and num_nodes > 1:
-                # Generate random source and target nodes
-                edge_index = torch.zeros(2, num_edges, dtype=torch.long, device=device)
-                for i in range(num_edges):
-                    src, dst = np.random.choice(num_nodes, 2, replace=False)
-                    edge_index[0, i] = src
-                    edge_index[1, i] = dst
-
-                # Create random edge features
-                edge_attr = torch.rand(
-                    num_edges, cls.s0.edge_attr.size(1), device=device
-                )
-
-                data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
+            if graph.edge_index.numel() == 0:
+                edge_idx = torch.zeros(0, dtype=torch.bool, device=self.device)
             else:
-                # No edges
-                data = GeometricData(
-                    x=x,
-                    edge_index=torch.zeros(2, 0, dtype=torch.long, device=device),
-                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1), device=device),
+                edge_idx = torch.logical_and(
+                    graph.edge_index[0][..., None] == ei0[None],
+                    graph.edge_index[1][..., None] == ei1[None],
+                ).to(self.device)
+
+                # Collapse across the edge dimension.
+                if len(edge_idx.shape) == 2:
+                    edge_idx = edge_idx.sum(0).bool()
+
+                edge_masks[i, edge_idx] = False
+
+        action_type = torch.ones(
+            *self.batch_shape, 3, dtype=torch.bool, device=self.device
+        )
+        action_type[:, 1] = torch.any(edge_masks, dim=-1)
+        return TensorDict(
+            {
+                "action_type": action_type,
+                "node_class": torch.ones(
+                    *self.batch_shape,
+                    self.num_node_classes,
+                    dtype=torch.bool,
+                    device=self.device,
+                ),
+                "edge_class": torch.ones(
+                    *self.batch_shape,
+                    self.num_edge_classes,
+                    dtype=torch.bool,
+                    device=self.device,
+                ),
+                "edge_index": edge_masks,
+            },
+            batch_size=self.batch_shape,
+        )
+
+    @property
+    def backward_masks(self) -> TensorDict:
+        """Compute masks for valid backward actions from the current state.
+
+        A backward action is valid if:
+        1. The edge exists in the current graph (i.e., can be removed)
+
+        For directed graphs, all existing edges are considered for removal.
+        For undirected graphs, only the upper triangular edges are considered.
+
+        The EXIT action is not included in backward masks.
+
+        Returns:
+            TensorDict: Boolean mask where True indicates valid actions
+        """
+        from gfn.gym.graph_building import get_edge_indices
+
+        max_nodes = int(torch.max(self.tensor.ptr[1:] - self.tensor.ptr[:-1]))
+        if self.is_directed:
+            max_possible_edges = max_nodes * (max_nodes - 1)
+        else:
+            max_possible_edges = max_nodes * (max_nodes - 1) // 2
+        # Disallow all actions.
+        edge_masks = torch.zeros(
+            len(self), max_possible_edges, dtype=torch.bool, device=self.device
+        )
+
+        for i in range(len(self)):
+            graph = self[i].tensor
+            existing_edges = graph.edge_index
+            # Convert action indices to source-target node pairs.
+            ei0, ei1 = get_edge_indices(
+                graph.num_nodes,
+                self.is_directed,
+                self.device,
+            )
+
+            if len(existing_edges) == 0:
+                edge_idx = torch.zeros(0, dtype=torch.bool)
+            else:
+                edge_idx = torch.logical_and(
+                    existing_edges[0][..., None] == ei0[None],
+                    existing_edges[1][..., None] == ei1[None],
                 )
+                # Collapse across the edge dimension.
+                if len(edge_idx.shape) == 2:
+                    edge_idx = edge_idx.sum(0).bool()
 
-            data_list.append(data)
+                # Allow the removal of this edge.
+                edge_masks[i, edge_idx] = True
 
-        if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [
-                GeometricData(
-                    x=torch.zeros(0, cls.s0.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1)),
-                )
-            ]
-
-        # Create a batch from the list
-        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
-
-        # Store the batch shape for later reference
-        batch.batch_shape = batch_shape
-
-        return batch
+        action_type = torch.zeros(
+            *self.batch_shape, 3, dtype=torch.bool, device=self.device
+        )
+        action_type[:, 0] = (self.tensor.ptr[1:] - self.tensor.ptr[:-1]) > 0
+        action_type[:, 1] = torch.any(edge_masks, dim=-1)
+        return TensorDict(
+            {
+                "action_type": action_type,
+                "node_class": torch.ones(
+                    *self.batch_shape,
+                    self.num_node_classes,
+                    dtype=torch.bool,
+                    device=self.device,
+                ),
+                "edge_class": torch.ones(
+                    *self.batch_shape,
+                    self.num_edge_classes,
+                    dtype=torch.bool,
+                    device=self.device,
+                ),
+                "edge_index": edge_masks,
+            },
+            batch_size=self.batch_shape,
+        )
 
     def __repr__(self):
         """Returns a detailed string representation of the GraphStates object."""
@@ -721,7 +812,6 @@ class GraphStates(States):
             f"state edge_attr={self.tensor.edge_attr.shape},",
             f"actions={self.n_actions},",
             f"device={self.device},",
-            f"masks={tuple(self.forward_masks.shape)})",
         ]
         return " ".join(parts)
 
@@ -1032,145 +1122,6 @@ class GraphStates(States):
             out.log_rewards = torch.stack(log_rewards)
 
         return out
-
-    @property
-    def forward_masks(self) -> dict:
-        """Returns masks denoting allowed forward actions.
-
-        Returns:
-            A dictionary containing masks for different action types.
-        """
-        # Get the data list from the batch
-        data_list = self.tensor.to_data_list()
-        N = self.tensor.x.size(0)
-
-        # Initialize masks
-        action_type_mask = torch.ones(
-            self.batch_shape + (3,), dtype=torch.bool, device=self.device
-        )
-        features_mask = torch.ones(
-            self.batch_shape + (self.tensor.x.size(1),),
-            dtype=torch.bool,
-            device=self.device,
-        )
-        edge_index_masks = torch.ones(
-            (len(data_list), N, N), dtype=torch.bool, device=self.device
-        )
-
-        # For each graph in the batch
-        for i, data in enumerate(data_list):
-            # Flatten the batch index
-            flat_idx = i
-
-            # ADD_NODE is always allowed
-            action_type_mask[flat_idx, GraphActionType.ADD_NODE] = True
-
-            # ADD_EDGE is allowed only if there are at least 2 nodes
-            assert data.num_nodes is not None
-            action_type_mask[flat_idx, GraphActionType.ADD_EDGE] = data.num_nodes > 1
-
-            # EXIT is always allowed
-            action_type_mask[flat_idx, GraphActionType.EXIT] = True
-
-        # Create edge_index mask as a dense representation (NxN matrix)
-        start_n = 0
-        for i, data in enumerate(data_list):
-            # For each graph, create a dense mask for potential edges
-            n = data.num_nodes
-            assert n is not None
-            edge_mask = torch.ones((n, n), dtype=torch.bool, device=self.device)
-            # Remove self-loops by setting diagonal to False
-            edge_mask.fill_diagonal_(False)
-
-            # Exclude existing edges
-            if data.edge_index.size(1) > 0:
-                for j in range(data.edge_index.size(1)):
-                    src, dst = data.edge_index[0, j], data.edge_index[1, j]
-                    edge_mask[src, dst] = False
-
-            edge_index_masks[i, start_n : (start_n + n), start_n : (start_n + n)] = (
-                edge_mask
-            )
-            start_n += n
-
-            # Update ADD_EDGE mask based on whether there are valid edges to add
-            action_type_mask[flat_idx, GraphActionType.ADD_EDGE] &= edge_mask.any()
-
-        return {
-            "action_type": action_type_mask,
-            "features": features_mask,
-            "edge_index": edge_index_masks,
-        }
-
-    @property
-    def backward_masks(self) -> dict:
-        """Returns masks denoting allowed backward actions.
-
-        Returns:
-            A dictionary containing masks for different action types.
-        """
-        # Get the data list from the batch
-        data_list = self.tensor.to_data_list()
-        N = self.tensor.x.size(0)
-
-        # Initialize masks
-        action_type_mask = torch.ones(
-            self.batch_shape + (3,), dtype=torch.bool, device=self.device
-        )
-        features_mask = torch.ones(
-            self.batch_shape + (self.tensor.x.size(1),),
-            dtype=torch.bool,
-            device=self.device,
-        )
-        edge_index_masks = torch.zeros(
-            (len(data_list), N, N), dtype=torch.bool, device=self.device
-        )
-
-        # For each graph in the batch
-        for i, data in enumerate(data_list):
-            assert data.num_nodes is not None
-
-            # Flatten the batch index
-            flat_idx = i
-
-            # ADD_NODE is allowed if there's at least one node (can remove a node)
-            action_type_mask[flat_idx, GraphActionType.ADD_NODE] = data.num_nodes >= 1
-
-            # ADD_EDGE is allowed if there's at least one edge (can remove an edge)
-            action_type_mask[flat_idx, GraphActionType.ADD_EDGE] = (
-                data.edge_index.size(1) > 0
-            )
-
-            # EXIT is allowed if there's at least one node
-            action_type_mask[flat_idx, GraphActionType.EXIT] = data.num_nodes >= 1
-
-        # Create edge_index mask for backward actions (existing edges that can be removed)
-        start_n = 0
-        for i, data in enumerate(data_list):
-            # For backward actions, we can only remove existing edges
-            n = data.num_nodes
-            assert n is not None
-            edge_mask = torch.zeros((n, n), dtype=torch.bool, device=self.device)
-
-            # Include only existing edges
-            if data.edge_index.size(1) > 0:
-                for j in range(data.edge_index.size(1)):
-                    src, dst = (
-                        data.edge_index[0, j].item(),
-                        data.edge_index[1, j].item(),
-                    )
-                    edge_mask[src, dst] = True
-
-            edge_index_masks[i, start_n : (start_n + n), start_n : (start_n + n)] = (
-                edge_mask
-            )
-            start_n += n
-
-        return {
-            "action_type": action_type_mask,
-            "features": features_mask,
-            "edge_index": edge_index_masks,
-        }
 
     def flatten(self) -> None:
         raise NotImplementedError

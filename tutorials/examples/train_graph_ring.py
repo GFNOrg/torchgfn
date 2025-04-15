@@ -21,7 +21,7 @@ from matplotlib import patches
 from gfn.containers import ReplayBuffer
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
-from gfn.modules import DiscretePolicyEstimator
+from gfn.modules import DiscreteGraphPolicyEstimator
 from gfn.preprocessors import IdentityPreprocessor
 from gfn.states import GraphStates
 from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
@@ -300,26 +300,37 @@ def main(args: Namespace):
     # Choose model type based on USE_GNN flag
     if args.use_gnn:
         module_pf = GraphEdgeActionGNN(
-            env.n_nodes, args.directed, num_conv_layers=args.num_conv_layers
+            env.n_nodes,
+            args.directed,
+            num_conv_layers=args.num_conv_layers,
+            num_edge_classes=env.num_edge_classes,
         )
         module_pb = GraphEdgeActionGNN(
             env.n_nodes,
             args.directed,
             is_backward=True,
             num_conv_layers=args.num_conv_layers,
+            num_edge_classes=env.num_edge_classes,
         )
     else:
-        module_pf = GraphEdgeActionMLP(env.n_nodes, args.directed)
-        module_pb = GraphEdgeActionMLP(env.n_nodes, args.directed, is_backward=True)
+        module_pf = GraphEdgeActionMLP(
+            env.n_nodes,
+            args.directed,
+            num_edge_classes=env.num_edge_classes,
+        )
+        module_pb = GraphEdgeActionMLP(
+            env.n_nodes,
+            args.directed,
+            is_backward=True,
+            num_edge_classes=env.num_edge_classes,
+        )
 
-    pf = DiscretePolicyEstimator(
+    pf = DiscreteGraphPolicyEstimator(
         module=module_pf,
-        n_actions=env.n_actions,
         preprocessor=IdentityPreprocessor(output_dim=1),
     )
-    pb = DiscretePolicyEstimator(
+    pb = DiscreteGraphPolicyEstimator(
         module=module_pb,
-        n_actions=env.n_actions,
         preprocessor=IdentityPreprocessor(output_dim=1),
         is_backward=True,
     )
@@ -341,7 +352,7 @@ def main(args: Namespace):
             env,
             n=args.batch_size,
             save_logprobs=True,
-            epsilon=0.2 * (1 - iteration / args.n_iterations),
+            # epsilon=0.2 * (1 - iteration / args.n_iterations),
         )
         training_samples = gflownet.to_training_samples(trajectories)
 
@@ -414,7 +425,7 @@ if __name__ == "__main__":
         "--lr", type=float, default=0.001, help="Learning rate for optimizer"
     )
     parser.add_argument(
-        "--batch_size", type=int, default=1024, help="Batch size for training"
+        "--batch_size", type=int, default=128, help="Batch size for training"
     )
     parser.add_argument(
         "--use_buffer",

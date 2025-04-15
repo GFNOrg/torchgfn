@@ -1,7 +1,6 @@
 from typing import Callable, Literal, Optional, Tuple
 
 import torch
-from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 from torch_geometric.utils import to_dense_adj
@@ -56,6 +55,9 @@ class BayesianStructure(GraphEnv):
         super().__init__(
             s0=s0,
             sf=sf,
+            num_node_classes=1,
+            num_edge_classes=1,
+            is_directed=True,
         )
 
     def make_actions_class(self) -> type[Actions]:
@@ -195,55 +197,8 @@ class BayesianStructure(GraphEnv):
         assert isinstance(states, GraphStates)
         return states
 
-    def _step(self, states: GraphStates, actions: Actions) -> GraphStates:
-        graph_actions = self.convert_actions(actions)
-        new_states = super()._step(states, graph_actions)
-        assert isinstance(new_states, self.States)
-        return new_states
-
-    def convert_actions(self, actions: Actions) -> GraphActions:
-        """Convert actions from the Actions class to the GraphActions class.
-
-        This method maps discrete action indices to specific graph operations:
-        - GraphActionType.ADD_EDGE: Add an edge between specific nodes
-        - GraphActionType.EXIT: Terminate trajectory
-        - GraphActionType.DUMMY: No-op action (for padding)
-
-        Args:
-            actions: Discrete actions to convert
-
-        Returns:
-            Equivalent actions in the GraphActions format
-        """
-        # TODO: factor out into utility function.
-        action_tensor = actions.tensor.squeeze(-1).clone()
-
-        is_exit = action_tensor == (self.n_actions - 1)
-        action_type = torch.where(
-            is_exit,
-            GraphActionType.EXIT,
-            GraphActionType.ADD_EDGE,
-        )
-        action_type[action_tensor == self.n_actions] = GraphActionType.DUMMY
-
-        edge_index = torch.zeros(
-            (action_type.shape[0], 2), dtype=torch.long, device=self.device
-        )
-        edge_index[~is_exit, 0] = action_tensor[~is_exit] // self.num_nodes
-        edge_index[~is_exit, 1] = action_tensor[~is_exit] % self.num_nodes
-
-        graph_actions = GraphActions(
-            TensorDict(
-                {
-                    "action_type": action_type,
-                    "features": torch.ones(action_type.shape + (1,)),
-                    "edge_index": edge_index,
-                },
-                batch_size=action_type.shape,
-                device=self.device,
-            )
-        )
-        return graph_actions
+    def make_random_states_tensor(self, batch_shape: int | Tuple) -> GeometricBatch:
+        return self.s0.repeat(batch_shape)  # TODO: fix this
 
     def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
         """Step function for the GraphBuilding environment.

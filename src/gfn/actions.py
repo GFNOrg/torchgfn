@@ -185,74 +185,53 @@ class GraphActions(Actions):
     - ADD_NODE: Add a node with given features
     - ADD_EDGE: Add an edge between two nodes with given features
     - EXIT: Terminate the trajectory
-
-    Attributes:
-        features_dim: Dimension of node/edge features
-        tensor: TensorDict containing:
-            - action_type: Type of action (GraphActionType)
-            - features: Features for nodes/edges
-            - edge_index: Source/target nodes for edges
     """
 
-    features_dim: ClassVar[int]
+    _ACTION_TYPE_IDX = 0
+    _NODE_CLASS_IDX = 1
+    _EDGE_CLASS_IDX = 2
+    _EDGE_INDEX_IDX = 3
 
-    def __init__(self, tensor: TensorDict):
+    def __init__(self, tensor: torch.Tensor):
         """Initializes a GraphAction object.
 
         Args:
-            action: a GraphActionType indicating the type of action.
-            features: a tensor of shape (batch_shape, feature_shape) representing the features
-                of the nodes or of the edges, depending on the action type. In case of EXIT
-                action, this can be None.
-            edge_index: an tensor of shape (batch_shape, 2) representing the edge to add.
-                This must defined if and only if the action type is GraphActionType.AddEdge.
+            tensor: A tensor of shape (*batch_shape, 4) containing the action type, node class, edge class, and edge index.
         """
-        self._batch_shape = tensor["action_type"].shape
+        if tensor.shape[-1] != 4:
+            raise ValueError(
+                f"Expected tensor of shape (*batch_shape, 4), got {tensor.shape}.\n"
+                "The last dimension should contain the action type, node class, edge class, and edge index."
+            )
+        self.tensor = tensor
 
-        features = tensor.get("features", None)
-        if features is None:
-            features = torch.zeros((*self.batch_shape, self.features_dim))
-        edge_index = tensor.get("edge_index", None)
-        if edge_index is None:
-            assert torch.all(tensor["action_type"] != GraphActionType.ADD_EDGE)
-            edge_index = torch.zeros((*self.batch_shape, 2), dtype=torch.long)
-
-        self.tensor = TensorDict(
-            {
-                "action_type": tensor["action_type"],
-                "features": features,
-                "edge_index": edge_index,
-            },
-            batch_size=self.batch_shape,
+    @classmethod
+    def from_tensor_dict(cls, tensor_dict: TensorDict) -> GraphActions:
+        """Creates a GraphActions object from a tensor dict."""
+        batch_shape = tensor_dict["action_type"].shape
+        action_type = tensor_dict["action_type"].reshape(*batch_shape, 1)
+        node_class = tensor_dict["node_class"].reshape(*batch_shape, 1)
+        edge_class = tensor_dict["edge_class"].reshape(*batch_shape, 1)
+        edge_index = tensor_dict["edge_index"].reshape(*batch_shape, 1)
+        return cls(
+            torch.cat(
+                [
+                    action_type,
+                    node_class,
+                    edge_class,
+                    edge_index,
+                ],
+                dim=-1,
+            )
         )
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return self._batch_shape
+        assert self.tensor.shape[-1] == 4
+        return self.tensor.shape[:-1]
 
     def __repr__(self):
         return f"""GraphAction object with {self.batch_shape} actions."""
-
-    def _compare(self, other: GraphActions) -> torch.Tensor:
-        """Compares the actions to another GraphAction object.
-
-        Args:
-            other: GraphAction object to compare.
-
-        Returns: boolean tensor of shape batch_shape indicating whether the actions are equal.
-        """
-        action_compare = torch.all(
-            self.tensor["action_type"] == other.tensor["action_type"]
-        )
-        exit_compare = (
-            torch.all(self.tensor["features"] == other.tensor["features"])
-            | action_compare
-            == GraphActionType.EXIT
-        )
-        edge_compare = (action_compare != GraphActionType.ADD_EDGE) | (
-            torch.all(self.tensor["edge_index"] == other.tensor["edge_index"])
-        )
-        return action_compare & exit_compare & edge_compare
 
     @property
     def is_exit(self) -> torch.Tensor:
@@ -267,47 +246,34 @@ class GraphActions(Actions):
     @property
     def action_type(self) -> torch.Tensor:
         """Returns the action type tensor."""
-        return self.tensor["action_type"]
+        return self.tensor[..., self._ACTION_TYPE_IDX]
 
     @property
-    def features(self) -> torch.Tensor:
-        """Returns the features tensor."""
-        return self.tensor["features"]
+    def node_class(self) -> torch.Tensor:
+        """Returns the node class tensor."""
+        return self.tensor[..., self._NODE_CLASS_IDX]
+
+    @property
+    def edge_class(self) -> torch.Tensor:
+        """Returns the edge class tensor."""
+        return self.tensor[..., self._EDGE_CLASS_IDX]
 
     @property
     def edge_index(self) -> torch.Tensor:
         """Returns the edge index tensor."""
-        return self.tensor["edge_index"]
+        return self.tensor[..., self._EDGE_INDEX_IDX]
 
     @classmethod
     def make_dummy_actions(cls, batch_shape: tuple[int]) -> GraphActions:
         """Creates a GraphActions object of dummy actions with the given batch shape."""
-        return cls(
-            TensorDict(
-                {
-                    "action_type": torch.full(
-                        batch_shape, fill_value=GraphActionType.DUMMY
-                    ),
-                },
-                batch_size=batch_shape,
-            )
-        )
+        # TODO: make default dtype int32
+        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64)
+        tensor[..., cls._ACTION_TYPE_IDX] = GraphActionType.DUMMY
+        return cls(tensor)
 
     @classmethod
     def make_exit_actions(cls, batch_shape: tuple[int]) -> Actions:
         """Creates an GraphActions object of exit actions with the given batch shape."""
-        return cls(
-            TensorDict(
-                {
-                    "action_type": torch.full(
-                        batch_shape, fill_value=GraphActionType.EXIT
-                    ),
-                },
-                batch_size=batch_shape,
-            )
-        )
-
-    def extend(self, other: Actions) -> None:
-        """Extends an Actions instance with another Actions instance."""
-        super().extend(other)
-        self._batch_shape = self.tensor.batch_size
+        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64)
+        tensor[..., cls._ACTION_TYPE_IDX] = GraphActionType.EXIT
+        return cls(tensor)

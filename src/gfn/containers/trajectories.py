@@ -529,6 +529,12 @@ class Trajectories(Container):
         """Return a reversed version of the backward trajectories."""
         assert self.is_backward, "Trajectories must be backward."
 
+        # TODO: Implement reverse backward trajectories for GraphStates.
+        if isinstance(self.env.States, GraphStates):
+            raise NotImplementedError(
+                "Reverse backward trajectories are not implemented for GraphStates."
+            )
+
         # env.sf should never be None unless something went wrong during class
         # instantiation.
         if self.env.sf is None:

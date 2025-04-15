@@ -1,13 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
+from torch_geometric.data import Batch as GeometricBatch
 
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
-from gfn.utils.distributions import UnsqueezedCategorical
+from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -96,13 +98,16 @@ class GFNModule(ABC, nn.Module):
 
     @property
     @abstractmethod
-    def expected_output_dim(self) -> int:
+    def expected_output_dim(self) -> Optional[int]:
         """Expected output dimension of the module."""
 
     def check_output_dim(self, module_output: torch.Tensor) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
         assert module_output.dtype == torch.float
-        if module_output.shape[-1] != self.expected_output_dim:
+        if (
+            self.expected_output_dim is not None
+            and module_output.shape[-1] != self.expected_output_dim
+        ):
             raise ValueError(
                 f"{self.__class__.__name__} output dimension should be {self.expected_output_dim}"
                 + f" but is {module_output.shape[-1]}."
@@ -269,7 +274,9 @@ class DiscretePolicyEstimator(GFNModule):
                 on policy.
             epsilon: with probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy."""
-        assert module_output.shape[-1] == self.expected_output_dim
+        assert (
+            module_output.shape[-1] == self.expected_output_dim
+        ), f"module_output.shape[-1] = {module_output.shape[-1]}, expected_output_dim = {self.expected_output_dim}"
         assert temperature > 0.0
         assert 0.0 <= epsilon <= 1.0
 
@@ -452,54 +459,45 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-# class GraphEdgeEstimator(DiscretePolicyEstimator):
-#     """A module which outputs a fixed logits for the actions (edge actions, exit action).
+class DiscreteGraphPolicyEstimator(GFNModule):
 
-#     Args:
-#         n_nodes: The number of nodes in the graph.
-#     """
+    def __init__(
+        self,
+        module: nn.Module,
+        preprocessor: Preprocessor | None = None,
+        is_backward: bool = False,
+    ):
+        super().__init__(module, preprocessor, is_backward)
 
-#     def __init__(
-#         self,
-#         module: nn.Module,
-#         preprocessor: Preprocessor | None = None,
-#         is_backward: bool = False,
-#     ):
-#         assert hasattr(module, "n_nodes"), "module must have a `n_nodes` attribute"
-#         assert isinstance(module.n_nodes, int), "n_nodes must be an integer"
-#         assert hasattr(module, "output_dim"), "module must have a `output_dim` attribute"
-#         assert isinstance(module.output_dim, int), "output_dim must be an integer"
+    def forward(self, input: States | torch.Tensor | GeometricBatch) -> torch.Tensor:
+        """Forward pass of the module.
 
-#         super().__init__(
-#             module=module,
-#             n_actions=module.output_dim,  # type: ignore
-#             preprocessor=preprocessor,
-#             is_backward=is_backward,
-#         )
+        Args:
+            input: The input to the module, as states or a tensor.
 
-#     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
-#         """Forward pass of the module.
+        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        if isinstance(input, States):
+            input = self.preprocessor(input)
 
-#         Args:
-#             input: The input to the module, as states or a tensor.
+        out = self.module(input)
 
-#         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
-#         """
-#         if isinstance(input, States):
-#             input = self.preprocessor(input)
+        return out
 
-#         out = self.module(input)
+    def to_probability_distribution(
+        self,
+        states: States,
+        module_output: TensorDict,
+    ) -> Distribution:
+        masks = states.backward_masks if self.is_backward else states.forward_masks
+        logits = module_output
+        logits["action_type"][~masks["action_type"]] = -float("inf")
+        logits["edge_class"][~masks["edge_class"]] = -float("inf")
+        logits["node_class"][~masks["node_class"]] = -float("inf")
+        logits["edge_index"][~masks["edge_index"]] = -float("inf")
 
-#         assert out.shape[-1] == self.expected_output_dim
-#         return out
+        return GraphActionDistribution(logits=logits)
 
-#     @property
-#     def n_nodes(self):
-#         return self.module.n_nodes
-
-#     @property
-#     def expected_output_dim(self) -> int:
-#         if not isinstance(self.module.output_dim, int):
-#             return int(self.module.output_dim)  # type: ignore
-#         else:
-#             return self.module.output_dim
+    @property
+    def expected_output_dim(self) -> Optional[int]:
+        return None  # the output_dim of a TensorDict is not well-defined
