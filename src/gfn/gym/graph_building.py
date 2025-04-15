@@ -356,11 +356,61 @@ class GraphBuilding(GraphEnv):
         """
         return self.state_evaluator(final_states)
 
-    def make_random_states_tensor(self, batch_shape: Tuple) -> GraphStates:
-        """Generates random states tensor of shape (*batch_shape, feature_dim)."""
-        random_states_tensor = self.States.from_batch_shape(batch_shape)
-        assert isinstance(random_states_tensor, GraphStates)
-        return random_states_tensor
+    def make_random_states_tensor(self, batch_shape: Tuple) -> GeometricBatch:
+        """Generates random states tensor of shape (*batch_shape, feature_dim).
+
+        Args:
+            batch_shape: Shape of the batch dimensions.
+
+        Returns:
+            A PyG Batch object containing random graph states.
+        """
+        assert self.s0.edge_attr is not None
+        assert self.s0.x is not None
+
+        batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
+        num_graphs = int(np.prod(batch_shape))
+        device = self.s0.x.device
+
+        data_list = []
+        for _ in range(num_graphs):
+            # Create a random graph with random number of nodes
+            num_nodes = np.random.randint(1, 10)
+
+            # Create random node features
+            x = torch.rand(num_nodes, self.s0.x.size(1), device=device)
+
+            # Create random edges (not all possible edges to keep it sparse)
+            num_edges = np.random.randint(0, num_nodes * (num_nodes - 1) // 2 + 1)
+            edge_index = torch.zeros(2, num_edges, dtype=torch.long, device=device)
+            for i in range(num_edges):
+                src, dst = np.random.choice(num_nodes, 2, replace=False)
+                edge_index[0, i] = src
+                edge_index[1, i] = dst
+            edge_attr = torch.rand(num_edges, self.s0.edge_attr.size(1), device=device)
+            data = GeometricData(
+                x=x,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+            )
+            data_list.append(data)
+
+        if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
+            data_list = [
+                GeometricData(
+                    x=torch.zeros(0, self.s0.x.size(1)),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long),
+                    edge_attr=torch.zeros(0, self.s0.edge_attr.size(1)),
+                )
+            ]
+
+        # Create a batch from the list
+        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
+
+        # Store the batch shape for later reference
+        batch.batch_shape = batch_shape
+
+        return batch
 
     def make_states_class(self) -> type[GraphStates]:
         env = self
@@ -381,22 +431,8 @@ class GraphBuilding(GraphEnv):
             which actions are valid from the current state.
             """
 
-            s0 = GeometricData(
-                x=torch.zeros(0, 1, device=env.device),
-                edge_attr=torch.zeros((0, 1), device=env.device),
-                edge_index=torch.zeros((2, 0), dtype=torch.long, device=env.device),
-                device=env.device,
-            )
-            sf = GeometricData(
-                x=-torch.ones(1, 1, device=env.device),
-                edge_attr=torch.zeros((0, 1), device=env.device),
-                edge_index=torch.zeros((2, 0), dtype=torch.long, device=env.device),
-                device=env.device,
-            )
-
-            def __init__(self, tensor: GeometricBatch):
-                self.tensor = tensor.to(env.device)
-                self._log_rewards: Optional[float] = None
+            s0 = env.s0
+            sf = env.sf
 
         return GraphBuildingStates
 
@@ -466,27 +502,8 @@ class GraphBuildingOnEdges(GraphBuilding):
             which actions are valid from the current state.
             """
 
-            num_node_classes = env.num_node_classes
-            num_edge_classes = env.num_edge_classes
-            is_directed = env.is_directed
-
-            s0 = GeometricData(
-                x=torch.arange(env.n_nodes)[:, None].to(env.device),
-                edge_attr=torch.ones((0, 1), device=env.device),
-                edge_index=torch.ones((2, 0), dtype=torch.long, device=env.device),
-                device=env.device,
-            )
-            sf = GeometricData(
-                x=-torch.ones(env.n_nodes)[:, None].to(env.device),
-                edge_attr=torch.zeros((0, 1), device=env.device),
-                edge_index=torch.zeros((2, 0), dtype=torch.long, device=env.device),
-                device=env.device,
-            )
-            n_nodes = env.n_nodes
-            is_directed = env.is_directed
-
-            def __init__(self, tensor: GeometricBatch):
-                super().__init__(tensor)
+            s0 = env.s0
+            sf = env.sf
 
             @property
             def forward_masks(self) -> TensorDict:

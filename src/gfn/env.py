@@ -619,7 +619,7 @@ class GraphEnv(Env):
 
             s0 = self.s0
             sf = self.sf
-            make_random_states_graph = self.make_random_states_tensor
+            make_random_states_tensor = self.make_random_states_tensor
 
         return GraphEnvStates
 
@@ -636,3 +636,7 @@ class GraphEnv(Env):
     def backward_step(self, states: GraphStates, actions: Actions) -> torch.Tensor:
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""
+
+    @abstractmethod
+    def make_random_states_tensor(self, batch_shape: int | Tuple) -> GeometricBatch:
+        """Returns a batch of random graph states."""
