@@ -62,19 +62,23 @@ class GraphBuilding(GraphEnv):
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         is_directed: bool = True,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        s0: GeometricData | None = None,
+        sf: GeometricData | None = None,
     ):
-        s0 = GeometricData(
-            x=torch.zeros((0, 1), dtype=torch.int64).to(device),
-            edge_attr=torch.zeros((0, 1), dtype=torch.int64).to(device),
-            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
-            device=device,
-        )
-        sf = GeometricData(
-            x=torch.full((1, 1), -1, dtype=torch.int64).to(device),
-            edge_attr=torch.full((0, 1), -1, dtype=torch.int64).to(device),
-            edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
-            device=device,
-        )
+        if s0 is None:
+            s0 = GeometricData(
+                x=torch.zeros((0, 1), dtype=torch.int64).to(device),
+                edge_attr=torch.zeros((0, 1), dtype=torch.int64).to(device),
+                edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+                device=device,
+            )
+        if sf is None:
+            sf = GeometricData(
+                x=torch.full((1, 1), -1, dtype=torch.int64).to(device),
+                edge_attr=torch.full((0, 1), -1, dtype=torch.int64).to(device),
+                edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
+                device=device,
+            )
 
         self.state_evaluator = state_evaluator
         super().__init__(
@@ -470,12 +474,27 @@ class GraphBuildingOnEdges(GraphBuilding):
         else:
             # bottom triangle.
             self.n_possible_edges = (n_nodes**2 - n_nodes) // 2
+
+        s0 = GeometricData(
+            x=torch.arange(self.n_nodes)[:, None].to(device),
+            edge_attr=torch.ones((0, 1), device=device),
+            edge_index=torch.ones((2, 0), dtype=torch.long, device=device),
+            device=device,
+        )
+        sf = GeometricData(
+            x=-torch.ones(self.n_nodes)[:, None].to(device),
+            edge_attr=torch.zeros((0, 1), device=device),
+            edge_index=torch.zeros((2, 0), dtype=torch.long, device=device),
+            device=device,
+        )
         super().__init__(
             num_node_classes=1,
             num_edge_classes=1,
             state_evaluator=state_evaluator,
             is_directed=directed,
             device=device,
+            s0=s0,
+            sf=sf,
         )
 
     def make_states_class(self) -> type[GraphStates]:
@@ -502,6 +521,10 @@ class GraphBuildingOnEdges(GraphBuilding):
             which actions are valid from the current state.
             """
 
+            num_node_classes = env.num_node_classes
+            num_edge_classes = env.num_edge_classes
+            is_directed = env.is_directed
+            n_nodes = env.n_nodes
             s0 = env.s0
             sf = env.sf
 
