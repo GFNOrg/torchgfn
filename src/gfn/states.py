@@ -541,6 +541,14 @@ class GraphStates(States):
     Base class for Graph as a state representation. The `GraphStates` object is a batched
     collection of multiple graph objects. The `GeometricBatch` object is used to
     represent the batch of graph objects as states.
+
+    Attributes:
+        num_node_classes: Number of node classes.
+        num_edge_classes: Number of edge classes.
+        is_directed: Whether the graph is directed.
+        s0: Initial state.
+        sf: Final state.
+        tensor: A PyG Batch object representing a batch of graphs.
     """
 
     num_node_classes: ClassVar[int]

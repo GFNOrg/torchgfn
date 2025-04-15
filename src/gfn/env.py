@@ -175,8 +175,6 @@ class Env(ABC):
             s0 = env.s0
             sf = env.sf
             make_random_states_tensor = env.make_random_states_tensor
-            # TODO: Why do we need to define the random state generator in the env class?
-            # TODO: Can we just define it in the States class?
 
         return DefaultEnvState
 

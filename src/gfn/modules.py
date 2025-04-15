@@ -498,4 +498,4 @@ class DiscreteGraphPolicyEstimator(GFNModule):
 
     @property
     def expected_output_dim(self) -> Optional[int]:
-        return None
+        return None  # the output_dim of a TensorDict is not well-defined

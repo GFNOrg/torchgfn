@@ -62,18 +62,24 @@ class GraphActionDistribution(Distribution):
         assert "node_class" in logits
         assert "edge_index" in logits
 
+        # Check if no possible edge can be added, 
+        # and assert that action type cannot be ADD_EDGE
         no_possible_edge_index = torch.isneginf(logits["edge_index"]).all(-1)
         assert torch.isneginf(
             logits["action_type"][no_possible_edge_index, GraphActionType.ADD_EDGE]
         ).all()
         logits["edge_index"][no_possible_edge_index] = 0
 
+        # Check if no possible edge class can be added, 
+        # and assert that action type cannot be ADD_EDGE
         no_possible_edge_class = torch.isneginf(logits["edge_class"]).all(-1)
         assert torch.isneginf(
             logits["action_type"][no_possible_edge_class, GraphActionType.ADD_EDGE]
         ).all()
         logits["edge_class"][no_possible_edge_class] = 0
 
+        # Check if no possible node can be added, 
+        # and assert that action type cannot be ADD_NODE
         no_possible_node = torch.isneginf(logits["node_class"]).all(-1)
         assert torch.isneginf(
             logits["action_type"][no_possible_node, GraphActionType.ADD_NODE]
