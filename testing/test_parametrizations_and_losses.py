@@ -74,7 +74,8 @@ def test_FM(env_name: str, ndim: int, module_name: str):
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_get_pfs_and_pbs(
-    env_name: str, preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"]
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box"],
+    preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"],
 ):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")
@@ -95,7 +96,8 @@ def test_get_pfs_and_pbs(
 @pytest.mark.parametrize("preprocessor_name", ["Identity", "KHot"])
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
 def test_get_scores(
-    env_name: str, preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"]
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box"],
+    preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"],
 ):
     if preprocessor_name == "KHot" and env_name != "HyperGrid":
         pytest.skip("KHot preprocessor only implemented for HyperGrid")

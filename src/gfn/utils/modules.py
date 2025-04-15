@@ -6,6 +6,7 @@ from typing import Literal, Optional
 import torch
 import torch.nn as nn
 from linear_attention_transformer import LinearAttentionTransformer
+from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
@@ -261,6 +262,7 @@ class GraphEdgeActionGNN(nn.Module):
         self,
         n_nodes: int,
         directed: bool,
+        num_edge_classes: int,
         num_conv_layers: int = 1,
         embedding_dim: int = 128,
         is_backward: bool = False,
@@ -281,6 +283,7 @@ class GraphEdgeActionGNN(nn.Module):
         self.is_backward = is_backward
         self.is_directed = directed
         self.num_conv_layers = num_conv_layers
+        self.num_edge_classes = num_edge_classes
 
         # Output dimension.
         edges_dim = self.n_nodes**2 - self.n_nodes
@@ -376,7 +379,7 @@ class GraphEdgeActionGNN(nn.Module):
     def edges_dim(self) -> int:
         return self._edges_dim
 
-    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+    def forward(self, states_tensor: GeometricBatch) -> TensorDict:
         node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
         batch_size = int(math.prod(states_tensor.batch_shape))
 
@@ -452,9 +455,23 @@ class GraphEdgeActionGNN(nn.Module):
         )
 
         if self.is_backward:
-            return edge_actions
+            action_type = torch.zeros(*states_tensor["batch_shape"], 3)
+            action_type[..., 1] = 1
         else:
-            return torch.cat([edge_actions, exit_action], dim=-1)
+            action_type = torch.cat(
+                [torch.zeros_like(exit_action), 1 - exit_action, exit_action], dim=-1
+            )
+        return TensorDict(
+            {
+                "action_type": action_type,
+                "edge_class": torch.zeros(
+                    *states_tensor["batch_shape"], self.num_edge_classes
+                ),  # TODO: make it learnable.
+                "node_class": torch.zeros(*states_tensor["batch_shape"], 1),
+                "edge_index": edge_actions,
+            },
+            batch_size=states_tensor["batch_shape"],
+        )
 
 
 class GraphEdgeActionMLP(nn.Module):
@@ -485,6 +502,7 @@ class GraphEdgeActionMLP(nn.Module):
         self,
         n_nodes: int,
         directed: bool,
+        num_edge_classes: int,
         n_hidden_layers: int = 2,
         n_hidden_layers_exit: int = 1,
         embedding_dim: int = 128,
@@ -508,6 +526,7 @@ class GraphEdgeActionMLP(nn.Module):
         self.is_directed = directed
         self.is_backward = is_backward
         self.hidden_dim = embedding_dim
+        self.num_edge_classes = num_edge_classes
 
         # MLP for processing the flattened adjacency matrix
         self.mlp = MLP(
@@ -557,7 +576,7 @@ class GraphEdgeActionMLP(nn.Module):
     def edges_dim(self) -> int:
         return self._edges_dim
 
-    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+    def forward(self, states_tensor: GeometricBatch) -> TensorDict:
         """Forward pass to compute action logits from graph states.
 
         Process:
@@ -595,6 +614,20 @@ class GraphEdgeActionMLP(nn.Module):
         exit_action = self.exit_mlp(embedding)
 
         if self.is_backward:
-            return edge_actions
+            action_type = torch.zeros(*states_tensor["batch_shape"], 3)
+            action_type[..., 1] = 1
         else:
-            return torch.cat([edge_actions, exit_action], dim=-1)
+            action_type = torch.cat(
+                [torch.zeros_like(exit_action), 1 - exit_action, exit_action], dim=-1
+            )
+        return TensorDict(
+            {
+                "action_type": action_type,
+                "edge_class": torch.zeros(
+                    *states_tensor["batch_shape"], self.num_edge_classes
+                ),  # TODO: make it learnable
+                "node_class": torch.zeros(*states_tensor["batch_shape"], 1),
+                "edge_index": edge_actions,
+            },
+            batch_size=states_tensor["batch_shape"],
+        )
