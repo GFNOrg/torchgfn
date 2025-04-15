@@ -394,10 +394,6 @@ class GraphBuilding(GraphEnv):
                 device=env.device,
             )
 
-            def __init__(self, tensor: GeometricBatch):
-                self.tensor = tensor.to(env.device)
-                self._log_rewards: Optional[float] = None
-
         return GraphBuildingStates
 
 

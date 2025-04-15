@@ -469,8 +469,8 @@ def test_extend_2d(datas):
     expected_edges = 3 * 1 * 4  # T * edges_per_graph * B
 
     # The actual count might be higher due to padding with sink states
-    assert state1.tensor.num_nodes >= expected_nodes
-    assert state1.tensor.num_edges >= expected_edges
+    assert state1.tensor.num_nodes == expected_nodes
+    assert state1.tensor.num_edges == expected_edges
 
     # Check if states are extended as expected
     assert (state1[0, 0].tensor.x == datas[0].x).all()
