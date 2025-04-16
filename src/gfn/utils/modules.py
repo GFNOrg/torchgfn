@@ -390,8 +390,7 @@ class GraphEdgeActionGNN(nn.Module):
         )
         cumsum[1:] = torch.cumsum(tensor, dim=0)
 
-        # Subtract the end val from each batch idx fom the start val of each batch idx.
-        size = batch_ptr[1:] - batch_ptr[:-1]
+        # Subtract the end val from each batch idx from the start val of each batch idx.
         return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
 
     def forward(self, states_tensor: GeometricBatch) -> TensorDict:
