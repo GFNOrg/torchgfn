@@ -46,7 +46,6 @@ def posterior_estimate(
             env,
             n=batch_size if it < n_batches - 1 else num_samples % batch_size,
             save_logprobs=False,
-            epsilon=0.0,
         )
         samples.extend(
             [
