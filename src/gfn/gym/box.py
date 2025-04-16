@@ -40,9 +40,12 @@ class Box(Env):
             exit_action=exit_action,
         )
 
-    def make_random_states_tensor(self, batch_shape: Tuple[int, ...]) -> torch.Tensor:
+    @staticmethod
+    def make_random_states_tensor(
+        batch_shape: Tuple[int, ...], device: torch.device
+    ) -> torch.Tensor:
         """Generates random states tensor of shape (*batch_shape, 2)."""
-        return torch.rand(batch_shape + (2,), device=self.device)
+        return torch.rand(batch_shape + (2,), device=device)
 
     def step(self, states: States, actions: Actions) -> torch.Tensor:
         """Step function for the Box environment.

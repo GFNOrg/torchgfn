@@ -31,7 +31,7 @@ In addition, a number of methods must be defined by the user:
   (these are often different sets of rules) for continuous environments. It
   accepts a batch of states and actions, and returning `True` only if all
   actions can be taken at the given states.
-+ `env.make_random_states_tensor(self, batch_shape)` is an **optional** method
++ `env.make_random_states_tensor(self, batch_shape, device)` is an **optional** method
   which is consumed by the States class automatically, which is useful if you
   want random samples you can evaluate under your reward model or policy.
 + `env.reset(self, ...)` can also **optionally** be overwritten by the user

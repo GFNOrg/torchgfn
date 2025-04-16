@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Tuple
 
 import torch
 
@@ -82,6 +82,11 @@ class PerfectBinaryTree(DiscreteEnv):
         next_states_tns = [self.transition_table.get(tuple_) for tuple_ in tuples]
         next_states_tns = torch.tensor(next_states_tns).reshape(-1, 1).long()
         return next_states_tns
+
+    def make_random_states_tensor(
+        self, batch_shape: Tuple[int, ...], device: torch.device
+    ) -> torch.Tensor:
+        raise NotImplementedError  # TODO: implement this
 
     def update_masks(self, states: DiscreteStates) -> None:
         terminating_states_mask = torch.isin(

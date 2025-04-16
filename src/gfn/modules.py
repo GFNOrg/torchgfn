@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from typing import Any, Optional
 
 import torch
@@ -7,6 +8,7 @@ from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
 from torch_geometric.data import Batch as GeometricBatch
 
+from gfn.actions import GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
@@ -256,8 +258,8 @@ class DiscretePolicyEstimator(GFNModule):
         self,
         states: DiscreteStates,
         module_output: torch.Tensor,
-        temperature: float = 1.0,
         sf_bias: float = 0.0,
+        temperature: float = 1.0,
         epsilon: float = 0.0,
     ) -> Categorical:
         """Returns a probability distribution given a batch of states and module output.
@@ -267,11 +269,11 @@ class DiscretePolicyEstimator(GFNModule):
         Args:
             states: The states to use.
             module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
-            temperature: scalar to divide the logits by before softmax. Does nothing
-                if set to 1.0 (default), in which case it's on policy.
             sf_bias: scalar to subtract from the exit action logit before dividing by
                 temperature. Does nothing if set to 0.0 (default), in which case it's
                 on policy.
+            temperature: scalar to divide the logits by before softmax. Does nothing
+                if set to 1.0 (default), in which case it's on policy.
             epsilon: with probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy."""
         assert (
@@ -284,18 +286,23 @@ class DiscretePolicyEstimator(GFNModule):
         logits = module_output
         logits[~masks] = -float("inf")
 
-        # Forward policy supports exploration in many implementations.
-        if temperature != 1.0 or sf_bias != 0.0 or epsilon != 0.0:
+        if sf_bias != 0.0:
             logits[:, -1] -= sf_bias
-            probs = torch.softmax(logits / temperature, dim=-1)
-            uniform_dist_probs = masks.float() / masks.sum(dim=-1, keepdim=True)
+
+        if temperature != 1.0:
+            logits /= temperature
+
+        probs = torch.softmax(logits, dim=-1)
+
+        if epsilon != 0.0:
+            uniform_dist_probs = torch.where(
+                masks.sum(dim=-1, keepdim=True) == 0,
+                torch.zeros_like(masks),
+                masks.float() / masks.sum(dim=-1, keepdim=True),
+            )
             probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
 
-            return UnsqueezedCategorical(probs=probs)
-
-        # LogEdgeFlows are greedy, as are most P_B.
-        else:
-            return UnsqueezedCategorical(logits=logits)
+        return UnsqueezedCategorical(probs=probs)
 
 
 class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
@@ -488,6 +495,9 @@ class DiscreteGraphPolicyEstimator(GFNModule):
         self,
         states: States,
         module_output: TensorDict,
+        sf_bias: float = 0.0,
+        temperature: dict[str, float] = defaultdict(lambda: 1.0),
+        epsilon: dict[str, float] = defaultdict(lambda: 0.0),
     ) -> Distribution:
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
@@ -496,7 +506,74 @@ class DiscreteGraphPolicyEstimator(GFNModule):
         logits["node_class"][~masks["node_class"]] = -float("inf")
         logits["edge_index"][~masks["edge_index"]] = -float("inf")
 
-        return GraphActionDistribution(logits=logits)
+        # Check if no possible edge can be added,
+        # and assert that action type cannot be ADD_EDGE
+        no_possible_edge_index = torch.isneginf(logits["edge_index"]).all(-1)
+        assert torch.isneginf(
+            logits["action_type"][no_possible_edge_index, GraphActionType.ADD_EDGE]
+        ).all()
+        logits["edge_index"][no_possible_edge_index] = 0
+
+        # Check if no possible edge class can be added,
+        # and assert that action type cannot be ADD_EDGE
+        no_possible_edge_class = torch.isneginf(logits["edge_class"]).all(-1)
+        assert torch.isneginf(
+            logits["action_type"][no_possible_edge_class, GraphActionType.ADD_EDGE]
+        ).all()
+        logits["edge_class"][no_possible_edge_class] = 0
+
+        # Check if no possible node can be added,
+        # and assert that action type cannot be ADD_NODE
+        no_possible_node = torch.isneginf(logits["node_class"]).all(-1)
+        assert torch.isneginf(
+            logits["action_type"][no_possible_node, GraphActionType.ADD_NODE]
+        ).all()
+        logits["node_class"][no_possible_node] = 0
+
+        probs = {}
+        for key in logits.keys():
+            probs[key] = self.logits_to_probs(
+                logits[key],
+                masks[key],
+                sf_bias=sf_bias if key == "action_type" else 0.0,
+                temperature=temperature[key],
+                epsilon=epsilon[key],
+            )
+
+        return GraphActionDistribution(probs=TensorDict(probs))
+
+    @staticmethod
+    def logits_to_probs(
+        logits: torch.Tensor,
+        masks: torch.Tensor,
+        sf_bias: float = 0.0,
+        temperature: float = 1.0,
+        epsilon: float = 0.0,
+    ) -> torch.Tensor:
+        assert temperature > 0.0
+        assert 0.0 <= epsilon <= 1.0
+
+        if sf_bias != 0.0:
+            logits[..., GraphActionType.EXIT] = (
+                logits[..., GraphActionType.EXIT] - sf_bias
+            )
+
+        if temperature != 1.0:
+            logits = logits / temperature
+
+        probs = torch.softmax(logits, dim=-1)
+
+        if epsilon != 0.0:
+            uniform_dist_probs = torch.where(
+                masks.sum(dim=-1, keepdim=True) == 0,
+                torch.zeros_like(masks),
+                masks.float() / masks.sum(dim=-1, keepdim=True),
+            )
+            invalid_idx = uniform_dist_probs.isnan().any(dim=-1)
+            uniform_dist_probs[invalid_idx] = 0.0
+            probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
+
+        return probs
 
     @property
     def expected_output_dim(self) -> Optional[int]:
