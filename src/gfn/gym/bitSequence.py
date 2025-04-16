@@ -388,6 +388,11 @@ class BitSequence(DiscreteEnv):
         self.update_masks(new_states)
         return new_states
 
+    def make_random_states_tensor(
+        self, batch_shape: Tuple[int, ...], device: torch.device
+    ) -> torch.Tensor:
+        raise NotImplementedError  # TODO: implement this
+
     def make_modes_set(self, seed) -> torch.Tensor:
         """
         Generates a set of unique mode sequences based on the predefined tensor H.
@@ -635,7 +640,9 @@ class BitSequence(DiscreteEnv):
             word_tensor = terminating_states_tensor[:, i].to(self.device)
             list_of_actions.append(self.actions_from_tensor(word_tensor.unsqueeze(-1)))
 
-        list_of_actions.append(self.Actions.make_exit_actions((n_trajectories,)))
+        list_of_actions.append(
+            self.Actions.make_exit_actions((n_trajectories,), device=self.device)
+        )
         actions = self.Actions.stack(list_of_actions)
 
         traj: Trajectories = Trajectories(

@@ -27,11 +27,11 @@ def test_continuous_action(action_fixture, request):
     action = request.getfixturevalue(action_fixture)
     BATCH = 5
 
-    exit_actions = action.make_exit_actions((BATCH,))
+    exit_actions = action.make_exit_actions((BATCH,), action.device)
     assert torch.all(exit_actions.is_exit == torch.ones(BATCH, dtype=torch.bool))
     assert torch.all(exit_actions.is_dummy == torch.zeros(BATCH, dtype=torch.bool))
 
-    dummy_actions = action.make_dummy_actions((BATCH,))
+    dummy_actions = action.make_dummy_actions((BATCH,), action.device)
     assert torch.all(dummy_actions.is_dummy == torch.ones(BATCH, dtype=torch.bool))
     assert torch.all(dummy_actions.is_exit == torch.zeros(BATCH, dtype=torch.bool))
 

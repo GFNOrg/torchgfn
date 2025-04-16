@@ -45,14 +45,18 @@ class Actions(ABC):
         return tuple(self.tensor.shape)[: -len(self.action_shape)]
 
     @classmethod
-    def make_dummy_actions(cls, batch_shape: tuple[int, ...]) -> Actions:
+    def make_dummy_actions(
+        cls, batch_shape: tuple[int, ...], device: torch.device
+    ) -> Actions:
         """Creates an Actions object of dummy actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.dummy_action.repeat(*batch_shape, *((1,) * action_ndim))
         return cls(tensor)
 
     @classmethod
-    def make_exit_actions(cls, batch_shape: tuple[int, ...]) -> Actions:
+    def make_exit_actions(
+        cls, batch_shape: tuple[int, ...], device: torch.device
+    ) -> Actions:
         """Creates an Actions object of exit actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.exit_action.repeat(*batch_shape, *((1,) * action_ndim))
@@ -126,7 +130,9 @@ class Actions(ABC):
             if self.batch_shape[0] >= required_first_dim:
                 return
             n = required_first_dim - self.batch_shape[0]
-            dummy_actions = self.__class__.make_dummy_actions((n, self.batch_shape[1]))
+            dummy_actions = self.__class__.make_dummy_actions(
+                (n, self.batch_shape[1]), device=self.device
+            )
             self.tensor = torch.cat((self.tensor, dummy_actions.tensor), dim=0)
         else:
             raise NotImplementedError(
@@ -264,16 +270,20 @@ class GraphActions(Actions):
         return self.tensor[..., self._EDGE_INDEX_IDX]
 
     @classmethod
-    def make_dummy_actions(cls, batch_shape: tuple[int]) -> GraphActions:
+    def make_dummy_actions(
+        cls, batch_shape: tuple[int], device: torch.device
+    ) -> GraphActions:
         """Creates a GraphActions object of dummy actions with the given batch shape."""
         # TODO: make default dtype int32
-        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64)
+        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64, device=device)
         tensor[..., cls._ACTION_TYPE_IDX] = GraphActionType.DUMMY
         return cls(tensor)
 
     @classmethod
-    def make_exit_actions(cls, batch_shape: tuple[int]) -> Actions:
+    def make_exit_actions(
+        cls, batch_shape: tuple[int], device: torch.device
+    ) -> GraphActions:
         """Creates an GraphActions object of exit actions with the given batch shape."""
-        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64)
+        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64, device=device)
         tensor[..., cls._ACTION_TYPE_IDX] = GraphActionType.EXIT
         return cls(tensor)

@@ -15,12 +15,14 @@ from typing import (
     cast,
 )
 
-import numpy as np
 import torch
 from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 from torch_geometric.data.data import BaseData
+
+from gfn.actions import GraphActionType
+from gfn.utils.graphs import get_edge_indices
 
 
 class States(ABC):
@@ -63,7 +65,7 @@ class States(ABC):
     s0: ClassVar[torch.Tensor | GeometricData]
     sf: ClassVar[torch.Tensor | GeometricData]
 
-    make_random_states_tensor: Callable = lambda x: (_ for _ in ()).throw(
+    make_random_states_tensor: Callable = lambda *x: (_ for _ in ()).throw(
         NotImplementedError(
             "The environment does not support initialization of random states."
         )
@@ -93,6 +95,7 @@ class States(ABC):
         batch_shape: int | tuple[int, ...],
         random: bool = False,
         sink: bool = False,
+        device: torch.device = torch.device("cpu"),
     ) -> States | GraphStates:
         """Create a States object with the given batch shape.
 
@@ -117,15 +120,17 @@ class States(ABC):
             raise ValueError("Only one of `random` and `sink` should be True.")
 
         if random:
-            tensor = cls.make_random_states_tensor(batch_shape)
+            tensor = cls.make_random_states_tensor(batch_shape, device=device)
         elif sink:
-            tensor = cls.make_sink_states_tensor(batch_shape)
+            tensor = cls.make_sink_states_tensor(batch_shape, device=device)
         else:
-            tensor = cls.make_initial_states_tensor(batch_shape)
+            tensor = cls.make_initial_states_tensor(batch_shape, device=device)
         return cls(tensor)
 
     @classmethod
-    def make_initial_states_tensor(cls, batch_shape: tuple[int, ...]) -> torch.Tensor:
+    def make_initial_states_tensor(
+        cls, batch_shape: tuple[int, ...], device: torch.device
+    ) -> torch.Tensor:
         """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
@@ -137,7 +142,9 @@ class States(ABC):
             )
 
     @classmethod
-    def make_sink_states_tensor(cls, batch_shape: tuple[int, ...]) -> torch.Tensor:
+    def make_sink_states_tensor(
+        cls, batch_shape: tuple[int, ...], device: torch.device
+    ) -> torch.Tensor:
         """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
@@ -320,7 +327,9 @@ class States(ABC):
             state.batch_shape == state_example.batch_shape for state in states
         ), "All states must have the same batch_shape"
 
-        stacked_states = state_example.from_batch_shape((0, 0))  # Empty.
+        stacked_states = state_example.from_batch_shape(
+            (0, 0), device=state_example.device
+        )  # Empty.
         stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
         if state_example._log_rewards:
             log_rewards = []
@@ -582,7 +591,9 @@ class GraphStates(States):
         return tuple(self.tensor.batch_shape)
 
     @classmethod
-    def make_initial_states_tensor(cls, batch_shape: int | Tuple) -> GeometricBatch:
+    def make_initial_states_tensor(
+        cls, batch_shape: int | Tuple, device: torch.device
+    ) -> GeometricBatch:
         """Makes a batch of graphs consisting of s0 states.
 
         Args:
@@ -595,7 +606,7 @@ class GraphStates(States):
         assert cls.s0.x is not None
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
-        num_graphs = int(np.prod(batch_shape))
+        num_graphs = prod(batch_shape)
 
         # Create a list of Data objects by copying s0
         data_list = [cls.s0.clone() for _ in range(num_graphs)]
@@ -603,9 +614,9 @@ class GraphStates(States):
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
             data_list = [
                 GeometricData(
-                    x=torch.zeros(0, cls.s0.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1)),
+                    x=torch.zeros(0, cls.s0.x.size(1), device=device),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long, device=device),
+                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1), device=device),
                 )
             ]
 
@@ -618,7 +629,9 @@ class GraphStates(States):
         return batch
 
     @classmethod
-    def make_sink_states_tensor(cls, batch_shape: int | Tuple) -> GeometricBatch:
+    def make_sink_states_tensor(
+        cls, batch_shape: int | Tuple, device: torch.device
+    ) -> GeometricBatch:
         """Makes a batch of graphs consisting of sf states.
 
         Args:
@@ -629,20 +642,21 @@ class GraphStates(States):
         """
         assert cls.sf.edge_attr is not None
         assert cls.sf.x is not None
+
         if cls.sf is None:
             raise NotImplementedError("Sink state is not defined")
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
-        num_graphs = int(np.prod(batch_shape))
+        num_graphs = prod(batch_shape)
 
         # Create a list of Data objects by copying sf
         data_list = [cls.sf.clone() for _ in range(num_graphs)]
         if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
             data_list = [
                 GeometricData(
-                    x=torch.zeros(0, cls.sf.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, cls.sf.edge_attr.size(1)),
+                    x=torch.zeros(0, cls.sf.x.size(1), device=device),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long, device=device),
+                    edge_attr=torch.zeros(0, cls.sf.edge_attr.size(1), device=device),
                 )
             ]
 
@@ -669,13 +683,13 @@ class GraphStates(States):
         Returns:
             TensorDict: Boolean mask where True indicates valid actions
         """
-        from gfn.gym.graph_building import get_edge_indices
 
         max_nodes = int(torch.max(self.tensor.ptr[1:] - self.tensor.ptr[:-1]))
         if self.is_directed:
             max_possible_edges = max_nodes * (max_nodes - 1)
         else:
             max_possible_edges = max_nodes * (max_nodes - 1) // 2
+
         edge_masks = torch.ones(
             len(self), max_possible_edges, dtype=torch.bool, device=self.device
         )
@@ -702,10 +716,13 @@ class GraphStates(States):
 
                 edge_masks[i, edge_idx] = False
 
+        edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
+
+        # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
         action_type = torch.ones(
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
-        action_type[:, 1] = torch.any(edge_masks, dim=-1)
+        action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
         return TensorDict(
             {
                 "action_type": action_type,
@@ -741,13 +758,13 @@ class GraphStates(States):
         Returns:
             TensorDict: Boolean mask where True indicates valid actions
         """
-        from gfn.gym.graph_building import get_edge_indices
 
         max_nodes = int(torch.max(self.tensor.ptr[1:] - self.tensor.ptr[:-1]))
         if self.is_directed:
             max_possible_edges = max_nodes * (max_nodes - 1)
         else:
             max_possible_edges = max_nodes * (max_nodes - 1) // 2
+
         # Disallow all actions.
         edge_masks = torch.zeros(
             len(self), max_possible_edges, dtype=torch.bool, device=self.device
@@ -777,11 +794,16 @@ class GraphStates(States):
                 # Allow the removal of this edge.
                 edge_masks[i, edge_idx] = True
 
+        edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
+
+        # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
         action_type = torch.zeros(
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
-        action_type[:, 0] = (self.tensor.ptr[1:] - self.tensor.ptr[:-1]) > 0
-        action_type[:, 1] = torch.any(edge_masks, dim=-1)
+        action_type[..., GraphActionType.ADD_NODE] = (
+            self.tensor.ptr[1:] - self.tensor.ptr[:-1]
+        ) > 0
+        action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
         return TensorDict(
             {
                 "action_type": action_type,
@@ -810,7 +832,6 @@ class GraphStates(States):
             f"state x={self.tensor.x.shape},",
             f"state edge_index={self.tensor.edge_index.shape},",
             f"state edge_attr={self.tensor.edge_attr.shape},",
-            f"actions={self.n_actions},",
             f"device={self.device},",
         ]
         return " ".join(parts)
@@ -841,7 +862,7 @@ class GraphStates(States):
         # Get the selected graphs from the batch
         selected_graphs = self.tensor.index_select(flat_idx)
         if len(selected_graphs) == 0:
-            assert np.prod(new_shape) == 0 and len(new_shape) > 0
+            assert prod(new_shape) == 0 and len(new_shape) > 0
             # Ensures all the expected attributes are properly initialized with the
             # correct dimensions.
             selected_graphs = [
@@ -987,13 +1008,15 @@ class GraphStates(States):
             # We need to extend both batches to the same length T
             if self.batch_shape[0] < max_len:
                 self_extension = self.make_sink_states_tensor(
-                    (max_len - self.batch_shape[0], self.batch_shape[1])
+                    (max_len - self.batch_shape[0], self.batch_shape[1]),
+                    device=self.device,
                 )
                 self_data_list = self_data_list + self_extension.to_data_list()
 
             if other.batch_shape[0] < max_len:
                 other_extension = other.make_sink_states_tensor(
-                    (max_len - other.batch_shape[0], other.batch_shape[1])
+                    (max_len - other.batch_shape[0], other.batch_shape[1]),
+                    device=self.device,
                 )
                 other_data_list = other_data_list + other_extension.to_data_list()
 

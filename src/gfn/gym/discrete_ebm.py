@@ -108,14 +108,12 @@ class DiscreteEBM(DiscreteEnv):
         states.backward_masks[..., : self.ndim] = states.tensor == 0
         states.backward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == 1
 
-    def make_random_states_tensor(self, batch_shape: Tuple) -> torch.Tensor:
+    def make_random_states_tensor(
+        self, batch_shape: Tuple, device: torch.device
+    ) -> torch.Tensor:
         """Generates random states tensor of shape (*batch_shape, ndim)."""
         return torch.randint(
-            -1,
-            2,
-            batch_shape + (self.ndim,),
-            dtype=torch.long,
-            device=self.device,
+            -1, 2, batch_shape + (self.ndim,), dtype=torch.long, device=device
         )
 
     def is_exit_actions(self, actions: torch.Tensor) -> torch.Tensor:

@@ -1,4 +1,4 @@
-from typing import Callable, List, Literal, Optional, Tuple, cast
+from typing import Callable, List, Literal, Tuple, cast
 
 import numpy as np
 import torch
@@ -10,35 +10,7 @@ from torch_geometric.data.data import BaseData
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import GraphEnv
 from gfn.states import GraphStates
-
-
-def get_edge_indices(
-    n_nodes: int,
-    is_directed: bool,
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Get the source and target node indices for the edges.
-
-    Args:
-        n_nodes: The number of nodes in the graph.
-        is_directed: Whether the graph is directed.
-        device: The device to run the computation on.
-
-    Returns:
-        A tuple of two tensors, the source and target node indices.
-    """
-    if is_directed:
-        # Upper triangle.
-        i_up, j_up = torch.triu_indices(n_nodes, n_nodes, offset=1, device=device)
-        # Lower triangle.
-        i_lo, j_lo = torch.tril_indices(n_nodes, n_nodes, offset=-1, device=device)
-
-        ei0 = torch.cat([i_up, i_lo])  # Combine them
-        ei1 = torch.cat([j_up, j_lo])
-    else:
-        ei0, ei1 = torch.triu_indices(n_nodes, n_nodes, offset=1, device=device)
-
-    return ei0, ei1
+from gfn.utils.graphs import get_edge_indices
 
 
 class GraphBuilding(GraphEnv):
@@ -89,18 +61,6 @@ class GraphBuilding(GraphEnv):
             is_directed=is_directed,
         )
 
-    def reset(
-        self,
-        batch_shape: int | Tuple[int, ...],
-        random: bool = False,
-        sink: bool = False,
-        seed: Optional[int] = None,
-    ) -> GraphStates:
-        """Reset the environment to a new batch of graphs."""
-        states = super().reset(batch_shape, random, sink, seed)
-        assert isinstance(states, GraphStates)
-        return states
-
     def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
         """Step function for the GraphBuilding environment.
 
@@ -118,7 +78,7 @@ class GraphBuilding(GraphEnv):
             actions.action_type == action_type
         )  # TODO: allow different action types
         if action_type == GraphActionType.EXIT:
-            return self.States.make_sink_states_tensor(states.batch_shape)
+            return self.States.make_sink_states_tensor(states.batch_shape, states.device)
 
         if action_type == GraphActionType.ADD_NODE:
             batch_indices = torch.arange(len(states))[
@@ -360,7 +320,9 @@ class GraphBuilding(GraphEnv):
         """
         return self.state_evaluator(final_states)
 
-    def make_random_states_tensor(self, batch_shape: Tuple) -> GeometricBatch:
+    def make_random_states_tensor(
+        self, batch_shape: Tuple, device: torch.device
+    ) -> GeometricBatch:
         """Generates random states tensor of shape (*batch_shape, feature_dim).
 
         Args:
@@ -371,10 +333,10 @@ class GraphBuilding(GraphEnv):
         """
         assert self.s0.edge_attr is not None
         assert self.s0.x is not None
+        assert device == self.s0.x.device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = int(np.prod(batch_shape))
-        device = self.s0.x.device
 
         data_list = []
         for _ in range(num_graphs):
@@ -543,7 +505,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                 Returns:
                     TensorDict: Boolean mask where True indicates valid actions
                 """
-                forward_masks = super(GraphBuildingOnEdgesStates, self).forward_masks
+                forward_masks = super().forward_masks
                 forward_masks["action_type"][..., GraphActionType.ADD_NODE] = False
                 return forward_masks
 
@@ -562,13 +524,13 @@ class GraphBuildingOnEdges(GraphBuilding):
                 Returns:
                     TensorDict: Boolean mask where True indicates valid actions
                 """
-                backward_masks = super(GraphBuildingOnEdgesStates, self).backward_masks
+                backward_masks = super().backward_masks
                 backward_masks["action_type"][..., GraphActionType.ADD_NODE] = False
                 return backward_masks
 
             @classmethod
             def make_random_states_tensor(
-                cls, batch_shape: int | Tuple
+                cls, batch_shape: int | Tuple, device: torch.device
             ) -> GeometricBatch:
                 """Makes a batch of random graph states with fixed number of nodes.
 
@@ -585,7 +547,6 @@ class GraphBuildingOnEdges(GraphBuilding):
                     batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
                 )
                 num_graphs = int(np.prod(batch_shape))
-                device = cls.s0.x.device
 
                 data_list = []
                 for _ in range(num_graphs):
