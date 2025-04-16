@@ -388,11 +388,6 @@ class BitSequence(DiscreteEnv):
         self.update_masks(new_states)
         return new_states
 
-    def make_random_states_tensor(
-        self, batch_shape: Tuple[int, ...], device: torch.device
-    ) -> torch.Tensor:
-        raise NotImplementedError  # TODO: implement this
-
     def make_modes_set(self, seed) -> torch.Tensor:
         """
         Generates a set of unique mode sequences based on the predefined tensor H.

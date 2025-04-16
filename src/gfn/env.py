@@ -156,9 +156,8 @@ class Env(ABC):
     ) -> bool:
         """Returns True if the actions are valid in the given states."""
 
-    @abstractmethod
     def make_random_states_tensor(
-        cls, batch_shape: Tuple, device: torch.device
+        self, batch_shape: Tuple, device: torch.device
     ) -> torch.Tensor:
         """Optional method inherited by all States instances to emit a random tensor."""
         raise NotImplementedError
@@ -656,8 +655,8 @@ class GraphEnv(Env):
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""
 
-    @abstractmethod
     def make_random_states_tensor(
-        cls, batch_shape: int | Tuple, device: torch.device
+        self, batch_shape: int | Tuple, device: torch.device
     ) -> GeometricBatch:
         """Returns a batch of random graph states."""
+        raise NotImplementedError
