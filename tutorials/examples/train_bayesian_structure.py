@@ -135,7 +135,7 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
         edge_actions = edgewise_dot_prod.flatten(1, 2)
         assert edge_actions.shape == (*states_tensor.batch_shape, self.edges_dim)
 
-        action_type = torch.zeros(*states_tensor.batch_shape, 3)
+        action_type = torch.zeros(*states_tensor.batch_shape, 3, device=x.device)
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
@@ -146,9 +146,11 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
             {
                 "action_type": action_type,
                 "edge_class": torch.zeros(
-                    *states_tensor.batch_shape, self.num_edge_classes
+                    *states_tensor.batch_shape, self.num_edge_classes, device=x.device
                 ),  # TODO: make it learnable.
-                "node_class": torch.zeros(*states_tensor.batch_shape, 1),
+                "node_class": torch.zeros(
+                    *states_tensor.batch_shape, 1, device=x.device
+                ),
                 "edge_index": edge_actions,
             },
             batch_size=states_tensor.batch_shape,
