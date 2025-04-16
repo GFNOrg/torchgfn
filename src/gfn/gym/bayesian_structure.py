@@ -111,40 +111,30 @@ class BayesianStructure(GraphBuilding):
                     - edge_index: Tensor of shape [*batch_shape, n_nodes, n_nodes] with True for valid edge index to add
                 """
 
-                assert (
-                    ~self.is_sink_state
-                ).all(), "No valid forward actions for sink states."
-
-                # Allow all actions.
-                edge_masks = torch.ones(
-                    len(self), self.n_nodes**2, dtype=torch.bool, device=self.device
+                batch_adjacency = (
+                    to_dense_adj(self.tensor.edge_index, self.tensor.batch)
+                    .squeeze(0)
+                    .to(torch.bool)
                 )
+                if batch_adjacency.ndim == 2:
+                    batch_adjacency = batch_adjacency.unsqueeze(0)
 
-                # Remove edges that are not allowed
-                for i, graph in enumerate(self.tensor.to_data_list()):
-                    # For each graph, create a dense mask for potential edges
-                    adjacency = (
-                        to_dense_adj(graph.edge_index, max_num_nodes=self.n_nodes)
-                        .squeeze(0)
-                        .to(torch.bool)
-                    )
-                    # Create self-loop mask
-                    self_loops = torch.eye(
-                        self.n_nodes, dtype=torch.bool, device=self.device
-                    )
-                    # Compute transitive closure using the Floyd–Warshall style update:
-                    # reach[u, v] is True if there is a path from u to v.
-                    reach = adjacency.clone()
-                    for k in range(self.n_nodes):
-                        reach = reach | (reach[:, k : k + 1] & reach[k : k + 1, :])
-                    # An edge u -> v is allowed if:
-                    # 1. It is not already in the graph (i.e. not in adjacency)
-                    # 2. It won't create a cycle (i.e. no path from v back to u: reach[v, u] is False)
-                    # 3. It is not a self-loop (i.e. u and v are different)
-                    allowed = (~adjacency) & (~reach.T) & (~self_loops)
-                    edge_masks[i] = allowed.flatten()
-
-                edge_masks = edge_masks.reshape(*self.batch_shape, self.n_nodes**2)
+                # Create self-loop mask
+                self_loops = torch.eye(
+                    self.n_nodes, dtype=torch.bool, device=self.device
+                ).repeat(prod(self.batch_shape), 1, 1)
+                # Compute transitive closure using the Floyd–Warshall style update:
+                # reach[u, v] is True if there is a path from u to v.
+                reach = batch_adjacency.clone()
+                for k in range(self.n_nodes):
+                    reach = reach | (reach[:, :, k : k + 1] & reach[:, k : k + 1, :])
+                # An edge u -> v is allowed if:
+                # 1. It is not already in the graph (i.e. not in adjacency)
+                # 2. It won't create a cycle (i.e. no path from v back to u: reach[v, u] is False)
+                # 3. It is not a self-loop (i.e. u and v are different)
+                allowed = (~batch_adjacency) & (~reach.transpose(1, 2)) & (~self_loops)
+                batch_edge_masks = allowed.flatten(1, 2)
+                edge_masks = batch_edge_masks.reshape(*self.batch_shape, -1)
 
                 # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
                 action_type = torch.zeros(
@@ -189,23 +179,15 @@ class BayesianStructure(GraphBuilding):
                     - edge_class: Tensor of shape [*batch_shape, n_nodes, n_nodes] (unused for this environment)
                     - edge_index: Tensor of shape [*batch_shape, n_nodes, n_nodes] with True for valid edge index to remove
                 """
-                assert (
-                    ~self.is_initial_state
-                ).all(), "No valid backward actions for initial states."
 
-                # Disable all actions.
-                edge_masks = torch.zeros(
-                    len(self), self.n_nodes**2, dtype=torch.bool, device=self.device
+                batch_adjacency = (
+                    to_dense_adj(self.tensor.edge_index, self.tensor.batch)
+                    .squeeze(0)
+                    .to(torch.bool)
                 )
-
-                # For each graph in the batch
-                for i, graph in enumerate(self.tensor.to_data_list()):
-                    # For each graph, create a dense mask for potential edges
-                    edge_masks[i] = to_dense_adj(
-                        graph.edge_index, max_num_nodes=self.n_nodes
-                    ).flatten()
-
-                edge_masks = edge_masks.reshape(*self.batch_shape, self.n_nodes**2)
+                if batch_adjacency.ndim == 2:
+                    batch_adjacency = batch_adjacency.unsqueeze(0)
+                edge_masks = batch_adjacency.flatten(1, 2).reshape(*self.batch_shape, -1)
 
                 # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
                 action_type = torch.zeros(
