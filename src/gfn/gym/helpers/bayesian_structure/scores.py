@@ -150,10 +150,20 @@ class BGeScore(BaseScore):
         The score is computed as the sum of local scores over all nodes.
         """
         total_score = 0.0
-        for target in range(adj_matrix.shape[1]):
-            sources = adj_matrix[:, target].nonzero().flatten().tolist()
-            local_score = self.local_score(target, sources)
-            total_score += local_score
+        _adj_matrix = torch.zeros_like(adj_matrix)
+        for indices in adj_matrix.nonzero():
+            source, target = indices.tolist()
+
+            # Score before adding the edge
+            parents_before = _adj_matrix[:, target].nonzero().flatten().tolist()
+            local_score_before = self.local_score(target, parents_before)
+
+            # Score after adding the edge
+            parents_after = parents_before + [source]
+            local_score_after = self.local_score(target, parents_after)
+
+            _adj_matrix[source, target] = 1
+            total_score += local_score_after - local_score_before
 
         return total_score
 
