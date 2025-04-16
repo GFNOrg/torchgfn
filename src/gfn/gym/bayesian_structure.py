@@ -111,13 +111,9 @@ class BayesianStructure(GraphBuilding):
                     - edge_index: Tensor of shape [*batch_shape, n_nodes, n_nodes] with True for valid edge index to add
                 """
 
-                batch_adjacency = (
-                    to_dense_adj(self.tensor.edge_index, self.tensor.batch)
-                    .squeeze(0)
-                    .to(torch.bool)
-                )
-                if batch_adjacency.ndim == 2:
-                    batch_adjacency = batch_adjacency.unsqueeze(0)
+                batch_adjacency = to_dense_adj(
+                    self.tensor.edge_index, self.tensor.batch, max_num_nodes=self.n_nodes
+                ).to(torch.bool)
 
                 # Create self-loop mask
                 self_loops = torch.eye(
@@ -180,13 +176,9 @@ class BayesianStructure(GraphBuilding):
                     - edge_index: Tensor of shape [*batch_shape, n_nodes, n_nodes] with True for valid edge index to remove
                 """
 
-                batch_adjacency = (
-                    to_dense_adj(self.tensor.edge_index, self.tensor.batch)
-                    .squeeze(0)
-                    .to(torch.bool)
-                )
-                if batch_adjacency.ndim == 2:
-                    batch_adjacency = batch_adjacency.unsqueeze(0)
+                batch_adjacency = to_dense_adj(
+                    self.tensor.edge_index, self.tensor.batch, max_num_nodes=self.n_nodes
+                ).to(torch.bool)
                 edge_masks = batch_adjacency.flatten(1, 2).reshape(*self.batch_shape, -1)
 
                 # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT

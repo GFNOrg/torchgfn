@@ -47,13 +47,12 @@ def posterior_estimate(
             n=batch_size if it < n_batches - 1 else num_samples % batch_size,
             save_logprobs=False,
         )
-        samples.extend(
-            [
-                to_dense_adj(
-                    state.tensor.edge_index, max_num_nodes=state.tensor.num_nodes
-                )
-                for state in trajectories.terminating_states
-            ]
+        samples.append(
+            to_dense_adj(
+                trajectories.terminating_states.tensor.edge_index,
+                batch=trajectories.terminating_states.tensor.batch,
+                max_num_nodes=env.n_nodes,
+            )
         )
     return torch.concat(samples, dim=0)
 

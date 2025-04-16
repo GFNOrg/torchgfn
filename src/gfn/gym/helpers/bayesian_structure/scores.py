@@ -127,18 +127,19 @@ class BGeScore(BaseScore):
         batch_size = states.batch_shape[0]
         scores = []
 
+        batch_adjacency = to_dense_adj(
+            states.tensor.edge_index,
+            states.tensor.batch,
+            max_num_nodes=len(self.column_names),
+        )
+
         for i in range(batch_size):
             graph = states[i].tensor
-            # Convert the graph object to an adjacency matrix.
-            # Here we assume a helper function 'to_dense_adj' is available.
             if graph.edge_index.shape[1] == 0:  # No edges
                 scores.append(0.0)
                 continue
 
-            adj_matrix = to_dense_adj(
-                graph.edge_index, max_num_nodes=len(self.column_names)
-            ).squeeze(0)
-            score = self._calculate_bge_score(adj_matrix)
+            score = self._calculate_bge_score(batch_adjacency[i])
             scores.append(score)
 
         return torch.tensor(scores, dtype=torch.float32, device=states.device)
