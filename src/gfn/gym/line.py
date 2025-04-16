@@ -1,4 +1,4 @@
-from typing import Literal, Tuple
+from typing import Literal
 
 import torch
 from torch.distributions import Normal  # TODO: extend to Beta
@@ -83,11 +83,6 @@ class Line(Env):
             return False
 
         return True
-
-    def make_random_states_tensor(
-        self, batch_shape: Tuple[int, ...], device: torch.device
-    ) -> torch.Tensor:
-        raise NotImplementedError  # TODO: implement this
 
     def log_reward(self, final_states: States) -> torch.Tensor:
         """Log reward log of the environment.

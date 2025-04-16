@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable
 
 import torch
 
@@ -60,11 +60,6 @@ class SetAddition(DiscreteEnv):
     def backward_step(self, states: DiscreteStates, actions: Actions):
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
         return new_states_tensor
-
-    def make_random_states_tensor(
-        self, batch_shape: Tuple[int, ...], device: torch.device
-    ) -> torch.Tensor:
-        raise NotImplementedError  # TODO: implement this
 
     def reward(self, final_states: DiscreteStates) -> torch.Tensor:
         return self.reward_fn(final_states.tensor)
