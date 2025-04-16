@@ -13,6 +13,7 @@ Key components:
 import math
 import time
 from argparse import ArgumentParser, Namespace
+from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import torch
@@ -22,7 +23,6 @@ from gfn.containers import ReplayBuffer
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.modules import DiscreteGraphPolicyEstimator
-from gfn.preprocessors import IdentityPreprocessor
 from gfn.states import GraphStates
 from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
 
@@ -327,11 +327,9 @@ def main(args: Namespace):
 
     pf = DiscreteGraphPolicyEstimator(
         module=module_pf,
-        preprocessor=IdentityPreprocessor(output_dim=1),
     )
     pb = DiscreteGraphPolicyEstimator(
         module=module_pb,
-        preprocessor=IdentityPreprocessor(output_dim=1),
         is_backward=True,
     )
     gflownet = TBGFlowNet(pf, pb).to(device)
@@ -347,12 +345,15 @@ def main(args: Namespace):
     losses = []
 
     t1 = time.time()
+    epsilon_dict = defaultdict(float)
     for iteration in range(args.n_iterations):
+        epsilon_dict["action_type"] = 0.0  # 0.2 * (1 - iteration / args.n_iterations)
+
         trajectories = gflownet.sample_trajectories(
             env,
             n=args.batch_size,
             save_logprobs=True,
-            # epsilon=0.2 * (1 - iteration / args.n_iterations),
+            epsilon=epsilon_dict,
         )
         training_samples = gflownet.to_training_samples(trajectories)
 

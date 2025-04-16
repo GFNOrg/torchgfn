@@ -4,8 +4,6 @@ import torch
 from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
 
-from gfn.actions import GraphActionType
-
 
 class UnsqueezedCategorical(Categorical):
     """Samples from a categorical distribution with an unsqueezed final dimension.
@@ -49,51 +47,16 @@ class UnsqueezedCategorical(Categorical):
 class GraphActionDistribution(Distribution):
     """A mixture distribution."""
 
-    def __init__(self, logits: TensorDict):
+    def __init__(self, probs: TensorDict):
         """Initializes the mixture distribution.
 
         Args:
-            logits: A TensorDict of logits.
+            probs: A TensorDict of probs.
         """
         super().__init__()
 
-        assert "action_type" in logits
-        assert "edge_class" in logits
-        assert "node_class" in logits
-        assert "edge_index" in logits
-
-        # Check if no possible edge can be added,
-        # and assert that action type cannot be ADD_EDGE
-        no_possible_edge_index = torch.isneginf(logits["edge_index"]).all(-1)
-        assert torch.isneginf(
-            logits["action_type"][no_possible_edge_index, GraphActionType.ADD_EDGE]
-        ).all()
-        logits["edge_index"][no_possible_edge_index] = 0
-
-        # Check if no possible edge class can be added,
-        # and assert that action type cannot be ADD_EDGE
-        no_possible_edge_class = torch.isneginf(logits["edge_class"]).all(-1)
-        assert torch.isneginf(
-            logits["action_type"][no_possible_edge_class, GraphActionType.ADD_EDGE]
-        ).all()
-        logits["edge_class"][no_possible_edge_class] = 0
-
-        # Check if no possible node can be added,
-        # and assert that action type cannot be ADD_NODE
-        no_possible_node = torch.isneginf(logits["node_class"]).all(-1)
-        assert torch.isneginf(
-            logits["action_type"][no_possible_node, GraphActionType.ADD_NODE]
-        ).all()
-        logits["node_class"][no_possible_node] = 0
-
-        self._batch_size = logits["action_type"].shape[:-1]
         self.dists = OrderedDict(
-            [
-                ("action_type", Categorical(logits=logits["action_type"])),
-                ("node_class", Categorical(logits=logits["node_class"])),
-                ("edge_class", Categorical(logits=logits["edge_class"])),
-                ("edge_index", Categorical(logits=logits["edge_index"])),
-            ]
+            [(key, Categorical(probs=probs[key])) for key in probs.keys()]
         )
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
@@ -115,7 +78,7 @@ class GraphActionDistribution(Distribution):
         Args:
             sample: The sample of for which to compute the log probabilities.
         """
-        log_prob = torch.zeros(sample.shape[:-1])
+        log_prob = torch.zeros(sample.shape[:-1], device=sample.device)
         for i, dist in enumerate(self.dists.values()):
             log_prob += dist.log_prob(sample[..., i])
         return log_prob

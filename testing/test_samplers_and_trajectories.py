@@ -101,18 +101,17 @@ def trajectory_sampling_with_return(
         pf_module = GraphEdgeActionGNN(
             n_nodes=env.n_nodes,
             directed=env.is_directed,
-            num_conv_layers=1,
+            num_edge_classes=env.num_edge_classes,
             embedding_dim=128,
             is_backward=False,
-            num_edge_classes=env.num_edge_classes,
         )
         pb_module = GraphEdgeActionGNN(
             n_nodes=env.n_nodes,
             directed=env.is_directed,
+            num_edge_classes=env.num_edge_classes,
             num_conv_layers=1,
             embedding_dim=128,
             is_backward=True,
-            num_edge_classes=env.num_edge_classes,
         )
         pf_estimator = DiscreteGraphPolicyEstimator(
             module=pf_module,
