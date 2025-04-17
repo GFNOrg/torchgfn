@@ -308,11 +308,11 @@ if __name__ == "__main__":
         "Train a GFlowNet to generate a DAG for Bayesian structure learning."
     )
     # Environment parameters
-    parser.add_argument("--num_nodes", type=int, default=4)
+    parser.add_argument("--num_nodes", type=int, default=5)
     parser.add_argument(
         "--num_edges",
         type=int,
-        default=4,
+        default=5,
         help="Number of edges in the sampled erdos renyi graph",
     )
     parser.add_argument(

@@ -141,22 +141,20 @@ class GraphRingArgs(CommonArgs):
 
 @dataclass
 class BayesianStructureArgs(CommonArgs):
-    num_nodes: int = 4
-    num_edges: int = 4
+    num_nodes: int = 3
+    num_edges: int = 3
     num_samples: int = 100
     graph_name: str = "erdos_renyi_lingauss"
     prior_name: str = "uniform"
     node_names: list[str] | None = None
     num_samples_posterior: int = 1000
-    num_layers: int = 2
-    embedding_dim: int = 128
+    num_layers: int = 1
+    embedding_dim: int = 32
     use_gnn: bool = True
-    num_layers: int = 2
-    embedding_dim: int = 128
     max_epsilon: float = 0.9
     min_epsilon: float = 0.1
     use_buffer: bool = False
-    prefill: int = 30
+    prefill: int = 0
     sampling_batch_size: int = 32
     lr: float = 0.001
     lr_Z: float = 1.0
