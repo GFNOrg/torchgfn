@@ -157,7 +157,7 @@ class Env(ABC):
         """Returns True if the actions are valid in the given states."""
 
     def make_random_states_tensor(
-        self, batch_shape: Tuple, device: torch.device
+        self, batch_shape: Tuple, device: torch.device | None = None
     ) -> torch.Tensor:
         """Optional method inherited by all States instances to emit a random tensor."""
         raise NotImplementedError
@@ -246,7 +246,7 @@ class Env(ABC):
         # Set to the sink state when the action is exit.
         new_sink_states_idx = actions.is_exit
         sf_tensor = self.States.make_sink_states_tensor(
-            (int(new_sink_states_idx.sum().item()),), device=self.device
+            (int(new_sink_states_idx.sum().item()),), device=states.device
         )
         new_states[new_sink_states_idx] = self.States(sf_tensor)
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
@@ -593,7 +593,12 @@ class GraphEnv(Env):
             sf: The sink graph state.
             device_str: String representation of the device.
         """
-        ensure_same_device(s0.device, sf.device)
+        assert s0.x is not None and sf.x is not None
+        assert s0.edge_attr is not None and sf.edge_attr is not None
+        assert s0.edge_index is not None and sf.edge_index is not None
+        ensure_same_device(s0.x.device, sf.x.device)
+        ensure_same_device(s0.edge_attr.device, sf.edge_attr.device)
+        ensure_same_device(s0.edge_index.device, sf.edge_index.device)
 
         self.s0 = s0
         self.sf = sf
@@ -609,7 +614,8 @@ class GraphEnv(Env):
 
     @property
     def device(self) -> torch.device:
-        return self.s0.device  # You should initialize s0 with a device.
+        assert self.s0.x is not None
+        return self.s0.x.device
 
     def make_states_class(self) -> type[GraphStates]:
         env = self
@@ -656,7 +662,7 @@ class GraphEnv(Env):
         graph states."""
 
     def make_random_states_tensor(
-        self, batch_shape: int | Tuple, device: torch.device
+        self, batch_shape: int | Tuple, device: torch.device | None = None
     ) -> GeometricBatch:
         """Returns a batch of random graph states."""
         raise NotImplementedError

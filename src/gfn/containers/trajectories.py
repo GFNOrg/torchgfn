@@ -196,6 +196,10 @@ class Trajectories(Container):
         )
 
     @property
+    def device(self) -> torch.device:
+        return self.states.device
+
+    @property
     def n_trajectories(self) -> int:
         return self.states.batch_shape[1]
 
@@ -636,10 +640,6 @@ class Trajectories(Container):
             assert torch.all(new_states == _new_states)
 
         return reversed_trajectories
-
-    @property
-    def device(self) -> torch.device:
-        return self.states.device
 
 
 def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:

@@ -86,6 +86,10 @@ class States(ABC):
         )
 
     @property
+    def device(self) -> torch.device:
+        return self.tensor.device
+
+    @property
     def batch_shape(self) -> tuple[int, ...]:
         return tuple(self.tensor.shape)[: -len(self.state_shape)]
 
@@ -95,7 +99,7 @@ class States(ABC):
         batch_shape: int | tuple[int, ...],
         random: bool = False,
         sink: bool = False,
-        device: torch.device = torch.device("cpu"),
+        device: torch.device | None = None,
     ) -> States | GraphStates:
         """Create a States object with the given batch shape.
 
@@ -129,13 +133,14 @@ class States(ABC):
 
     @classmethod
     def make_initial_states_tensor(
-        cls, batch_shape: tuple[int, ...], device: torch.device
+        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> torch.Tensor:
         """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
+        device = cls.s0.device if device is None else device
         if isinstance(cls.s0, torch.Tensor):
-            return cls.s0.repeat(*batch_shape, *((1,) * state_ndim))
+            return cls.s0.repeat(*batch_shape, *((1,) * state_ndim)).to(device)
         else:
             raise NotImplementedError(
                 f"make_initial_states_tensor is not implemented by default for {cls.__name__}"
@@ -143,13 +148,14 @@ class States(ABC):
 
     @classmethod
     def make_sink_states_tensor(
-        cls, batch_shape: tuple[int, ...], device: torch.device
+        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> torch.Tensor:
         """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
+        device = cls.sf.device if device is None else device
         if isinstance(cls.sf, torch.Tensor):
-            return cls.sf.repeat(*batch_shape, *((1,) * state_ndim))
+            return cls.sf.repeat(*batch_shape, *((1,) * state_ndim)).to(device)
         else:
             raise NotImplementedError(
                 f"make_sink_states_tensor is not implemented by default for {cls.__name__}"
@@ -166,10 +172,6 @@ class States(ABC):
             f"device={self.device})",
         ]
         return " ".join(parts)
-
-    @property
-    def device(self) -> torch.device:
-        return self.tensor.device
 
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
@@ -586,13 +588,18 @@ class GraphStates(States):
         self._log_rewards: Optional[torch.Tensor] = None
 
     @property
+    def device(self) -> torch.device:
+        """Returns the device of the tensor."""
+        return self.tensor.x.device
+
+    @property
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
         return tuple(self.tensor.batch_shape)
 
     @classmethod
     def make_initial_states_tensor(
-        cls, batch_shape: int | Tuple, device: torch.device
+        cls, batch_shape: int | Tuple, device: torch.device | None = None
     ) -> GeometricBatch:
         """Makes a batch of graphs consisting of s0 states.
 
@@ -604,6 +611,7 @@ class GraphStates(States):
         """
         assert cls.s0.edge_attr is not None
         assert cls.s0.x is not None
+        device = cls.s0.x.device if device is None else device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
@@ -630,7 +638,7 @@ class GraphStates(States):
 
     @classmethod
     def make_sink_states_tensor(
-        cls, batch_shape: int | Tuple, device: torch.device
+        cls, batch_shape: int | Tuple, device: torch.device | None = None
     ) -> GeometricBatch:
         """Makes a batch of graphs consisting of sf states.
 
@@ -642,6 +650,7 @@ class GraphStates(States):
         """
         assert cls.sf.edge_attr is not None
         assert cls.sf.x is not None
+        device = cls.sf.x.device if device is None else device
 
         if cls.sf is None:
             raise NotImplementedError("Sink state is not defined")
@@ -922,11 +931,6 @@ class GraphStates(States):
 
         # Preserve the batch shape
         self.tensor.batch_shape = batch_shape
-
-    @property
-    def device(self) -> torch.device:
-        """Returns the device of the tensor."""
-        return self.tensor.x.device
 
     def to(self, device: torch.device) -> GraphStates:
         """Moves the GraphStates to the specified device.
