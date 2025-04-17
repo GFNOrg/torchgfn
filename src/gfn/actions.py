@@ -41,25 +41,33 @@ class Actions(ABC):
         self.tensor = tensor
 
     @property
+    def device(self) -> torch.device:
+        return self.tensor.device
+
+    @property
     def batch_shape(self) -> tuple[int, ...]:
         return tuple(self.tensor.shape)[: -len(self.action_shape)]
 
     @classmethod
     def make_dummy_actions(
-        cls, batch_shape: tuple[int, ...], device: torch.device
+        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> Actions:
         """Creates an Actions object of dummy actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.dummy_action.repeat(*batch_shape, *((1,) * action_ndim))
+        if device is not None:
+            tensor = tensor.to(device)
         return cls(tensor)
 
     @classmethod
     def make_exit_actions(
-        cls, batch_shape: tuple[int, ...], device: torch.device
+        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> Actions:
         """Creates an Actions object of exit actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.exit_action.repeat(*batch_shape, *((1,) * action_ndim))
+        if device is not None:
+            tensor = tensor.to(device)
         return cls(tensor)
 
     def __len__(self) -> int:
@@ -68,10 +76,6 @@ class Actions(ABC):
     def __repr__(self):
         return f"""{self.__class__.__name__} object of batch shape {self.batch_shape}.
           The subclass did not implement __repr__."""
-
-    @property
-    def device(self) -> torch.device:
-        return self.tensor.device
 
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
@@ -211,6 +215,11 @@ class GraphActions(Actions):
             )
         self.tensor = tensor
 
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        assert self.tensor.shape[-1] == 4
+        return self.tensor.shape[:-1]
+
     @classmethod
     def from_tensor_dict(cls, tensor_dict: TensorDict) -> GraphActions:
         """Creates a GraphActions object from a tensor dict."""
@@ -230,11 +239,6 @@ class GraphActions(Actions):
                 dim=-1,
             )
         )
-
-    @property
-    def batch_shape(self) -> tuple[int, ...]:
-        assert self.tensor.shape[-1] == 4
-        return self.tensor.shape[:-1]
 
     def __repr__(self):
         return f"""GraphAction object with {self.batch_shape} actions."""

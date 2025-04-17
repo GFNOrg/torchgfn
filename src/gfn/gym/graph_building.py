@@ -43,14 +43,12 @@ class GraphBuilding(GraphEnv):
                 x=torch.zeros((0, 1), dtype=torch.int64).to(device),
                 edge_attr=torch.zeros((0, 1), dtype=torch.int64).to(device),
                 edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
-                device=device,
             )
         if sf is None:
             sf = GeometricData(
                 x=torch.full((1, 1), -1, dtype=torch.int64).to(device),
                 edge_attr=torch.full((0, 1), -1, dtype=torch.int64).to(device),
                 edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
-                device=device,
             )
 
         self.state_evaluator = state_evaluator
@@ -101,7 +99,7 @@ class GraphBuilding(GraphEnv):
 
                 assert isinstance(graph.num_nodes, int)
                 src, dst = get_edge_indices(
-                    graph.num_nodes, self.is_directed, self.device
+                    graph.num_nodes, self.is_directed, graph.edge_index.device
                 )
                 src, dst = src[edge_idx], dst[edge_idx]
 
@@ -124,7 +122,7 @@ class GraphBuilding(GraphEnv):
             # For graphs with EXIT action, replace them with sink states
             exit_indices = torch.where(exit_mask)[0]
             for idx in exit_indices:
-                data_list[idx] = self.sf  # TODO: should we clone?
+                data_list[idx] = self.sf
 
         # Create a new batch from the updated data list
         new_tensor = GeometricBatch.from_data_list(data_list)
@@ -190,7 +188,7 @@ class GraphBuilding(GraphEnv):
 
                 assert isinstance(graph.num_nodes, int)
                 src, dst = get_edge_indices(
-                    graph.num_nodes, self.is_directed, self.device
+                    graph.num_nodes, self.is_directed, graph.edge_index.device
                 )
                 src, dst = src[edge_idx], dst[edge_idx]
 
@@ -253,7 +251,7 @@ class GraphBuilding(GraphEnv):
             elif action_type == GraphActionType.ADD_EDGE:
                 edge_idx = edge_index_flat[i]
                 src, dst = get_edge_indices(
-                    graph.num_nodes, self.is_directed, self.device
+                    graph.num_nodes, self.is_directed, graph.edge_index.device
                 )
                 if edge_idx >= len(src) or edge_idx >= len(dst):
                     return False
@@ -327,7 +325,7 @@ class GraphBuilding(GraphEnv):
         return self.state_evaluator(final_states)
 
     def make_random_states_tensor(
-        self, batch_shape: Tuple, device: torch.device
+        self, batch_shape: Tuple, device: torch.device | None = None
     ) -> GeometricBatch:
         """Generates random states tensor of shape (*batch_shape, feature_dim).
 
@@ -339,7 +337,7 @@ class GraphBuilding(GraphEnv):
         """
         assert self.s0.edge_attr is not None
         assert self.s0.x is not None
-        assert device == self.s0.x.device
+        device = self.device if device is None else device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
@@ -458,13 +456,11 @@ class GraphBuildingOnEdges(GraphBuilding):
             x=torch.arange(self.n_nodes)[:, None].to(device),
             edge_attr=torch.ones((0, 1), device=device),
             edge_index=torch.ones((2, 0), dtype=torch.long, device=device),
-            device=device,
         )
         sf = GeometricData(
             x=-torch.ones(self.n_nodes)[:, None].to(device),
             edge_attr=torch.zeros((0, 1), device=device),
             edge_index=torch.zeros((2, 0), dtype=torch.long, device=device),
-            device=device,
         )
         super().__init__(
             num_node_classes=1,
@@ -550,7 +546,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         return GraphBuildingOnEdgesStates
 
     def make_random_states_tensor(
-        self, batch_shape: Tuple, device: torch.device
+        self, batch_shape: Tuple, device: torch.device | None = None
     ) -> GeometricBatch:
         """Makes a batch of random graph states with fixed number of nodes.
 
@@ -562,7 +558,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         """
         assert self.s0.edge_attr is not None
         assert self.s0.x is not None
-        assert device == self.s0.x.device
+        device = self.device if device is None else device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)

@@ -94,6 +94,10 @@ class StatesContainer(Container, Generic[StateType]):
         )
 
     @property
+    def device(self) -> torch.device:
+        return self.states.device
+
+    @property
     def intermediary_states(self) -> StateType:
         """Return the intermediary states."""
         return cast(StateType, self.states[~self.states.is_initial_state])
@@ -208,7 +212,3 @@ class StatesContainer(Container, Generic[StateType]):
             is_terminating=is_terminating,
             log_rewards=log_rewards,
         )
-
-    @property
-    def device(self) -> torch.device:
-        return self.states.device

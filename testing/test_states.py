@@ -368,7 +368,7 @@ def test_from_batch_shape(state_fixture, request):
     StateClass = request.getfixturevalue(state_fixture).__class__
 
     # Create states with initial state
-    states = StateClass.from_batch_shape((3,), device=torch.device("cpu"))
+    states = StateClass.from_batch_shape((3,))  # device will be automatically set
     assert states.batch_shape == (3,)
 
     # Check all states are initial states
@@ -376,9 +376,7 @@ def test_from_batch_shape(state_fixture, request):
     assert torch.all(is_initial)
 
     # Create states with sink state
-    sink_states = StateClass.from_batch_shape(
-        (2,), sink=True, device=torch.device("cpu")
-    )
+    sink_states = StateClass.from_batch_shape((2,), sink=True)
     assert sink_states.batch_shape == (2,)
 
     # Check all states are sink states
