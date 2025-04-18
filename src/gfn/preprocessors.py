@@ -31,9 +31,7 @@ class Preprocessor(ABC):
     def __call__(self, states: States | GraphStates) -> torch.Tensor | GeometricBatch:
         """Transform the states to the input of the neural network, calling the preprocess method."""
         out = self.preprocess(states)
-        if isinstance(out, GeometricBatch):
-            assert out.x.shape[-1] == self.output_dim
-        else:
+        if isinstance(out, torch.Tensor):
             assert out.shape[-1] == self.output_dim
 
         return out

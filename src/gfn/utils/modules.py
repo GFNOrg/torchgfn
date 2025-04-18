@@ -10,6 +10,8 @@ from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
+from gfn.actions import GraphActionType
+
 
 class MLP(nn.Module):
     """Implements a basic MLP."""
@@ -379,6 +381,19 @@ class GraphEdgeActionGNN(nn.Module):
     def edges_dim(self) -> int:
         return self._edges_dim
 
+    @staticmethod
+    def _group_mean(tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
+        cumsum = torch.zeros(
+            (len(tensor) + 1, *tensor.shape[1:]),
+            dtype=tensor.dtype,
+            device=tensor.device,
+        )
+        cumsum[1:] = torch.cumsum(tensor, dim=0)
+
+        # Subtract the end val from each batch idx from the start val of each batch idx.
+        size = batch_ptr[1:] - batch_ptr[:-1]
+        return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
+
     def forward(self, states_tensor: GeometricBatch) -> TensorDict:
         node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
         batch_size = int(math.prod(states_tensor.batch_shape))
@@ -402,21 +417,9 @@ class GraphEdgeActionGNN(nn.Module):
             x = x_new + x if i > 0 else x_new  # Residual connection.
             x = self.norm(x)  # Layernorm.
 
-        # This MLP computes the exit action.
-        def group_mean(tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
-            cumsum = torch.zeros(
-                (len(tensor) + 1, *tensor.shape[1:]),
-                dtype=tensor.dtype,
-                device=tensor.device,
-            )
-            cumsum[1:] = torch.cumsum(tensor, dim=0)
-
-            # Subtract the end val from each batch idx fom the start val of each batch idx.
-            size = batch_ptr[1:] - batch_ptr[:-1]
-            return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
-
-        node_feature_means = group_mean(x, batch_ptr)
-        exit_action = self.exit_mlp(node_feature_means)
+        node_feature_means = self._group_mean(x, batch_ptr)
+        if not self.is_backward:
+            exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
 
         x = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
 
@@ -454,20 +457,22 @@ class GraphEdgeActionGNN(nn.Module):
             self.edges_dim,
         )
 
+        action_type = torch.zeros(*states_tensor["batch_shape"], 3, device=x.device)
         if self.is_backward:
-            action_type = torch.zeros(*states_tensor["batch_shape"], 3)
-            action_type[..., 1] = 1
+            action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
-            action_type = torch.cat(
-                [torch.zeros_like(exit_action), 1 - exit_action, exit_action], dim=-1
-            )
+            action_type[..., GraphActionType.ADD_EDGE] = 1 - exit_action
+            action_type[..., GraphActionType.EXIT] = exit_action
+
         return TensorDict(
             {
                 "action_type": action_type,
                 "edge_class": torch.zeros(
-                    *states_tensor["batch_shape"], self.num_edge_classes
+                    *states_tensor["batch_shape"], self.num_edge_classes, device=x.device
                 ),  # TODO: make it learnable.
-                "node_class": torch.zeros(*states_tensor["batch_shape"], 1),
+                "node_class": torch.zeros(
+                    *states_tensor["batch_shape"], 1, device=x.device
+                ),
                 "edge_index": edge_actions,
             },
             batch_size=states_tensor["batch_shape"],
@@ -521,7 +526,7 @@ class GraphEdgeActionMLP(nn.Module):
         ), "n_hidden_layers_exit must be an integer"
         assert isinstance(directed, bool), "directed must be a boolean"
         assert isinstance(is_backward, bool), "is_backward must be a boolean"
-
+        self._input_dim = n_nodes**2
         self.n_nodes = n_nodes
         self.is_directed = directed
         self.is_backward = is_backward
@@ -530,7 +535,7 @@ class GraphEdgeActionMLP(nn.Module):
 
         # MLP for processing the flattened adjacency matrix
         self.mlp = MLP(
-            input_dim=n_nodes * n_nodes,  # Flattened adjacency matrix
+            input_dim=n_nodes**2,  # Flattened adjacency matrix
             output_dim=embedding_dim,
             hidden_dim=embedding_dim,
             n_hidden_layers=n_hidden_layers,
@@ -569,6 +574,10 @@ class GraphEdgeActionMLP(nn.Module):
         )
 
     @property
+    def input_dim(self) -> int:
+        return self._input_dim
+
+    @property
     def output_dim(self) -> int:
         return self._output_dim
 
@@ -590,11 +599,12 @@ class GraphEdgeActionMLP(nn.Module):
         Returns:
             A tensor of logits for all possible actions
         """
+        device = states_tensor.x.device
         # Convert the graph to adjacency matrix.
         batch_size = int(states_tensor.batch_size)
         adj_matrices = torch.zeros(
             (batch_size, self.n_nodes, self.n_nodes),
-            device=states_tensor.x.device,
+            device=device,
         )
 
         # Fill the adjacency matrices from edge indices
@@ -611,23 +621,86 @@ class GraphEdgeActionMLP(nn.Module):
 
         # Generate edge and exit actions
         edge_actions = self.edge_mlp(embedding)
-        exit_action = self.exit_mlp(embedding)
+        exit_action = self.exit_mlp(embedding).squeeze(-1)
 
+        action_type = torch.zeros(*states_tensor["batch_shape"], 3, device=device)
         if self.is_backward:
-            action_type = torch.zeros(*states_tensor["batch_shape"], 3)
-            action_type[..., 1] = 1
+            action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
-            action_type = torch.cat(
-                [torch.zeros_like(exit_action), 1 - exit_action, exit_action], dim=-1
-            )
+            action_type[..., GraphActionType.ADD_EDGE] = 1 - exit_action
+            action_type[..., GraphActionType.EXIT] = exit_action
+
         return TensorDict(
             {
                 "action_type": action_type,
                 "edge_class": torch.zeros(
-                    *states_tensor["batch_shape"], self.num_edge_classes
+                    *states_tensor["batch_shape"], self.num_edge_classes, device=device
                 ),  # TODO: make it learnable
-                "node_class": torch.zeros(*states_tensor["batch_shape"], 1),
+                "node_class": torch.zeros(
+                    *states_tensor["batch_shape"], 1, device=device
+                ),
                 "edge_index": edge_actions,
             },
             batch_size=states_tensor["batch_shape"],
+        )
+
+
+class GraphActionUniform(nn.Module):
+    """Implements a uniform distribution over discrete actions given a graph state.
+
+    It uses a zero function approximator (a function that always outputs 0) to be used as
+    logits by a DiscretePBEstimator.
+
+    Attributes:
+        output_dim: The size of the output space.
+    """
+
+    def __init__(
+        self,
+        edges_dim: int,
+        num_edge_classes: int,
+        num_node_classes: int,
+    ) -> None:
+        """Initializes the uniform function approximiator.
+
+        Args:
+            edges_dim (int): The dimension of edge_index in GraphActions.
+            num_edge_classes (int): Number of edge classes.
+            num_node_classes (int): Number of node classes.
+        """
+        super().__init__()
+        self.input_dim = 1  # has no effect
+        self.edges_dim = edges_dim
+        self.num_edge_classes = num_edge_classes
+        self.num_node_classes = num_node_classes
+
+    def forward(self, states_tensor: GeometricBatch) -> TensorDict:
+        """Forward method for the uniform distribution.
+
+        Args:
+            states_tensor: a batch of states appropriately preprocessed for
+                ingestion by the uniform distribution.
+
+        Returns:
+            A TensorDict containing logits for each action component, with all values set to 1 to represent a uniform distribution:
+            - "action_type": Tensor of shape [*batch_shape, 3] for the 3 possible action types
+            - "edge_class": Tensor of shape [*batch_shape, num_edge_classes] for edge class logits
+            - "node_class": Tensor of shape [*batch_shape, num_node_classes] for node class logits
+            - "edge_index": Tensor of shape [*batch_shape, edges_dim] for edge index logits
+        """
+        device = states_tensor.x.device
+        return TensorDict(
+            {
+                "action_type": torch.ones(*states_tensor.batch_shape, 3, device=device),
+                "edge_class": torch.ones(
+                    *states_tensor.batch_shape, self.num_edge_classes, device=device
+                ),
+                "node_class": torch.ones(
+                    *states_tensor.batch_shape, self.num_node_classes, device=device
+                ),
+                "edge_index": torch.ones(
+                    *states_tensor.batch_shape, self.edges_dim, device=device
+                ),
+            },
+            batch_size=states_tensor.batch_shape,
         )
