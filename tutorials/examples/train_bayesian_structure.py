@@ -160,7 +160,7 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
 def main(args: Namespace):
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
-    device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
 
     rng = torch.Generator(device="cpu")  # This should be cpu
     rng.manual_seed(seed)
@@ -356,7 +356,7 @@ if __name__ == "__main__":
 
     # Misc parameters
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--no_cuda", action="store_true")
+    parser.add_argument("--use_cuda", action="store_true")
     args = parser.parse_args()
 
     if not args.use_buffer:

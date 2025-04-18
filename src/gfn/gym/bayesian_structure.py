@@ -70,8 +70,8 @@ class BayesianStructure(GraphBuilding):
         class BayesianStructureStates(GraphStates):
             """Represents the state for building DAGs for Bayesian structure
 
-            Each state is a graph with a fixed number of nodes wierhe edges
-            are being addd incrementally to form a DAG.
+            Each state is a graph with a fixed number of nodes where edges
+            are being added incrementally to form a DAG.
 
             The state representation consists of:
             - x: Node IDs (shape: [n_nodes, 1])
@@ -90,14 +90,6 @@ class BayesianStructure(GraphBuilding):
             s0 = env.s0
             sf = env.sf
             n_nodes = env.n_nodes
-            n_actions = env.n_actions
-
-            @property
-            def num_edges(self) -> torch.Tensor:
-                """Returns the number of edges in each graph."""
-                return torch.tensor(
-                    [data.num_edges for data in self.tensor.to_data_list()]
-                ).view(*self.batch_shape)
 
             @property
             def forward_masks(self) -> TensorDict:
@@ -211,6 +203,18 @@ class BayesianStructure(GraphBuilding):
 
         return BayesianStructureStates
 
+    def make_actions_class(self) -> type[GraphActions]:
+        class GraphBuildingActions(GraphActions):
+            @classmethod
+            def edge_index_action_to_src_dst(
+                cls, edge_index_action: torch.Tensor, n_nodes: int
+            ) -> tuple[torch.Tensor, torch.Tensor]:
+                """Converts the edge index action to source and destination node indices."""
+                assert edge_index_action.ndim == 0  # TODO: support vector actions
+                return edge_index_action // n_nodes, edge_index_action % n_nodes
+
+        return GraphBuildingActions
+
     def make_random_states_tensor(
         self, batch_shape: int | Tuple, device: torch.device
     ) -> GeometricBatch:
@@ -299,113 +303,20 @@ class BayesianStructure(GraphBuilding):
         return batch
 
     def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
-        """Step function for the GraphBuilding environment.
-
-        Args:
-            states: BayesianStructureStates object representing the current graph states.
-            actions: Actions to apply to each graph state.
-
-        Returns:
-            The updated graph states after applying the actions.
-        """
-        if len(actions) == 0:
-            return states.tensor
-
         if torch.any(actions.action_type == GraphActionType.ADD_NODE):
             raise ValueError(
                 "ADD_NODE action is not supported in BayesianStructure environment."
             )
-
-        # Get the data list from the batch for processing individual graphs
-        data_list = states.tensor.to_data_list()
-
-        # Create masks for different action types
-        # Flatten each mask, from (*batch_shape) to (prod(batch_shape),)
-        exit_mask = (actions.action_type == GraphActionType.EXIT).flatten()
-        add_edge_mask = (actions.action_type == GraphActionType.ADD_EDGE).flatten()
-
-        # Handle ADD_EDGE actions
-        if torch.any(add_edge_mask):
-            add_edge_index = torch.where(add_edge_mask)[0]
-            action_edge_index_flat = actions.edge_index.flatten()
-            action_edge_class_flat = actions.edge_class.flatten()
-
-            for i in add_edge_index:
-                graph = data_list[i]
-                edge_idx = action_edge_index_flat[i]
-
-                # Get source and destination nodes for this edge
-                src, dst = edge_idx // self.n_nodes, edge_idx % self.n_nodes
-
-                # Add the new edge
-                graph.edge_index = torch.cat(
-                    [
-                        graph.edge_index,
-                        torch.tensor([[src], [dst]], device=graph.edge_index.device),
-                    ],
-                    dim=1,
-                )
-                # Add the edge feature
-                graph.edge_attr = torch.cat(
-                    [graph.edge_attr, action_edge_class_flat[i].reshape(1, 1)], dim=0
-                )
-
-        # Handle EXIT actions
-        if torch.any(exit_mask):
-            # For graphs with EXIT action, replace them with sink states
-            exit_indices = torch.where(exit_mask)[0]
-            for idx in exit_indices:
-                data_list[idx] = self.sf  # TODO: should we clone?
-
-        # Create a new batch from the updated data list
-        new_tensor = GeometricBatch.from_data_list(data_list)
-        new_tensor.batch_shape = states.tensor.batch_shape
-        return new_tensor
+        return super().step(states, actions)
 
     def backward_step(
         self, states: GraphStates, actions: GraphActions
     ) -> GeometricBatch:
-        """Backward step function for the Bayesian structure learning environment.
-
-        Args:
-            states: BayesianStructureStates object representing the current graph.
-            actions: Actions indicating which edge to remove.
-
-        Returns:
-            The previous graph states after reversing the actions.
-        """
-        if len(actions) == 0:
-            return states.tensor
-
-        # Get the data list from the batch for processing individual graphs
-        data_list = states.tensor.to_data_list()
-
-        add_edge_mask = (actions.action_type == GraphActionType.ADD_EDGE).flatten()
-        assert (
-            add_edge_mask.all()
-        ), "Only ADD_EDGE actions are valid for backward step in this environment"
-
-        # Handle ADD_EDGE actions
-        add_edge_index = torch.where(add_edge_mask)[0]
-        action_edge_index_flat = actions.edge_index.flatten()
-
-        for i in add_edge_index:
-            graph = data_list[i]
-            edge_idx = action_edge_index_flat[i]
-
-            # Get source and destination nodes for the edge to remove
-            src, dst = edge_idx // self.n_nodes, edge_idx % self.n_nodes
-
-            # Find the edge to remove
-            edge_mask = ~((graph.edge_index[0] == src) & (graph.edge_index[1] == dst))
-            # Remove the edge
-            graph.edge_index = graph.edge_index[:, edge_mask]
-            graph.edge_attr = graph.edge_attr[edge_mask]
-
-        # Create a new batch from the updated data list
-        new_tensor = GeometricBatch.from_data_list(data_list)
-        new_tensor.batch_shape = states.tensor.batch_shape
-        return new_tensor
+        if torch.any(actions.action_type == GraphActionType.ADD_NODE):
+            raise ValueError(
+                "ADD_NODE action is not supported in BayesianStructure environment."
+            )
+        return super().backward_step(states, actions)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
@@ -424,39 +335,7 @@ class BayesianStructure(GraphBuilding):
             return False
         if backward and (actions.action_type != GraphActionType.ADD_EDGE).any():
             return False
-
-        # Get the data list from the batch
-        data_list = states.tensor.to_data_list()
-        action_type_flat = actions.action_type.flatten()
-        edge_index_flat = actions.edge_index.flatten()
-
-        for i in range(len(actions)):
-            action_type = action_type_flat[i]
-            if action_type == GraphActionType.EXIT:
-                continue
-
-            graph = data_list[i]
-            assert isinstance(graph.num_nodes, int) and graph.num_nodes == self.n_nodes
-
-            if action_type_flat[i] == GraphActionType.ADD_EDGE:
-                edge_idx = edge_index_flat[i]
-                src, dst = edge_idx // self.n_nodes, edge_idx % self.n_nodes
-
-                # Check if the edge already exists
-                edge_exists = torch.any(
-                    (graph.edge_index[0] == src) & (graph.edge_index[1] == dst)
-                )
-
-                if backward:
-                    # For backward actions, the edge must exist
-                    if not edge_exists:
-                        return False
-                else:
-                    # For forward actions, the edge must not exist
-                    if edge_exists:
-                        return False
-
-        return True
+        return super().is_action_valid(states, actions, backward)
 
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         raise NotImplementedError(

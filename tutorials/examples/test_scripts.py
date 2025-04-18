@@ -161,7 +161,7 @@ class BayesianStructureArgs(CommonArgs):
     n_iterations: int = 4
     batch_size: int = 32
     seed: int = 0
-    no_cuda: bool = True
+    use_cuda: bool = False
 
 
 @pytest.mark.parametrize("ndim", [2, 4])

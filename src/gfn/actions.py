@@ -228,17 +228,7 @@ class GraphActions(Actions):
         node_class = tensor_dict["node_class"].reshape(*batch_shape, 1)
         edge_class = tensor_dict["edge_class"].reshape(*batch_shape, 1)
         edge_index = tensor_dict["edge_index"].reshape(*batch_shape, 1)
-        return cls(
-            torch.cat(
-                [
-                    action_type,
-                    node_class,
-                    edge_class,
-                    edge_index,
-                ],
-                dim=-1,
-            )
-        )
+        return cls(torch.cat([action_type, node_class, edge_class, edge_index], dim=-1))
 
     def __repr__(self):
         return f"""GraphAction object with {self.batch_shape} actions."""
@@ -291,3 +281,10 @@ class GraphActions(Actions):
         tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64, device=device)
         tensor[..., cls._ACTION_TYPE_IDX] = GraphActionType.EXIT
         return cls(tensor)
+
+    @classmethod
+    def edge_index_action_to_src_dst(
+        cls, edge_index_action: torch.Tensor, n_nodes: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Converts the edge index action to source and destination node indices."""
+        raise NotImplementedError("Not implemented.")
