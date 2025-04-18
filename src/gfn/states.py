@@ -567,7 +567,8 @@ class GraphStates(States):
             assert tensor.num_graphs == prod(tensor.batch_shape)
 
         # Initialize batch_ptrs
-        self.batch_ptrs = torch.arange(np.prod(tensor.batch_shape), device=tensor.x.device)
+        batch_ptrs = torch.arange(np.prod(tensor.batch_shape), device=tensor.x.device)
+        self.batch_ptrs = batch_ptrs.view(tensor.batch_shape)
         self._log_rewards: Optional[torch.Tensor] = None
 
     @property
@@ -883,17 +884,12 @@ class GraphStates(States):
         ), "We can't index on a Batch with 0-dimensional batch shape."
 
         # Convert the index to a list of indices based on batch_shape
-        tensor_idx = torch.arange(len(self), device=self.device).view(*self.batch_shape)[
-            index
-        ]
+        tensor_idx = self.batch_ptrs[index]
         new_shape = tuple(tensor_idx.shape)
         flat_idx = tensor_idx.flatten()
 
-        # Use batch_ptrs to get the actual indices in the flat representation
-        actual_indices = self.batch_ptrs[flat_idx]
-
         # Get the selected graphs from the batch
-        selected_graphs = self.tensor.index_select(actual_indices)
+        selected_graphs = self.tensor.index_select(flat_idx)
         if len(selected_graphs) == 0:
             assert np.prod(new_shape) == 0 and len(new_shape) > 0
             selected_graphs = [
@@ -912,8 +908,8 @@ class GraphStates(States):
         out = self.__class__(new_batch)
 
         # Update the batch_ptrs for the new object
-        out.batch_ptrs = torch.arange(len(out), device=self.device)
-
+        batch_ptrs = torch.arange(len(out), device=self.device)
+        out.batch_ptrs = batch_ptrs.view(out.batch_shape)
         # Copy log rewards if they exist
         if self._log_rewards is not None:
             out.log_rewards = self._log_rewards[index]
@@ -936,13 +932,9 @@ class GraphStates(States):
         if isinstance(index, int) and len(batch_shape) == 1:
             indices = [index]
         else:
-            tensor_idx = torch.arange(len(self), device=self.device).view(*batch_shape)
-            indices = tensor_idx[index].flatten().tolist()
+            indices = self.batch_ptrs[index].flatten().tolist()
 
         assert len(indices) == len(graph)
-
-        # Get the actual indices using batch_ptrs
-        actual_indices = self.batch_ptrs[indices].tolist()
 
         # Get the data list from the current batch
         data_list = self.tensor.to_data_list()
@@ -951,7 +943,7 @@ class GraphStates(States):
         new_data_list = graph.tensor.to_data_list()
 
         # Replace the selected graphs
-        for i, idx in enumerate(actual_indices):
+        for i, idx in enumerate(indices):
             data_list[idx] = new_data_list[i]
 
         # Create a new batch from the updated data list
@@ -1034,7 +1026,9 @@ class GraphStates(States):
             # Simple concatenation for 1D batch
             combined_data_list = self_data_list + other_data_list
             new_batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
-            batch_ptrs = torch.arange(new_batch_shape[0], device=self.device)
+            new_batch_ptrs = torch.cat(
+                [self.batch_ptrs, other.batch_ptrs + len(self)], dim=0
+            )
         else:
             # Handle the case where batch_shape is (T, B)
             # and we want to concatenate along the B dimension
@@ -1047,42 +1041,35 @@ class GraphStates(States):
                     (max_len - self.batch_shape[0], self.batch_shape[1])
                 )
                 self_data_list.extend(sink_states.to_data_list())
-                # Extend batch pointers for sink states
-                # self.batch_ptrs = torch.cat(
-                #     [
-                #         self.batch_ptrs,
-                #         torch.arange(
-                #             len(self), len(self) + len(sink_states), device=self.device
-                #         ),
-                #     ]
-                # )
+                self.batch_ptrs = torch.cat(
+                    [
+                        self.batch_ptrs,
+                        len(self) + torch.arange(len(sink_states), device=self.device).view(sink_states.batch_shape),
+                    ]
+                )
 
             if other.batch_shape[0] < max_len:
                 sink_states = other.make_sink_states_tensor(
                     (max_len - other.batch_shape[0], other.batch_shape[1])
                 )
                 other_data_list.extend(sink_states.to_data_list())
-                # other.batch_ptrs = torch.cat(
-                #     [
-                #         other.batch_ptrs,
-                #         torch.arange(
-                #             len(other),
-                #             len(other) + len(sink_states),
-                #             device=other.device,
-                #         ),
-                #     ]
-                # )
+                other.batch_ptrs = torch.cat(
+                    [
+                        other.batch_ptrs,
+                        len(other) + torch.arange(len(sink_states), device=self.device).view(sink_states.batch_shape),
+                    ]
+                )
 
             new_batch_shape = (max_len, self.batch_shape[1] + other.batch_shape[1])
             combined_data_list = self_data_list + other_data_list
-            batch_ptrs = torch.arange(len(combined_data_list), device=self.device)
+            new_batch_ptrs = torch.cat(
+                [self.batch_ptrs, other.batch_ptrs + len(self_data_list)], dim=1
+            )
 
         # Create the new batch
         self.tensor = GeometricBatch.from_data_list(combined_data_list)
         self.tensor.batch_shape = new_batch_shape
-
-        # TODO
-        self.batch_ptrs = batch_ptrs
+        self.batch_ptrs = new_batch_ptrs
 
         # Combine log rewards if they exist
         if self._log_rewards is not None and other._log_rewards is not None:
