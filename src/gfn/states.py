@@ -888,10 +888,7 @@ class GraphStates(States):
         flat_idx = tensor_idx.flatten()
 
         # Get the selected graphs from the batch
-        try:
-            selected_graphs = self.tensor.index_select(flat_idx)
-        except Exception as e:
-            import pdb; pdb.set_trace()
+        selected_graphs = self.tensor.index_select(flat_idx)
         if len(selected_graphs) == 0:
             assert np.prod(new_shape) == 0 and len(new_shape) > 0
             selected_graphs = [
@@ -1254,14 +1251,16 @@ class GraphStates(States):
         xs = []
         edge_indices = []
         edge_attrs = []
-        ptrs = [torch.zeros([1], device=states[0].device)]
+        ptrs = [torch.zeros([1], dtype=torch.long, device=states[0].device)]
         batches = []
         _slice_dict = {"x": [torch.tensor([0])], "edge_index": [torch.tensor([0])], "edge_attr": [torch.tensor([0])]}
+        edge_index_inc = []
         offset = 0
         for state in states:
             xs.append(state.tensor.x)
             edge_attrs.append(state.tensor.edge_attr)
             edge_indices.append(state.tensor.edge_index + ptrs[-1][-1])
+            edge_index_inc.append(state.tensor._inc_dict["edge_index"] + ptrs[-1][-1])
             ptrs.append(state.tensor.ptr[1:] + ptrs[-1][-1])
             batches.append(state.tensor.batch + offset)
             offset += len(state)
@@ -1279,7 +1278,7 @@ class GraphStates(States):
         )
         batch._inc_dict = {
             "x": torch.zeros(batch.num_graphs),
-            "edge_index": torch.arange(0, 2 * batch.num_graphs, step=2),
+            "edge_index": torch.cat(edge_index_inc, dim=0),
             "edge_attr": torch.zeros(batch.num_graphs),
         }
         batch._slice_dict = {

@@ -445,6 +445,9 @@ def test_extend_1d(simple_graph_state):
         torch.ones(original_num_nodes, dtype=torch.long),
     )
 
+    assert (simple_graph_state[0].tensor.edge_index == other_state[0].tensor.edge_index).all()
+    assert (simple_graph_state[1].tensor.edge_index == other_state[0].tensor.edge_index).all()
+
 
 def test_extend_2d(datas):
     """Test extending two 2D batch states"""
@@ -479,6 +482,13 @@ def test_extend_2d(datas):
     assert (state1[0, 3].tensor.x == datas[5].x).all()
     assert (state1[2, 2].tensor.x == datas[8].x).all()
     assert (state1[2, 3].tensor.x == datas[9].x).all()
+
+    assert (state1[0, 0].tensor.edge_index == datas[0].edge_index).all()
+    assert (state1[0, 1].tensor.edge_index == datas[1].edge_index).all()
+    assert (state1[0, 2].tensor.edge_index == datas[4].edge_index).all()
+    assert (state1[0, 3].tensor.edge_index == datas[5].edge_index).all()
+    assert (state1[2, 2].tensor.edge_index == datas[8].edge_index).all()
+    assert (state1[2, 3].tensor.edge_index == datas[9].edge_index).all()
 
 
 def test_forward_masks(datas):
@@ -568,6 +578,11 @@ def test_stack_1d(datas):
     assert torch.equal(stacked.tensor.batch[:4], batch1.batch)
     assert torch.equal(stacked.tensor.batch[4:], batch2.batch + 2)
 
+    assert (stacked[0, 0].tensor.edge_index == datas[0].edge_index).all()
+    assert (stacked[0, 1].tensor.edge_index == datas[1].edge_index).all()
+    assert (stacked[1, 0].tensor.edge_index == datas[2].edge_index).all()
+    assert (stacked[1, 1].tensor.edge_index == datas[3].edge_index).all()
+
 
 def test_stack_2d(datas):
     """Test stacking GraphStates objects with 2D batch shape"""
@@ -593,3 +608,12 @@ def test_stack_2d(datas):
     # Check the batch indices
     assert torch.equal(stacked.tensor.batch[:8], batch1.batch)
     assert torch.equal(stacked.tensor.batch[8:], batch2.batch + 4)
+
+    assert (stacked[0, 0, 0].tensor.edge_index == datas[0].edge_index).all()
+    assert (stacked[0, 0, 1].tensor.edge_index == datas[1].edge_index).all()
+    assert (stacked[0, 1, 0].tensor.edge_index == datas[4].edge_index).all()
+    assert (stacked[0, 1, 1].tensor.edge_index == datas[5].edge_index).all()
+    assert (stacked[1, 0, 0].tensor.edge_index == datas[8].edge_index).all()
+    assert (stacked[1, 0, 1].tensor.edge_index == datas[9].edge_index).all()
+
+
