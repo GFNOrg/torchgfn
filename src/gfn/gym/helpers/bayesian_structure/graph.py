@@ -2,6 +2,7 @@ import string
 from itertools import chain, count, islice, product
 from typing import List, Optional
 
+import numpy as np
 import torch
 from pgmpy.factors.continuous import LinearGaussianCPD
 from torch_geometric.data import Data as GeometricData
@@ -9,7 +10,7 @@ from torch_geometric.data import Data as GeometricData
 
 def sample_erdos_renyi_graph(
     num_nodes: int,
-    rng: torch.Generator,
+    rng: np.random.Generator,
     p: Optional[float] = None,
     num_edges: Optional[int] = None,
     node_names: Optional[List[str]] = None,
@@ -19,7 +20,7 @@ def sample_erdos_renyi_graph(
 
     Args:
         num_nodes (int): Number of nodes in the graph.
-        rng (torch.Generator): Torch random number generator.
+        rng (np.random.Generator): Numpy random number generator.
         p (Optional[float]): Probability of creating an edge.
         num_edges (Optional[int]): Total number of edges (used to compute p if p is None).
         node_names (Optional[List[str]]): Optional list of node names.
@@ -43,14 +44,14 @@ def sample_erdos_renyi_graph(
         node_names = ["".join(letters) for letters in islice(iterator, num_nodes)]
 
     # Generate adjacency matrix using torch and keep lower triangular matrix
-    adjacency = (torch.rand(num_nodes, num_nodes, generator=rng) < p).to(torch.int64)
-    adjacency = torch.tril(adjacency, diagonal=-1)
+    adjacency = rng.binomial(1, p=p, size=(num_nodes, num_nodes))
+    adjacency = np.tril(adjacency, k=-1)  # Only keep the lower triangular part
 
-    # Permute rows, columns, and node names
-    perm = torch.randperm(num_nodes, generator=rng)
+    # Permute the rows and columns
+    perm = rng.permutation(num_nodes)
     adjacency = adjacency[perm, :]
     adjacency = adjacency[:, perm]
-    node_names = [node_names[i] for i in perm.tolist()]
+    adjacency = torch.tensor(adjacency, dtype=torch.int64)
 
     # Get edge indices using torch.nonzero and transpose to shape (2, num_edges)
     edge_index = torch.nonzero(adjacency, as_tuple=False).t().contiguous()
@@ -62,7 +63,7 @@ def sample_erdos_renyi_graph(
 
 def sample_erdos_renyi_linear_gaussian(
     num_nodes: int,
-    rng: torch.Generator,
+    rng: np.random.Generator,
     p: Optional[float] = None,
     num_edges: Optional[int] = None,
     node_names: Optional[List[str]] = None,
@@ -79,7 +80,7 @@ def sample_erdos_renyi_linear_gaussian(
 
     Args:
         num_nodes (int): Number of nodes.
-        rng (torch.Generator): Random number generator for reproducibility.
+        rng (np.random.Generator): Random number generator for reproducibility.
         p (Optional[float]): Probability of creating an edge.
         num_edges (Optional[int]): Total number of edges (used to compute p if p is None).
         node_names (Optional[List[str]]): Optional list of node names.
@@ -102,16 +103,12 @@ def sample_erdos_renyi_linear_gaussian(
         # For each node, its parents are those nodes j such that edge_index[1]==i
         if graph.edge_index is not None:
             parents_tensor = graph.edge_index[0][graph.edge_index[1] == i]
-            parents = parents_tensor.tolist()
+            parents = [graph.node_names[parent] for parent in parents_tensor.tolist()]
         else:
             parents = []
 
         # Sample random parameters (from Normal distribution)
-        theta = torch.normal(
-            mean=torch.full((len(parents) + 1,), loc_edges),
-            std=scale_edges,
-            generator=rng,
-        )
+        theta = rng.normal(loc_edges, scale_edges, size=(len(parents) + 1,))
         theta[0] = 0.0  # There is no bias term
 
         # Create LinearGaussianCPD factor

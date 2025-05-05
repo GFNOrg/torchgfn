@@ -7,15 +7,37 @@ Bayesian network over `num_nodes` nodes. We generate 100 datapoints from it, and
 calculate the BGe score. The GFlowNet is learned to generate directed acyclic graphs (DAGs)
 proportionally to their BGe score, using the modified DB loss.
 
-Key components:
-- BayesianStructure: Environment for Bayesian structure learning
-- LinearTransformerPolicyModule: Linear transformer policy module
-- ModifiedDBGFlowNet: GFlowNet with modified detailed balance loss
+Some expected results on the Erdős-Rényi model with 4 nodes and 4 edges:
+
+(On-policy training)
+python train_bayesian_structure.py \
+    --no_buffer \
+    --batch_size 32 \
+    --sampling_batch_size 32 \
+    --use_gnn \
+    --max_epsilon 0.0 \
+    --min_epsilon 0.0
+>> Expected SHD: ~3.3
+>> Expected edges: ~6.0
+>> ROC-AUC: ~0.8
+
+(Off-policy training with epsilon-noisy exploration)
+python train_bayesian_structure.py \
+    --no_buffer \
+    --batch_size 32 \
+    --sampling_batch_size 32 \
+    --use_gnn \
+    --max_epsilon 0.9 \
+    --min_epsilon 0.0
+>> Expected SHD: ~4.2
+>> Expected edges: ~5.2
+>> ROC-AUC: ~0.9
 """
 
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
 
+import numpy as np
 import torch
 from tensordict import TensorDict
 from torch import nn
@@ -37,8 +59,6 @@ from gfn.gym.helpers.bayesian_structure.factories import get_scorer
 from gfn.modules import DiscreteGraphPolicyEstimator
 from gfn.utils.common import set_seed
 from gfn.utils.modules import GraphActionUniform, GraphEdgeActionGNN, GraphEdgeActionMLP
-
-DEFAULT_SEED = 4444
 
 
 class DAGEdgeActionMLP(GraphEdgeActionMLP):
@@ -158,12 +178,11 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
 
 
 def main(args: Namespace):
-    seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    set_seed(seed)
+    set_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() and args.use_cuda else "cpu"
 
-    rng = torch.Generator(device="cpu")  # This should be cpu
-    rng.manual_seed(seed)
+    torch.manual_seed(args.seed)
+    rng = np.random.default_rng(args.seed)
 
     # Create the scorer
     scorer, _, gt_graph = get_scorer(
@@ -308,11 +327,11 @@ if __name__ == "__main__":
         "Train a GFlowNet to generate a DAG for Bayesian structure learning."
     )
     # Environment parameters
-    parser.add_argument("--num_nodes", type=int, default=5)
+    parser.add_argument("--num_nodes", type=int, default=4)
     parser.add_argument(
         "--num_edges",
         type=int,
-        default=5,
+        default=4,
         help="Number of edges in the sampled erdos renyi graph",
     )
     parser.add_argument(
@@ -339,7 +358,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--embedding_dim", type=int, default=128)
     parser.add_argument("--max_epsilon", type=float, default=0.9)
-    parser.add_argument("--min_epsilon", type=float, default=0.1)
+    parser.add_argument("--min_epsilon", type=float, default=0.0)
 
     # Replay buffer parameters
     parser.add_argument("--no_buffer", dest="use_buffer", action="store_false")
@@ -349,9 +368,9 @@ if __name__ == "__main__":
     parser.add_argument("--sampling_batch_size", type=int, default=32)
 
     # Training parameters
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--lr_Z", type=float, default=1.0)
-    parser.add_argument("--n_iterations", type=int, default=1000)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr_Z", type=float, default=1e-1)
+    parser.add_argument("--n_iterations", type=int, default=2000)
     parser.add_argument("--batch_size", type=int, default=256)
 
     # Misc parameters

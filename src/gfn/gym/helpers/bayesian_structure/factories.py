@@ -1,7 +1,7 @@
 from typing import Optional
 
+import numpy as np
 import pandas as pd
-import torch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.gym.helpers.bayesian_structure import priors
@@ -16,7 +16,7 @@ def get_data(
     num_edges: int,
     num_samples: int,
     node_names: Optional[list[str]] = None,
-    rng: Optional[torch.Generator] = None,
+    rng: Optional[np.random.Generator] = None,
 ) -> tuple[GeometricData, pd.DataFrame, str]:
     """
     Generate Bayesian linear Gaussian data.
@@ -27,13 +27,13 @@ def get_data(
         num_edges (int): Number of edges to sample in the graph.
         num_samples (int): Number of samples to generate.
         node_names (Optional[List[str]]): Optional list of node names.
-        rng (Optional[torch.Generator]): Optional random generator instance.
+        rng (Optional[np.random.Generator]): Optional random generator instance.
 
     Returns:
         tuple: (graph, data, score) where 'score' indicates the scoring method used.
     """
     if rng is None:
-        rng = torch.Generator()
+        rng = np.random.default_rng()
 
     if name == "erdos_renyi_lingauss":
         graph = sample_erdos_renyi_linear_gaussian(
@@ -69,7 +69,7 @@ def get_scorer(
     num_edges: int,
     num_samples: int,
     node_names: Optional[list[str]] = None,
-    rng: Optional[torch.Generator] = None,
+    rng: Optional[np.random.Generator] = None,
 ) -> tuple[BGeScore, pd.DataFrame, GeometricData]:
     # Get the data
     graph, data, score = get_data(
