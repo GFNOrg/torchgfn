@@ -586,7 +586,7 @@ class GraphStates(States):
             assert tensor.num_graphs == prod(tensor.batch_shape)
 
         # Initialize batch_ptrs
-        batch_ptrs = torch.arange(np.prod(tensor.batch_shape), device=tensor.x.device)
+        batch_ptrs = torch.arange(prod(tensor.batch_shape), device=tensor.x.device)
         self.batch_ptrs = batch_ptrs.view(tensor.batch_shape)
         self._log_rewards: Optional[torch.Tensor] = None
 
