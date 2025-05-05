@@ -333,7 +333,7 @@ def test_is_initial_state(state_fixture, request):
     assert isinstance(is_initial, torch.Tensor)
     assert is_initial.dtype == torch.bool
 
-    initial_states = state.make_initial_states_tensor(state.batch_shape)
+    initial_states = state.make_initial_states_tensor(state.batch_shape, state.device)
     assert torch.all(state.__class__(initial_states).is_initial_state)
 
 
@@ -355,7 +355,7 @@ def test_is_sink_state(state_fixture, request):
     assert isinstance(is_sink, torch.Tensor)
     assert is_sink.dtype == torch.bool
 
-    sink_states = state.make_sink_states_tensor(state.batch_shape)
+    sink_states = state.make_sink_states_tensor(state.batch_shape, state.device)
     assert torch.all(state.__class__(sink_states).is_sink_state)
 
 
@@ -368,7 +368,7 @@ def test_from_batch_shape(state_fixture, request):
     StateClass = request.getfixturevalue(state_fixture).__class__
 
     # Create states with initial state
-    states = StateClass.from_batch_shape((3,))
+    states = StateClass.from_batch_shape((3,))  # device will be automatically set
     assert states.batch_shape == (3,)
 
     # Check all states are initial states

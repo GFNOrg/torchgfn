@@ -92,7 +92,9 @@ class Env(ABC):
         Returns:
             States: A batch of initial states.
         """
-        return self.States.from_batch_shape(batch_shape, random=random, sink=sink)
+        return self.States.from_batch_shape(
+            batch_shape, random=random, sink=sink, device=self.device
+        )
 
     def actions_from_tensor(self, tensor: torch.Tensor) -> Actions:
         """Wraps the supplied Tensor an an Actions instance.
@@ -114,7 +116,7 @@ class Env(ABC):
         Returns:
             Actions: A batch of dummy actions.
         """
-        return self.Actions.make_dummy_actions(batch_shape)
+        return self.Actions.make_dummy_actions(batch_shape, device=self.device)
 
     # To be implemented by the User.
     @abstractmethod
@@ -154,7 +156,9 @@ class Env(ABC):
     ) -> bool:
         """Returns True if the actions are valid in the given states."""
 
-    def make_random_states_tensor(self, batch_shape: Tuple) -> torch.Tensor:
+    def make_random_states_tensor(
+        self, batch_shape: Tuple, device: torch.device | None = None
+    ) -> torch.Tensor:
         """Optional method inherited by all States instances to emit a random tensor."""
         raise NotImplementedError
 
@@ -175,8 +179,6 @@ class Env(ABC):
             s0 = env.s0
             sf = env.sf
             make_random_states_tensor = env.make_random_states_tensor
-            # TODO: Why do we need to define the random state generator in the env class?
-            # TODO: Can we just define it in the States class?
 
         return DefaultEnvState
 
@@ -244,7 +246,7 @@ class Env(ABC):
         # Set to the sink state when the action is exit.
         new_sink_states_idx = actions.is_exit
         sf_tensor = self.States.make_sink_states_tensor(
-            (int(new_sink_states_idx.sum().item()),)
+            (int(new_sink_states_idx.sum().item()),), device=states.device
         )
         new_states[new_sink_states_idx] = self.States(sf_tensor)
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
@@ -591,7 +593,12 @@ class GraphEnv(Env):
             sf: The sink graph state.
             device_str: String representation of the device.
         """
-        ensure_same_device(s0.device, sf.device)
+        assert s0.x is not None and sf.x is not None
+        assert s0.edge_attr is not None and sf.edge_attr is not None
+        assert s0.edge_index is not None and sf.edge_index is not None
+        ensure_same_device(s0.x.device, sf.x.device)
+        ensure_same_device(s0.edge_attr.device, sf.edge_attr.device)
+        ensure_same_device(s0.edge_index.device, sf.edge_index.device)
 
         self.s0 = s0
         self.sf = sf
@@ -607,19 +614,22 @@ class GraphEnv(Env):
 
     @property
     def device(self) -> torch.device:
-        return self.s0.device  # You should initialize s0 with a device.
+        assert self.s0.x is not None
+        return self.s0.x.device
 
     def make_states_class(self) -> type[GraphStates]:
+        env = self
+
         class GraphEnvStates(GraphStates):
             """Graph states for the environment."""
 
-            num_node_classes = self.num_node_classes
-            num_edge_classes = self.num_edge_classes
-            is_directed = self.is_directed
+            num_node_classes = env.num_node_classes
+            num_edge_classes = env.num_edge_classes
+            is_directed = env.is_directed
 
-            s0 = self.s0
-            sf = self.sf
-            make_random_states_graph = self.make_random_states_tensor
+            s0 = env.s0
+            sf = env.sf
+            make_random_states_tensor = env.make_random_states_tensor
 
         return GraphEnvStates
 
@@ -627,12 +637,32 @@ class GraphEnv(Env):
         """The default GraphActions class factory for all GraphEnvs."""
         return GraphActions
 
+    def reset(
+        self,
+        batch_shape: int | Tuple[int, ...],
+        random: bool = False,
+        sink: bool = False,
+        seed: Optional[int] = None,
+    ) -> GraphStates:
+        """Reset the environment to a new batch of graphs."""
+        states = super().reset(batch_shape, random, sink, seed)
+        assert isinstance(states, GraphStates)
+        return states
+
     @abstractmethod
-    def step(self, states: GraphStates, actions: Actions) -> torch.Tensor:
+    def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
         """Function that takes a batch of graph states and actions and returns a batch of next
         graph states."""
 
     @abstractmethod
-    def backward_step(self, states: GraphStates, actions: Actions) -> torch.Tensor:
+    def backward_step(
+        self, states: GraphStates, actions: GraphActions
+    ) -> GeometricBatch:
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""
+
+    def make_random_states_tensor(
+        self, batch_shape: int | Tuple, device: torch.device | None = None
+    ) -> GeometricBatch:
+        """Returns a batch of random graph states."""
+        raise NotImplementedError

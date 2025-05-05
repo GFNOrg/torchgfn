@@ -45,6 +45,11 @@ class ReplayBuffer:
         self.training_objects: ContainerUnion | None = None
         self.prioritized = prioritized
 
+    @property
+    def device(self) -> torch.device:
+        assert self.training_objects is not None, "Buffer is empty, it has no device!"
+        return self.training_objects.device
+
     def add(self, training_objects: ContainerUnion) -> None:
         """Adds a training object to the buffer."""
         if not isinstance(training_objects, ValidContainerTypes):
@@ -119,11 +124,6 @@ class ReplayBuffer:
         """Loads the buffer from disk."""
         if self.training_objects is not None:
             self.training_objects.load(os.path.join(directory, "training_objects"))
-
-    @property
-    def device(self) -> torch.device:
-        assert self.training_objects is not None, "Buffer is empty, it has no device!"
-        return self.training_objects.device
 
 
 class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):

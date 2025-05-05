@@ -135,6 +135,10 @@ class Transitions(Container):
         )
 
     @property
+    def device(self) -> torch.device:
+        return self.states.device
+
+    @property
     def n_transitions(self) -> int:
         return self.states.batch_shape[0]
 
@@ -300,7 +304,3 @@ class Transitions(Container):
             self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=0)
         else:
             self.log_probs = None
-
-    @property
-    def device(self) -> torch.device:
-        return self.states.device

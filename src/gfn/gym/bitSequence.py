@@ -635,7 +635,9 @@ class BitSequence(DiscreteEnv):
             word_tensor = terminating_states_tensor[:, i].to(self.device)
             list_of_actions.append(self.actions_from_tensor(word_tensor.unsqueeze(-1)))
 
-        list_of_actions.append(self.Actions.make_exit_actions((n_trajectories,)))
+        list_of_actions.append(
+            self.Actions.make_exit_actions((n_trajectories,), device=self.device)
+        )
         actions = self.Actions.stack(list_of_actions)
 
         traj: Trajectories = Trajectories(
