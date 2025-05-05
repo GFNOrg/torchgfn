@@ -17,9 +17,9 @@ python train_bayesian_structure.py \
     --use_gnn \
     --max_epsilon 0.0 \
     --min_epsilon 0.0
->> Expected SHD: ~3.3
+>> Expected SHD: ~5.0
 >> Expected edges: ~6.0
->> ROC-AUC: ~0.8
+>> ROC-AUC: ~0.7
 
 (Off-policy training with epsilon-noisy exploration)
 python train_bayesian_structure.py \
