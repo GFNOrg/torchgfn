@@ -445,8 +445,12 @@ def test_extend_1d(simple_graph_state):
         torch.ones(original_num_nodes, dtype=torch.long),
     )
 
-    assert (simple_graph_state[0].tensor.edge_index == other_state[0].tensor.edge_index).all()
-    assert (simple_graph_state[1].tensor.edge_index == other_state[0].tensor.edge_index).all()
+    assert (
+        simple_graph_state[0].tensor.edge_index == other_state[0].tensor.edge_index
+    ).all()
+    assert (
+        simple_graph_state[1].tensor.edge_index == other_state[0].tensor.edge_index
+    ).all()
 
 
 def test_extend_2d(datas):
@@ -615,5 +619,3 @@ def test_stack_2d(datas):
     assert (stacked[0, 1, 1].tensor.edge_index == datas[5].edge_index).all()
     assert (stacked[1, 0, 0].tensor.edge_index == datas[8].edge_index).all()
     assert (stacked[1, 0, 1].tensor.edge_index == datas[9].edge_index).all()
-
-
