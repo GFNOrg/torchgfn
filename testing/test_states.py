@@ -484,6 +484,8 @@ def test_extend_2d(datas):
     assert (state1[0, 1].tensor.x == datas[1].x).all()
     assert (state1[0, 2].tensor.x == datas[4].x).all()
     assert (state1[0, 3].tensor.x == datas[5].x).all()
+    assert (state1[2, 0].tensor.x == state1.sf.x).all()
+    assert (state1[2, 1].tensor.x == state1.sf.x).all()
     assert (state1[2, 2].tensor.x == datas[8].x).all()
     assert (state1[2, 3].tensor.x == datas[9].x).all()
 
@@ -491,6 +493,8 @@ def test_extend_2d(datas):
     assert (state1[0, 1].tensor.edge_index == datas[1].edge_index).all()
     assert (state1[0, 2].tensor.edge_index == datas[4].edge_index).all()
     assert (state1[0, 3].tensor.edge_index == datas[5].edge_index).all()
+    assert (state1[2, 0].tensor.edge_index == state1.sf.edge_index).all()
+    assert (state1[2, 1].tensor.edge_index == state1.sf.edge_index).all()
     assert (state1[2, 2].tensor.edge_index == datas[8].edge_index).all()
     assert (state1[2, 3].tensor.edge_index == datas[9].edge_index).all()
 
