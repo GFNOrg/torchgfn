@@ -49,6 +49,7 @@ tox = { version = "*", optional = true }
 
 # scripts dependencies.
 matplotlib = { version = "*", optional = true }
+pgmpy = { version = "<1.0.0", optional = true }
 scikit-learn = {version = "*", optional = true }
 scipy = { version = "*", optional = true }
 tqdm = { version = "*", optional = true }
@@ -75,6 +76,7 @@ dev = [
 
 scripts = [
     "matplotlib",
+    "pgmpy",
     "scikit-learn",
     "scipy",
     "tqdm",
@@ -89,6 +91,7 @@ all = [
     "matplotlib",
     "myst-parser",
     "nbmake",
+    "pgmpy",
     "pre-commit",
     "pyright",
     "pytest",

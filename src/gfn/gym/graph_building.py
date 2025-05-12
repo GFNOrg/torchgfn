@@ -83,26 +83,26 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_NODE action
         if torch.any(add_node_mask):
             batch_indices_flat = torch.arange(len(states))[add_node_mask]
-            node_class_flat = actions.node_class.flatten()
-            data_list = self._add_node(data_list, batch_indices_flat, node_class_flat)
+            node_class_action_flat = actions.node_class.flatten()
+            data_list = self._add_node(
+                data_list, batch_indices_flat, node_class_action_flat
+            )
 
         # Handle ADD_EDGE action
         if torch.any(add_edge_mask):
             add_edge_index = torch.where(add_edge_mask)[0]
-            action_edge_index_flat = actions.edge_index.flatten()
-            action_edge_class_flat = actions.edge_class.flatten()
+            edge_index_action_flat = actions.edge_index.flatten()
+            edge_class_action_flat = actions.edge_class.flatten()
 
             # Add edges to each graph
             for i in add_edge_index:
                 graph = data_list[i]
-                edge_idx = action_edge_index_flat[i]
+                edge_idx = edge_index_action_flat[i]
 
                 assert isinstance(graph.num_nodes, int)
-                src, dst = get_edge_indices(
-                    graph.num_nodes, self.is_directed, graph.edge_index.device
+                src, dst = self.Actions.edge_index_action_to_src_dst(
+                    edge_idx, graph.num_nodes
                 )
-                src, dst = src[edge_idx], dst[edge_idx]
-
                 # Add the new edge
                 graph.edge_index = torch.cat(
                     [
@@ -114,7 +114,7 @@ class GraphBuilding(GraphEnv):
 
                 # Add the edge feature
                 graph.edge_attr = torch.cat(
-                    [graph.edge_attr, action_edge_class_flat[i].reshape(1, 1)], dim=0
+                    [graph.edge_attr, edge_class_action_flat[i].reshape(1, 1)], dim=0
                 )
 
         # Handle EXIT action
@@ -154,7 +154,7 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_NODE action
         if torch.any(add_node_mask):
             add_node_index = torch.where(add_node_mask)[0]
-            node_class_flat = actions.node_class.flatten()
+            node_class_action_flat = actions.node_class.flatten()
 
             # Remove nodes with matching features
             for i in add_node_index:
@@ -162,7 +162,9 @@ class GraphBuilding(GraphEnv):
                 assert isinstance(graph.num_nodes, int)
 
                 # Find nodes with matching features
-                is_equal = torch.all(graph.x == node_class_flat[i].unsqueeze(0), dim=1)
+                is_equal = torch.all(
+                    graph.x == node_class_action_flat[i].unsqueeze(0), dim=1
+                )
 
                 # Remove the first matching node
                 node_idx = int(torch.where(is_equal)[0][0].item())
@@ -179,18 +181,17 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_EDGE action
         if torch.any(add_edge_mask):
             add_edge_index = torch.where(add_edge_mask)[0]
-            action_edge_index_flat = actions.edge_index.flatten()
+            edge_index_action_flat = actions.edge_index.flatten()
 
             # Remove edges with matching indices
             for i in add_edge_index:
                 graph = data_list[i]
-                edge_idx = action_edge_index_flat[i]
+                edge_idx = edge_index_action_flat[i]
 
                 assert isinstance(graph.num_nodes, int)
-                src, dst = get_edge_indices(
-                    graph.num_nodes, self.is_directed, graph.edge_index.device
+                src, dst = self.Actions.edge_index_action_to_src_dst(
+                    edge_idx, graph.num_nodes
                 )
-                src, dst = src[edge_idx], dst[edge_idx]
 
                 # Find the edge to remove
                 edge_mask = ~(
@@ -221,22 +222,21 @@ class GraphBuilding(GraphEnv):
         """
         # Get the data list from the batch
         data_list = states.tensor.to_data_list()
-        action_type_flat = actions.action_type.flatten()
-        node_class_flat = actions.node_class.flatten()
-        edge_index_flat = actions.edge_index.flatten()
+        action_type_action_flat = actions.action_type.flatten()
+        node_class_action_flat = actions.node_class.flatten()
+        edge_index_action_flat = actions.edge_index.flatten()
 
         for i in range(len(actions)):
-            action_type = action_type_flat[i]
+            action_type = action_type_action_flat[i]
             if action_type == GraphActionType.EXIT:
                 continue
 
             graph = data_list[i]
-            assert isinstance(graph.num_nodes, int)
 
             if action_type == GraphActionType.ADD_NODE:
                 # Check if a node with these features already exists
                 equal_nodes = torch.all(
-                    graph.x == node_class_flat[i].unsqueeze(0), dim=1
+                    graph.x == node_class_action_flat[i].unsqueeze(0), dim=1
                 )
 
                 if backward:
@@ -249,13 +249,11 @@ class GraphBuilding(GraphEnv):
                         return False
 
             elif action_type == GraphActionType.ADD_EDGE:
-                edge_idx = edge_index_flat[i]
-                src, dst = get_edge_indices(
-                    graph.num_nodes, self.is_directed, graph.edge_index.device
+                assert isinstance(graph.num_nodes, int)
+                edge_idx = edge_index_action_flat[i]
+                src, dst = self.Actions.edge_index_action_to_src_dst(
+                    edge_idx, graph.num_nodes
                 )
-                if edge_idx >= len(src) or edge_idx >= len(dst):
-                    return False
-                src, dst = src[edge_idx], dst[edge_idx]
 
                 # Check if the edge already exists
                 edge_exists = torch.any(
@@ -416,6 +414,23 @@ class GraphBuilding(GraphEnv):
             make_random_states_tensor = env.make_random_states_tensor
 
         return GraphBuildingStates
+
+    def make_actions_class(self) -> type[GraphActions]:
+        env = self
+
+        class GraphBuildingActions(GraphActions):
+            @classmethod
+            def edge_index_action_to_src_dst(
+                cls, edge_index_action: torch.Tensor, n_nodes: int
+            ) -> tuple[torch.Tensor, torch.Tensor]:
+                """Converts the edge index action to source and destination node indices."""
+                assert edge_index_action.ndim == 0  # TODO: support vector actions
+                src, dst = get_edge_indices(
+                    n_nodes, env.is_directed, edge_index_action.device
+                )
+                return src[edge_index_action], dst[edge_index_action]
+
+        return GraphBuildingActions
 
 
 class GraphBuildingOnEdges(GraphBuilding):
