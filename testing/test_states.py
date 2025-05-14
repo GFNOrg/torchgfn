@@ -14,16 +14,16 @@ class MyGraphStates(GraphStates):
 
     # Initial state: a graph with 2 nodes and 1 edge
     s0 = GeometricData(
-        x=torch.tensor([[1.0], [2.0]]),
+        x=torch.tensor([[-1.0], [-2.0]]),
         edge_index=torch.tensor([[0], [1]]),
         edge_attr=torch.tensor([[0.5]]),
     )
 
     # Sink state: a graph with 2 nodes and 1 edge (different from s0)
     sf = GeometricData(
-        x=torch.tensor([[3.0], [4.0]]),
-        edge_index=torch.tensor([[0], [1]]),
-        edge_attr=torch.tensor([[0.7]]),
+        x=torch.tensor([[-1.0]]),
+        edge_index=torch.zeros((2, 0), dtype=torch.long),
+        edge_attr=torch.zeros((0, 1)),
     )
 
 
@@ -472,8 +472,11 @@ def test_extend_2d(datas):
     # Check that we have the correct number of nodes and edges
     # Each graph has 2 nodes and 1 edge
     # For 3 time steps and 2 batches, we should have:
-    expected_nodes = 3 * 2 * 4  # T * nodes_per_graph * B
-    expected_edges = 3 * 1 * 4  # T * edges_per_graph * B
+    expected_nodes = batch1.num_nodes + batch2.num_nodes
+    assert isinstance(MyGraphStates.sf.num_nodes, int)
+    expected_nodes += 2 * MyGraphStates.sf.num_nodes
+    expected_edges = batch1.num_edges + batch2.num_edges
+    expected_edges += 2 * MyGraphStates.sf.num_edges
 
     # The actual count might be higher due to padding with sink states
     assert state1.tensor.num_nodes == expected_nodes
@@ -484,17 +487,30 @@ def test_extend_2d(datas):
     assert (state1[0, 1].tensor.x == datas[1].x).all()
     assert (state1[0, 2].tensor.x == datas[4].x).all()
     assert (state1[0, 3].tensor.x == datas[5].x).all()
-    assert (state1[2, 0].tensor.x == state1.sf.x).all()
-    assert (state1[2, 1].tensor.x == state1.sf.x).all()
+    assert (state1[1, 0].tensor.x == datas[2].x).all()
+    assert (state1[1, 1].tensor.x == datas[3].x).all()
+    assert (state1[1, 2].tensor.x == datas[6].x).all()
+    assert (state1[1, 3].tensor.x == datas[7].x).all()
+    assert (state1[2, 0].tensor.x == MyGraphStates.sf.x).all()
+    assert (state1[2, 1].tensor.x == MyGraphStates.sf.x).all()
     assert (state1[2, 2].tensor.x == datas[8].x).all()
     assert (state1[2, 3].tensor.x == datas[9].x).all()
+
+    is_sink_state = torch.zeros(state1.batch_shape, dtype=torch.bool)
+    is_sink_state[2, 0] = True
+    is_sink_state[2, 1] = True
+    assert torch.all(state1.is_sink_state == is_sink_state), state1.is_sink_state
 
     assert (state1[0, 0].tensor.edge_index == datas[0].edge_index).all()
     assert (state1[0, 1].tensor.edge_index == datas[1].edge_index).all()
     assert (state1[0, 2].tensor.edge_index == datas[4].edge_index).all()
     assert (state1[0, 3].tensor.edge_index == datas[5].edge_index).all()
-    assert (state1[2, 0].tensor.edge_index == state1.sf.edge_index).all()
-    assert (state1[2, 1].tensor.edge_index == state1.sf.edge_index).all()
+    assert (state1[1, 0].tensor.edge_index == datas[2].edge_index).all()
+    assert (state1[1, 1].tensor.edge_index == datas[3].edge_index).all()
+    assert (state1[1, 2].tensor.edge_index == datas[6].edge_index).all()
+    assert (state1[1, 3].tensor.edge_index == datas[7].edge_index).all()
+    assert (state1[2, 0].tensor.edge_index == MyGraphStates.sf.edge_index).all()
+    assert (state1[2, 1].tensor.edge_index == MyGraphStates.sf.edge_index).all()
     assert (state1[2, 2].tensor.edge_index == datas[8].edge_index).all()
     assert (state1[2, 3].tensor.edge_index == datas[9].edge_index).all()
 
@@ -586,6 +602,11 @@ def test_stack_1d(datas):
     assert torch.equal(stacked.tensor.batch[:4], batch1.batch)
     assert torch.equal(stacked.tensor.batch[4:], batch2.batch + 2)
 
+    assert torch.all(stacked[0, 0].tensor.x == datas[0].x)
+    assert torch.all(stacked[0, 1].tensor.x == datas[1].x)
+    assert torch.all(stacked[1, 0].tensor.x == datas[2].x)
+    assert torch.all(stacked[1, 1].tensor.x == datas[3].x)
+
     assert (stacked[0, 0].tensor.edge_index == datas[0].edge_index).all()
     assert (stacked[0, 1].tensor.edge_index == datas[1].edge_index).all()
     assert (stacked[1, 0].tensor.edge_index == datas[2].edge_index).all()
@@ -617,9 +638,20 @@ def test_stack_2d(datas):
     assert torch.equal(stacked.tensor.batch[:8], batch1.batch)
     assert torch.equal(stacked.tensor.batch[8:], batch2.batch + 4)
 
+    assert torch.all(stacked[0, 0, 0].tensor.x == datas[0].x)
+    assert torch.all(stacked[0, 0, 1].tensor.x == datas[1].x)
+    assert torch.all(stacked[0, 1, 0].tensor.x == datas[2].x)
+    assert torch.all(stacked[0, 1, 1].tensor.x == datas[3].x)
+    assert torch.all(stacked[1, 0, 0].tensor.x == datas[4].x)
+    assert torch.all(stacked[1, 0, 1].tensor.x == datas[5].x)
+    assert torch.all(stacked[1, 1, 0].tensor.x == datas[6].x)
+    assert torch.all(stacked[1, 1, 1].tensor.x == datas[7].x)
+
     assert (stacked[0, 0, 0].tensor.edge_index == datas[0].edge_index).all()
     assert (stacked[0, 0, 1].tensor.edge_index == datas[1].edge_index).all()
-    assert (stacked[0, 1, 0].tensor.edge_index == datas[4].edge_index).all()
-    assert (stacked[0, 1, 1].tensor.edge_index == datas[5].edge_index).all()
-    assert (stacked[1, 0, 0].tensor.edge_index == datas[8].edge_index).all()
-    assert (stacked[1, 0, 1].tensor.edge_index == datas[9].edge_index).all()
+    assert (stacked[0, 1, 0].tensor.edge_index == datas[2].edge_index).all()
+    assert (stacked[0, 1, 1].tensor.edge_index == datas[3].edge_index).all()
+    assert (stacked[1, 0, 0].tensor.edge_index == datas[4].edge_index).all()
+    assert (stacked[1, 0, 1].tensor.edge_index == datas[5].edge_index).all()
+    assert (stacked[1, 1, 0].tensor.edge_index == datas[6].edge_index).all()
+    assert (stacked[1, 1, 1].tensor.edge_index == datas[7].edge_index).all()
