@@ -1012,7 +1012,7 @@ class GraphStates(States):
         )
         _self_inc_edge_index, _other_inc_edge_index = (
             self.tensor._inc_dict["edge_index"],
-            other.tensor._inc_dict["edge_index"]
+            other.tensor._inc_dict["edge_index"],
         )
 
         # Update the batch shape and pointers
@@ -1024,7 +1024,7 @@ class GraphStates(States):
                 "x": torch.cat(
                     [
                         _self_slice_dict["x"],
-                        _self_slice_dict["x"][-1] + _other_slice_dict["x"],
+                        _self_slice_dict["x"][-1] + _other_slice_dict["x"][1:],
                     ]
                 ),
                 "edge_index": torch.cat(
@@ -1038,7 +1038,7 @@ class GraphStates(States):
                     [
                         _self_slice_dict["edge_attr"],
                         _self_slice_dict["edge_attr"][-1]
-                        + _other_slice_dict["edge_attr"],
+                        + _other_slice_dict["edge_attr"][1:],
                     ]
                 ),
             }
@@ -1102,15 +1102,18 @@ class GraphStates(States):
                     attr: torch.cat(
                         [
                             _self_slice_dict[attr],
-                            _self_slice_dict[attr][-1] + sink_states._slice_dict[attr][1:],
+                            _self_slice_dict[attr][-1]
+                            + sink_states._slice_dict[attr][1:],
                         ]
                     )
                     for attr in _self_slice_dict.keys()
                 }
-                _self_inc_edge_index = torch.cat([
-                    _self_inc_edge_index,
-                    self_ptr[-1] + sink_states._inc_dict["edge_index"],
-                ])
+                _self_inc_edge_index = torch.cat(
+                    [
+                        _self_inc_edge_index,
+                        self_ptr[-1] + sink_states._inc_dict["edge_index"],
+                    ]
+                )
                 self_ptr = torch.cat([self_ptr, self_nodes + sink_states.ptr[1:]], dim=0)
 
             if other.batch_shape[0] < max_len:
@@ -1144,10 +1147,12 @@ class GraphStates(States):
                     )
                     for attr in _other_slice_dict.keys()
                 }
-                _other_inc_edge_index = torch.cat([
-                    _other_inc_edge_index,
-                    other_ptr[-1] + sink_states._inc_dict["edge_index"],
-                ])
+                _other_inc_edge_index = torch.cat(
+                    [
+                        _other_inc_edge_index,
+                        other_ptr[-1] + sink_states._inc_dict["edge_index"],
+                    ]
+                )
                 other_ptr = torch.cat(
                     [other_ptr, other_nodes + sink_states.ptr[1:]], dim=0
                 )
