@@ -146,7 +146,8 @@ class Sampler:
             n_trajectories = states.batch_shape[0]
             # Backward trajectories should have the reward at the beginning (terminating state)
             if self.estimator.is_backward:
-                assert states in env.terminating_states
+                # [ASSUMPTION] all provided states are part of the terminating states (can be passed to reward fn)
+                # assert states in env.terminating_states # This assert would be useful, unfortunately, not every environment implements this.
                 trajectories_log_rewards = env.log_reward(states)
 
         device = states.device
