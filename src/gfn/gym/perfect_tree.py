@@ -86,25 +86,37 @@ class PerfectBinaryTree(DiscreteEnv):
     def update_masks(self, states: DiscreteStates) -> None:
         terminating_states_mask = torch.isin(
             states.tensor, self.terminating_states.tensor
-        ).flatten()
-        initial_state_mask = (states.tensor == self.s0).flatten()
-        even_states = (states.tensor % 2 == 0).flatten()
+        ).squeeze()
+        initial_state_mask = (states.tensor == self.s0).squeeze()
+        even_states = (states.tensor % 2 == 0).squeeze()
 
         # Going from any node, we can choose action 0 or 1
         # Except terminating states where we must end the trajectory
-        states.forward_masks[~terminating_states_mask, -1] = False
-        states.forward_masks[terminating_states_mask, :] = False
-        states.forward_masks[terminating_states_mask, -1] = True
+        not_term_mask = states.forward_masks[~terminating_states_mask]
+        not_term_mask[:, -1] = False
+
+        term_mask = states.forward_masks[terminating_states_mask]
+        term_mask[:, :] = False
+        term_mask[:, -1] = True
+
+        states.forward_masks[~terminating_states_mask] = not_term_mask
+        states.forward_masks[terminating_states_mask] = term_mask
 
         # Even states are to the right, so tied to action 1
         # Uneven states are to the left, tied to action 0
-        states.backward_masks[even_states, 1] = True
-        states.backward_masks[even_states, 0] = False
-        states.backward_masks[~even_states, 1] = False
-        states.backward_masks[~even_states, 0] = True
+        even_mask = states.backward_masks[even_states]
+        odd_mask = states.backward_masks[~even_states]
+
+        even_mask[:, 0] = False
+        even_mask[:, 1] = True
+        odd_mask[:, 0] = True
+        odd_mask[:, 1] = False
+        states.backward_masks[even_states] = even_mask
+        states.backward_masks[~even_states] = odd_mask
 
         # Initial state has no available backward action
-        states.backward_masks[initial_state_mask, :] = False
+        states.backward_masks[initial_state_mask] = False
+        states.backward_masks[initial_state_mask] = False
 
     def get_states_indices(self, states: States):
         return torch.flatten(states.tensor)
