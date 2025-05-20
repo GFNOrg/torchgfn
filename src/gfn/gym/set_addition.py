@@ -99,7 +99,7 @@ class SetAddition(DiscreteEnv):
     def all_states(self) -> DiscreteStates:
         digits = torch.arange(0, 2, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.n_items)
-        return DiscreteStates(all_states)
+        return self.states_from_tensor(all_states)
 
     @property
     def terminating_states(self) -> DiscreteStates:
