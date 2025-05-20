@@ -103,4 +103,10 @@ class SetAddition(DiscreteEnv):
 
     @property
     def terminating_states(self) -> DiscreteStates:
-        return self.all_states[1:]  # Remove initial state s_0
+        if self.fixed_length:
+            return self.all_states[
+                self.all_states.tensor.sum(dim=1) == self.max_traj_len
+            ]
+
+        else:
+            return self.all_states[1:]  # Remove initial state s_0
