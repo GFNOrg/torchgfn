@@ -16,10 +16,24 @@ class SetAddition(DiscreteEnv):
     Recommended preprocessor: `IdentityPreprocessor`.
     """
 
-    def __init__(self, n_items: int, max_items: int, reward_fn: Callable):
+    def __init__(
+        self,
+        n_items: int,
+        max_items: int,
+        reward_fn: Callable,
+        fixed_length: bool = False,
+    ):
+        """
+        Args:
+            n_items: number of items in the append MDP
+            max_items: max number of items that can be added to the 'set'. Defines maximum trajectory length
+            reward_fn: reward function to use
+            fixed_length: indicates whether every trajectory ends after the same number of steps (i.e. if terminating state space contains only sets of the same size).
+        """
         self.n_items = n_items
         self.reward_fn = reward_fn
         self.max_traj_len = max_items
+        self.fixed_length = fixed_length
         n_actions = n_items + 1
         s0 = torch.zeros(n_items)
         state_shape = (n_items,)
@@ -36,22 +50,39 @@ class SetAddition(DiscreteEnv):
         return indices
 
     def update_masks(self, states: DiscreteStates) -> None:
-        trajs_that_must_end = states.tensor.sum(dim=1) >= self.max_traj_len
-        trajs_that_may_continue = states.tensor.sum(dim=1) < self.max_traj_len
-
-        states.forward_masks[trajs_that_may_continue, : self.n_items] = (
-            states.tensor[trajs_that_may_continue] == 0
+        n_items_per_state = states.tensor.sum(dim=-1)
+        states_that_must_end = n_items_per_state >= self.max_traj_len
+        states_that_may_continue = (n_items_per_state < self.max_traj_len) & (
+            n_items_per_state >= 0
         )
 
+        cont_f_mask = torch.cat(
+            (
+                (states.tensor[states_that_may_continue] == 0),
+                torch.zeros(
+                    states.tensor[states_that_may_continue].shape[0], 1, dtype=torch.bool
+                ),
+            ),
+            1,
+        )
+
+        states.forward_masks[states_that_may_continue] = cont_f_mask
         # Disallow everything for trajs that must end
-        states.forward_masks[trajs_that_must_end, : self.n_items] = 0
-        states.forward_masks[..., -1] = 1  # Allow exit action
+        end_f_mask = torch.zeros(
+            states.tensor[states_that_must_end].shape[0],
+            states.forward_masks.shape[-1],
+            dtype=torch.bool,
+        )
+        end_f_mask[..., -1] = True
+
+        states.forward_masks[states_that_must_end] = end_f_mask
+
+        # Disallow everything for trajs that must end
+        # states.forward_masks[states_that_must_end, : self.n_items] = 0
+        if not self.fixed_length:
+            states.forward_masks[..., -1] = 1  # Allow exit action
 
         states.backward_masks[..., : self.n_items] = states.tensor != 0
-
-        # Disallow exit action if at s_0
-        at_initial_state = torch.all(states.tensor == 0, dim=1)
-        states.forward_masks[at_initial_state, -1] = 0
 
     def step(self, states: DiscreteStates, actions: Actions) -> torch.Tensor:
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
