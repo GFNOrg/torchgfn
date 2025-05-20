@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Remove old version of torchgfn
+pip uninstall torch
+
+# Install the relevant OneCCL, mpiexec.hydra, Torch, and Compilers.
+conda config --set    channel_priority        strict
+conda config --set    allow_non_channel_urls  True
+conda config --remove channels defaults
+conda config --append channels 'https://software.repos.intel.com/python/conda/'
+conda config --append channels pytorch
+conda config --append channels conda-forge
+conda config --append channels defaults
+conda install gcc_linux-64 gxx_linux-64 gfortran_linux-64              \
+              impi_rt impi-devel intel-opencl-rt intel-openmp mpi4py   \
+              'oneccl_bind_pt=*=py310_cpu_*' oneccl-devel              \
+              'intel-extension-for-pytorch=*=py310_cpu_*' setuptools   \
+              'pytorch==2.2' cpuonly \
+              mkl -y
