@@ -60,7 +60,10 @@ class SetAddition(DiscreteEnv):
             (
                 (states.tensor[states_that_may_continue] == 0),
                 torch.zeros(
-                    states.tensor[states_that_may_continue].shape[0], 1, dtype=torch.bool
+                    states.tensor[states_that_may_continue].shape[0],
+                    1,
+                    dtype=torch.bool,
+                    device=states.tensor.device,
                 ),
             ),
             1,
@@ -72,6 +75,7 @@ class SetAddition(DiscreteEnv):
             states.tensor[states_that_must_end].shape[0],
             states.forward_masks.shape[-1],
             dtype=torch.bool,
+            device=states.tensor.device,
         )
         end_f_mask[..., -1] = True
 
