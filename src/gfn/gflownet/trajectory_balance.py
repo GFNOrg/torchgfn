@@ -3,7 +3,7 @@ Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.1325
 and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
-from typing import cast
+from typing import Optional, cast
 
 import torch
 import torch.nn as nn
@@ -55,6 +55,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
+        log_rewards: Optional[torch.Tensor] = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -69,7 +70,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         del env  # unused
         warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         _, _, scores = self.get_trajectories_scores(
-            trajectories, recalculate_all_logprobs=recalculate_all_logprobs
+            trajectories, log_rewards, recalculate_all_logprobs=recalculate_all_logprobs
         )
 
         # If the conditioning values exist, we pass them to self.logZ
@@ -113,6 +114,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
+        log_rewards: Optional[torch.Tensor] = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -124,7 +126,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         del env  # unused
         warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         _, _, scores = self.get_trajectories_scores(
-            trajectories, recalculate_all_logprobs=recalculate_all_logprobs
+            trajectories, log_rewards, recalculate_all_logprobs=recalculate_all_logprobs
         )
         scores = (scores - scores.mean()).pow(2)
         loss = loss_reduce(scores, reduction)
