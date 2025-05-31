@@ -197,6 +197,11 @@ class GraphActions(Actions):
     - EXIT: Terminate the trajectory
     """
 
+    ACTION_TYPE_KEY = "action_type"
+    NODE_CLASS_KEY = "node_class"
+    EDGE_CLASS_KEY = "edge_class"
+    EDGE_INDEX_KEY = "edge_index"
+
     _ACTION_TYPE_IDX = 0
     _NODE_CLASS_IDX = 1
     _EDGE_CLASS_IDX = 2
@@ -223,11 +228,11 @@ class GraphActions(Actions):
     @classmethod
     def from_tensor_dict(cls, tensor_dict: TensorDict) -> GraphActions:
         """Creates a GraphActions object from a tensor dict."""
-        batch_shape = tensor_dict["action_type"].shape
-        action_type = tensor_dict["action_type"].reshape(*batch_shape, 1)
-        node_class = tensor_dict["node_class"].reshape(*batch_shape, 1)
-        edge_class = tensor_dict["edge_class"].reshape(*batch_shape, 1)
-        edge_index = tensor_dict["edge_index"].reshape(*batch_shape, 1)
+        batch_shape = tensor_dict[cls.ACTION_TYPE_KEY].shape
+        action_type = tensor_dict[cls.ACTION_TYPE_KEY].reshape(*batch_shape, 1)
+        node_class = tensor_dict[cls.NODE_CLASS_KEY].reshape(*batch_shape, 1)
+        edge_class = tensor_dict[cls.EDGE_CLASS_KEY].reshape(*batch_shape, 1)
+        edge_index = tensor_dict[cls.EDGE_INDEX_KEY].reshape(*batch_shape, 1)
         return cls(
             torch.cat(
                 [

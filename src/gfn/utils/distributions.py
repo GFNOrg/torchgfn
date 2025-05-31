@@ -4,6 +4,8 @@ import torch
 from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
 
+from gfn.actions import GraphActions
+
 
 class UnsqueezedCategorical(Categorical):
     """Samples from a categorical distribution with an unsqueezed final dimension.
@@ -55,8 +57,14 @@ class GraphActionDistribution(Distribution):
         """
         super().__init__()
 
+        action_keys = [
+            GraphActions.ACTION_TYPE_KEY,
+            GraphActions.NODE_CLASS_KEY,
+            GraphActions.EDGE_CLASS_KEY,
+            GraphActions.EDGE_INDEX_KEY,
+        ]
         self.dists = OrderedDict(
-            [(key, Categorical(probs=probs[key])) for key in probs.keys()]
+            (key, Categorical(probs=probs[key])) for key in action_keys
         )
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:

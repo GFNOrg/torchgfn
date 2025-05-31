@@ -8,7 +8,7 @@ from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
 from torch_geometric.data import Batch as GeometricBatch
 
-from gfn.actions import GraphActionType
+from gfn.actions import GraphActions, GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
@@ -501,41 +501,59 @@ class DiscreteGraphPolicyEstimator(GFNModule):
     ) -> Distribution:
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
-        logits["action_type"][~masks["action_type"]] = -float("inf")
-        logits["edge_class"][~masks["edge_class"]] = -float("inf")
-        logits["node_class"][~masks["node_class"]] = -float("inf")
-        logits["edge_index"][~masks["edge_index"]] = -float("inf")
+        logits[GraphActions.ACTION_TYPE_KEY][~masks[GraphActions.ACTION_TYPE_KEY]] = (
+            -float("inf")
+        )
+        logits[GraphActions.NODE_CLASS_KEY][~masks[GraphActions.NODE_CLASS_KEY]] = (
+            -float("inf")
+        )
+        logits[GraphActions.EDGE_CLASS_KEY][~masks[GraphActions.EDGE_CLASS_KEY]] = (
+            -float("inf")
+        )
+        logits[GraphActions.EDGE_INDEX_KEY][~masks[GraphActions.EDGE_INDEX_KEY]] = (
+            -float("inf")
+        )
 
         # Check if no possible edge can be added,
         # and assert that action type cannot be ADD_EDGE
-        no_possible_edge_index = torch.isneginf(logits["edge_index"]).all(-1)
+        no_possible_edge_index = torch.isneginf(logits[GraphActions.EDGE_INDEX_KEY]).all(
+            -1
+        )
         assert torch.isneginf(
-            logits["action_type"][no_possible_edge_index, GraphActionType.ADD_EDGE]
+            logits[GraphActions.ACTION_TYPE_KEY][
+                no_possible_edge_index, GraphActionType.ADD_EDGE
+            ]
         ).all()
-        logits["edge_index"][no_possible_edge_index] = 0
+        logits[GraphActions.EDGE_INDEX_KEY][no_possible_edge_index] = 0
 
         # Check if no possible edge class can be added,
         # and assert that action type cannot be ADD_EDGE
-        no_possible_edge_class = torch.isneginf(logits["edge_class"]).all(-1)
+        no_possible_edge_class = torch.isneginf(logits[GraphActions.EDGE_CLASS_KEY]).all(
+            -1
+        )
         assert torch.isneginf(
-            logits["action_type"][no_possible_edge_class, GraphActionType.ADD_EDGE]
+            logits[GraphActions.ACTION_TYPE_KEY][
+                no_possible_edge_class, GraphActionType.ADD_EDGE
+            ]
         ).all()
-        logits["edge_class"][no_possible_edge_class] = 0
+        logits[GraphActions.EDGE_CLASS_KEY][no_possible_edge_class] = 0
 
         # Check if no possible node can be added,
         # and assert that action type cannot be ADD_NODE
-        no_possible_node = torch.isneginf(logits["node_class"]).all(-1)
+        no_possible_node = torch.isneginf(logits[GraphActions.NODE_CLASS_KEY]).all(-1)
         assert torch.isneginf(
-            logits["action_type"][no_possible_node, GraphActionType.ADD_NODE]
+            logits[GraphActions.ACTION_TYPE_KEY][
+                no_possible_node, GraphActionType.ADD_NODE
+            ]
         ).all()
-        logits["node_class"][no_possible_node] = 0
+        logits[GraphActions.NODE_CLASS_KEY][no_possible_node] = 0
 
         probs = {}
         for key in logits.keys():
             probs[key] = self.logits_to_probs(
                 logits[key],
                 masks[key],
-                sf_bias=sf_bias if key == "action_type" else 0.0,
+                sf_bias=sf_bias if key == GraphActions.ACTION_TYPE_KEY else 0.0,
                 temperature=temperature[key],
                 epsilon=epsilon[key],
             )
