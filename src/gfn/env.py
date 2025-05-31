@@ -51,7 +51,6 @@ class Env(ABC):
         )
 
         assert self.s0.shape == self.sf.shape == state_shape
-        ensure_same_device(s0.device, sf.device)
 
         self.state_shape = state_shape
         self.action_shape = action_shape
