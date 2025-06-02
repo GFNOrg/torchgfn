@@ -98,10 +98,14 @@ class GraphActionDistribution(Distribution):
             GraphActions.EDGE_INDEX_KEY: edge_indices,
         }
 
-        # Stack components in the order specified by ACTION_INDICES
-        return torch.stack(
-            [components[key] for key in GraphActions.ACTION_INDICES.keys()], dim=-1
+        samples = torch.zeros(
+            (*action_types.shape, len(GraphActions.ACTION_INDICES)),
+            device=action_types.device,
+            dtype=torch.long,
         )
+        for key, idx in GraphActions.ACTION_INDICES.items():
+            samples[..., idx] = components[key]
+        return samples
 
     def log_prob(self, sample: torch.Tensor) -> torch.Tensor:
         """Returns the log probabilities for a batch of action samples.
