@@ -1,5 +1,3 @@
-from typing import OrderedDict
-
 import torch
 from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
@@ -57,10 +55,10 @@ class GraphActionDistribution(Distribution):
         """
         super().__init__()
 
-        self.dists = OrderedDict(
-            (key, Categorical(probs=probs[key]))
+        self.dists = {
+            key: Categorical(probs=probs[key])
             for key in GraphActions.ACTION_INDICES.keys()
-        )
+        }
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         """Samples from the distribution.
@@ -75,23 +73,23 @@ class GraphActionDistribution(Distribution):
         edge_classes = torch.zeros_like(action_types)
         edge_indices = torch.zeros_like(action_types)
 
-        add_node_mask = action_types == GraphActionType.ADD_NODE
-        if add_node_mask.any():
+        add_node_idx = action_types == GraphActionType.ADD_NODE
+        if add_node_idx.any():
             node_classes_all = self.dists[GraphActions.NODE_CLASS_KEY].sample(
                 sample_shape
             )
-            node_classes[add_node_mask] = node_classes_all[add_node_mask]
+            node_classes[add_node_idx] = node_classes_all[add_node_idx]
 
-        add_edge_mask = action_types == GraphActionType.ADD_EDGE
-        if add_edge_mask.any():
+        add_edge_idx = action_types == GraphActionType.ADD_EDGE
+        if add_edge_idx.any():
             edge_classes_all = self.dists[GraphActions.EDGE_CLASS_KEY].sample(
                 sample_shape
             )
-            edge_classes[add_edge_mask] = edge_classes_all[add_edge_mask]
+            edge_classes[add_edge_idx] = edge_classes_all[add_edge_idx]
             edge_indices_all = self.dists[GraphActions.EDGE_INDEX_KEY].sample(
                 sample_shape
             )
-            edge_indices[add_edge_mask] = edge_indices_all[add_edge_mask]
+            edge_indices[add_edge_idx] = edge_indices_all[add_edge_idx]
 
         components = {
             GraphActions.ACTION_TYPE_KEY: action_types,
@@ -124,24 +122,24 @@ class GraphActionDistribution(Distribution):
         log_prob += self.dists[GraphActions.ACTION_TYPE_KEY].log_prob(action_types)
 
         # If action_type is ADD_NODE, add log_prob for NODE_CLASS_KEY
-        add_node_mask = action_types == GraphActionType.ADD_NODE
-        if add_node_mask.any():
+        add_node_idx = action_types == GraphActionType.ADD_NODE
+        if add_node_idx.any():
             log_prob_node_class_all = self.dists[GraphActions.NODE_CLASS_KEY].log_prob(
                 sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_CLASS_KEY]]
             )
-            log_prob[add_node_mask] += log_prob_node_class_all[add_node_mask]
+            log_prob[add_node_idx] += log_prob_node_class_all[add_node_idx]
 
         # If action_type is ADD_EDGE, add log_prob for EDGE_CLASS_KEY and EDGE_INDEX_KEY
-        add_edge_mask = action_types == GraphActionType.ADD_EDGE
-        if add_edge_mask.any():
+        add_edge_idx = action_types == GraphActionType.ADD_EDGE
+        if add_edge_idx.any():
             log_prob_edge_class_all = self.dists[GraphActions.EDGE_CLASS_KEY].log_prob(
                 sample[..., GraphActions.ACTION_INDICES[GraphActions.EDGE_CLASS_KEY]]
             )
-            log_prob[add_edge_mask] += log_prob_edge_class_all[add_edge_mask]
+            log_prob[add_edge_idx] += log_prob_edge_class_all[add_edge_idx]
 
             log_prob_edge_index_all = self.dists[GraphActions.EDGE_INDEX_KEY].log_prob(
                 sample[..., GraphActions.ACTION_INDICES[GraphActions.EDGE_INDEX_KEY]]
             )
-            log_prob[add_edge_mask] += log_prob_edge_index_all[add_edge_mask]
+            log_prob[add_edge_idx] += log_prob_edge_index_all[add_edge_idx]
 
         return log_prob
