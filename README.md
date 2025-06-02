@@ -226,30 +226,7 @@ for i in (pbar := tqdm(range(1000))):
 
 ## Contributing
 
-Before the first commit:
-
-```bash
-pip install -e .[dev,scripts]
-pre-commit install
-pre-commit run --all-files
-```
-
-Run `pre-commit` after staging, and before committing. Make sure all the tests pass (By running `pytest`). Note that the `pytest` hook of `pre-commit` only runs the tests in the `testing/` folder. To run all the tests, which take longer, run `pytest` manually.
-
-The codebase uses:
-- `black` formatter for code style
-- `flake8` for linting
-- `pyright` for static type checking
-
-The pre-commit hooks ensure code quality and type safety across the project. The pyright configuration includes all project directories including tutorials/examples and testing.
-
-To make the docs locally:
-
-```bash
-cd docs
-make html
-open build/html/index.html
-```
+Please see the [Contributing Guidelines](.github/CONTRIBUTING.md).
 
 ## Details about the codebase
 
