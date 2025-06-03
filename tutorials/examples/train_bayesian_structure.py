@@ -44,7 +44,7 @@ from torch import nn
 from torch_geometric.data import Batch as GeometricBatch
 from tqdm import trange
 
-from gfn.actions import GraphActionType
+from gfn.actions import GraphActions, GraphActionType
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.containers.trajectories import Trajectories
 from gfn.gflownet.trajectory_balance import TBGFlowNet
@@ -164,14 +164,14 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
 
         return TensorDict(
             {
-                "action_type": action_type,
-                "edge_class": torch.zeros(
+                GraphActions.ACTION_TYPE_KEY: action_type,
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
                     *states_tensor.batch_shape, self.num_edge_classes, device=x.device
                 ),  # TODO: make it learnable.
-                "node_class": torch.zeros(
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
                     *states_tensor.batch_shape, 1, device=x.device
                 ),
-                "edge_index": edge_actions,
+                GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
             batch_size=states_tensor.batch_shape,
         )
@@ -268,10 +268,13 @@ def main(args: Namespace):
     epsilon_dict = defaultdict(float)
     pbar = trange(args.n_iterations, dynamic_ncols=True)
     for it in pbar:
-        epsilon_dict["action_type"] = args.min_epsilon + (
+        # Schedule epsilon for the first half of training
+        eps = args.min_epsilon + (
             (args.max_epsilon - args.min_epsilon)
             * max(0.0, 1.0 - it / (args.n_iterations / 2))
-        )  # Schedule for the first half of training
+        )
+        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = eps
+        epsilon_dict[GraphActions.EDGE_INDEX_KEY] = eps
 
         trajectories = gflownet.sample_trajectories(
             env,

@@ -135,20 +135,20 @@ class BayesianStructure(GraphBuilding):
 
                 return TensorDict(
                     {
-                        "action_type": action_type,
-                        "node_class": torch.ones(
+                        GraphActions.ACTION_TYPE_KEY: action_type,
+                        GraphActions.NODE_CLASS_KEY: torch.ones(
                             *self.batch_shape,
                             self.num_node_classes,
                             dtype=torch.bool,
                             device=self.device,
                         ),
-                        "edge_class": torch.ones(
+                        GraphActions.EDGE_CLASS_KEY: torch.ones(
                             *self.batch_shape,
                             self.num_edge_classes,
                             dtype=torch.bool,
                             device=self.device,
                         ),
-                        "edge_index": edge_masks,
+                        GraphActions.EDGE_INDEX_KEY: edge_masks,
                     },
                     batch_size=self.batch_shape,
                 )
@@ -183,20 +183,20 @@ class BayesianStructure(GraphBuilding):
 
                 return TensorDict(
                     {
-                        "action_type": action_type,
-                        "node_class": torch.ones(
+                        GraphActions.ACTION_TYPE_KEY: action_type,
+                        GraphActions.NODE_CLASS_KEY: torch.ones(
                             *self.batch_shape,
                             self.num_node_classes,
                             dtype=torch.bool,
                             device=self.device,
                         ),
-                        "edge_class": torch.ones(
+                        GraphActions.EDGE_CLASS_KEY: torch.ones(
                             *self.batch_shape,
                             self.num_edge_classes,
                             dtype=torch.bool,
                             device=self.device,
                         ),
-                        "edge_index": edge_masks,
+                        GraphActions.EDGE_INDEX_KEY: edge_masks,
                     },
                     batch_size=self.batch_shape,
                 )
