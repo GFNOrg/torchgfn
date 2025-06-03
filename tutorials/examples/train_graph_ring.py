@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import torch
 from matplotlib import patches
 
+from gfn.actions import GraphActions
 from gfn.containers import ReplayBuffer
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
@@ -347,7 +348,7 @@ def main(args: Namespace):
     t1 = time.time()
     epsilon_dict = defaultdict(float)
     for iteration in range(args.n_iterations):
-        epsilon_dict["action_type"] = 0.0  # 0.2 * (1 - iteration / args.n_iterations)
+        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 0.0
 
         trajectories = gflownet.sample_trajectories(
             env,
