@@ -10,7 +10,7 @@ from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
-from gfn.actions import GraphActionType
+from gfn.actions import GraphActions, GraphActionType
 
 
 class MLP(nn.Module):
@@ -466,14 +466,14 @@ class GraphEdgeActionGNN(nn.Module):
 
         return TensorDict(
             {
-                "action_type": action_type,
-                "edge_class": torch.zeros(
+                GraphActions.ACTION_TYPE_KEY: action_type,
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
                     *states_tensor["batch_shape"], self.num_edge_classes, device=x.device
                 ),  # TODO: make it learnable.
-                "node_class": torch.zeros(
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
                     *states_tensor["batch_shape"], 1, device=x.device
                 ),
-                "edge_index": edge_actions,
+                GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
             batch_size=states_tensor["batch_shape"],
         )
@@ -632,14 +632,14 @@ class GraphEdgeActionMLP(nn.Module):
 
         return TensorDict(
             {
-                "action_type": action_type,
-                "edge_class": torch.zeros(
-                    *states_tensor["batch_shape"], self.num_edge_classes, device=device
-                ),  # TODO: make it learnable
-                "node_class": torch.zeros(
+                GraphActions.ACTION_TYPE_KEY: action_type,
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
                     *states_tensor["batch_shape"], 1, device=device
                 ),
-                "edge_index": edge_actions,
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                    *states_tensor["batch_shape"], self.num_edge_classes, device=device
+                ),  # TODO: make it learnable
+                GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
             batch_size=states_tensor["batch_shape"],
         )
@@ -683,22 +683,24 @@ class GraphActionUniform(nn.Module):
 
         Returns:
             A TensorDict containing logits for each action component, with all values set to 1 to represent a uniform distribution:
-            - "action_type": Tensor of shape [*batch_shape, 3] for the 3 possible action types
-            - "edge_class": Tensor of shape [*batch_shape, num_edge_classes] for edge class logits
-            - "node_class": Tensor of shape [*batch_shape, num_node_classes] for node class logits
-            - "edge_index": Tensor of shape [*batch_shape, edges_dim] for edge index logits
+            - GraphActions.ACTION_TYPE_KEY: Tensor of shape [*batch_shape, 3] for the 3 possible action types
+            - GraphActions.EDGE_CLASS_KEY: Tensor of shape [*batch_shape, num_edge_classes] for edge class logits
+            - GraphActions.NODE_CLASS_KEY: Tensor of shape [*batch_shape, num_node_classes] for node class logits
+            - GraphActions.EDGE_INDEX_KEY: Tensor of shape [*batch_shape, edges_dim] for edge index logits
         """
         device = states_tensor.x.device
         return TensorDict(
             {
-                "action_type": torch.ones(*states_tensor.batch_shape, 3, device=device),
-                "edge_class": torch.ones(
+                GraphActions.ACTION_TYPE_KEY: torch.ones(
+                    *states_tensor.batch_shape, 3, device=device
+                ),
+                GraphActions.EDGE_CLASS_KEY: torch.ones(
                     *states_tensor.batch_shape, self.num_edge_classes, device=device
                 ),
-                "node_class": torch.ones(
+                GraphActions.NODE_CLASS_KEY: torch.ones(
                     *states_tensor.batch_shape, self.num_node_classes, device=device
                 ),
-                "edge_index": torch.ones(
+                GraphActions.EDGE_INDEX_KEY: torch.ones(
                     *states_tensor.batch_shape, self.edges_dim, device=device
                 ),
             },

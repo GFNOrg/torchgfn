@@ -3,7 +3,7 @@ import torch
 from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
-from gfn.actions import GraphActionType
+from gfn.actions import GraphActions, GraphActionType
 from gfn.states import DiscreteStates, GraphStates, States
 
 
@@ -527,24 +527,30 @@ def test_forward_masks(datas):
     masks = states.forward_masks
 
     # Check action type mask
-    assert masks["action_type"].shape == (1, 3)
-    assert masks["action_type"][0, GraphActionType.ADD_NODE].item()  # Can add node
+    assert masks[GraphActions.ACTION_TYPE_KEY].shape == (1, 3)
+    assert masks[GraphActions.ACTION_TYPE_KEY][
+        0, GraphActionType.ADD_NODE
+    ].item()  # Can add node
     assert (
-        masks["action_type"][0, GraphActionType.ADD_EDGE]
+        masks[GraphActions.ACTION_TYPE_KEY][0, GraphActionType.ADD_EDGE]
     ).item()  # Can add edge (2 nodes)
-    assert masks["action_type"][0, GraphActionType.EXIT].item()  # Can exit
+    assert masks[GraphActions.ACTION_TYPE_KEY][
+        0, GraphActionType.EXIT
+    ].item()  # Can exit
 
     # Check features mask
-    assert masks["node_class"].shape == (1, states.num_node_classes)
-    assert torch.all(masks["node_class"])
+    assert masks[GraphActions.NODE_CLASS_KEY].shape == (1, states.num_node_classes)
+    assert torch.all(masks[GraphActions.NODE_CLASS_KEY])
 
     # Check edge_class mask
-    assert masks["edge_class"].shape == (1, states.num_edge_classes)
-    assert torch.all(masks["edge_class"])
+    assert masks[GraphActions.EDGE_CLASS_KEY].shape == (1, states.num_edge_classes)
+    assert torch.all(masks[GraphActions.EDGE_CLASS_KEY])
 
     # Check edge_index masks
-    assert len(masks["edge_index"]) == 1  # 1 graph
-    assert torch.all(masks["edge_index"][0] == torch.tensor([[False, True]]))
+    assert len(masks[GraphActions.EDGE_INDEX_KEY]) == 1  # 1 graph
+    assert torch.all(
+        masks[GraphActions.EDGE_INDEX_KEY][0] == torch.tensor([[False, True]])
+    )
 
 
 def test_backward_masks(datas):
@@ -559,22 +565,30 @@ def test_backward_masks(datas):
     masks = states.backward_masks
 
     # Check action type mask
-    assert masks["action_type"].shape == (1, 3)
-    assert masks["action_type"][0, GraphActionType.ADD_NODE].item()  # Can remove node
-    assert masks["action_type"][0, GraphActionType.ADD_EDGE].item()  # Can remove edge
-    assert not masks["action_type"][0, GraphActionType.EXIT].item()  # Can exit
+    assert masks[GraphActions.ACTION_TYPE_KEY].shape == (1, 3)
+    assert masks[GraphActions.ACTION_TYPE_KEY][
+        0, GraphActionType.ADD_NODE
+    ].item()  # Can remove node
+    assert masks[GraphActions.ACTION_TYPE_KEY][
+        0, GraphActionType.ADD_EDGE
+    ].item()  # Can remove edge
+    assert not masks[GraphActions.ACTION_TYPE_KEY][
+        0, GraphActionType.EXIT
+    ].item()  # Can exit
 
     # Check node_class mask
-    assert masks["node_class"].shape == (1, states.num_node_classes)
-    assert torch.all(masks["node_class"])
+    assert masks[GraphActions.NODE_CLASS_KEY].shape == (1, states.num_node_classes)
+    assert torch.all(masks[GraphActions.NODE_CLASS_KEY])
 
     # Check edge_class mask
-    assert masks["edge_class"].shape == (1, states.num_edge_classes)
-    assert torch.all(masks["edge_class"])
+    assert masks[GraphActions.EDGE_CLASS_KEY].shape == (1, states.num_edge_classes)
+    assert torch.all(masks[GraphActions.EDGE_CLASS_KEY])
 
     # Check edge_index masks
-    assert len(masks["edge_index"]) == 1  # 1 graph
-    assert torch.all(masks["edge_index"][0] == torch.tensor([[True, False]]))
+    assert len(masks[GraphActions.EDGE_INDEX_KEY]) == 1  # 1 graph
+    assert torch.all(
+        masks[GraphActions.EDGE_INDEX_KEY][0] == torch.tensor([[True, False]])
+    )
 
 
 def test_stack_1d(datas):

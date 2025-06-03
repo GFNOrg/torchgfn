@@ -5,7 +5,7 @@ import pytest
 import torch
 from tensordict import TensorDict
 
-from gfn.actions import GraphActionType
+from gfn.actions import GraphActions, GraphActionType
 from gfn.env import NonValidActionsError
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuilding
@@ -338,10 +338,18 @@ def test_graph_env():
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "node_class": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
-                    "edge_class": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
-                    "edge_index": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_EDGE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -353,10 +361,18 @@ def test_graph_env():
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "node_class": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
-                    "edge_class": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
-                    "edge_index": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_NODE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -371,10 +387,16 @@ def test_graph_env():
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "node_class": states.tensor.x[first_node_mask],
-                    "edge_class": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
-                    "edge_index": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_NODE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: states.tensor.x[first_node_mask],
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -386,10 +408,16 @@ def test_graph_env():
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "node_class": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
-                    "edge_index": torch.tensor([i] * BATCH_SIZE),
-                    "edge_class": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_EDGE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -399,10 +427,18 @@ def test_graph_env():
     actions = action_cls.from_tensor_dict(
         TensorDict(
             {
-                "action_type": torch.full((BATCH_SIZE,), GraphActionType.EXIT),
-                "node_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                "edge_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                "edge_index": torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.ACTION_TYPE_KEY: torch.full(
+                    (BATCH_SIZE,), GraphActionType.EXIT
+                ),
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
             },
             batch_size=BATCH_SIZE,
         )
@@ -418,10 +454,16 @@ def test_graph_env():
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "node_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                    "edge_class": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
-                    "edge_index": torch.tensor([i] * BATCH_SIZE),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_EDGE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -433,10 +475,18 @@ def test_graph_env():
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "node_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                    "edge_class": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
-                    "edge_index": torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_EDGE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -449,10 +499,16 @@ def test_graph_env():
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "node_class": states.tensor.x[edge_idx],
-                    "edge_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                    "edge_index": torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_NODE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: states.tensor.x[edge_idx],
+                    GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -465,10 +521,18 @@ def test_graph_env():
     actions = action_cls.from_tensor_dict(
         TensorDict(
             {
-                "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                "node_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                "edge_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                "edge_index": torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.ACTION_TYPE_KEY: torch.full(
+                    (BATCH_SIZE,), GraphActionType.ADD_NODE
+                ),
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
             },
             batch_size=BATCH_SIZE,
         )
@@ -480,10 +544,18 @@ def test_graph_env():
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "node_class": torch.ones((BATCH_SIZE,), dtype=torch.long),
-                    "edge_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                    "edge_index": torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_NODE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.ones(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -494,10 +566,18 @@ def test_graph_env():
     actions = action_cls.from_tensor_dict(
         TensorDict(
             {
-                "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                "node_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                "edge_class": torch.zeros((BATCH_SIZE,), dtype=torch.long),
-                "edge_index": torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.ACTION_TYPE_KEY: torch.full(
+                    (BATCH_SIZE,), GraphActionType.ADD_NODE
+                ),
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
             },
             batch_size=BATCH_SIZE,
         )
