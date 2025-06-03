@@ -56,6 +56,12 @@ from gfn.gym.helpers.bayesian_structure.evaluation import (
     threshold_metrics,
 )
 from gfn.gym.helpers.bayesian_structure.factories import get_scorer
+from gfn.gym.helpers.bayesian_structure.jsd import (
+    get_full_posterior,
+    get_gfn_exact_posterior,
+    jensen_shannon_divergence,
+    posterior_exact,
+)
 from gfn.modules import DiscreteGraphPolicyEstimator
 from gfn.utils.common import set_seed
 from gfn.utils.modules import GraphActionUniform, GraphEdgeActionGNN, GraphEdgeActionMLP
@@ -185,7 +191,7 @@ def main(args: Namespace):
     rng = np.random.default_rng(args.seed)
 
     # Create the scorer
-    scorer, _, gt_graph = get_scorer(
+    scorer, data, gt_graph = get_scorer(
         args.graph_name,
         args.prior_name,
         args.num_nodes,
@@ -323,6 +329,19 @@ def main(args: Namespace):
     thres_metrics = threshold_metrics(posterior_samples, gt_graph)
     for k, v in thres_metrics.items():
         print(f"{k}: {v}")
+
+    ### Jensen-Shannon divergence
+    if env.n_nodes < 6:
+        full_posterior = get_full_posterior(
+            scorer, data, env, gt_graph.node_names, verbose=False
+        )
+        exact_posterior = get_gfn_exact_posterior(
+            posterior_exact(
+                env, gflownet.pf, gt_graph.node_names, batch_size=args.batch_size
+            )
+        )
+        jsd = jensen_shannon_divergence(full_posterior, exact_posterior)
+        print(f"Jensen-Shannon divergence: {jsd}")
 
 
 if __name__ == "__main__":
