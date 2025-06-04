@@ -35,11 +35,13 @@ class GraphCollection:
         self.mapping = defaultdict(int)
         self.mapping.default_factory = lambda: len(self.mapping)
 
-    def append(self, graph):
-        self.edges.extend([self.mapping[edge] for edge in graph.edges()])
+    def append(self, graph: nx.DiGraph) -> None:
+        self.edges.extend(
+            [self.mapping[edge] for edge in graph.edges()]  # pyright: ignore
+        )
         self.lengths.append(graph.number_of_edges())
 
-    def freeze(self):
+    def freeze(self) -> "GraphCollection":
         self.edges = np.asarray(self.edges, dtype=np.int32)
         self.lengths = np.asarray(self.lengths, dtype=np.int32)
         self.mapping = [
@@ -47,10 +49,10 @@ class GraphCollection:
         ]
         return self
 
-    def is_frozen(self):
+    def is_frozen(self) -> bool:
         return isinstance(self.mapping, list)
 
-    def to_dict(self, prefix=None):
+    def to_dict(self, prefix: str | None = None) -> dict:
         prefix = f"{prefix}_" if (prefix is not None) else ""
         return {
             f"{prefix}edges": self.edges,
@@ -66,7 +68,7 @@ class FullPosterior:
     closures: GraphCollection
     markov: GraphCollection
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         # Ensure that "graphs" has been frozen
         if not self.graphs.is_frozen():
             raise ValueError('Graphs must be frozen. Call "graphs.freeze()".')

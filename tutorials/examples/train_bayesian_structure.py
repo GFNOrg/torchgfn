@@ -274,10 +274,10 @@ def main(args: Namespace):
     epsilon_dict = defaultdict(float)
     pbar = trange(args.n_iterations, dynamic_ncols=True)
     for it in pbar:
-        # Schedule epsilon for the first half of training
+        # Schedule epsilon throughout training
         eps = args.min_epsilon + (
             (args.max_epsilon - args.min_epsilon)
-            * max(0.0, 1.0 - it / (args.n_iterations / 2))
+            * max(0.0, 1.0 - it / args.n_iterations)
         )
         epsilon_dict[GraphActions.ACTION_TYPE_KEY] = eps
         epsilon_dict[GraphActions.EDGE_INDEX_KEY] = eps
