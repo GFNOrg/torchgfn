@@ -303,12 +303,15 @@ class GraphEdgeActionGNN(nn.Module):
         # Node embedding layer.
         self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
         self.conv_blks = nn.ModuleList()
-        self.exit_mlp = MLP(
-            input_dim=self.hidden_dim,
-            output_dim=1,
-            hidden_dim=self.hidden_dim,
-            n_hidden_layers=1,
-            add_layer_norm=True,
+        self.exit_mlp = nn.Sequential(
+            MLP(
+                input_dim=self.hidden_dim,
+                output_dim=1,
+                hidden_dim=self.hidden_dim,
+                n_hidden_layers=1,
+                add_layer_norm=True,
+            ),
+            nn.Sigmoid(),
         )
 
         if directed:
@@ -417,17 +420,13 @@ class GraphEdgeActionGNN(nn.Module):
             x = x_new + x if i > 0 else x_new  # Residual connection.
             x = self.norm(x)  # Layernorm.
 
-        node_feature_means = self._group_mean(x, batch_ptr)
-        if not self.is_backward:
-            exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
-
-        x = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
+        x_reshaped = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
 
         # Undirected.
         if self.is_directed:
             feature_dim = self.hidden_dim // 2
-            source_features = x[..., :feature_dim]
-            target_features = x[..., feature_dim:]
+            source_features = x_reshaped[..., :feature_dim]
+            target_features = x_reshaped[..., feature_dim:]
 
             # Dot product between source and target features (asymmetric).
             edgewise_dot_prod = torch.einsum(
@@ -444,7 +443,7 @@ class GraphEdgeActionGNN(nn.Module):
 
         else:
             # Dot product between all node features (symmetric).
-            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x, x)
+            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x_reshaped, x_reshaped)
             edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
                 torch.tensor(self.hidden_dim)
             )
@@ -461,8 +460,10 @@ class GraphEdgeActionGNN(nn.Module):
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
-            action_type[..., GraphActionType.ADD_EDGE] = 1 - exit_action
-            action_type[..., GraphActionType.EXIT] = exit_action
+            node_feature_means = self._group_mean(x, batch_ptr)
+            exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
+            action_type[..., GraphActionType.ADD_EDGE] = (1 - exit_action).log()
+            action_type[..., GraphActionType.EXIT] = exit_action.log()
 
         return TensorDict(
             {
@@ -543,12 +544,15 @@ class GraphEdgeActionMLP(nn.Module):
         )
 
         # Exit action MLP
-        self.exit_mlp = MLP(
-            input_dim=embedding_dim,
-            output_dim=1,
-            hidden_dim=embedding_dim,
-            n_hidden_layers=n_hidden_layers_exit,
-            add_layer_norm=True,
+        self.exit_mlp = nn.Sequential(
+            MLP(
+                input_dim=embedding_dim,
+                output_dim=1,
+                hidden_dim=embedding_dim,
+                n_hidden_layers=n_hidden_layers_exit,
+                add_layer_norm=True,
+            ),
+            nn.Sigmoid(),
         )
 
         # Edge prediction MLP
@@ -621,14 +625,14 @@ class GraphEdgeActionMLP(nn.Module):
 
         # Generate edge and exit actions
         edge_actions = self.edge_mlp(embedding)
-        exit_action = self.exit_mlp(embedding).squeeze(-1)
 
         action_type = torch.zeros(*states_tensor["batch_shape"], 3, device=device)
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
-            action_type[..., GraphActionType.ADD_EDGE] = 1 - exit_action
-            action_type[..., GraphActionType.EXIT] = exit_action
+            exit_action = self.exit_mlp(embedding).squeeze(-1)
+            action_type[..., GraphActionType.ADD_EDGE] = (1 - exit_action).log()
+            action_type[..., GraphActionType.EXIT] = exit_action.log()
 
         return TensorDict(
             {
