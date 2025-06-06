@@ -21,6 +21,7 @@ from matplotlib import patches
 
 from gfn.actions import GraphActions
 from gfn.containers import ReplayBuffer
+from gfn.containers.replay_buffer import ListReplayBuffer
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.modules import DiscreteGraphPolicyEstimator
@@ -337,7 +338,7 @@ def main(args: Namespace):
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
 
-    replay_buffer = ReplayBuffer(
+    replay_buffer = ListReplayBuffer(
         env,
         capacity=args.batch_size,
         prioritized=True,
@@ -432,7 +433,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_buffer",
         action="store_true",
-        default=False,
+        default=True,
         help="Whether to use replay buffer",
     )
 

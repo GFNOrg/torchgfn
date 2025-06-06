@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections import deque
+import glob
 import os
-from typing import Protocol, Union, cast, runtime_checkable
+from typing import List, Protocol, Union, cast, runtime_checkable
 
 import torch
 
@@ -254,3 +256,41 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             # If any training object remain after filtering, add them.
             if len(training_objects):
                 self._add_objs(training_objects)
+
+
+class ListReplayBuffer(ReplayBuffer):
+    """A replay buffer where the training objects are stored in a list.
+    This may be more efficient for objects like Graphs, where extending is an expensive operation."""
+
+    def __init__(self, env: Env, capacity: int = 1000, prioritized: bool = True):
+        super().__init__(env, capacity, prioritized=True)
+        self.training_objects: deque[ContainerUnion] = deque(maxlen=capacity)
+        self._total_size = 0
+
+    def add(self, training_objects: ContainerUnion):
+        import pdb; pdb.set_trace()
+        self.training_objects.append(training_objects)
+        self._total_size += len(training_objects)
+        while self._total_size > self.capacity:
+            self._total_size -= len(self.training_objects.popleft())
+
+    def sample(self, n_trajectories: int) -> ContainerUnion:
+        idx = torch.randint(0, self._total_size, (n_trajectories,))
+        current_length = len(self.training_objects[0])
+        out = self.training_objects[idx < current_length]
+        for i in range(len(self.training_objects)):
+            current_length += len(self.training_objects[i])
+            current_idx = idx[idx < current_length]
+            if len(current_idx) > 0:
+                out.extend(self.training_objects[i][current_idx])
+        return out
+
+    def save(self, directory: str):
+        for i, training_object in enumerate(self.training_objects):
+            training_object.save(os.path.join(directory, f"training_object_{i}.pt"))
+
+    def load(self, directory: str):
+        self.training_objects = deque(maxlen=self.capacity)
+        for file in glob.glob(os.path.join(directory, "training_object_*.pt")):
+            self.training_objects.append(...) # TODO: load
+            self._total_size += len(self.training_objects[-1])
