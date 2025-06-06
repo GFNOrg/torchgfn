@@ -14,7 +14,7 @@ python train_bayesian_structure.py \
     --no_buffer \
     --batch_size 32 \
     --sampling_batch_size 32 \
-    --use_gnn \
+    --module gnn \
     --max_epsilon 0.0 \
     --min_epsilon 0.0
 >> Expected SHD: ~5.0
@@ -26,7 +26,7 @@ python train_bayesian_structure.py \
     --no_buffer \
     --batch_size 32 \
     --sampling_batch_size 32 \
-    --use_gnn \
+    --module gnn \
     --max_epsilon 0.9 \
     --min_epsilon 0.0
 >> Expected SHD: ~4.2
@@ -39,9 +39,11 @@ from collections import defaultdict
 
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from tensordict import TensorDict
-from torch import nn
 from torch_geometric.data import Batch as GeometricBatch
+from torch_geometric.nn import global_add_pool
 from tqdm import trange
 
 from gfn.actions import GraphActions, GraphActionType
@@ -94,10 +96,14 @@ class DAGEdgeActionMLP(GraphEdgeActionMLP):
 
 
 class DAGEdgeActionGNN(GraphEdgeActionGNN):
-    """Simple module which outputs a fixed logits for the actions, depending on the number of nodes.
+    """Simple GNN-based edge action module
 
     Args:
         n_nodes: The number of nodes in the graph.
+        num_edge_classes: The number of edge classes.
+        num_conv_layers: The number of GNN layers.
+        embedding_dim: The dimension of embeddings.
+        is_backward: Whether the module is used for backward action prediction.
     """
 
     def __init__(
@@ -140,16 +146,11 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
             x = x_new + x if i > 0 else x_new  # Residual connection.
             x = self.norm(x)  # Layernorm.
 
-        # This MLP computes the exit action.
-        node_feature_means = self._group_mean(x, batch_ptr)
-        if not self.is_backward:
-            exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
-
-        x = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
+        x_reshaped = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
 
         feature_dim = self.hidden_dim // 2
-        source_features = x[..., :feature_dim]
-        target_features = x[..., feature_dim:]
+        source_features = x_reshaped[..., :feature_dim]
+        target_features = x_reshaped[..., feature_dim:]
 
         # Dot product between source and target features (asymmetric).
         edgewise_dot_prod = torch.einsum(
@@ -161,12 +162,17 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
         edge_actions = edgewise_dot_prod.flatten(1, 2)
         assert edge_actions.shape == (*states_tensor.batch_shape, self.edges_dim)
 
-        action_type = torch.zeros(*states_tensor.batch_shape, 3, device=x.device)
+        action_type = torch.ones(
+            *states_tensor.batch_shape, 3, device=x_reshaped.device
+        ) * float("-inf")
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
-            action_type[..., GraphActionType.ADD_EDGE] = 1 - exit_action
-            action_type[..., GraphActionType.EXIT] = exit_action
+            # This MLP computes the exit action.
+            node_feature_means = self._group_mean(x, batch_ptr)
+            exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
+            action_type[..., GraphActionType.ADD_EDGE] = F.logsigmoid(-exit_action)
+            action_type[..., GraphActionType.EXIT] = F.logsigmoid(exit_action)
 
         return TensorDict(
             {
@@ -176,6 +182,219 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
                 ),  # TODO: make it learnable.
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
                     *states_tensor.batch_shape, 1, device=x.device
+                ),
+                GraphActions.EDGE_INDEX_KEY: edge_actions,
+            },
+            batch_size=states_tensor.batch_shape,
+        )
+
+
+class DAGEdgeActionGNNv2(nn.Module):
+    """
+    GNN-based edge action module, adapted from the implementation of
+    https://github.com/GFNOrg/GFN_vs_HVI/blob/master/dags/dag_gflownet/nets/gnn/gflownet.py
+
+    Args:
+        n_nodes: The number of nodes in the graph.
+        num_edge_classes: The number of edge classes.
+        num_conv_layers: The number of GNN layers.
+        embedding_dim: The dimension of embeddings.
+        num_heads: The number of attention heads.
+        is_backward: Whether the module is used for backward action prediction.
+    """
+
+    def __init__(
+        self,
+        n_nodes: int,
+        num_edge_classes: int,
+        num_conv_layers: int = 2,
+        embedding_dim: int = 128,
+        num_heads: int = 4,
+        is_backward: bool = False,
+    ):
+        super().__init__()
+
+        assert n_nodes > 0, "n_nodes must be greater than 0"
+        assert embedding_dim > 0, "embedding_dim must be greater than 0"
+        assert isinstance(n_nodes, int), "n_nodes must be an integer"
+        assert isinstance(embedding_dim, int), "embedding_dim must be an integer"
+        assert isinstance(is_backward, bool), "is_backward must be a boolean"
+        self._input_dim = 1  # Each node input is a single integer before embedding.
+        self._n_nodes = n_nodes
+        self.embedding_dim = embedding_dim
+        self.is_backward = is_backward
+        self.num_edge_classes = num_edge_classes
+
+        self._output_dim = self.n_nodes**2
+        if not self.is_backward:
+            self._output_dim += 1  # +1 for exit action.
+
+        self.node_embedding = nn.Embedding(n_nodes, embedding_dim)
+        self.edge_embedding = nn.Parameter(
+            torch.randn(1, embedding_dim).clamp(min=-2.0, max=2.0)
+        )
+
+        self.graph_network = nn.ModuleList(
+            [
+                nn.ModuleDict(
+                    {
+                        "node_mlp": nn.Sequential(
+                            nn.Linear(embedding_dim * 2 + embedding_dim, embedding_dim),
+                            nn.ReLU(),
+                            nn.Linear(embedding_dim, embedding_dim),
+                        ),
+                        "edge_mlp": nn.Sequential(
+                            nn.Linear(embedding_dim * 2 + embedding_dim, embedding_dim),
+                            nn.ReLU(),
+                            nn.Linear(embedding_dim, embedding_dim),
+                        ),
+                        "global_mlp": nn.Sequential(
+                            nn.Linear(embedding_dim * 2 + embedding_dim, embedding_dim),
+                            nn.ReLU(),
+                            nn.Linear(embedding_dim, embedding_dim),
+                        ),
+                    }
+                )
+                for _ in range(num_conv_layers)
+            ]
+        )
+
+        self.projection = nn.Linear(embedding_dim, embedding_dim * 3)
+        self.attention = nn.MultiheadAttention(embedding_dim, num_heads)
+
+        self.senders_mlp = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, embedding_dim),
+        )
+        self.receivers_mlp = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, embedding_dim),
+        )
+
+        self.stop_mlp = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, 1),
+        )
+
+        self.temperature = nn.Parameter(torch.tensor(1.0))
+
+    @property
+    def input_dim(self):
+        return self._input_dim
+
+    @property
+    def n_nodes(self):
+        return self._n_nodes
+
+    @property
+    def edges_dim(self) -> int:
+        return self.n_nodes**2
+
+    @property
+    def output_dim(self) -> int:
+        return self._output_dim
+
+    def forward(self, states_tensor: GeometricBatch) -> TensorDict:
+        node_features, edge_index, batch_ptr = (
+            states_tensor.x,
+            states_tensor.edge_index,
+            states_tensor.ptr,
+        )
+        # node_features: (n_graphs * n_nodes, 1)
+        # edge_index: (2, \sum_{i=1}^{n_graphs} n_edges_i)
+        # batch_ptr: (n_graphs + 1)
+        n_graphs = batch_ptr.shape[0] - 1
+
+        # batch_ptr to batch_idx
+        batch_idx = torch.repeat_interleave(
+            torch.arange(n_graphs, device=batch_ptr.device),
+            batch_ptr[1:] - batch_ptr[:-1],
+        )
+        # batch_idx: (n_graphs * n_nodes)
+
+        node_embs = self.node_embedding(node_features.squeeze().int())
+        # node_embs: (n_graphs * n_nodes, embedding_dim)
+
+        edge_embs = self.edge_embedding.repeat(edge_index.shape[1], 1)
+        # edge_embs: (\sum_{i=1}^{n_graphs} n_edges_i, embedding_dim)
+
+        globals = torch.zeros(n_graphs, self.embedding_dim, device=node_embs.device)
+        # globals: (n_graphs, embedding_dim)
+
+        for layer in self.graph_network:
+            # Edge update
+            edge_input = torch.cat(
+                [node_embs[edge_index[0]], node_embs[edge_index[1]], edge_embs],
+                dim=-1,
+            )
+            # Note the skip-connection
+            edge_embs = edge_embs + layer["edge_mlp"](edge_input)  # pyright: ignore
+
+            # Node update
+            node_aggr = global_add_pool(
+                edge_embs, edge_index[1], size=node_embs.shape[0]
+            )
+            node_input = torch.cat([node_embs, node_aggr, globals[batch_idx]], dim=-1)
+            node_embs = node_embs + layer["node_mlp"](node_input)  # pyright: ignore
+            # Global update
+            edge_aggr_global = global_add_pool(
+                global_add_pool(edge_embs, edge_index[1], size=node_embs.shape[0]),
+                batch_idx,
+                size=n_graphs,
+            )
+            node_aggr_global = global_add_pool(node_embs, batch_idx, size=n_graphs)
+
+            global_input = torch.cat(
+                [node_aggr_global, edge_aggr_global, globals], dim=-1
+            )
+            globals = globals + layer["global_mlp"](global_input)  # pyright: ignore
+
+        # Reshape the node features, and project into keys, queries, and values
+        node_embs = node_embs.reshape(n_graphs, self.n_nodes, self.embedding_dim)
+        node_embs = self.projection(node_embs)
+        queries, keys, values = torch.chunk(node_embs, 3, dim=-1)
+        # queries: (n_graphs, n_nodes, embedding_dim)
+
+        queries = queries.transpose(0, 1)
+        keys = keys.transpose(0, 1)
+        values = values.transpose(0, 1)
+        # (n_nodes, n_graphs, embedding_dim)
+
+        attn_output, _ = self.attention(queries, keys, values)
+        attn_output = attn_output.transpose(0, 1)
+        # (n_nodes, n_graphs, embedding_dim)
+
+        senders = self.senders_mlp(attn_output)
+        receivers = self.receivers_mlp(attn_output)
+        edge_actions = torch.bmm(senders, receivers.transpose(1, 2)).view(n_graphs, -1)
+
+        temperature = nn.functional.softplus(self.temperature)
+        edge_actions = edge_actions / temperature
+
+        # Make TensorDict output
+        action_type = torch.ones(
+            *states_tensor.batch_shape, 3, device=node_embs.device
+        ) * float("-inf")
+        if self.is_backward:
+            action_type[..., GraphActionType.ADD_EDGE] = 0.0  # log(1.0)
+        else:
+            stop_logits = self.stop_mlp(globals).squeeze(-1)
+            action_type[..., GraphActionType.ADD_EDGE] = F.logsigmoid(-stop_logits)
+            action_type[..., GraphActionType.EXIT] = F.logsigmoid(stop_logits)
+
+        return TensorDict(
+            {
+                GraphActions.ACTION_TYPE_KEY: action_type,
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                    *states_tensor.batch_shape,
+                    self.num_edge_classes,
+                    device=node_embs.device,
+                ),  # TODO: make it learnable.
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
+                    *states_tensor.batch_shape, 1, device=node_embs.device
                 ),
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
@@ -208,27 +427,38 @@ def main(args: Namespace):
         device=device,
     )
 
-    if args.use_gnn:
+    if args.module == "mlp":
+        pf_module = DAGEdgeActionMLP(
+            n_nodes=env.n_nodes,
+            num_edge_classes=env.num_edge_classes,
+            n_hidden_layers=args.num_layers,
+            n_hidden_layers_exit=1,
+            embedding_dim=args.embedding_dim,
+        )
+    elif args.module == "gnn":
         pf_module = DAGEdgeActionGNN(
-            env.n_nodes,
-            env.num_edge_classes,
-            args.num_layers,
-            args.embedding_dim,
+            n_nodes=env.n_nodes,
+            num_edge_classes=env.num_edge_classes,
+            num_conv_layers=args.num_layers,
+            embedding_dim=args.embedding_dim,
+        )
+    elif args.module == "gnn_v2":
+        pf_module = DAGEdgeActionGNNv2(
+            n_nodes=env.n_nodes,
+            num_edge_classes=env.num_edge_classes,
+            num_conv_layers=args.num_layers,
+            embedding_dim=args.embedding_dim,
+            num_heads=4,
         )
     else:
-        pf_module = DAGEdgeActionMLP(
-            env.n_nodes,
-            env.num_edge_classes,
-            args.num_layers,
-            1,
-            args.embedding_dim,
-        )
+        raise ValueError(f"Invalid module: {args.module}")
 
     pb_module = GraphActionUniform(
         env.n_actions - 1,  # equivalent to env.n_nodes**2
         env.num_edge_classes,
         env.num_node_classes,
     )
+
     pf = DiscreteGraphPolicyEstimator(
         module=pf_module,
     )
@@ -236,6 +466,7 @@ def main(args: Namespace):
         module=pb_module,
         is_backward=True,
     )
+
     gflownet = TBGFlowNet(pf, pb)
     gflownet = gflownet.to(device)
 
@@ -258,8 +489,8 @@ def main(args: Namespace):
     optimizer = torch.optim.Adam(params)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        milestones=[int(args.n_iterations * 0.5), int(args.n_iterations * 0.8)],
-        gamma=0.1,
+        milestones=list(range(0, args.n_iterations, int(args.n_iterations * 0.1))),
+        gamma=0.5,
     )
 
     # Replay buffer
@@ -277,9 +508,9 @@ def main(args: Namespace):
         # Schedule epsilon throughout training
         eps = args.min_epsilon + (
             (args.max_epsilon - args.min_epsilon)
-            * max(0.0, 1.0 - it / args.n_iterations)
+            * max(0.0, 1.0 - it / (args.n_iterations // 2))
         )
-        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = eps
+        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 2 * eps / (args.num_nodes**2)
         epsilon_dict[GraphActions.EDGE_INDEX_KEY] = eps
 
         trajectories = gflownet.sample_trajectories(
@@ -308,12 +539,13 @@ def main(args: Namespace):
         scheduler.step()
 
         assert training_samples.log_rewards is not None
-        pbar.set_postfix(
-            {
-                "Loss": loss.item(),
-                "log_r_mean": training_samples.log_rewards.mean().item(),
-            },
-        )
+        postfix = {
+            "Loss": loss.item(),
+            "log_r_mean": training_samples.log_rewards.mean().item(),
+        }
+        if isinstance(gflownet.logZ, nn.Parameter):
+            postfix["logZ"] = gflownet.logZ.item()
+        pbar.set_postfix(postfix)
 
     # Compute the metrics
     with torch.no_grad():
@@ -376,7 +608,12 @@ if __name__ == "__main__":
     )
 
     # GFlowNet and policy parameters
-    parser.add_argument("--use_gnn", action="store_true")
+    parser.add_argument(
+        "--module",
+        type=str,
+        default="gnn_v2",
+        choices=["mlp", "gnn", "gnn_v2"],
+    )
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--embedding_dim", type=int, default=128)
     parser.add_argument("--max_epsilon", type=float, default=0.9)
@@ -391,7 +628,7 @@ if __name__ == "__main__":
 
     # Training parameters
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--lr_Z", type=float, default=1e-1)
+    parser.add_argument("--lr_Z", type=float, default=5e-1)
     parser.add_argument("--n_iterations", type=int, default=2000)
     parser.add_argument("--batch_size", type=int, default=256)
 

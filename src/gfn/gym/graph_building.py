@@ -84,9 +84,26 @@ class GraphBuilding(GraphEnv):
         if torch.any(add_node_mask):
             batch_indices_flat = torch.arange(len(states))[add_node_mask]
             node_class_action_flat = actions.node_class.flatten()
-            data_list = self._add_node(
-                data_list, batch_indices_flat, node_class_action_flat
-            )
+
+            # Add nodes to the specified graphs
+            for graph_idx, new_node_class in zip(
+                batch_indices_flat, node_class_action_flat
+            ):
+                # Get the graph to modify
+                graph = data_list[graph_idx]
+                assert graph.x is not None
+
+                # Ensure new_nodes is 2D
+                new_node_class = torch.atleast_2d(new_node_class)
+
+                # Check feature dimension
+                if new_node_class.shape[1] != graph.x.shape[1]:
+                    raise ValueError(
+                        f"Node features must have dimension {graph.x.shape[1]}"
+                    )
+
+                # Add new nodes to the graph
+                graph.x = torch.cat([graph.x, new_node_class], dim=0)
 
         # Handle ADD_EDGE action
         if torch.any(add_edge_mask):
@@ -270,45 +287,6 @@ class GraphBuilding(GraphEnv):
                         return False
 
         return True
-
-    def _add_node(
-        self,
-        data_list: List[BaseData],
-        batch_indices_flat: torch.Tensor,
-        node_class: torch.Tensor,
-    ) -> List[BaseData]:
-        """Add nodes to graphs in a batch.
-
-        Args:
-            data_list: The current batch of graphs.
-            batch_indices: Indices of graphs to add nodes to.
-            node_class: Class of nodes to add.
-
-        Returns:
-            Updated batch of graphs.
-        """
-        if len(batch_indices_flat) != len(node_class):
-            raise ValueError(
-                "Number of batch indices must match number of node feature lists"
-            )
-
-        # Add nodes to the specified graphs
-        for graph_idx, new_node_class in zip(batch_indices_flat, node_class):
-            # Get the graph to modify
-            graph = data_list[graph_idx]
-            assert graph.x is not None
-
-            # Ensure new_nodes is 2D
-            new_node_class = torch.atleast_2d(new_node_class)
-
-            # Check feature dimension
-            if new_node_class.shape[1] != graph.x.shape[1]:
-                raise ValueError(f"Node features must have dimension {graph.x.shape[1]}")
-
-            # Add new nodes to the graph
-            graph.x = torch.cat([graph.x, new_node_class], dim=0)
-
-        return data_list
 
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
