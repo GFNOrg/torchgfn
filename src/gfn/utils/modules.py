@@ -450,13 +450,13 @@ class GraphEdgeActionGNN(nn.Module):
         # Grab the needed elements from the adjacency matrix and reshape.
         edge_actions = edgewise_dot_prod[torch.arange(batch_size)[:, None, None], i0, i1]
         edge_actions = edge_actions.reshape(
-            *states_tensor["batch_shape"],
+            *states_tensor.batch_shape,
             self.edges_dim,
         )
 
-        action_type = torch.ones(
-            *states_tensor["batch_shape"], 3, device=x.device
-        ) * float("-inf")
+        action_type = torch.ones(*states_tensor.batch_shape, 3, device=x.device) * float(
+            "-inf"
+        )
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
@@ -469,14 +469,14 @@ class GraphEdgeActionGNN(nn.Module):
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
                 GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                    *states_tensor["batch_shape"], self.num_edge_classes, device=x.device
+                    *states_tensor.batch_shape, self.num_edge_classes, device=x.device
                 ),  # TODO: make it learnable.
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    *states_tensor["batch_shape"], 1, device=x.device
+                    *states_tensor.batch_shape, 1, device=x.device
                 ),
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
-            batch_size=states_tensor["batch_shape"],
+            batch_size=states_tensor.batch_shape,
         )
 
 
@@ -623,9 +623,9 @@ class GraphEdgeActionMLP(nn.Module):
         # Generate edge and exit actions
         edge_actions = self.edge_mlp(embedding)
 
-        action_type = torch.ones(
-            *states_tensor["batch_shape"], 3, device=device
-        ) * float("-inf")
+        action_type = torch.ones(*states_tensor.batch_shape, 3, device=device) * float(
+            "-inf"
+        )
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
@@ -637,14 +637,14 @@ class GraphEdgeActionMLP(nn.Module):
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    *states_tensor["batch_shape"], 1, device=device
+                    *states_tensor.batch_shape, 1, device=device
                 ),
                 GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                    *states_tensor["batch_shape"], self.num_edge_classes, device=device
+                    *states_tensor.batch_shape, self.num_edge_classes, device=device
                 ),  # TODO: make it learnable
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
-            batch_size=states_tensor["batch_shape"],
+            batch_size=states_tensor.batch_shape,
         )
 
 
