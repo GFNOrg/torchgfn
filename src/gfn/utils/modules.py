@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from linear_attention_transformer import LinearAttentionTransformer
 from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
@@ -303,15 +304,12 @@ class GraphEdgeActionGNN(nn.Module):
         # Node embedding layer.
         self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
         self.conv_blks = nn.ModuleList()
-        self.exit_mlp = nn.Sequential(
-            MLP(
-                input_dim=self.hidden_dim,
-                output_dim=1,
-                hidden_dim=self.hidden_dim,
-                n_hidden_layers=1,
-                add_layer_norm=True,
-            ),
-            nn.Sigmoid(),
+        self.exit_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=1,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
         )
 
         if directed:
@@ -456,14 +454,16 @@ class GraphEdgeActionGNN(nn.Module):
             self.edges_dim,
         )
 
-        action_type = torch.zeros(*states_tensor["batch_shape"], 3, device=x.device)
+        action_type = torch.ones(
+            *states_tensor["batch_shape"], 3, device=x.device
+        ) * float("-inf")
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
             node_feature_means = self._group_mean(x, batch_ptr)
             exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
-            action_type[..., GraphActionType.ADD_EDGE] = (1 - exit_action).log()
-            action_type[..., GraphActionType.EXIT] = exit_action.log()
+            action_type[..., GraphActionType.ADD_EDGE] = F.logsigmoid(-exit_action)
+            action_type[..., GraphActionType.EXIT] = F.logsigmoid(exit_action)
 
         return TensorDict(
             {
@@ -544,15 +544,12 @@ class GraphEdgeActionMLP(nn.Module):
         )
 
         # Exit action MLP
-        self.exit_mlp = nn.Sequential(
-            MLP(
-                input_dim=embedding_dim,
-                output_dim=1,
-                hidden_dim=embedding_dim,
-                n_hidden_layers=n_hidden_layers_exit,
-                add_layer_norm=True,
-            ),
-            nn.Sigmoid(),
+        self.exit_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=1,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=n_hidden_layers_exit,
+            add_layer_norm=True,
         )
 
         # Edge prediction MLP
@@ -626,13 +623,15 @@ class GraphEdgeActionMLP(nn.Module):
         # Generate edge and exit actions
         edge_actions = self.edge_mlp(embedding)
 
-        action_type = torch.zeros(*states_tensor["batch_shape"], 3, device=device)
+        action_type = torch.ones(
+            *states_tensor["batch_shape"], 3, device=device
+        ) * float("-inf")
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 1
         else:
             exit_action = self.exit_mlp(embedding).squeeze(-1)
-            action_type[..., GraphActionType.ADD_EDGE] = (1 - exit_action).log()
-            action_type[..., GraphActionType.EXIT] = exit_action.log()
+            action_type[..., GraphActionType.ADD_EDGE] = F.logsigmoid(-exit_action)
+            action_type[..., GraphActionType.EXIT] = F.logsigmoid(exit_action)
 
         return TensorDict(
             {
