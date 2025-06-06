@@ -158,7 +158,7 @@ class BayesianStructureArgs(CommonArgs):
     sampling_batch_size: int = 32
     lr: float = 0.001
     lr_Z: float = 1.0
-    n_iterations: int = 4
+    n_iterations: int = 10
     batch_size: int = 32
     seed: int = 0
     use_cuda: bool = False
