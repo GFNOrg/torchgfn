@@ -150,7 +150,7 @@ class BayesianStructureArgs(CommonArgs):
     num_samples_posterior: int = 1000
     num_layers: int = 1
     embedding_dim: int = 32
-    use_gnn: bool = True
+    module: str = "gnn_v2"
     max_epsilon: float = 0.9
     min_epsilon: float = 0.1
     use_buffer: bool = False
