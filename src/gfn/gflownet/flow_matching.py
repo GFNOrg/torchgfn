@@ -1,5 +1,5 @@
 import warnings
-from typing import Any
+from typing import Any, Optional
 
 import torch
 
@@ -189,6 +189,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         self,
         env: DiscreteEnv,
         states_container: StatesContainer[DiscreteStates],
+        log_rewards: Optional[torch.Tensor] = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -209,11 +210,16 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             states_container.intermediary_states,
             states_container.intermediary_conditioning,
         )
+
+        if log_rewards is None:
+            log_rewards = states_container.log_rewards
+        assert log_rewards is not None
+        assert log_rewards.shape == (len(states_container.states),)
         rm_loss = self.reward_matching_loss(
             env,
             states_container.terminating_states,
             states_container.terminating_conditioning,
-            states_container.terminating_log_rewards,
+            log_rewards[states_container.is_terminating],
         )
         return fm_loss + self.alpha * rm_loss
 
