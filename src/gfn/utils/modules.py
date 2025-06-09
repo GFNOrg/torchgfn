@@ -5,7 +5,6 @@ from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from linear_attention_transformer import LinearAttentionTransformer
 from tensordict import TensorDict
 from torch_geometric.data import Batch as GeometricBatch
@@ -458,12 +457,12 @@ class GraphEdgeActionGNN(nn.Module):
             "-inf"
         )
         if self.is_backward:
-            action_type[..., GraphActionType.ADD_EDGE] = 1
+            action_type[..., GraphActionType.ADD_EDGE] = 0.0
         else:
             node_feature_means = self._group_mean(x, batch_ptr)
             exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
-            action_type[..., GraphActionType.ADD_EDGE] = F.logsigmoid(-exit_action)
-            action_type[..., GraphActionType.EXIT] = F.logsigmoid(exit_action)
+            action_type[..., GraphActionType.ADD_EDGE] = 0.0
+            action_type[..., GraphActionType.EXIT] = exit_action
 
         return TensorDict(
             {
@@ -627,11 +626,11 @@ class GraphEdgeActionMLP(nn.Module):
             "-inf"
         )
         if self.is_backward:
-            action_type[..., GraphActionType.ADD_EDGE] = 1
+            action_type[..., GraphActionType.ADD_EDGE] = 0.0
         else:
             exit_action = self.exit_mlp(embedding).squeeze(-1)
-            action_type[..., GraphActionType.ADD_EDGE] = F.logsigmoid(-exit_action)
-            action_type[..., GraphActionType.EXIT] = F.logsigmoid(exit_action)
+            action_type[..., GraphActionType.ADD_EDGE] = 0.0
+            action_type[..., GraphActionType.EXIT] = exit_action
 
         return TensorDict(
             {
