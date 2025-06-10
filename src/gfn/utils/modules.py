@@ -417,17 +417,13 @@ class GraphEdgeActionGNN(nn.Module):
             x = x_new + x if i > 0 else x_new  # Residual connection.
             x = self.norm(x)  # Layernorm.
 
-        node_feature_means = self._group_mean(x, batch_ptr)
-        if not self.is_backward:
-            exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
-
-        x = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
+        x_reshaped = x.reshape(*states_tensor.batch_shape, self.n_nodes, self.hidden_dim)
 
         # Undirected.
         if self.is_directed:
             feature_dim = self.hidden_dim // 2
-            source_features = x[..., :feature_dim]
-            target_features = x[..., feature_dim:]
+            source_features = x_reshaped[..., :feature_dim]
+            target_features = x_reshaped[..., feature_dim:]
 
             # Dot product between source and target features (asymmetric).
             edgewise_dot_prod = torch.einsum(
@@ -444,7 +440,7 @@ class GraphEdgeActionGNN(nn.Module):
 
         else:
             # Dot product between all node features (symmetric).
-            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x, x)
+            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x_reshaped, x_reshaped)
             edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
                 torch.tensor(self.hidden_dim)
             )
@@ -453,29 +449,33 @@ class GraphEdgeActionGNN(nn.Module):
         # Grab the needed elements from the adjacency matrix and reshape.
         edge_actions = edgewise_dot_prod[torch.arange(batch_size)[:, None, None], i0, i1]
         edge_actions = edge_actions.reshape(
-            *states_tensor["batch_shape"],
+            *states_tensor.batch_shape,
             self.edges_dim,
         )
 
-        action_type = torch.zeros(*states_tensor["batch_shape"], 3, device=x.device)
+        action_type = torch.ones(*states_tensor.batch_shape, 3, device=x.device) * float(
+            "-inf"
+        )
         if self.is_backward:
-            action_type[..., GraphActionType.ADD_EDGE] = 1
+            action_type[..., GraphActionType.ADD_EDGE] = 0.0
         else:
-            action_type[..., GraphActionType.ADD_EDGE] = 1 - exit_action
+            node_feature_means = self._group_mean(x, batch_ptr)
+            exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
+            action_type[..., GraphActionType.ADD_EDGE] = 0.0
             action_type[..., GraphActionType.EXIT] = exit_action
 
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
                 GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                    *states_tensor["batch_shape"], self.num_edge_classes, device=x.device
+                    *states_tensor.batch_shape, self.num_edge_classes, device=x.device
                 ),  # TODO: make it learnable.
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    *states_tensor["batch_shape"], 1, device=x.device
+                    *states_tensor.batch_shape, 1, device=x.device
                 ),
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
-            batch_size=states_tensor["batch_shape"],
+            batch_size=states_tensor.batch_shape,
         )
 
 
@@ -621,27 +621,29 @@ class GraphEdgeActionMLP(nn.Module):
 
         # Generate edge and exit actions
         edge_actions = self.edge_mlp(embedding)
-        exit_action = self.exit_mlp(embedding).squeeze(-1)
 
-        action_type = torch.zeros(*states_tensor["batch_shape"], 3, device=device)
+        action_type = torch.ones(*states_tensor.batch_shape, 3, device=device) * float(
+            "-inf"
+        )
         if self.is_backward:
-            action_type[..., GraphActionType.ADD_EDGE] = 1
+            action_type[..., GraphActionType.ADD_EDGE] = 0.0
         else:
-            action_type[..., GraphActionType.ADD_EDGE] = 1 - exit_action
+            exit_action = self.exit_mlp(embedding).squeeze(-1)
+            action_type[..., GraphActionType.ADD_EDGE] = 0.0
             action_type[..., GraphActionType.EXIT] = exit_action
 
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    *states_tensor["batch_shape"], 1, device=device
+                    *states_tensor.batch_shape, 1, device=device
                 ),
                 GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                    *states_tensor["batch_shape"], self.num_edge_classes, device=device
+                    *states_tensor.batch_shape, self.num_edge_classes, device=device
                 ),  # TODO: make it learnable
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
-            batch_size=states_tensor["batch_shape"],
+            batch_size=states_tensor.batch_shape,
         )
 
 
