@@ -549,9 +549,8 @@ class DiscreteStates(States, ABC):
 
 class GraphStates(States):
     """
-    Base class for Graph as a state representation. The `GraphStates` object is a batched
-    collection of multiple graph objects. The `GeometricBatch` object is used to
-    represent the batch of graph objects as states.
+    Base class for Graph as a state representation. The `GraphStates` object is a collection
+    of multiple graph objects stored as a list of GeometricData objects.
 
     Attributes:
         num_node_classes: Number of node classes.
@@ -559,7 +558,7 @@ class GraphStates(States):
         is_directed: Whether the graph is directed.
         s0: Initial state.
         sf: Final state.
-        tensor: A PyG Batch object representing a batch of graphs.
+        graphs: A list of GeometricData objects representing individual graphs.
     """
 
     num_node_classes: ClassVar[int]
@@ -569,48 +568,44 @@ class GraphStates(States):
     s0: ClassVar[GeometricData]
     sf: ClassVar[GeometricData]
 
-    def __init__(self, tensor: GeometricBatch):
-        """Initialize the GraphStates with a PyG Batch object.
+    def __init__(self, graphs: List[GeometricData], batch_shape: Optional[tuple[int, ...]] = None):
+        """Initialize the GraphStates with a list of GeometricData objects.
 
         Args:
-            tensor: A PyG Batch object representing a batch of graphs.
+            graphs: A list of GeometricData objects representing individual graphs.
         """
-        self.tensor = tensor
-        if not hasattr(self.tensor, "batch_shape"):
-            if isinstance(self.tensor.batch_size, tuple):
-                self.tensor.batch_shape = self.tensor.batch_size
-            else:
-                self.tensor.batch_shape = (self.tensor.batch_size,)
-
-        if tensor.x.size(0) > 0:
-            assert tensor.num_graphs == prod(tensor.batch_shape)
-
-        # Initialize batch_ptrs
-        batch_ptrs = torch.arange(prod(tensor.batch_shape), device=tensor.x.device)
-        self.batch_ptrs = batch_ptrs.view(tensor.batch_shape)
+        self.graphs = graphs
+        if batch_shape is None:
+            batch_shape = (len(graphs),)
+        self._batch_shape = batch_shape
         self._log_rewards: Optional[torch.Tensor] = None
 
     @property
     def device(self) -> torch.device:
-        """Returns the device of the tensor."""
-        return self.tensor.x.device
+        """Returns the device of the graphs."""
+        if len(self.graphs) == 0:
+            return torch.device('cpu')
+        if self.graphs[0].x is None:
+            return torch.device('cpu')
+        return self.graphs[0].x.device
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
-        return tuple(self.tensor.batch_shape)
+        return self._batch_shape
 
     @classmethod
     def make_initial_states_tensor(
         cls, batch_shape: int | Tuple, device: torch.device | None = None
-    ) -> GeometricBatch:
-        """Makes a batch of graphs consisting of s0 states.
+    ) -> List[GeometricData]:
+        """Makes a list of graphs consisting of s0 states.
 
         Args:
             batch_shape: Shape of the batch dimensions.
+            device: Device to create the graphs on.
 
         Returns:
-            A PyG Batch object containing copies of the initial state.
+            A list of GeometricData objects containing copies of the initial state.
         """
         assert cls.s0.edge_attr is not None
         assert cls.s0.x is not None
@@ -622,34 +617,20 @@ class GraphStates(States):
         # Create a list of Data objects by copying s0
         data_list = [cls.s0.clone() for _ in range(num_graphs)]
 
-        if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [
-                GeometricData(
-                    x=torch.zeros(0, cls.s0.x.size(1), device=device),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long, device=device),
-                    edge_attr=torch.zeros(0, cls.s0.edge_attr.size(1), device=device),
-                )
-            ]
-
-        # Create a batch from the list
-        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
-
-        # Store the batch shape for later reference
-        batch.batch_shape = tuple(batch_shape)
-
-        return batch
+        return data_list
 
     @classmethod
     def make_sink_states_tensor(
         cls, batch_shape: int | Tuple, device: torch.device | None = None
-    ) -> GeometricBatch:
-        """Makes a batch of graphs consisting of sf states.
+    ) -> List[GeometricData]:
+        """Makes a list of graphs consisting of sf states.
 
         Args:
             batch_shape: Shape of the batch dimensions.
+            device: Device to create the graphs on.
 
         Returns:
-            A PyG Batch object containing copies of the sink state.
+            A list of GeometricData objects containing copies of the sink state.
         """
         assert cls.sf.edge_attr is not None
         assert cls.sf.x is not None
@@ -663,22 +644,7 @@ class GraphStates(States):
 
         # Create a list of Data objects by copying sf
         data_list = [cls.sf.clone() for _ in range(num_graphs)]
-        if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [
-                GeometricData(
-                    x=torch.zeros(0, cls.sf.x.size(1), device=device),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long, device=device),
-                    edge_attr=torch.zeros(0, cls.sf.edge_attr.size(1), device=device),
-                )
-            ]
-
-        # Create a batch from the list
-        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
-
-        # Store the batch shape for later reference
-        batch.batch_shape = batch_shape
-
-        return batch
+        return data_list
 
     @property
     def forward_masks(self) -> TensorDict:
@@ -695,8 +661,12 @@ class GraphStates(States):
         Returns:
             TensorDict: Boolean mask where True indicates valid actions
         """
+        # Get max nodes across all graphs, handling None values
+        max_nodes = 0
+        for graph in self.graphs:
+            if graph.num_nodes is not None:
+                max_nodes = max(max_nodes, graph.num_nodes)
 
-        max_nodes = int(torch.max(self.tensor.ptr[1:] - self.tensor.ptr[:-1]))
         if self.is_directed:
             max_possible_edges = max_nodes * (max_nodes - 1)
         else:
@@ -706,25 +676,21 @@ class GraphStates(States):
             len(self), max_possible_edges, dtype=torch.bool, device=self.device
         )
 
-        # Remove existing edges.
-        for i in range(len(self)):
-            num_nodes = self.tensor.ptr[i + 1] - self.tensor.ptr[i]
+        # Remove existing edges
+        for i, graph in enumerate(self.graphs):
+            if graph.num_nodes is None:
+                continue
+            num_nodes = graph.num_nodes
             ei0, ei1 = get_edge_indices(num_nodes, self.is_directed, self.device)
-            edge_masks[i, len(ei0) :] = False
+            edge_masks[i, len(ei0):] = False
 
-            ei_start = self.tensor._slice_dict["edge_index"][i]
-            ei_end = self.tensor._slice_dict["edge_index"][i + 1]
-            inc = self.tensor._inc_dict["edge_index"][i]
-            existing_edges = self.tensor.edge_index[:, ei_start:ei_end] - inc
-            if ei_end - ei_start == 0:
-                edge_idx = torch.zeros(0, dtype=torch.bool, device=self.device)
-            else:
+            if graph.edge_index is not None and graph.edge_index.size(1) > 0:
                 edge_idx = torch.logical_and(
-                    existing_edges[0][..., None] == ei0[None],
-                    existing_edges[1][..., None] == ei1[None],
+                    graph.edge_index[0][..., None] == ei0[None],
+                    graph.edge_index[1][..., None] == ei1[None],
                 ).to(self.device)
 
-                # Collapse across the edge dimension.
+                # Collapse across the edge dimension
                 if len(edge_idx.shape) == 2:
                     edge_idx = edge_idx.sum(0).bool()
 
@@ -772,43 +738,42 @@ class GraphStates(States):
         Returns:
             TensorDict: Boolean mask where True indicates valid actions
         """
+        # Get max nodes across all graphs, handling None values
+        max_nodes = 0
+        for graph in self.graphs:
+            if graph.num_nodes is not None:
+                max_nodes = max(max_nodes, graph.num_nodes)
 
-        max_nodes = int(torch.max(self.tensor.ptr[1:] - self.tensor.ptr[:-1]))
         if self.is_directed:
             max_possible_edges = max_nodes * (max_nodes - 1)
         else:
             max_possible_edges = max_nodes * (max_nodes - 1) // 2
 
-        # Disallow all actions.
+        # Disallow all actions
         edge_masks = torch.zeros(
             len(self), max_possible_edges, dtype=torch.bool, device=self.device
         )
 
-        for i in range(len(self)):
-            num_nodes = self.tensor.ptr[i + 1] - self.tensor.ptr[i]
+        for i, graph in enumerate(self.graphs):
+            if graph.num_nodes is None:
+                continue
+            num_nodes = graph.num_nodes
             ei0, ei1 = get_edge_indices(
                 num_nodes,
                 self.is_directed,
                 self.device,
             )
 
-            ei_start = self.tensor._slice_dict["edge_index"][i]
-            ei_end = self.tensor._slice_dict["edge_index"][i + 1]
-            inc = self.tensor._inc_dict["edge_index"][i]
-            existing_edges = self.tensor.edge_index[:, ei_start:ei_end] - inc
-
-            if len(existing_edges) == 0:
-                edge_idx = torch.zeros(0, dtype=torch.bool)
-            else:
+            if graph.edge_index is not None and graph.edge_index.size(1) > 0:
                 edge_idx = torch.logical_and(
-                    existing_edges[0][..., None] == ei0[None],
-                    existing_edges[1][..., None] == ei1[None],
+                    graph.edge_index[0][..., None] == ei0[None],
+                    graph.edge_index[1][..., None] == ei1[None],
                 )
-                # Collapse across the edge dimension.
+                # Collapse across the edge dimension
                 if len(edge_idx.shape) == 2:
                     edge_idx = edge_idx.sum(0).bool()
 
-                # Allow the removal of this edge.
+                # Allow the removal of this edge
                 edge_masks[i, edge_idx] = True
 
         edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
@@ -817,9 +782,10 @@ class GraphStates(States):
         action_type = torch.zeros(
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
-        action_type[..., GraphActionType.ADD_NODE] = (
-            self.tensor.ptr[1:] - self.tensor.ptr[:-1]
-        ) > 0
+        action_type[..., GraphActionType.ADD_NODE] = torch.tensor(
+            [graph.num_nodes is not None and graph.num_nodes > 0 for graph in self.graphs],
+            device=self.device
+        ).view(self.batch_shape)
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
         return TensorDict(
             {
@@ -846,9 +812,7 @@ class GraphStates(States):
         parts = [
             f"{self.__class__.__name__}(",
             f"batch={self.batch_shape},",
-            f"state x={self.tensor.x.shape},",
-            f"state edge_index={self.tensor.edge_index.shape},",
-            f"state edge_attr={self.tensor.edge_attr.shape},",
+            f"num_graphs={len(self.graphs)},",
             f"device={self.device},",
         ]
         return " ".join(parts)
@@ -865,40 +829,18 @@ class GraphStates(States):
         Returns:
             A new GraphStates object containing the selected graphs.
         """
-        assert (
-            self.batch_shape != ()
-        ), "We can't index on a Batch with 0-dimensional batch shape."
+        if isinstance(index, int):
+            selected_graphs = [self.graphs[index]]
+        elif isinstance(index, slice):
+            selected_graphs = self.graphs[index]
+        elif isinstance(index, (list, tuple, torch.Tensor)):
+            selected_graphs = [self.graphs[i] for i in index]
+        else:
+            raise TypeError(f"Invalid index type: {type(index)}")
 
-        # Convert the index to a list of indices based on batch_shape
-        tensor_idx = self.batch_ptrs[index]
-        new_shape = tuple(tensor_idx.shape)
-        flat_idx = tensor_idx.flatten()
-
-        # Get the selected graphs from the batch
-        selected_graphs = self.tensor.index_select(flat_idx)
-        if len(selected_graphs) == 0:
-            assert prod(new_shape) == 0 and len(new_shape) > 0
-            # Ensures all the expected attributes are properly initialized with the
-            # correct dimensions.
-            selected_graphs = [
-                GeometricData(
-                    x=torch.zeros(*new_shape, self.tensor.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(*new_shape, self.tensor.edge_attr.size(1)),
-                )
-            ]
-
-        # Create a new batch from the selected graphs
-        new_batch = GeometricBatch.from_data_list(cast(List[BaseData], selected_graphs))
-        new_batch.batch_shape = new_shape
-
-        # Create a new GraphStates object
-        out = self.__class__(new_batch)
-
-        # Copy log rewards if they exist
+        out = self.__class__(selected_graphs)
         if self._log_rewards is not None:
             out.log_rewards = self._log_rewards[index]
-
         return out
 
     def __setitem__(
@@ -912,28 +854,15 @@ class GraphStates(States):
             index: Index or indices to set.
             graph: GraphStates object containing the new graphs.
         """
-        # Convert the index to a list of indices
-        batch_shape = self.batch_shape
-        if isinstance(index, int) and len(batch_shape) == 1:
-            indices = [index]
+        if isinstance(index, int):
+            self.graphs[index] = graph.graphs[0]
+        elif isinstance(index, slice):
+            self.graphs[index] = graph.graphs
+        elif isinstance(index, (list, tuple, torch.Tensor)):
+            for i, g in zip(index, graph.graphs):
+                self.graphs[i] = g
         else:
-            indices = self.batch_ptrs[index].flatten().tolist()
-
-        assert len(indices) == len(graph)
-
-        # Get the data list from the current batch
-        data_list = self.tensor.to_data_list()
-
-        # Get the data list from the new graphs
-        new_data_list = graph.tensor.to_data_list()
-
-        # Replace the selected graphs
-        for i, idx in enumerate(indices):
-            data_list[idx] = new_data_list[i]
-
-        # Create a new batch from the updated data list
-        self.tensor = GeometricBatch.from_data_list(data_list)
-        self.tensor.batch_shape = batch_shape
+            raise TypeError(f"Invalid index type: {type(index)}")
 
     def to(self, device: torch.device) -> GraphStates:
         """Moves the GraphStates to the specified device.
@@ -944,26 +873,10 @@ class GraphStates(States):
         Returns:
             The GraphStates object on the specified device.
         """
-        self.tensor = self.tensor.to(device)
+        self.graphs = [graph.to(device) for graph in self.graphs]
         if self._log_rewards is not None:
             self._log_rewards = self._log_rewards.to(device)
         return self
-
-    @staticmethod
-    def _clone_batch(batch: GeometricBatch) -> GeometricBatch:
-        """Clones a PyG Batch object.
-
-        Args:
-            batch: The Batch object to clone.
-
-        Returns:
-            A new Batch object with the same data.
-        """
-        new_batch = batch.clone()
-        # The Batch.clone() changes the type of the batch shape to a list
-        # We need to set it back to a tuple
-        new_batch.batch_shape = batch.batch_shape
-        return new_batch
 
     def clone(self) -> GraphStates:
         """Returns a detached clone of the current instance.
@@ -971,16 +884,9 @@ class GraphStates(States):
         Returns:
             A new GraphStates object with the same data.
         """
-        # Create a deep copy of the batch
-        new_batch = self._clone_batch(self.tensor)
-
-        # Create a new GraphStates object
-        out = self.__class__(new_batch)
-
-        # Copy log rewards if they exist
+        out = self.__class__([graph.clone() for graph in self.graphs])
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards.clone()
-
         return out
 
     def extend(self, other: GraphStates):
@@ -989,213 +895,7 @@ class GraphStates(States):
         Args:
             other: GraphStates object to concatenate with.
         """
-        if len(self) == 0:
-            # If self is empty, just copy other
-            self.tensor = self._clone_batch(other.tensor)
-            self.batch_ptrs = other.batch_ptrs.clone()
-            if other._log_rewards is not None:
-                self._log_rewards = other._log_rewards.clone()
-            return
-
-        self_x, other_x = self.tensor.x, other.tensor.x
-        self_edge_index, other_edge_index = (
-            self.tensor.edge_index,
-            other.tensor.edge_index,
-        )
-        self_edge_attr, other_edge_attr = self.tensor.edge_attr, other.tensor.edge_attr
-        self_ptr, other_ptr = self.tensor.ptr, other.tensor.ptr
-        self_batch, other_batch = self.tensor.batch, other.tensor.batch
-        self_batch_ptrs, other_batch_ptrs = self.batch_ptrs, other.batch_ptrs
-        _self_slice_dict, _other_slice_dict = (
-            self.tensor._slice_dict,
-            other.tensor._slice_dict,
-        )
-        _self_inc_edge_index, _other_inc_edge_index = (
-            self.tensor._inc_dict["edge_index"],
-            other.tensor._inc_dict["edge_index"],
-        )
-
-        # Update the batch shape and pointers
-        if len(self.batch_shape) == 1:
-            # Simple concatenation for 1D batch
-            new_batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
-            self_nodes = self.tensor.num_nodes
-            _slice_dict = {
-                "x": torch.cat(
-                    [
-                        _self_slice_dict["x"],
-                        _self_slice_dict["x"][-1] + _other_slice_dict["x"][1:],
-                    ]
-                ),
-                "edge_index": torch.cat(
-                    [
-                        _self_slice_dict["edge_index"],
-                        _self_slice_dict["edge_index"][-1]
-                        + _other_slice_dict["edge_index"][1:],
-                    ]
-                ),
-                "edge_attr": torch.cat(
-                    [
-                        _self_slice_dict["edge_attr"],
-                        _self_slice_dict["edge_attr"][-1]
-                        + _other_slice_dict["edge_attr"][1:],
-                    ]
-                ),
-            }
-
-            # Create the new batch
-            self.tensor = GeometricBatch(
-                x=torch.cat([self_x, other_x], dim=0),
-                edge_index=torch.cat(
-                    [self_edge_index, self_nodes + other_edge_index], dim=1
-                ),
-                edge_attr=torch.cat([self_edge_attr, other_edge_attr], dim=0),
-                ptr=torch.cat([self_ptr, self_nodes + other_ptr[1:]], dim=0),
-                batch=torch.cat([self_batch, len(self) + other_batch], dim=0),
-            )
-            self.tensor.batch_shape = new_batch_shape
-            self.batch_ptrs = torch.cat(
-                [self_batch_ptrs, self_batch_ptrs.numel() + other_batch_ptrs], dim=0
-            )
-            self.tensor._slice_dict = _slice_dict
-            self.tensor._inc_dict = {
-                "x": torch.zeros(self.tensor.num_graphs),
-                "edge_index": torch.cat(
-                    [
-                        _self_inc_edge_index,
-                        self_ptr[-1] + _other_inc_edge_index,
-                    ]
-                ),
-                "edge_attr": torch.zeros(self.tensor.num_graphs),
-            }
-
-        else:
-            # Handle the case where batch_shape is (T, B)
-            # and we want to concatenate along the B dimension
-            self_batch_shape, other_batch_shape = self.batch_shape, other.batch_shape
-            assert len(self_batch_shape) == 2 and len(other_batch_shape) == 2
-            max_len = max(self_batch_shape[0], other_batch_shape[0])
-
-            # Extend both batches to the same length T with sink states if needed
-            if self.batch_shape[0] < max_len:
-                sink_states = self.make_sink_states_tensor(
-                    (max_len - self_batch_shape[0], self_batch_shape[1])
-                )
-                self_nodes = self_x.size(0)
-                self_x = torch.cat([self_x, sink_states.x], dim=0)
-                self_edge_index = torch.cat(
-                    [self_edge_index, self_nodes + sink_states.edge_index], dim=1
-                )
-                self_edge_attr = torch.cat(
-                    [self_edge_attr, sink_states.edge_attr], dim=0
-                )
-                self_batch = torch.cat(
-                    [self_batch, len(self) + sink_states.batch], dim=0
-                )
-                sink_states_batch_ptrs = torch.arange(
-                    sink_states.num_graphs, device=self.device
-                ).view(sink_states.batch_shape)
-                self_batch_ptrs = torch.cat(
-                    [self_batch_ptrs, len(self) + sink_states_batch_ptrs], dim=0
-                )
-                _self_slice_dict = {
-                    attr: torch.cat(
-                        [
-                            _self_slice_dict[attr],
-                            _self_slice_dict[attr][-1]
-                            + sink_states._slice_dict[attr][1:],
-                        ]
-                    )
-                    for attr in _self_slice_dict.keys()
-                }
-                _self_inc_edge_index = torch.cat(
-                    [
-                        _self_inc_edge_index,
-                        self_ptr[-1] + sink_states._inc_dict["edge_index"],
-                    ]
-                )
-                self_ptr = torch.cat([self_ptr, self_nodes + sink_states.ptr[1:]], dim=0)
-
-            if other.batch_shape[0] < max_len:
-                sink_states = other.make_sink_states_tensor(
-                    (max_len - other_batch_shape[0], other_batch_shape[1])
-                )
-                other_nodes = other_x.size(0)
-                other_x = torch.cat([other_x, sink_states.x], dim=0)
-                other_edge_index = torch.cat(
-                    [other_edge_index, other_nodes + sink_states.edge_index], dim=1
-                )
-                other_edge_attr = torch.cat(
-                    [other_edge_attr, sink_states.edge_attr], dim=0
-                )
-                other_batch = torch.cat(
-                    [other_batch, len(other) + sink_states.batch], dim=0
-                )
-                sink_states_batch_ptrs = torch.arange(
-                    sink_states.num_graphs, device=self.device
-                ).view(sink_states.batch_shape)
-                other_batch_ptrs = torch.cat(
-                    [other_batch_ptrs, len(other) + sink_states_batch_ptrs], dim=0
-                )
-                _other_slice_dict = {
-                    attr: torch.cat(
-                        [
-                            _other_slice_dict[attr],
-                            _other_slice_dict[attr][-1]
-                            + sink_states._slice_dict[attr][1:],
-                        ]
-                    )
-                    for attr in _other_slice_dict.keys()
-                }
-                _other_inc_edge_index = torch.cat(
-                    [
-                        _other_inc_edge_index,
-                        other_ptr[-1] + sink_states._inc_dict["edge_index"],
-                    ]
-                )
-                other_ptr = torch.cat(
-                    [other_ptr, other_nodes + sink_states.ptr[1:]], dim=0
-                )
-
-            _slice_dict = {
-                attr: torch.cat(
-                    [
-                        _self_slice_dict[attr],
-                        _self_slice_dict[attr][-1] + _other_slice_dict[attr][1:],
-                    ]
-                )
-                for attr in _self_slice_dict.keys()
-            }
-
-            self.tensor = GeometricBatch(
-                x=torch.cat([self_x, other_x], dim=0),
-                edge_index=torch.cat(
-                    [self_edge_index, self_ptr[-1] + other_edge_index], dim=1
-                ),
-                edge_attr=torch.cat([self_edge_attr, other_edge_attr], dim=0),
-                ptr=torch.cat([self_ptr, self_ptr[-1] + other_ptr[1:]], dim=0),
-                batch=torch.cat([self_batch, (len(self_ptr) - 1) + other_batch], dim=0),
-            )
-            new_batch_shape = (max_len, self_batch_shape[1] + other_batch_shape[1])
-            self.tensor.batch_shape = new_batch_shape
-            new_batch_ptrs = torch.cat(
-                [self_batch_ptrs, self_batch_ptrs.numel() + other_batch_ptrs], dim=1
-            )
-            self.batch_ptrs = new_batch_ptrs
-            self.tensor._slice_dict = _slice_dict
-
-            self.tensor._inc_dict = {
-                "x": torch.zeros(self.tensor.num_graphs),
-                "edge_index": torch.cat(
-                    [
-                        _self_inc_edge_index,
-                        self_ptr[-1] + _other_inc_edge_index,
-                    ]
-                ),
-                "edge_attr": torch.zeros(self.tensor.num_graphs),
-            }
-
-        # Combine log rewards if they exist
+        self.graphs.extend(other.graphs)
         if self._log_rewards is not None and other._log_rewards is not None:
             self.log_rewards = torch.cat([self._log_rewards, other._log_rewards], dim=0)
         elif other._log_rewards is not None:
@@ -1216,44 +916,36 @@ class GraphStates(States):
         assert other.edge_attr is not None
         assert other.num_nodes is not None
 
-        for i in range(len(self)):
-            _idx = self.batch_ptrs.view(-1)[i]
-            self_x = self.tensor.x[self.tensor.ptr[_idx] : self.tensor.ptr[_idx + 1]]
-            if len(self_x) != other.num_nodes:
+        for i, graph in enumerate(self.graphs):
+            if graph.num_nodes is None or graph.edge_index is None or graph.edge_attr is None:
                 continue
-            if not torch.all(self_x == other.x):
+            if graph.num_nodes != other.num_nodes:
+                continue
+            if not torch.all(graph.x == other.x):
                 continue
 
             # Check if the number of edges is the same
-            ei_start = self.tensor._slice_dict["edge_index"][_idx]
-            ei_end = self.tensor._slice_dict["edge_index"][_idx + 1]
-            inc = self.tensor._inc_dict["edge_index"][_idx]
-            self_edge_index = self.tensor.edge_index[:, ei_start:ei_end] - inc
-            if self_edge_index.size(1) != other.edge_index.size(1):
+            if graph.edge_index.size(1) != other.edge_index.size(1):
                 continue
 
             # Check if edge indices are the same (this is more complex due to potential reordering)
             # We'll use a simple heuristic: sort edges and compare
-            # TODO: avoid sorting
-            self_edges = self_edge_index.t().tolist()
+            self_edges = graph.edge_index.t().tolist()
             other_edges = other.edge_index.t().tolist()
             self_edges.sort()
             other_edges.sort()
             if self_edges != other_edges:
                 continue
 
-            # # Check if edge attributes are the same (after sorting)
-            ea_start = self.tensor._slice_dict["edge_attr"][_idx]
-            ea_end = self.tensor._slice_dict["edge_attr"][_idx + 1]
-            self_edge_attr = self.tensor.edge_attr[ea_start:ea_end]
-            if self_edge_attr.size(0) != other.edge_attr.size(0):
+            # Check if edge attributes are the same (after sorting)
+            if graph.edge_attr.size(0) != other.edge_attr.size(0):
                 continue
-            if not torch.all(self_edge_attr == other.edge_attr):
+            if not torch.all(graph.edge_attr == other.edge_attr):
                 continue
 
-            self_edge_attr = self_edge_attr[
+            self_edge_attr = graph.edge_attr[
                 torch.argsort(
-                    self_edge_index[0] * self.tensor.num_nodes + self_edge_index[1]
+                    graph.edge_index[0] * graph.num_nodes + graph.edge_index[1]
                 )
             ]
             other_edge_attr = other.edge_attr[
@@ -1293,58 +985,12 @@ class GraphStates(States):
         state_batch_shape = states[0].batch_shape
         assert all(state.batch_shape == state_batch_shape for state in states)
 
-        xs = []
-        edge_indices = []
-        edge_attrs = []
-        ptrs = [torch.zeros([1], dtype=torch.long, device=states[0].device)]
-        batches = []
-        _slice_dict = {
-            "x": [torch.tensor([0])],
-            "edge_index": [torch.tensor([0])],
-            "edge_attr": [torch.tensor([0])],
-        }
-        edge_index_inc = []
-        offset = 0
+        # Concatenate all graphs from all states
+        all_graphs = []
         for state in states:
-            xs.append(state.tensor.x)
-            edge_attrs.append(state.tensor.edge_attr)
-            edge_indices.append(state.tensor.edge_index + ptrs[-1][-1])
-            edge_index_inc.append(state.tensor._inc_dict["edge_index"] + ptrs[-1][-1])
-            ptrs.append(state.tensor.ptr[1:] + ptrs[-1][-1])
-            batches.append(state.tensor.batch + offset)
-            offset += len(state)
-            _slice_dict["x"].append(
-                state.tensor._slice_dict["x"][1:] + _slice_dict["x"][-1][-1]
-            )
-            _slice_dict["edge_index"].append(
-                state.tensor._slice_dict["edge_index"][1:]
-                + _slice_dict["edge_index"][-1][-1]
-            )
-            _slice_dict["edge_attr"].append(
-                state.tensor._slice_dict["edge_attr"][1:]
-                + _slice_dict["edge_attr"][-1][-1]
-            )
+            all_graphs.extend(state.graphs)
 
-        # Create a new batch
-        batch = GeometricBatch(
-            x=torch.cat(xs, dim=0),
-            edge_index=torch.cat(edge_indices, dim=1),
-            edge_attr=torch.cat(edge_attrs, dim=0),
-            ptr=torch.cat(ptrs, dim=0),
-            batch=torch.cat(batches, dim=0),
-        )
-        batch._inc_dict = {
-            "x": torch.zeros(batch.num_graphs),
-            "edge_index": torch.cat(edge_index_inc, dim=0),
-            "edge_attr": torch.zeros(batch.num_graphs),
-        }
-        batch._slice_dict = {
-            "x": torch.cat(_slice_dict["x"], dim=0),
-            "edge_index": torch.cat(_slice_dict["edge_index"], dim=0),
-            "edge_attr": torch.cat(_slice_dict["edge_attr"], dim=0),
-        }
-        batch.batch_shape = (len(states),) + state_batch_shape
-        out = cls(batch)
+        out = cls(all_graphs)
 
         # Stack log rewards if they exist
         if all(state._log_rewards is not None for state in states):
