@@ -1007,6 +1007,7 @@ def main(args):  # noqa: C901
                 "opt_time": opt_time,
                 "average_time": average_time,
                 "rest_time": rest_time,
+                "l1_dist": None,  # only logged if calculate_partition.
             }
 
             if use_wandb:
@@ -1077,7 +1078,6 @@ def main(args):  # noqa: C901
     try:
         return validation_info["l1_dist"]
     except KeyError:
-        print(validation_info.keys())
         return validation_info["n_modes_found"]
 
 
@@ -1165,7 +1165,7 @@ if __name__ == "__main__":
         "--loss",
         type=str,
         choices=["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"],
-        default="FM",
+        default="TB",
         help="Loss function to use",
     )
     parser.add_argument(
@@ -1263,14 +1263,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--calculate_all_states",
         action="store_true",
-        default=True,
-        help="Enumerates all states.",
+        default=False,
+        help="Disable enumeration of all states.",
     )
     parser.add_argument(
         "--calculate_partition",
         action="store_true",
-        default=True,
-        help="Calculates the true partition function.",
+        default=False,
+        help="Disable calculation of the true partition function.",
     )
     parser.add_argument(
         "--profile",
