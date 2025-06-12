@@ -89,6 +89,7 @@ class Trajectories(Container):
                     ensure_same_device(obj.tensor["x"].device, device)
                 else:
                     ensure_same_device(obj.tensor.device, device)
+
         for tensor in [
             conditioning,
             terminating_idx,
