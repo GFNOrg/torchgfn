@@ -124,23 +124,22 @@ class States(ABC):
             raise ValueError("Only one of `random` and `sink` should be True.")
 
         if random:
-            tensor = cls.make_random_states_tensor(batch_shape, device=device)
+            return cls.make_random_states_tensor(batch_shape, device=device)
         elif sink:
-            tensor = cls.make_sink_states_tensor(batch_shape, device=device)
+            return cls.make_sink_states_tensor(batch_shape, device=device)
         else:
-            tensor = cls.make_initial_states_tensor(batch_shape, device=device)
-        return cls(tensor)
+            return cls.make_initial_states_tensor(batch_shape, device=device)
 
     @classmethod
     def make_initial_states_tensor(
         cls, batch_shape: tuple[int, ...], device: torch.device | None = None
-    ) -> torch.Tensor:
+    ) -> States:
         """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
         device = cls.s0.device if device is None else device
         if isinstance(cls.s0, torch.Tensor):
-            return cls.s0.repeat(*batch_shape, *((1,) * state_ndim)).to(device)
+            return cls(cls.s0.repeat(*batch_shape, *((1,) * state_ndim)).to(device))
         else:
             raise NotImplementedError(
                 f"make_initial_states_tensor is not implemented by default for {cls.__name__}"
@@ -149,13 +148,13 @@ class States(ABC):
     @classmethod
     def make_sink_states_tensor(
         cls, batch_shape: tuple[int, ...], device: torch.device | None = None
-    ) -> torch.Tensor:
+    ) -> States:
         """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
         device = cls.sf.device if device is None else device
         if isinstance(cls.sf, torch.Tensor):
-            return cls.sf.repeat(*batch_shape, *((1,) * state_ndim)).to(device)
+            return cls(cls.sf.repeat(*batch_shape, *((1,) * state_ndim)).to(device))
         else:
             raise NotImplementedError(
                 f"make_sink_states_tensor is not implemented by default for {cls.__name__}"
@@ -577,27 +576,38 @@ class GraphStates(States):
         self.graphs = graphs
         if batch_shape is None:
             batch_shape = (len(graphs),)
-        self._batch_shape = batch_shape
+        self._batch_ptrs = torch.arange(len(graphs)).view(batch_shape)
         self._log_rewards: Optional[torch.Tensor] = None
+    
+    @property
+    def tensor(self) -> GeometricBatch:
+        """Returns the tensor representation of the graphs."""
+        if len(self.graphs) == 0:
+            return GeometricBatch.from_data_list([
+                GeometricData(
+                    x=torch.zeros(0, self.s0.x.size(1)),
+                    edge_index=torch.zeros(2, 0, dtype=torch.long),
+                    edge_attr=torch.zeros(0, self.s0.edge_attr.size(1)),
+                )
+            ])
+        return GeometricBatch.from_data_list(self.graphs)
 
     @property
     def device(self) -> torch.device:
         """Returns the device of the graphs."""
         if len(self.graphs) == 0:
-            return torch.device('cpu')
-        if self.graphs[0].x is None:
-            return torch.device('cpu')
+            raise ValueError("Unknown device for empty GraphStates")
         return self.graphs[0].x.device
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
-        return self._batch_shape
+        return self._batch_ptrs.shape
 
     @classmethod
     def make_initial_states_tensor(
         cls, batch_shape: int | Tuple, device: torch.device | None = None
-    ) -> List[GeometricData]:
+    ) -> GraphStates:
         """Makes a list of graphs consisting of s0 states.
 
         Args:
@@ -616,13 +626,12 @@ class GraphStates(States):
 
         # Create a list of Data objects by copying s0
         data_list = [cls.s0.clone() for _ in range(num_graphs)]
-
-        return data_list
+        return cls(data_list, batch_shape=batch_shape)
 
     @classmethod
     def make_sink_states_tensor(
         cls, batch_shape: int | Tuple, device: torch.device | None = None
-    ) -> List[GeometricData]:
+    ) -> GraphStates:
         """Makes a list of graphs consisting of sf states.
 
         Args:
@@ -644,7 +653,7 @@ class GraphStates(States):
 
         # Create a list of Data objects by copying sf
         data_list = [cls.sf.clone() for _ in range(num_graphs)]
-        return data_list
+        return cls(data_list, batch_shape=batch_shape)
 
     @property
     def forward_masks(self) -> TensorDict:
@@ -677,7 +686,8 @@ class GraphStates(States):
         )
 
         # Remove existing edges
-        for i, graph in enumerate(self.graphs):
+        for i in range(len(self)):
+            graph = self.graphs[self._batch_ptrs.view(-1)[i]]
             if graph.num_nodes is None:
                 continue
             num_nodes = graph.num_nodes
@@ -754,7 +764,8 @@ class GraphStates(States):
             len(self), max_possible_edges, dtype=torch.bool, device=self.device
         )
 
-        for i, graph in enumerate(self.graphs):
+        for i in range(len(self)):
+            graph = self.graphs[self._batch_ptrs.view(-1)[i]]
             if graph.num_nodes is None:
                 continue
             num_nodes = graph.num_nodes
@@ -811,11 +822,10 @@ class GraphStates(States):
         """Returns a detailed string representation of the GraphStates object."""
         parts = [
             f"{self.__class__.__name__}(",
-            f"batch={self.batch_shape},",
-            f"num_graphs={len(self.graphs)},",
-            f"device={self.device},",
+            f"batch={self.batch_shape}, ",
+            f"device={self.device})",
         ]
-        return " ".join(parts)
+        return "".join(parts)
 
     def __getitem__(
         self,
@@ -829,18 +839,12 @@ class GraphStates(States):
         Returns:
             A new GraphStates object containing the selected graphs.
         """
-        if isinstance(index, int):
-            selected_graphs = [self.graphs[index]]
-        elif isinstance(index, slice):
-            selected_graphs = self.graphs[index]
-        elif isinstance(index, (list, tuple, torch.Tensor)):
-            selected_graphs = [self.graphs[i] for i in index]
-        else:
-            raise TypeError(f"Invalid index type: {type(index)}")
+        indices = self._batch_ptrs[index]
+        selected_graphs = [self.graphs[i] for i in indices.flatten()]
+        out = self.__class__(selected_graphs, batch_shape=indices.shape)
 
-        out = self.__class__(selected_graphs)
         if self._log_rewards is not None:
-            out.log_rewards = self._log_rewards[index]
+            out._log_rewards = self._log_rewards[indices]
         return out
 
     def __setitem__(
@@ -854,15 +858,12 @@ class GraphStates(States):
             index: Index or indices to set.
             graph: GraphStates object containing the new graphs.
         """
-        if isinstance(index, int):
-            self.graphs[index] = graph.graphs[0]
-        elif isinstance(index, slice):
-            self.graphs[index] = graph.graphs
-        elif isinstance(index, (list, tuple, torch.Tensor)):
-            for i, g in zip(index, graph.graphs):
-                self.graphs[i] = g
-        else:
-            raise TypeError(f"Invalid index type: {type(index)}")
+        indices = self._batch_ptrs[index]
+        for i, g in zip(indices, graph.graphs):
+            self.graphs[i] = g
+
+        if self._log_rewards is not None:
+            self._log_rewards[indices] = graph._log_rewards
 
     def to(self, device: torch.device) -> GraphStates:
         """Moves the GraphStates to the specified device.
@@ -884,7 +885,8 @@ class GraphStates(States):
         Returns:
             A new GraphStates object with the same data.
         """
-        out = self.__class__([graph.clone() for graph in self.graphs])
+        out = self.__class__(deepcopy(self.graphs))
+        out._batch_ptrs = self._batch_ptrs.clone()
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards.clone()
         return out
@@ -895,214 +897,22 @@ class GraphStates(States):
         Args:
             other: GraphStates object to concatenate with.
         """
-        if len(self) == 0:
-            # If self is empty, just copy other
-            self.tensor = self._clone_batch(other.tensor)
-            self.batch_ptrs = other.batch_ptrs.clone()
-            if other._log_rewards is not None:
-                self._log_rewards = other._log_rewards.clone()
-            return
+        if len(other.batch_shape) == len(self.batch_shape) == 1:
+            self.graphs.extend(other.graphs)
+            self._batch_ptrs = torch.cat([self._batch_ptrs, other._batch_ptrs + len(self)])
+        elif len(other.batch_shape) == len(self.batch_shape) == 2:
+            max_batch_shape = max(self.batch_shape[0], other.batch_shape[0])
+            self_sf = self.make_sink_states_tensor((max_batch_shape - self.batch_shape[0], self.batch_shape[1]))
+            self._batch_ptrs = torch.cat([self._batch_ptrs, self_sf._batch_ptrs + len(self)])
+            self.graphs.extend(self_sf.graphs)
+            other_sf = other.make_sink_states_tensor((max_batch_shape - other.batch_shape[0], other.batch_shape[1]))
+            other._batch_ptrs = torch.cat([other._batch_ptrs, other_sf._batch_ptrs + len(other)])
+            other.graphs.extend(other_sf.graphs)
 
-        self_x, other_x = self.tensor.x, other.tensor.x
-        self_edge_index, other_edge_index = (
-            self.tensor.edge_index,
-            other.tensor.edge_index,
-        )
-        self_edge_attr, other_edge_attr = self.tensor.edge_attr, other.tensor.edge_attr
-        self_ptr, other_ptr = self.tensor.ptr, other.tensor.ptr
-        self_batch, other_batch = self.tensor.batch, other.tensor.batch
-        self_batch_ptrs, other_batch_ptrs = self.batch_ptrs, other.batch_ptrs
-        _self_slice_dict, _other_slice_dict = (
-            self.tensor._slice_dict,
-            other.tensor._slice_dict,
-        )
-        _self_inc_edge_index, _other_inc_edge_index = (
-            self.tensor._inc_dict["edge_index"],
-            other.tensor._inc_dict["edge_index"],
-        )
-
-        # Update the batch shape and pointers
-        if len(self.batch_shape) == 1:
-            # Simple concatenation for 1D batch
-            new_batch_shape = (self.batch_shape[0] + other.batch_shape[0],)
-            self_nodes = self.tensor.num_nodes
-            _slice_dict = {
-                "x": torch.cat(
-                    [
-                        _self_slice_dict["x"],
-                        _self_slice_dict["x"][-1] + _other_slice_dict["x"][1:],
-                    ]
-                ),
-                "edge_index": torch.cat(
-                    [
-                        _self_slice_dict["edge_index"],
-                        _self_slice_dict["edge_index"][-1]
-                        + _other_slice_dict["edge_index"][1:],
-                    ]
-                ),
-                "edge_attr": torch.cat(
-                    [
-                        _self_slice_dict["edge_attr"],
-                        _self_slice_dict["edge_attr"][-1]
-                        + _other_slice_dict["edge_attr"][1:],
-                    ]
-                ),
-            }
-
-            # Create the new batch
-            self.tensor = GeometricBatch(
-                x=torch.cat([self_x, other_x], dim=0),
-                edge_index=torch.cat(
-                    [self_edge_index, self_nodes + other_edge_index], dim=1
-                ),
-                edge_attr=torch.cat([self_edge_attr, other_edge_attr], dim=0),
-                ptr=torch.cat([self_ptr, self_nodes + other_ptr[1:]], dim=0),
-                batch=torch.cat([self_batch, len(self) + other_batch], dim=0),
-            )
-            self.tensor.batch_shape = new_batch_shape
-            self.batch_ptrs = torch.cat(
-                [self_batch_ptrs, self_batch_ptrs.numel() + other_batch_ptrs], dim=0
-            )
-            self.tensor._slice_dict = _slice_dict
-            self.tensor._inc_dict = {
-                "x": torch.zeros(self.tensor.num_graphs),
-                "edge_index": torch.cat(
-                    [
-                        _self_inc_edge_index,
-                        self_ptr[-1] + _other_inc_edge_index,
-                    ]
-                ),
-                "edge_attr": torch.zeros(self.tensor.num_graphs),
-            }
-
+            self._batch_ptrs = torch.cat([self._batch_ptrs, other._batch_ptrs + len(self)], dim=1)
+            self.graphs.extend(other.graphs)
         else:
-            # Handle the case where batch_shape is (T, B)
-            # and we want to concatenate along the B dimension
-            self_batch_shape, other_batch_shape = self.batch_shape, other.batch_shape
-            assert len(self_batch_shape) == 2 and len(other_batch_shape) == 2
-            max_len = max(self_batch_shape[0], other_batch_shape[0])
-
-            # Extend both batches to the same length T with sink states if needed
-            if self.batch_shape[0] < max_len:
-                sink_states = self.make_sink_states_tensor(
-                    (max_len - self_batch_shape[0], self_batch_shape[1])
-                )
-                self_nodes = self_x.size(0)
-                self_x = torch.cat([self_x, sink_states.x], dim=0)
-                self_edge_index = torch.cat(
-                    [self_edge_index, self_nodes + sink_states.edge_index], dim=1
-                )
-                self_edge_attr = torch.cat(
-                    [self_edge_attr, sink_states.edge_attr], dim=0
-                )
-                self_batch = torch.cat(
-                    [self_batch, len(self) + sink_states.batch], dim=0
-                )
-                sink_states_batch_ptrs = torch.arange(
-                    sink_states.num_graphs, device=self.device
-                ).view(sink_states.batch_shape)
-                self_batch_ptrs = torch.cat(
-                    [self_batch_ptrs, len(self) + sink_states_batch_ptrs], dim=0
-                )
-                _self_slice_dict = {
-                    attr: torch.cat(
-                        [
-                            _self_slice_dict[attr],
-                            _self_slice_dict[attr][-1]
-                            + sink_states._slice_dict[attr][1:],
-                        ]
-                    )
-                    for attr in _self_slice_dict.keys()
-                }
-                _self_inc_edge_index = torch.cat(
-                    [
-                        _self_inc_edge_index,
-                        self_ptr[-1].to(_self_inc_edge_index.device)
-                        + sink_states._inc_dict["edge_index"],
-                    ]
-                )
-                self_ptr = torch.cat([self_ptr, self_nodes + sink_states.ptr[1:]], dim=0)
-
-            if other.batch_shape[0] < max_len:
-                sink_states = other.make_sink_states_tensor(
-                    (max_len - other_batch_shape[0], other_batch_shape[1])
-                )
-                other_nodes = other_x.size(0)
-                other_x = torch.cat([other_x, sink_states.x], dim=0)
-                other_edge_index = torch.cat(
-                    [other_edge_index, other_nodes + sink_states.edge_index], dim=1
-                )
-                other_edge_attr = torch.cat(
-                    [other_edge_attr, sink_states.edge_attr], dim=0
-                )
-                other_batch = torch.cat(
-                    [other_batch, len(other) + sink_states.batch], dim=0
-                )
-                sink_states_batch_ptrs = torch.arange(
-                    sink_states.num_graphs, device=self.device
-                ).view(sink_states.batch_shape)
-                other_batch_ptrs = torch.cat(
-                    [other_batch_ptrs, len(other) + sink_states_batch_ptrs], dim=0
-                )
-                _other_slice_dict = {
-                    attr: torch.cat(
-                        [
-                            _other_slice_dict[attr],
-                            _other_slice_dict[attr][-1]
-                            + sink_states._slice_dict[attr][1:],
-                        ]
-                    )
-                    for attr in _other_slice_dict.keys()
-                }
-                _other_inc_edge_index = torch.cat(
-                    [
-                        _other_inc_edge_index,
-                        other_ptr[-1].to(_other_inc_edge_index.device)
-                        + sink_states._inc_dict["edge_index"],
-                    ]
-                )
-                other_ptr = torch.cat(
-                    [other_ptr, other_nodes + sink_states.ptr[1:]], dim=0
-                )
-
-            _slice_dict = {
-                attr: torch.cat(
-                    [
-                        _self_slice_dict[attr],
-                        _self_slice_dict[attr][-1] + _other_slice_dict[attr][1:],
-                    ]
-                )
-                for attr in _self_slice_dict.keys()
-            }
-
-            self.tensor = GeometricBatch(
-                x=torch.cat([self_x, other_x], dim=0),
-                edge_index=torch.cat(
-                    [self_edge_index, self_ptr[-1] + other_edge_index], dim=1
-                ),
-                edge_attr=torch.cat([self_edge_attr, other_edge_attr], dim=0),
-                ptr=torch.cat([self_ptr, self_ptr[-1] + other_ptr[1:]], dim=0),
-                batch=torch.cat([self_batch, (len(self_ptr) - 1) + other_batch], dim=0),
-            )
-            new_batch_shape = (max_len, self_batch_shape[1] + other_batch_shape[1])
-            self.tensor.batch_shape = new_batch_shape
-            new_batch_ptrs = torch.cat(
-                [self_batch_ptrs, self_batch_ptrs.numel() + other_batch_ptrs], dim=1
-            )
-            self.batch_ptrs = new_batch_ptrs
-            self.tensor._slice_dict = _slice_dict
-
-            self.tensor._inc_dict = {
-                "x": torch.zeros(self.tensor.num_graphs),
-                "edge_index": torch.cat(
-                    [
-                        _self_inc_edge_index,
-                        self_ptr[-1].to(_self_inc_edge_index.device)
-                        + _other_inc_edge_index,
-                    ]
-                ),
-                "edge_attr": torch.zeros(self.tensor.num_graphs),
-            }
+            raise ValueError(f"Cannot extend GraphStates with batch shape {other.batch_shape}")
 
         # Combine log rewards if they exist
         if self._log_rewards is not None and other._log_rewards is not None:
@@ -1125,7 +935,8 @@ class GraphStates(States):
         assert other.edge_attr is not None
         assert other.num_nodes is not None
 
-        for i, graph in enumerate(self.graphs):
+        for i in range(len(self)):
+            graph = self.graphs[self._batch_ptrs.view(-1)[i]]
             if graph.num_nodes is None or graph.edge_index is None or graph.edge_attr is None:
                 continue
             if graph.num_nodes != other.num_nodes:
@@ -1194,57 +1005,22 @@ class GraphStates(States):
         state_batch_shape = states[0].batch_shape
         assert all(state.batch_shape == state_batch_shape for state in states)
 
-        # Concatenate all graphs from all states
-        all_graphs = []
+        batch_ptrs = []
+        ptr_offset = 0
+        graphs = []
+        log_rewards = []
+        save_log_rewards = True
         for state in states:
-            xs.append(state.tensor.x)
-            edge_attrs.append(state.tensor.edge_attr)
-            edge_indices.append(state.tensor.edge_index + ptrs[-1][-1])
-            edge_index_inc.append(
-                state.tensor._inc_dict["edge_index"]
-                + ptrs[-1][-1].to(state.tensor._inc_dict["edge_index"].device)
-            )
-            ptrs.append(state.tensor.ptr[1:] + ptrs[-1][-1])
-            batches.append(state.tensor.batch + offset)
-            offset += len(state)
-            _slice_dict["x"].append(
-                state.tensor._slice_dict["x"][1:] + _slice_dict["x"][-1][-1]
-            )
-            _slice_dict["edge_index"].append(
-                state.tensor._slice_dict["edge_index"][1:]
-                + _slice_dict["edge_index"][-1][-1]
-            )
-            _slice_dict["edge_attr"].append(
-                state.tensor._slice_dict["edge_attr"][1:]
-                + _slice_dict["edge_attr"][-1][-1]
-            )
-
-        # Create a new batch
-        batch = GeometricBatch(
-            x=torch.cat(xs, dim=0),
-            edge_index=torch.cat(edge_indices, dim=1),
-            edge_attr=torch.cat(edge_attrs, dim=0),
-            ptr=torch.cat(ptrs, dim=0),
-            batch=torch.cat(batches, dim=0),
-        )
-        batch._inc_dict = {
-            "x": torch.zeros(batch.num_graphs),
-            "edge_index": torch.cat(edge_index_inc, dim=0),
-            "edge_attr": torch.zeros(batch.num_graphs),
-        }
-        batch._slice_dict = {
-            "x": torch.cat(_slice_dict["x"], dim=0),
-            "edge_index": torch.cat(_slice_dict["edge_index"], dim=0),
-            "edge_attr": torch.cat(_slice_dict["edge_attr"], dim=0),
-        }
-        batch.batch_shape = (len(states),) + state_batch_shape
-        out = cls(batch)
-
-        # Stack log rewards if they exist
-        if all(state._log_rewards is not None for state in states):
-            log_rewards = []
-            for state in states:
+            batch_ptrs.append(state._batch_ptrs + ptr_offset)
+            ptr_offset += len(state)
+            graphs.extend(state.graphs)
+            save_log_rewards &= state._log_rewards is not None
+            if save_log_rewards:
                 log_rewards.append(state._log_rewards)
+
+        out = cls(graphs)
+        out._batch_ptrs = torch.stack(batch_ptrs)
+        if save_log_rewards:
             out.log_rewards = torch.stack(log_rewards)
 
         return out

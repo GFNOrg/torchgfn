@@ -335,7 +335,6 @@ def main(args: Namespace):
     )
     gflownet = TBGFlowNet(pf, pb).to(device)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
 
     replay_buffer = ReplayBuffer(
         env,
@@ -383,7 +382,6 @@ def main(args: Namespace):
         )
         loss.backward()
         optimizer.step()
-        scheduler.step()
         losses.append(loss.item())
 
     t2 = time.time()
@@ -421,7 +419,7 @@ if __name__ == "__main__":
 
     # Training parameters
     parser.add_argument(
-        "--n_iterations", type=int, default=200, help="Number of training iterations"
+        "--n_iterations", type=int, default=500, help="Number of training iterations"
     )
     parser.add_argument(
         "--lr", type=float, default=0.001, help="Learning rate for optimizer"
@@ -432,7 +430,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_buffer",
         action="store_true",
-        default=False,
+        default=True,
         help="Whether to use replay buffer",
     )
 

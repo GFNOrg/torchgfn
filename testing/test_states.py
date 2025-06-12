@@ -334,7 +334,7 @@ def test_is_initial_state(state_fixture, request):
     assert is_initial.dtype == torch.bool
 
     initial_states = state.make_initial_states_tensor(state.batch_shape, state.device)
-    assert torch.all(state.__class__(initial_states).is_initial_state)
+    assert torch.all(initial_states.is_initial_state)
 
 
 @pytest.mark.parametrize(
@@ -356,7 +356,7 @@ def test_is_sink_state(state_fixture, request):
     assert is_sink.dtype == torch.bool
 
     sink_states = state.make_sink_states_tensor(state.batch_shape, state.device)
-    assert torch.all(state.__class__(sink_states).is_sink_state)
+    assert torch.all(sink_states.is_sink_state)
 
 
 @pytest.mark.parametrize(

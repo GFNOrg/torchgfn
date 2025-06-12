@@ -244,10 +244,10 @@ class Env(ABC):
 
         # Set to the sink state when the action is exit.
         new_sink_states_idx = actions.is_exit
-        sf_tensor = self.States.make_sink_states_tensor(
+        sf_states = self.States.make_sink_states_tensor(
             (int(new_sink_states_idx.sum().item()),), device=states.device
         )
-        new_states[new_sink_states_idx] = self.States(sf_tensor)
+        new_states[new_sink_states_idx] = sf_states
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
         assert new_sink_states_idx.shape == states.batch_shape
 
@@ -256,13 +256,14 @@ class Env(ABC):
 
         new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
 
-        if not isinstance(new_not_done_states_tensor, (torch.Tensor, GeometricBatch)):
+        if not isinstance(new_not_done_states_tensor, (torch.Tensor, GraphStates)):
             raise Exception(
                 "User implemented env.step function *must* return a torch.Tensor or "
-                "a GeometricBatch (for graph-based environments)."
+                "a GraphStates (for graph-based environments)."
             )
 
-        new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
+        #new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
+        new_states[~new_sink_states_idx] = new_not_done_states_tensor
         return new_states
 
     def _backward_step(self, states: States, actions: Actions) -> States:

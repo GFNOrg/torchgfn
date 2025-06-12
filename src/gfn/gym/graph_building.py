@@ -60,7 +60,7 @@ class GraphBuilding(GraphEnv):
             is_directed=is_directed,
         )
 
-    def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
+    def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Step function for the GraphBuilding environment.
 
         Args:
@@ -70,9 +70,9 @@ class GraphBuilding(GraphEnv):
         Returns the next graph the new GraphStates.
         """
         if len(actions) == 0:
-            return states.tensor
+            return states
 
-        data_list = states.tensor.to_data_list()
+        data_list = states.graphs
 
         # Create masks for different action types
         # Flatten each mask, from (*batch_shape) to (prod(batch_shape),)
@@ -125,13 +125,11 @@ class GraphBuilding(GraphEnv):
                 data_list[idx] = self.sf
 
         # Create a new batch from the updated data list
-        new_tensor = GeometricBatch.from_data_list(data_list)
-        new_tensor.batch_shape = states.tensor.batch_shape
-        return new_tensor
+        return self.States(data_list, batch_shape=states.batch_shape)
 
     def backward_step(
         self, states: GraphStates, actions: GraphActions
-    ) -> GeometricBatch:
+    ) -> GraphStates:
         """Backward step function for the GraphBuilding environment.
 
         Args:
@@ -141,10 +139,10 @@ class GraphBuilding(GraphEnv):
         Returns the previous graph as a new GraphStates.
         """
         if len(actions) == 0:
-            return states.tensor
+            return states
 
         # Get the data list from the batch
-        data_list = states.tensor.to_data_list()
+        data_list = states.graphs
 
         # Create masks for different action types
         # Flatten each mask, from (*batch_shape) to (prod(batch_shape),)
@@ -202,9 +200,7 @@ class GraphBuilding(GraphEnv):
                 graph.edge_attr = graph.edge_attr[edge_mask]
 
         # Create a new batch from the updated data list
-        new_batch = GeometricBatch.from_data_list(data_list)
-        new_batch.batch_shape = states.batch_shape
-        return new_batch
+        return self.States(data_list, batch_shape=states.batch_shape)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
@@ -326,7 +322,7 @@ class GraphBuilding(GraphEnv):
 
     def make_random_states_tensor(
         self, batch_shape: Tuple, device: torch.device | None = None
-    ) -> GeometricBatch:
+    ) -> GraphStates:
         """Generates random states tensor of shape (*batch_shape, feature_dim).
 
         Args:
@@ -380,13 +376,7 @@ class GraphBuilding(GraphEnv):
                 )
             ]
 
-        # Create a batch from the list
-        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
-
-        # Store the batch shape for later reference
-        batch.batch_shape = batch_shape
-
-        return batch
+        return self.States(data_list, batch_shape=batch_shape)
 
     def make_states_class(self) -> type[GraphStates]:
         env = self
@@ -551,7 +541,7 @@ class GraphBuildingOnEdges(GraphBuilding):
 
     def make_random_states_tensor(
         self, batch_shape: Tuple, device: torch.device | None = None
-    ) -> GeometricBatch:
+    ) -> GraphStates:
         """Makes a batch of random graph states with fixed number of nodes.
 
         Args:
@@ -602,13 +592,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                 )
             ]
 
-        # Create a batch from the list
-        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
-
-        # Store the batch shape for later reference
-        batch.batch_shape = batch_shape
-
-        return batch
+        return self.States(data_list, batch_shape=batch_shape)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
