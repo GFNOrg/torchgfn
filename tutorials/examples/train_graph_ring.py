@@ -77,9 +77,6 @@ class RingReward(object):
         Returns:
             A tensor of rewards with the same batch shape as states.
         """
-        if states.tensor.edge_index.numel() == 0:
-            return torch.full(states.batch_shape, self.eps_val, device=self.device)
-
         out = torch.full(
             (len(states),), self.eps_val, device=self.device
         )  # Default reward.
@@ -133,9 +130,6 @@ class RingReward(object):
         Returns:
             A tensor of rewards with the same batch shape as states
         """
-        if states.tensor.edge_index.numel() == 0:
-            return torch.full(states.batch_shape, self.eps_val, device=self.device)
-
         out = torch.full(
             (len(states),), self.eps_val, device=self.device
         )  # Default reward.
@@ -419,7 +413,7 @@ if __name__ == "__main__":
 
     # Training parameters
     parser.add_argument(
-        "--n_iterations", type=int, default=500, help="Number of training iterations"
+        "--n_iterations", type=int, default=200, help="Number of training iterations"
     )
     parser.add_argument(
         "--lr", type=float, default=0.001, help="Learning rate for optimizer"
