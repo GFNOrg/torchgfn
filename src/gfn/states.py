@@ -21,7 +21,7 @@ from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 from torch_geometric.data.data import BaseData
 
-from gfn.actions import GraphActionType
+from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.graphs import get_edge_indices
 
 
@@ -739,20 +739,20 @@ class GraphStates(States):
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
         return TensorDict(
             {
-                "action_type": action_type,
-                "node_class": torch.ones(
+                GraphActions.ACTION_TYPE_KEY: action_type,
+                GraphActions.NODE_CLASS_KEY: torch.ones(
                     *self.batch_shape,
                     self.num_node_classes,
                     dtype=torch.bool,
                     device=self.device,
                 ),
-                "edge_class": torch.ones(
+                GraphActions.EDGE_CLASS_KEY: torch.ones(
                     *self.batch_shape,
                     self.num_edge_classes,
                     dtype=torch.bool,
                     device=self.device,
                 ),
-                "edge_index": edge_masks,
+                GraphActions.EDGE_INDEX_KEY: edge_masks,
             },
             batch_size=self.batch_shape,
         )
@@ -823,20 +823,20 @@ class GraphStates(States):
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
         return TensorDict(
             {
-                "action_type": action_type,
-                "node_class": torch.ones(
+                GraphActions.ACTION_TYPE_KEY: action_type,
+                GraphActions.NODE_CLASS_KEY: torch.ones(
                     *self.batch_shape,
                     self.num_node_classes,
                     dtype=torch.bool,
                     device=self.device,
                 ),
-                "edge_class": torch.ones(
+                GraphActions.EDGE_CLASS_KEY: torch.ones(
                     *self.batch_shape,
                     self.num_edge_classes,
                     dtype=torch.bool,
                     device=self.device,
                 ),
-                "edge_index": edge_masks,
+                GraphActions.EDGE_INDEX_KEY: edge_masks,
             },
             batch_size=self.batch_shape,
         )
@@ -1111,7 +1111,8 @@ class GraphStates(States):
                 _self_inc_edge_index = torch.cat(
                     [
                         _self_inc_edge_index,
-                        self_ptr[-1] + sink_states._inc_dict["edge_index"],
+                        self_ptr[-1].to(_self_inc_edge_index.device)
+                        + sink_states._inc_dict["edge_index"],
                     ]
                 )
                 self_ptr = torch.cat([self_ptr, self_nodes + sink_states.ptr[1:]], dim=0)
@@ -1150,7 +1151,8 @@ class GraphStates(States):
                 _other_inc_edge_index = torch.cat(
                     [
                         _other_inc_edge_index,
-                        other_ptr[-1] + sink_states._inc_dict["edge_index"],
+                        other_ptr[-1].to(_other_inc_edge_index.device)
+                        + sink_states._inc_dict["edge_index"],
                     ]
                 )
                 other_ptr = torch.cat(
@@ -1189,7 +1191,8 @@ class GraphStates(States):
                 "edge_index": torch.cat(
                     [
                         _self_inc_edge_index,
-                        self_ptr[-1] + _other_inc_edge_index,
+                        self_ptr[-1].to(_self_inc_edge_index.device)
+                        + _other_inc_edge_index,
                     ]
                 ),
                 "edge_attr": torch.zeros(self.tensor.num_graphs),
@@ -1309,7 +1312,10 @@ class GraphStates(States):
             xs.append(state.tensor.x)
             edge_attrs.append(state.tensor.edge_attr)
             edge_indices.append(state.tensor.edge_index + ptrs[-1][-1])
-            edge_index_inc.append(state.tensor._inc_dict["edge_index"] + ptrs[-1][-1])
+            edge_index_inc.append(
+                state.tensor._inc_dict["edge_index"]
+                + ptrs[-1][-1].to(state.tensor._inc_dict["edge_index"].device)
+            )
             ptrs.append(state.tensor.ptr[1:] + ptrs[-1][-1])
             batches.append(state.tensor.batch + offset)
             offset += len(state)

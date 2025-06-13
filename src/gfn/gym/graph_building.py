@@ -521,7 +521,9 @@ class GraphBuildingOnEdges(GraphBuilding):
                     TensorDict: Boolean mask where True indicates valid actions
                 """
                 forward_masks = super().forward_masks
-                forward_masks["action_type"][..., GraphActionType.ADD_NODE] = False
+                forward_masks[GraphActions.ACTION_TYPE_KEY][
+                    ..., GraphActionType.ADD_NODE
+                ] = False
                 return forward_masks
 
             @property
@@ -540,7 +542,9 @@ class GraphBuildingOnEdges(GraphBuilding):
                     TensorDict: Boolean mask where True indicates valid actions
                 """
                 backward_masks = super().backward_masks
-                backward_masks["action_type"][..., GraphActionType.ADD_NODE] = False
+                backward_masks[GraphActions.ACTION_TYPE_KEY][
+                    ..., GraphActionType.ADD_NODE
+                ] = False
                 return backward_masks
 
         return GraphBuildingOnEdgesStates
