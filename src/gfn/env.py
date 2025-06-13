@@ -132,9 +132,9 @@ class Env(ABC):
         """
 
     @abstractmethod
-    def backward_step(  # TODO: rename to backward_step, other method becomes _backward_step.
+    def backward_step(
         self, states: States, actions: Actions
-    ) -> torch.Tensor:
+    ) -> States:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
 
@@ -157,7 +157,7 @@ class Env(ABC):
 
     def make_random_states_tensor(
         self, batch_shape: Tuple, device: torch.device | None = None
-    ) -> torch.Tensor:
+    ) -> States:
         """Optional method inherited by all States instances to emit a random tensor."""
         raise NotImplementedError
 
@@ -277,8 +277,7 @@ class Env(ABC):
             )
 
         # Calculate the backward step, and update only the states which are not Done.
-        new_not_done_states_tensor = self.backward_step(valid_states, valid_actions)
-        new_states[valid_states_idx] = self.States(new_not_done_states_tensor)
+        new_states[valid_states_idx] = self.backward_step(valid_states, valid_actions)
 
         return new_states
 
@@ -641,19 +640,19 @@ class GraphEnv(Env):
         return states
 
     @abstractmethod
-    def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
+    def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Function that takes a batch of graph states and actions and returns a batch of next
         graph states."""
 
     @abstractmethod
     def backward_step(
         self, states: GraphStates, actions: GraphActions
-    ) -> GeometricBatch:
+    ) -> GraphStates:
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""
 
     def make_random_states_tensor(
         self, batch_shape: int | Tuple, device: torch.device | None = None
-    ) -> GeometricBatch:
+    ) -> GraphStates:
         """Returns a batch of random graph states."""
         raise NotImplementedError

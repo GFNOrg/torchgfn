@@ -1,12 +1,10 @@
 from math import prod
-from typing import Callable, List, Literal, Tuple, cast
+from typing import Callable, List, Literal, Tuple
 
 import numpy as np
 import torch
 from tensordict import TensorDict
-from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
-from torch_geometric.data.data import BaseData
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import GraphEnv
@@ -271,10 +269,10 @@ class GraphBuilding(GraphEnv):
 
     def _add_node(
         self,
-        data_list: List[BaseData],
+        data_list: List[GeometricData],
         batch_indices_flat: torch.Tensor,
         node_class: torch.Tensor,
-    ) -> List[BaseData]:
+    ) -> List[GeometricData]:
         """Add nodes to graphs in a batch.
 
         Args:

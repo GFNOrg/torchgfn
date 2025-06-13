@@ -227,6 +227,7 @@ class BitSequence(DiscreteEnv):
         self.H = H
         self.modes = self.make_modes_set(seed)  # set of modes written as binary
         self.temperature = temperature
+        self.States: type[BitSequenceStates] = self.States
 
     def make_states_class(self) -> type[BitSequenceStates]:
         env = self
@@ -309,7 +310,7 @@ class BitSequence(DiscreteEnv):
         )
         states.backward_masks[~is_sink, last_actions] = True
 
-    def step(self, states: BitSequenceStates, actions: Actions) -> torch.Tensor:
+    def step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
 
@@ -329,9 +330,9 @@ class BitSequence(DiscreteEnv):
             dtype=torch.long,
             device=old_tensor.device,
         )
-        return old_tensor
+        return self.States(old_tensor)
 
-    def backward_step(self, states: BitSequenceStates, actions: Actions) -> torch.Tensor:
+    def backward_step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
         Operates on flattened states only.
@@ -352,7 +353,7 @@ class BitSequence(DiscreteEnv):
         ).all()
         old_tensor = states.tensor.clone()
         old_tensor[..., states.length - 1] = -1
-        return old_tensor
+        return self.States(old_tensor)
 
     def _step(self, states: BitSequenceStates, actions: Actions):
         """
@@ -745,7 +746,7 @@ class BitSequencePlus(BitSequence):
         states.backward_masks[~is_sink, last_actions] = True
         states.backward_masks[~is_sink, first_actions + (self.n_actions - 1) // 2] = True
 
-    def step(self, states: BitSequenceStates, actions: Actions) -> torch.Tensor:
+    def step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
         is_exit = actions.is_exit
         old_tensor = states.tensor.clone()
         append_mask = (actions.tensor < (self.n_actions - 1) // 2).squeeze()
@@ -768,9 +769,9 @@ class BitSequencePlus(BitSequence):
             dtype=torch.long,
             device=old_tensor.device,
         )
-        return old_tensor
+        return self.States(old_tensor)
 
-    def backward_step(self, states: BitSequenceStates, actions: Actions) -> torch.Tensor:
+    def backward_step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
         old_tensor = states.tensor.clone()
         remove_end_mask = (actions.tensor < (self.n_actions - 1) // 2).squeeze()
         remove_front_mask = ~remove_end_mask
@@ -780,7 +781,7 @@ class BitSequencePlus(BitSequence):
         old_tensor[remove_front_mask, :-1] = old_tensor[remove_front_mask, 1:]
 
         old_tensor[remove_front_mask, -1] = -1
-        return old_tensor
+        return self.States(old_tensor)
 
     def trajectory_from_terminating_states(
         self, terminating_states_tensor: torch.Tensor

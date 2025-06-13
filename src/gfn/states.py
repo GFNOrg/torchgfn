@@ -100,7 +100,7 @@ class States(ABC):
         random: bool = False,
         sink: bool = False,
         device: torch.device | None = None,
-    ) -> States | GraphStates:
+    ) -> States:
         """Create a States object with the given batch shape.
 
         By default, all states are initialized to $s_0$, the initial state. Optionally,

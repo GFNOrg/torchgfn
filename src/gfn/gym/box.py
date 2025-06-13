@@ -42,12 +42,12 @@ class Box(Env):
 
     def make_random_states_tensor(
         self, batch_shape: Tuple[int, ...], device: torch.device | None = None
-    ) -> torch.Tensor:
+    ) -> States:
         """Generates random states tensor of shape (*batch_shape, 2)."""
         device = self.device if device is None else device
-        return torch.rand(batch_shape + (2,), device=device)
+        return self.States(torch.rand(batch_shape + (2,), device=device))
 
-    def step(self, states: States, actions: Actions) -> torch.Tensor:
+    def step(self, states: States, actions: Actions) -> States:
         """Step function for the Box environment.
 
         Args:
@@ -56,9 +56,9 @@ class Box(Env):
 
         Returns the next states as tensor of shape (*batch_shape, 2).
         """
-        return states.tensor + actions.tensor
+        return self.States(states.tensor + actions.tensor)
 
-    def backward_step(self, states: States, actions: Actions) -> torch.Tensor:
+    def backward_step(self, states: States, actions: Actions) -> States:
         """Backward step function for the Box environment.
 
         Args:
@@ -67,7 +67,7 @@ class Box(Env):
 
         Returns the previous states as tensor of shape (*batch_shape, 2).
         """
-        return states.tensor - actions.tensor
+        return self.States(states.tensor - actions.tensor)
 
     @staticmethod
     def norm(x: torch.Tensor) -> torch.Tensor:
