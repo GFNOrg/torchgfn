@@ -1,6 +1,5 @@
 """This file contains some examples of modules that can be used with GFN."""
 
-import math
 from typing import Literal, Optional
 
 import torch
@@ -446,15 +445,15 @@ class GraphEdgeActionGNN(nn.Module):
             i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
 
         # Grab the needed elements from the adjacency matrix and reshape.
-        edge_actions = edgewise_dot_prod[torch.arange(len(states_tensor))[:, None, None], i0, i1]
+        edge_actions = edgewise_dot_prod[
+            torch.arange(len(states_tensor))[:, None, None], i0, i1
+        ]
         edge_actions = edge_actions.reshape(
             len(states_tensor),
             self.edges_dim,
         )
 
-        action_type = torch.ones(len(states_tensor), 3, device=x.device) * float(
-            "-inf"
-        )
+        action_type = torch.ones(len(states_tensor), 3, device=x.device) * float("-inf")
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
         else:
@@ -620,9 +619,7 @@ class GraphEdgeActionMLP(nn.Module):
         # Generate edge and exit actions
         edge_actions = self.edge_mlp(embedding)
 
-        action_type = torch.ones(len(states_tensor), 3, device=device) * float(
-            "-inf"
-        )
+        action_type = torch.ones(len(states_tensor), 3, device=device) * float("-inf")
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
         else:

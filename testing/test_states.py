@@ -1,6 +1,5 @@
 import pytest
 import torch
-from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActions, GraphActionType
@@ -50,13 +49,7 @@ def simple_graph_state(datas):
 @pytest.fixture
 def empty_graph_state():
     """Creates an empty GraphStates object"""
-    # Create an empty batch
-    batch = GeometricData()
-    batch.x = torch.zeros((0, 1))
-    batch.edge_index = torch.zeros((2, 0), dtype=torch.long)
-    batch.edge_attr = torch.zeros((0, 1))
-    batch.batch = torch.zeros((0,), dtype=torch.long)
-    return MyGraphStates([batch])
+    return MyGraphStates([])
 
 
 @pytest.fixture
@@ -248,9 +241,7 @@ def test_setitem_2d(datas):
     assert states.batch_shape == (2, 2)  # Batch shape should not change
 
     # Set the new graphs in the first column
-    new_batch_col = GeometricBatch.from_data_list(datas[6:8])
-    new_batch_col.batch_shape = (2,)
-    new_states_col = MyGraphStates(new_batch_col)
+    new_states_col = MyGraphStates(datas[6:8], batch_shape=(2,))
     states[:, 1] = new_states_col
     assert torch.equal(states[1, 1].tensor.x, datas[7].x)
     assert torch.equal(states[1, 1].tensor.edge_attr, datas[7].edge_attr)
@@ -280,14 +271,8 @@ def test_clone(state_fixture, request):
         assert torch.equal(cloned.tensor.edge_attr, state.tensor.edge_attr)
 
     # Modify the clone and check that the original is unchanged
-    if hasattr(state.tensor, "shape"):
-        cloned.tensor[..., 0] = 99.0
-        assert cloned.tensor[..., 0] == 99.0
-        assert state.tensor[..., 0] != 99.0
-    else:
-        cloned.tensor.x[..., 0] = 99.0
-        assert cloned.tensor.x[0] == 99.0
-        assert state.tensor.x[0] != 99.0
+    cloned[0] = cloned.make_initial_states_tensor((1,))
+    assert state[0] != cloned[0]
 
 
 @pytest.mark.parametrize(
@@ -433,12 +418,6 @@ def test_extend_2d(datas):
     state1 = MyGraphStates(datas[:4], batch_shape=(2, 2))
     state2 = MyGraphStates(datas[4:], batch_shape=(3, 2))
 
-    # Extend state1 with state2
-    state1.extend(state2)
-
-    # Check final shape should be (max_len=3, B=4)
-    assert state1.batch_shape == (3, 4)
-
     # Check that we have the correct number of nodes and edges
     # Each graph has 2 nodes and 1 edge
     # For 3 time steps and 2 batches, we should have:
@@ -447,6 +426,11 @@ def test_extend_2d(datas):
     expected_nodes += 2 * MyGraphStates.sf.num_nodes
     expected_edges = state1.tensor.num_edges + state2.tensor.num_edges
     expected_edges += 2 * MyGraphStates.sf.num_edges
+
+    # Extend state1 with state2
+    state1.extend(state2)
+    # Check final shape should be (max_len=3, B=4)
+    assert state1.batch_shape == (3, 4)
 
     # The actual count might be higher due to padding with sink states
     assert state1.tensor.num_nodes == expected_nodes

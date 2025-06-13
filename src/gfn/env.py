@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple, cast
 
 import torch
-from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import Actions, GraphActions
@@ -132,9 +131,7 @@ class Env(ABC):
         """
 
     @abstractmethod
-    def backward_step(
-        self, states: States, actions: Actions
-    ) -> States:
+    def backward_step(self, states: States, actions: Actions) -> States:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
 
@@ -645,9 +642,7 @@ class GraphEnv(Env):
         graph states."""
 
     @abstractmethod
-    def backward_step(
-        self, states: GraphStates, actions: GraphActions
-    ) -> GraphStates:
+    def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""
 

@@ -143,7 +143,9 @@ class HyperGrid(DiscreteEnv):
         Returns the batch of random states as tensor of shape (*batch_shape, *state_shape).
         """
         device = self.device if device is None else device
-        tensor = torch.randint(0, self.height, batch_shape + self.s0.shape, device=device)
+        tensor = torch.randint(
+            0, self.height, batch_shape + self.s0.shape, device=device
+        )
         return self.States(tensor)
 
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:

@@ -125,9 +125,7 @@ class GraphBuilding(GraphEnv):
         # Create a new batch from the updated data list
         return self.States(data_list, batch_shape=states.batch_shape)
 
-    def backward_step(
-        self, states: GraphStates, actions: GraphActions
-    ) -> GraphStates:
+    def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Backward step function for the GraphBuilding environment.
 
         Args:

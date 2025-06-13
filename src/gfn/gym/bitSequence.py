@@ -332,7 +332,9 @@ class BitSequence(DiscreteEnv):
         )
         return self.States(old_tensor)
 
-    def backward_step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
+    def backward_step(
+        self, states: BitSequenceStates, actions: Actions
+    ) -> BitSequenceStates:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
         Operates on flattened states only.
@@ -771,7 +773,9 @@ class BitSequencePlus(BitSequence):
         )
         return self.States(old_tensor)
 
-    def backward_step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
+    def backward_step(
+        self, states: BitSequenceStates, actions: Actions
+    ) -> BitSequenceStates:
         old_tensor = states.tensor.clone()
         remove_end_mask = (actions.tensor < (self.n_actions - 1) // 2).squeeze()
         remove_front_mask = ~remove_end_mask
