@@ -39,6 +39,7 @@ class SetAddition(DiscreteEnv):
         state_shape = (n_items,)
 
         super().__init__(n_actions, s0, state_shape)
+        self.States: type[DiscreteStates] = self.States
 
     def get_states_indices(self, states: DiscreteStates):
         states_raw = states.tensor
@@ -88,13 +89,13 @@ class SetAddition(DiscreteEnv):
 
         states.backward_masks[..., : self.n_items] = states.tensor != 0
 
-    def step(self, states: DiscreteStates, actions: Actions) -> torch.Tensor:
+    def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
-        return new_states_tensor
+        return self.States(new_states_tensor)
 
-    def backward_step(self, states: DiscreteStates, actions: Actions):
+    def backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
-        return new_states_tensor
+        return self.States(new_states_tensor)
 
     def reward(self, final_states: DiscreteStates) -> torch.Tensor:
         return self.reward_fn(final_states.tensor)

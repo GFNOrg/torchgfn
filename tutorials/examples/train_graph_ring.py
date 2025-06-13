@@ -77,9 +77,6 @@ class RingReward(object):
         Returns:
             A tensor of rewards with the same batch shape as states.
         """
-        if states.tensor.edge_index.numel() == 0:
-            return torch.full(states.batch_shape, self.eps_val, device=self.device)
-
         out = torch.full(
             (len(states),), self.eps_val, device=self.device
         )  # Default reward.
@@ -133,9 +130,6 @@ class RingReward(object):
         Returns:
             A tensor of rewards with the same batch shape as states
         """
-        if states.tensor.edge_index.numel() == 0:
-            return torch.full(states.batch_shape, self.eps_val, device=self.device)
-
         out = torch.full(
             (len(states),), self.eps_val, device=self.device
         )  # Default reward.
@@ -335,7 +329,6 @@ def main(args: Namespace):
     )
     gflownet = TBGFlowNet(pf, pb).to(device)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
 
     replay_buffer = ReplayBuffer(
         env,
@@ -383,7 +376,6 @@ def main(args: Namespace):
         )
         loss.backward()
         optimizer.step()
-        scheduler.step()
         losses.append(loss.item())
 
     t2 = time.time()
@@ -432,7 +424,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_buffer",
         action="store_true",
-        default=False,
+        default=True,
         help="Whether to use replay buffer",
     )
 

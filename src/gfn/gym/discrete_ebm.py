@@ -100,6 +100,7 @@ class DiscreteEBM(DiscreteEnv):
             n_actions=n_actions,
             sf=sf,
         )
+        self.States: type[DiscreteStates] = self.States
 
     def update_masks(self, states: DiscreteStates) -> None:
         states.forward_masks[..., : self.ndim] = states.tensor == -1
@@ -110,12 +111,13 @@ class DiscreteEBM(DiscreteEnv):
 
     def make_random_states_tensor(
         self, batch_shape: Tuple, device: torch.device | None = None
-    ) -> torch.Tensor:
+    ) -> DiscreteStates:
         """Generates random states tensor of shape (*batch_shape, ndim)."""
         device = self.device if device is None else device
-        return torch.randint(
+        tensor = torch.randint(
             -1, 2, batch_shape + (self.ndim,), dtype=torch.long, device=device
         )
+        return self.States(tensor)
 
     def is_exit_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """Determines if the actions are exit actions.
@@ -127,7 +129,7 @@ class DiscreteEBM(DiscreteEnv):
         """
         return actions == self.n_actions - 1
 
-    def step(self, states: States, actions: Actions) -> torch.Tensor:
+    def step(self, states: States, actions: Actions) -> States:
         """Performs a step.
 
         Args:
@@ -151,9 +153,9 @@ class DiscreteEBM(DiscreteEnv):
         states.tensor[mask_1] = states.tensor[mask_1].scatter(
             -1, (actions.tensor[mask_1] - self.ndim), 1  # Set indices to 1.
         )
-        return states.tensor
+        return self.States(states.tensor)
 
-    def backward_step(self, states: States, actions: Actions) -> torch.Tensor:
+    def backward_step(self, states: States, actions: Actions) -> States:
         """Performs a backward step.
 
         In this env, states are n-dim vectors. s0 is empty (represented as -1),
@@ -163,7 +165,7 @@ class DiscreteEBM(DiscreteEnv):
             A backward action asks "what index should be set back to -1", hence the fmod
             to enable wrapping of indices.
         """
-        return states.tensor.scatter(-1, actions.tensor.fmod(self.ndim), -1)
+        return self.States(states.tensor.scatter(-1, actions.tensor.fmod(self.ndim), -1))
 
     def reward(self, final_states: DiscreteStates) -> torch.Tensor:
         """Not used during training but provided for completeness.
