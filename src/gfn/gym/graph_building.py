@@ -96,6 +96,8 @@ class GraphBuilding(GraphEnv):
                 edge_idx = action_edge_index_flat[i]
 
                 assert isinstance(graph.num_nodes, int)
+                assert graph.edge_index is not None
+                assert graph.edge_attr is not None
                 src, dst = get_edge_indices(
                     graph.num_nodes, self.is_directed, graph.edge_index.device
                 )
@@ -154,6 +156,7 @@ class GraphBuilding(GraphEnv):
             for i in add_node_index:
                 graph = data_list[i]
                 assert isinstance(graph.num_nodes, int)
+                assert graph.x is not None
 
                 # Find nodes with matching features
                 is_equal = torch.all(graph.x == node_class_flat[i].unsqueeze(0), dim=1)
@@ -181,6 +184,8 @@ class GraphBuilding(GraphEnv):
                 edge_idx = action_edge_index_flat[i]
 
                 assert isinstance(graph.num_nodes, int)
+                assert graph.edge_index is not None
+                assert graph.edge_attr is not None
                 src, dst = get_edge_indices(
                     graph.num_nodes, self.is_directed, graph.edge_index.device
                 )

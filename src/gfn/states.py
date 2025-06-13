@@ -586,20 +586,25 @@ class GraphStates(States):
             return GeometricBatch.from_data_list(
                 [
                     GeometricData(
-                        x=torch.zeros(0, self.s0.x.size(1)),
+                        x=torch.zeros(0, self.num_node_classes),
                         edge_index=torch.zeros(2, 0, dtype=torch.long),
-                        edge_attr=torch.zeros(0, self.s0.edge_attr.size(1)),
+                        edge_attr=torch.zeros(0, self.num_edge_classes),
                     )
                 ]
             )
-        return GeometricBatch.from_data_list(self.graphs)
+        return GeometricBatch.from_data_list(self.graphs)  # type: ignore
 
     @property
     def device(self) -> torch.device:
         """Returns the device of the graphs."""
-        if len(self.graphs) == 0:
-            raise ValueError("Unknown device for empty GraphStates")
-        return self.graphs[0].x.device
+        for g in self.graphs:
+            if g.x is not None:
+                return g.x.device
+            if g.edge_attr is not None:
+                return g.edge_attr.device
+            if g.edge_index is not None:
+                return g.edge_index.device
+        raise ValueError("No device found for GraphStates")
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
@@ -850,7 +855,8 @@ class GraphStates(States):
         out = self.__class__(selected_graphs, batch_shape=indices.shape)
 
         if self._log_rewards is not None:
-            out._log_rewards = self._log_rewards[index]
+            log_rewards = self._log_rewards.view(-1)[indices.flatten()]
+            out._log_rewards = log_rewards.reshape(indices.shape)
         return out
 
     def __setitem__(
@@ -864,16 +870,18 @@ class GraphStates(States):
             index: Index or indices to set.
             graph: GraphStates object containing the new graphs.
         """
-        indices = self._batch_ptrs[index].flatten()
-        assert len(indices) == len(
+        indices = self._batch_ptrs[index]
+        assert indices.numel() == len(
             graph.graphs
         ), "The number of graphs to set must match the number of graphs in the GraphStates"
 
-        for i, g in zip(indices, graph.graphs):
+        for i, g in zip(indices.flatten(), graph.graphs):
             self.graphs[i] = g
 
-        if self._log_rewards is not None:
+        if self._log_rewards is not None and graph._log_rewards is not None:
             self._log_rewards[indices] = graph._log_rewards
+        else:
+            self._log_rewards = None
 
     def to(self, device: torch.device) -> GraphStates:
         """Moves the GraphStates to the specified device.
@@ -884,7 +892,7 @@ class GraphStates(States):
         Returns:
             The GraphStates object on the specified device.
         """
-        self.graphs = [graph.to(device) for graph in self.graphs]
+        self.graphs = [graph.to(str(device)) for graph in self.graphs]
         if self._log_rewards is not None:
             self._log_rewards = self._log_rewards.to(device)
         return self
@@ -913,11 +921,6 @@ class GraphStates(States):
                 [self._batch_ptrs, other._batch_ptrs + len(self)]
             )
 
-            # Combine log rewards if they exist
-            if self._log_rewards is not None and other._log_rewards is not None:
-                self._log_rewards = torch.cat(
-                    [self._log_rewards, other._log_rewards], dim=0
-                )
         elif len(other.batch_shape) == len(self.batch_shape) == 2:
             max_batch_shape = max(self.batch_shape[0], other.batch_shape[0])
             self_sf = self.make_sink_states_tensor(
@@ -940,16 +943,18 @@ class GraphStates(States):
             )
             self.graphs.extend(other.graphs)
 
-            # Combine log rewards if they exist
-            if self._log_rewards is not None and other._log_rewards is not None:
-                self._log_rewards = torch.cat(
-                    [self._log_rewards, other._log_rewards], dim=1
-                )
-
+            # We don't have log rewards of sf states
+            self._log_rewards = None
         else:
             raise ValueError(
                 f"Cannot extend GraphStates with batch shape {other.batch_shape}"
             )
+
+        # Combine log rewards if they exist
+        if self._log_rewards is not None and other._log_rewards is not None:
+            self._log_rewards = torch.cat([self._log_rewards, other._log_rewards], dim=0)
+        else:
+            self._log_rewards = None
 
     def _compare(self, other: GeometricData) -> torch.Tensor:
         """Compares the current batch of graphs with another graph.
