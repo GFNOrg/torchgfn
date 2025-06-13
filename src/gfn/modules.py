@@ -524,7 +524,7 @@ class DiscreteGraphPolicyEstimator(GFNModule):
                 no_possible_edge_index, GraphActionType.ADD_EDGE
             ]
         ).all()
-        logits[GraphActions.EDGE_INDEX_KEY][no_possible_edge_index] = 0
+        logits[GraphActions.EDGE_INDEX_KEY][no_possible_edge_index] = 0.0
 
         # Check if no possible edge class can be added,
         # and assert that action type cannot be ADD_EDGE
@@ -536,7 +536,7 @@ class DiscreteGraphPolicyEstimator(GFNModule):
                 no_possible_edge_class, GraphActionType.ADD_EDGE
             ]
         ).all()
-        logits[GraphActions.EDGE_CLASS_KEY][no_possible_edge_class] = 0
+        logits[GraphActions.EDGE_CLASS_KEY][no_possible_edge_class] = 0.0
 
         # Check if no possible node can be added,
         # and assert that action type cannot be ADD_NODE
@@ -546,7 +546,7 @@ class DiscreteGraphPolicyEstimator(GFNModule):
                 no_possible_node, GraphActionType.ADD_NODE
             ]
         ).all()
-        logits[GraphActions.NODE_CLASS_KEY][no_possible_node] = 0
+        logits[GraphActions.NODE_CLASS_KEY][no_possible_node] = 0.0
 
         probs = {}
         for key in logits.keys():
@@ -582,14 +582,12 @@ class DiscreteGraphPolicyEstimator(GFNModule):
         probs = torch.softmax(logits, dim=-1)
 
         if epsilon != 0.0:
-            uniform_dist_probs = torch.where(
-                masks.sum(dim=-1, keepdim=True) == 0,
-                torch.zeros_like(masks),
-                masks.float() / masks.sum(dim=-1, keepdim=True),
+            masks_sum = masks.sum(dim=-1, keepdim=True)
+            probs = torch.where(
+                masks_sum == 0,
+                probs,
+                (1 - epsilon) * probs + epsilon * masks.to(logits.dtype) / masks_sum,
             )
-            invalid_idx = uniform_dist_probs.isnan().any(dim=-1)
-            uniform_dist_probs[invalid_idx] = 0.0
-            probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
 
         return probs
 
