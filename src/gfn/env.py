@@ -119,7 +119,7 @@ class Env(ABC):
 
     # To be implemented by the User.
     @abstractmethod
-    def step(self, states: States, actions: Actions) -> torch.Tensor:
+    def step(self, states: States, actions: Actions) -> States:
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
 
@@ -254,16 +254,7 @@ class Env(ABC):
         not_done_states = new_states[~new_sink_states_idx]
         not_done_actions = actions[~new_sink_states_idx]
 
-        new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
-
-        if not isinstance(new_not_done_states_tensor, (torch.Tensor, GraphStates)):
-            raise Exception(
-                "User implemented env.step function *must* return a torch.Tensor or "
-                "a GraphStates (for graph-based environments)."
-            )
-
-        #new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
-        new_states[~new_sink_states_idx] = new_not_done_states_tensor
+        new_states[~new_sink_states_idx] = self.step(not_done_states, not_done_actions)
         return new_states
 
     def _backward_step(self, states: States, actions: Actions) -> States:
