@@ -1111,7 +1111,8 @@ class GraphStates(States):
                 _self_inc_edge_index = torch.cat(
                     [
                         _self_inc_edge_index,
-                        self_ptr[-1] + sink_states._inc_dict["edge_index"],
+                        self_ptr[-1].to(_self_inc_edge_index.device)
+                        + sink_states._inc_dict["edge_index"],
                     ]
                 )
                 self_ptr = torch.cat([self_ptr, self_nodes + sink_states.ptr[1:]], dim=0)
@@ -1150,7 +1151,8 @@ class GraphStates(States):
                 _other_inc_edge_index = torch.cat(
                     [
                         _other_inc_edge_index,
-                        other_ptr[-1] + sink_states._inc_dict["edge_index"],
+                        other_ptr[-1].to(_other_inc_edge_index.device)
+                        + sink_states._inc_dict["edge_index"],
                     ]
                 )
                 other_ptr = torch.cat(
@@ -1189,7 +1191,8 @@ class GraphStates(States):
                 "edge_index": torch.cat(
                     [
                         _self_inc_edge_index,
-                        self_ptr[-1] + _other_inc_edge_index,
+                        self_ptr[-1].to(_self_inc_edge_index.device)
+                        + _other_inc_edge_index,
                     ]
                 ),
                 "edge_attr": torch.zeros(self.tensor.num_graphs),
@@ -1309,7 +1312,10 @@ class GraphStates(States):
             xs.append(state.tensor.x)
             edge_attrs.append(state.tensor.edge_attr)
             edge_indices.append(state.tensor.edge_index + ptrs[-1][-1])
-            edge_index_inc.append(state.tensor._inc_dict["edge_index"] + ptrs[-1][-1])
+            edge_index_inc.append(
+                state.tensor._inc_dict["edge_index"]
+                + ptrs[-1][-1].to(state.tensor._inc_dict["edge_index"].device)
+            )
             ptrs.append(state.tensor.ptr[1:] + ptrs[-1][-1])
             batches.append(state.tensor.batch + offset)
             offset += len(state)
