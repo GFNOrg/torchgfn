@@ -686,8 +686,8 @@ class GraphStates(States):
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
         for graph in self.graphs:
-            if graph.num_nodes is not None:
-                max_nodes = max(max_nodes, graph.num_nodes)
+            if graph.x is not None:
+                max_nodes = max(max_nodes, graph.x.size(0))
 
         if self.is_directed:
             max_possible_edges = max_nodes * (max_nodes - 1)
@@ -702,10 +702,9 @@ class GraphStates(States):
         # Remove existing edges
         for i in range(len(self)):
             graph = self.graphs[flat_indices[i]]
-            if graph.num_nodes is None:
+            if graph.x is None:
                 continue
-            num_nodes = graph.num_nodes
-            ei0, ei1 = get_edge_indices(num_nodes, self.is_directed, self.device)
+            ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
             edge_masks[i, len(ei0) :] = False
 
             if graph.edge_index is not None and graph.edge_index.size(1) > 0:
@@ -765,8 +764,8 @@ class GraphStates(States):
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
         for graph in self.graphs:
-            if graph.num_nodes is not None:
-                max_nodes = max(max_nodes, graph.num_nodes)
+            if graph.x is not None:
+                max_nodes = max(max_nodes, graph.x.size(0))
 
         if self.is_directed:
             max_possible_edges = max_nodes * (max_nodes - 1)
@@ -781,14 +780,9 @@ class GraphStates(States):
         flat_indices = self._batch_ptrs.view(-1)
         for i in range(len(self)):
             graph = self.graphs[flat_indices[i]]
-            if graph.num_nodes is None:
+            if graph.x is None:
                 continue
-            num_nodes = graph.num_nodes
-            ei0, ei1 = get_edge_indices(
-                num_nodes,
-                self.is_directed,
-                self.device,
-            )
+            ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
 
             if graph.edge_index is not None and graph.edge_index.size(1) > 0:
                 edge_idx = torch.logical_and(
@@ -809,10 +803,7 @@ class GraphStates(States):
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
         action_type[..., GraphActionType.ADD_NODE] = torch.tensor(
-            [
-                graph.num_nodes is not None and graph.num_nodes > 0
-                for graph in self.graphs
-            ],
+            [graph.x is not None and graph.x.size(0) > 0 for graph in self.graphs],
             device=self.device,
         ).view(self.batch_shape)
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)

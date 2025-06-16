@@ -95,11 +95,11 @@ class GraphBuilding(GraphEnv):
                 graph = data_list[i]
                 edge_idx = action_edge_index_flat[i]
 
-                assert isinstance(graph.num_nodes, int)
+                assert graph.x is not None
                 assert graph.edge_index is not None
                 assert graph.edge_attr is not None
                 src, dst = get_edge_indices(
-                    graph.num_nodes, self.is_directed, graph.edge_index.device
+                    graph.x.size(0), self.is_directed, graph.edge_index.device
                 )
                 src, dst = src[edge_idx], dst[edge_idx]
 
@@ -157,7 +157,6 @@ class GraphBuilding(GraphEnv):
             # Remove nodes with matching features
             for i in add_node_index:
                 graph = data_list[i]
-                assert isinstance(graph.num_nodes, int)
                 assert graph.x is not None
 
                 # Find nodes with matching features
@@ -168,7 +167,7 @@ class GraphBuilding(GraphEnv):
 
                 # Remove the node
                 mask = torch.ones(
-                    graph.num_nodes, dtype=torch.bool, device=graph.x.device
+                    graph.x.size(0), dtype=torch.bool, device=graph.x.device
                 )
                 mask[node_idx] = False
 
@@ -185,11 +184,11 @@ class GraphBuilding(GraphEnv):
                 graph = data_list[i]
                 edge_idx = action_edge_index_flat[i]
 
-                assert isinstance(graph.num_nodes, int)
+                assert graph.x is not None
                 assert graph.edge_index is not None
                 assert graph.edge_attr is not None
                 src, dst = get_edge_indices(
-                    graph.num_nodes, self.is_directed, graph.edge_index.device
+                    graph.x.size(0), self.is_directed, graph.edge_index.device
                 )
                 src, dst = src[edge_idx], dst[edge_idx]
 
@@ -250,11 +249,12 @@ class GraphBuilding(GraphEnv):
                         return False
 
             elif action_type == GraphActionType.ADD_EDGE:
+                assert graph.x is not None
                 assert graph.edge_index is not None
                 assert graph.edge_attr is not None
                 edge_idx = edge_index_flat[i]
                 src, dst = get_edge_indices(
-                    graph.num_nodes, self.is_directed, graph.edge_index.device
+                    graph.x.size(0), self.is_directed, graph.edge_index.device
                 )
                 if edge_idx >= len(src) or edge_idx >= len(dst):
                     return False
