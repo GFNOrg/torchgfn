@@ -544,6 +544,21 @@ class GraphBuildingOnEdges(GraphBuilding):
                 ] = False
                 return backward_masks
 
+            @property
+            def is_sink_state(self) -> torch.Tensor:
+                """Returns a tensor that is True for states that are sf."""
+                xs = torch.cat([graph.x for graph in self.graphs], dim=1)  # type: ignore
+                return (xs == self.sf.x).all(dim=0).view(self.batch_shape)
+
+            @property
+            def is_initial_state(self) -> torch.Tensor:
+                """Returns a tensor that is True for states that are s0."""
+                is_not_sink = ~self.is_sink_state
+                has_edges = torch.tensor(
+                    [graph.edge_index.shape[1] > 0 for graph in self.graphs]  # type: ignore
+                ).view(self.batch_shape)
+                return is_not_sink & ~has_edges
+
         return GraphBuildingOnEdgesStates
 
     def make_random_states_tensor(

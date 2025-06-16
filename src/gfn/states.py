@@ -698,9 +698,10 @@ class GraphStates(States):
             len(self), max_possible_edges, dtype=torch.bool, device=self.device
         )
 
+        flat_indices = self._batch_ptrs.view(-1)
         # Remove existing edges
         for i in range(len(self)):
-            graph = self.graphs[self._batch_ptrs.view(-1)[i]]
+            graph = self.graphs[flat_indices[i]]
             if graph.num_nodes is None:
                 continue
             num_nodes = graph.num_nodes
@@ -777,8 +778,9 @@ class GraphStates(States):
             len(self), max_possible_edges, dtype=torch.bool, device=self.device
         )
 
+        flat_indices = self._batch_ptrs.view(-1)
         for i in range(len(self)):
-            graph = self.graphs[self._batch_ptrs.view(-1)[i]]
+            graph = self.graphs[flat_indices[i]]
             if graph.num_nodes is None:
                 continue
             num_nodes = graph.num_nodes
@@ -981,21 +983,29 @@ class GraphStates(States):
         """
         out = torch.zeros(len(self), dtype=torch.bool, device=self.device)
 
+        assert other.x is not None
         assert other.edge_index is not None
         assert other.edge_attr is not None
-        assert other.num_nodes is not None
 
+        other_num_nodes = other.x.size(0)
+        other_nodes = other.x
+        other_edges = sorted(other.edge_index.t().tolist())
+        other_edge_attr = other.edge_attr[
+            torch.argsort(other.edge_index[0] * other_num_nodes + other.edge_index[1])
+        ]
+
+        flat_indices = self._batch_ptrs.view(-1)
         for i in range(len(self)):
-            graph = self.graphs[self._batch_ptrs.view(-1)[i]]
-            if (
-                graph.num_nodes is None
-                or graph.edge_index is None
-                or graph.edge_attr is None
-            ):
+            graph = self.graphs[flat_indices[i]]
+            if graph.x is None or graph.edge_index is None or graph.edge_attr is None:
                 continue
-            if graph.num_nodes != other.num_nodes:
+
+            graph_num_nodes = graph.x.size(0)
+            if graph_num_nodes != other_num_nodes:
                 continue
-            if not torch.all(graph.x == other.x):
+
+            # FIXME: What if the nodes are not sorted?
+            if not torch.all(graph.x == other_nodes):
                 continue
 
             # Check if the number of edges is the same
@@ -1004,30 +1014,21 @@ class GraphStates(States):
 
             # Check if edge indices are the same (this is more complex due to potential reordering)
             # We'll use a simple heuristic: sort edges and compare
-            self_edges = graph.edge_index.t().tolist()
-            other_edges = other.edge_index.t().tolist()
-            self_edges.sort()
-            other_edges.sort()
+            self_edges = sorted(graph.edge_index.t().tolist())
             if self_edges != other_edges:
                 continue
 
-            # Check if edge attributes are the same (after sorting)
+            # Check if the number of edge attributes is the same
             if graph.edge_attr.size(0) != other.edge_attr.size(0):
                 continue
-            if not torch.all(graph.edge_attr == other.edge_attr):
-                continue
 
-            self_edge_attr = graph.edge_attr[
+            # Check if edge attributes are the same (after sorting)
+            graph_edge_attr = graph.edge_attr[
                 torch.argsort(
-                    graph.edge_index[0] * graph.num_nodes + graph.edge_index[1]
+                    graph.edge_index[0] * graph_num_nodes + graph.edge_index[1]
                 )
             ]
-            other_edge_attr = other.edge_attr[
-                torch.argsort(
-                    other.edge_index[0] * other.num_nodes + other.edge_index[1]
-                )
-            ]
-            if not torch.all(self_edge_attr == other_edge_attr):
+            if not torch.all(graph_edge_attr == other_edge_attr):
                 continue
 
             # If all checks pass, the graphs are equal
