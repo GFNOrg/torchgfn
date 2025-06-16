@@ -217,7 +217,7 @@ class GraphBuilding(GraphEnv):
             True if all actions are valid, False otherwise.
         """
         # Get the data list from the batch
-        data_list = states.tensor.to_data_list()
+        data_list = states.graphs
         action_type_flat = actions.action_type.flatten()
         node_class_flat = actions.node_class.flatten()
         edge_index_flat = actions.edge_index.flatten()
@@ -246,6 +246,8 @@ class GraphBuilding(GraphEnv):
                         return False
 
             elif action_type == GraphActionType.ADD_EDGE:
+                assert graph.edge_index is not None
+                assert graph.edge_attr is not None
                 edge_idx = edge_index_flat[i]
                 src, dst = get_edge_indices(
                     graph.num_nodes, self.is_directed, graph.edge_index.device
