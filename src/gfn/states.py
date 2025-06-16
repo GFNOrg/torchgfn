@@ -12,6 +12,7 @@ from typing import (
     Sequence,
     Tuple,
     Union,
+    cast,
 )
 
 import torch
@@ -20,6 +21,7 @@ from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import get_edge_indices
 
 
@@ -566,7 +568,10 @@ class GraphStates(States):
     sf: ClassVar[GeometricData]
 
     def __init__(
-        self, graphs: List[GeometricData], batch_shape: Optional[tuple[int, ...]] = None
+        self,
+        graphs: List[GeometricData],
+        batch_shape: Optional[tuple[int, ...]] = None,
+        device: torch.device | None = None,
     ):
         """Initialize the GraphStates with a list of GeometricData objects.
 
@@ -578,6 +583,13 @@ class GraphStates(States):
             batch_shape = (len(graphs),)
         self._batch_ptrs = torch.arange(len(graphs)).view(batch_shape)
         self._log_rewards: Optional[torch.Tensor] = None
+
+        self._device = device
+        if len(graphs) > 0:
+            if self._device is None:
+                self._device = cast(torch.Tensor, graphs[0].x).device
+            else:
+                ensure_same_device(self._device, cast(torch.Tensor, graphs[0].x).device)
 
     @property
     def tensor(self) -> GeometricBatch:
@@ -597,14 +609,8 @@ class GraphStates(States):
     @property
     def device(self) -> torch.device:
         """Returns the device of the graphs."""
-        for g in self.graphs:
-            if g.x is not None:
-                return g.x.device
-            if g.edge_attr is not None:
-                return g.edge_attr.device
-            if g.edge_index is not None:
-                return g.edge_index.device
-        raise ValueError("No device found for GraphStates")
+        assert self._device is not None
+        return self._device
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
@@ -633,7 +639,7 @@ class GraphStates(States):
 
         # Create a list of Data objects by copying s0
         data_list = [cls.s0.clone() for _ in range(num_graphs)]
-        return cls(data_list, batch_shape=batch_shape)
+        return cls(data_list, batch_shape=batch_shape, device=device)
 
     @classmethod
     def make_sink_states_tensor(
@@ -852,7 +858,11 @@ class GraphStates(States):
         assert len(self.batch_shape) != 0, "Single GraphState does not support indexing"
         indices = self._batch_ptrs[index]
         selected_graphs = [self.graphs[i] for i in indices.flatten()]
-        out = self.__class__(selected_graphs, batch_shape=indices.shape)
+        out = self.__class__(
+            selected_graphs,
+            batch_shape=indices.shape,
+            device=self.device,
+        )
 
         if self._log_rewards is not None:
             log_rewards = self._log_rewards.view(-1)[indices.flatten()]
@@ -903,7 +913,11 @@ class GraphStates(States):
         Returns:
             A new GraphStates object with the same data.
         """
-        out = self.__class__(deepcopy(self.graphs))
+        out = self.__class__(
+            deepcopy(self.graphs),
+            batch_shape=self.batch_shape,
+            device=self.device,
+        )
         out._batch_ptrs = self._batch_ptrs.clone()
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards.clone()
