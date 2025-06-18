@@ -581,7 +581,7 @@ class GraphStates(States):
         self.graphs = graphs
         if batch_shape is None:
             batch_shape = (len(graphs),)
-        self._batch_ptrs = torch.arange(len(graphs)).view(batch_shape)
+        self._batch_ptrs = torch.arange(len(graphs), device=device).view(batch_shape)
         self._log_rewards: Optional[torch.Tensor] = None
 
         self._device = device
@@ -666,7 +666,7 @@ class GraphStates(States):
 
         # Create a list of Data objects by copying sf
         data_list = [cls.sf.clone() for _ in range(num_graphs)]
-        return cls(data_list, batch_shape=batch_shape)
+        return cls(data_list, batch_shape=batch_shape, device=device)
 
     @property
     def forward_masks(self) -> TensorDict:
