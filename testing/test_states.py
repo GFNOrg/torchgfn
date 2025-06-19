@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 import torch
 from torch_geometric.data import Data as GeometricData
@@ -29,27 +30,26 @@ class MyGraphStates(GraphStates):
 @pytest.fixture
 def datas():
     """Creates a list of 10 GeometricData objects"""
-    return [
-        GeometricData(
+    datas = np.empty(10, dtype=object)
+    for i in range(10):
+        datas[i] = GeometricData(
             x=torch.tensor([[i], [i + 1]]),
             edge_index=torch.tensor([[0], [1]]),
             edge_attr=torch.tensor([[i]]),
         )
-        for i in range(10)
-    ]
+    return datas
 
 
 @pytest.fixture
 def simple_graph_state(datas):
     """Creates a simple graph state with 2 nodes and 1 edge"""
-    data = datas[0]
-    return MyGraphStates([data])
+    return MyGraphStates(datas[:1])
 
 
 @pytest.fixture
 def empty_graph_state():
     """Creates an empty GraphStates object"""
-    return MyGraphStates([])
+    return MyGraphStates(np.empty(0, dtype=object))
 
 
 @pytest.fixture
@@ -156,7 +156,7 @@ def test_getitem_2d(datas):
     tsr = torch.tensor([[1, 2], [3, 4]])
 
     # Create a batch with 2x2 graphs
-    states = MyGraphStates(datas[:4], batch_shape=(2, 2))
+    states = MyGraphStates(datas[:4].reshape(2, 2))
     states.log_rewards = tsr.clone()
 
     # Get a single row
@@ -188,14 +188,14 @@ def test_getitem_2d(datas):
         states[2, 2]
 
     # We can't index on a Batch with 0-dimensional batch shape
-    with pytest.raises(AssertionError):
+    with pytest.raises(IndexError):
         single_state[0]
 
 
 def test_setitem_1d(datas):
     """Test setting values in States"""
-    states = MyGraphStates(datas[:3], batch_shape=(3,))
-    new_states = MyGraphStates(datas[3:5], batch_shape=(2,))
+    states = MyGraphStates(datas[:3])
+    new_states = MyGraphStates(datas[3:5])
 
     # Set the new graph in the first position
     states[0] = new_states[0]
@@ -231,8 +231,12 @@ def test_setitem_1d(datas):
 
 def test_setitem_2d(datas):
     """Test setting values in GraphStates with 2D batch shape"""
-    states = MyGraphStates(datas[:4], batch_shape=(2, 2))
-    new_states_row = MyGraphStates(datas[4:6], batch_shape=(2,))
+    states = MyGraphStates(datas[:4].reshape(2, 2))
+    new_states_row = MyGraphStates(
+        datas[4:6].reshape(
+            2,
+        )
+    )
     states[0] = new_states_row
 
     assert torch.equal(states[0, 0].tensor.x, datas[4].x)
@@ -241,7 +245,11 @@ def test_setitem_2d(datas):
     assert states.batch_shape == (2, 2)  # Batch shape should not change
 
     # Set the new graphs in the first column
-    new_states_col = MyGraphStates(datas[6:8], batch_shape=(2,))
+    new_states_col = MyGraphStates(
+        datas[6:8].reshape(
+            2,
+        )
+    )
     states[:, 1] = new_states_col
     assert torch.equal(states[1, 1].tensor.x, datas[7].x)
     assert torch.equal(states[1, 1].tensor.edge_attr, datas[7].edge_attr)
@@ -415,8 +423,8 @@ def test_extend_1d(simple_graph_state):
 
 def test_extend_2d(datas):
     """Test extending two 2D batch states"""
-    state1 = MyGraphStates(datas[:4], batch_shape=(2, 2))
-    state2 = MyGraphStates(datas[4:], batch_shape=(3, 2))
+    state1 = MyGraphStates(datas[:4].reshape(2, 2))
+    state2 = MyGraphStates(datas[4:].reshape(3, 2))
 
     # Check that we have the correct number of nodes and edges
     # Each graph has 2 nodes and 1 edge
@@ -472,8 +480,7 @@ def test_extend_2d(datas):
 def test_forward_masks(datas):
     """Test forward_masks property"""
     # Create a graph with 2 nodes and 1 edge
-    data = datas[0]
-    states = MyGraphStates([data])
+    states = MyGraphStates(datas[:1])
 
     # Get forward masks
     masks = states.forward_masks
@@ -508,8 +515,7 @@ def test_forward_masks(datas):
 def test_backward_masks(datas):
     """Test backward_masks property"""
     # Create a graph with 2 nodes and 1 edge
-    data = datas[0]
-    states = MyGraphStates([data])
+    states = MyGraphStates(datas[:1])
 
     # Get backward masks
     masks = states.backward_masks
@@ -544,8 +550,8 @@ def test_backward_masks(datas):
 def test_stack_1d(datas):
     """Test stacking GraphStates objects"""
     # Create two states
-    state1 = MyGraphStates(datas[0:2], batch_shape=(2,))
-    state2 = MyGraphStates(datas[2:4], batch_shape=(2,))
+    state1 = MyGraphStates(datas[0:2])
+    state2 = MyGraphStates(datas[2:4])
 
     # Stack the states
     stacked = MyGraphStates.stack([state1, state2])
@@ -575,8 +581,8 @@ def test_stack_1d(datas):
 def test_stack_2d(datas):
     """Test stacking GraphStates objects with 2D batch shape"""
     # Create two states
-    state1 = MyGraphStates(datas[:4], batch_shape=(2, 2))
-    state2 = MyGraphStates(datas[4:8], batch_shape=(2, 2))
+    state1 = MyGraphStates(datas[:4].reshape(2, 2))
+    state2 = MyGraphStates(datas[4:8].reshape(2, 2))
 
     # Stack the states
     stacked = MyGraphStates.stack([state1, state2])

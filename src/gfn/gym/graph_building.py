@@ -1,5 +1,5 @@
 from math import prod
-from typing import Callable, List, Literal, Tuple
+from typing import Callable, Literal, Tuple
 
 import numpy as np
 import torch
@@ -70,7 +70,7 @@ class GraphBuilding(GraphEnv):
         if len(actions) == 0:
             return states
 
-        data_list = states.graphs
+        data_array = states.graphs
 
         # Create masks for different action types
         # Flatten each mask, from (*batch_shape) to (prod(batch_shape),)
@@ -82,7 +82,7 @@ class GraphBuilding(GraphEnv):
         if torch.any(add_node_mask):
             batch_indices_flat = torch.arange(len(states))[add_node_mask]
             node_class_flat = actions.node_class.flatten()
-            data_list = self._add_node(data_list, batch_indices_flat, node_class_flat)
+            data_array = self._add_node(data_array, batch_indices_flat, node_class_flat)
 
         # Handle ADD_EDGE action
         if torch.any(add_edge_mask):
@@ -92,7 +92,7 @@ class GraphBuilding(GraphEnv):
 
             # Add edges to each graph
             for i in add_edge_index:
-                graph = data_list[i]
+                graph = data_array[i]
                 edge_idx = action_edge_index_flat[i]
 
                 assert graph.x is not None
@@ -122,12 +122,10 @@ class GraphBuilding(GraphEnv):
             # For graphs with EXIT action, replace them with sink states
             exit_indices = torch.where(exit_mask)[0]
             for idx in exit_indices:
-                data_list[idx] = self.sf
+                data_array[idx] = self.sf
 
         # Create a new batch from the updated data list
-        return self.States(
-            data_list, batch_shape=states.batch_shape, device=states.device
-        )
+        return self.States(data_array)
 
     def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Backward step function for the GraphBuilding environment.
@@ -142,7 +140,7 @@ class GraphBuilding(GraphEnv):
             return states
 
         # Get the data list from the batch
-        data_list = states.graphs
+        data_array = states.graphs
 
         # Create masks for different action types
         # Flatten each mask, from (*batch_shape) to (prod(batch_shape),)
@@ -156,7 +154,8 @@ class GraphBuilding(GraphEnv):
 
             # Remove nodes with matching features
             for i in add_node_index:
-                graph = data_list[i]
+                graph = data_array[i]
+                assert isinstance(graph.num_nodes, int)
                 assert graph.x is not None
 
                 # Find nodes with matching features
@@ -181,7 +180,7 @@ class GraphBuilding(GraphEnv):
 
             # Remove edges with matching indices
             for i in add_edge_index:
-                graph = data_list[i]
+                graph = data_array[i]
                 edge_idx = action_edge_index_flat[i]
 
                 assert graph.x is not None
@@ -202,9 +201,7 @@ class GraphBuilding(GraphEnv):
                 graph.edge_attr = graph.edge_attr[edge_mask]
 
         # Create a new batch from the updated data list
-        return self.States(
-            data_list, batch_shape=states.batch_shape, device=states.device
-        )
+        return self.States(data_array)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
@@ -278,10 +275,10 @@ class GraphBuilding(GraphEnv):
 
     def _add_node(
         self,
-        data_list: List[GeometricData],
+        data_list: np.ndarray,
         batch_indices_flat: torch.Tensor,
         node_class: torch.Tensor,
-    ) -> List[GeometricData]:
+    ) -> np.ndarray:
         """Add nodes to graphs in a batch.
 
         Args:
@@ -345,8 +342,8 @@ class GraphBuilding(GraphEnv):
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
 
-        data_list = []
-        for _ in range(num_graphs):
+        data_array = np.empty(batch_shape, dtype=object)
+        for i in range(num_graphs):
             # Create a random graph with random number of nodes
             n_nodes = np.random.randint(1, 10)  # TODO: make the max n_nodes a parameter
             n_possible_edges = (
@@ -372,18 +369,9 @@ class GraphBuilding(GraphEnv):
                 edge_index=edge_index,
                 edge_attr=edge_attr,
             )
-            data_list.append(data)
+            data_array.flat[i] = data
 
-        if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [
-                GeometricData(
-                    x=torch.zeros(0, self.s0.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, self.s0.edge_attr.size(1)),
-                )
-            ]
-
-        return self.States(data_list, batch_shape=batch_shape, device=device)
+        return self.States(data_array)
 
     def make_states_class(self) -> type[GraphStates]:
         env = self
@@ -580,8 +568,8 @@ class GraphBuildingOnEdges(GraphBuilding):
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
 
-        data_list = []
-        for _ in range(num_graphs):
+        data_array = np.empty(batch_shape, dtype=object)
+        for i in range(num_graphs):
             # Create a graph with the given number of nodes
             n_nodes = self.n_nodes
 
@@ -604,18 +592,9 @@ class GraphBuildingOnEdges(GraphBuilding):
                 edge_index=edge_index,
                 edge_attr=edge_attr,
             )
-            data_list.append(data)
+            data_array.flat[i] = data
 
-        if len(data_list) == 0:  # If batch_shape is 0, create a single empty graph
-            data_list = [
-                GeometricData(
-                    x=torch.zeros(0, self.s0.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, self.s0.edge_attr.size(1)),
-                )
-            ]
-
-        return self.States(data_list, batch_shape=batch_shape, device=device)
+        return self.States(data_array)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False

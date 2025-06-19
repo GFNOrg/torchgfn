@@ -83,8 +83,9 @@ class RingReward(object):
 
         for i in range(len(states)):
             graph = states[i]
-            adj_matrix = torch.zeros(graph.tensor.num_nodes, graph.tensor.num_nodes)
-            adj_matrix[graph.tensor.edge_index[0], graph.tensor.edge_index[1]] = 1
+            graph_tensor = graph.tensor
+            adj_matrix = torch.zeros(graph_tensor.num_nodes, graph_tensor.num_nodes)
+            adj_matrix[graph_tensor.edge_index[0], graph_tensor.edge_index[1]] = 1
 
             # Check if each node has exactly one outgoing edge (row sum = 1)
             if not torch.all(adj_matrix.sum(dim=1) == 1):
@@ -105,7 +106,7 @@ class RingReward(object):
                 current = torch.where(adj_matrix[int(current)] == 1)[0].item()
 
                 # If we've visited all nodes and returned to 0, it's a valid ring
-                if len(visited) == graph.tensor.num_nodes and current == 0:
+                if len(visited) == graph_tensor.num_nodes and current == 0:
                     out[i] = self.reward_val
                     break
 
