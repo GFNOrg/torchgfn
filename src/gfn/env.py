@@ -152,7 +152,7 @@ class Env(ABC):
     ) -> bool:
         """Returns True if the actions are valid in the given states."""
 
-    def make_random_states_tensor(
+    def make_random_states(
         self, batch_shape: Tuple, device: torch.device | None = None
     ) -> States:
         """Optional method inherited by all States instances to emit a random tensor."""
@@ -174,7 +174,7 @@ class Env(ABC):
             state_shape = env.state_shape
             s0 = env.s0
             sf = env.sf
-            make_random_states_tensor = env.make_random_states_tensor
+            make_random_states = env.make_random_states
 
         return DefaultEnvState
 
@@ -241,7 +241,7 @@ class Env(ABC):
 
         # Set to the sink state when the action is exit.
         new_sink_states_idx = actions.is_exit
-        sf_states = self.States.make_sink_states_tensor(
+        sf_states = self.States.make_sink_states(
             (int(new_sink_states_idx.sum().item()),), device=states.device
         )
         new_states[new_sink_states_idx] = sf_states
@@ -454,7 +454,7 @@ class DiscreteEnv(Env, ABC):
             state_shape = env.state_shape
             s0 = env.s0
             sf = env.sf
-            make_random_states_tensor = env.make_random_states_tensor
+            make_random_states = env.make_random_states
             n_actions = env.n_actions
             device = env.device
 
@@ -616,7 +616,7 @@ class GraphEnv(Env):
 
             s0 = env.s0
             sf = env.sf
-            make_random_states_tensor = env.make_random_states_tensor
+            make_random_states = env.make_random_states
 
         return GraphEnvStates
 
@@ -646,7 +646,7 @@ class GraphEnv(Env):
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""
 
-    def make_random_states_tensor(
+    def make_random_states(
         self, batch_shape: int | Tuple, device: torch.device | None = None
     ) -> GraphStates:
         """Returns a batch of random graph states."""

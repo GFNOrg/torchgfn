@@ -40,7 +40,7 @@ class Box(Env):
             exit_action=exit_action,
         )
 
-    def make_random_states_tensor(
+    def make_random_states(
         self, batch_shape: Tuple[int, ...], device: torch.device | None = None
     ) -> States:
         """Generates random states tensor of shape (*batch_shape, 2)."""

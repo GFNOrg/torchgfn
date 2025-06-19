@@ -64,7 +64,7 @@ class States(ABC):
     s0: ClassVar[torch.Tensor | GeometricData]
     sf: ClassVar[torch.Tensor | GeometricData]
 
-    make_random_states_tensor: Callable = lambda *x: (_ for _ in ()).throw(
+    make_random_states: Callable = lambda *x: (_ for _ in ()).throw(
         NotImplementedError(
             "The environment does not support initialization of random states."
         )
@@ -104,7 +104,7 @@ class States(ABC):
 
         By default, all states are initialized to $s_0$, the initial state. Optionally,
         one can initialize random state, which requires that the environment implements
-        the `make_random_states_tensor` class method. Sink can be used to initialize
+        the `make_random_states` class method. Sink can be used to initialize
         states at $s_f$, the sink state. Both random and sink cannot be True at the
         same time.
 
@@ -123,14 +123,14 @@ class States(ABC):
             raise ValueError("Only one of `random` and `sink` should be True.")
 
         if random:
-            return cls.make_random_states_tensor(batch_shape, device=device)
+            return cls.make_random_states(batch_shape, device=device)
         elif sink:
-            return cls.make_sink_states_tensor(batch_shape, device=device)
+            return cls.make_sink_states(batch_shape, device=device)
         else:
-            return cls.make_initial_states_tensor(batch_shape, device=device)
+            return cls.make_initial_states(batch_shape, device=device)
 
     @classmethod
-    def make_initial_states_tensor(
+    def make_initial_states(
         cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> States:
         """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
@@ -141,11 +141,11 @@ class States(ABC):
             return cls(cls.s0.repeat(*batch_shape, *((1,) * state_ndim)).to(device))
         else:
             raise NotImplementedError(
-                f"make_initial_states_tensor is not implemented by default for {cls.__name__}"
+                f"make_initial_states is not implemented by default for {cls.__name__}"
             )
 
     @classmethod
-    def make_sink_states_tensor(
+    def make_sink_states(
         cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> States:
         """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
@@ -156,7 +156,7 @@ class States(ABC):
             return cls(cls.sf.repeat(*batch_shape, *((1,) * state_ndim)).to(device))
         else:
             raise NotImplementedError(
-                f"make_sink_states_tensor is not implemented by default for {cls.__name__}"
+                f"make_sink_states is not implemented by default for {cls.__name__}"
             )
 
     def __len__(self) -> int:
@@ -610,7 +610,7 @@ class GraphStates(States):
         return self.graphs.shape
 
     @classmethod
-    def make_initial_states_tensor(
+    def make_initial_states(
         cls, batch_shape: int | Tuple, device: torch.device | None = None
     ) -> GraphStates:
         """Makes a numpy array of graphs consisting of s0 states.
@@ -637,7 +637,7 @@ class GraphStates(States):
         return cls(data_array)
 
     @classmethod
-    def make_sink_states_tensor(
+    def make_sink_states(
         cls, batch_shape: int | Tuple, device: torch.device | None = None
     ) -> GraphStates:
         """Makes a numpy array of graphs consisting of sf states.
@@ -930,14 +930,14 @@ class GraphStates(States):
 
             # Extend self with sink states if needed
             if self.batch_shape[0] < max_batch_shape:
-                self_sf = self.make_sink_states_tensor(
+                self_sf = self.make_sink_states(
                     (max_batch_shape - self.batch_shape[0], self.batch_shape[1])
                 )
                 self.graphs = np.concatenate([self.graphs, self_sf.graphs])
 
             # Extend other with sink states if needed
             if other.batch_shape[0] < max_batch_shape:
-                other_sf = other.make_sink_states_tensor(
+                other_sf = other.make_sink_states(
                     (max_batch_shape - other.batch_shape[0], other.batch_shape[1])
                 )
                 other.graphs = np.concatenate([other.graphs, other_sf.graphs])

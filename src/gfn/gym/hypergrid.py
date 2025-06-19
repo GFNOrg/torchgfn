@@ -132,7 +132,7 @@ class HyperGrid(DiscreteEnv):
         )
         states.backward_masks = states.tensor != 0
 
-    def make_random_states_tensor(
+    def make_random_states(
         self, batch_shape: Tuple[int, ...], device: torch.device | None = None
     ) -> DiscreteStates:
         """Creates a batch of random states.

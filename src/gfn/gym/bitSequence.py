@@ -236,7 +236,7 @@ class BitSequence(DiscreteEnv):
             state_shape = (env.words_per_seq,)
             s0 = env.s0
             sf = env.sf
-            make_random_states_tensor = env.make_random_states_tensor
+            make_random_states = env.make_random_states
             n_actions = env.n_actions
             device = env.device
             word_size = env.word_size

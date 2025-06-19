@@ -324,7 +324,7 @@ class GraphBuilding(GraphEnv):
         """
         return self.state_evaluator(final_states)
 
-    def make_random_states_tensor(
+    def make_random_states(
         self, batch_shape: Tuple, device: torch.device | None = None
     ) -> GraphStates:
         """Generates random states tensor of shape (*batch_shape, feature_dim).
@@ -398,7 +398,7 @@ class GraphBuilding(GraphEnv):
 
             s0 = env.s0
             sf = env.sf
-            make_random_states_tensor = env.make_random_states_tensor
+            make_random_states = env.make_random_states
 
         return GraphBuildingStates
 
@@ -488,7 +488,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             n_possible_edges = env.n_possible_edges
             s0 = env.s0
             sf = env.sf
-            make_random_states_tensor = env.make_random_states_tensor
+            make_random_states = env.make_random_states
 
             @property
             def forward_masks(self) -> TensorDict:
@@ -550,7 +550,7 @@ class GraphBuildingOnEdges(GraphBuilding):
 
         return GraphBuildingOnEdgesStates
 
-    def make_random_states_tensor(
+    def make_random_states(
         self, batch_shape: Tuple, device: torch.device | None = None
     ) -> GraphStates:
         """Makes a batch of random graph states with fixed number of nodes.
