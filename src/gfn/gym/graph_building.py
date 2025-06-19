@@ -122,7 +122,7 @@ class GraphBuilding(GraphEnv):
                 data_array[idx] = self.sf
 
         # Create a new batch from the updated data list
-        return self.States(data_array)
+        return self.States(data_array, device=states.device)
 
     def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Backward step function for the GraphBuilding environment.
@@ -193,7 +193,7 @@ class GraphBuilding(GraphEnv):
                 graph.edge_attr = graph.edge_attr[edge_mask]
 
         # Create a new batch from the updated data list
-        return self.States(data_array)
+        return self.States(data_array, device=states.device)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
@@ -357,7 +357,7 @@ class GraphBuilding(GraphEnv):
             )
             data_array.flat[i] = data
 
-        return self.States(data_array)
+        return self.States(data_array, device=device)
 
     def make_states_class(self) -> type[GraphStates]:
         env = self
@@ -576,7 +576,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
             data_array.flat[i] = data
 
-        return self.States(data_array)
+        return self.States(data_array, device=device)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False

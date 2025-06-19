@@ -12,6 +12,7 @@ from typing import (
     Sequence,
     Tuple,
     Union,
+    cast,
 )
 
 import numpy as np
@@ -21,6 +22,7 @@ from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import get_edge_indices
 
 
@@ -566,7 +568,7 @@ class GraphStates(States):
     s0: ClassVar[GeometricData]
     sf: ClassVar[GeometricData]
 
-    def __init__(self, graphs: np.ndarray):
+    def __init__(self, graphs: np.ndarray, device: torch.device | None = None):
         """Initialize the GraphStates with a numpy array of GeometricData objects.
 
         Args:
@@ -575,6 +577,13 @@ class GraphStates(States):
         assert isinstance(graphs, np.ndarray), "Graphs must be a numpy array"
         self.graphs = graphs
         self._log_rewards: Optional[torch.Tensor] = None
+        self._device = device
+        if graphs.size > 0:
+            g = graphs.flatten()[0]
+            if self._device is None:
+                self._device = cast(torch.Tensor, g.x).device
+            else:
+                ensure_same_device(self._device, cast(torch.Tensor, g.x).device)
 
     @property
     def tensor(self) -> GeometricBatch:
@@ -592,14 +601,8 @@ class GraphStates(States):
     @property
     def device(self) -> torch.device:
         """Returns the device of the graphs."""
-        for g in self.graphs.flatten():
-            if g.x is not None:
-                return g.x.device
-            if g.edge_attr is not None:
-                return g.edge_attr.device
-            if g.edge_index is not None:
-                return g.edge_index.device
-        raise ValueError("No device found for GraphStates")
+        assert self._device is not None
+        return self._device
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
@@ -631,7 +634,7 @@ class GraphStates(States):
         for i in range(num_graphs):
             data_array.flat[i] = cls.s0.clone()
 
-        return cls(data_array)
+        return cls(data_array, device=device)
 
     @classmethod
     def make_sink_states(
@@ -661,7 +664,7 @@ class GraphStates(States):
         for i in range(num_graphs):
             data_array.flat[i] = cls.sf.clone()
 
-        return cls(data_array)
+        return cls(data_array, device=device)
 
     @property
     def forward_masks(self) -> TensorDict:
@@ -853,7 +856,7 @@ class GraphStates(States):
             selected_graphs_array[0] = selected_graphs
             selected_graphs = selected_graphs_array.squeeze()
 
-        out = self.__class__(selected_graphs)
+        out = self.__class__(selected_graphs, device=self.device)
 
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards[index]
@@ -923,7 +926,7 @@ class GraphStates(States):
         for i in range(self.graphs.size):
             cloned_graphs.flat[i] = deepcopy(self.graphs.flat[i])
 
-        out = self.__class__(cloned_graphs)
+        out = self.__class__(cloned_graphs, device=self.device)
         if self._log_rewards is not None:
             out._log_rewards = self._log_rewards.clone()
         return out
@@ -1055,7 +1058,7 @@ class GraphStates(States):
         graphs_list = [state.graphs for state in states]
         stacked_graphs = np.stack(graphs_list)
 
-        out = cls(stacked_graphs)
+        out = cls(stacked_graphs, device=states[0].device)
 
         # Handle log rewards
         log_rewards = []
