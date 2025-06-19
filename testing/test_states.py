@@ -132,7 +132,7 @@ def test_getitem_1d(datas):
     single_state = states[1]
     assert tuple(single_tsr.shape) == single_state.batch_shape == ()
     assert single_state.log_rewards is not None and single_state.log_rewards.shape == ()
-    assert single_state.tensor.num_nodes == 2
+    assert single_state.tensor.x.size(0) == 2
     assert torch.allclose(single_state.tensor.x, datas[1].x)
     assert torch.allclose(single_state.log_rewards, tsr[1])
 
@@ -141,7 +141,7 @@ def test_getitem_1d(datas):
     multi_state = states[[0, 2]]
     assert tuple(multi_tsr.shape) == multi_state.batch_shape == (2,)
     assert multi_state.log_rewards is not None and multi_state.log_rewards.shape == (2,)
-    assert multi_state.tensor.num_nodes == 4
+    assert multi_state.tensor.x.size(0) == 4
     assert torch.allclose(multi_state.tensor.get_example(0).x, datas[0].x)
     assert torch.allclose(multi_state.tensor.get_example(1).x, datas[2].x)
     assert torch.allclose(multi_state.log_rewards, tsr[[0, 2]])
@@ -164,7 +164,7 @@ def test_getitem_2d(datas):
     batch_row = states[0]
     assert tuple(tsr_row.shape) == batch_row.batch_shape == (2,)
     assert batch_row.log_rewards is not None and batch_row.log_rewards.shape == (2,)
-    assert batch_row.tensor.num_nodes == 4  # 2 graphs * 2 nodes
+    assert batch_row.tensor.x.size(0) == 4  # 2 graphs * 2 nodes
     assert torch.allclose(batch_row.tensor.get_example(0).x, datas[0].x)
     assert torch.allclose(batch_row.tensor.get_example(1).x, datas[1].x)
     assert torch.allclose(batch_row.log_rewards, tsr[0])
@@ -180,7 +180,7 @@ def test_getitem_2d(datas):
     single_state = states[1, 1]
     assert tuple(single_tsr.shape) == single_state.batch_shape == ()
     assert single_state.log_rewards is not None and single_state.log_rewards.shape == ()
-    assert single_state.tensor.num_nodes == 2  # 1 graph * 2 nodes
+    assert single_state.tensor.x.size(0) == 2  # 1 graph * 2 nodes
     assert torch.allclose(single_state.tensor.x, datas[3].x)
     assert torch.allclose(single_state.log_rewards, tsr[1, 1])
 
@@ -390,7 +390,7 @@ def test_extend_1d(simple_graph_state):
     other_state = simple_graph_state.clone()
 
     # Store original number of nodes and edges
-    original_num_nodes = simple_graph_state.tensor.num_nodes
+    original_num_nodes = simple_graph_state.tensor.x.size(0)
     original_num_edges = simple_graph_state.tensor.num_edges
 
     simple_graph_state.extend(other_state)
@@ -399,7 +399,7 @@ def test_extend_1d(simple_graph_state):
     assert simple_graph_state.batch_shape[0] == 2
 
     # Check number of nodes and edges doubled
-    assert simple_graph_state.tensor.num_nodes == 2 * original_num_nodes
+    assert simple_graph_state.tensor.x.size(0) == 2 * original_num_nodes
     assert simple_graph_state.tensor.num_edges == 2 * original_num_edges
 
     # Check that batch indices are properly updated
@@ -429,9 +429,9 @@ def test_extend_2d(datas):
     # Check that we have the correct number of nodes and edges
     # Each graph has 2 nodes and 1 edge
     # For 3 time steps and 2 batches, we should have:
-    expected_nodes = state1.tensor.num_nodes + state2.tensor.num_nodes
-    assert isinstance(MyGraphStates.sf.num_nodes, int)
-    expected_nodes += 2 * MyGraphStates.sf.num_nodes
+    expected_nodes = state1.tensor.x.size(0) + state2.tensor.x.size(0)
+    assert isinstance(MyGraphStates.sf.x.size(0), int)  # type: ignore
+    expected_nodes += 2 * MyGraphStates.sf.x.size(0)  # type: ignore
     expected_edges = state1.tensor.num_edges + state2.tensor.num_edges
     expected_edges += 2 * MyGraphStates.sf.num_edges
 
@@ -441,7 +441,7 @@ def test_extend_2d(datas):
     assert state1.batch_shape == (3, 4)
 
     # The actual count might be higher due to padding with sink states
-    assert state1.tensor.num_nodes == expected_nodes
+    assert state1.tensor.x.size(0) == expected_nodes
     assert state1.tensor.num_edges == expected_edges
 
     # Check if states are extended as expected
@@ -560,7 +560,7 @@ def test_stack_1d(datas):
     assert stacked.batch_shape == (2, 2)
 
     # Check the number of nodes and edges
-    assert stacked.tensor.num_nodes == 8  # 4 states * 2 nodes
+    assert stacked.tensor.x.size(0) == 8  # 4 states * 2 nodes
     assert stacked.tensor.num_edges == 4  # 4 states * 1 edge
 
     # Check the batch indices
@@ -591,7 +591,7 @@ def test_stack_2d(datas):
     assert stacked.batch_shape == (2, 2, 2)
 
     # Check the number of nodes and edges
-    assert stacked.tensor.num_nodes == 16  # 8 states * 2 nodes
+    assert stacked.tensor.x.size(0) == 16  # 8 states * 2 nodes
     assert stacked.tensor.num_edges == 8  # 8 states * 1 edge
 
     # Check the batch indices

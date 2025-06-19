@@ -84,7 +84,7 @@ class RingReward(object):
         for i in range(len(states)):
             graph = states[i]
             graph_tensor = graph.tensor
-            adj_matrix = torch.zeros(graph_tensor.num_nodes, graph_tensor.num_nodes)
+            adj_matrix = torch.zeros(graph_tensor.x.size(0), graph_tensor.x.size(0))
             adj_matrix[graph_tensor.edge_index[0], graph_tensor.edge_index[1]] = 1
 
             # Check if each node has exactly one outgoing edge (row sum = 1)
@@ -106,7 +106,7 @@ class RingReward(object):
                 current = torch.where(adj_matrix[int(current)] == 1)[0].item()
 
                 # If we've visited all nodes and returned to 0, it's a valid ring
-                if len(visited) == graph_tensor.num_nodes and current == 0:
+                if len(visited) == graph_tensor.x.size(0) and current == 0:
                     out[i] = self.reward_val
                     break
 
@@ -137,9 +137,9 @@ class RingReward(object):
 
         for i in range(len(states)):
             graph = states[i]
-            if graph.tensor.num_nodes == 0:
+            if graph.tensor.x.size(0) == 0:
                 continue
-            adj_matrix = torch.zeros(graph.tensor.num_nodes, graph.tensor.num_nodes)
+            adj_matrix = torch.zeros(graph.tensor.x.size(0), graph.tensor.x.size(0))
             adj_matrix[graph.tensor.edge_index[0], graph.tensor.edge_index[1]] = 1
             adj_matrix[graph.tensor.edge_index[1], graph.tensor.edge_index[0]] = 1
 
@@ -170,7 +170,7 @@ class RingReward(object):
                 next_node = possible[0]
                 prev, current = current, next_node
 
-            if current == start_vertex and len(visited) == graph.tensor.num_nodes:
+            if current == start_vertex and len(visited) == graph.tensor.x.size(0):
                 out[i] = self.reward_val
 
         return out.view(*states.batch_shape)
@@ -198,7 +198,7 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
     for i in range(8):
         current_ax = ax[i // 4, i % 4]
         state = states[i]
-        n_circles = state.tensor.num_nodes
+        n_circles = state.tensor.x.size(0)
         radius = 5
         xs, ys = [], []
         for j in range(n_circles):

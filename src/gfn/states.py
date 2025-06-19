@@ -580,17 +580,14 @@ class GraphStates(States):
     def tensor(self) -> GeometricBatch:
         """Returns the tensor representation of the graphs."""
         if self.graphs.size == 0:
-            return GeometricBatch.from_data_list(
-                [
-                    GeometricData(
-                        x=torch.zeros(0, self.num_node_classes),
-                        edge_index=torch.zeros(2, 0, dtype=torch.long),
-                        edge_attr=torch.zeros(0, self.num_edge_classes),
-                    )
-                ]
+            dummy_graph = GeometricData(
+                x=torch.zeros(0, self.num_node_classes, device=self.device),
+                edge_index=torch.zeros(2, 0, dtype=torch.long, device=self.device),
+                edge_attr=torch.zeros(0, self.num_edge_classes, device=self.device),
             )
+            return GeometricBatch.from_data_list([dummy_graph])
 
-        return GeometricBatch.from_data_list(self.graphs.flatten().tolist())  # type: ignore
+        return GeometricBatch.from_data_list(self.graphs.flatten().tolist())
 
     @property
     def device(self) -> torch.device:
@@ -684,8 +681,8 @@ class GraphStates(States):
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
         for graph in self.graphs.flatten():
-            if graph.num_nodes is not None:
-                max_nodes = max(max_nodes, graph.num_nodes)
+            if graph.x is not None:
+                max_nodes = max(max_nodes, graph.x.size(0))
 
         if self.is_directed:
             max_possible_edges = max_nodes * (max_nodes - 1)
@@ -698,7 +695,7 @@ class GraphStates(States):
 
         # Remove existing edges
         for i, graph in enumerate(self.graphs.flatten()):
-            if graph.num_nodes is None:
+            if graph.x is None:
                 continue
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
             edge_masks[i, len(ei0) :] = False
@@ -760,8 +757,8 @@ class GraphStates(States):
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
         for graph in self.graphs.flatten():
-            if graph.num_nodes is not None:
-                max_nodes = max(max_nodes, graph.num_nodes)
+            if graph.x is not None:
+                max_nodes = max(max_nodes, graph.x.size(0))
 
         if self.is_directed:
             max_possible_edges = max_nodes * (max_nodes - 1)
@@ -774,7 +771,7 @@ class GraphStates(States):
         )
 
         for i, graph in enumerate(self.graphs.flatten()):
-            if graph.num_nodes is None:
+            if graph.x is None:
                 continue
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
 
@@ -798,7 +795,7 @@ class GraphStates(States):
         )
         action_type[..., GraphActionType.ADD_NODE] = torch.tensor(
             [
-                graph.num_nodes is not None and graph.num_nodes > 0
+                graph.x is not None and graph.x.size(0) > 0
                 for graph in self.graphs.flatten()
             ],
             device=self.device,
@@ -971,18 +968,17 @@ class GraphStates(States):
         assert other.x is not None
         assert other.edge_index is not None
         assert other.edge_attr is not None
-        assert other.num_nodes is not None
+
+        other_edges = sorted(other.edge_index.t().tolist())
+        other_edge_attr = other.edge_attr[
+            torch.argsort(other.edge_index[0] * other.x.size(0) + other.edge_index[1])
+        ]
 
         for i, graph in enumerate(self.graphs.flatten()):
-            if (
-                graph.num_nodes is None
-                or graph.edge_index is None
-                or graph.edge_attr is None
-            ):
+            if graph.x is None or graph.edge_index is None or graph.edge_attr is None:
                 continue
 
-            graph_num_nodes = graph.x.size(0)
-            if graph_num_nodes != other.num_nodes:
+            if graph.x.size(0) != other.x.size(0):
                 continue
 
             # FIXME: What if the nodes are not sorted?
@@ -996,7 +992,7 @@ class GraphStates(States):
             # Check if edge indices are the same (this is more complex due to potential reordering)
             # We'll use a simple heuristic: sort edges and compare
             self_edges = sorted(graph.edge_index.t().tolist())
-            if self_edges != other.edge_index.t().tolist():
+            if self_edges != other_edges:
                 continue
 
             # Check if the number of edge attributes is the same
@@ -1006,10 +1002,10 @@ class GraphStates(States):
             # Check if edge attributes are the same (after sorting)
             graph_edge_attr = graph.edge_attr[
                 torch.argsort(
-                    graph.edge_index[0] * graph_num_nodes + graph.edge_index[1]
+                    graph.edge_index[0] * graph.x.size(0) + graph.edge_index[1]
                 )
             ]
-            if not torch.all(graph_edge_attr == other.edge_attr):
+            if not torch.all(graph_edge_attr == other_edge_attr):
                 continue
 
             # If all checks pass, the graphs are equal

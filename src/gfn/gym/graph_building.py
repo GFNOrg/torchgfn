@@ -95,9 +95,6 @@ class GraphBuilding(GraphEnv):
                 graph = data_array[i]
                 edge_idx = action_edge_index_flat[i]
 
-                assert graph.x is not None
-                assert graph.edge_index is not None
-                assert graph.edge_attr is not None
                 src, dst = get_edge_indices(
                     graph.x.size(0), self.is_directed, graph.edge_index.device
                 )
@@ -155,8 +152,6 @@ class GraphBuilding(GraphEnv):
             # Remove nodes with matching features
             for i in add_node_index:
                 graph = data_array[i]
-                assert isinstance(graph.num_nodes, int)
-                assert graph.x is not None
 
                 # Find nodes with matching features
                 is_equal = torch.all(graph.x == node_class_flat[i].unsqueeze(0), dim=1)
@@ -183,9 +178,6 @@ class GraphBuilding(GraphEnv):
                 graph = data_array[i]
                 edge_idx = action_edge_index_flat[i]
 
-                assert graph.x is not None
-                assert graph.edge_index is not None
-                assert graph.edge_attr is not None
                 src, dst = get_edge_indices(
                     graph.x.size(0), self.is_directed, graph.edge_index.device
                 )
@@ -217,7 +209,7 @@ class GraphBuilding(GraphEnv):
             True if all actions are valid, False otherwise.
         """
         # Get the data list from the batch
-        data_list = states.graphs
+        data_array = states.graphs
         action_type_flat = actions.action_type.flatten()
         node_class_flat = actions.node_class.flatten()
         edge_index_flat = actions.edge_index.flatten()
@@ -227,9 +219,7 @@ class GraphBuilding(GraphEnv):
             if action_type == GraphActionType.EXIT:
                 continue
 
-            graph = data_list[i]
-            assert isinstance(graph.num_nodes, int)
-
+            graph = data_array[i]
             if action_type == GraphActionType.ADD_NODE:
                 # Check if a node with these features already exists
                 equal_nodes = torch.all(
@@ -246,9 +236,6 @@ class GraphBuilding(GraphEnv):
                         return False
 
             elif action_type == GraphActionType.ADD_EDGE:
-                assert graph.x is not None
-                assert graph.edge_index is not None
-                assert graph.edge_attr is not None
                 edge_idx = edge_index_flat[i]
                 src, dst = get_edge_indices(
                     graph.x.size(0), self.is_directed, graph.edge_index.device
@@ -275,14 +262,14 @@ class GraphBuilding(GraphEnv):
 
     def _add_node(
         self,
-        data_list: np.ndarray,
+        data_array: np.ndarray,
         batch_indices_flat: torch.Tensor,
         node_class: torch.Tensor,
     ) -> np.ndarray:
         """Add nodes to graphs in a batch.
 
         Args:
-            data_list: The current batch of graphs.
+            data_array: The current batch of graphs.
             batch_indices: Indices of graphs to add nodes to.
             node_class: Class of nodes to add.
 
@@ -297,8 +284,7 @@ class GraphBuilding(GraphEnv):
         # Add nodes to the specified graphs
         for graph_idx, new_node_class in zip(batch_indices_flat, node_class):
             # Get the graph to modify
-            graph = data_list[graph_idx]
-            assert graph.x is not None
+            graph = data_array[graph_idx]
 
             # Ensure new_nodes is 2D
             new_node_class = torch.atleast_2d(new_node_class)
@@ -310,7 +296,7 @@ class GraphBuilding(GraphEnv):
             # Add new nodes to the graph
             graph.x = torch.cat([graph.x, new_node_class], dim=0)
 
-        return data_list
+        return data_array
 
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
@@ -587,11 +573,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             # Create random edge attributes
             edge_attr = torch.rand(n_edges, self.s0.edge_attr.size(1), device=device)
 
-            data = GeometricData(
-                x=x,
-                edge_index=edge_index,
-                edge_attr=edge_attr,
-            )
+            data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
             data_array.flat[i] = data
 
         return self.States(data_array)
