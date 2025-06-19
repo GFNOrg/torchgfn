@@ -70,8 +70,7 @@ class GraphBuilding(GraphEnv):
         if len(actions) == 0:
             return states
 
-        data_array = states.graphs
-
+        data_array = states.graphs.flatten()
         # Create masks for different action types
         # Flatten each mask, from (*batch_shape) to (prod(batch_shape),)
         add_node_mask = (actions.action_type == GraphActionType.ADD_NODE).flatten()
@@ -137,8 +136,7 @@ class GraphBuilding(GraphEnv):
             return states
 
         # Get the data list from the batch
-        data_array = states.graphs
-
+        data_array = states.graphs.flatten()
         # Create masks for different action types
         # Flatten each mask, from (*batch_shape) to (prod(batch_shape),)
         add_node_mask = (actions.action_type == GraphActionType.ADD_NODE).flatten()
@@ -209,7 +207,7 @@ class GraphBuilding(GraphEnv):
             True if all actions are valid, False otherwise.
         """
         # Get the data list from the batch
-        data_array = states.graphs
+        data_array = states.graphs.flatten()
         action_type_flat = actions.action_type.flatten()
         node_class_flat = actions.node_class.flatten()
         edge_index_flat = actions.edge_index.flatten()

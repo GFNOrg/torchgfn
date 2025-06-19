@@ -683,7 +683,7 @@ class GraphStates(States):
         """
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
-        for graph in self.graphs.flatten():
+        for graph in self.graphs.flat:
             if graph.x is not None:
                 max_nodes = max(max_nodes, graph.x.size(0))
 
@@ -697,7 +697,7 @@ class GraphStates(States):
         )
 
         # Remove existing edges
-        for i, graph in enumerate(self.graphs.flatten()):
+        for i, graph in enumerate(self.graphs.flat):
             if graph.x is None:
                 continue
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
@@ -759,7 +759,7 @@ class GraphStates(States):
         """
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
-        for graph in self.graphs.flatten():
+        for graph in self.graphs.flat:
             if graph.x is not None:
                 max_nodes = max(max_nodes, graph.x.size(0))
 
@@ -773,7 +773,7 @@ class GraphStates(States):
             self.graphs.size, max_possible_edges, dtype=torch.bool, device=self.device
         )
 
-        for i, graph in enumerate(self.graphs.flatten()):
+        for i, graph in enumerate(self.graphs.flat):
             if graph.x is None:
                 continue
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
@@ -797,10 +797,7 @@ class GraphStates(States):
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
         action_type[..., GraphActionType.ADD_NODE] = torch.tensor(
-            [
-                graph.x is not None and graph.x.size(0) > 0
-                for graph in self.graphs.flatten()
-            ],
+            [graph.x is not None and graph.x.size(0) > 0 for graph in self.graphs.flat],
             device=self.device,
         ).view(self.batch_shape)
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
@@ -910,7 +907,7 @@ class GraphStates(States):
         Returns:
             The GraphStates object on the specified device.
         """
-        for graph in self.graphs.flatten():
+        for graph in self.graphs.flat:
             graph.to(str(device))
         if self._log_rewards is not None:
             self._log_rewards = self._log_rewards.to(device)
@@ -923,8 +920,8 @@ class GraphStates(States):
             A new GraphStates object with the same data.
         """
         cloned_graphs = np.empty(self.graphs.shape, dtype=object)
-        for i in range(self.graphs.size):
-            cloned_graphs.flat[i] = deepcopy(self.graphs.flat[i])
+        for i, graph in enumerate(self.graphs.flat):
+            cloned_graphs.flat[i] = deepcopy(graph)
 
         out = self.__class__(cloned_graphs, device=self.device)
         if self._log_rewards is not None:
@@ -992,7 +989,7 @@ class GraphStates(States):
             torch.argsort(other.edge_index[0] * other.x.size(0) + other.edge_index[1])
         ]
 
-        for i, graph in enumerate(self.graphs.flatten()):
+        for i, graph in enumerate(self.graphs.flat):
             if graph.x is None or graph.edge_index is None or graph.edge_attr is None:
                 continue
 
