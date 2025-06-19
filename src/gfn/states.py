@@ -846,7 +846,8 @@ class GraphStates(States):
         Returns:
             A new GraphStates object containing the selected graphs.
         """
-        selected_graphs = self.graphs[index]
+        index_np = self._get_index_np(index)
+        selected_graphs = self.graphs[index_np]
         if not isinstance(selected_graphs, np.ndarray):
             selected_graphs_array = np.empty(1, dtype=object)
             selected_graphs_array[0] = selected_graphs
@@ -869,19 +870,33 @@ class GraphStates(States):
             index: Index or indices to set.
             graph: GraphStates object containing the new graphs.
         """
-        len_dst = np.empty(self.batch_shape)[index].size
+        index_np = self._get_index_np(index)
+        len_dst = np.empty(self.batch_shape)[index_np].size
         len_src = prod(graph.batch_shape)
         assert (
             len_dst == len_src
         ), "Index and graph must have the same length, but got {} and {}".format(
             len_dst, len_src
         )
-        self.graphs[index] = graph.graphs
+        self.graphs[index_np] = graph.graphs
 
         if self._log_rewards is not None and graph._log_rewards is not None:
             self._log_rewards[index] = graph._log_rewards
         else:
             self._log_rewards = None
+
+    def _get_index_np(
+        self, index: Union[int, Sequence[int], slice, torch.Tensor, Tuple]
+    ) -> Union[int, Sequence[int], slice, np.ndarray, Tuple]:
+        if isinstance(index, torch.Tensor):
+            return index.cpu().numpy()
+        elif isinstance(index, Tuple):
+            return tuple(
+                idx.cpu().numpy() if isinstance(idx, torch.Tensor) else idx
+                for idx in index
+            )
+        else:
+            return index
 
     def to(self, device: torch.device) -> GraphStates:
         """Moves the GraphStates to the specified device.
