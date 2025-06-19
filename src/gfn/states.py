@@ -12,7 +12,6 @@ from typing import (
     Sequence,
     Tuple,
     Union,
-    cast,
 )
 
 import numpy as np
@@ -22,7 +21,6 @@ from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActions, GraphActionType
-from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import get_edge_indices
 
 
@@ -578,13 +576,6 @@ class GraphStates(States):
         self.graphs = graphs
         self._log_rewards: Optional[torch.Tensor] = None
 
-        self._device = device
-        if len(graphs) > 0:
-            if self._device is None:
-                self._device = cast(torch.Tensor, graphs[0].x).device
-            else:
-                ensure_same_device(self._device, cast(torch.Tensor, graphs[0].x).device)
-
     @property
     def tensor(self) -> GeometricBatch:
         """Returns the tensor representation of the graphs."""
@@ -705,7 +696,6 @@ class GraphStates(States):
             self.graphs.size, max_possible_edges, dtype=torch.bool, device=self.device
         )
 
-        flat_indices = self._batch_ptrs.view(-1)
         # Remove existing edges
         for i, graph in enumerate(self.graphs.flatten()):
             if graph.num_nodes is None:
@@ -992,11 +982,11 @@ class GraphStates(States):
                 continue
 
             graph_num_nodes = graph.x.size(0)
-            if graph_num_nodes != other_num_nodes:
+            if graph_num_nodes != other.num_nodes:
                 continue
 
             # FIXME: What if the nodes are not sorted?
-            if not torch.all(graph.x == other_nodes):
+            if not torch.all(graph.x == other.x):
                 continue
 
             # Check if the number of edges is the same
@@ -1006,7 +996,7 @@ class GraphStates(States):
             # Check if edge indices are the same (this is more complex due to potential reordering)
             # We'll use a simple heuristic: sort edges and compare
             self_edges = sorted(graph.edge_index.t().tolist())
-            if self_edges != other_edges:
+            if self_edges != other.edge_index.t().tolist():
                 continue
 
             # Check if the number of edge attributes is the same
@@ -1019,7 +1009,7 @@ class GraphStates(States):
                     graph.edge_index[0] * graph_num_nodes + graph.edge_index[1]
                 )
             ]
-            if not torch.all(graph_edge_attr == other_edge_attr):
+            if not torch.all(graph_edge_attr == other.edge_attr):
                 continue
 
             # If all checks pass, the graphs are equal
