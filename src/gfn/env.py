@@ -251,7 +251,12 @@ class Env(ABC):
         not_done_states = new_states[~new_sink_states_idx]
         not_done_actions = actions[~new_sink_states_idx]
 
-        new_states[~new_sink_states_idx] = self.step(not_done_states, not_done_actions)
+        not_done_states = self.step(not_done_states, not_done_actions)
+        if not isinstance(not_done_states, States):
+            raise ValueError(
+                f"The step function must return a States instance, but got {type(not_done_states)} instead."
+            )
+        new_states[~new_sink_states_idx] = not_done_states
         return new_states
 
     def _backward_step(self, states: States, actions: Actions) -> States:

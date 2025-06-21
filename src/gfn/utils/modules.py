@@ -364,6 +364,14 @@ class GraphEdgeActionGNN(nn.Module):
 
         self.norm = nn.LayerNorm(self.hidden_dim)
 
+        self.edge_class_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=self.num_edge_classes,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
     @property
     def input_dim(self):
         return self._input_dim
@@ -454,6 +462,9 @@ class GraphEdgeActionGNN(nn.Module):
         )
 
         action_type = torch.ones(len(states_tensor), 3, device=x.device) * float("-inf")
+        edge_class_logits = torch.zeros(
+            len(states_tensor), self.num_edge_classes, device=x.device
+        )
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
         else:
@@ -461,13 +472,12 @@ class GraphEdgeActionGNN(nn.Module):
             exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
             action_type[..., GraphActionType.EXIT] = exit_action
+            edge_class_logits = self.edge_class_mlp(node_feature_means)
 
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
-                GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                    len(states_tensor), self.num_edge_classes, device=x.device
-                ),  # TODO: make it learnable.
+                GraphActions.EDGE_CLASS_KEY: edge_class_logits,
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
                     len(states_tensor), 1, device=x.device
                 ),
@@ -571,6 +581,14 @@ class GraphEdgeActionMLP(nn.Module):
             add_layer_norm=True,
         )
 
+        self.edge_class_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=self.num_edge_classes,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
     @property
     def input_dim(self) -> int:
         return self._input_dim
@@ -620,12 +638,16 @@ class GraphEdgeActionMLP(nn.Module):
         edge_actions = self.edge_mlp(embedding)
 
         action_type = torch.ones(len(states_tensor), 3, device=device) * float("-inf")
+        edge_class_logits = torch.zeros(
+            len(states_tensor), self.num_edge_classes, device=device
+        )
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
         else:
             exit_action = self.exit_mlp(embedding).squeeze(-1)
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
             action_type[..., GraphActionType.EXIT] = exit_action
+            edge_class_logits = self.edge_class_mlp(embedding)
 
         return TensorDict(
             {
@@ -633,9 +655,7 @@ class GraphEdgeActionMLP(nn.Module):
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
                     len(states_tensor), 1, device=device
                 ),
-                GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                    len(states_tensor), self.num_edge_classes, device=device
-                ),  # TODO: make it learnable
+                GraphActions.EDGE_CLASS_KEY: edge_class_logits,
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
             batch_size=len(states_tensor),

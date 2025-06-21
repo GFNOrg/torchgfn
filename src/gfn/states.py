@@ -558,7 +558,7 @@ class GraphStates(States):
         is_directed: Whether the graph is directed.
         s0: Initial state.
         sf: Final state.
-        graphs: A numpy array of GeometricData objects representing individual graphs.
+        data: A numpy array of GeometricData objects representing individual graphs.
     """
 
     num_node_classes: ClassVar[int]
@@ -568,18 +568,18 @@ class GraphStates(States):
     s0: ClassVar[GeometricData]
     sf: ClassVar[GeometricData]
 
-    def __init__(self, graphs: np.ndarray, device: torch.device | None = None):
+    def __init__(self, data: np.ndarray, device: torch.device | None = None):
         """Initialize the GraphStates with a numpy array of GeometricData objects.
 
         Args:
-            graphs: A numpy array of GeometricData objects representing individual graphs.
+            data: A numpy array of GeometricData objects representing individual graphs.
         """
-        assert isinstance(graphs, np.ndarray), "Graphs must be a numpy array"
-        self.graphs = graphs
+        assert isinstance(data, np.ndarray), "Graphs must be a numpy array"
+        self.data = data
         self._log_rewards: Optional[torch.Tensor] = None
         self._device = device
-        if graphs.size > 0:
-            g = graphs.flatten()[0]
+        if data.size > 0:
+            g = data.flatten()[0]
             if self._device is None:
                 self._device = cast(torch.Tensor, g.x).device
             else:
@@ -587,8 +587,8 @@ class GraphStates(States):
 
     @property
     def tensor(self) -> GeometricBatch:
-        """Returns the tensor representation of the graphs."""
-        if self.graphs.size == 0:
+        """Returns the tensor representation of the data."""
+        if self.data.size == 0:
             dummy_graph = GeometricData(
                 x=torch.zeros(0, self.num_node_classes, device=self.device),
                 edge_index=torch.zeros(2, 0, dtype=torch.long, device=self.device),
@@ -596,7 +596,7 @@ class GraphStates(States):
             )
             return GeometricBatch.from_data_list([dummy_graph])
 
-        return GeometricBatch.from_data_list(self.graphs.flatten().tolist())
+        return GeometricBatch.from_data_list(self.data.flatten().tolist())
 
     @property
     def device(self) -> torch.device:
@@ -607,7 +607,7 @@ class GraphStates(States):
     @property
     def batch_shape(self) -> tuple[int, ...]:
         """Returns the batch shape as a tuple."""
-        return self.graphs.shape
+        return self.data.shape
 
     @classmethod
     def make_initial_states(
@@ -683,7 +683,7 @@ class GraphStates(States):
         """
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
-        for graph in self.graphs.flat:
+        for graph in self.data.flat:
             if graph.x is not None:
                 max_nodes = max(max_nodes, graph.x.size(0))
 
@@ -693,11 +693,11 @@ class GraphStates(States):
             max_possible_edges = max_nodes * (max_nodes - 1) // 2
 
         edge_masks = torch.ones(
-            self.graphs.size, max_possible_edges, dtype=torch.bool, device=self.device
+            self.data.size, max_possible_edges, dtype=torch.bool, device=self.device
         )
 
         # Remove existing edges
-        for i, graph in enumerate(self.graphs.flat):
+        for i, graph in enumerate(self.data.flat):
             if graph.x is None:
                 continue
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
@@ -759,7 +759,7 @@ class GraphStates(States):
         """
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
-        for graph in self.graphs.flat:
+        for graph in self.data.flat:
             if graph.x is not None:
                 max_nodes = max(max_nodes, graph.x.size(0))
 
@@ -770,10 +770,10 @@ class GraphStates(States):
 
         # Disallow all actions
         edge_masks = torch.zeros(
-            self.graphs.size, max_possible_edges, dtype=torch.bool, device=self.device
+            self.data.size, max_possible_edges, dtype=torch.bool, device=self.device
         )
 
-        for i, graph in enumerate(self.graphs.flat):
+        for i, graph in enumerate(self.data.flat):
             if graph.x is None:
                 continue
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
@@ -797,7 +797,7 @@ class GraphStates(States):
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
         action_type[..., GraphActionType.ADD_NODE] = torch.tensor(
-            [graph.x is not None and graph.x.size(0) > 0 for graph in self.graphs.flat],
+            [graph.x is not None and graph.x.size(0) > 0 for graph in self.data.flat],
             device=self.device,
         ).view(self.batch_shape)
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
@@ -832,7 +832,7 @@ class GraphStates(States):
 
     def __len__(self) -> int:
         """Returns the total number of graphs."""
-        return self.graphs.size
+        return self.data.size
 
     def __getitem__(
         self,
@@ -847,7 +847,7 @@ class GraphStates(States):
             A new GraphStates object containing the selected graphs.
         """
         index_np = self._get_index_np(index)
-        selected_graphs = self.graphs[index_np]
+        selected_graphs = self.data[index_np]
         if not isinstance(selected_graphs, np.ndarray):
             selected_graphs_array = np.empty(1, dtype=object)
             selected_graphs_array[0] = selected_graphs
@@ -878,7 +878,7 @@ class GraphStates(States):
         ), "Index and graph must have the same length, but got {} and {}".format(
             len_dst, len_src
         )
-        self.graphs[index_np] = graph.graphs
+        self.data[index_np] = graph.data
 
         if self._log_rewards is not None and graph._log_rewards is not None:
             self._log_rewards[index] = graph._log_rewards
@@ -907,7 +907,7 @@ class GraphStates(States):
         Returns:
             The GraphStates object on the specified device.
         """
-        for graph in self.graphs.flat:
+        for graph in self.data.flat:
             graph.to(str(device))
         if self._log_rewards is not None:
             self._log_rewards = self._log_rewards.to(device)
@@ -919,8 +919,8 @@ class GraphStates(States):
         Returns:
             A new GraphStates object with the same data.
         """
-        cloned_graphs = np.empty(self.graphs.shape, dtype=object)
-        for i, graph in enumerate(self.graphs.flat):
+        cloned_graphs = np.empty(self.data.shape, dtype=object)
+        for i, graph in enumerate(self.data.flat):
             cloned_graphs.flat[i] = deepcopy(graph)
 
         out = self.__class__(cloned_graphs, device=self.device)
@@ -935,7 +935,7 @@ class GraphStates(States):
             other: GraphStates object to concatenate with.
         """
         if len(self.batch_shape) == len(other.batch_shape) == 1:
-            self.graphs = np.concatenate([self.graphs, other.graphs])
+            self.data = np.concatenate([self.data, other.data])
 
         elif len(self.batch_shape) == len(other.batch_shape) == 2:
             max_batch_shape = max(self.batch_shape[0], other.batch_shape[0])
@@ -945,16 +945,16 @@ class GraphStates(States):
                 self_sf = self.make_sink_states(
                     (max_batch_shape - self.batch_shape[0], self.batch_shape[1])
                 )
-                self.graphs = np.concatenate([self.graphs, self_sf.graphs])
+                self.data = np.concatenate([self.data, self_sf.data])
 
             # Extend other with sink states if needed
             if other.batch_shape[0] < max_batch_shape:
                 other_sf = other.make_sink_states(
                     (max_batch_shape - other.batch_shape[0], other.batch_shape[1])
                 )
-                other.graphs = np.concatenate([other.graphs, other_sf.graphs])
+                other.data = np.concatenate([other.data, other_sf.data])
 
-            self.graphs = np.concatenate([self.graphs, other.graphs], axis=1)
+            self.data = np.concatenate([self.data, other.data], axis=1)
 
             # We don't have log rewards of sf states
             self._log_rewards = None
@@ -978,7 +978,7 @@ class GraphStates(States):
         Returns:
             A boolean tensor indicating which graphs in the batch are equal to other.
         """
-        out = torch.zeros(self.graphs.size, dtype=torch.bool, device=self.device)
+        out = torch.zeros(self.data.size, dtype=torch.bool, device=self.device)
 
         assert other.x is not None
         assert other.edge_index is not None
@@ -989,7 +989,7 @@ class GraphStates(States):
             torch.argsort(other.edge_index[0] * other.x.size(0) + other.edge_index[1])
         ]
 
-        for i, graph in enumerate(self.graphs.flat):
+        for i, graph in enumerate(self.data.flat):
             if graph.x is None or graph.edge_index is None or graph.edge_attr is None:
                 continue
 
@@ -1052,7 +1052,7 @@ class GraphStates(States):
         state_batch_shape = states[0].batch_shape
         assert all(state.batch_shape == state_batch_shape for state in states)
 
-        graphs_list = [state.graphs for state in states]
+        graphs_list = [state.data for state in states]
         stacked_graphs = np.stack(graphs_list)
 
         out = cls(stacked_graphs, device=states[0].device)
