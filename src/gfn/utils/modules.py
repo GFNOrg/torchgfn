@@ -6,10 +6,10 @@ import torch
 import torch.nn as nn
 from linear_attention_transformer import LinearAttentionTransformer
 from tensordict import TensorDict
-from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.utils.graphs import GeometricBatch
 
 
 class MLP(nn.Module):

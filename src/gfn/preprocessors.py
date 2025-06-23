@@ -4,9 +4,9 @@ from typing import Callable
 import torch
 from einops import rearrange
 from torch.nn.functional import one_hot
-from torch_geometric.data import Batch as GeometricBatch
 
 from gfn.states import DiscreteStates, GraphStates, States
+from gfn.utils.graphs import GeometricBatch
 
 
 class Preprocessor(ABC):

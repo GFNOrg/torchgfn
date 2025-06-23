@@ -18,12 +18,11 @@ from typing import (
 import numpy as np
 import torch
 from tensordict import TensorDict
-from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.common import ensure_same_device
-from gfn.utils.graphs import get_edge_indices
+from gfn.utils.graphs import GeometricBatch, get_edge_indices
 
 
 class States(ABC):
