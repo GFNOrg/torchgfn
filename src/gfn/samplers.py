@@ -144,6 +144,11 @@ class Sampler:
                 len(states.batch_shape) == 1
             ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
             n_trajectories = states.batch_shape[0]
+            # Backward trajectories should have the reward at the beginning (terminating state)
+            if self.estimator.is_backward:
+                # [ASSUMPTION] all provided states are part of the terminating states (can be passed to reward fn)
+                # assert states in env.terminating_states # This assert would be useful, unfortunately, not every environment implements this.
+                trajectories_log_rewards = env.log_reward(states)
 
         device = states.device
 
@@ -236,12 +241,11 @@ class Sampler:
                 else new_states.is_sink_state
             ) & ~dones
             trajectories_terminating_idx[new_dones] = step
-            try:
+
+            # Only forward trajectories should fetch a reward at the end.
+            if not self.estimator.is_backward:
                 trajectories_log_rewards[new_dones] = env.log_reward(states[new_dones])
-            except NotImplementedError:
-                trajectories_log_rewards[new_dones] = torch.log(
-                    env.reward(states[new_dones])
-                )
+
             states = new_states
             dones = dones | new_dones
             trajectories_states.append(deepcopy(states))
