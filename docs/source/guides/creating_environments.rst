@@ -16,7 +16,7 @@ To create a basic discrete environment, you need to:
 
 3. Optionally implement:
 
-   - ``make_random_states_tensor()``: For random state initialization
+   - ``make_random_states()``: For random state initialization
 
 For a complete working example, see the HyperGrid environment in ``src/gfn/gym/hypergrid.py``.
 This serves as a reference implementation showing how to properly implement all required methods.

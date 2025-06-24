@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple, cast
 
 import torch
-from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import Actions, GraphActions
@@ -119,7 +118,7 @@ class Env(ABC):
 
     # To be implemented by the User.
     @abstractmethod
-    def step(self, states: States, actions: Actions) -> torch.Tensor:
+    def step(self, states: States, actions: Actions) -> States:
         """Function that takes a batch of states and actions and returns a batch of next
         states. Does not need to check whether the actions are valid or the states are sink states.
 
@@ -132,9 +131,7 @@ class Env(ABC):
         """
 
     @abstractmethod
-    def backward_step(  # TODO: rename to backward_step, other method becomes _backward_step.
-        self, states: States, actions: Actions
-    ) -> torch.Tensor:
+    def backward_step(self, states: States, actions: Actions) -> States:
         """Function that takes a batch of states and actions and returns a batch of previous
         states. Does not need to check whether the actions are valid or the states are sink states.
 
@@ -155,9 +152,9 @@ class Env(ABC):
     ) -> bool:
         """Returns True if the actions are valid in the given states."""
 
-    def make_random_states_tensor(
+    def make_random_states(
         self, batch_shape: Tuple, device: torch.device | None = None
-    ) -> torch.Tensor:
+    ) -> States:
         """Optional method inherited by all States instances to emit a random tensor."""
         raise NotImplementedError
 
@@ -177,7 +174,7 @@ class Env(ABC):
             state_shape = env.state_shape
             s0 = env.s0
             sf = env.sf
-            make_random_states_tensor = env.make_random_states_tensor
+            make_random_states = env.make_random_states
 
         return DefaultEnvState
 
@@ -244,25 +241,22 @@ class Env(ABC):
 
         # Set to the sink state when the action is exit.
         new_sink_states_idx = actions.is_exit
-        sf_tensor = self.States.make_sink_states_tensor(
+        sf_states = self.States.make_sink_states(
             (int(new_sink_states_idx.sum().item()),), device=states.device
         )
-        new_states[new_sink_states_idx] = self.States(sf_tensor)
+        new_states[new_sink_states_idx] = sf_states
         new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
         assert new_sink_states_idx.shape == states.batch_shape
 
         not_done_states = new_states[~new_sink_states_idx]
         not_done_actions = actions[~new_sink_states_idx]
 
-        new_not_done_states_tensor = self.step(not_done_states, not_done_actions)
-
-        if not isinstance(new_not_done_states_tensor, (torch.Tensor, GeometricBatch)):
-            raise Exception(
-                "User implemented env.step function *must* return a torch.Tensor or "
-                "a GeometricBatch (for graph-based environments)."
+        not_done_states = self.step(not_done_states, not_done_actions)
+        if not isinstance(not_done_states, States):
+            raise ValueError(
+                f"The step function must return a States instance, but got {type(not_done_states)} instead."
             )
-
-        new_states[~new_sink_states_idx] = self.States(new_not_done_states_tensor)
+        new_states[~new_sink_states_idx] = not_done_states
         return new_states
 
     def _backward_step(self, states: States, actions: Actions) -> States:
@@ -285,8 +279,7 @@ class Env(ABC):
             )
 
         # Calculate the backward step, and update only the states which are not Done.
-        new_not_done_states_tensor = self.backward_step(valid_states, valid_actions)
-        new_states[valid_states_idx] = self.States(new_not_done_states_tensor)
+        new_states[valid_states_idx] = self.backward_step(valid_states, valid_actions)
 
         return new_states
 
@@ -466,7 +459,7 @@ class DiscreteEnv(Env, ABC):
             state_shape = env.state_shape
             s0 = env.s0
             sf = env.sf
-            make_random_states_tensor = env.make_random_states_tensor
+            make_random_states = env.make_random_states
             n_actions = env.n_actions
             device = env.device
 
@@ -628,7 +621,7 @@ class GraphEnv(Env):
 
             s0 = env.s0
             sf = env.sf
-            make_random_states_tensor = env.make_random_states_tensor
+            make_random_states = env.make_random_states
 
         return GraphEnvStates
 
@@ -649,19 +642,17 @@ class GraphEnv(Env):
         return states
 
     @abstractmethod
-    def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
+    def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Function that takes a batch of graph states and actions and returns a batch of next
         graph states."""
 
     @abstractmethod
-    def backward_step(
-        self, states: GraphStates, actions: GraphActions
-    ) -> GeometricBatch:
+    def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         """Function that takes a batch of graph states and actions and returns a batch of previous
         graph states."""
 
-    def make_random_states_tensor(
+    def make_random_states(
         self, batch_shape: int | Tuple, device: torch.device | None = None
-    ) -> GeometricBatch:
+    ) -> GraphStates:
         """Returns a batch of random graph states."""
         raise NotImplementedError
