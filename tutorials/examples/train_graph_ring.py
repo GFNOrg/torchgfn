@@ -255,6 +255,69 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
     plt.show()
 
 
+def init_gflownet(
+    num_nodes: int,
+    directed: bool,
+    use_gnn: bool,
+    num_conv_layers: int,
+    num_edge_classes: int,
+    device: torch.device,
+) -> TBGFlowNet:
+    # Choose model type based on USE_GNN flag
+    if use_gnn:
+        module_pf = GraphEdgeActionGNN(
+            num_nodes,
+            directed,
+            num_conv_layers=num_conv_layers,
+            num_edge_classes=num_edge_classes,
+        )
+        module_pb = GraphEdgeActionGNN(
+            num_nodes,
+            directed,
+            is_backward=True,
+            num_conv_layers=num_conv_layers,
+            num_edge_classes=num_edge_classes,
+        )
+    else:
+        module_pf = GraphEdgeActionMLP(
+            num_nodes,
+            directed,
+            num_edge_classes=num_edge_classes,
+        )
+        module_pb = GraphEdgeActionMLP(
+            num_nodes,
+            directed,
+            is_backward=True,
+            num_edge_classes=num_edge_classes,
+        )
+
+    pf = DiscreteGraphPolicyEstimator(
+        module=module_pf,
+    )
+    pb = DiscreteGraphPolicyEstimator(
+        module=module_pb,
+        is_backward=True,
+    )
+    gflownet = TBGFlowNet(pf, pb).to(device)
+    return gflownet
+
+
+def init_env(n_nodes: int, directed: bool, device: torch.device) -> GraphBuildingOnEdges:
+    state_evaluator = RingReward(
+        directed=directed,
+        reward_val=100.0,
+        eps_val=1e-6,
+        device=device,
+    )
+
+    return GraphBuildingOnEdges(
+        n_nodes=n_nodes,
+        state_evaluator=state_evaluator,
+        directed=directed,
+        device=device,
+    )
+
+
 def main(args: Namespace):
     """
     Main execution for training a GFlowNet to generate ring graphs.
@@ -277,58 +340,19 @@ def main(args: Namespace):
     3. Visualize sample generated graphs
     """
     device = torch.device(args.device)
-
-    state_evaluator = RingReward(
-        directed=args.directed,
-        reward_val=100.0,
-        eps_val=1e-6,
-        device=device,
-    )
     torch.random.manual_seed(7)
 
-    env = GraphBuildingOnEdges(
-        n_nodes=args.n_nodes,
-        state_evaluator=state_evaluator,
-        directed=args.directed,
-        device=device,
+    env = init_env(args.n_nodes, args.directed, device)
+
+    gflownet = init_gflownet(
+        args.n_nodes,
+        args.directed,
+        args.use_gnn,
+        args.num_conv_layers,
+        env.num_edge_classes,
+        device,
     )
 
-    # Choose model type based on USE_GNN flag
-    if args.use_gnn:
-        module_pf = GraphEdgeActionGNN(
-            env.n_nodes,
-            args.directed,
-            num_conv_layers=args.num_conv_layers,
-            num_edge_classes=env.num_edge_classes,
-        )
-        module_pb = GraphEdgeActionGNN(
-            env.n_nodes,
-            args.directed,
-            is_backward=True,
-            num_conv_layers=args.num_conv_layers,
-            num_edge_classes=env.num_edge_classes,
-        )
-    else:
-        module_pf = GraphEdgeActionMLP(
-            env.n_nodes,
-            args.directed,
-            num_edge_classes=env.num_edge_classes,
-        )
-        module_pb = GraphEdgeActionMLP(
-            env.n_nodes,
-            args.directed,
-            is_backward=True,
-            num_edge_classes=env.num_edge_classes,
-        )
-
-    pf = DiscreteGraphPolicyEstimator(
-        module=module_pf,
-    )
-    pb = DiscreteGraphPolicyEstimator(
-        module=module_pb,
-        is_backward=True,
-    )
-    gflownet = TBGFlowNet(pf, pb).to(device)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
 
     replay_buffer = ReplayBuffer(
@@ -355,7 +379,7 @@ def main(args: Namespace):
         # Collect rewards for reporting.
         terminating_states = training_samples.terminating_states
         assert isinstance(terminating_states, GraphStates)
-        rewards = state_evaluator(terminating_states)
+        rewards = env.reward(terminating_states)
 
         if args.use_buffer:
             with torch.no_grad():
@@ -386,7 +410,7 @@ def main(args: Namespace):
     if args.plot:
         samples_to_render = trajectories.terminating_states[:8]
         assert isinstance(samples_to_render, GraphStates)
-        render_states(samples_to_render, state_evaluator, args.directed)
+        render_states(samples_to_render, env.reward, args.directed)
 
 
 if __name__ == "__main__":

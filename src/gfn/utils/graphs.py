@@ -33,6 +33,20 @@ def get_edge_indices(
     return ei0, ei1
 
 
+def from_edge_indices(
+    ei0: int | torch.Tensor,
+    ei1: int | torch.Tensor,
+    n_nodes: int,
+    is_directed: bool,
+) -> int | torch.Tensor:
+    """Get the source and target node indices for the edges.
+    """
+    if is_directed:
+        return ei0 * (n_nodes - 1) + (ei1 if ei1 < ei0 else ei1 - 1)
+    else:
+        raise NotImplementedError("Undirected graphs are not supported yet.")
+
+
 class GeometricBatch(Batch):
 
     def extend(self, other: GeometricBatch) -> None:
