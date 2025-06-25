@@ -6,7 +6,7 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
-from gfn.states import GraphStates, States
+from gfn.states import GraphStates, States, graph_states_share_storage
 from gfn.utils.common import ensure_same_device
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -169,7 +169,6 @@ class Sampler:
         )
 
         # Define dummy actions to avoid errors when stacking empty lists.
-
         trajectories_states: List[States] = [states]
         trajectories_actions: List[Actions] = [
             env.actions_from_batch_shape((n_trajectories,))
@@ -235,6 +234,20 @@ class Sampler:
                 new_states = env._backward_step(states, actions)
             else:
                 new_states = env._step(states, actions)
+
+            # Ensure that the new state is a distinct object from the old state.
+            if __debug__:
+                assert new_states is not states
+                assert isinstance(new_states, States)
+                assert type(new_states) is type(states)
+                if isinstance(new_states, GraphStates):
+                    # Asserts that there exists no shared storage between the two
+                    # GraphStates.
+                    assert not graph_states_share_storage(new_states, states)
+                else:
+                    # Asserts that there exists no shared storage between the two
+                    # States.
+                    assert new_states.tensor.data_ptr() != states.tensor.data_ptr()
 
             # Increment the step, determine which trajectories are finished, and eval
             # rewards.
