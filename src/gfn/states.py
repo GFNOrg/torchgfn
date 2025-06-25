@@ -1084,7 +1084,7 @@ class GraphStates(States):
 def graph_states_share_storage(a: GraphStates, b: GraphStates) -> bool:
     """True if *any* tensor storage is shared between the two GraphStates."""
 
-    def _tensor_ptrs(g: Data) -> tuple[int, ...]:
+    def _tensor_ptrs(g: GeometricData) -> tuple[int, ...]:
         """Return the data_ptr() of every tensor field in the graph."""
         out: list[int] = []
         for key, t in g:
