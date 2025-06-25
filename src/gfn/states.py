@@ -596,7 +596,7 @@ class GraphStates(States):
 
     @property
     def tensor(self) -> GeometricBatch:
-        """Returns the tensor representation of the data."""
+        """Returns the Batch representation of the data."""
         if self.data.size == 0:
             dummy_graph = GeometricData(
                 x=torch.zeros(0, self.num_node_classes, device=self.device),
@@ -1079,3 +1079,26 @@ class GraphStates(States):
             out._log_rewards = torch.stack(log_rewards)
 
         return out
+
+
+def graph_states_share_storage(a: GraphStates, b: GraphStates) -> bool:
+    """True if *any* tensor storage is shared between the two GraphStates."""
+
+    def _tensor_ptrs(g: Data) -> tuple[int, ...]:
+        """Return the data_ptr() of every tensor field in the graph."""
+        out: list[int] = []
+        for key, t in g:
+            if torch.is_tensor(t) and t.numel() > 0:  # ignore empty tensors.
+                out.append(t.data_ptr())
+
+        return tuple(out)
+
+    ptrs_a = {  # hash-set for O(1) look-ups.
+        ptr for g in a.data.flat for ptr in _tensor_ptrs(g)
+    }
+
+    for g in b.data.flat:
+        for ptr in _tensor_ptrs(g):
+            if ptr in ptrs_a:
+                return True  # first hit confirms shared storage.
+    return False
