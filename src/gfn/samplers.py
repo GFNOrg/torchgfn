@@ -1,7 +1,6 @@
 from typing import Any, List, Optional, Tuple
 
 import torch
-from line_profiler import profile
 
 from gfn.actions import Actions
 from gfn.containers import Trajectories
@@ -101,7 +100,6 @@ class Sampler:
 
         return actions, log_probs, estimator_output
 
-    @profile
     def sample_trajectories(
         self,
         env: Env,
