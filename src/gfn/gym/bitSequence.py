@@ -351,7 +351,7 @@ class BitSequence(DiscreteEnv):
                 states.length - 1,
             ]
         ).all()
-        old_tensor = states.tensor.clone()
+        old_tensor = states.tensor
         old_tensor[..., states.length - 1] = -1
         return self.States(old_tensor)
 
