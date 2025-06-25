@@ -93,8 +93,11 @@ class Sampler:
         if not save_estimator_outputs:
             estimator_output = None
 
-        assert log_probs is None or log_probs.shape == actions.batch_shape
-        # assert estimator_output is None or estimator_output.shape == actions.batch_shape  TODO: check expected shape
+        if __debug__:
+            assert log_probs is None or log_probs.shape == actions.batch_shape
+            # assert estimator_output is None or estimator_output.shape == actions.batch_shape
+            # TODO: check expected shape
+
         return actions, log_probs, estimator_output
 
     def sample_trajectories(
@@ -139,9 +142,10 @@ class Sampler:
             states = env.reset(batch_shape=(n,))
             n_trajectories = n
         else:
-            assert (
-                len(states.batch_shape) == 1
-            ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
+            if __debug__:
+                assert (
+                    len(states.batch_shape) == 1
+                ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
             n_trajectories = states.batch_shape[0]
             # Backward trajectories should have the reward at the beginning (terminating state)
             if self.estimator.is_backward:
@@ -152,8 +156,11 @@ class Sampler:
         device = states.device
 
         if conditioning is not None:
-            assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
-            ensure_same_device(states.device, conditioning.device)
+            if __debug__:
+                assert (
+                    states.batch_shape == conditioning.shape[: len(states.batch_shape)]
+                )
+                ensure_same_device(states.device, conditioning.device)
 
         dones = (
             states.is_initial_state
@@ -515,9 +522,14 @@ class LocalSearchSampler(Sampler):
         )
 
         if n is None:
-            n = trajectories.n_trajectories
+            n = int(trajectories.n_trajectories)
 
-        search_indices = torch.arange(n, device=trajectories.states.device)
+        search_indices = torch.arange(
+            n,
+            dtype=torch.long,
+            device=trajectories.states.device,
+        )
+
         for it in range(1, n_local_search_loops):  # 0-th loop is the initial sampling
             # Search phase
             ls_trajectories, is_updated = self.local_search(
@@ -534,7 +546,10 @@ class LocalSearchSampler(Sampler):
             trajectories.extend(ls_trajectories)
 
             last_indices = torch.arange(
-                n * it, n * (it + 1), device=trajectories.states.device
+                n * it,
+                n * (it + 1),
+                dtype=torch.long,
+                device=trajectories.states.device,
             )
             search_indices[is_updated] = last_indices[is_updated]
 
@@ -575,7 +590,16 @@ class LocalSearchSampler(Sampler):
         max_traj_len = int(new_trajectories_dones.max().item())
 
         # Create helper indices and masks
-        idx = torch.arange(max_traj_len + 1).unsqueeze(1).expand(-1, bs).to(n_prevs)
+        idx = (
+            torch.arange(
+                max_traj_len + 1,
+                dtype=torch.long,
+            )
+            .unsqueeze(1)
+            .expand(-1, bs)
+            .to(n_prevs)
+        )
+
         prev_mask = idx < n_prevs
         state_recon_mask = (idx >= n_prevs) * (idx <= n_prevs + n_recons)
         state_recon_mask2 = idx[: max_n_recon + 1] <= n_recons
@@ -731,20 +755,25 @@ class LocalSearchSampler(Sampler):
                         recon_trajectories_log_pb[:_len_recon, i]
                     )
 
-            assert torch.all(_new_trajectories_states_tsr == new_trajectories_states_tsr)
-            assert torch.all(
-                _new_trajectories_actions_tsr == new_trajectories_actions_tsr
-            )
+            if __debug__:
+                assert torch.all(
+                    _new_trajectories_states_tsr == new_trajectories_states_tsr
+                )
+                assert torch.all(
+                    _new_trajectories_actions_tsr == new_trajectories_actions_tsr
+                )
             if (
                 prev_trajectories_log_pf is not None
                 and recon_trajectories_log_pf is not None
             ):
-                assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)
+                if __debug__:
+                    assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)
             if (
                 prev_trajectories_log_pb is not None
                 and recon_trajectories_log_pb is not None
             ):
-                assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
+                if __debug__:
+                    assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
 
         new_trajectories = Trajectories(
             env=env,
