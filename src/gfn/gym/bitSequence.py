@@ -76,9 +76,9 @@ class BitSequenceStates(DiscreteStates):
     def clone(self) -> BitSequenceStates:
         return self.__class__(
             self.tensor.detach().clone(),
-            self.length,
-            self.forward_masks,
-            self.backward_masks,
+            self.length.detach().clone(),
+            self.forward_masks.detach().clone(),
+            self.backward_masks.detach().clone(),
         )
 
     def _check_both_forward_backward_masks_exist(self):
@@ -87,16 +87,14 @@ class BitSequenceStates(DiscreteStates):
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> BitSequenceStates:
-        states = self.tensor[index]
         self._check_both_forward_backward_masks_exist()
-        # print(index.shape)
-        # print(self.tensor)
-        # print(self.length.shape)
-        length = self.length[index]
-        forward_masks = self.forward_masks[index]
-        backward_masks = self.backward_masks[index]
-        out = self.__class__(states, length, forward_masks, backward_masks)
-        return out
+
+        return self.__class__(
+            self.tensor[index],
+            self.length[index],
+            self.forward_masks[index],
+            self.backward_masks[index],
+        )
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: BitSequenceStates
@@ -322,8 +320,8 @@ class BitSequence(DiscreteEnv):
             torch.Tensor: A batch of next states.
         """
         is_exit = actions.is_exit
-        old_tensor = states.tensor.clone()
-        old_tensor[~is_exit, states.length] = actions.tensor[~is_exit].squeeze()
+        old_tensor = states.tensor
+        old_tensor[~is_exit, states.length] = actions.tensor[~is_exit].squeeze().clone()
         old_tensor[is_exit] = torch.full_like(
             old_tensor[is_exit],
             self.n_actions - 1,
@@ -366,7 +364,7 @@ class BitSequence(DiscreteEnv):
         Returns:
             BitSequenceStates: The new states of the environment after applying the actions.
         """
-        length = states.length.clone()
+        length = states.length.detach().clone()
         new_states = super(DiscreteEnv, self)._step(states, actions)
         assert isinstance(new_states, BitSequenceStates)
         new_states.length = length + 1
