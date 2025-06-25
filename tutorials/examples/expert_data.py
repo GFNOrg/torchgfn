@@ -130,6 +130,10 @@ def main(args: Namespace):
         save_logprobs=True,
     )
     sample_trajectories = sample_trajectories.reverse_backward_trajectories()
+    final_states = sample_trajectories.terminating_states
+    assert isinstance(final_states, GraphStates)
+    rewards = env.reward(final_states)
+    print("Rewards of expert data:", rewards.mean())
     replay_buffer.add(sample_trajectories)
 
     losses = []
@@ -186,7 +190,7 @@ if __name__ == "__main__":
 
     # Model parameters
     parser.add_argument(
-        "--n_nodes", type=int, default=4, help="Number of nodes in the graph"
+        "--n_nodes", type=int, default=8, help="Number of nodes in the graph"
     )
 
     parser.add_argument(
@@ -195,7 +199,7 @@ if __name__ == "__main__":
 
     # Training parameters
     parser.add_argument(
-        "--n_iterations", type=int, default=200, help="Number of training iterations"
+        "--n_iterations", type=int, default=500, help="Number of training iterations"
     )
     parser.add_argument(
         "--lr", type=float, default=0.001, help="Learning rate for optimizer"

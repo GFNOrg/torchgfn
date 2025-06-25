@@ -39,12 +39,104 @@ def from_edge_indices(
     n_nodes: int,
     is_directed: bool,
 ) -> int | torch.Tensor:
-    """Get the source and target node indices for the edges.
+    """Return the index (or indices) corresponding to the provided edge(s).
+
+    This is the inverse operation of :func:`get_edge_indices`.  Given the
+    source- and target-node indices of one or several edges, this function
+    returns the *position* of each edge in the enumeration produced by
+    ``get_edge_indices`` for the same ``n_nodes``/``is_directed`` setting.
+
+    The enumeration rules are the same as in ``get_edge_indices``:
+
+    1. ``is_directed = False``  →  only the strict upper–triangular part
+       (``i < j``) is enumerated using ``torch.triu_indices`` with
+       ``offset=1``.
+    2. ``is_directed = True``   →  the strict upper part is enumerated
+       first, followed by the strict lower part (``i > j``).
+
+    Parameters
+    ----------
+    ei0 / ei1
+        Source- and target-node indices. They can be Python ``int`` or
+        *matching-shape* tensors.  If undirected, the orientation is
+        ignored (``(i, j)`` and ``(j, i)`` map to the same index).
+    n_nodes
+        Number of nodes in the graph.
+    is_directed
+        Whether the graph is directed.
+
+    Returns
+    -------
+    int | torch.Tensor
+        The position(s) of each edge in the ordering returned by
+        ``get_edge_indices``.
     """
-    if is_directed:
-        return ei0 * (n_nodes - 1) + (ei1 if ei1 < ei0 else ei1 - 1)
+
+    # Convert to tensors for a unified implementation while preserving the
+    # original return type.
+    scalar_input = not torch.is_tensor(ei0) and not torch.is_tensor(ei1)
+
+    if scalar_input:
+        # Promote to tensor for easier math; keep device on CPU for ints.
+        i = torch.tensor(ei0, dtype=torch.long)
+        j = torch.tensor(ei1, dtype=torch.long)
     else:
-        raise NotImplementedError("Undirected graphs are not supported yet.")
+        i = ei0 if torch.is_tensor(ei0) else torch.tensor(ei0, device=ei1.device)
+        j = ei1 if torch.is_tensor(ei1) else torch.tensor(ei1, device=ei0.device)
+
+    # Sanity checks
+    if torch.any(i == j):
+        raise ValueError("Self-loops (i == j) are not enumerated by get_edge_indices.")
+
+    # Ensure both tensors share the same dtype/device.
+    if i.dtype != torch.long:
+        i = i.long()
+    if j.dtype != torch.long:
+        j = j.long()
+
+    if is_directed:
+        # Number of edges in the upper triangular part.
+        n_up = n_nodes * (n_nodes - 1) // 2
+
+        # Masks for upper and lower triangles.
+        upper_mask = i < j
+        lower_mask = j < i  # same as i > j & avoids computing again.
+
+        # Allocate container for result.
+        idx = torch.empty_like(i)
+
+        # --- Upper triangle -------------------------------------------------
+        if upper_mask.any():
+            iu = i[upper_mask]
+            ju = j[upper_mask]
+
+            preceding = iu * (n_nodes - 1) - (iu * (iu - 1)) // 2
+            offset = ju - iu - 1
+            idx[upper_mask] = preceding + offset
+
+        # --- Lower triangle -------------------------------------------------
+        if lower_mask.any():
+            il = i[lower_mask]
+            jl = j[lower_mask]
+
+            preceding = (il * (il - 1)) // 2  # number of edges before row *il*
+            offset = jl  # j ranges 0..i-1
+            idx[lower_mask] = n_up + preceding + offset
+
+    else:  # undirected ------------------------------------------------------
+        # Ensure orientation is i < j for each edge.
+        swapped_mask = i > j
+        if swapped_mask.any():
+            i, j = torch.where(swapped_mask, j, i), torch.where(swapped_mask, i, j)
+
+        preceding = i * (n_nodes - 1) - (i * (i - 1)) // 2
+        offset = j - i - 1
+        idx = preceding + offset
+
+    # Return in the original type.
+    if scalar_input:
+        return int(idx.item())
+    return idx
 
 
 class GeometricBatch(Batch):
@@ -233,6 +325,7 @@ class GeometricBatch(Batch):
             )
             new_batch_shape = (max_len, self_batch_shape[1] + other_batch_shape[1])
             self.tensor.batch_shape = new_batch_shape
+            # Restore batch pointers for the concatenated batch.
             new_batch_ptrs = torch.cat(
                 [self_batch_ptrs, self_batch_ptrs.numel() + other_batch_ptrs], dim=1
             )
