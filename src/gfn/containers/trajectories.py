@@ -522,16 +522,9 @@ class Trajectories(Container):
             log_rewards=log_rewards,
         )
 
-    def reverse_backward_trajectories(self, debug: bool = False) -> Trajectories:
+    def reverse_backward_trajectories(self) -> Trajectories:
         """Return a reversed version of the backward trajectories."""
         assert self.is_backward, "Trajectories must be backward."
-
-        # TODO: Implement reverse backward trajectories for GraphStates.
-        if isinstance(self.env.States, GraphStates):
-            raise NotImplementedError(
-                "Reverse backward trajectories are not implemented for GraphStates."
-            )
-
         # env.sf should never be None unless something went wrong during class
         # instantiation.
         if self.env.sf is None:
@@ -607,30 +600,6 @@ class Trajectories(Container):
             # FIXME: To resolve this, we can save log_pfs and log_pbs in the trajectories object.
             estimator_outputs=None,  # Same as `log_probs`.
         )
-
-        # ------------------------------ DEBUG ------------------------------
-        # If `debug` is True (expected only when testing), compare the
-        # vectorized approach's results (above) to the for-loop results (below).
-        if debug:
-            _new_actions = self.env.dummy_action.repeat(max_len + 1, len(self), 1).to(
-                actions
-            )  # shape (max_len + 1, n_trajectories, *action_dim)
-            _new_states = self.env.sf.repeat(max_len + 2, len(self), 1).to(
-                states
-            )  # shape (max_len + 2, n_trajectories, *state_dim)
-
-            for i in range(len(self)):
-                _new_actions[self.terminating_idx[i], i] = self.env.exit_action
-                _new_actions[: self.terminating_idx[i], i] = self.actions.tensor[
-                    : self.terminating_idx[i], i
-                ].flip(0)
-
-                _new_states[: self.terminating_idx[i] + 1, i] = self.states.tensor[
-                    : self.terminating_idx[i] + 1, i
-                ].flip(0)
-
-            assert torch.all(new_actions == _new_actions)
-            assert torch.all(new_states == _new_states)
 
         return reversed_trajectories
 
