@@ -75,9 +75,10 @@ class States(ABC):
         Args:
             tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of states.
         """
-        assert self.s0.shape == self.state_shape
-        assert self.sf.shape == self.state_shape
-        assert tensor.shape[-len(self.state_shape) :] == self.state_shape
+        if __debug__:
+            assert self.s0.shape == self.state_shape
+            assert self.sf.shape == self.state_shape
+            assert tensor.shape[-len(self.state_shape) :] == self.state_shape
 
         self.tensor = tensor
         self._log_rewards = (
@@ -327,9 +328,10 @@ class States(ABC):
     def stack(cls, states: Sequence[States]) -> States:
         """Given a list of states, stacks them along a new dimension (0)."""
         state_example = states[0]
-        assert all(
-            state.batch_shape == state_example.batch_shape for state in states
-        ), "All states must have the same batch_shape"
+        if __debug__:
+            assert all(
+                state.batch_shape == state_example.batch_shape for state in states
+            ), "All states must have the same batch_shape"
 
         stacked_states = state_example.from_batch_shape(
             (0, 0), device=state_example.device
@@ -377,7 +379,9 @@ class DiscreteStates(States, ABC):
                 allowable backward policy actions.
         """
         super().__init__(tensor)
-        assert tensor.shape == self.batch_shape + self.state_shape
+
+        if __debug__:
+            assert tensor.shape == self.batch_shape + self.state_shape
 
         # In the usual case, no masks are provided and we produce these defaults.
         # Note: this **must** be updated externally by the env.
@@ -396,8 +400,10 @@ class DiscreteStates(States, ABC):
 
         self.forward_masks: torch.Tensor = forward_masks
         self.backward_masks: torch.Tensor = backward_masks
-        assert self.forward_masks.shape == (*self.batch_shape, self.n_actions)
-        assert self.backward_masks.shape == (*self.batch_shape, self.n_actions - 1)
+
+        if __debug__:
+            assert self.forward_masks.shape == (*self.batch_shape, self.n_actions)
+            assert self.backward_masks.shape == (*self.batch_shape, self.n_actions - 1)
 
     def clone(self) -> DiscreteStates:
         """Returns a clone of the current instance."""
@@ -585,7 +591,8 @@ class GraphStates(States):
             if self._device is None:
                 self._device = cast(torch.Tensor, g.x).device
             else:
-                ensure_same_device(self._device, cast(torch.Tensor, g.x).device)
+                if __debug__:
+                    ensure_same_device(self._device, cast(torch.Tensor, g.x).device)
 
     @property
     def tensor(self) -> GeometricBatch:
@@ -1052,7 +1059,8 @@ class GraphStates(States):
         """
         # Check that all states have the same batch shape
         state_batch_shape = states[0].batch_shape
-        assert all(state.batch_shape == state_batch_shape for state in states)
+        if __debug__:
+            assert all(state.batch_shape == state_batch_shape for state in states)
 
         graphs_list = [state.data for state in states]
         stacked_graphs = np.stack(graphs_list)
