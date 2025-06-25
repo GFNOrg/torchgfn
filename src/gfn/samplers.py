@@ -240,7 +240,9 @@ class Sampler:
                 assert new_states is not states
                 assert isinstance(new_states, States)
                 assert type(new_states) is type(states)
-                if isinstance(new_states, GraphStates):
+                if isinstance(new_states, GraphStates) and isinstance(
+                    states, GraphStates
+                ):
                     # Asserts that there exists no shared storage between the two
                     # GraphStates.
                     assert not graph_states_share_storage(new_states, states)
