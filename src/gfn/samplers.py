@@ -1,4 +1,3 @@
-from copy import deepcopy
 from typing import Any, List, Optional, Tuple
 
 import torch
@@ -163,14 +162,14 @@ class Sampler:
         )
 
         # Define dummy actions to avoid errors when stacking empty lists.
-        dummy_actions = env.actions_from_batch_shape((n_trajectories,))
-        dummy_logprobs = torch.full(
-            (n_trajectories,), fill_value=0, dtype=torch.float, device=device
-        )
 
-        trajectories_states: List[States] = [deepcopy(states)]
-        trajectories_actions: List[Actions] = [dummy_actions]
-        trajectories_logprobs: List[torch.Tensor] = [dummy_logprobs]
+        trajectories_states: List[States] = [states]
+        trajectories_actions: List[Actions] = [
+            env.actions_from_batch_shape((n_trajectories,))
+        ]
+        trajectories_logprobs: List[torch.Tensor] = [
+            torch.full((n_trajectories,), fill_value=0, dtype=torch.float, device=device)
+        ]
         trajectories_terminating_idx = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
@@ -182,8 +181,10 @@ class Sampler:
         all_estimator_outputs = []
 
         while not all(dones):
-            actions = deepcopy(dummy_actions)
-            log_probs = dummy_logprobs.clone()
+            actions = env.actions_from_batch_shape((n_trajectories,))
+            log_probs = torch.full(
+                (n_trajectories,), fill_value=0, dtype=torch.float, device=device
+            )
             # This optionally allows you to retrieve the estimator_outputs collected
             # during sampling. This is useful if, for example, you want to evaluate off
             # policy actions later without repeating calculations to obtain the env
@@ -248,7 +249,7 @@ class Sampler:
 
             states = new_states
             dones = dones | new_dones
-            trajectories_states.append(deepcopy(states))
+            trajectories_states.append(states)
 
         # Stack all states and actions
         stacked_states = env.States.stack(trajectories_states)
