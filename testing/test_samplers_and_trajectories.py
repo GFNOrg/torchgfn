@@ -247,14 +247,10 @@ def test_reverse_backward_trajectories(
             )
             assert torch.all(
                 reversed_traj.states.tensor[j, i] == backward_trajectories.states.tensor[terminating_idx - j, i]
-            ), f"{reversed_traj.states.tensor[j, i]} != {backward_trajectories.states.tensor[terminating_idx - j, i]}"
+            )
     
-        assert torch.all(
-            reversed_traj.actions.tensor[terminating_idx, i] == backward_trajectories.env.Actions.make_exit_actions((1,)).tensor
-        )
-        assert torch.all(
-            reversed_traj.states.tensor[terminating_idx + 1, i] == backward_trajectories.env.States.make_sink_states((1,)).tensor
-        )
+        assert torch.all(reversed_traj.actions[terminating_idx, i].is_exit)
+        assert torch.all(reversed_traj.states[terminating_idx + 1, i].is_sink_state)
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])

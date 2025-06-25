@@ -539,59 +539,57 @@ class Trajectories(Container):
         max_len = int(seq_lengths.max().item())
 
         # Get actions and states
-        actions = self.actions.tensor  # shape (max_len, n_trajectories *action_dim)
-        states = self.states.tensor  # shape (max_len + 1, n_trajectories, *state_dim)
+        actions = self.actions  # shape (max_len, n_trajectories *action_dim)
+        states = self.states  # shape (max_len + 1, n_trajectories, *state_dim)
 
         # Initialize new actions and states
-        new_actions = self.env.dummy_action.repeat(max_len + 1, len(self), 1).to(actions)
+        new_actions = self.env.Actions.make_dummy_actions((max_len + 1, len(self)), device=actions.device)
         # shape (max_len + 1, n_trajectories, *action_dim)
-        new_states = self.env.sf.repeat(max_len + 2, len(self), 1).to(states)
+        new_states = self.env.States.make_sink_states((max_len + 2, len(self)), device=states.device)
         # shape (max_len + 2, n_trajectories, *state_dim)
 
         # Create helper indices and masks
-        idx = torch.arange(max_len).unsqueeze(1).expand(-1, len(self)).to(seq_lengths)
-        rev_idx = seq_lengths - 1 - idx  # shape (max_len, n_trajectories)
+        idx = torch.arange(max_len, device=seq_lengths.device).unsqueeze(1).expand(-1, len(self))
+        rev_idx = seq_lengths.unsqueeze(0) - 1 - idx  # shape (max_len, n_trajectories)
         mask = rev_idx >= 0  # shape (max_len, n_trajectories)
-        rev_idx[:, 1:] += seq_lengths.cumsum(0)[:-1]
 
-        # Transpose for easier indexing
-        actions = actions.transpose(0, 1)
-        # shape (n_trajectories, max_len, *action_dim)
-        new_actions = new_actions.transpose(0, 1)
-        # shape (n_trajectories, max_len + 1, *action_dim)
-        states = states.transpose(0, 1)
-        # shape (n_trajectories, max_len + 1, *state_dim)
-        new_states = new_states.transpose(0, 1)
-        # shape (n_trajectories, max_len + 2, *state_dim)
-        rev_idx = rev_idx.transpose(0, 1)
-        mask = mask.transpose(0, 1)
+        # -------------------------------------------------------------
+        # Replace the previous transpose-based reversal logic with a
+        # version that operates directly in (time, trajectory, *) space.
+        # -------------------------------------------------------------
 
-        # Assign reversed actions to new_actions
-        new_actions[:, :-1][mask] = actions[mask][rev_idx[mask]]
-        new_actions[torch.arange(len(self)), seq_lengths] = self.env.exit_action
+        # 1. Reverse actions ---------------------------------------------------
+        # Gather linear indices where the mask is valid
+        time_idx, traj_idx = torch.nonzero(mask, as_tuple=True)  # 1-D tensors
+        src_time_idx = rev_idx[mask]  # Corresponding source time indices
+        # Assign reversed actions
+        new_actions[time_idx, traj_idx] = actions[src_time_idx, traj_idx]
+        # Insert EXIT action right after the last real action of every trajectory
+        new_actions[seq_lengths, torch.arange(len(self), device=seq_lengths.device)] = self.env.Actions.make_exit_actions((1,), device=actions.device)
 
-        # Assign reversed states to new_states
-        assert isinstance(states[:, -1], torch.Tensor)
-        assert isinstance(
-            self.env.s0, torch.Tensor
-        ), "reverse_backward_trajectories not supported for Graph trajectories"
-        assert torch.all(states[:, -1] == self.env.s0), "Last state must be s0"
-        new_states[:, 0] = self.env.s0
-        new_states[:, 1:-1][mask] = states[:, :-1][mask][rev_idx[mask]]
+        # 2. Reverse states ----------------------------------------------------
+        # The last state of the backward trajectories must be s0.
+        assert torch.all(states[-1].is_initial_state), "Last state must be s0"
+        
+        # First state of the forward trajectories is s0 for every trajectory
+        new_states[0] = self.env.States.make_initial_states((len(self),), device=states.device)  # Broadcast over the trajectory dimension
 
-        # Transpose back
-        new_actions = new_actions.transpose(
-            0, 1
-        )  # shape (max_len + 1, n_trajectories, *action_dim)
-        new_states = new_states.transpose(
-            0, 1
-        )  # shape (max_len + 2, n_trajectories, *state_dim)
+        # We do not want to copy the last state (s0) from the backward trajectory.
+        states_excl_last = states[:-1]  # shape (max_len, n_trajectories, *state_dim)
+        new_states_data = new_states[1:-1]  # shape (max_len, n_trajectories, *state_dim)
+        new_states_data[time_idx, traj_idx] = states_excl_last[src_time_idx, traj_idx]
+
+        # ---------------------------------------------------------------------
+        # new_actions / new_states already have the correct shapes
+        #   new_actions: (max_len + 1, n_trajectories, *action_dim)
+        #   new_states:  (max_len + 2, n_trajectories, *state_dim)
+        # ---------------------------------------------------------------------
 
         reversed_trajectories = Trajectories(
             env=self.env,
-            states=self.env.states_from_tensor(new_states),
+            states=new_states,
             conditioning=self.conditioning,
-            actions=self.env.actions_from_tensor(new_actions),
+            actions=new_actions,
             terminating_idx=self.terminating_idx + 1,
             is_backward=False,
             log_rewards=self.log_rewards,
