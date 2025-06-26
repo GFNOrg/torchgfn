@@ -93,10 +93,9 @@ class Sampler:
         if not save_estimator_outputs:
             estimator_output = None
 
-        if __debug__:
-            assert log_probs is None or log_probs.shape == actions.batch_shape
-            # assert estimator_output is None or estimator_output.shape == actions.batch_shape
-            # TODO: check expected shape
+        assert log_probs is None or log_probs.shape == actions.batch_shape
+        # assert estimator_output is None or estimator_output.shape == actions.batch_shape
+        # TODO: check expected shape
 
         return actions, log_probs, estimator_output
 
@@ -142,10 +141,9 @@ class Sampler:
             states = env.reset(batch_shape=(n,))
             n_trajectories = n
         else:
-            if __debug__:
-                assert (
-                    len(states.batch_shape) == 1
-                ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
+            assert (
+                len(states.batch_shape) == 1
+            ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
             n_trajectories = states.batch_shape[0]
             # Backward trajectories should have the reward at the beginning (terminating state)
             if self.estimator.is_backward:
@@ -156,11 +154,8 @@ class Sampler:
         device = states.device
 
         if conditioning is not None:
-            if __debug__:
-                assert (
-                    states.batch_shape == conditioning.shape[: len(states.batch_shape)]
-                )
-                ensure_same_device(states.device, conditioning.device)
+            assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
+            ensure_same_device(states.device, conditioning.device)
 
         dones = (
             states.is_initial_state
@@ -236,20 +231,17 @@ class Sampler:
                 new_states = env._step(states, actions)
 
             # Ensure that the new state is a distinct object from the old state.
-            if __debug__:
-                assert new_states is not states
-                assert isinstance(new_states, States)
-                assert type(new_states) is type(states)
-                if isinstance(new_states, GraphStates) and isinstance(
-                    states, GraphStates
-                ):
-                    # Asserts that there exists no shared storage between the two
-                    # GraphStates.
-                    assert not graph_states_share_storage(new_states, states)
-                else:
-                    # Asserts that there exists no shared storage between the two
-                    # States.
-                    assert new_states.tensor.data_ptr() != states.tensor.data_ptr()
+            assert new_states is not states
+            assert isinstance(new_states, States)
+            assert type(new_states) is type(states)
+            if isinstance(new_states, GraphStates) and isinstance(states, GraphStates):
+                # Asserts that there exists no shared storage between the two
+                # GraphStates.
+                assert not graph_states_share_storage(new_states, states)
+            else:
+                # Asserts that there exists no shared storage between the two
+                # States.
+                assert new_states.tensor.data_ptr() != states.tensor.data_ptr()
 
             # Increment the step, determine which trajectories are finished, and eval
             # rewards.
@@ -770,25 +762,20 @@ class LocalSearchSampler(Sampler):
                         recon_trajectories_log_pb[:_len_recon, i]
                     )
 
-            if __debug__:
-                assert torch.all(
-                    _new_trajectories_states_tsr == new_trajectories_states_tsr
-                )
-                assert torch.all(
-                    _new_trajectories_actions_tsr == new_trajectories_actions_tsr
-                )
+            assert torch.all(_new_trajectories_states_tsr == new_trajectories_states_tsr)
+            assert torch.all(
+                _new_trajectories_actions_tsr == new_trajectories_actions_tsr
+            )
             if (
                 prev_trajectories_log_pf is not None
                 and recon_trajectories_log_pf is not None
             ):
-                if __debug__:
-                    assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)
+                assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)
             if (
                 prev_trajectories_log_pb is not None
                 and recon_trajectories_log_pb is not None
             ):
-                if __debug__:
-                    assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
+                assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
 
         new_trajectories = Trajectories(
             env=env,
