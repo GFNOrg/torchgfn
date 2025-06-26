@@ -211,8 +211,7 @@ class ScalarEstimator(GFNModule):
         if out.shape[-1] != 1:
             out = self.reduction_fxn(out, -1)
 
-        if __debug__:
-            assert out.shape[-1] == 1
+        assert out.shape[-1] == 1
 
         return out
 
@@ -368,9 +367,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
         out = self._forward_trunk(states, conditioning)
-        if __debug__:
-            assert out.shape[-1] == self.expected_output_dim
-
+        assert out.shape[-1] == self.expected_output_dim
         return out
 
 
