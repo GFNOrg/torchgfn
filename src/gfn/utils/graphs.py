@@ -297,3 +297,23 @@ class GeometricBatch(Batch):
         )
         batch.batch_shape = (len(data_list),) + single_batch_shape
         return batch
+
+
+def data_share_storage(a: Data, b: Data) -> bool:
+    """True ⇢ every tensor attribute in `a` points to the same storage in `b`.
+
+    Args:
+        a: The first Data object.
+        b: The second Data object.
+
+    Returns:
+        True if every tensor attribute in `a` points to the same storage in `b`,
+        False otherwise.
+    """
+    for key, ta in a:
+        if not torch.is_tensor(ta):
+            continue
+        tb = getattr(b, key, None)
+        if not (torch.is_tensor(tb) and ta.data_ptr() == tb.data_ptr()):
+            return False
+    return True

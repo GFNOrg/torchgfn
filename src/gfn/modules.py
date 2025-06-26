@@ -212,6 +212,7 @@ class ScalarEstimator(GFNModule):
             out = self.reduction_fxn(out, -1)
 
         assert out.shape[-1] == 1
+
         return out
 
 
