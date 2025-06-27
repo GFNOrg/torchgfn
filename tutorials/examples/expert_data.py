@@ -8,9 +8,8 @@ import itertools
 import time
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
-from typing import Any, Dict, List, Literal, Tuple, Union
+from typing import Literal, Union
 
-import numpy as np
 import torch
 from tensordict import TensorDict
 from train_graph_ring import RingReward, init_env, init_gflownet, render_states
@@ -18,13 +17,10 @@ from train_graph_ring import RingReward, init_env, init_gflownet, render_states
 from gfn.actions import GraphActions, GraphActionType
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.containers.trajectories import Trajectories
-from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
-from gfn.modules import DiscreteGraphPolicyEstimator
 from gfn.samplers import Sampler
 from gfn.states import GraphStates
 from gfn.utils.graphs import from_edge_indices
-from gfn.utils.modules import GraphEdgeActionGNN
 
 
 def generate_all_rings(
