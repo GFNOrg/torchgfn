@@ -259,6 +259,7 @@ def init_gflownet(
     num_nodes: int,
     directed: bool,
     use_gnn: bool,
+    embedding_dim: int,
     num_conv_layers: int,
     num_edge_classes: int,
     device: torch.device,
@@ -348,6 +349,7 @@ def main(args: Namespace):
         args.n_nodes,
         args.directed,
         args.use_gnn,
+        args.embedding_dim,
         args.num_conv_layers,
         env.num_edge_classes,
         device,
@@ -434,6 +436,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--num_conv_layers", type=int, default=1, help="Number of convolutional layers"
+    )
+    parser.add_argument(
+        "--embedding_dim", type=int, default=128, help="Embedding dimension"
     )
 
     # Training parameters

@@ -189,3 +189,5 @@ scripts.py
 models/
 *.DS_Store
 .python-version
+
+.lprof

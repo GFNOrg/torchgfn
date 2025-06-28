@@ -243,12 +243,14 @@ def test_reverse_backward_trajectories(
         terminating_idx = backward_trajectories.terminating_idx[i]
         for j in range(terminating_idx):
             assert torch.all(
-                reversed_traj.actions.tensor[j, i] == backward_trajectories.actions.tensor[terminating_idx - j - 1, i]
+                reversed_traj.actions.tensor[j, i]
+                == backward_trajectories.actions.tensor[terminating_idx - j - 1, i]
             )
             assert torch.all(
-                reversed_traj.states.tensor[j, i] == backward_trajectories.states.tensor[terminating_idx - j, i]
+                reversed_traj.states.tensor[j, i]
+                == backward_trajectories.states.tensor[terminating_idx - j, i]
             )
-    
+
         assert torch.all(reversed_traj.actions[terminating_idx, i].is_exit)
         assert torch.all(reversed_traj.states[terminating_idx + 1, i].is_sink_state)
 
