@@ -227,7 +227,14 @@ class Env(ABC):
         states and a boolean tensor indicating sink states in the new batch.
         """
         assert states.batch_shape == actions.batch_shape
+
+        # IMPORTANT: states.clone() is used to ensure that the new states are a
+        # distinct object from the old states. This is important for the sampler to
+        # work correctly when building the trajectories. If you want to override this
+        # method in your custom environment, you must ensure that the `new_states`
+        # returned is a distinct object from the submitted states.
         new_states = states.clone()
+
         valid_states_idx: torch.Tensor = ~states.is_sink_state
         assert valid_states_idx.shape == states.batch_shape
         assert valid_states_idx.dtype == torch.bool
@@ -266,12 +273,19 @@ class Env(ABC):
         states and a boolean tensor indicating initial states in the new batch.
         """
         assert states.batch_shape == actions.batch_shape
+
+        # IMPORTANT: states.clone() is used to ensure that the new states are a
+        # distinct object from the old states. This is important for the sampler to
+        # work correctly when building the trajectories. If you want to override this
+        # method in your custom environment, you must ensure that the `new_states`
+        # returned is a distinct object from the submitted states.
         new_states = states.clone()
+
         valid_states_idx: torch.Tensor = ~new_states.is_initial_state
-        assert valid_states_idx.shape == states.batch_shape
+        assert valid_states_idx.shape == new_states.batch_shape
         assert valid_states_idx.dtype == torch.bool
         valid_actions = actions[valid_states_idx]
-        valid_states = states[valid_states_idx]
+        valid_states = new_states[valid_states_idx]
 
         if not self.is_action_valid(valid_states, valid_actions, backward=True):
             raise NonValidActionsError(

@@ -1,7 +1,6 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
 from abc import ABC
-from copy import deepcopy
 from math import prod
 from typing import (
     Callable,
@@ -187,8 +186,12 @@ class States(ABC):
         self.tensor[index] = states.tensor
 
     def clone(self) -> States:
-        """Returns a *detached* clone of the current instance using deepcopy."""
-        return deepcopy(self)
+        """Returns a clone of the current instance."""
+        cloned = self.__class__(self.tensor.clone())
+        if self._log_rewards is not None:
+            cloned._log_rewards = self._log_rewards.clone()
+
+        return cloned
 
     def flatten(self) -> States:
         """Flatten the batch dimension of the states.
@@ -393,6 +396,7 @@ class DiscreteStates(States, ABC):
 
         self.forward_masks: torch.Tensor = forward_masks
         self.backward_masks: torch.Tensor = backward_masks
+
         assert self.forward_masks.shape == (*self.batch_shape, self.n_actions)
         assert self.backward_masks.shape == (*self.batch_shape, self.n_actions - 1)
 
@@ -400,8 +404,8 @@ class DiscreteStates(States, ABC):
         """Returns a clone of the current instance."""
         return self.__class__(
             self.tensor.clone(),
-            self.forward_masks,
-            self.backward_masks,
+            self.forward_masks.clone(),
+            self.backward_masks.clone(),
         )
 
     def _check_both_forward_backward_masks_exist(self):
@@ -586,7 +590,7 @@ class GraphStates(States):
 
     @property
     def tensor(self) -> GeometricBatch:
-        """Returns the tensor representation of the data."""
+        """Returns the Batch representation of the data."""
         if self.data.size == 0:
             dummy_graph = GeometricData(
                 x=torch.zeros(0, self.num_node_classes, device=self.device),
@@ -920,7 +924,7 @@ class GraphStates(States):
         """
         cloned_graphs = np.empty(self.data.shape, dtype=object)
         for i, graph in enumerate(self.data.flat):
-            cloned_graphs.flat[i] = deepcopy(graph)
+            cloned_graphs.flat[i] = graph.clone()
 
         out = self.__class__(cloned_graphs, device=self.device)
         if self._log_rewards is not None:
@@ -1068,3 +1072,26 @@ class GraphStates(States):
             out._log_rewards = torch.stack(log_rewards)
 
         return out
+
+
+def graph_states_share_storage(a: GraphStates, b: GraphStates) -> bool:
+    """True if *any* tensor storage is shared between the two GraphStates."""
+
+    def _tensor_ptrs(g: GeometricData) -> tuple[int, ...]:
+        """Return the data_ptr() of every tensor field in the graph."""
+        out: list[int] = []
+        for key, t in g:
+            if torch.is_tensor(t) and t.numel() > 0:  # ignore empty tensors.
+                out.append(t.data_ptr())
+
+        return tuple(out)
+
+    ptrs_a = {  # hash-set for O(1) look-ups.
+        ptr for g in a.data.flat for ptr in _tensor_ptrs(g)
+    }
+
+    for g in b.data.flat:
+        for ptr in _tensor_ptrs(g):
+            if ptr in ptrs_a:
+                return True  # first hit confirms shared storage.
+    return False
