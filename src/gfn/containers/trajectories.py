@@ -543,13 +543,22 @@ class Trajectories(Container):
         states = self.states  # shape (max_len + 1, n_trajectories, *state_dim)
 
         # Initialize new actions and states
-        new_actions = self.env.Actions.make_dummy_actions((max_len + 1, len(self)), device=actions.device)
+        new_actions = self.env.Actions.make_dummy_actions(
+            (max_len + 1, len(self)), device=actions.device
+        )
         # shape (max_len + 1, n_trajectories, *action_dim)
-        new_states = self.env.States.make_sink_states((max_len + 2, len(self)), device=states.device)
+        new_states = self.env.States.make_sink_states(
+            (max_len + 2, len(self)), device=states.device
+        )
         # shape (max_len + 2, n_trajectories, *state_dim)
 
         # Create helper indices and masks
-        idx = torch.arange(max_len, device=seq_lengths.device).unsqueeze(1).expand(-1, len(self))
+        idx = (
+            torch.arange(max_len, device=seq_lengths.device)
+            .unsqueeze(1)
+            .expand(-1, len(self))
+        )
+
         rev_idx = seq_lengths.unsqueeze(0) - 1 - idx  # shape (max_len, n_trajectories)
         mask = rev_idx >= 0  # shape (max_len, n_trajectories)
 
@@ -565,14 +574,18 @@ class Trajectories(Container):
         # Assign reversed actions
         new_actions[time_idx, traj_idx] = actions[src_time_idx, traj_idx]
         # Insert EXIT action right after the last real action of every trajectory
-        new_actions[seq_lengths, torch.arange(len(self), device=seq_lengths.device)] = self.env.Actions.make_exit_actions((1,), device=actions.device)
+        new_actions[seq_lengths, torch.arange(len(self), device=seq_lengths.device)] = (
+            self.env.Actions.make_exit_actions((1,), device=actions.device)
+        )
 
         # 2. Reverse states ----------------------------------------------------
         # The last state of the backward trajectories must be s0.
         assert torch.all(states[-1].is_initial_state), "Last state must be s0"
-        
+
         # First state of the forward trajectories is s0 for every trajectory
-        new_states[0] = self.env.States.make_initial_states((len(self),), device=states.device)  # Broadcast over the trajectory dimension
+        new_states[0] = self.env.States.make_initial_states(
+            (len(self),), device=states.device
+        )  # Broadcast over the trajectory dimension
 
         # We do not want to copy the last state (s0) from the backward trajectory.
         states_excl_last = states[:-1]  # shape (max_len, n_trajectories, *state_dim)
