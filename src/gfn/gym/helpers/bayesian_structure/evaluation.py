@@ -75,7 +75,7 @@ def expected_shd(posterior_samples: torch.Tensor, gt_graph: GeometricData) -> fl
     """
     posterior_samples = posterior_samples.cpu()
     gt_graph_adj = to_dense_adj(
-        gt_graph.edge_index, max_num_nodes=gt_graph.num_nodes  # pyright: ignore
+        gt_graph.edge_index, max_num_nodes=len(gt_graph.node_names)  # pyright: ignore
     )
 
     # Compute the pairwise differences
@@ -127,7 +127,7 @@ def threshold_metrics(posterior_samples: torch.Tensor, gt_graph: GeometricData) 
             - Average Precision
     """
     gt_graph_adj = to_dense_adj(
-        gt_graph.edge_index, max_num_nodes=gt_graph.num_nodes  # pyright: ignore
+        gt_graph.edge_index, max_num_nodes=len(gt_graph.node_names)  # pyright: ignore
     )
     posterior_samples_np = posterior_samples.cpu().numpy()
     gt_graph_adj_np = gt_graph_adj.cpu().numpy()

@@ -488,14 +488,18 @@ def nx_to_geometric_data(
     graph: nx.DiGraph, env: BayesianStructure, nodelist: list[str]
 ) -> GeometricData:
     node_indices = {node: i for i, node in enumerate(nodelist)}
-    edge_index = torch.tensor(
-        [
-            [node_indices[source], node_indices[target]]
-            for source, target in graph.edges()
-        ],
-        dtype=torch.long,
-        device=env.device,
-    ).T
+    if graph.edges():
+        edge_index = torch.tensor(
+            [
+                [node_indices[source], node_indices[target]]
+                for source, target in graph.edges()
+            ],
+            dtype=torch.long,
+            device=env.device,
+        ).T
+    else:
+        edge_index = torch.zeros(2, 0, dtype=torch.long, device=env.device)
+
     return GeometricData(
         x=env.s0.x,
         edge_attr=env.s0.edge_attr,

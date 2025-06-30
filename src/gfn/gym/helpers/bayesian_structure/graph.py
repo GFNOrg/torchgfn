@@ -56,9 +56,7 @@ def sample_erdos_renyi_graph(
     # Get edge indices using torch.nonzero and transpose to shape (2, num_edges)
     edge_index = torch.nonzero(adjacency, as_tuple=False).t().contiguous()
 
-    return GeometricData(
-        edge_index=edge_index, num_nodes=num_nodes, node_names=node_names
-    )
+    return GeometricData(edge_index=edge_index, node_names=node_names)
 
 
 def sample_erdos_renyi_linear_gaussian(

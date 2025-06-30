@@ -1,13 +1,10 @@
 from math import prod
-from typing import Callable, List, Literal, Tuple, cast
+from typing import Callable, Literal, Tuple
 
 import numpy as np
 import torch
 from tensordict import TensorDict
-from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
-from torch_geometric.data.data import BaseData
-from torch_geometric.utils import to_dense_adj
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.gym.graph_building import GraphBuilding
@@ -103,14 +100,19 @@ class BayesianStructure(GraphBuilding):
                     - edge_index: Tensor of shape [*batch_shape, n_nodes, n_nodes] with True for valid edge index to add
                 """
 
-                batch_adjacency = to_dense_adj(
-                    self.tensor.edge_index, self.tensor.batch, max_num_nodes=self.n_nodes
-                ).to(torch.bool)
+                batch_adjacency = torch.zeros(
+                    (len(self), self.n_nodes, self.n_nodes),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                for i, graph in enumerate(self.data.flat):
+                    src, dst = graph.edge_index
+                    batch_adjacency[i, src, dst] = True
 
                 # Create self-loop mask
                 self_loops = torch.eye(
                     self.n_nodes, dtype=torch.bool, device=self.device
-                ).repeat(prod(self.batch_shape), 1, 1)
+                ).repeat(len(self), 1, 1)
                 # Compute transitive closure using the Floyd–Warshall style update:
                 # reach[u, v] is True if there is a path from u to v.
                 reach = batch_adjacency.clone()
@@ -168,9 +170,15 @@ class BayesianStructure(GraphBuilding):
                     - edge_index: Tensor of shape [*batch_shape, n_nodes, n_nodes] with True for valid edge index to remove
                 """
 
-                batch_adjacency = to_dense_adj(
-                    self.tensor.edge_index, self.tensor.batch, max_num_nodes=self.n_nodes
-                ).to(torch.bool)
+                batch_adjacency = torch.zeros(
+                    (len(self), self.n_nodes, self.n_nodes),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                for i, graph in enumerate(self.data.flat):
+                    src, dst = graph.edge_index
+                    batch_adjacency[i, src, dst] = True
+
                 edge_masks = batch_adjacency.flatten(1, 2).reshape(*self.batch_shape, -1)
 
                 # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
@@ -201,6 +209,22 @@ class BayesianStructure(GraphBuilding):
                     batch_size=self.batch_shape,
                 )
 
+            @property
+            def is_sink_state(self) -> torch.Tensor:
+                """Returns a tensor that is True for states that are sf."""
+                xs = torch.cat([graph.x for graph in self.data.flat], dim=1)  # type: ignore
+                return (xs == self.sf.x).all(dim=0).view(self.batch_shape)
+
+            @property
+            def is_initial_state(self) -> torch.Tensor:
+                """Returns a tensor that is True for states that are s0."""
+                is_not_sink = ~self.is_sink_state
+                has_edges = torch.tensor(
+                    [graph.edge_index.shape[1] > 0 for graph in self.data.flat],  # type: ignore
+                    device=self.device,
+                ).view(self.batch_shape)
+                return is_not_sink & ~has_edges
+
         return BayesianStructureStates
 
     def make_actions_class(self) -> type[GraphActions]:
@@ -217,7 +241,7 @@ class BayesianStructure(GraphBuilding):
 
     def make_random_states_tensor(
         self, batch_shape: int | Tuple, device: torch.device
-    ) -> GeometricBatch:
+    ) -> GraphStates:
         """Makes a batch of random DAG states with fixed number of nodes.
 
         Args:
@@ -232,7 +256,7 @@ class BayesianStructure(GraphBuilding):
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
 
-        data_list = []
+        data_array = np.empty(batch_shape, dtype=object)
         for _ in range(num_graphs):
             # Create a random DAG with the given number of nodes
             n_nodes = self.n_nodes
@@ -278,29 +302,10 @@ class BayesianStructure(GraphBuilding):
             # Create random edge attributes
             edge_attr = torch.rand(n_edges, self.s0.edge_attr.size(1), device=device)
 
-            data = GeometricData(
-                x=x,
-                edge_index=edge_index,
-                edge_attr=edge_attr,
-            )
-            data_list.append(data)
+            data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
+            data_array.flat[i] = data
 
-        if len(data_list) == 0:
-            data_list = [
-                GeometricData(
-                    x=torch.zeros(0, self.s0.x.size(1)),
-                    edge_index=torch.zeros(2, 0, dtype=torch.long),
-                    edge_attr=torch.zeros(0, self.s0.edge_attr.size(1)),
-                )
-            ]
-
-        # Create a batch from the list
-        batch = GeometricBatch.from_data_list(cast(List[BaseData], data_list))
-
-        # Store the batch shape for later reference
-        batch.batch_shape = batch_shape
-
-        return batch
+        return self.States(data_array, device=device)
 
     def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         if torch.any(actions.action_type == GraphActionType.ADD_NODE):

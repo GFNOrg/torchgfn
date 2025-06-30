@@ -5,7 +5,6 @@ from typing import Optional
 import pandas as pd
 import torch
 from scipy.special import gammaln
-from torch_geometric.utils import to_dense_adj
 
 from gfn.gym.helpers.bayesian_structure.priors import BasePrior
 from gfn.states import GraphStates
@@ -127,14 +126,18 @@ class BGeScore(BaseScore):
         batch_size = states.batch_shape[0]
         scores = []
 
-        batch_adjacency = to_dense_adj(
-            states.tensor.edge_index,
-            states.tensor.batch,
-            max_num_nodes=len(self.column_names),
+        n_nodes = len(self.column_names)
+        batch_adjacency = torch.zeros(
+            (len(states), n_nodes, n_nodes),
+            dtype=torch.bool,
+            device=states.device,
         )
+        for i, graph in enumerate(states.data.flat):
+            src, dst = graph.edge_index
+            batch_adjacency[i, src, dst] = True
 
         for i in range(batch_size):
-            graph = states[i].tensor
+            graph = states.data.flat[i]
             if graph.edge_index.shape[1] == 0:  # No edges
                 scores.append(0.0)
                 continue

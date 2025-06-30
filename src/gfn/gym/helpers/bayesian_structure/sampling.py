@@ -6,8 +6,8 @@ from torch_geometric.data import Data as GeometricData
 
 def topological_sort_data(graph: GeometricData) -> list[int]:
     # Compute topological order for a torch_geometric graph DAG
-    assert graph.num_nodes is not None, "Graph must have nodes"
-    indegree = torch.zeros(graph.num_nodes, dtype=torch.int)
+    assert graph.node_names is not None, "Graph must have nodes"
+    indegree = torch.zeros(len(graph.node_names), dtype=torch.int)
     # Assert edge_index is present
     assert graph.edge_index is not None, "Graph must have a valid edge_index attribute."
     edge_index = graph.edge_index
