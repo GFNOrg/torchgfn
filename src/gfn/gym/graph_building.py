@@ -221,7 +221,7 @@ class GraphBuilding(GraphEnv):
             True if all actions are valid, False otherwise.
         """
         # Get the data list from the batch
-        data_array = states.data.flatten()
+        data_array = states.data.flat
         action_type_action_flat = actions.action_type.flatten()
         node_class_action_flat = actions.node_class.flatten()
         edge_index_action_flat = actions.edge_index.flatten()
