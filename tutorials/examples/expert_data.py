@@ -8,12 +8,13 @@ import itertools
 import time
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
-from typing import Literal, Union, Iterable
+from typing import Literal, Union, Iterable, List, Tuple, Dict, Any
 
 import torch
 from tensordict import TensorDict
 from train_graph_ring import RingReward, init_env, init_gflownet, render_states
 from torch.optim.lr_scheduler import LambdaLR
+import numpy as np
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.containers.replay_buffer import ReplayBuffer
@@ -22,6 +23,10 @@ from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.samplers import Sampler
 from gfn.states import GraphStates
 from gfn.utils.graphs import from_edge_indices
+from gfn.gflownet.trajectory_balance import TBGFlowNet
+from gfn.modules import DiscreteGraphPolicyEstimator
+from gfn.utils.modules import GraphEdgeActionGNN
+from train_graph_ring import RingReward, init_env, init_gflownet, render_states
 
 
 def grad_norm(params: Iterable[torch.nn.Parameter], p: float = 2) -> float:
@@ -58,6 +63,7 @@ def lr_grad_ratio(optimizer: torch.optim.Optimizer) -> list[float]:
         out.append((lr * g_norm) / p_norm if p_norm else 0.0)
 
     return out
+
 
 def per_step_decay(num_steps: int, total_drop: float) -> float:
     """
@@ -100,9 +106,12 @@ def generate_all_rings(
     device = torch.device(device)
     state_evaluator = RingReward(directed=True, device=device)
     env = GraphBuildingOnEdges(
-        n_nodes=n_nodes, state_evaluator=state_evaluator, directed=True, device=device
+        n_nodes=n_nodes,
+        state_evaluator=state_evaluator,
+        directed=True,
+        device=device
     )
-
+    
     valid_rings = []
     for perm in itertools.permutations(range(1, n_nodes)):
         # Start with empty state
@@ -110,7 +119,7 @@ def generate_all_rings(
 
         # Create the sequence of nodes to connect
         nodes_sequence = [0] + list(perm) + [0]  # Add 0 at end to close the ring
-
+        
         # Add edges between consecutive nodes
         for i in range(len(nodes_sequence) - 1):
             src, dst = nodes_sequence[i], nodes_sequence[i + 1]
@@ -240,8 +249,9 @@ def main(args: Namespace):
 
     t1 = time.time()
     epsilon_dict = defaultdict(float)
+    epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 0.0  # Exploration on action type.  
+
     for iteration in range(args.n_iterations):
-        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 0.1
 
         trajectories = gflownet.sample_trajectories(
             env,
@@ -255,11 +265,14 @@ def main(args: Namespace):
         terminating_states = training_samples.terminating_states
         assert isinstance(terminating_states, GraphStates)
         rewards = env.reward(terminating_states)
-
+        pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
+        
         # Add the training samples to the replay buffer. If the user requested the use
         # of expert data, gflownet samples are only added after the first
         # n_iterations_with_expert_data iterations. The gflownet loss is calculated on
         # the a 50% mixture of the gflownet samples and the replay buffer samples.
+        # TODO: During iteration < args.n_iterations_with_only_expert_data, no
+        # non-ring trajectories will be seen!
         with torch.no_grad():
             if (
                 iteration < args.n_iterations_with_only_expert_data
@@ -284,12 +297,10 @@ def main(args: Namespace):
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
-        pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
         loss.backward()
 
         # Print stats about the gradient and parameter norms.
         lr_grad_ratios = lr_grad_ratio(optimizer)
-
         # gnorm = grad_norm(gflownet.parameters())
         # pnorm = param_norm(gflownet.parameters())
         # lr = optimizer.param_groups[0]["lr"]  # Ignores logz param.
@@ -310,7 +321,7 @@ def main(args: Namespace):
         )
 
     t2 = time.time()
-    print("Time:", t2 - t1)
+    print("Total Training Time:", t2 - t1)
 
     if args.plot:
         samples_to_render = trajectories.terminating_states[:8]
@@ -330,7 +341,7 @@ if __name__ == "__main__":
         "--num_conv_layers", type=int, default=1, help="Number of convolutional layers"
     )
     parser.add_argument(
-        "--embedding_dim", type=int, default=256, help="Embedding dimension"
+        "--embedding_dim", type=int, default=128, help="Embedding dimension"
     )
 
     # Training parameters
@@ -342,7 +353,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--lr_Z", type=float, default=0.1, help="Learning rate for logZ")
     parser.add_argument(
-        "--batch_size", type=int, default=256, help="Batch size for training"
+        "--batch_size", type=int, default=128, help="Batch size for training"
     )
 
     parser.add_argument(
@@ -350,7 +361,6 @@ if __name__ == "__main__":
         type=int,
         default=1024 * 16,
         help="Max size of the replay buffer",
-    )
 
     # Misc parameters
     parser.add_argument(
@@ -384,4 +394,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     print(args)
     main(args)
-

@@ -558,6 +558,7 @@ class Trajectories(Container):
             .unsqueeze(1)
             .expand(-1, len(self))
         )
+
         rev_idx = seq_lengths.unsqueeze(0) - 1 - idx  # shape (max_len, n_trajectories)
         mask = rev_idx >= 0  # shape (max_len, n_trajectories)
 
