@@ -8,11 +8,12 @@ import itertools
 import time
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
-from typing import Literal, Union
+from typing import Literal, Union, Iterable
 
 import torch
 from tensordict import TensorDict
 from train_graph_ring import RingReward, init_env, init_gflownet, render_states
+from torch.optim.lr_scheduler import LambdaLR
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.containers.replay_buffer import ReplayBuffer
@@ -21,6 +22,62 @@ from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.samplers import Sampler
 from gfn.states import GraphStates
 from gfn.utils.graphs import from_edge_indices
+
+
+def grad_norm(params: Iterable[torch.nn.Parameter], p: float = 2) -> float:
+    """
+    Returns the p-norm of all gradients in ``params`` (ignores params with no grad).
+    Example: grad_norm(model.parameters())               # total L2 norm
+             grad_norm(model.parameters(), p=float('inf'))  # max-grad
+    """
+    grads = [p_.grad for p_ in params if p_.grad is not None]
+    if not grads:
+        return 0.0
+    return torch.norm(torch.stack([g.norm(p) for g in grads]), p).item()
+
+
+def param_norm(params: Iterable[torch.nn.Parameter], p: float = 2) -> float:
+    """
+    Total p-norm of a collection of parameters.
+    Example:
+        model_pnorm = param_norm(model.parameters())        # L2 norm
+        max_abs     = param_norm(model.parameters(), p=float('inf'))
+    """
+    with torch.no_grad():                       # no grad tracking needed
+        norms = [p_.data.norm(p) for p_ in params]
+    return torch.norm(torch.stack(norms), p).item() if norms else 0.0
+
+
+def lr_grad_ratio(optimizer: torch.optim.Optimizer) -> list[float]:
+    """Return (lr·‖g‖₂)/‖θ‖₂ for each param group."""
+    out = []
+    for group in optimizer.param_groups:
+        lr = group["lr"]
+        g_norm = grad_norm(group["params"])
+        p_norm = param_norm(group["params"])
+        out.append((lr * g_norm) / p_norm if p_norm else 0.0)
+
+    return out
+
+def per_step_decay(num_steps: int, total_drop: float) -> float:
+    """
+    Compute the per-step decay multiplier y (γ) so that after ``num_steps``
+    scheduler steps the learning rate has been multiplied by ``total_drop``.
+
+    lr_final = lr_init * y**num_steps  -->  y = total_drop**(1/num_steps)
+
+    Args
+    ----
+    num_steps   : total number of scheduler.step() calls you will make
+    total_drop  : desired overall multiplier (e.g. 0.1 for a 10× drop)
+
+    Returns
+    -------
+    y : float  # per-step multiplier
+    """
+    if not (0.0 < total_drop <= 1.0):
+        raise ValueError("total_drop must be in (0, 1].")
+    return total_drop ** (1.0 / num_steps)
 
 
 def generate_all_rings(
@@ -139,7 +196,14 @@ def main(args: Namespace):
         {"params": logz_params, "lr": args.lr_Z},
     ]
     optimizer = torch.optim.Adam(params)
-
+    gamma = per_step_decay(args.n_iterations, 0.1)  # 10x drop over n_iterations.
+    scheduler = LambdaLR(
+        optimizer,
+        lr_lambda=[
+            lambda s: gamma ** s,      # non-logZ decay
+            lambda s: gamma ** s,      # logZ decay
+        ],
+    )
     replay_buffer = ReplayBuffer(
         env,
         capacity=args.replay_buffer_max_size,
@@ -221,14 +285,29 @@ def main(args: Namespace):
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
         pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
+        loss.backward()
+
+        # Print stats about the gradient and parameter norms.
+        lr_grad_ratios = lr_grad_ratio(optimizer)
+
+        # gnorm = grad_norm(gflownet.parameters())
+        # pnorm = param_norm(gflownet.parameters())
+        # lr = optimizer.param_groups[0]["lr"]  # Ignores logz param.
+        # update_ratio = (lr * gnorm) / pnorm if pnorm else 0.0
+
+        optimizer.step()
+        scheduler.step()
+        losses.append(loss.item())
+
         print(
-            "Iteration {} - Loss: {:.02f}, rings: {:.0f}%, logZ: {:.06f}".format(
-                iteration, loss.item(), pct_rings, gflownet.logZ.item()
+            "Iter {}: loss: {:.02f}, rings: {:.0f}%, logZ: {:.06f}, grad_norms: {}".format(
+                iteration,
+                loss.item(),
+                pct_rings,
+                gflownet.logZ.item(),
+                ", ".join("{:.{}g}".format(v, 4) for v in lr_grad_ratios),
             )
         )
-        loss.backward()
-        optimizer.step()
-        losses.append(loss.item())
 
     t2 = time.time()
     print("Time:", t2 - t1)
