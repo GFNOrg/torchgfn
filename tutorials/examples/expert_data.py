@@ -8,13 +8,12 @@ import itertools
 import time
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
-from typing import Literal, Union, Iterable, List, Tuple, Dict, Any
+from typing import Iterable, Literal, Union
 
 import torch
 from tensordict import TensorDict
-from train_graph_ring import RingReward, init_env, init_gflownet, render_states
 from torch.optim.lr_scheduler import LambdaLR
-import numpy as np
+from train_graph_ring import RingReward, init_env, init_gflownet, render_states
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.containers.replay_buffer import ReplayBuffer
@@ -23,10 +22,6 @@ from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.samplers import Sampler
 from gfn.states import GraphStates
 from gfn.utils.graphs import from_edge_indices
-from gfn.gflownet.trajectory_balance import TBGFlowNet
-from gfn.modules import DiscreteGraphPolicyEstimator
-from gfn.utils.modules import GraphEdgeActionGNN
-from train_graph_ring import RingReward, init_env, init_gflownet, render_states
 
 
 def grad_norm(params: Iterable[torch.nn.Parameter], p: float = 2) -> float:
@@ -48,7 +43,7 @@ def param_norm(params: Iterable[torch.nn.Parameter], p: float = 2) -> float:
         model_pnorm = param_norm(model.parameters())        # L2 norm
         max_abs     = param_norm(model.parameters(), p=float('inf'))
     """
-    with torch.no_grad():                       # no grad tracking needed
+    with torch.no_grad():  # no grad tracking needed
         norms = [p_.data.norm(p) for p_ in params]
     return torch.norm(torch.stack(norms), p).item() if norms else 0.0
 
@@ -106,12 +101,9 @@ def generate_all_rings(
     device = torch.device(device)
     state_evaluator = RingReward(directed=True, device=device)
     env = GraphBuildingOnEdges(
-        n_nodes=n_nodes,
-        state_evaluator=state_evaluator,
-        directed=True,
-        device=device
+        n_nodes=n_nodes, state_evaluator=state_evaluator, directed=True, device=device
     )
-    
+
     valid_rings = []
     for perm in itertools.permutations(range(1, n_nodes)):
         # Start with empty state
@@ -119,7 +111,7 @@ def generate_all_rings(
 
         # Create the sequence of nodes to connect
         nodes_sequence = [0] + list(perm) + [0]  # Add 0 at end to close the ring
-        
+
         # Add edges between consecutive nodes
         for i in range(len(nodes_sequence) - 1):
             src, dst = nodes_sequence[i], nodes_sequence[i + 1]
@@ -205,14 +197,19 @@ def main(args: Namespace):
         {"params": logz_params, "lr": args.lr_Z},
     ]
     optimizer = torch.optim.Adam(params)
-    gamma = per_step_decay(args.n_iterations, 0.1)  # 10x drop over n_iterations.
-    scheduler = LambdaLR(
-        optimizer,
-        lr_lambda=[
-            lambda s: gamma ** s,      # non-logZ decay
-            lambda s: gamma ** s,      # logZ decay
-        ],
-    )
+
+    if args.use_lr_scheduler:
+        gamma = per_step_decay(args.n_iterations, 0.1)  # 10x drop over n_iterations.
+        scheduler = LambdaLR(
+            optimizer,
+            lr_lambda=[
+                lambda s: gamma**s,  # non-logZ decay
+                lambda s: gamma**s,  # logZ decay
+            ],
+        )
+    else:
+        scheduler = None
+
     replay_buffer = ReplayBuffer(
         env,
         capacity=args.replay_buffer_max_size,
@@ -249,7 +246,7 @@ def main(args: Namespace):
 
     t1 = time.time()
     epsilon_dict = defaultdict(float)
-    epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 0.0  # Exploration on action type.  
+    epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 0.0  # Exploration on action type.
 
     for iteration in range(args.n_iterations):
 
@@ -266,7 +263,7 @@ def main(args: Namespace):
         assert isinstance(terminating_states, GraphStates)
         rewards = env.reward(terminating_states)
         pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
-        
+
         # Add the training samples to the replay buffer. If the user requested the use
         # of expert data, gflownet samples are only added after the first
         # n_iterations_with_expert_data iterations. The gflownet loss is calculated on
@@ -307,7 +304,10 @@ def main(args: Namespace):
         # update_ratio = (lr * gnorm) / pnorm if pnorm else 0.0
 
         optimizer.step()
-        scheduler.step()
+
+        if scheduler is not None:
+            scheduler.step()
+
         losses.append(loss.item())
 
         print(
@@ -351,6 +351,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--lr", type=float, default=1e-3, help="Learning rate for optimizer"
     )
+    parser.add_argument(
+        "--use_lr_scheduler",
+        action="store_true",
+        default=False,
+        help="Whether to use a learning rate scheduler.",
+    )
     parser.add_argument("--lr_Z", type=float, default=0.1, help="Learning rate for logZ")
     parser.add_argument(
         "--batch_size", type=int, default=128, help="Batch size for training"
@@ -361,6 +367,7 @@ if __name__ == "__main__":
         type=int,
         default=1024 * 16,
         help="Max size of the replay buffer",
+    )
 
     # Misc parameters
     parser.add_argument(
