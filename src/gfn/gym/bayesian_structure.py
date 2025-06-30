@@ -302,16 +302,14 @@ class BayesianStructure(GraphBuilding):
 
         return batch
 
-    def step(self, states: GraphStates, actions: GraphActions) -> GeometricBatch:
+    def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         if torch.any(actions.action_type == GraphActionType.ADD_NODE):
             raise ValueError(
                 "ADD_NODE action is not supported in BayesianStructure environment."
             )
         return super().step(states, actions)
 
-    def backward_step(
-        self, states: GraphStates, actions: GraphActions
-    ) -> GeometricBatch:
+    def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         if torch.any(actions.action_type == GraphActionType.ADD_NODE):
             raise ValueError(
                 "ADD_NODE action is not supported in BayesianStructure environment."

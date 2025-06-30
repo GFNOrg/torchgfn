@@ -43,7 +43,7 @@ class Line(Env):
             exit_action=exit_action,
         )  # sf is -inf by default.
 
-    def step(self, states: States, actions: Actions) -> torch.Tensor:
+    def step(self, states: States, actions: Actions) -> States:
         """Take a step in the environment.
 
         Args:
@@ -57,9 +57,9 @@ class Line(Env):
         )  # x position.
         states.tensor[..., 1] = states.tensor[..., 1] + 1  # Step counter.
         assert states.tensor.shape == states.batch_shape + (2,)
-        return states.tensor
+        return self.States(states.tensor)
 
-    def backward_step(self, states: States, actions: Actions) -> torch.Tensor:
+    def backward_step(self, states: States, actions: Actions) -> States:
         """Take a step in the environment in the backward direction.
 
         Args:
@@ -73,7 +73,7 @@ class Line(Env):
         )  # x position.
         states.tensor[..., 1] = states.tensor[..., 1] - 1  # Step counter.
         assert states.tensor.shape == states.batch_shape + (2,)
-        return states.tensor
+        return self.States(states.tensor)
 
     def is_action_valid(
         self, states: States, actions: Actions, backward: bool = False

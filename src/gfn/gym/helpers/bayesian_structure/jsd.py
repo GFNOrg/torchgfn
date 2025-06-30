@@ -6,7 +6,7 @@ https://github.com/GFNOrg/GFN_vs_HVI/blob/master/dags/dag_gflownet/utils/exhaust
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from itertools import permutations
-from typing import List, cast
+from typing import cast
 
 import networkx as nx
 import numpy as np
@@ -15,9 +15,7 @@ import torch
 from pgmpy.estimators import ExhaustiveSearch
 from pgmpy.utils.mathext import powerset
 from scipy.special import logsumexp
-from torch_geometric.data import Batch as GeometricBatch
 from torch_geometric.data import Data as GeometricData
-from torch_geometric.data.data import BaseData
 from tqdm import tqdm
 
 from gfn.actions import GraphActions, GraphActionType
@@ -126,13 +124,10 @@ def get_full_posterior(
     markov = GraphCollection()
 
     nx_graphs = list(estimator.all_dags())
-    scores = scorer.state_evaluator(
-        env.States(
-            GeometricBatch.from_data_list(
-                [nx_to_geometric_data(graph, env, nodelist) for graph in nx_graphs]
-            )
-        )
-    )
+    data_array = np.empty(len(nx_graphs), dtype=object)
+    for i, graph in enumerate(nx_graphs):
+        data_array[i] = nx_to_geometric_data(graph, env, nodelist)
+    scores = scorer.state_evaluator(env.States(data_array))
     log_probas = scores.cpu().numpy()
     # Normalize the log-joint distribution to get the posterior
     log_probas -= cast(np.ndarray, logsumexp(log_probas))
@@ -248,10 +243,12 @@ def get_gflownet_cache(
     batch_idx = 0
     while batch_idx < len(graphs):
         _graphs = graphs[batch_idx : batch_idx + batch_size]
-        batch = GeometricBatch.from_data_list(cast(List[BaseData], _graphs))
-        _bsz = batch.batch_size
+        _bsz = len(_graphs)
+        data_array = np.empty(_bsz, dtype=object)
+        for i, graph in enumerate(_graphs):
+            data_array[i] = graph
 
-        state = env.States(batch)
+        state = env.States(data_array)
         with torch.no_grad():
             estimator_output = estimator(state)
             dist = estimator.to_probability_distribution(state, estimator_output)

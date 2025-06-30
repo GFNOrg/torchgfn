@@ -1,4 +1,3 @@
-from copy import deepcopy
 from typing import Any, List, Optional, Tuple
 
 import torch
@@ -7,7 +6,7 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
-from gfn.states import GraphStates, States
+from gfn.states import GraphStates, States, graph_states_share_storage
 from gfn.utils.common import ensure_same_device
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -95,7 +94,9 @@ class Sampler:
             estimator_output = None
 
         assert log_probs is None or log_probs.shape == actions.batch_shape
-        # assert estimator_output is None or estimator_output.shape == actions.batch_shape  TODO: check expected shape
+        # assert estimator_output is None or estimator_output.shape == actions.batch_shape
+        # TODO: check expected shape
+
         return actions, log_probs, estimator_output
 
     def sample_trajectories(
@@ -144,6 +145,11 @@ class Sampler:
                 len(states.batch_shape) == 1
             ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
             n_trajectories = states.batch_shape[0]
+            # Backward trajectories should have the reward at the beginning (terminating state)
+            if self.estimator.is_backward:
+                # [ASSUMPTION] all provided states are part of the terminating states (can be passed to reward fn)
+                # assert states in env.terminating_states # This assert would be useful, unfortunately, not every environment implements this.
+                trajectories_log_rewards = env.log_reward(states)
 
         device = states.device
 
@@ -158,14 +164,13 @@ class Sampler:
         )
 
         # Define dummy actions to avoid errors when stacking empty lists.
-        dummy_actions = env.actions_from_batch_shape((n_trajectories,))
-        dummy_logprobs = torch.full(
-            (n_trajectories,), fill_value=0, dtype=torch.float, device=device
-        )
-
-        trajectories_states: List[States] = [deepcopy(states)]
-        trajectories_actions: List[Actions] = [dummy_actions]
-        trajectories_logprobs: List[torch.Tensor] = [dummy_logprobs]
+        trajectories_states: List[States] = [states]
+        trajectories_actions: List[Actions] = [
+            env.actions_from_batch_shape((n_trajectories,))
+        ]
+        trajectories_logprobs: List[torch.Tensor] = [
+            torch.full((n_trajectories,), fill_value=0, dtype=torch.float, device=device)
+        ]
         trajectories_terminating_idx = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
@@ -177,8 +182,10 @@ class Sampler:
         all_estimator_outputs = []
 
         while not all(dones):
-            actions = deepcopy(dummy_actions)
-            log_probs = dummy_logprobs.clone()
+            actions = env.actions_from_batch_shape((n_trajectories,))
+            log_probs = torch.full(
+                (n_trajectories,), fill_value=0, dtype=torch.float, device=device
+            )
             # This optionally allows you to retrieve the estimator_outputs collected
             # during sampling. This is useful if, for example, you want to evaluate off
             # policy actions later without repeating calculations to obtain the env
@@ -223,6 +230,19 @@ class Sampler:
             else:
                 new_states = env._step(states, actions)
 
+            # Ensure that the new state is a distinct object from the old state.
+            assert new_states is not states
+            assert isinstance(new_states, States)
+            assert type(new_states) is type(states)
+            if isinstance(new_states, GraphStates) and isinstance(states, GraphStates):
+                # Asserts that there exists no shared storage between the two
+                # GraphStates.
+                assert not graph_states_share_storage(new_states, states)
+            else:
+                # Asserts that there exists no shared storage between the two
+                # States.
+                assert new_states.tensor.data_ptr() != states.tensor.data_ptr()
+
             # Increment the step, determine which trajectories are finished, and eval
             # rewards.
             step += 1
@@ -236,15 +256,14 @@ class Sampler:
                 else new_states.is_sink_state
             ) & ~dones
             trajectories_terminating_idx[new_dones] = step
-            try:
+
+            # Only forward trajectories should fetch a reward at the end.
+            if not self.estimator.is_backward:
                 trajectories_log_rewards[new_dones] = env.log_reward(states[new_dones])
-            except NotImplementedError:
-                trajectories_log_rewards[new_dones] = torch.log(
-                    env.reward(states[new_dones])
-                )
+
             states = new_states
             dones = dones | new_dones
-            trajectories_states.append(deepcopy(states))
+            trajectories_states.append(states)
 
         # Stack all states and actions
         stacked_states = env.States.stack(trajectories_states)
@@ -510,9 +529,14 @@ class LocalSearchSampler(Sampler):
         )
 
         if n is None:
-            n = trajectories.n_trajectories
+            n = int(trajectories.n_trajectories)
 
-        search_indices = torch.arange(n, device=trajectories.states.device)
+        search_indices = torch.arange(
+            n,
+            dtype=torch.long,
+            device=trajectories.states.device,
+        )
+
         for it in range(1, n_local_search_loops):  # 0-th loop is the initial sampling
             # Search phase
             ls_trajectories, is_updated = self.local_search(
@@ -529,7 +553,10 @@ class LocalSearchSampler(Sampler):
             trajectories.extend(ls_trajectories)
 
             last_indices = torch.arange(
-                n * it, n * (it + 1), device=trajectories.states.device
+                n * it,
+                n * (it + 1),
+                dtype=torch.long,
+                device=trajectories.states.device,
             )
             search_indices[is_updated] = last_indices[is_updated]
 
@@ -570,7 +597,16 @@ class LocalSearchSampler(Sampler):
         max_traj_len = int(new_trajectories_dones.max().item())
 
         # Create helper indices and masks
-        idx = torch.arange(max_traj_len + 1).unsqueeze(1).expand(-1, bs).to(n_prevs)
+        idx = (
+            torch.arange(
+                max_traj_len + 1,
+                dtype=torch.long,
+            )
+            .unsqueeze(1)
+            .expand(-1, bs)
+            .to(n_prevs)
+        )
+
         prev_mask = idx < n_prevs
         state_recon_mask = (idx >= n_prevs) * (idx <= n_prevs + n_recons)
         state_recon_mask2 = idx[: max_n_recon + 1] <= n_recons
