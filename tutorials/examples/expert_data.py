@@ -210,27 +210,28 @@ def main(args: Namespace):
     else:
         scheduler = None
 
+    # Generate all possible ring graphs.
+    ring_examples = generate_all_rings(args.n_nodes, device, args.replay_buffer_max_size)
+    n_modes = len(ring_examples)
+
     replay_buffer = ReplayBuffer(
         env,
-        capacity=args.replay_buffer_max_size,
+        capacity=min(args.replay_buffer_max_size, n_modes),
         prioritized=True,
     )
 
-    # If the user has requested to use expert data to prefill the replay buffer,
-    # generate all possible ring graphs, determine their backward trajectory,
-    # reverse those to create forward trajectories, and add those to the replay
-    # buffer.
+    print(f"+ Number of modes: {n_modes}")
+
+    # If the user has requested to use expert data to prefill the replay buffer
+    # determine the backward trajectories of the ring_examples, reverse them to
+    # create forward trajectories, and add those to the replay buffer.
     if args.use_expert_data:
-        # Generate all possible ring graphs.
-        ring_examples = generate_all_rings(
-            args.n_nodes, device, args.replay_buffer_max_size
-        )
         backward_sampler = Sampler(gflownet.pb)
         sample_trajectories = backward_sampler.sample_trajectories(
             env,
             n=args.replay_buffer_max_size,
             states=ring_examples,
-            save_logprobs=True,
+            save_logprobs=False,  # Not used.
         )
         sample_trajectories = sample_trajectories.reverse_backward_trajectories()
         replay_buffer.add(sample_trajectories)
@@ -246,7 +247,9 @@ def main(args: Namespace):
 
     t1 = time.time()
     epsilon_dict = defaultdict(float)
-    epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 0.0  # Exploration on action type.
+    epsilon_dict[GraphActions.ACTION_TYPE_KEY] = (
+        args.action_type_epsilon
+    )  # Exploration on action type.
 
     for iteration in range(args.n_iterations):
 
@@ -310,6 +313,11 @@ def main(args: Namespace):
 
         losses.append(loss.item())
 
+        import IPython
+
+        IPython.embed()
+        sys.exit()
+
         print(
             "Iter {}: loss: {:.02f}, rings: {:.0f}%, logZ: {:.06f}, grad_norms: {}".format(
                 iteration,
@@ -367,6 +375,13 @@ if __name__ == "__main__":
         type=int,
         default=1024 * 16,
         help="Max size of the replay buffer",
+    )
+
+    parser.add_argument(
+        "--action_type_epsilon",
+        type=float,
+        default=0.0,
+        help="Epsilon for exploration on action type.",
     )
 
     # Misc parameters
