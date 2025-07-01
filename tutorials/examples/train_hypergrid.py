@@ -773,7 +773,7 @@ def main(args):  # noqa: C901
             replay_buffer = ReplayBuffer(
                 env,
                 capacity=args.replay_buffer_size,
-                prioritized=False,
+                prioritized_capacity=False,
             )
 
     gflownet = gflownet.to(device)

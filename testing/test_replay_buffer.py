@@ -133,7 +133,7 @@ def test_capacity_limit(simple_env, trajectories):
 
 
 def test_prioritized(simple_env, trajectories):
-    buffer = ReplayBuffer(simple_env, capacity=5, prioritized=True)
+    buffer = ReplayBuffer(simple_env, capacity=5, prioritized_capacity=True)
     buffer.add(trajectories)
 
     assert buffer.prioritized
