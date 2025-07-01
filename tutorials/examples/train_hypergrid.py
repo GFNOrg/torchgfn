@@ -50,6 +50,136 @@ from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
 
+r"""
+Helper class for timing code execution blocks and accumulating elapsed time in a dictionary.
+
+This class is designed to be used as a context manager to measure the execution time of code blocks.
+Upon entering the context, it records the start time, and upon exiting, it adds the elapsed time to a
+specified key in a provided timing dictionary. This is useful for profiling and tracking the time spent
+in different parts of a program, such as during training loops or data processing steps.
+
+    timing_dict (dict): A dictionary where timing results will be accumulated.
+    key (str): The key in the timing_dict under which to accumulate elapsed time.
+
+Example:
+    for name in ["step1", "step2"]:
+        timing[name] = 0
+
+    with Timer(timing, "step1"):
+        # Code block to time
+        do_something()
+
+    print(f"Elapsed time for step1: {timing['step1']} seconds")
+"""
+class Timer:
+    def __init__(self, timing_dict, key, enabled=True):
+        self.timing_dict = timing_dict
+        self.key = key
+        self.enabled = enabled
+        self.elapsed = None
+
+    def __enter__(self):
+        if self.enabled:
+            self.start = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.enabled:
+            self.elapsed = time.perf_counter() - self.start
+            if self.key not in self.timing_dict:
+                self.timing_dict[self.key] = []
+            self.timing_dict[self.key].append(self.elapsed)
+        else:
+            self.elapsed = 0.0
+
+r"""
+Reports load imbalance and timing information from a timing dictionary.
+    param all_timing_dict: A list of dictionaries containing timing information for each rank.
+        all_timing_dict structure: [rank0_dict, rank1_dict, ...]
+        where each rank_dict is: {"step_name": [iter0_time, iter1_time, iter2_time, ...], ...}
+
+    param world_size: The total number of ranks in the distributed setup.
+"""
+def report_load_imbalance(all_timing_dict, world_size):
+
+    # Header
+    print(f"{'Step Name':<25} {'Useful Work':>12} {'Waiting':>12}")
+    print("-" * 80)
+
+    for step, times in all_timing_dict[0].items():
+        if type(times) is not list:
+            times = [times]  # Ensure times is a list
+
+        curr_step_times = {}
+        isValidKey = True # Time information for some steps are not present in all ranks. Those are skipped.
+        for rank in range(world_size):
+            curr_dict = all_timing_dict[rank]
+            if step in curr_dict:
+                curr_step_times[rank] = curr_dict[step]
+            else:
+                isValidKey = False
+                break
+        if not isValidKey:
+            print(f"Time for Step - '{step}' not found in all ranks, skipping...")
+            continue
+
+        # Calculate the timing profile for the step.
+        useful_work = []
+        waiting_times = []
+
+        for iteration in range(len(times)):
+            rank_times = [curr_step_times[rank][iteration] for rank in curr_step_times]
+            max_time = max(rank_times)
+            useful_time = sum(rank_times) / len(rank_times)
+            waiting_time = max_time - useful_time
+
+            useful_work.append(useful_time)
+            waiting_times.append(waiting_time)
+
+        total_useful = sum(useful_work)
+        total_waiting = sum(waiting_times)
+
+        print(f"{step:<25} {total_useful:>10.4f}s {total_waiting:>10.4f}s")
+
+
+def report_time_info(all_timing_dict, world_size):
+    overall_timing = {}
+    print("Timing information for each rank:")
+    for rank in range(world_size):
+        print(f"Rank {rank} timing information:")
+        for step, times in all_timing_dict[rank].items():
+            if type(times) is not list:
+                times = [times]  # Ensure times is a list
+
+            avg_time = sum(times) / len(times)
+            sum_time = sum(times)
+            print(f"  {step}: {avg_time:.4f} seconds (total: {sum_time:.4f} seconds)")
+
+            if overall_timing.get(step) is None:
+                overall_timing[step] = [sum_time]
+            else:
+                overall_timing[step].append(sum_time)
+
+    print("\nMaximum timing information:")
+    for step, times in overall_timing.items():
+        print(f"  {step}: {max(times):.4f} seconds")
+
+    print("\nAverage timing information:")
+    for step, times in overall_timing.items():
+        print(f"  {step}: {sum(times) / len(times):.4f} seconds")
+
+
+def report_timing(all_timing_dict, world_size):
+    """Prints the timing information from the timing dictionary."""
+
+
+    # uncomment if you need rank level timing information.
+    # report_time_info(all_timing_dict, world_size)
+
+    # print("Load Imbalance (LI) is as follows:")
+    report_load_imbalance(all_timing_dict, world_size)
+
+
 
 def average_gradients(model):
     """All-Reduce gradients across all models."""
@@ -836,127 +966,108 @@ def main(args):  # noqa: C901
 
     # Initialize some variables before the training loop.
     timing = {}
-    for n in [
-        "total_sample_time",
-        "total_to_train_samples_time",
-        "total_loss_time",
-        "total_loss_backward_time",
-        "total_opt_time",
-        "total_rest_time",
-        "total_average_time",
-        "total_bar0_time",
-        "total_bar1_time",
-    ]:
-        timing[n] = 0
-
     time_start = time.time()
     l1_distances, validation_steps = [], []
 
     # Used for calculating the L1 distance across all nodes.
     all_visited_terminating_states = env.states_from_batch_shape((0,))
 
+    # Barrier for pre-processing. Wait for all processes to reach this point before starting training.
+    with Timer(timing, "Pre-processing_barrier", enabled=(args.timing and args.distributed)):
+        if args.distributed and args.timing:
+            dist.barrier()
+
     # Training loop.
     pbar = trange(n_iterations)
     for iteration in pbar:
-
-        # Keep track of visited terminating states on this node.
-        visited_terminating_states = env.states_from_batch_shape((0,))
-
         iteration_start = time.time()
 
-        # Profiler.
-        if args.profile:
-            prof.step()
-            if iteration >= 1 + 1 + keep_active:
-                break
+        # Keep track of visited terminating states on this node.
+        with Timer(timing, "track_visited_states", enabled=args.timing) as visited_states_timer:
+            visited_terminating_states = env.states_from_batch_shape((0,))
+
+            # Profiler.
+            if args.profile:
+                prof.step()
+                if iteration >= 1 + 1 + keep_active:
+                    break
 
         # Sample trajectories.
-        sample_start = time.time()
-        trajectories = gflownet.sample_trajectories(
-            env,
-            n=args.batch_size,
-            save_logprobs=is_on_policy,  # Can be re-used if on-policy.
-            save_estimator_outputs=not is_on_policy,  # Only used if off-policy.
-        )
-        sample_time = time.time() - sample_start
-        timing["total_sample_time"] += sample_time
+        with Timer(timing, "generate_samples", enabled=args.timing) as sample_timer:
+            trajectories = gflownet.sample_trajectories(
+                env,
+                n=args.batch_size,
+                save_logprobs=is_on_policy,  # Can be re-used if on-policy.
+                save_estimator_outputs=not is_on_policy,  # Only used if off-policy.
+            )
 
         # Training objects (incl. possible replay buffer sampling).
-        to_train_samples_start = time.time()
-        training_samples = gflownet.to_training_samples(trajectories)
+        with Timer(timing, "to_training_samples", enabled=args.timing) as to_train_samples_timer:
+            training_samples = gflownet.to_training_samples(trajectories)
 
-        if replay_buffer is not None:
-            with torch.no_grad():
-                replay_buffer.add(training_samples)
-                training_objects = replay_buffer.sample(
-                    n_trajectories=per_node_batch_size
-                )
-        else:
-            training_objects = training_samples
-
-        to_train_samples_time = time.time() - to_train_samples_start
-        timing["total_to_train_samples_time"] += to_train_samples_time
+            if replay_buffer is not None:
+                with torch.no_grad():
+                    replay_buffer.add(training_samples)
+                    training_objects = replay_buffer.sample(
+                        n_trajectories=per_node_batch_size
+                    )
+            else:
+                training_objects = training_samples
 
         # Loss.
-        optimizer.zero_grad()
-        loss_start = time.time()
-        gflownet = cast(GFlowNet, gflownet)
-        loss = gflownet.loss(
-            env,
-            training_objects,  # type: ignore
-            recalculate_all_logprobs=args.replay_buffer_size > 0,
-            reduction="sum" if args.distributed or args.loss == "SubTB" else "mean",  # type: ignore
-        )
+        with Timer(timing, "calculate_loss", enabled=args.timing) as loss_timer:
 
-        # Normalize the loss by the local batch size if distributed.
-        if args.distributed:
-            loss = loss / (per_node_batch_size)
-        loss_time = time.time() - loss_start
-        timing["total_loss_time"] += time.time() - loss_start
+            optimizer.zero_grad()
+            gflownet = cast(GFlowNet, gflownet)
+            loss = gflownet.loss(
+                env,
+                training_objects,  # type: ignore
+                recalculate_all_logprobs=args.replay_buffer_size > 0,
+                reduction="sum" if args.distributed or args.loss == "SubTB" else "mean",  # type: ignore
+            )
+
+            # Normalize the loss by the local batch size if distributed.
+            if args.distributed:
+                loss = loss / (per_node_batch_size)
 
         # Barrier.
-        bar0_start = time.time()
-        if args.distributed:
-            dist.barrier()
-        bar0_time = time.time() - bar0_start
-        timing["total_bar0_time"] += bar0_time
+        with Timer(timing, "barrier 0", enabled=(args.timing and args.distributed)) as bar0_timer:
+            if args.distributed and args.timing:
+                dist.barrier()
 
         # Backpropagation.
-        loss_backward_start = time.time()
-        loss.backward()
-        loss_backward_time = time.time() - loss_backward_start
-        timing["total_loss_backward_time"] += loss_backward_time
+        with Timer(timing, "loss_backward", enabled=args.timing) as loss_backward_timer:
+            loss.backward()
 
         # Optimization.
-        opt_start = time.time()
-        optimizer.step()
-        opt_time = time.time() - opt_start
-        timing["total_opt_time"] += opt_time
+        with Timer(timing, "optimizer", enabled=args.timing) as opt_timer:
+            optimizer.step()
 
-        bar1_start = time.time()
-        if args.distributed:
-            dist.barrier()
-        timing["total_bar1_time"] += time.time() - bar1_start
+        # Barrier.
+        with Timer(timing, "barrier 1", enabled=(args.timing and args.distributed)) as bar1_timer:
+            if args.distributed and args.timing:
+                dist.barrier()
 
         # Model averaging.
-        average_start = time.time()
-        if args.distributed and (iteration % args.average_every == 0):
-            print("before averaging model, iteration = ", iteration)
-            average_models(gflownet)
-            print("after averaging model, iteration = ", iteration)
-        average_time = time.time() - average_start
-        timing["total_average_time"] += average_time
+        with Timer(timing, "averaging_model", enabled=args.timing) as model_averaging_timer:
+            if args.distributed and (iteration % args.average_every == 0):
+                print("before averaging model, iteration = ", iteration)
+                average_models(gflownet)
+                print("after averaging model, iteration = ", iteration)
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
         rest_time = iteration_time - sum(
             [
-                timing["total_sample_time"],
-                timing["total_to_train_samples_time"],
-                timing["total_loss_time"],
-                timing["total_loss_backward_time"],
-                timing["total_opt_time"],
-                timing["total_average_time"],
+                visited_states_timer.elapsed,
+                sample_timer.elapsed,
+                to_train_samples_timer.elapsed,
+                loss_timer.elapsed,
+                bar0_timer.elapsed,
+                loss_backward_timer.elapsed,
+                opt_timer.elapsed,
+                bar1_timer.elapsed,
+                model_averaging_timer.elapsed,
             ]
         )
 
@@ -969,54 +1080,55 @@ def main(args):  # noqa: C901
             cast(DiscreteStates, trajectories.terminating_states)
         )
 
-        # If distributed, gather all visited terminating states from all nodes.
-        if args.distributed and log_this_iter:
-            try:
+        with Timer(timing, "gather_visited_states", enabled=args.timing) as gather_timer:
+            # If distributed, gather all visited terminating states from all nodes.
+            if args.distributed and log_this_iter:
+                try:
+                    assert visited_terminating_states is not None
+                    # Gather all visited terminating states from all nodes.
+                    gathered_visited_terminating_states = gather_distributed_data(
+                        visited_terminating_states.tensor
+                    )
+                except Exception as e:
+                    print("Process {}: Caught error: {}".format(my_rank, e))
+                    # handler.signal_error()
+                    sys.exit(1)
+            else:
+                # Just use the visited terminating states from this node.
                 assert visited_terminating_states is not None
-                # Gather all visited terminating states from all nodes.
-                gathered_visited_terminating_states = gather_distributed_data(
-                    visited_terminating_states.tensor
-                )
-            except Exception as e:
-                print("Process {}: Caught error: {}".format(my_rank, e))
-                # handler.signal_error()
-                sys.exit(1)
-        else:
-            # Just use the visited terminating states from this node.
-            assert visited_terminating_states is not None
-            gathered_visited_terminating_states = visited_terminating_states.tensor
+                gathered_visited_terminating_states = visited_terminating_states.tensor
 
         # If we are on the master node, calculate the validation metrics.
-        if my_rank == 0:
+        with Timer(timing, "validation", enabled=args.timing) as validation_timer:
+            if my_rank == 0:
 
-            # Extend `all_visited_terminating_states` with the gathered data.
-            assert gathered_visited_terminating_states is not None
-            gathered_visited_terminating_states = cast(
-                DiscreteStates, env.States(gathered_visited_terminating_states)
-            )
-            states_visited += len(gathered_visited_terminating_states)
-            all_visited_terminating_states.extend(gathered_visited_terminating_states)
+                # Extend `all_visited_terminating_states` with the gathered data.
+                assert gathered_visited_terminating_states is not None
+                gathered_visited_terminating_states = cast(
+                    DiscreteStates, env.States(gathered_visited_terminating_states)
+                )
+                states_visited += len(gathered_visited_terminating_states)
+                all_visited_terminating_states.extend(gathered_visited_terminating_states)
 
-            to_log = {
-                "loss": loss.item(),
-                "states_visited": states_visited,
-                "sample_time": sample_time,
-                "to_train_samples_time": to_train_samples_time,
-                "loss_time": loss_time,
-                "loss_backward_time": loss_backward_time,
-                "opt_time": opt_time,
-                "average_time": average_time,
-                "rest_time": rest_time,
-                "l1_dist": None,  # only logged if calculate_partition.
-            }
+                to_log = {
+                    "loss": loss.item(),
+                    "states_visited": states_visited,
+                    "sample_time": sample_timer.elapsed,
+                    "to_train_samples_time": to_train_samples_timer.elapsed,
+                    "loss_time": loss_timer.elapsed,
+                    "loss_backward_time": loss_backward_timer.elapsed,
+                    "opt_time": opt_timer.elapsed,
+                    "model_averaging_time": model_averaging_timer.elapsed,
+                    "rest_time": rest_time,
+                    "l1_dist": None,  # only logged if calculate_partition.
+                    }
 
-            if use_wandb:
-                wandb.log(to_log, step=iteration)
+                if use_wandb:
+                        wandb.log(to_log, step=iteration)
 
-            if log_this_iter:
-
-                validation_info, all_visited_terminating_states, discovered_modes = (
-                    validate_hypergrid(
+                if log_this_iter:
+                    (validation_info, all_visited_terminating_states, discovered_modes) = (
+                        validate_hypergrid(
                         env,
                         gflownet,
                         args.validation_samples,
@@ -1025,44 +1137,61 @@ def main(args):  # noqa: C901
                     )
                 )
 
-                print(
-                    "all_visited_terminating_states = ",
-                    len(all_visited_terminating_states),
-                )
-                print("visited_terminating_states = ", len(visited_terminating_states))
+                    print(
+                        "all_visited_terminating_states = ",
+                        len(all_visited_terminating_states),
+                    )
+                    print("visited_terminating_states = ", len(visited_terminating_states))
 
-                if use_wandb:
-                    wandb.log(validation_info, step=iteration)
+                    if use_wandb:
+                        wandb.log(validation_info, step=iteration)
 
-                to_log.update(validation_info)
+                    to_log.update(validation_info)
 
-                pbar.set_postfix(
-                    loss=to_log["loss"],
-                    l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
-                    n_modes_found=to_log["n_modes_found"],
-                )
+                    pbar.set_postfix(
+                        loss=to_log["loss"],
+                        l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
+                        n_modes_found=to_log["n_modes_found"],
+                    )
 
-    timing["total_time"] = time.time() - time_start
-    timing["total_rest_time"] = timing["total_time"] - sum(
-        [
-            timing["total_sample_time"],
-            timing["total_to_train_samples_time"],
-            timing["total_loss_time"],
-            timing["total_loss_backward_time"],
-            timing["total_opt_time"],
-            timing["total_average_time"],
-        ]
-    )
+        with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)) as bar2_timer:
+            if args.distributed and args.timing:
+                dist.barrier()
+
+    total_time = time.time() - time_start
+    if args.timing:
+        timing["total_rest_time"] = [total_time - sum(
+            sum(v)
+            for k, v in timing.items())]
+
+    timing["total_time"] = [total_time]
 
     if args.distributed:
         dist.barrier()
 
     # Log the final timing results.
-    if my_rank == 0:
-        to_log = {k: v for k, v in timing.items()}
-        print("+ Final timing.")
-        for k, v in to_log.items():
-            print("  {}: {:.6f}".format(k, v))
+    if args.timing:
+        print("\n" + "="*80)
+        print("\n Timing information:")
+        if args.distributed:
+            print("-"*80)
+            print("The below timing information is averaged across all ranks.")
+        print("="*80)
+
+        if args.distributed:
+            # Gather timing data from all ranks
+            all_timings = [None] * world_size
+            dist.all_gather_object(all_timings, timing)
+
+            if my_rank == 0:
+                report_timing(all_timings, world_size)
+        else:
+            # Single machine case
+            # Header
+            print(f"{'Step Name':<25} {'Time (s)':>12}")
+            print("-" * 80)
+            for k, v in timing.items():
+                print(f"{k:<25} {sum(v):>10.4f}s")
 
     # Stop the profiler if it's active.
     if args.profile:
@@ -1076,9 +1205,14 @@ def main(args):  # noqa: C901
         plot_results(env, gflownet, l1_distances, validation_steps)
 
     try:
-        return validation_info["l1_dist"]
+        result = validation_info["l1_dist"]
     except KeyError:
-        return validation_info["n_modes_found"]
+        result = validation_info["n_modes_found"]
+
+    if my_rank == 0:
+        print("+ Training complete - final_score={:.6f}".format(result))
+
+    return result
 
 
 if __name__ == "__main__":
@@ -1293,6 +1427,11 @@ if __name__ == "__main__":
         help="Generate plots of true and learned distributions (only works for 2D, incompatible with wandb)",
     )
 
+    parser.add_argument(
+        "--timing",
+        action="store_true",
+        help="Report timing information at the end of training",
+    )
+
     args = parser.parse_args()
     result = main(args)
-    print("+ Training complete - final_score={:.6f}".format(result))
