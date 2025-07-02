@@ -371,12 +371,11 @@ class Trajectories(Container):
                 ],
                 dim=0,
             )
-
-        # Initialize log_probs None if not available
-        if self.has_log_probs:
-            log_probs = self.log_probs[~self.actions.is_dummy]  # type: ignore
-        else:
-            log_probs = None
+        log_probs = (
+            self.log_probs[~self.actions.is_dummy]
+            if self.log_probs is not None
+            else None
+        )
 
         return Transitions(
             env=self.env,
@@ -388,6 +387,7 @@ class Trajectories(Container):
             is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
+            # FIXME: Add estimator_outputs.
         )
 
     def to_states_container(self) -> StatesContainer:
@@ -450,6 +450,7 @@ class Trajectories(Container):
             conditioning=conditioning,
             is_terminating=is_terminating,
             log_rewards=log_rewards,
+            # FIXME: Add log_probs and estimator_outputs.
         )
 
     def reverse_backward_trajectories(self, debug: bool = False) -> Trajectories:
