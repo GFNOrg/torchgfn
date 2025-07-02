@@ -176,6 +176,10 @@ def graph_hash(data) -> str:
     for attr in ("edge_index", "edge_attr", "x"):
         t = getattr(data, attr, None)
         if torch.is_tensor(t):
+            # TODO: Sort the attributes too.
+            if attr == "edge_index":
+                idx = torch.argsort(t[0, :])  # Directed case!
+                t = t[:, idx]  # Sort the edge attributes by ascending source nodes.
             h.update(t.contiguous().view(-1).cpu().numpy().tobytes())
         else:
             h.update(b"\0")  # placeholder for 'missing' field
@@ -396,7 +400,7 @@ def main(args: Namespace):
     final_states = sample_trajectories.terminating_states
     assert isinstance(final_states, GraphStates)
     found = count_recovered_modes(final_states, mode_hashes)
-    print(f"+ Found {found} matches out of {n_modes} final states.")
+    print(f"+ Found {found} / {n_modes} modes.")
 
     if args.plot:
         samples_to_render = trajectories.terminating_states[:8]
