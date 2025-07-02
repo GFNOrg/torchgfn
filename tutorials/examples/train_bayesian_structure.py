@@ -496,11 +496,7 @@ def main(args: Namespace):
     # Replay buffer
     replay_buffer = None
     if args.use_buffer:
-        replay_buffer = ReplayBuffer(
-            env,
-            capacity=args.buffer_capacity,
-            prioritized=args.buffer_prioritize,
-        )
+        replay_buffer = ReplayBuffer(env, capacity=args.buffer_capacity)
 
     epsilon_dict = defaultdict(float)
     pbar = trange(args.n_iterations, dynamic_ncols=True)
@@ -622,7 +618,6 @@ if __name__ == "__main__":
     # Replay buffer parameters
     parser.add_argument("--no_buffer", dest="use_buffer", action="store_false")
     parser.add_argument("--buffer_capacity", type=int, default=1000)
-    parser.add_argument("--buffer_prioritize", action="store_true")
     parser.add_argument("--prefill", type=int, default=30)
     parser.add_argument("--sampling_batch_size", type=int, default=32)
 
