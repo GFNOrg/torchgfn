@@ -360,7 +360,7 @@ def main(args: Namespace):
     replay_buffer = ReplayBuffer(
         env,
         capacity=args.batch_size,
-        prioritized=True,
+        prioritized_capacity=True,
     )
 
     losses = []
