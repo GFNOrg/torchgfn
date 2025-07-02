@@ -83,7 +83,8 @@ def test_init_rb(simple_env):
     assert buffer.env == simple_env
     assert buffer.training_objects is None
     assert len(buffer) == 0
-    assert not buffer.prioritized
+    assert not buffer.prioritized_capacity
+    assert not buffer.prioritized_sampling
 
     # Test representation
     assert "ReplayBuffer" in repr(buffer)
@@ -132,11 +133,12 @@ def test_capacity_limit(simple_env, trajectories):
     assert buffer.training_objects.log_rewards[-3:].tolist() == [2.0, 3.0, 4.0]
 
 
-def test_prioritized(simple_env, trajectories):
-    buffer = ReplayBuffer(simple_env, capacity=5, prioritized=True)
+def test_prioritized_capacity(simple_env, trajectories):
+    buffer = ReplayBuffer(simple_env, capacity=5, prioritized_capacity=True)
     buffer.add(trajectories)
 
-    assert buffer.prioritized
+    assert buffer.prioritized_capacity
+    assert not buffer.prioritized_sampling
     assert len(buffer) == 5
     # Should sort by log_rewards in ascending order
     assert isinstance(buffer.training_objects, Trajectories)
@@ -202,7 +204,8 @@ def test_init_ndrb(simple_env):
     assert buffer.capacity == 100
     assert buffer.cutoff_distance == 0.5
     assert buffer.p_norm_distance == 2.0
-    assert buffer.prioritized
+    assert buffer.prioritized_capacity
+    assert not buffer.prioritized_sampling
 
 
 def test_add_with_diversity(simple_env, trajectories):
@@ -276,3 +279,27 @@ def test_skip_diversity_check(simple_env, trajectories):
     assert isinstance(buffer.training_objects, Trajectories)
     assert isinstance(buffer.training_objects.log_rewards, torch.Tensor)
     assert torch.min(buffer.training_objects.log_rewards) >= 2.0
+
+
+def test_prioritized_sampling(simple_env, trajectories):
+    # Fill a buffer that has prioritised *sampling*.
+    buffer = ReplayBuffer(simple_env, capacity=5, prioritized_sampling=True)
+    buffer.add(trajectories)
+
+    # Use a fixed RNG seed for deterministic behaviour in the test.
+    torch.manual_seed(0)
+
+    n_samples = 1000
+    counts = torch.zeros(5, dtype=torch.long)
+
+    # Repeatedly sample a single trajectory and record which reward was drawn.
+    for _ in range(n_samples):
+        sampled = buffer.sample(1)
+        # `log_rewards` is guaranteed to be defined for trajectories stored in the
+        # replay buffer when `prioritized_sampling` is enabled.
+        assert sampled.log_rewards is not None
+        reward_value = int(sampled.log_rewards.item())  # Rewards are 0‒4.
+        counts[reward_value] += 1
+
+    # Higher-reward trajectories should have been sampled more often.
+    assert torch.all(counts[:-1] <= counts[1:])
