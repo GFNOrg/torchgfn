@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import Sequence
 
 import torch
-from tensordict import TensorDict
-from torch_geometric.data import Batch as GeometricBatch
 
 from gfn.actions import Actions
 from gfn.containers.base import Container
@@ -83,12 +81,8 @@ class Trajectories(Container):
 
         for obj in [states, actions]:
             if obj is not None:
-                if isinstance(obj.tensor, GeometricBatch):
-                    ensure_same_device(obj.tensor.x.device, device)
-                elif isinstance(obj.tensor, TensorDict):
-                    ensure_same_device(obj.tensor["x"].device, device)
-                else:
-                    ensure_same_device(obj.tensor.device, device)
+                ensure_same_device(obj.device, device)
+
         for tensor in [
             conditioning,
             terminating_idx,

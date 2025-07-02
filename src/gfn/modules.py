@@ -6,12 +6,12 @@ import torch
 import torch.nn as nn
 from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
-from torch_geometric.data import Batch as GeometricBatch
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
+from gfn.utils.graphs import GeometricBatch
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -212,6 +212,7 @@ class ScalarEstimator(GFNModule):
             out = self.reduction_fxn(out, -1)
 
         assert out.shape[-1] == 1
+
         return out
 
 

@@ -37,13 +37,15 @@ class ReplayBuffer:
         self,
         env: Env,
         capacity: int = 1000,
-        prioritized: bool = False,
+        prioritized_capacity: bool = False,
+        prioritized_sampling: bool = False,
     ):
         self.env = env
         self.capacity = capacity
         self._is_full = False
         self.training_objects: ContainerUnion | None = None
-        self.prioritized = prioritized
+        self.prioritized_capacity = prioritized_capacity
+        self.prioritized_sampling = prioritized_sampling
 
     @property
     def device(self) -> torch.device:
@@ -93,7 +95,7 @@ class ReplayBuffer:
         self.training_objects.extend(training_objects)  # type: ignore
 
         # Sort elements by log reward, capping the size at the defined capacity.
-        if self.prioritized:
+        if self.prioritized_capacity:
             if (
                 self.training_objects.log_rewards is None
                 or training_objects.log_rewards is None
@@ -113,6 +115,28 @@ class ReplayBuffer:
         """Samples `n_trajectories` training objects from the buffer."""
         if self.training_objects is None:
             raise ValueError("Buffer is empty")
+
+        # If the buffer is flagged as prioritised, draw samples proportionally to the
+        # (exponentiated) log-rewards; otherwise, fall back to uniform sampling.
+        if self.prioritized_sampling:
+            log_rewards = self.training_objects.log_rewards
+
+            if log_rewards is None:
+                raise ValueError("log_rewards must be defined for prioritized sampling.")
+
+            # Convert to a proper probability mass function.  Using the softmax of
+            # the log-rewards ensures numerical stability even for widely varying
+            # magnitudes.
+            probs = torch.softmax(log_rewards, dim=0)
+
+            # Decide whether to sample with replacement – this is required when the
+            # request is larger than the buffer size.
+            replacement = n_trajectories > len(self)
+
+            indices = torch.multinomial(probs, n_trajectories, replacement=replacement)
+            return self.training_objects[indices]
+
+        # Uniform sampling (replacement-free) for the non-prioritised case.
         return cast(ContainerUnion, self.training_objects.sample(n_trajectories))
 
     def save(self, directory: str):
@@ -157,7 +181,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             p_norm_distance: p-norm distance value to pass to torch.cdist, for the
                 determination of novel states.
         """
-        super().__init__(env, capacity, prioritized=True)
+        super().__init__(env, capacity, prioritized_capacity=True)
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
 
