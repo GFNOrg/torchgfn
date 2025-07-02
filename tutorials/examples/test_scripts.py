@@ -153,13 +153,15 @@ class BayesianStructureArgs(CommonArgs):
     module: str = "gnn_v2"
     max_epsilon: float = 0.9
     min_epsilon: float = 0.1
-    use_buffer: bool = False
-    prefill: int = 0
+    use_buffer: bool = True
+    buffer_capacity: int = 1000
+    prefill: int = 5
     sampling_batch_size: int = 32
     lr: float = 0.001
     lr_Z: float = 1.0
     n_iterations: int = 10
     batch_size: int = 32
+    n_steps_per_iteration: int = 1
     seed: int = 0
     use_cuda: bool = False
 
