@@ -7,31 +7,25 @@ Bayesian network over `num_nodes` nodes. We generate 100 datapoints from it, and
 calculate the BGe score. The GFlowNet is learned to generate directed acyclic graphs (DAGs)
 proportionally to their BGe score, using the modified DB loss.
 
-Some expected results on the Erdős-Rényi model with 4 nodes and 4 edges:
+Some expected results on the Erdős-Rényi model with 5 nodes and 5 edges:
 
 (On-policy training)
 python train_bayesian_structure.py \
+    --seed 0 \
     --no_buffer \
-    --batch_size 32 \
-    --sampling_batch_size 32 \
-    --module gnn \
     --max_epsilon 0.0 \
     --min_epsilon 0.0
->> Expected SHD: ~5.0
->> Expected edges: ~6.0
->> ROC-AUC: ~0.7
+>> Expected SHD: 6.92
+>> Expected edges: 10.00
+>> ROC-AUC: 0.91
+>> Jensen-Shannon divergence: 0.36
 
-(Off-policy training with epsilon-noisy exploration)
-python train_bayesian_structure.py \
-    --no_buffer \
-    --batch_size 32 \
-    --sampling_batch_size 32 \
-    --module gnn \
-    --max_epsilon 0.9 \
-    --min_epsilon 0.0
->> Expected SHD: ~4.2
->> Expected edges: ~5.2
->> ROC-AUC: ~0.9
+(Off-policy training with epsilon-noisy exploration, which is the default)
+python train_bayesian_structure.py --seed 0
+>> Expected SHD: 6.53
+>> Expected edges: 9.15
+>> ROC-AUC: 0.75
+>> Jensen-Shannon divergence: 0.04
 """
 
 from argparse import ArgumentParser, Namespace
@@ -479,19 +473,16 @@ def main(args: Namespace):
             "lr": args.lr,
         }
     ]
+    optimizer = torch.optim.Adam(params)
+    optimizer_logZ = None
     if "logZ" in dict(gflownet.named_parameters()):
-        params.append(
+        params_logZ = [
             {
                 "params": [dict(gflownet.named_parameters())["logZ"]],
                 "lr": args.lr_Z,
             }
-        )
-    optimizer = torch.optim.Adam(params)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer,
-        milestones=list(range(0, args.n_iterations, int(args.n_iterations * 0.1))),
-        gamma=0.5,
-    )
+        ]
+        optimizer_logZ = torch.optim.SGD(params_logZ, momentum=0.8)
 
     # Replay buffer
     replay_buffer = None
@@ -499,7 +490,8 @@ def main(args: Namespace):
         replay_buffer = ReplayBuffer(env, capacity=args.buffer_capacity)
 
     epsilon_dict = defaultdict(float)
-    pbar = trange(args.n_iterations, dynamic_ncols=True)
+    total_niter = args.n_iterations + (args.prefill if args.use_buffer else 0)
+    pbar = trange(total_niter, dynamic_ncols=True)
     for it in pbar:
         # Schedule epsilon throughout training
         eps = args.min_epsilon + (
@@ -523,16 +515,23 @@ def main(args: Namespace):
                 replay_buffer.add(_training_samples)
             if it < args.prefill or len(replay_buffer) < args.batch_size:
                 continue
-            training_samples = replay_buffer.sample(n_trajectories=args.batch_size)
-        else:
-            training_samples = _training_samples
-        assert isinstance(training_samples, Trajectories)  # TODO: Other containers
 
-        optimizer.zero_grad()
-        loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
+        for _ in range(args.n_steps_per_iteration):
+            if args.use_buffer:
+                assert replay_buffer is not None
+                training_samples = replay_buffer.sample(n_trajectories=args.batch_size)
+            else:
+                training_samples = _training_samples
+            assert isinstance(training_samples, Trajectories)
+
+            optimizer.zero_grad()
+            if optimizer_logZ is not None:
+                optimizer_logZ.zero_grad()
+            loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
+            loss.backward()
+            optimizer.step()
+            if optimizer_logZ is not None:
+                optimizer_logZ.step()
 
         assert training_samples.log_rewards is not None
         postfix = {
@@ -577,11 +576,11 @@ if __name__ == "__main__":
         "Train a GFlowNet to generate a DAG for Bayesian structure learning."
     )
     # Environment parameters
-    parser.add_argument("--num_nodes", type=int, default=4)
+    parser.add_argument("--num_nodes", type=int, default=5)
     parser.add_argument(
         "--num_edges",
         type=int,
-        default=4,
+        default=5,
         help="Number of edges in the sampled erdos renyi graph",
     )
     parser.add_argument(
@@ -612,20 +611,21 @@ if __name__ == "__main__":
     )
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--embedding_dim", type=int, default=128)
-    parser.add_argument("--max_epsilon", type=float, default=0.9)
-    parser.add_argument("--min_epsilon", type=float, default=0.0)
+    parser.add_argument("--max_epsilon", type=float, default=1.0)
+    parser.add_argument("--min_epsilon", type=float, default=0.1)
 
     # Replay buffer parameters
     parser.add_argument("--no_buffer", dest="use_buffer", action="store_false")
-    parser.add_argument("--buffer_capacity", type=int, default=1000)
-    parser.add_argument("--prefill", type=int, default=30)
+    parser.add_argument("--buffer_capacity", type=int, default=100000)
+    parser.add_argument("--prefill", type=int, default=100)
     parser.add_argument("--sampling_batch_size", type=int, default=32)
 
     # Training parameters
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--lr_Z", type=float, default=5e-1)
-    parser.add_argument("--n_iterations", type=int, default=2000)
-    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--lr_Z", type=float, default=1e-1)
+    parser.add_argument("--n_iterations", type=int, default=10000)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--n_steps_per_iteration", type=int, default=1)
 
     # Misc parameters
     parser.add_argument("--seed", type=int, default=0)
