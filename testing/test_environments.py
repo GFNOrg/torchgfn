@@ -334,7 +334,7 @@ def test_graph_env():
     action_cls = env.make_actions_class()
 
     # We can't add an edge without nodes.
-    with pytest.raises(NonValidActionsError):
+    with pytest.raises(IndexError):
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
