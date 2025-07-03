@@ -12,7 +12,7 @@ def has_conditioning_exception_handler(
 ):
     """A context manager that handles exceptions when conditioning is passed.
 
-    Args:  
+    Args:
         target_name: The name of the target.
         target: The target object.
     """

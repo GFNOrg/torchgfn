@@ -1,4 +1,5 @@
 """This module contains all the environments implemented as Gym environments."""
+
 from .bitSequence import BitSequence, BitSequencePlus
 from .box import Box
 from .discrete_ebm import DiscreteEBM

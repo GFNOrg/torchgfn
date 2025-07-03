@@ -1,4 +1,4 @@
-Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
+"""Adapted from https://github.com/Tikquuss/GflowNets_Tutorial"""
 
 import itertools
 import multiprocessing
@@ -295,10 +295,10 @@ class HyperGrid(DiscreteEnv):
         """
 
         if self._log_partition is None and self.calculate_partition:
-            # The # of possible combinations (with repetition) of 
- numbers, where each
-            # number can be any integer from 0 to 
- (inclusive), is given by:
+            # The # of possible combinations (with repetition) of
+            # numbers, where each
+            # number can be any integer from 0 to
+            # (inclusive), is given by:
             # n = (k + 1) ** n -- note that k in our case is height-1, as it represents
             # a python index.
             max_height_idx = self.height - 1  # Handles 0 indexing.
@@ -360,7 +360,6 @@ class HyperGrid(DiscreteEnv):
 
             self._all_states = all_states
 
-    # These properties are optionally available according to the flags set in init.
     @property
     def true_dist_pmf(self) -> torch.Tensor | None:
         """Returns the pmf over all states in the hypergrid."""
@@ -426,10 +425,10 @@ class HyperGrid(DiscreteEnv):
         """Uses Pool to collect subsets of the results of itertools.product in parallel."""
         numbers = list(range(k + 1))
 
-        # Number of possible combinations (with repetition) of 
- numbers, where each
-        # number can be any integer from 0 to 
- (inclusive). 
+        # Number of possible combinations (with repetition) of
+        # numbers, where each
+        # number can be any integer from 0 to
+        # (inclusive).
         total_combinations = (k + 1) ** n
         tasks = [
             (numbers, n, i, min(i + batch_size, total_combinations))
