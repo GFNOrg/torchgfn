@@ -123,10 +123,14 @@ class BitSequenceArgs(CommonArgs):
 
 @dataclass
 class GraphRingArgs(CommonArgs):
+    action_type_epsilon: float = 0.0
     batch_size: int = 128
     device: str = "cpu"
     directed: bool = True
+    edge_index_epsilon: float = 0.0
+    embedding_dim: int = 128
     hidden_dim: int = 64
+    lr_Z: float = 0.1
     lr: float = 0.001
     n_hidden: int = 1
     n_iterations: int = 4

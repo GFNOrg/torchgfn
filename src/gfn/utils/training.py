@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import Dict, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 import torch
 from tqdm import trange
@@ -198,3 +198,39 @@ def warm_up(
 
     optimizer.zero_grad()
     return gflownet
+
+
+def grad_norm(params: Iterable[torch.nn.Parameter], p: float = 2) -> float:
+    """
+    Returns the p-norm of all gradients in ``params`` (ignores params with no grad).
+    Example: grad_norm(model.parameters())               # total L2 norm
+             grad_norm(model.parameters(), p=float('inf'))  # max-grad
+    """
+    grads = [p_.grad for p_ in params if p_.grad is not None]
+    if not grads:
+        return 0.0
+    return torch.norm(torch.stack([g.norm(p) for g in grads]), p).item()
+
+
+def param_norm(params: Iterable[torch.nn.Parameter], p: float = 2) -> float:
+    """
+    Total p-norm of a collection of parameters.
+    Example:
+        model_pnorm = param_norm(model.parameters())        # L2 norm
+        max_abs     = param_norm(model.parameters(), p=float('inf'))
+    """
+    with torch.no_grad():  # no grad tracking needed
+        norms = [p_.data.norm(p) for p_ in params]
+    return torch.norm(torch.stack(norms), p).item() if norms else 0.0
+
+
+def lr_grad_ratio(optimizer: torch.optim.Optimizer) -> list[float]:
+    """Return (lr·‖g‖₂)/‖θ‖₂ for each param group."""
+    out = []
+    for group in optimizer.param_groups:
+        lr = group["lr"]
+        g_norm = grad_norm(group["params"])
+        p_norm = param_norm(group["params"])
+        out.append((lr * g_norm) / p_norm if p_norm else 0.0)
+
+    return out

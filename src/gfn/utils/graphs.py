@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import torch
 from torch_geometric.data import Batch, Data
 
@@ -423,4 +425,66 @@ def data_share_storage(a: Data, b: Data) -> bool:
         tb = getattr(b, key, None)
         if not (torch.is_tensor(tb) and ta.data_ptr() == tb.data_ptr()):
             return False
+    return True
+
+
+def hash_graph(data, directed: bool) -> str:
+    """
+    Hash a PyG `Data` object (edge_index, edge_attr, x).
+    Produces the same hash for graphs that are element-wise identical.
+    """
+
+    def _hash_update(t: torch.Tensor | None, h: hashlib.blake2b):
+        """Update the hash with the contents of a tensor or placeholder."""
+        if torch.is_tensor(t):
+            h.update(t.contiguous().view(-1).cpu().numpy().tobytes())
+        else:
+            h.update(b"\0")  # placeholder for None.
+
+        return h
+
+    h = hashlib.blake2b(digest_size=16)
+
+    # First, sort edge index, to remove isomorphisms.
+    t = getattr(data, "edge_index", None)
+
+    if torch.is_tensor(t):
+        # Sorts individual edges to have source nodes < target nodes.
+        if not directed:
+            # Loop over edges.
+            for i in range(t.shape[1]):
+                idx = torch.argsort(t[:, i])  # Undirected case!
+                t[:, i] = t[idx, i]  # Undirected case!
+
+        # Sorts edges such that the source nodes are in ascending order.
+        idx_per_edge = torch.argsort(t[0, :])  # Directed & undirected case!
+        t = t[:, idx_per_edge]
+    h = _hash_update(t, h)
+
+    # Apply idx_per_edge to sort edge attributes.
+    t = getattr(data, "edge_attr", None)
+    if torch.is_tensor(t):
+        t = t[idx_per_edge, ...]  # Sort edge attributes by ascending source nodes.
+    h = _hash_update(t, h)
+
+    # Finally, hash node features.
+    t = getattr(data, "x", None)
+    h = _hash_update(t, h)
+
+    return h.hexdigest()
+
+
+def compare_data_objects(a: Data, b: Data) -> bool:
+    """Compare two Data objects along the main fields."""
+    for attr in ("edge_index", "edge_attr", "x"):
+        ta, tb = getattr(a, attr, None), getattr(b, attr, None)
+
+        # One has a tensor, the other doesn't.
+        if torch.is_tensor(ta) != torch.is_tensor(tb):
+            return False
+
+        # Both are tensors → compare contents (includes shape & dtype).
+        if torch.is_tensor(ta) and not torch.equal(ta, tb):  # type: ignore
+            return False
+
     return True

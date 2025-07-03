@@ -5,18 +5,17 @@ It supports both directed and undirected rings, using the same environment as tr
 """
 
 import copy
-import hashlib
 import itertools
 import time
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
-from typing import Iterable, Literal, Union
+from typing import Literal, Union
 
 import numpy as np
 import torch
 from tensordict import TensorDict
 from torch.optim.lr_scheduler import LambdaLR
-from torch_geometric.data import Data
+from tqdm import trange
 from train_graph_ring import RingReward, init_env, init_gflownet, render_states
 
 from gfn.actions import GraphActions, GraphActionType
@@ -26,43 +25,8 @@ from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.samplers import Sampler
 from gfn.states import GraphStates
 from gfn.utils.common import set_seed
-from gfn.utils.graphs import from_edge_indices
-
-
-def grad_norm(params: Iterable[torch.nn.Parameter], p: float = 2) -> float:
-    """
-    Returns the p-norm of all gradients in ``params`` (ignores params with no grad).
-    Example: grad_norm(model.parameters())               # total L2 norm
-             grad_norm(model.parameters(), p=float('inf'))  # max-grad
-    """
-    grads = [p_.grad for p_ in params if p_.grad is not None]
-    if not grads:
-        return 0.0
-    return torch.norm(torch.stack([g.norm(p) for g in grads]), p).item()
-
-
-def param_norm(params: Iterable[torch.nn.Parameter], p: float = 2) -> float:
-    """
-    Total p-norm of a collection of parameters.
-    Example:
-        model_pnorm = param_norm(model.parameters())        # L2 norm
-        max_abs     = param_norm(model.parameters(), p=float('inf'))
-    """
-    with torch.no_grad():  # no grad tracking needed
-        norms = [p_.data.norm(p) for p_ in params]
-    return torch.norm(torch.stack(norms), p).item() if norms else 0.0
-
-
-def lr_grad_ratio(optimizer: torch.optim.Optimizer) -> list[float]:
-    """Return (lr·‖g‖₂)/‖θ‖₂ for each param group."""
-    out = []
-    for group in optimizer.param_groups:
-        lr = group["lr"]
-        g_norm = grad_norm(group["params"])
-        p_norm = param_norm(group["params"])
-        out.append((lr * g_norm) / p_norm if p_norm else 0.0)
-
-    return out
+from gfn.utils.graphs import from_edge_indices, hash_graph
+from gfn.utils.training import lr_grad_ratio
 
 
 def per_step_decay(num_steps: int, total_drop: float) -> float:
@@ -152,49 +116,13 @@ def generate_all_rings(
     return ring_examples
 
 
-def compare_data_objects(a: Data, b: Data) -> bool:
-    """Compare two Data objects along the main fields."""
-    for attr in ("edge_index", "edge_attr", "x"):
-        ta, tb = getattr(a, attr, None), getattr(b, attr, None)
-
-        # One has a tensor, the other doesn't.
-        if torch.is_tensor(ta) != torch.is_tensor(tb):
-            return False
-
-        # Both are tensors → compare contents (includes shape & dtype).
-        if torch.is_tensor(ta) and not torch.equal(ta, tb):  # type: ignore
-            return False
-
-    return True
-
-
-def graph_hash(data) -> str:
-    """
-    Hash a PyG `Data` object (edge_index, edge_attr, x).
-    Produces the same hash for graphs that are element-wise identical.
-    """
-    h = hashlib.blake2b(digest_size=16)
-    for attr in ("edge_index", "edge_attr", "x"):
-        t = getattr(data, attr, None)
-        if torch.is_tensor(t):
-            # TODO: Sort the attributes too.
-            if attr == "edge_index":
-                idx = torch.argsort(t[0, :])  # Directed case!
-                t = t[:, idx]  # Sort the edge attributes by ascending source nodes.
-            h.update(t.contiguous().view(-1).cpu().numpy().tobytes())
-        else:
-            h.update(b"\0")  # placeholder for 'missing' field
-
-    return h.hexdigest()
-
-
 def count_recovered_modes(final_states: GraphStates, mode_hashes: set[str]) -> int:
     """Count the number of unique modes in the final states that are in the mode_hashes."""
     _hashes = copy.deepcopy(mode_hashes)
 
     found = 0
     for example in final_states:
-        example_hash = graph_hash(example.tensor[0])
+        example_hash = hash_graph(example.tensor[0], directed=True)
         if example_hash in _hashes:
             found += 1
             _hashes.remove(example_hash)
@@ -205,22 +133,23 @@ def main(args: Namespace):
     """
     Main execution for training a GFlowNet to generate ring graphs.
 
-    This script demonstrates the complete workflow of training a GFlowNet
-    to generate valid ring structures in both directed and undirected settings.
+    This script demonstrates how to use example modes to warm-start gflownet exploration.
+    We show this in the context of generating ring graphs, where the number of modes
+    quickly grows with the number of nodes in the graph, making learning from scratch
+    very difficult on even relatively small graphs.
 
-    Configurable parameters:
-    - n_nodes: Number of nodes in the graph (default: 5)
-    - n_iterations: Number of training iterations (default: 1000)
-    - lr: Learning rate for optimizer (default: 0.001)
-    - batch_size: Batch size for training (default: 128)
-    - directed: Whether to generate directed rings (default: True)
-    - use_buffer: Whether to use a replay buffer (default: False)
-    - use_gnn: Whether to use GNN-based policy (True) or MLP-based policy (False)
+    For usage see count_recovered_modes.py -h
 
     The script performs the following steps:
-    1. Initialize the environment and policy networks
-    2. Train the GFlowNet using trajectory balance
-    3. Visualize sample generated graphs
+        1. Initialize the environment and policy networks.
+        2. If using expert data, generates all possible ring graphs, and pre-fills the
+           replay buffer with 1/2 of their forward trajectories (found by computing the
+           backward trajectories from the final states, then reversing them).
+        3. Train the GFlowNet using trajectory balance, with each batch containing a
+           mix of 50% replay buffer and 50% gflownet samples.
+        4. At the end of training we evaluate the GFlowNet's ability to recover all
+           modes.
+        5. Optionally, we plot samples of generated graphs.
     """
     device = torch.device(args.device)
     set_seed(args.seed if args.seed is not None else 1234)
@@ -236,7 +165,7 @@ def main(args: Namespace):
         device=device,
     )
 
-    # 3. Create the optimizer
+    # Create the optimizer.
     non_logz_params = [
         v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
     ]
@@ -252,6 +181,7 @@ def main(args: Namespace):
     ]
     optimizer = torch.optim.Adam(params)
 
+    # Create the learning rate scheduler.
     if args.use_lr_scheduler:
         gamma = per_step_decay(args.n_iterations, 0.1)  # 10x drop over n_iterations.
         scheduler = LambdaLR(
@@ -264,12 +194,13 @@ def main(args: Namespace):
     else:
         scheduler = None
 
-    # Generate all possible ring graphs.
+    # Generate all possible ring graphs (and compute their hashes).
     ring_modes = generate_all_rings(args.n_nodes, device, args.replay_buffer_max_size)
-    n_modes = len(ring_modes)
-    mode_hashes = {graph_hash(m.tensor[0]) for m in ring_modes}  # Check mode coverage.
-    print(f"+ Number of modes: {n_modes}")
+    n_modes_total = len(ring_modes)
+    mode_hashes = {hash_graph(m.tensor[0], directed=True) for m in ring_modes}
+    print(f"+ Number of modes: {n_modes_total}")
 
+    # Create the replay buffer.
     replay_buffer = ReplayBuffer(
         env,
         capacity=args.replay_buffer_max_size,
@@ -282,8 +213,8 @@ def main(args: Namespace):
     # create forward trajectories, and add those to the replay buffer.
     if args.use_expert_data:
 
-        n_expert_data = n_modes // 2  # Use half of the modes as expert data.
-        idx = np.arange(n_modes)
+        n_expert_data = n_modes_total // 2  # Use half of the modes as expert data.
+        idx = np.arange(n_modes_total)
         np.random.shuffle(idx)
         ring_expert_data = ring_modes[idx[:n_expert_data]]  # type: ignore
         backward_sampler = Sampler(gflownet.pb)
@@ -300,29 +231,25 @@ def main(args: Namespace):
         # Report the proportion of modes in the replay buffer expert data.
         final_states = training_samples.terminating_states
         assert isinstance(final_states, GraphStates)
-
         rewards = env.reward(final_states)
         print("+ Mean reward of expert data:", rewards.mean().item())
 
-        # Ensures that all replay buffer expert data is in the ring_modes.
-        found = count_recovered_modes(final_states, mode_hashes)
-        assert found == len(final_states)
+        # Ensures that all replay buffer expert data are in ring_modes and unique.
+        assert count_recovered_modes(final_states, mode_hashes) == len(final_states)
 
     # Train the GFlowNet to generate ring graphs, drawing on examples from the
     # replay buffer.
     losses = []
 
-    t1 = time.time()
+    time_start = time.time()
+
+    # Exploration on action type & edge index.
     epsilon_dict = defaultdict(float)
-    epsilon_dict[GraphActions.ACTION_TYPE_KEY] = (
-        args.action_type_epsilon
-    )  # Exploration on action type.
-    epsilon_dict[GraphActions.EDGE_INDEX_KEY] = (
-        args.edge_index_epsilon
-    )  # Exploration on edge index.
+    epsilon_dict[GraphActions.ACTION_TYPE_KEY] = args.action_type_epsilon
+    epsilon_dict[GraphActions.EDGE_INDEX_KEY] = args.edge_index_epsilon
 
-    for iteration in range(args.n_iterations):
-
+    pbar = trange(args.n_iterations)
+    for iteration in pbar:
         trajectories = gflownet.sample_trajectories(
             env,
             n=args.batch_size,
@@ -341,16 +268,8 @@ def main(args: Namespace):
         # of expert data, gflownet samples are only added after the first
         # n_iterations_with_expert_data iterations. The gflownet loss is calculated on
         # the a 50% mixture of the gflownet samples and the replay buffer samples.
-        # TODO: During iteration < args.n_iterations_with_only_expert_data, no
-        # non-ring trajectories will be seen!
         with torch.no_grad():
-            # if (
-            #     iteration < args.n_iterations_with_only_expert_data
-            #     and args.use_expert_data
-            # ):
-            #     training_samples = replay_buffer.sample(n_trajectories=args.batch_size)
-            # else:
-            # A mix of 50% the replay buffer and 50% the gflownet samples.
+            # Mix of 50% replay buffer and 50% gflownet samples.
             replay_buffer.add(training_samples)
             training_samples = training_samples[: args.batch_size // 2]
             replay_buffer_samples = replay_buffer.sample(
@@ -359,59 +278,50 @@ def main(args: Namespace):
             assert isinstance(replay_buffer_samples, Trajectories)
             training_samples.extend(replay_buffer_samples)
 
-        if iteration % 10 == 0:
-            print(
-                "n_modes in buffer: {}",
-                sum(env.reward(replay_buffer.training_objects.terminating_states) > 0.1),  # type: ignore
+        if iteration % 100 == 0 or iteration == 0 or iteration == args.n_iterations - 1:
+            n_modes_in_buffer = sum(
+                env.reward(
+                    replay_buffer.training_objects.terminating_states  # type: ignore
+                )
+                > 0.1
             )
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)  # type: ignore
         loss.backward()
-
-        # Print stats about the gradient and parameter norms.
-        lr_grad_ratios = lr_grad_ratio(optimizer)
-        # gnorm = grad_norm(gflownet.parameters())
-        # pnorm = param_norm(gflownet.parameters())
-        # lr = optimizer.param_groups[0]["lr"]  # Ignores logz param.
-        # update_ratio = (lr * gnorm) / pnorm if pnorm else 0.0
-
+        lr_g_ratios = lr_grad_ratio(optimizer)  # lr * grad_norm / param_norm.
         optimizer.step()
 
         if scheduler is not None:
             scheduler.step()
 
         losses.append(loss.item())
-
         final_states = training_samples.terminating_states
         assert isinstance(final_states, GraphStates)
         found = count_recovered_modes(final_states, mode_hashes)
 
-        print(
-            "{}: loss: {:.02f}, sampled gflownet rings: {:.0f}%, unique modes in batch: {}/{}, logZ: {:.03f}, grad norm ratios: {}".format(
-                iteration,
-                loss.item(),
-                pct_rings,
-                found,
-                n_modes,
-                gflownet.logZ.item(),  # type: ignore
-                ", ".join("{:.{}g}".format(v, 3) for v in lr_grad_ratios),
-            )
+        pbar.set_postfix(
+            iter=iteration,
+            loss=loss.item(),
+            pct_gfn_sampled_rings=pct_rings,
+            unique_modes_in_batch="{}/{}".format(found, n_modes_total),
+            logZ=gflownet.logZ.item(),  # type: ignore
+            n_modes_in_buffer=n_modes_in_buffer,
+            grad_norm_ratios=", ".join("{:.{}g}".format(v, 3) for v in lr_g_ratios),
         )
 
-    t2 = time.time()
-    print("Total Training Time:", t2 - t1)
+    print("+ Total Training Time: {} minutes".format((time.time() - time_start) / 60))
 
     # Report mode coverage.
     sample_trajectories = gflownet.sample_trajectories(
         env,
-        n=n_modes * 100,  # Oversample to ensure all modes are seen.
+        n=n_modes_total * 100,  # Oversample to ensure all modes are seen.
         save_logprobs=False,  # Not used.
     )
     final_states = sample_trajectories.terminating_states
     assert isinstance(final_states, GraphStates)
     found = count_recovered_modes(final_states, mode_hashes)
-    print(f"+ Sampler discovered {found} / {n_modes} modes.")
+    print(f"+ Sampler discovered {found} / {n_modes_total} modes.")
 
     if args.plot:
         samples_to_render = trajectories.terminating_states[:8]
@@ -420,38 +330,44 @@ def main(args: Namespace):
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Train a GFlowNet to generate ring graphs")
+    parser = ArgumentParser(description="Train a GFlowNet to generate ring graphs.")
 
-    # Model parameters
+    # Problem size (number of modes is factorial in n_nodes).
     parser.add_argument(
-        "--n_nodes", type=int, default=8, help="Number of nodes in the graph"
+        "--n_nodes", type=int, default=7, help="Number of nodes in the graph"
+    )
+    parser.add_argument(
+        "--use_expert_data",
+        action="store_true",
+        default=False,
+        help="Whether to use expert data to prefill the replay buffer.",
     )
 
+    # GFlowNet estimator parameters.
     parser.add_argument(
-        "--num_conv_layers", type=int, default=1, help="Number of convolutional layers"
+        "--num_conv_layers", type=int, default=2, help="Number of convolutional layers"
     )
     parser.add_argument(
         "--embedding_dim", type=int, default=128, help="Embedding dimension"
     )
 
-    # Training parameters
+    # Training parameters.
+    parser.add_argument(
+        "--batch_size", type=int, default=128, help="Batch size for training"
+    )
     parser.add_argument(
         "--n_iterations", type=int, default=500, help="Number of training iterations"
     )
     parser.add_argument(
         "--lr", type=float, default=1e-3, help="Learning rate for optimizer"
     )
+    parser.add_argument("--lr_Z", type=float, default=0.1, help="Learning rate for logZ")
     parser.add_argument(
         "--use_lr_scheduler",
         action="store_true",
         default=False,
         help="Whether to use a learning rate scheduler.",
     )
-    parser.add_argument("--lr_Z", type=float, default=0.1, help="Learning rate for logZ")
-    parser.add_argument(
-        "--batch_size", type=int, default=128, help="Batch size for training"
-    )
-
     parser.add_argument(
         "--replay_buffer_max_size",
         type=int,
@@ -459,6 +375,7 @@ if __name__ == "__main__":
         help="Max size of the replay buffer",
     )
 
+    # Exploration parameters.
     parser.add_argument(
         "--action_type_epsilon",
         type=float,
@@ -472,7 +389,7 @@ if __name__ == "__main__":
         help="Epsilon for exploration on edge index.",
     )
 
-    # Misc parameters
+    # Misc parameters.
     parser.add_argument(
         "--device",
         type=str,
@@ -486,20 +403,6 @@ if __name__ == "__main__":
         default=False,
         help="Whether to plot generated graphs",
     )
-
-    # Expert data parameters.
-    parser.add_argument(
-        "--use_expert_data",
-        action="store_true",
-        default=False,
-        help="Whether to use expert data to prefill the replay buffer.",
-    )
-    parser.add_argument(
-        "--n_iterations_with_only_expert_data",
-        type=int,
-        default=100,
-        help="Number of iterations where no gflownet samples are added to the replay buffer.",
-    )
     parser.add_argument(
         "--seed",
         type=int,
@@ -508,5 +411,5 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    print(args)
+    print("+ Training Arguments:", args)
     main(args)

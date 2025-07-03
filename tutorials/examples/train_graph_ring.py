@@ -25,6 +25,7 @@ from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.modules import DiscreteGraphPolicyEstimator
 from gfn.states import GraphStates
+from gfn.utils.common import set_seed
 from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
 
 
@@ -326,23 +327,15 @@ def main(args: Namespace):
     This script demonstrates the complete workflow of training a GFlowNet
     to generate valid ring structures in both directed and undirected settings.
 
-    Configurable parameters:
-    - n_nodes: Number of nodes in the graph (default: 5)
-    - n_iterations: Number of training iterations (default: 1000)
-    - lr: Learning rate for optimizer (default: 0.001)
-    - batch_size: Batch size for training (default: 128)
-    - directed: Whether to generate directed rings (default: True)
-    - use_buffer: Whether to use a replay buffer (default: False)
-    - use_gnn: Whether to use GNN-based policy (True) or MLP-based policy (False)
+    For usage see train_graph_ring.py -h
 
     The script performs the following steps:
-    1. Initialize the environment and policy networks
-    2. Train the GFlowNet using trajectory balance
-    3. Visualize sample generated graphs
+        1. Initialize the environment and policy networks.
+        2. Train the GFlowNet using trajectory balance.
+        3. Visualize sample generated graphs.
     """
     device = torch.device(args.device)
-    torch.random.manual_seed(7)
-
+    set_seed(args.seed)
     env = init_env(args.n_nodes, args.directed, device)
 
     gflownet = init_gflownet(
@@ -355,12 +348,27 @@ def main(args: Namespace):
         device,
     )
 
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
+    # Create the optimizer.
+    non_logz_params = [
+        v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
+    ]
+    if "logZ" in dict(gflownet.named_parameters()):
+        logz_params = [dict(gflownet.named_parameters())["logZ"]]
+    else:
+        logz_params = []
+
+    params = [
+        {"params": non_logz_params, "lr": args.lr},
+        # Log Z gets dedicated learning rate (typically higher).
+        {"params": logz_params, "lr": args.lr_Z},
+    ]
+    optimizer = torch.optim.Adam(params)
 
     replay_buffer = ReplayBuffer(
         env,
         capacity=args.batch_size,
         prioritized_capacity=True,
+        prioritized_sampling=True,
     )
 
     losses = []
@@ -368,7 +376,8 @@ def main(args: Namespace):
     t1 = time.time()
     epsilon_dict = defaultdict(float)
     for iteration in range(args.n_iterations):
-        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 0.0
+        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = args.action_type_epsilon
+        epsilon_dict[GraphActions.EDGE_INDEX_KEY] = args.edge_index_epsilon
 
         trajectories = gflownet.sample_trajectories(
             env,
@@ -386,7 +395,7 @@ def main(args: Namespace):
         if args.use_buffer:
             with torch.no_grad():
                 replay_buffer.add(training_samples)
-                if iteration > 20:
+                if iteration > 10:
                     training_samples = training_samples[: args.batch_size // 2]
                     buffer_samples = replay_buffer.sample(
                         n_trajectories=args.batch_size // 2
@@ -405,8 +414,7 @@ def main(args: Namespace):
         optimizer.step()
         losses.append(loss.item())
 
-    t2 = time.time()
-    print("Time:", t2 - t1)
+    print("+ Total Training Time: {} minutes".format((time.time() - t1) / 60))
 
     # This comes from the gflownet, not the buffer.
     if args.plot:
@@ -418,7 +426,7 @@ def main(args: Namespace):
 if __name__ == "__main__":
     parser = ArgumentParser(description="Train a GFlowNet to generate ring graphs")
 
-    # Model parameters
+    # Problem size (number of modes is factorial in n_nodes for directed rings).
     parser.add_argument(
         "--n_nodes", type=int, default=4, help="Number of nodes in the graph"
     )
@@ -428,6 +436,8 @@ if __name__ == "__main__":
         default=True,
         help="Whether to generate directed rings",
     )
+
+    # GFlowNet estimator parameters.
     parser.add_argument(
         "--use_gnn",
         action="store_true",
@@ -441,21 +451,36 @@ if __name__ == "__main__":
         "--embedding_dim", type=int, default=128, help="Embedding dimension"
     )
 
-    # Training parameters
+    # Training parameters.
+    parser.add_argument(
+        "--batch_size", type=int, default=128, help="Batch size for training"
+    )
     parser.add_argument(
         "--n_iterations", type=int, default=200, help="Number of training iterations"
     )
     parser.add_argument(
         "--lr", type=float, default=0.001, help="Learning rate for optimizer"
     )
-    parser.add_argument(
-        "--batch_size", type=int, default=128, help="Batch size for training"
-    )
+    parser.add_argument("--lr_Z", type=float, default=0.1, help="Learning rate for logZ")
     parser.add_argument(
         "--use_buffer",
         action="store_true",
         default=True,
         help="Whether to use replay buffer",
+    )
+
+    # Exploration parameters.
+    parser.add_argument(
+        "--action_type_epsilon",
+        type=float,
+        default=0.0,
+        help="Epsilon for action type exploration",
+    )
+    parser.add_argument(
+        "--edge_index_epsilon",
+        type=float,
+        default=0.0,
+        help="Epsilon for edge index exploration",
     )
 
     # Misc parameters
@@ -471,6 +496,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Whether to plot generated graphs",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=1234,
+        help="Seed for random number generator.",
     )
 
     args = parser.parse_args()
