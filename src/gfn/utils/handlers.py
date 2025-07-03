@@ -10,6 +10,12 @@ def has_conditioning_exception_handler(
     target_name: str,
     target: Any,
 ):
+    """A context manager that handles exceptions when conditioning is passed.
+
+    Args:  
+        target_name: The name of the target.
+        target: The target object.
+    """
     try:
         yield
     except TypeError as e:
@@ -23,6 +29,12 @@ def no_conditioning_exception_handler(
     target_name: str,
     target: Any,
 ):
+    """A context manager that handles exceptions when no conditioning is passed.
+
+    Args:
+        target_name: The name of the target.
+        target: The target object.
+    """
     try:
         yield
     except TypeError as e:
@@ -36,6 +48,12 @@ def is_callable_exception_handler(
     target_name: str,
     target: Any,
 ):
+    """A context manager that handles exceptions when a target is not callable.
+
+    Args:
+        target_name: The name of the target.
+        target: The target object.
+    """
     try:
         yield
     except:  # noqa
@@ -49,6 +67,12 @@ def warn_about_recalculating_logprobs(
     obj: Container,
     recalculate_all_logprobs: bool,
 ):
+    """Warns the user if logprobs are being recalculated.
+
+    Args:
+        obj: The container to check for logprobs.
+        recalculate_all_logprobs: Whether to recalculate all logprobs.
+    """
     if recalculate_all_logprobs and obj.has_log_probs:
         warnings.warn(
             "Recalculating logprobs for a container that already has them. "

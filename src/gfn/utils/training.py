@@ -21,7 +21,9 @@ def get_terminating_state_dist_pmf(
         env: The environment.
         states: The states to compute the distribution of.
 
-    Returns the empirical distribution of the terminating states as a tensor of shape (n_terminating_states,).
+    Returns:
+        The empirical distribution of the terminating states as a tensor of shape
+        (n_terminating_states,).
     """
     states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
     counter = Counter(str(idx) for idx in states_indices)
@@ -39,25 +41,26 @@ def validate(
     n_validation_samples: int = 1000,
     visited_terminating_states: Optional[DiscreteStates] = None,
 ) -> Tuple[Dict[str, float], DiscreteStates | None]:
-    """Evaluates the current gflownet on the given environment.
+    """Evaluates the current GFlowNet on the given environment.
 
-    This is for environments with known target reward. The validation is done by
-    computing the l1 distance between the learned empirical and the target
-    distributions.
+    This function is designed for environments with known target reward distributions.
+    Validation is performed by computing the L1 distance between the learned empirical
+    distribution of terminating states and the true target distribution.
 
     Args:
-        env: The environment to evaluate the gflownet on.
-        gflownet: The gflownet to evaluate.
-        n_validation_samples: The number of samples to use to evaluate the pmf.
-        visited_terminating_states: The terminating states visited during training.
-            If given, the pmf is obtained from the last n_validation_samples states.
-            Otherwise, n_validation_samples are resampled directly from the gflownet for
-            evaluation.
+        env: The environment to evaluate the GFlowNet on.
+        gflownet: The GFlowNet instance to evaluate.
+        n_validation_samples: The number of samples to use for evaluating the PMF.
+        visited_terminating_states: Optional. If provided, the PMF is obtained from
+            the last `n_validation_samples` states from this collection. Otherwise,
+            `n_validation_samples` are resampled directly from the GFlowNet for evaluation.
 
-    Returns: A dictionary containing the l1 validation metric. If the gflownet
-        is a TBGFlowNet, i.e. contains LogZ, then the (absolute) difference
-        between the learned and the target LogZ is also returned in the dictionary, and
-        the sampled terminating states are returned.
+    Returns:
+        A tuple containing:
+        - dict: A dictionary containing validation metrics. If the GFlowNet is a
+            `TBGFlowNet` (i.e., it contains `LogZ`), the absolute difference between
+            the learned and target `LogZ` is also included.
+        - DiscreteStates or None: The sampled terminating states, or None if not applicable.
     """
 
     true_logZ = env.log_partition
@@ -99,22 +102,24 @@ def states_actions_tns_to_traj(
     env: DiscreteEnv,
     conditioning: torch.Tensor | None = None,
 ) -> Trajectories:
-    """
-    This utility function helps integrate external data (e.g. expert demonstrations)
+    """Converts raw state and action tensors into a Trajectories object.
+
+    This utility function helps integrate external data (e.g., expert demonstrations)
     into the GFlowNet framework by converting raw tensors into proper Trajectories objects.
-    The downstream GFN needs to be capable of recalculating all logprobs (e.g. PFBasedGFlowNets)
+    The downstream GFN needs to be capable of recalculating all logprobs (e.g., PFBasedGFlowNets).
 
     Args:
-        states_tns: Tensor of shape [traj_len, *state_shape] containing states for a single trajectory
-        actions_tns: Tensor of shape [traj_len] containing discrete action indices
-        env: The discrete environment that defines the state/action spaces
-        conditioning: Tensor of shape [traj_len, *conditioning_shape] containing states for a single trajectory
+        states_tns: A tensor of shape `[traj_len, *state_shape]` containing states for a single trajectory.
+        actions_tns: A tensor of shape `[traj_len]` containing discrete action indices.
+        env: The discrete environment that defines the state/action spaces.
+        conditioning: An optional tensor of shape `[traj_len, *conditioning_shape]`
+            containing conditioning information for a single trajectory.
 
     Returns:
-        Trajectories: A Trajectories object containing the converted states and actions
+        A `Trajectories` object containing the converted states and actions.
 
     Raises:
-        ValueError: If tensor shapes are invalid or inconsistent
+        ValueError: If tensor shapes are invalid or inconsistent.
     """
 
     if states_tns.shape[1:] != env.state_shape:
@@ -164,20 +169,24 @@ def warm_up(
     batch_size: int,
     recalculate_all_logprobs: bool = True,
 ):
-    """
-    This utility function is an example implementation of pre-training for GFlowNets agent.
+    """Performs a warm-up training phase for a GFlowNet agent.
+
+    This utility function provides an example implementation of pre-training for
+    GFlowNet agents.
 
     Args:
-        replay_buf: Replay Buffer, which collects Trajectories
-        optimizer: Any torch.optim optimizer (e.g. Adam, SGD)
-        gflownet: The GFlowNet to train
-        env: The environment instance
-        n_epochs: Number of epochs for warmup
-        batch_size: Number of trajectories to sample from replay buffer
-        recalculate_all_logprobs: For PFBasedGFlowNets only, force recalculating all log probs.
-            Useful trajectories do not already have log probs.
+        replay_buf: The replay buffer, which collects Trajectories.
+        optimizer: Any `torch.optim` optimizer (e.g., Adam, SGD).
+        gflownet: The GFlowNet instance to train.
+        env: The environment instance.
+        n_epochs: The number of epochs for the warm-up phase.
+        batch_size: The number of trajectories to sample from the replay buffer per step.
+        recalculate_all_logprobs: For `PFBasedGFlowNets` only, forces recalculation of
+            all log probabilities. Useful when trajectories do not already have log
+            probabilities.
+
     Returns:
-        GFlowNet: A trained GFlowNet
+        The trained GFlowNet instance.
     """
     t = trange(n_epochs, desc="Bar desc", leave=True)
     for epoch in t:

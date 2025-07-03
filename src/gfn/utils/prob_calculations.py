@@ -17,6 +17,20 @@ def check_cond_forward(
     states: States,
     condition: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    """Checks if conditioning is passed and calls the module's forward method accordingly.
+
+    Args:
+        module: The GFN module to call.
+        module_name: The name of the module (for error messages).
+        states: The states to pass to the module.
+        condition: Optional conditioning tensor to pass to the module.
+
+    Returns:
+        The output of the module's forward method.
+
+    Raises:
+        TypeError: If conditioning is passed but the module does not accept it, or vice-versa.
+    """
     if condition is not None:
         with has_conditioning_exception_handler(module_name, module):
             return module(states, condition)
@@ -37,6 +51,19 @@ def get_trajectory_pfs_and_pbs(
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Calculates the log probabilities of forward and backward trajectories.
+
+    Args:
+        pf: The forward policy GFN module.
+        pb: The backward policy GFN module.
+        trajectories: The trajectories to calculate probabilities for.
+        fill_value: The value to fill for invalid states (e.g., sink states).
+        recalculate_all_logprobs: Whether to recalculate log probabilities even if they
+            already exist in the trajectories object.
+
+    Returns:
+        A tuple containing two tensors: log_pf_trajectories and log_pb_trajectories.
+    """
     # fill value is the value used for invalid states (sink state usually)
 
     # uncomment next line for debugging
@@ -59,6 +86,21 @@ def get_trajectory_pfs(
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
 ) -> torch.Tensor:
+    """Calculates the log probabilities of forward trajectories.
+
+    Args:
+        pf: The forward policy GFN module.
+        trajectories: The trajectories to calculate probabilities for.
+        fill_value: The value to fill for invalid states (e.g., sink states).
+        recalculate_all_logprobs: Whether to recalculate log probabilities even if they
+            already exist in the trajectories object.
+
+    Returns:
+        A tensor containing the log probabilities of the forward trajectories.
+
+    Raises:
+        ValueError: If backward trajectories are provided.
+    """
     if trajectories.is_backward:
         raise ValueError("Backward trajectories are not supported")
 
@@ -117,6 +159,19 @@ def get_trajectory_pfs(
 def get_trajectory_pbs(
     pb: GFNModule, trajectories: Trajectories, fill_value: float = 0.0
 ) -> torch.Tensor:
+    """Calculates the log probabilities of backward trajectories.
+
+    Args:
+        pb: The backward policy GFN module.
+        trajectories: The trajectories to calculate probabilities for.
+        fill_value: The value to fill for invalid states (e.g., sink states).
+
+    Returns:
+        A tensor containing the log probabilities of the backward trajectories.
+
+    Raises:
+        ValueError: If backward trajectories are provided.
+    """
     if trajectories.is_backward:
         raise ValueError("Backward trajectories are not supported")
 
@@ -181,6 +236,21 @@ def get_transition_pfs_and_pbs(
     transitions: Transitions,
     recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Calculates the log probabilities of forward and backward transitions.
+
+    Args:
+        pf: The forward policy GFN module.
+        pb: The backward policy GFN module.
+        transitions: The transitions to calculate probabilities for.
+        recalculate_all_logprobs: Whether to recalculate log probabilities even if they
+            already exist in the transitions object.
+
+    Returns:
+        A tuple containing two tensors: log_pf_transitions and log_pb_transitions.
+
+    Raises:
+        ValueError: If backward transitions are provided.
+    """
     if transitions.is_backward:
         raise ValueError("Backward transitions are not supported")
 
@@ -196,6 +266,17 @@ def get_transition_pfs_and_pbs(
 def get_transition_pfs(
     pf: GFNModule, transitions: Transitions, recalculate_all_logprobs: bool = True
 ) -> torch.Tensor:
+    """Calculates the log probabilities of forward transitions.
+
+    Args:
+        pf: The forward policy GFN module.
+        transitions: The transitions to calculate probabilities for.
+        recalculate_all_logprobs: Whether to recalculate log probabilities even if they
+            already exist in the transitions object.
+
+    Returns:
+        A tensor containing the log probabilities of the forward transitions.
+    """
     states = transitions.states
     actions = transitions.actions
 
