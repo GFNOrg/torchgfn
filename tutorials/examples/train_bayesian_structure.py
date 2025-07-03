@@ -15,17 +15,17 @@ python train_bayesian_structure.py \
     --no_buffer \
     --max_epsilon 0.0 \
     --min_epsilon 0.0
->> Expected SHD: 6.92
+>> Expected SHD: 6.99
 >> Expected edges: 10.00
->> ROC-AUC: 0.91
+>> ROC-AUC: 0.68
 >> Jensen-Shannon divergence: 0.36
 
 (Off-policy training with epsilon-noisy exploration, which is the default)
 python train_bayesian_structure.py --seed 0
->> Expected SHD: 6.53
->> Expected edges: 9.15
->> ROC-AUC: 0.75
->> Jensen-Shannon divergence: 0.04
+>> Expected SHD: 6.31
+>> Expected edges: 8.80
+>> ROC-AUC: 0.78
+>> Jensen-Shannon divergence: 0.02
 """
 
 from argparse import ArgumentParser, Namespace
@@ -474,6 +474,12 @@ def main(args: Namespace):
         }
     ]
     optimizer = torch.optim.Adam(params)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        milestones=[int(args.n_iterations * args.n_steps_per_iteration * 0.5)],
+        gamma=0.1,
+    )
+
     optimizer_logZ = None
     if "logZ" in dict(gflownet.named_parameters()):
         params_logZ = [
@@ -496,9 +502,9 @@ def main(args: Namespace):
         # Schedule epsilon throughout training
         eps = args.min_epsilon + (
             (args.max_epsilon - args.min_epsilon)
-            * max(0.0, 1.0 - it / (args.n_iterations // 2))
+            * max(0.0, 1.0 - it / (total_niter // 2))
         )
-        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 2 * eps / (args.num_nodes**2)
+        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = eps / (args.num_nodes**2)
         epsilon_dict[GraphActions.EDGE_INDEX_KEY] = eps
 
         trajectories = gflownet.sample_trajectories(
@@ -530,6 +536,7 @@ def main(args: Namespace):
             loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
             loss.backward()
             optimizer.step()
+            scheduler.step()
             if optimizer_logZ is not None:
                 optimizer_logZ.step()
 
@@ -621,7 +628,7 @@ if __name__ == "__main__":
     parser.add_argument("--sampling_batch_size", type=int, default=32)
 
     # Training parameters
-    parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--lr_Z", type=float, default=1e-1)
     parser.add_argument("--n_iterations", type=int, default=10000)
     parser.add_argument("--batch_size", type=int, default=32)
