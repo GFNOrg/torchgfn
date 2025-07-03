@@ -25,6 +25,7 @@ from gfn.containers.trajectories import Trajectories
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.samplers import Sampler
 from gfn.states import GraphStates
+from gfn.utils.common import set_seed
 from gfn.utils.graphs import from_edge_indices
 
 
@@ -222,7 +223,7 @@ def main(args: Namespace):
     3. Visualize sample generated graphs
     """
     device = torch.device(args.device)
-    torch.random.manual_seed(7)
+    set_seed(args.seed if args.seed is not None else 1234)
 
     env = init_env(args.n_nodes, True, device)
     gflownet = init_gflownet(
@@ -271,7 +272,7 @@ def main(args: Namespace):
 
     replay_buffer = ReplayBuffer(
         env,
-        capacity=min(args.replay_buffer_max_size, n_modes),
+        capacity=args.replay_buffer_max_size,
         prioritized_capacity=True,
         prioritized_sampling=True,
     )
@@ -287,20 +288,21 @@ def main(args: Namespace):
         ring_expert_data = ring_modes[idx[:n_expert_data]]  # type: ignore
         backward_sampler = Sampler(gflownet.pb)
 
-        sample_trajectories = backward_sampler.sample_trajectories(
+        trajectories = backward_sampler.sample_trajectories(
             env,
             states=ring_expert_data,
             save_logprobs=False,  # Not used.
         )
-        sample_trajectories = sample_trajectories.reverse_backward_trajectories()
-        replay_buffer.add(sample_trajectories)
+        trajectories = trajectories.reverse_backward_trajectories()
+        training_samples = gflownet.to_training_samples(trajectories)
+        replay_buffer.add(training_samples)
 
         # Report the proportion of modes in the replay buffer expert data.
-        final_states = sample_trajectories.terminating_states
+        final_states = training_samples.terminating_states
         assert isinstance(final_states, GraphStates)
 
         rewards = env.reward(final_states)
-        print("Mean reward of expert data:", rewards.mean().item())
+        print("+ Mean reward of expert data:", rewards.mean().item())
 
         # Ensures that all replay buffer expert data is in the ring_modes.
         found = count_recovered_modes(final_states, mode_hashes)
@@ -315,13 +317,16 @@ def main(args: Namespace):
     epsilon_dict[GraphActions.ACTION_TYPE_KEY] = (
         args.action_type_epsilon
     )  # Exploration on action type.
+    epsilon_dict[GraphActions.EDGE_INDEX_KEY] = (
+        args.edge_index_epsilon
+    )  # Exploration on edge index.
 
     for iteration in range(args.n_iterations):
 
         trajectories = gflownet.sample_trajectories(
             env,
             n=args.batch_size,
-            save_logprobs=True,
+            save_logprobs=False,
             epsilon=epsilon_dict,
         )
         training_samples = gflownet.to_training_samples(trajectories)
@@ -339,25 +344,25 @@ def main(args: Namespace):
         # TODO: During iteration < args.n_iterations_with_only_expert_data, no
         # non-ring trajectories will be seen!
         with torch.no_grad():
-            if (
-                iteration < args.n_iterations_with_only_expert_data
-                and args.use_expert_data
-            ):
-                training_samples = replay_buffer.sample(n_trajectories=args.batch_size)
-            else:
-                # A mix of 50% the replay buffer and 50% the gflownet samples.
-                replay_buffer.add(training_samples)
-                training_samples = training_samples[: args.batch_size // 2]
-                replay_buffer_samples = replay_buffer.sample(
-                    n_trajectories=args.batch_size // 2
-                )
-                assert isinstance(replay_buffer_samples, Trajectories)
-                training_samples.extend(replay_buffer_samples)
+            # if (
+            #     iteration < args.n_iterations_with_only_expert_data
+            #     and args.use_expert_data
+            # ):
+            #     training_samples = replay_buffer.sample(n_trajectories=args.batch_size)
+            # else:
+            # A mix of 50% the replay buffer and 50% the gflownet samples.
+            replay_buffer.add(training_samples)
+            training_samples = training_samples[: args.batch_size // 2]
+            replay_buffer_samples = replay_buffer.sample(
+                n_trajectories=args.batch_size // 2
+            )
+            assert isinstance(replay_buffer_samples, Trajectories)
+            training_samples.extend(replay_buffer_samples)
 
-        if iteration > 101 and iteration % 25 == 0:
+        if iteration % 10 == 0:
             print(
-                "sum of rewards in buffer: {}",
-                sum(env.reward(replay_buffer.training_objects.terminating_states)) / 100,  # type: ignore
+                "n_modes in buffer: {}",
+                sum(env.reward(replay_buffer.training_objects.terminating_states) > 0.1),  # type: ignore
             )
 
         optimizer.zero_grad()
@@ -378,13 +383,19 @@ def main(args: Namespace):
 
         losses.append(loss.item())
 
+        final_states = training_samples.terminating_states
+        assert isinstance(final_states, GraphStates)
+        found = count_recovered_modes(final_states, mode_hashes)
+
         print(
-            "Iter {}: loss: {:.02f}, rings: {:.0f}%, logZ: {:.06f}, grad_norms: {}".format(
+            "{}: loss: {:.02f}, sampled gflownet rings: {:.0f}%, unique modes in batch: {}/{}, logZ: {:.03f}, grad norm ratios: {}".format(
                 iteration,
                 loss.item(),
                 pct_rings,
+                found,
+                n_modes,
                 gflownet.logZ.item(),  # type: ignore
-                ", ".join("{:.{}g}".format(v, 4) for v in lr_grad_ratios),
+                ", ".join("{:.{}g}".format(v, 3) for v in lr_grad_ratios),
             )
         )
 
@@ -394,13 +405,13 @@ def main(args: Namespace):
     # Report mode coverage.
     sample_trajectories = gflownet.sample_trajectories(
         env,
-        n=n_modes * 5,  # Oversample to ensure all modes are seen.
+        n=n_modes * 100,  # Oversample to ensure all modes are seen.
         save_logprobs=False,  # Not used.
     )
     final_states = sample_trajectories.terminating_states
     assert isinstance(final_states, GraphStates)
     found = count_recovered_modes(final_states, mode_hashes)
-    print(f"+ Found {found} / {n_modes} modes.")
+    print(f"+ Sampler discovered {found} / {n_modes} modes.")
 
     if args.plot:
         samples_to_render = trajectories.terminating_states[:8]
@@ -454,6 +465,12 @@ if __name__ == "__main__":
         default=0.0,
         help="Epsilon for exploration on action type.",
     )
+    parser.add_argument(
+        "--edge_index_epsilon",
+        type=float,
+        default=0.0,
+        help="Epsilon for exploration on edge index.",
+    )
 
     # Misc parameters
     parser.add_argument(
@@ -482,6 +499,12 @@ if __name__ == "__main__":
         type=int,
         default=100,
         help="Number of iterations where no gflownet samples are added to the replay buffer.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=1234,
+        help="Seed for random number generator.",
     )
 
     args = parser.parse_args()
