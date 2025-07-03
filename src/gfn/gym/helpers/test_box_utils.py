@@ -8,7 +8,12 @@ from gfn.gym.helpers.box_utils import BoxPFMLP, split_PF_module_output
 @pytest.mark.parametrize("n_components", [5, 6])
 @pytest.mark.parametrize("n_components_s0", [5, 6])
 def test_mixed_distributions(n_components: int, n_components_s0: int):
-    """Ensure DistributionWrapper functions correctly."""
+    """Tests the `DistributionWrapper` class.
+
+    Args:
+        n_components: The number of components for non-s0 states.
+        n_components_s0: The number of components for s0.
+    """
 
     delta = 0.1
     hidden_dim = 10

@@ -7,11 +7,13 @@ from gfn.states import States
 
 
 class PerfectBinaryTree(DiscreteEnv):
-    r"""
-    Perfect Tree Environment where there is a bijection between trajectories and terminating states.
-    Nodes are represented by integers, starting from 0 for the root.
-    States are represented by a single integer tensor corresponding to the node index.
-    Actions are integers: 0 (left child), 1 (right child), 2 (exit).
+    r"""Perfect Tree Environment.
+
+    This environment is a perfect binary tree, where there is a bijection between
+    trajectories and terminating states. Nodes are represented by integers, starting
+    from 0 for the root. States are represented by a single integer tensor
+    corresponding to the node index. Actions are integers: 0 (left child), 1 (right
+    child), 2 (exit).
 
     e.g.:
 
@@ -24,9 +26,25 @@ class PerfectBinaryTree(DiscreteEnv):
     7   8  9  10 11 12 13 14 (terminating states if depth=3)
 
     Recommended preprocessor: `OneHotPreprocessor`.
+
+    Attributes:
+        reward_fn (Callable): A function that computes the reward for a given state.
+        depth (int): The depth of the tree.
+        branching_factor (int): The branching factor of the tree.
+        n_actions (int): The number of actions.
+        n_nodes (int): The number of nodes in the tree.
+        transition_table (dict): A dictionary that maps (state, action) to the next state.
+        inverse_transition_table (dict): A dictionary that maps (state, action) to the previous state.
+        term_states (DiscreteStates): The terminating states.
     """
 
     def __init__(self, reward_fn: Callable, depth: int = 4):
+        """Initializes the PerfectBinaryTree environment.
+
+        Args:
+            reward_fn: A function that computes the reward for a given state.
+            depth: The depth of the tree.
+        """
         self.reward_fn = reward_fn
         self.depth = depth
         self.branching_factor = 2
@@ -45,7 +63,12 @@ class PerfectBinaryTree(DiscreteEnv):
         ) = self._build_tree()
 
     def _build_tree(self) -> tuple[dict, dict, DiscreteStates]:
-        """Create a transition table ensuring a bijection between trajectories and last states."""
+        """Builds the tree and the transition tables.
+
+        Returns:
+            A tuple containing the transition table, the inverse transition table,
+            and the terminating states.
+        """
         transition_table = {}
         inverse_transition_table = {}
         node_index = 0
@@ -68,6 +91,15 @@ class PerfectBinaryTree(DiscreteEnv):
         return transition_table, inverse_transition_table, terminating_states
 
     def backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
+        """Performs a backward step in the environment.
+
+        Args:
+            states: The current states.
+            actions: The actions to take.
+
+        Returns:
+            The previous states.
+        """
         tuples = torch.hstack((states.tensor, actions.tensor)).tolist()
         tuples = tuple((tuple_) for tuple_ in tuples)
         next_states_tns = [
@@ -78,6 +110,15 @@ class PerfectBinaryTree(DiscreteEnv):
         return self.States(next_states_tns)
 
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
+        """Performs a step in the environment.
+
+        Args:
+            states: The current states.
+            actions: The actions to take.
+
+        Returns:
+            The next states.
+        """
         tuples = torch.hstack((states.tensor, actions.tensor)).tolist()
         tuples = tuple(tuple(tuple_) for tuple_ in tuples)
         next_states_tns = [self.transition_table.get(tuple_) for tuple_ in tuples]
@@ -85,6 +126,11 @@ class PerfectBinaryTree(DiscreteEnv):
         return self.States(next_states_tns)
 
     def update_masks(self, states: DiscreteStates) -> None:
+        """Updates the masks of the states.
+
+        Args:
+            states: The states to update the masks of.
+        """
         terminating_states_mask = torch.isin(
             states.tensor, self.terminating_states.tensor
         ).squeeze()
@@ -120,17 +166,35 @@ class PerfectBinaryTree(DiscreteEnv):
         states.backward_masks[initial_state_mask] = False
 
     def get_states_indices(self, states: States):
+        """Returns the indices of the states.
+
+        Args:
+            states: The states to get the indices of.
+
+        Returns:
+            The indices of the states.
+        """
         return torch.flatten(states.tensor)
 
     @property
     def all_states(self) -> DiscreteStates:
+        """Returns all the states of the environment."""
         return self.states_from_tensor(torch.arange(self.n_nodes).reshape(-1, 1))
 
     @property
     def terminating_states(self) -> DiscreteStates:
+        """Returns the terminating states of the environment."""
         lb = 2**self.depth - 1
         ub = 2 ** (self.depth + 1) - 1
         return self.make_states_class()(torch.arange(lb, ub).reshape(-1, 1))
 
     def reward(self, final_states):
+        """Computes the reward for a batch of final states.
+
+        Args:
+            final_states: The final states.
+
+        Returns:
+            The reward of the final states.
+        """
         return self.reward_fn(final_states.tensor)

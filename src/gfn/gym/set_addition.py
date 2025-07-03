@@ -14,6 +14,12 @@ class SetAddition(DiscreteEnv):
     Adding an existing item is invalid. The trajectory must end when `max_items` are present.
 
     Recommended preprocessor: `IdentityPreprocessor`.
+
+    Attributes:
+        n_items (int): The number of items in the set.
+        max_items (int): The maximum number of items that can be added to the set.
+        reward_fn (Callable): The reward function.
+        fixed_length (bool): Whether the trajectories have a fixed length.
     """
 
     def __init__(
@@ -23,12 +29,13 @@ class SetAddition(DiscreteEnv):
         reward_fn: Callable,
         fixed_length: bool = False,
     ):
-        """
+        """Initializes the SetAddition environment.
+
         Args:
-            n_items: number of items in the append MDP
-            max_items: max number of items that can be added to the 'set'. Defines maximum trajectory length
-            reward_fn: reward function to use
-            fixed_length: indicates whether every trajectory ends after the same number of steps (i.e. if terminating state space contains only sets of the same size).
+            n_items: The number of items in the set.
+            max_items: The maximum number of items that can be added to the set.
+            reward_fn: The reward function.
+            fixed_length: Whether the trajectories have a fixed length.
         """
         self.n_items = n_items
         self.reward_fn = reward_fn
@@ -42,6 +49,14 @@ class SetAddition(DiscreteEnv):
         self.States: type[DiscreteStates] = self.States
 
     def get_states_indices(self, states: DiscreteStates):
+        """Returns the indices of the states.
+
+        Args:
+            states: The states to get the indices of.
+
+        Returns:
+            The indices of the states.
+        """
         states_raw = states.tensor
 
         canonical_base = 2 ** torch.arange(
@@ -51,6 +66,11 @@ class SetAddition(DiscreteEnv):
         return indices
 
     def update_masks(self, states: DiscreteStates) -> None:
+        """Updates the masks of the states.
+
+        Args:
+            states: The states to update the masks of.
+        """
         n_items_per_state = states.tensor.sum(dim=-1)
         states_that_must_end = n_items_per_state >= self.max_traj_len
         states_that_may_continue = (n_items_per_state < self.max_traj_len) & (
@@ -90,24 +110,52 @@ class SetAddition(DiscreteEnv):
         states.backward_masks[..., : self.n_items] = states.tensor != 0
 
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
+        """Performs a step in the environment.
+
+        Args:
+            states: The current states.
+            actions: The actions to take.
+
+        Returns:
+            The next states.
+        """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
         return self.States(new_states_tensor)
 
     def backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
+        """Performs a backward step in the environment.
+
+        Args:
+            states: The current states.
+            actions: The actions to take.
+
+        Returns:
+            The previous states.
+        """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
         return self.States(new_states_tensor)
 
     def reward(self, final_states: DiscreteStates) -> torch.Tensor:
+        """Computes the reward for a batch of final states.
+
+        Args:
+            final_states: The final states.
+
+        Returns:
+            The reward of the final states.
+        """
         return self.reward_fn(final_states.tensor)
 
     @property
     def all_states(self) -> DiscreteStates:
+        """Returns all the states of the environment."""
         digits = torch.arange(0, 2, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.n_items)
         return self.states_from_tensor(all_states)
 
     @property
     def terminating_states(self) -> DiscreteStates:
+        """Returns the terminating states of the environment."""
         if self.fixed_length:
             return self.all_states[
                 self.all_states.tensor.sum(dim=1) == self.max_traj_len
