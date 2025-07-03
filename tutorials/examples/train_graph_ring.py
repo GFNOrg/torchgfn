@@ -362,9 +362,7 @@ def main(args: Namespace):
                 replay_buffer.add(training_samples)
                 if iteration > 20:
                     training_samples = training_samples[: args.batch_size // 2]
-                    buffer_samples = replay_buffer.sample(
-                        n_trajectories=args.batch_size // 2
-                    )
+                    buffer_samples = replay_buffer.sample(n_samples=args.batch_size // 2)
                     training_samples.extend(buffer_samples)  # type: ignore
 
         optimizer.zero_grad()

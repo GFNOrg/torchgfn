@@ -14,19 +14,29 @@ from gfn.utils.common import ensure_same_device
 
 
 class Transitions(Container):
-    """Container for the transitions.
+    """Container for a batch of transitions.
+
+    This class manages a collection of transitions (triplet of states, actions, and
+    next states) and their corresponding properties.
 
     Attributes:
-        env: environment.
-        is_backward: Whether the transitions are backward transitions (i.e.
-            `next_states` is the parent of states).
-        states: States object with uni-dimensional `batch_shape`, representing the
-            parents of the transitions.
-        actions: Actions chosen at the parents of each transitions.
-        is_terminating: Whether the action is the exit action.
-        next_states: States object with uni-dimensional `batch_shape`, representing
-            the children of the transitions.
-        log_probs: The log-probabilities of the actions.
+        env: The environment where the states and actions are defined.
+        states: States with batch_shape (n_transitions,).
+        conditioning: (Optional) Tensor of shape (n_transitions,) containing the
+            conditioning for the transitions.
+        actions: Actions with batch_shape (n_transitions,). The actions make the
+            transitions from the `states` to the `next_states`.
+        is_terminating: Boolean tensor of shape (n_transitions,) indicating whether the
+            action is the exit action.
+        next_states: States with batch_shape (n_transitions,).
+        is_backward: Whether the transitions are backward transitions. When not
+            is_backward, the `states` are the parents of the transitions and the
+            `next_states` are the children. When is_backward, the `states` are the
+            children of the transitions and the `next_states` are the parents.
+        _log_rewards: (Optional) Tensor of shape (n_transitions,) containing the log
+            rewards of the transitions.
+        log_probs: (Optional) Tensor of shape (n_transitions,) containing the log
+            probabilities of the actions.
     """
 
     def __init__(
@@ -41,32 +51,31 @@ class Transitions(Container):
         log_rewards: torch.Tensor | None = None,
         log_probs: torch.Tensor | None = None,
     ):
-        """Instantiates a container for transitions.
-
-        When states and next_states are not None, the Transitions is an empty container
-        that can be populated on the go.
+        """Initializes a Transitions instance.
 
         Args:
-            env: Environment
-            states: States object with uni-dimensional `batch_shape`, representing the
-                parents of the transitions.
-            conditioning: The conditioning of the transitions for conditional MDPs.
-            actions: Actions chosen at the parents of each transitions.
-            is_terminating: Tensor of shape (n_transitions,) indicating whether the action is the exit action.
-            next_states: States object with uni-dimensional `batch_shape`, representing
-                the children of the transitions.
-            is_backward: Whether the transitions are backward transitions (i.e.
-                `next_states` is the parent of states).
-            log_rewards: Tensor of shape (n_transitions,) containing the log-rewards of the transitions (using a
-                default value like `-float('inf')` for non-terminating transitions).
-            log_probs: Tensor of shape (n_transitions,) containing the log-probabilities of the actions.
+            env: The environment where the states and actions are defined.
+            states: States with batch_shape (n_transitions,). If None, an empty States
+                object is created.
+            conditioning: Optional tensor of shape (n_transitions,) containing the
+                conditioning for the transitions.
+            actions: Actions with batch_shape (n_transitions,). If None, an empty Actions
+                object is created.
+            is_terminating: Boolean tensor of shape (n_transitions,) indicating whether
+                the action is the exit action.
+            next_states: States with batch_shape (n_transitions,). If None, an empty
+                States object is created.
+            is_backward: Whether the transitions are backward transitions.
+            log_rewards: Optional tensor of shape (n_transitions,) containing the log
+                rewards for the transitions. If None, computed on the fly when needed.
+            log_probs: Optional tensor of shape (n_transitions,) containing the log
+                probabilities of the actions.
 
-        Raises:
-            AssertionError: If states and next_states do not have matching
-                `batch_shapes`.
+        Note:
+            When states and next_states are not None, the Transitions is initialized as
+            an empty container that can be populated later with the `extend` method.
         """
         self.env = env
-        self.conditioning = conditioning
         self.is_backward = is_backward
 
         # Assert that all tensors are on the same device as the environment.
@@ -80,6 +89,7 @@ class Transitions(Container):
         assert len(self.states.batch_shape) == 1
         batch_shape = self.states.batch_shape
 
+        self.conditioning = conditioning
         assert self.conditioning is None or (
             self.conditioning.shape[: len(batch_shape)] == batch_shape
         )
@@ -118,16 +128,36 @@ class Transitions(Container):
 
     @property
     def device(self) -> torch.device:
+        """The device on which the transitions are stored.
+
+        Returns:
+            The device object of the `self.states`.
+        """
         return self.states.device
 
     @property
     def n_transitions(self) -> int:
+        """The number of transitions in the container.
+
+        Returns:
+            The number of transitions.
+        """
         return self.states.batch_shape[0]
 
     def __len__(self) -> int:
+        """Returns the number of transitions in the container.
+
+        Returns:
+            The number of transitions.
+        """
         return self.n_transitions
 
     def __repr__(self):
+        """Returns a string representation of the Transitions container.
+
+        Returns:
+            A string summary of the transitions.
+        """
         states_tensor = self.states.tensor
         next_states_tensor = self.next_states.tensor
 
@@ -140,21 +170,28 @@ class Transitions(Container):
         return (
             f"Transitions(n_transitions={self.n_transitions}, "
             f"transitions={states_repr}, actions={self.actions}, "
-            # f"is_terminating={self.is_terminating})"
         )
 
     @property
     def terminating_states(self) -> States:
-        """Return the terminating states."""
+        """The terminating states of the transitions.
+
+        Returns:
+            The terminating states.
+        """
         return self.states[self.is_terminating]
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
-        """
-        Returns the log rewards for the Transitions as a tensor of shape (n_transitions,),
-        with a value of `-float('inf')` for non-terminating (~is_terminating) transitions.
+        """The log rewards for the transitions.
 
-        If the `log_rewards` are not provided during initialization, they are computed on the fly.
+        Returns:
+            Log rewards tensor of shape (n_transitions,). Non-terminating transitions
+            have value -inf.
+
+        Note:
+            If not provided at initialization, log rewards are computed on demand for
+            terminating transitions.
         """
         if self.is_backward:
             return None
@@ -175,18 +212,14 @@ class Transitions(Container):
 
     @property
     def all_log_rewards(self) -> torch.Tensor:
-        """Calculate all log rewards for the transitions.
+        """A helper method to compute the log rewards for all transitions
 
         This is applicable to environments where all states are terminating. This
         function evaluates the rewards for all transitions that do not end in the sink
         state. This is useful for the Modified Detailed Balance loss.
 
         Returns:
-            log_rewards: Tensor of shape (n_transitions, 2) containing the log rewards
-                for the transitions.
-
-        Raises:
-            NotImplementedError: when used for backward transitions.
+            Log rewards tensor of shape (n_transitions, 2) for the transitions.
         """
         # TODO: reuse self._log_rewards if it exists.
         if self.is_backward:
@@ -212,7 +245,14 @@ class Transitions(Container):
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> Transitions:
-        """Access particular transitions of the batch."""
+        """Returns a subset of the transitions along the batch dimension.
+
+        Args:
+            index: Indices to select transitions.
+
+        Returns:
+            A new Transitions object with the selected transitions and associated data.
+        """
         if isinstance(index, int):
             index = [index]
 
@@ -239,7 +279,11 @@ class Transitions(Container):
         )
 
     def extend(self, other: Transitions) -> None:
-        """Extend the Transitions object with another Transitions object."""
+        """Extends this Transitions object with another Transitions object.
+
+        Args:
+            Another Transitions object to append.
+        """
         if self.conditioning is not None:
             # TODO: Support the case
             raise NotImplementedError(

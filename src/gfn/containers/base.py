@@ -20,7 +20,7 @@ class Container(ABC):
         """Returns the number of elements in the container.
 
         Returns:
-            int: The number of elements in the container.
+            The number of elements in the container.
         """
 
     @abstractmethod
@@ -30,29 +30,29 @@ class Container(ABC):
         """Returns a subset of the container based on the provided index.
 
         Args:
-            index: An integer, slice, tuple, sequence of indices or booleans, or a torch.Tensor
-                specifying which elements to select.
+            index: An integer, slice, tuple, sequence of indices or booleans,
+                or a torch.Tensor specifying which elements to select.
 
         Returns:
-            Container: A new container containing the selected elements.
+            A new container containing the selected elements and associated data.
         """
 
     @abstractmethod
     def extend(self, other: Container) -> None:
-        """Extends the current container with elements from another container.
+        """Extends the current container with elements from another container object.
 
         Args:
-            other (Container): The container whose elements will be added.
+            other: The other container whose elements will be added.
         """
 
     def sample(self, n_samples: int) -> Container:
         """Randomly samples a subset of elements from the container.
 
         Args:
-            n_samples (int): The number of elements to sample.
+            n_samples: The number of elements to sample.
 
         Returns:
-            Container: A new container with the sampled elements.
+            A new container with the sampled elements.
         """
         return self[torch.randperm(len(self))[:n_samples]]
 
@@ -60,10 +60,7 @@ class Container(ABC):
         """Saves the container and its contents to a directory.
 
         Args:
-            path (str): The directory path where the container will be saved.
-
-        Raises:
-            ValueError: If an attribute type is not supported for saving.
+            path: The directory path where the container will be saved.
         """
         for key, val in self.__dict__.items():
             if isinstance(val, Env):
@@ -79,10 +76,7 @@ class Container(ABC):
         """Loads the container's contents from a directory, overwriting current contents.
 
         Args:
-            path (str): The directory path from which to load the container.
-
-        Raises:
-            ValueError: If an attribute type is not supported for loading.
+            path: The directory path from which to load the container.
         """
         for key, val in self.__dict__.items():
             if isinstance(val, Env):
@@ -96,28 +90,37 @@ class Container(ABC):
 
     @property
     @abstractmethod
-    def terminating_states(self) -> States:
-        """Returns the last (terminating) states of the container.
+    def device(self) -> torch.device:
+        """The device on which the container is stored.
 
         Returns:
-            States: The terminating states.
+            The device on which the container is stored.
+        """
+
+    @property
+    @abstractmethod
+    def terminating_states(self) -> States:
+        """The last (terminating) states of the container.
+
+        Returns:
+            The terminating states.
         """
 
     @property
     @abstractmethod
     def log_rewards(self) -> torch.Tensor:
-        """Returns the log rewards associated with the container.
+        """The log rewards associated with the container.
 
         Returns:
-            torch.Tensor: The log rewards tensor.
+            The log rewards tensor.
         """
 
     @property
     def has_log_probs(self) -> bool:
-        """Indicates whether the container has log probabilities.
+        """Whether the container has log probabilities.
 
         Returns:
-            bool: True if log probabilities are present and non-empty, False otherwise.
+            True if log probabilities are present and non-empty, False otherwise.
         """
         if not hasattr(self, "log_probs"):
             return False
