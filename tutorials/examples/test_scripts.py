@@ -73,6 +73,7 @@ class HypergridArgs(CommonArgs):
     R1: float = 0.5
     R2: float = 2.0
     replay_buffer_size: int = 0
+    timing: bool = True
     use_metropolis_hastings: bool = True
 
 
