@@ -71,6 +71,8 @@ Example:
 
     print(f"Elapsed time for step1: {timing['step1']} seconds")
 """
+
+
 class Timer:
     def __init__(self, timing_dict, key, enabled=True):
         self.timing_dict = timing_dict
@@ -92,6 +94,7 @@ class Timer:
         else:
             self.elapsed = 0.0
 
+
 r"""
 Reports load imbalance and timing information from a timing dictionary.
     param all_timing_dict: A list of dictionaries containing timing information for each rank.
@@ -100,6 +103,8 @@ Reports load imbalance and timing information from a timing dictionary.
 
     param world_size: The total number of ranks in the distributed setup.
 """
+
+
 def report_load_imbalance(all_timing_dict, world_size):
 
     # Header
@@ -111,7 +116,7 @@ def report_load_imbalance(all_timing_dict, world_size):
             times = [times]  # Ensure times is a list
 
         curr_step_times = {}
-        isValidKey = True # Time information for some steps are not present in all ranks. Those are skipped.
+        isValidKey = True  # Time information for some steps are not present in all ranks. Those are skipped.
         for rank in range(world_size):
             curr_dict = all_timing_dict[rank]
             if step in curr_dict:
@@ -172,13 +177,11 @@ def report_time_info(all_timing_dict, world_size):
 def report_timing(all_timing_dict, world_size):
     """Prints the timing information from the timing dictionary."""
 
-
     # uncomment if you need rank level timing information.
     # report_time_info(all_timing_dict, world_size)
 
     # print("Load Imbalance (LI) is as follows:")
     report_load_imbalance(all_timing_dict, world_size)
-
 
 
 def average_gradients(model):
@@ -973,7 +976,9 @@ def main(args):  # noqa: C901
     all_visited_terminating_states = env.states_from_batch_shape((0,))
 
     # Barrier for pre-processing. Wait for all processes to reach this point before starting training.
-    with Timer(timing, "Pre-processing_barrier", enabled=(args.timing and args.distributed)):
+    with Timer(
+        timing, "Pre-processing_barrier", enabled=(args.timing and args.distributed)
+    ):
         if args.distributed and args.timing:
             dist.barrier()
 
@@ -983,7 +988,9 @@ def main(args):  # noqa: C901
         iteration_start = time.time()
 
         # Keep track of visited terminating states on this node.
-        with Timer(timing, "track_visited_states", enabled=args.timing) as visited_states_timer:
+        with Timer(
+            timing, "track_visited_states", enabled=args.timing
+        ) as visited_states_timer:
             visited_terminating_states = env.states_from_batch_shape((0,))
 
             # Profiler.
@@ -1002,7 +1009,9 @@ def main(args):  # noqa: C901
             )
 
         # Training objects (incl. possible replay buffer sampling).
-        with Timer(timing, "to_training_samples", enabled=args.timing) as to_train_samples_timer:
+        with Timer(
+            timing, "to_training_samples", enabled=args.timing
+        ) as to_train_samples_timer:
             training_samples = gflownet.to_training_samples(trajectories)
 
             if replay_buffer is not None:
@@ -1031,7 +1040,9 @@ def main(args):  # noqa: C901
                 loss = loss / (per_node_batch_size)
 
         # Barrier.
-        with Timer(timing, "barrier 0", enabled=(args.timing and args.distributed)) as bar0_timer:
+        with Timer(
+            timing, "barrier 0", enabled=(args.timing and args.distributed)
+        ) as bar0_timer:
             if args.distributed and args.timing:
                 dist.barrier()
 
@@ -1044,12 +1055,16 @@ def main(args):  # noqa: C901
             optimizer.step()
 
         # Barrier.
-        with Timer(timing, "barrier 1", enabled=(args.timing and args.distributed)) as bar1_timer:
+        with Timer(
+            timing, "barrier 1", enabled=(args.timing and args.distributed)
+        ) as bar1_timer:
             if args.distributed and args.timing:
                 dist.barrier()
 
         # Model averaging.
-        with Timer(timing, "averaging_model", enabled=args.timing) as model_averaging_timer:
+        with Timer(
+            timing, "averaging_model", enabled=args.timing
+        ) as model_averaging_timer:
             if args.distributed and (iteration % args.average_every == 0):
                 print("before averaging model, iteration = ", iteration)
                 average_models(gflownet)
@@ -1059,15 +1074,19 @@ def main(args):  # noqa: C901
         iteration_time = time.time() - iteration_start
         rest_time = iteration_time - sum(
             [
-                visited_states_timer.elapsed,
-                sample_timer.elapsed,
-                to_train_samples_timer.elapsed,
-                loss_timer.elapsed,
-                bar0_timer.elapsed,
-                loss_backward_timer.elapsed,
-                opt_timer.elapsed,
-                bar1_timer.elapsed,
-                model_averaging_timer.elapsed,
+                t
+                for t in [
+                    visited_states_timer.elapsed,
+                    sample_timer.elapsed,
+                    to_train_samples_timer.elapsed,
+                    loss_timer.elapsed,
+                    bar0_timer.elapsed,
+                    loss_backward_timer.elapsed,
+                    opt_timer.elapsed,
+                    bar1_timer.elapsed,
+                    model_averaging_timer.elapsed,
+                ]
+                if t is not None
             ]
         )
 
@@ -1080,7 +1099,7 @@ def main(args):  # noqa: C901
             cast(DiscreteStates, trajectories.terminating_states)
         )
 
-        with Timer(timing, "gather_visited_states", enabled=args.timing) as gather_timer:
+        with Timer(timing, "gather_visited_states", enabled=args.timing):
             # If distributed, gather all visited terminating states from all nodes.
             if args.distributed and log_this_iter:
                 try:
@@ -1099,7 +1118,7 @@ def main(args):  # noqa: C901
                 gathered_visited_terminating_states = visited_terminating_states.tensor
 
         # If we are on the master node, calculate the validation metrics.
-        with Timer(timing, "validation", enabled=args.timing) as validation_timer:
+        with Timer(timing, "validation", enabled=args.timing):
             if my_rank == 0:
 
                 # Extend `all_visited_terminating_states` with the gathered data.
@@ -1108,7 +1127,9 @@ def main(args):  # noqa: C901
                     DiscreteStates, env.States(gathered_visited_terminating_states)
                 )
                 states_visited += len(gathered_visited_terminating_states)
-                all_visited_terminating_states.extend(gathered_visited_terminating_states)
+                all_visited_terminating_states.extend(
+                    gathered_visited_terminating_states
+                )
 
                 to_log = {
                     "loss": loss.item(),
@@ -1121,27 +1142,31 @@ def main(args):  # noqa: C901
                     "model_averaging_time": model_averaging_timer.elapsed,
                     "rest_time": rest_time,
                     "l1_dist": None,  # only logged if calculate_partition.
-                    }
+                }
 
                 if use_wandb:
-                        wandb.log(to_log, step=iteration)
+                    wandb.log(to_log, step=iteration)
 
                 if log_this_iter:
-                    (validation_info, all_visited_terminating_states, discovered_modes) = (
-                        validate_hypergrid(
+                    (
+                        validation_info,
+                        all_visited_terminating_states,
+                        discovered_modes,
+                    ) = validate_hypergrid(
                         env,
                         gflownet,
                         args.validation_samples,
                         all_visited_terminating_states,
                         discovered_modes,
                     )
-                )
 
                     print(
                         "all_visited_terminating_states = ",
                         len(all_visited_terminating_states),
                     )
-                    print("visited_terminating_states = ", len(visited_terminating_states))
+                    print(
+                        "visited_terminating_states = ", len(visited_terminating_states)
+                    )
 
                     if use_wandb:
                         wandb.log(validation_info, step=iteration)
@@ -1154,15 +1179,13 @@ def main(args):  # noqa: C901
                         n_modes_found=to_log["n_modes_found"],
                     )
 
-        with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)) as bar2_timer:
+        with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
             if args.distributed and args.timing:
                 dist.barrier()
 
     total_time = time.time() - time_start
     if args.timing:
-        timing["total_rest_time"] = [total_time - sum(
-            sum(v)
-            for k, v in timing.items())]
+        timing["total_rest_time"] = [total_time - sum(sum(v) for k, v in timing.items())]
 
     timing["total_time"] = [total_time]
 
@@ -1171,12 +1194,12 @@ def main(args):  # noqa: C901
 
     # Log the final timing results.
     if args.timing:
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("\n Timing information:")
         if args.distributed:
-            print("-"*80)
+            print("-" * 80)
             print("The below timing information is averaged across all ranks.")
-        print("="*80)
+        print("=" * 80)
 
         if args.distributed:
             # Gather timing data from all ranks
