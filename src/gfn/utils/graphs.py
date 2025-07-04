@@ -34,8 +34,24 @@ def get_edge_indices(
 
 
 class GeometricBatch(Batch):
+    """A batch of graphs.
+
+    This class extends `torch_geometric.data.Batch` to support extending a batch
+    with another batch, and to support stacking a list of `Data` objects into a
+    single batch.
+
+    Attributes:
+        tensor: The underlying `torch_geometric.data.Data` object.
+        batch_shape: The shape of the batch.
+        batch_ptrs: A tensor of pointers to the start of each graph in the batch.
+    """
 
     def extend(self, other: GeometricBatch) -> None:
+        """Extends the current batch with another batch.
+
+        Args:
+            other: The batch to extend with.
+        """
         self_x, other_x = self.tensor.x, other.tensor.x
         self_edge_index, other_edge_index = (
             self.tensor.edge_index,
@@ -239,6 +255,14 @@ class GeometricBatch(Batch):
 
     @classmethod
     def stack(cls, data_list: list[Data]) -> GeometricBatch:
+        """Stacks a list of `Data` objects into a single `GeometricBatch`.
+
+        Args:
+            data_list: A list of `Data` objects to stack.
+
+        Returns:
+            A new `GeometricBatch` containing the stacked graphs.
+        """
         xs = []
         edge_indices = []
         edge_attrs = []

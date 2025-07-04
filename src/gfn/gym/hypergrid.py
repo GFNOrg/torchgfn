@@ -1,6 +1,4 @@
-"""
-Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
-"""
+"""Adapted from https://github.com/Tikquuss/GflowNets_Tutorial"""
 
 import itertools
 import multiprocessing
@@ -45,6 +43,23 @@ def smallest_multiplier_to_integers(float_vector, precision=3):
 
 
 class HyperGrid(DiscreteEnv):
+    """HyperGrid environment from the GFlowNets paper.
+
+    The states are represented as 1-d tensors of length `ndim` with values in
+    `{0, 1, ..., height - 1}`.
+
+    Attributes:
+        ndim (int): The dimension of the grid.
+        height (int): The height of the grid.
+        R0 (float): The reward parameter R0.
+        R1 (float): The reward parameter R1.
+        R2 (float): The reward parameter R2.
+        reward_cos (bool): Whether to use the cosine reward.
+        calculate_partition (bool): Whether to calculate the log partition function.
+        calculate_all_states (bool): Whether to store all states.
+        scale_factor (int): The scale factor for the reward.
+    """
+
     def __init__(
         self,
         ndim: int = 2,
@@ -57,24 +72,18 @@ class HyperGrid(DiscreteEnv):
         calculate_partition: bool = False,
         calculate_all_states: bool = False,
     ):
-        """HyperGrid environment from the GFlowNets paper.
-        The states are represented as 1-d tensors of length `ndim` with values in
-        {0, 1, ..., height - 1}.
+        """Initializes the HyperGrid environment.
 
         Args:
-            ndim: dimension of the grid.
-            height: height of the grid.
-            R0: reward parameter R0.
-            R1: reward parameter R1.
-            R2: reward parameter R1.
-            reward_cos: Which version of the reward to use.
-            device: The device to use for the environment.
-            calculate_partition: If True, calculates the true log partition function,
-                which requires enumerating all states of the hypergrid. Might have
-                intractable time complexity for very large problems.
-            calculate_all_states: If True, stores all states in the internal property
-                all_states. Might have intractable space complexity for very large
-                problems.
+            ndim: The dimension of the grid.
+            height: The height of the grid.
+            R0: The reward parameter R0.
+            R1: The reward parameter R1.
+            R2: The reward parameter R2.
+            reward_cos: Whether to use the cosine reward.
+            device: The device to use.
+            calculate_partition: Whether to calculate the log partition function.
+            calculate_all_states: Whether to store all states.
         """
         if height <= 4:
             warnings.warn("+ Warning: height <= 4 can lead to unsolvable environments.")
@@ -122,7 +131,11 @@ class HyperGrid(DiscreteEnv):
         self.States: type[DiscreteStates] = self.States
 
     def update_masks(self, states: DiscreteStates) -> None:
-        """Update the masks based on the current states."""
+        """Updates the masks of the states.
+
+        Args:
+            states: The states to update the masks of.
+        """
         # Not allowed to take any action beyond the environment height, but
         # allow early termination.
         # TODO: do we need to handle the conditional case here?
@@ -138,9 +151,11 @@ class HyperGrid(DiscreteEnv):
         """Creates a batch of random states.
 
         Args:
-            batch_shape: Tuple indicating the shape of the batch.
+            batch_shape: The shape of the batch.
+            device: The device to use.
 
-        Returns the batch of random states as tensor of shape (*batch_shape, *state_shape).
+        Returns:
+            A `DiscreteStates` object with random states.
         """
         device = self.device if device is None else device
         tensor = torch.randint(
@@ -149,41 +164,46 @@ class HyperGrid(DiscreteEnv):
         return self.States(tensor)
 
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
-        """Take a step in the environment.
+        """Performs a step in the environment.
 
         Args:
             states: The current states.
             actions: The actions to take.
 
-        Returns the new states after taking the actions as a tensor of shape (*batch_shape, *state_shape).
+        Returns:
+            The next states.
         """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
         assert new_states_tensor.shape == states.tensor.shape
         return self.States(new_states_tensor)
 
     def backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
-        """Take a step in the environment in the backward direction.
+        """Performs a backward step in the environment.
 
         Args:
             states: The current states.
             actions: The actions to take.
 
-        Returns the new states after taking the actions as a tensor of shape (*batch_shape, *state_shape).
+        Returns:
+            The previous states.
         """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
         assert new_states_tensor.shape == states.tensor.shape
         return self.States(new_states_tensor)
 
     def reward(self, final_states: DiscreteStates | torch.Tensor) -> torch.Tensor:
-        r"""In the normal setting, the reward is:
-        R(s) = R_0 + 0.5 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1}
+        r"""Computes the reward for a batch of final states.
+
+        In the normal setting, the reward is:
+        `R(s) = R_0 + 0.5 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1}
           - 0.5 \right\rvert \in (0.25, 0.5] \right)
-          + 2 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1} - 0.5 \right\rvert \in (0.3, 0.4) \right)
+          + 2 \prod_{d=1}^D \mathbf{1} \left( \left\lvert \frac{s^d}{H-1} - 0.5 \right\rvert \in (0.3, 0.4) \right)`
 
         Args:
             final_states: The final states.
 
-        Returns the reward as a tensor of shape `batch_shape`.
+        Returns:
+            The reward of the final states.
         """
         assert isinstance(
             final_states, DiscreteStates | torch.Tensor
@@ -222,7 +242,8 @@ class HyperGrid(DiscreteEnv):
         Args:
             states: The states to get the indices of.
 
-        Returns the indices of the states in the canonical ordering as a tensor of shape `batch_shape`.
+        Returns:
+            The indices of the states in the canonical ordering.
         """
         if isinstance(states, DiscreteStates):
             states_raw = states.tensor
@@ -245,18 +266,24 @@ class HyperGrid(DiscreteEnv):
         return indices
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Get the indices of the terminating states in the canonical ordering from the submitted states.
+        """Get the indices of the terminating states in the canonical ordering.
 
-        Canonical ordering is returned as a tensor of shape `batch_shape`.
+        Args:
+            states: The states to get the indices of.
+
+        Returns:
+            The indices of the terminating states in the canonical ordering.
         """
         return self.get_states_indices(states)
 
     @property
     def n_states(self) -> int:
+        """Returns the number of states in the environment."""
         return self.height**self.ndim
 
     @property
     def n_terminating_states(self) -> int:
+        """Returns the number of terminating states in the environment."""
         return self.n_states
 
     # Functions for calculating the true log partition function / state enumeration.
@@ -264,12 +291,14 @@ class HyperGrid(DiscreteEnv):
         """Calculates the log partition of the complete hypergrid.
 
         Args:
-            batch_size: Compute this number of hypergrid indices in parallel.
+            batch_size: The batch size to use for the calculation.
         """
 
         if self._log_partition is None and self.calculate_partition:
-            # The # of possible combinations (with repetition) of 𝑛 numbers, where each
-            # number can be any integer from 0 to 𝑘 (inclusive), is given by:
+            # The # of possible combinations (with repetition) of
+            # numbers, where each
+            # number can be any integer from 0 to
+            # (inclusive), is given by:
             # n = (k + 1) ** n -- note that k in our case is height-1, as it represents
             # a python index.
             max_height_idx = self.height - 1  # Handles 0 indexing.
@@ -307,7 +336,7 @@ class HyperGrid(DiscreteEnv):
         """Enumerates all states of the complete hypergrid.
 
         Args:
-            batch_size: Compute this number of hypergrid indices in parallel.
+            batch_size: The batch size to use for the calculation.
         """
         if self._all_states is None and self.calculate_all_states:
             start_time = time()
@@ -331,7 +360,6 @@ class HyperGrid(DiscreteEnv):
 
             self._all_states = all_states
 
-    # These properties are optionally available according to the flags set in init.
     @property
     def true_dist_pmf(self) -> torch.Tensor | None:
         """Returns the pmf over all states in the hypergrid."""
@@ -349,7 +377,7 @@ class HyperGrid(DiscreteEnv):
         """Generate all possible indices for the grid.
 
         Returns:
-            List of index tuples representing all possible grid positions
+            A list of all possible indices for the grid.
         """
 
         def _all_indices(dim: int, height: int) -> List[Tuple[int, ...]]:
@@ -363,11 +391,12 @@ class HyperGrid(DiscreteEnv):
 
     @property
     def log_partition(self) -> float | None:
+        """Returns the log partition of the reward function."""
         return self._log_partition
 
     @property
     def all_states(self) -> DiscreteStates:
-        """Returns a tensor of all hypergrid states as a States instance."""
+        """Returns a tensor of all hypergrid states as a `DiscreteStates` instance."""
         if self.calculate_all_states and not isinstance(self._all_states, torch.Tensor):
             self._calculate_all_states_tensor()
 
@@ -378,6 +407,7 @@ class HyperGrid(DiscreteEnv):
 
     @property
     def terminating_states(self) -> DiscreteStates:
+        """Returns all terminating states of the environment."""
         return self.all_states
 
     # Helper methods for enumerating all possible statxes.
@@ -395,8 +425,10 @@ class HyperGrid(DiscreteEnv):
         """Uses Pool to collect subsets of the results of itertools.product in parallel."""
         numbers = list(range(k + 1))
 
-        # Number of possible combinations (with repetition) of 𝑛 numbers, where each
-        # number can be any integer from 0 to 𝑘 (inclusive).
+        # Number of possible combinations (with repetition) of
+        # numbers, where each
+        # number can be any integer from 0 to
+        # (inclusive).
         total_combinations = (k + 1) ** n
         tasks = [
             (numbers, n, i, min(i + batch_size, total_combinations))

@@ -5,7 +5,13 @@ import torch
 
 
 def set_seed(seed: int, performance_mode: bool = False) -> None:
-    """Used to control randomness."""
+    """Sets the seed for all random number generators.
+
+    Args:
+        seed: The seed to use.
+        performance_mode: If True, sets some PyTorch flags to maximize performance.
+            If False, sets the flags to ensure reproducibility.
+    """
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -21,7 +27,15 @@ def set_seed(seed: int, performance_mode: bool = False) -> None:
 
 
 def ensure_same_device(device1: torch.device, device2: torch.device) -> None:
-    """Ensure that two tensors are on the same device."""
+    """Ensure that two tensors are on the same device.
+
+    Args:
+        device1: The first device.
+        device2: The second device.
+
+    Raises:
+        ValueError: If the devices are not the same.
+    """
     if device1 == device2:
         return
 
