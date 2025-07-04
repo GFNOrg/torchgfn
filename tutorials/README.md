@@ -8,7 +8,7 @@
 
 The repository includes several example environments and training scripts. There are three different implementations of training on the HyperGrid environment, which serve as good starting points for understanding GFlowNets at multiple levels of complexity:
 
-2. `tutorials/examples/train_hypergrid_simple.py`: Focused on core concepts:
+1. `tutorials/examples/train_hypergrid_simple.py`: Focused on core concepts:
    - Uses only Trajectory Balance (TB) loss.
    - Minimal architecture with shared trunks.
    - No extra features (no replay buffer, no wandb).
@@ -31,9 +31,15 @@ The repository includes several example environments and training scripts. There
    - Optional Metropolis-Hastings acceptance criterion.
    - Shows how to extend basic GFlowNet training with sophisticated sampling.
 
+4. `tutorials/examples/train_hypergrid_simple_ls.py`: Demonstrates advanced sampling strategies:
+   - Implements local search sampling with configurable parameters.
+   - Optional Metropolis-Hastings acceptance criterion.
+   - Shows how to extend basic GFlowNet training with sophisticated sampling.
+
+
 Other environments available in the package include:
-- Discrete Energy Based Model: A simple environment for learning energy-based distributions
-- Box Environment: A continuous environment for sampling from distributions in bounded spaces
+- Discrete Energy Based Model: A simple environment for learning energy-based distributions.
+- Box Environment: A continuous environment for sampling from distributions in bounded spaces.
 - Custom environments can be added by following the environment creation guide in `tutorials/ENV.md`
 
 ## Usage Examples
