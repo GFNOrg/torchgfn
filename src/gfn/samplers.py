@@ -17,16 +17,24 @@ from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 
 
 class Sampler:
-    """`Sampler is a container for a PolicyEstimator.
+    """Wrapper for a PolicyEstimator that enables sampling from GFlowNet environments.
 
-    Can be used to either sample individual actions, sample trajectories from $s_0$,
-    or complete a batch of partially-completed trajectories from a given batch states.
+    A Sampler encapsulates a PolicyEstimator and provides methods to sample individual
+    actions or complete trajectories from GFlowNet environments. It can be used for
+    both forward and backward sampling, depending on the estimator's configuration.
 
     Attributes:
-        estimator: the submitted PolicyEstimator.
+        estimator: The PolicyEstimator used for sampling actions and computing
+            probability distributions.
     """
 
     def __init__(self, estimator: GFNModule) -> None:
+        """Initializes a Sampler with a PolicyEstimator.
+
+        Args:
+            estimator: The PolicyEstimator to use for sampling actions and computing
+                probability distributions.
+        """
         self.estimator = estimator
 
     def sample_actions(
@@ -38,35 +46,36 @@ class Sampler:
         save_logprobs: bool = False,
         **policy_kwargs: Any,
     ) -> Tuple[Actions, torch.Tensor | None, torch.Tensor | None]:
-        """Samples actions from the given states.
+        """Samples actions from the given states using the policy estimator.
+
+        This method samples actions from the probability distribution defined by the
+        policy estimator.
+
+        When sampling off-policy, ensure to set `save_logprobs=False`. Log probabilities
+        for off-policy actions should be calculated separately during GFlowNet training.
 
         Args:
-            env: The environment to sample actions from.
-            states: A batch of states.
-            conditioning: An optional tensor of conditioning information.
-            save_estimator_outputs: If True, the estimator outputs will be returned.
-            save_logprobs: If True, calculates and saves the log probabilities of sampled
-                actions.
-            policy_kwargs: keyword arguments to be passed to the
-                `to_probability_distribution` method of the estimator. For example, for
-                DiscretePolicyEstimators, the kwargs can contain the `temperature`
-                parameter, `epsilon`, and `sf_bias`. In the continuous case these
-                kwargs will be user defined. This can be used to, for example, sample
-                off-policy.
-
-        When sampling off policy, ensure to `save_estimator_outputs` and not
-            `calculate logprobs`. Log probabilities are instead calculated during the
-            computation of `PF` as part of the `GFlowNet` class, and the estimator
-            outputs are required for estimating the logprobs of these off policy
-            actions.
+            env: The environment where the states and actions are defined.
+            states: A batch of states to sample actions from.
+            conditioning: Optional tensor of conditioning information for conditional
+                policies. If provided, the estimator must support conditional sampling.
+            save_estimator_outputs: If True, returns the raw outputs from the estimator
+                before conversion to probability distributions. This is useful for
+                off-policy training with tempered policies.
+            save_logprobs: If True, calculates and returns the log probabilities of
+                the sampled actions under the policy distribution. This is useful for
+                on-policy training.
+            **policy_kwargs: Keyword arguments passed to the estimator's
+                `to_probability_distribution` method. Common parameters include:
+                - `temperature`: Scalar to divide logits by before softmax
+                - `epsilon`: Probability of choosing random actions (exploration)
+                - `sf_bias`: Bias to apply to exit action logits
 
         Returns:
-            A tuple of tensors containing:
-             - An Actions object containing the sampled actions.
-             - An optional tensor of shape `batch_shape` containing the log probabilities of
-                the sampled actions under the probability distribution of the given
-                states.
-             - An optional tensor of shape `batch_shape` containing the estimator outputs
+            A tuple containing:
+            - An Actions object with the sampled actions
+            - Optional tensor of log probabilities (if save_logprobs=True)
+            - Optional tensor of estimator outputs (if save_estimator_outputs=True)
         """
         # TODO: Should estimators instead ignore None for the conditioning vector?
         if conditioning is not None:
@@ -110,33 +119,39 @@ class Sampler:
         save_logprobs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:
-        """Sample trajectories sequentially.
+        """Samples complete trajectories from the environment.
+
+        This method samples trajectories by sequentially sampling actions from the
+        policy estimator. It supports both forward and backward sampling, depending on
+        the estimator's `is_backward` flag. If forward sampling, it samples until all
+        trajectories reach the sink state. If backward sampling, it samples until all
+        trajectories reach the initial state.
 
         Args:
             env: The environment to sample trajectories from.
-            n: If given, a batch of n_trajectories will be sampled all
-                starting from the environment's s_0.
-            states: If given, trajectories would start from such states. Otherwise,
-                trajectories are sampled from $s_o$ and n_trajectories must be provided.
-            conditioning: An optional tensor of conditioning information.
-            save_estimator_outputs: If True, the estimator outputs will be returned. This
-                is useful for off-policy training with tempered policy.
-            save_logprobs: If True, calculates and saves the log probabilities of sampled
-                actions. This is useful for on-policy training.
-            policy_kwargs: keyword arguments to be passed to the
-                `to_probability_distribution` method of the estimator. For example, for
-                DiscretePolicyEstimators, the kwargs can contain the `temperature`
-                parameter, `epsilon`, and `sf_bias`. In the continuous case these
-                kwargs will be user defined. This can be used to, for example, sample
-                off-policy.
+            n: Number of trajectories to sample, all starting from s0. Must be
+                provided if `states` is None.
+            states: Initial states to start trajectories from. It should have batch_shape
+                of length 1 (no trajectory dim). If `None`, `n` must be provided and we
+                initialize `n` trajectories with the environment's initial state.
+            conditioning: Optional tensor of conditioning information for conditional
+                policies. Must match the batch shape of states.
+            save_estimator_outputs: If True, saves the estimator outputs for each
+                step. Useful for off-policy training with tempered policies.
+            save_logprobs: If True, calculates and saves the log probabilities of
+                sampled actions. Useful for on-policy training.
+            **policy_kwargs: Keyword arguments passed to the policy estimator.
+                See `sample_actions` for details.
 
-        Returns: A Trajectories object representing the batch of sampled trajectories.
+        Returns:
+            A Trajectories object containing the sampled trajectories with batch_shape
+            (max_length+1, n_trajectories) for states and (max_length, n_trajectories)
+            for actions.
 
-        Raises:
-            AssertionError: When both states and n_trajectories are specified.
-            AssertionError: When states are not linear.
+        Note:
+            For backward trajectories, the reward is computed at the initial state
+            (s0) rather than the terminal state (sf).
         """
-
         if states is None:
             assert n is not None, "Either kwarg `states` or `n` must be specified"
             states = env.reset(batch_shape=(n,))
@@ -299,17 +314,30 @@ class Sampler:
 
 class LocalSearchSampler(Sampler):
     """Sampler equipped with local search capabilities.
-    The local search operation is based on back-and-forth heuristic, first proposed
-    by Zhang et al. 2022 (https://arxiv.org/abs/2202.01361) for negative sampling
-    and further explored its effectiveness in various applications by Kim et al. 2023
-    (https://arxiv.org/abs/2310.02710).
+
+    The LocalSearchSampler extends the basic Sampler with local search functionality
+    based on the back-and-forth heuristic. This approach was first proposed by
+    [Zhang et al. 2022](https://arxiv.org/abs/2202.01361) and further explored by
+    [Kim et al. 2023](https://arxiv.org/abs/2310.02710).
+
+    The local search process involves:
+    1. Taking a trajectory and performing K backward steps using a backward policy
+    2. Reconstructing the trajectory from the junction state using the forward policy
+    3. Optionally applying Metropolis-Hastings acceptance criterion
 
     Attributes:
-        pf_estimator: the submitted PolicyEstimator for the forward pass.
-        pb_estimator: the PolicyEstimator for the backward pass.
+        estimator: The forward PolicyEstimator (inherited from Sampler).
+        backward_sampler: A Sampler instance with the backward PolicyEstimator.
     """
 
     def __init__(self, pf_estimator: GFNModule, pb_estimator: GFNModule):
+        """Initializes a LocalSearchSampler with forward and backward estimators.
+
+        Args:
+            pf_estimator: The forward PolicyEstimator for sampling and reconstructing
+                trajectories.
+            pb_estimator: The backward PolicyEstimator for backtracking trajectories.
+        """
         super().__init__(pf_estimator)
         self.backward_sampler = Sampler(pb_estimator)
 
@@ -328,27 +356,36 @@ class LocalSearchSampler(Sampler):
     ) -> tuple[Trajectories, torch.Tensor]:
         """Performs local search on a batch of trajectories.
 
+        This method implements the local search algorithm by:
+        1. For each trajectory, performing K backward steps to reach a junction state
+        2. Reconstructing the trajectory from the junction state using the forward policy
+        3. Optionally applying Metropolis-Hastings acceptance criterion to decide whether
+           to accept the new trajectory.
+
         Args:
             env: The environment to sample trajectories from.
             trajectories: The batch of trajectories to perform local search on.
-            conditioning: An optional tensor of conditioning information.
-            save_estimator_outputs: If True, the estimator outputs will be returned. This
-                is useful for off-policy training with tempered policy.
-            save_logprobs: If True, calculates and saves the log probabilities of sampled
-                actions. This is useful for on-policy training.
-            back_steps: The number of backward steps.
-            back_ratio: The ratio of the number of backward steps to the length of the trajectory.
-            use_metropolis_hastings: If True, applies Metropolis-Hastings acceptance criterion.
-            policy_kwargs: keyword arguments to be passed to the
-                `to_probability_distribution` method of the estimator. For example, for
-                DiscretePolicyEstimators, the kwargs can contain the `temperature`
-                parameter, `epsilon`, and `sf_bias`. In the continuous case these
-                kwargs will be user defined. This can be used to, for example, sample
-                off-policy.
+            conditioning: Optional tensor of conditioning information for conditional
+                policies. Must match the batch shape of states.
+            save_estimator_outputs: If True, saves the estimator outputs for each
+                step. Useful for off-policy training with tempered policies.
+            save_logprobs: If True, calculates and saves the log probabilities of
+                sampled actions. Useful for on-policy training.
+            back_steps: Number of backward steps to take. Must be provided if
+                `back_ratio` is None.
+            back_ratio: Ratio of trajectory length to use for backward steps.
+                Must be provided if `back_steps` is None.
+            use_metropolis_hastings: If True, applies Metropolis-Hastings acceptance
+                criterion. If False, accepts new trajectories if they have higher
+                rewards.
+            debug: If True, performs additional validation checks for debugging.
+            **policy_kwargs: Keyword arguments passed to the policy estimator.
+                See `sample_actions` for details.
 
         Returns:
-            A tuple of Trajectories object and a boolean tensor indicating whether the
-            trajectory was updated.
+            A tuple containing:
+            - A Trajectories object refined by local search
+            - A boolean tensor indicating which trajectories were updated
         """
         # TODO: Implement local search for GraphStates.
         if isinstance(env.States, GraphStates):
@@ -483,42 +520,53 @@ class LocalSearchSampler(Sampler):
         n: Optional[int] = None,
         states: Optional[States] = None,
         conditioning: Optional[torch.Tensor] = None,
-        save_estimator_outputs: bool = False,  # FIXME: currently not work when this is True
-        save_logprobs: bool = False,  # TODO: Support save_logprobs=True
+        save_estimator_outputs: bool = False,  # FIXME: currently not work if this is True
+        save_logprobs: bool = False,  # FIXME: currently not work if this is True
         n_local_search_loops: int = 0,
         back_steps: torch.Tensor | None = None,
         back_ratio: float | None = None,
         use_metropolis_hastings: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:
-        """Sample trajectories sequentially with optional local search.
+        """Samples trajectories with optional local search operations.
+
+        This method extends the basic trajectory sampling with local search operations.
+        After sampling initial trajectories, it performs multiple rounds of local search
+        to potentially improve the trajectory quality in terms of the reward.
 
         Args:
             env: The environment to sample trajectories from.
-            n: If given, a batch of n_trajectories will be sampled all
-                starting from the environment's s_0.
-            states: If given, trajectories would start from such states. Otherwise,
-                trajectories are sampled from $s_o$ and n_trajectories must be provided.
-            conditioning: An optional tensor of conditioning information.
-            save_estimator_outputs: If True, the estimator outputs will be returned. This
-                is useful for off-policy training with tempered policy.
-            save_logprobs: If True, calculates and saves the log probabilities of sampled
-                actions. This is useful for on-policy training.
-            n_local_search_loops: The number of local search loops.
-            back_steps: The number of backward steps.
-            back_ratio: The ratio of the number of backward steps to the length of the trajectory.
-            use_metropolis_hastings: If True, applies Metropolis-Hastings acceptance criterion.
-            policy_kwargs: keyword arguments to be passed to the
-                `to_probability_distribution` method of the estimator. For example, for
-                DiscretePolicyEstimators, the kwargs can contain the `temperature`
-                parameter, `epsilon`, and `sf_bias`. In the continuous case these
-                kwargs will be user defined. This can be used to, for example, sample
-                off-policy.
+            n: Number of trajectories to sample, all starting from s0. Must be
+                provided if `states` is None.
+            states: Initial states to start trajectories from. It should have batch_shape
+                of length 1 (no trajectory dim). If `None`, `n` must be provided and we
+                initialize `n` trajectories with the environment's initial state.
+            conditioning: Optional tensor of conditioning information for conditional
+                policies. Must match the batch shape of states.
+            save_estimator_outputs: If True, saves the estimator outputs for each
+                step. Useful for off-policy training with tempered policies.
+            save_logprobs: If True, calculates and saves the log probabilities of
+                sampled actions. Useful for on-policy training.
+            n_local_search_loops: Number of local search loops to perform after
+                initial sampling. Each loop creates additional trajectories.
+            back_steps: Number of backward steps to take. Must be provided if
+                `back_ratio` is None.
+            back_ratio: Ratio of trajectory length to use for backward steps.
+                Must be provided if `back_steps` is None.
+            use_metropolis_hastings: If True, applies Metropolis-Hastings acceptance
+                criterion. If False, accepts new trajectories if they have higher
+                rewards.
+            **policy_kwargs: Keyword arguments passed to the policy estimator.
+                See `sample_actions` for details.
 
-        Returns: A Trajectories object representing the batch of sampled trajectories,
-            where the batch size is n * (1 + n_local_search_loops).
+        Returns:
+            A Trajectories object representing the batch of sampled trajectories,
+            where the number of trajectories is n * (1 + n_local_search_loops).
+
+        Note:
+            The final trajectories container contains both the initial trajectories
+            and the improved trajectories from local search.
         """
-
         trajectories = super().sample_trajectories(
             env,
             n,
@@ -538,7 +586,7 @@ class LocalSearchSampler(Sampler):
             device=trajectories.states.device,
         )
 
-        for it in range(1, n_local_search_loops):  # 0-th loop is the initial sampling
+        for it in range(n_local_search_loops):
             # Search phase
             ls_trajectories, is_updated = self.local_search(
                 env,
@@ -574,13 +622,40 @@ class LocalSearchSampler(Sampler):
         recon_trajectories_log_pb: torch.Tensor | None = None,
         debug: bool = False,
     ) -> tuple[Trajectories, torch.Tensor | None, torch.Tensor | None]:
-        """
-        Combine `prev_trajectories` and `recon_trajectories` to obtain `new_trajectories`.
-        Specifically, `new_trajectories` is constructed by replacing certain portion of
-        the `prev_trajectories` with `recon_trajectories`. See self.local_search for how
-        to generate `prev_trajectories` and `recon_trajectories`.
-        """
+        """Combines previous and reconstructed trajectories to create new trajectories.
 
+        This static method combines two trajectory segments: `prev_trajectories` and
+        `recon_trajectories` to create `new_trajectories`. Specifically,
+        `new_trajectories` is constructed by replacing certain portion of the
+        `prev_trajectories` with `recon_trajectories`. See self.local_search for how
+        to generate `prev_trajectories` and `recon_trajectories`.
+
+        Args:
+            n_prevs: Tensor indicating how many steps to take from prev_trajectories
+                for each trajectory in the batch.
+            prev_trajectories: Trajectories obtained from backward sampling.
+            recon_trajectories: Trajectories obtained from forward reconstruction.
+            prev_trajectories_log_pf: Optional log probabilities for forward policy
+                on `prev_trajectories`.
+            recon_trajectories_log_pf: Optional log probabilities for forward policy
+                on `recon_trajectories`.
+            prev_trajectories_log_pb: Optional log probabilities for backward policy
+                on `prev_trajectories`.
+            recon_trajectories_log_pb: Optional log probabilities for backward policy
+                on `recon_trajectories`.
+            debug: If True, performs additional validation checks for debugging.
+
+        Returns:
+            A tuple containing:
+            - the `new_trajectories` Trajectories object with the combined trajectories
+            - the `new_trajectories_log_pf` tensor of combined forward log probabilities
+            - the `new_trajectories_log_pb` tensor of combined backward log probabilities
+
+        Note:
+            This method performs complex tensor operations to efficiently combine
+            trajectory segments. The debug mode compares the vectorized approach
+            with a for-loop implementation to ensure correctness.
+        """
         new_trajectories_log_pf = None
         new_trajectories_log_pb = None
 
