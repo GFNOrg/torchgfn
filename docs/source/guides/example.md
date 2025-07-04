@@ -1,10 +1,10 @@
-# Quickstart: Compact Example
+# Quickstart
 
 This example, which shows how to use the library for a simple discrete environment, requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]` or `pip install torchgfn[scripts]`.
 
-For many more detailed examples on various uses of `torchgfn`, see the [tutorials](tutorials/README.md).
+For many more detailed examples on various uses of `torchgfn`, see the [tutorials](../../tutorials/README.md).
 
-In the first example, we will train a Tarjectory Balance GFlowNet:
+In the first example, we will train a Trajectory Balance GFlowNet:
 
 ```python
 import torch
@@ -123,5 +123,4 @@ for i in (pbar := tqdm(range(1000))):
     optimizer.step()
     if i % 25 == 0:
         pbar.set_postfix({"loss": loss.item()})
-
 ```
