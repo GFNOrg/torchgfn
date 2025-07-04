@@ -1,4 +1,4 @@
-### Defining a new GFlowNet
+# Defining a new GFlowNet
 
 To define a new `GFlowNet`, the user needs to define a class which subclasses `GFlowNet` and implements the following methods:
 
