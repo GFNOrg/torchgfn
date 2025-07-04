@@ -617,6 +617,12 @@ class GraphEnv(Env):
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
+        self.dummy_action = self.Actions.make_dummy_actions(
+            (1,), device=self.device
+        ).tensor
+        self.exit_action = self.Actions.make_exit_actions(
+            (1,), device=self.device
+        ).tensor
 
     @property
     def device(self) -> torch.device:
