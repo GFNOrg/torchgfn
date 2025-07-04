@@ -32,9 +32,9 @@ Containers are collections of `States`, along with other information, such as re
 - [Trajectories](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
 - [StatesContainer](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/states_container.py), representing a batch of states with optional conditioning, particularly useful for flow matching algorithms.
 
-These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of the [ReplayBuffer](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/replay_buffer.py) class.
+These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of the [ReplayBuffer](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/replay_buffer.py) class.
 
-They inherit from the base `Container` [class](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/base.py), indicating some helpful methods.
+They inherit from the base `Container` [class](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/base.py), indicating some helpful methods.
 
 In most cases, one needs to sample complete trajectories. From a batch of trajectories, various training samples can be generated:
 - Use `Trajectories.to_transitions()` and `Trajectories.to_states()` for edge-decomposable or state-decomposable losses

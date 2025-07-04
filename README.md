@@ -12,7 +12,7 @@
 
 </p>
 <p align="center">
-  <a href="https://torchgfn.readthedocs.io/en/latest/">Documentation</a> ~ <a href="https://github.com/saleml/torchgfn">Code</a> ~ <a href="https://arxiv.org/abs/2305.14594">Paper</a>
+  <a href="https://torchgfn.readthedocs.io/en/latest/">Documentation</a> ~ <a href="https://github.com/gfnorg/torchgfn">Code</a> ~ <a href="https://arxiv.org/abs/2305.14594">Paper</a>
 </p>
 
 # torchgfn: a Python package for GFlowNets
@@ -57,7 +57,7 @@ The library is shipped with many environments under the `gym`, including discret
 
 ### Getting Started with example scripts & notebooks
 
-See [this simple example](docs/source/guides/example.md) for a concise description of how to train a gflownet using the library, and [this README](tutorials/README.md) for an overview of the included [example scripts and notebooks](https://github.com/saleml/torchgfn/tree/master/tutorials/examples) drawn from the included gym environments. Where indicated, these scripts are intended to reproduce published results.
+See [this simple example](docs/source/guides/example.md) for a concise description of how to train a gflownet using the library, and [this README](tutorials/README.md) for an overview of the included [example scripts and notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples) drawn from the included gym environments. Where indicated, these scripts are intended to reproduce published results.
 
 ## Contributing
 
