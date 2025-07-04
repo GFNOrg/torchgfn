@@ -78,20 +78,15 @@ class StatesContainer(Container, Generic[StateType]):
             and self.is_terminating.dtype == torch.bool
         )
 
-        # self._log_rewards can be torch.Tensor of shape same as self.states or None.
-        if log_rewards is not None:
-            self._log_rewards = log_rewards
-        else:  # if log_rewards is None, there are two cases
-            if self.states.tensor.nelement() == 0:  # 1) initializing with empty states
-                self._log_rewards = torch.full(
-                    size=(0,), fill_value=-float("inf"), dtype=torch.float, device=device
-                )
-            else:  # 2) we don't have log_rewards and need to compute them on the fly
-                self._log_rewards = None
+        self._log_rewards = log_rewards
         assert self._log_rewards is None or (
             self._log_rewards.shape == batch_shape
             and self._log_rewards.dtype == torch.float
         )
+
+    @property
+    def device(self) -> torch.device:
+        return self.states.device
 
     @property
     def intermediary_states(self) -> StateType:
@@ -141,14 +136,9 @@ class StatesContainer(Container, Generic[StateType]):
                 dtype=torch.float,
                 device=self.states.device,
             )
-            try:
-                self._log_rewards[self.is_terminating] = self.env.log_reward(
-                    self.terminating_states
-                )
-            except NotImplementedError:
-                self._log_rewards[self.is_terminating] = torch.log(
-                    self.env.reward(self.terminating_states)
-                )
+            self._log_rewards[self.is_terminating] = self.env.log_reward(
+                self.terminating_states
+            )
 
         assert self._log_rewards.shape == self.states.batch_shape
         return self._log_rewards
@@ -163,6 +153,17 @@ class StatesContainer(Container, Generic[StateType]):
     def extend(self, other: StatesContainer[StateType]) -> None:
         """Extend this container with another StatesContainer container."""
         assert len(self.states.batch_shape) == len(other.states.batch_shape) == 1
+
+        if len(other) == 0:
+            return
+
+        if len(self) == 0 and other._log_rewards is not None:
+            self._log_rewards = torch.full(
+                size=(0,),
+                fill_value=-float("inf"),
+                dtype=torch.float,
+                device=self.device,
+            )
 
         self.states.extend(other.states)
         self.is_terminating = torch.cat(
@@ -208,7 +209,3 @@ class StatesContainer(Container, Generic[StateType]):
             is_terminating=is_terminating,
             log_rewards=log_rewards,
         )
-
-    @property
-    def device(self) -> torch.device:
-        return self.states.device

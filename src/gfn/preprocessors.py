@@ -4,9 +4,9 @@ from typing import Callable
 import torch
 from einops import rearrange
 from torch.nn.functional import one_hot
-from torch_geometric.data import Batch as GeometricBatch
 
 from gfn.states import DiscreteStates, GraphStates, States
+from gfn.utils.graphs import GeometricBatch
 
 
 class Preprocessor(ABC):
@@ -31,9 +31,7 @@ class Preprocessor(ABC):
     def __call__(self, states: States | GraphStates) -> torch.Tensor | GeometricBatch:
         """Transform the states to the input of the neural network, calling the preprocess method."""
         out = self.preprocess(states)
-        if isinstance(out, GeometricBatch):
-            assert out.x.shape[-1] == self.output_dim
-        else:
+        if isinstance(out, torch.Tensor):
             assert out.shape[-1] == self.output_dim
 
         return out

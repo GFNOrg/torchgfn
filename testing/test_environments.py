@@ -5,10 +5,12 @@ import pytest
 import torch
 from tensordict import TensorDict
 
-from gfn.actions import GraphActionType
+from gfn.actions import GraphActions, GraphActionType
 from gfn.env import NonValidActionsError
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuilding
+from gfn.gym.perfect_tree import PerfectBinaryTree
+from gfn.gym.set_addition import SetAddition
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.states import GraphStates
 
@@ -319,26 +321,34 @@ def test_get_grid():
 
 
 def test_graph_env():
-    FEATURE_DIM = 8
     BATCH_SIZE = 3
     NUM_NODES = 5
 
     env = GraphBuilding(
-        feature_dim=FEATURE_DIM, state_evaluator=lambda s: torch.zeros(s.batch_shape)
+        state_evaluator=lambda s: torch.zeros(s.batch_shape),
+        num_node_classes=10,
+        num_edge_classes=10,
     )
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.batch_shape == (BATCH_SIZE,)
     action_cls = env.make_actions_class()
 
     # We can't add an edge without nodes.
-    with pytest.raises(NonValidActionsError):
-        actions = action_cls(
+    with pytest.raises(IndexError):
+        actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
-                    "edge_index": torch.randint(
-                        0, 10, (BATCH_SIZE, 2), dtype=torch.long
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_EDGE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
                 },
                 batch_size=BATCH_SIZE,
@@ -348,42 +358,45 @@ def test_graph_env():
 
     # Add nodes.
     for _ in range(NUM_NODES):
-        actions = action_cls(
+        actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_NODE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
         )
         states = env._step(states, actions)
 
-    assert states.tensor.x.shape == (BATCH_SIZE * NUM_NODES, FEATURE_DIM)
+    assert states.tensor.x.shape == (BATCH_SIZE * NUM_NODES, 1)
 
     # We can't add a node with the same features.
     with pytest.raises(NonValidActionsError):
         first_node_mask = torch.arange(len(states.tensor.x)) // BATCH_SIZE == 0
-        actions = action_cls(
+        actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "features": states.tensor.x[first_node_mask],
-                },
-                batch_size=BATCH_SIZE,
-            )
-        )
-        states = env._step(states, actions)
-
-    # We can't add a self-loop edge for GraphBuilding env.
-    with pytest.raises(NonValidActionsError):
-        edge_index = torch.randint(0, 3, (BATCH_SIZE,), dtype=torch.long)
-        actions = action_cls(
-            TensorDict(
-                {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
-                    "edge_index": torch.stack([edge_index, edge_index], dim=1),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_NODE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: states.tensor.x[first_node_mask],
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -391,23 +404,41 @@ def test_graph_env():
         states = env._step(states, actions)
 
     # Add edges.
-    for i in range(NUM_NODES - 1):
-        actions = action_cls(
+    for i in range(NUM_NODES**2 - NUM_NODES):
+        actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
-                    "edge_index": torch.tensor([[i, i + 1]] * BATCH_SIZE),
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_EDGE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
         )
         states = env._step(states, actions)
 
-    actions = action_cls(
+    actions = action_cls.from_tensor_dict(
         TensorDict(
             {
-                "action_type": torch.full((BATCH_SIZE,), GraphActionType.EXIT),
+                GraphActions.ACTION_TYPE_KEY: torch.full(
+                    (BATCH_SIZE,), GraphActionType.EXIT
+                ),
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
             },
             batch_size=BATCH_SIZE,
         )
@@ -418,17 +449,21 @@ def test_graph_env():
     assert isinstance(sf_states, GraphStates)
     env.reward(sf_states)
 
-    num_edges_per_batch = len(states.tensor.edge_attr) // BATCH_SIZE
     # Remove edges.
-    for i in reversed(range(num_edges_per_batch)):
-        edge_idx = torch.arange(i, (i + 1) * BATCH_SIZE, i + 1)
-        actions = action_cls(
+    for i in reversed(range(NUM_NODES**2 - NUM_NODES)):
+        actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "features": states.tensor.edge_attr[edge_idx],
-                    "edge_index": states.tensor.edge_index[:, edge_idx].T
-                    - states.tensor.ptr[:-1, None],
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_EDGE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -437,13 +472,20 @@ def test_graph_env():
 
     # We can't remove edges that don't exist.
     with pytest.raises(NonValidActionsError):
-        actions = action_cls(
+        actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_EDGE),
-                    "features": torch.rand((BATCH_SIZE, FEATURE_DIM)),
-                    "edge_index": torch.randint(
-                        0, 10, (BATCH_SIZE, 2), dtype=torch.long
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_EDGE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
                 },
                 batch_size=BATCH_SIZE,
@@ -454,26 +496,43 @@ def test_graph_env():
     # Remove nodes.
     for i in reversed(range(1, NUM_NODES + 1)):
         edge_idx = torch.arange(BATCH_SIZE) * i
-        actions = action_cls(
+        actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "features": states.tensor.x[edge_idx],
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_NODE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: states.tensor.x[edge_idx],
+                    GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
         )
         states = env._backward_step(states, actions)
 
-    assert states.tensor.x.shape == (0, FEATURE_DIM)
+    assert states.tensor.x.shape == (0, 1)
 
     # Add one random node again
-    features = torch.rand((BATCH_SIZE, FEATURE_DIM))
-    actions = action_cls(
+    actions = action_cls.from_tensor_dict(
         TensorDict(
             {
-                "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                "features": features,
+                GraphActions.ACTION_TYPE_KEY: torch.full(
+                    (BATCH_SIZE,), GraphActionType.ADD_NODE
+                ),
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
             },
             batch_size=BATCH_SIZE,
         )
@@ -482,11 +541,21 @@ def test_graph_env():
 
     # We can't remove nodes that don't exist.
     with pytest.raises(NonValidActionsError):
-        actions = action_cls(
+        actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
-                    "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                    "features": features + 1e-5,
+                    GraphActions.ACTION_TYPE_KEY: torch.full(
+                        (BATCH_SIZE,), GraphActionType.ADD_NODE
+                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.ones(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -494,14 +563,198 @@ def test_graph_env():
         states = env._backward_step(states, actions)
 
     # Remove the node.
-    actions = action_cls(
+    actions = action_cls.from_tensor_dict(
         TensorDict(
             {
-                "action_type": torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
-                "features": features,
+                GraphActions.ACTION_TYPE_KEY: torch.full(
+                    (BATCH_SIZE,), GraphActionType.ADD_NODE
+                ),
+                GraphActions.NODE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.EDGE_INDEX_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
             },
             batch_size=BATCH_SIZE,
         )
     )
     states = env._backward_step(states, actions)
-    assert states.tensor.x.shape == (0, FEATURE_DIM)
+    assert states.tensor.x.shape == (0, 1)
+
+
+def test_set_addition_fwd_step():
+    N_ITEMS = 4
+    MAX_ITEMS = 3
+    BATCH_SIZE = 2
+
+    env = SetAddition(
+        n_items=N_ITEMS, max_items=MAX_ITEMS, reward_fn=lambda s: s.sum(-1)
+    )
+    states = env.reset(batch_shape=BATCH_SIZE)
+    assert states.tensor.shape == (BATCH_SIZE, N_ITEMS)
+
+    # Add item 0 and 1
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Add item 2 and 3
+    actions = env.actions_from_tensor(format_tensor([2, 3]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[1, 0, 1, 0], [0, 1, 0, 1]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Try adding existing items (invalid)
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    with pytest.raises(NonValidActionsError):
+        env._step(states, actions)
+
+    # Add item 3 and 0
+    actions = env.actions_from_tensor(format_tensor([3, 0]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[1, 0, 1, 1], [1, 1, 0, 1]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)  # Now has 3 items
+
+    # Try adding another item (invalid, max_items reached)
+    actions = env.actions_from_tensor(format_tensor([1, 2]))
+    with pytest.raises(NonValidActionsError):
+        env._step(states, actions)
+
+    # Exit action (valid)
+    actions = env.actions_from_tensor(format_tensor([N_ITEMS, N_ITEMS]))
+    final_states = env._step(states, actions)
+    assert torch.all(final_states.is_sink_state)
+
+    # Check rewards
+    rewards = env.reward(states)
+    expected_rewards = torch.tensor([3.0, 3.0])
+    assert torch.allclose(rewards, expected_rewards)
+
+
+def test_set_addition_bwd_step():
+    N_ITEMS = 5
+    MAX_ITEMS = 4
+    BATCH_SIZE = 2
+
+    env = SetAddition(
+        n_items=N_ITEMS, max_items=MAX_ITEMS, reward_fn=lambda s: s.sum(-1)
+    )
+
+    # Start from a state with 3 items
+    initial_tensor = torch.tensor([[1, 1, 0, 1, 0], [0, 1, 1, 0, 1]], dtype=torch.float)
+    states = env.states_from_tensor(initial_tensor)
+
+    # Remove item 1 and 2
+    actions = env.actions_from_tensor(format_tensor([1, 2]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[1, 0, 0, 1, 0], [0, 1, 0, 0, 1]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Try removing non-existent item (invalid)
+    actions = env.actions_from_tensor(format_tensor([2, 0]))
+    with pytest.raises(NonValidActionsError):
+        env._backward_step(states, actions)
+
+    # Remove item 0 and 4
+    actions = env.actions_from_tensor(format_tensor([0, 4]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[0, 0, 0, 1, 0], [0, 1, 0, 0, 0]], dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Remove item 3 and 1 (last items)
+    actions = env.actions_from_tensor(format_tensor([3, 1]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.zeros((BATCH_SIZE, N_ITEMS), dtype=torch.float)
+    assert torch.equal(states.tensor, expected_states)
+    assert torch.all(states.is_initial_state)
+
+
+def test_perfect_binary_tree_fwd_step():
+    DEPTH = 3
+    BATCH_SIZE = 2
+    N_ACTIONS = 3  # 0=left, 1=right, 2=exit
+
+    env = PerfectBinaryTree(depth=DEPTH, reward_fn=lambda s: s.float() + 1)
+    states = env.reset(batch_shape=BATCH_SIZE)
+    assert states.tensor.shape == (BATCH_SIZE, 1)
+    assert torch.all(states.tensor == 0)
+
+    # Go left, Go right
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[1], [2]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Go right, Go left
+    actions = env.actions_from_tensor(format_tensor([1, 0]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[4], [5]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Go left, Go left
+    actions = env.actions_from_tensor(format_tensor([0, 0]))
+    states = env._step(states, actions)
+    expected_states = torch.tensor([[9], [11]], dtype=torch.long)  # Leaf nodes
+    assert torch.equal(states.tensor, expected_states)
+    assert torch.all(torch.isin(states.tensor, env.terminating_states.tensor))
+
+    # Try moving from leaf node (invalid)
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    with pytest.raises(NonValidActionsError):
+        env._step(states, actions)
+
+    # Exit action (valid)
+    actions = env.actions_from_tensor(format_tensor([N_ACTIONS - 1, N_ACTIONS - 1]))
+    final_states = env._step(states, actions)
+    assert torch.all(final_states.is_sink_state)
+
+    # Check rewards
+    rewards = env.reward(states)
+    expected_rewards = torch.tensor([[10.0], [12.0]])
+    assert torch.allclose(rewards, expected_rewards)
+
+
+def test_perfect_binary_tree_bwd_step():
+    DEPTH = 3
+
+    env = PerfectBinaryTree(depth=DEPTH, reward_fn=lambda s: s.float() + 1)
+
+    # Start from leaf nodes 8 and 12
+    initial_tensor = torch.tensor([[8], [12]], dtype=torch.long)
+    states = env.states_from_tensor(initial_tensor)
+
+    # Try backward exit action (invalid)
+    actions = env.actions_from_tensor(format_tensor([2, 2]))
+    with pytest.raises(RuntimeError):
+        env._backward_step(states, actions)
+
+    # Go up (from right child, from left child)
+    # Node 8 is right child of 3 (action 1). Node 12 is left child of 5 (action 0)
+    actions = env.actions_from_tensor(format_tensor([1, 0]))
+    # Go up (Node 8 is right child of 3 -> bwd action 1; Node 12 is right child of 5 -> bwd action 1)
+    actions = env.actions_from_tensor(format_tensor([1, 1]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[3], [5]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Go up (from left child, from right child)
+    # Node 3 is left child of 1 (action 0). Node 5 is right child of 2 (action 1)
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    # Go up (Node 3 is left child of 1 -> bwd action 0; Node 5 is left child of 2 -> bwd action 0)
+    actions = env.actions_from_tensor(format_tensor([0, 0]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[1], [2]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+
+    # Go up to root (from left child, from right child)
+    # Node 1 is left child of 0 (action 0). Node 2 is right child of 0 (action 1)
+    actions = env.actions_from_tensor(format_tensor([0, 1]))
+    states = env._backward_step(states, actions)
+    expected_states = torch.tensor([[0], [0]], dtype=torch.long)
+    assert torch.equal(states.tensor, expected_states)
+    assert torch.all(states.is_initial_state)

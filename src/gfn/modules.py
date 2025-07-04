@@ -1,13 +1,17 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from collections import defaultdict
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
 
+from gfn.actions import GraphActions, GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
-from gfn.utils.distributions import UnsqueezedCategorical
+from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
+from gfn.utils.graphs import GeometricBatch
 
 REDUCTION_FXNS = {
     "mean": torch.mean,
@@ -96,13 +100,16 @@ class GFNModule(ABC, nn.Module):
 
     @property
     @abstractmethod
-    def expected_output_dim(self) -> int:
+    def expected_output_dim(self) -> Optional[int]:
         """Expected output dimension of the module."""
 
     def check_output_dim(self, module_output: torch.Tensor) -> None:
         """Check that the output of the module has the correct shape. Raises an error if not."""
         assert module_output.dtype == torch.float
-        if module_output.shape[-1] != self.expected_output_dim:
+        if (
+            self.expected_output_dim is not None
+            and module_output.shape[-1] != self.expected_output_dim
+        ):
             raise ValueError(
                 f"{self.__class__.__name__} output dimension should be {self.expected_output_dim}"
                 + f" but is {module_output.shape[-1]}."
@@ -205,6 +212,7 @@ class ScalarEstimator(GFNModule):
             out = self.reduction_fxn(out, -1)
 
         assert out.shape[-1] == 1
+
         return out
 
 
@@ -251,8 +259,8 @@ class DiscretePolicyEstimator(GFNModule):
         self,
         states: DiscreteStates,
         module_output: torch.Tensor,
-        temperature: float = 1.0,
         sf_bias: float = 0.0,
+        temperature: float = 1.0,
         epsilon: float = 0.0,
     ) -> Categorical:
         """Returns a probability distribution given a batch of states and module output.
@@ -262,31 +270,40 @@ class DiscretePolicyEstimator(GFNModule):
         Args:
             states: The states to use.
             module_output: The output of the module as a tensor of shape (*batch_shape, output_dim).
-            temperature: scalar to divide the logits by before softmax. Does nothing
-                if set to 1.0 (default), in which case it's on policy.
             sf_bias: scalar to subtract from the exit action logit before dividing by
                 temperature. Does nothing if set to 0.0 (default), in which case it's
                 on policy.
+            temperature: scalar to divide the logits by before softmax. Does nothing
+                if set to 1.0 (default), in which case it's on policy.
             epsilon: with probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy."""
-        assert module_output.shape[-1] == self.expected_output_dim
+        assert (
+            module_output.shape[-1] == self.expected_output_dim
+        ), f"module_output.shape[-1] = {module_output.shape[-1]}, expected_output_dim = {self.expected_output_dim}"
+        assert temperature > 0.0
+        assert 0.0 <= epsilon <= 1.0
 
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
         logits[~masks] = -float("inf")
 
-        # Forward policy supports exploration in many implementations.
-        if temperature != 1.0 or sf_bias != 0.0 or epsilon != 0.0:
+        if sf_bias != 0.0:
             logits[:, -1] -= sf_bias
-            probs = torch.softmax(logits / temperature, dim=-1)
-            uniform_dist_probs = masks.float() / masks.sum(dim=-1, keepdim=True)
+
+        if temperature != 1.0:
+            logits /= temperature
+
+        probs = torch.softmax(logits, dim=-1)
+
+        if epsilon != 0.0:
+            uniform_dist_probs = torch.where(
+                masks.sum(dim=-1, keepdim=True) == 0,
+                torch.zeros_like(masks),
+                masks.float() / masks.sum(dim=-1, keepdim=True),
+            )
             probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
 
-            return UnsqueezedCategorical(probs=probs)
-
-        # LogEdgeFlows are greedy, as are most P_B.
-        else:
-            return UnsqueezedCategorical(logits=logits)
+        return UnsqueezedCategorical(probs=probs)
 
 
 class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
@@ -450,54 +467,131 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-# class GraphEdgeEstimator(DiscretePolicyEstimator):
-#     """A module which outputs a fixed logits for the actions (edge actions, exit action).
+class DiscreteGraphPolicyEstimator(GFNModule):
 
-#     Args:
-#         n_nodes: The number of nodes in the graph.
-#     """
+    def __init__(
+        self,
+        module: nn.Module,
+        preprocessor: Preprocessor | None = None,
+        is_backward: bool = False,
+    ):
+        super().__init__(module, preprocessor, is_backward)
 
-#     def __init__(
-#         self,
-#         module: nn.Module,
-#         preprocessor: Preprocessor | None = None,
-#         is_backward: bool = False,
-#     ):
-#         assert hasattr(module, "n_nodes"), "module must have a `n_nodes` attribute"
-#         assert isinstance(module.n_nodes, int), "n_nodes must be an integer"
-#         assert hasattr(module, "output_dim"), "module must have a `output_dim` attribute"
-#         assert isinstance(module.output_dim, int), "output_dim must be an integer"
+    def forward(self, input: States | torch.Tensor | GeometricBatch) -> torch.Tensor:
+        """Forward pass of the module.
 
-#         super().__init__(
-#             module=module,
-#             n_actions=module.output_dim,  # type: ignore
-#             preprocessor=preprocessor,
-#             is_backward=is_backward,
-#         )
+        Args:
+            input: The input to the module, as states or a tensor.
 
-#     def forward(self, input: States | torch.Tensor) -> torch.Tensor:
-#         """Forward pass of the module.
+        Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        if isinstance(input, States):
+            input = self.preprocessor(input)
 
-#         Args:
-#             input: The input to the module, as states or a tensor.
+        out = self.module(input)
 
-#         Returns the output of the module, as a tensor of shape (*batch_shape, output_dim).
-#         """
-#         if isinstance(input, States):
-#             input = self.preprocessor(input)
+        return out
 
-#         out = self.module(input)
+    def to_probability_distribution(
+        self,
+        states: States,
+        module_output: TensorDict,
+        sf_bias: float = 0.0,
+        temperature: dict[str, float] = defaultdict(lambda: 1.0),
+        epsilon: dict[str, float] = defaultdict(lambda: 0.0),
+    ) -> Distribution:
+        masks = states.backward_masks if self.is_backward else states.forward_masks
+        logits = module_output
+        logits[GraphActions.ACTION_TYPE_KEY][~masks[GraphActions.ACTION_TYPE_KEY]] = (
+            -float("inf")
+        )
+        logits[GraphActions.NODE_CLASS_KEY][~masks[GraphActions.NODE_CLASS_KEY]] = (
+            -float("inf")
+        )
+        logits[GraphActions.EDGE_CLASS_KEY][~masks[GraphActions.EDGE_CLASS_KEY]] = (
+            -float("inf")
+        )
+        logits[GraphActions.EDGE_INDEX_KEY][~masks[GraphActions.EDGE_INDEX_KEY]] = (
+            -float("inf")
+        )
 
-#         assert out.shape[-1] == self.expected_output_dim
-#         return out
+        # Check if no possible edge can be added,
+        # and assert that action type cannot be ADD_EDGE
+        no_possible_edge_index = torch.isneginf(logits[GraphActions.EDGE_INDEX_KEY]).all(
+            -1
+        )
+        assert torch.isneginf(
+            logits[GraphActions.ACTION_TYPE_KEY][
+                no_possible_edge_index, GraphActionType.ADD_EDGE
+            ]
+        ).all()
+        logits[GraphActions.EDGE_INDEX_KEY][no_possible_edge_index] = 0.0
 
-#     @property
-#     def n_nodes(self):
-#         return self.module.n_nodes
+        # Check if no possible edge class can be added,
+        # and assert that action type cannot be ADD_EDGE
+        no_possible_edge_class = torch.isneginf(logits[GraphActions.EDGE_CLASS_KEY]).all(
+            -1
+        )
+        assert torch.isneginf(
+            logits[GraphActions.ACTION_TYPE_KEY][
+                no_possible_edge_class, GraphActionType.ADD_EDGE
+            ]
+        ).all()
+        logits[GraphActions.EDGE_CLASS_KEY][no_possible_edge_class] = 0.0
 
-#     @property
-#     def expected_output_dim(self) -> int:
-#         if not isinstance(self.module.output_dim, int):
-#             return int(self.module.output_dim)  # type: ignore
-#         else:
-#             return self.module.output_dim
+        # Check if no possible node can be added,
+        # and assert that action type cannot be ADD_NODE
+        no_possible_node = torch.isneginf(logits[GraphActions.NODE_CLASS_KEY]).all(-1)
+        assert torch.isneginf(
+            logits[GraphActions.ACTION_TYPE_KEY][
+                no_possible_node, GraphActionType.ADD_NODE
+            ]
+        ).all()
+        logits[GraphActions.NODE_CLASS_KEY][no_possible_node] = 0.0
+
+        probs = {}
+        for key in logits.keys():
+            probs[key] = self.logits_to_probs(
+                logits[key],
+                masks[key],
+                sf_bias=sf_bias if key == GraphActions.ACTION_TYPE_KEY else 0.0,
+                temperature=temperature[key],
+                epsilon=epsilon[key],
+            )
+
+        return GraphActionDistribution(probs=TensorDict(probs))
+
+    @staticmethod
+    def logits_to_probs(
+        logits: torch.Tensor,
+        masks: torch.Tensor,
+        sf_bias: float = 0.0,
+        temperature: float = 1.0,
+        epsilon: float = 0.0,
+    ) -> torch.Tensor:
+        assert temperature > 0.0
+        assert 0.0 <= epsilon <= 1.0
+
+        if sf_bias != 0.0:
+            logits[..., GraphActionType.EXIT] = (
+                logits[..., GraphActionType.EXIT] - sf_bias
+            )
+
+        if temperature != 1.0:
+            logits = logits / temperature
+
+        probs = torch.softmax(logits, dim=-1)
+
+        if epsilon != 0.0:
+            masks_sum = masks.sum(dim=-1, keepdim=True)
+            probs = torch.where(
+                masks_sum == 0,
+                probs,
+                (1 - epsilon) * probs + epsilon * masks.to(logits.dtype) / masks_sum,
+            )
+
+        return probs
+
+    @property
+    def expected_output_dim(self) -> Optional[int]:
+        return None  # the output_dim of a TensorDict is not well-defined

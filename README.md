@@ -226,30 +226,7 @@ for i in (pbar := tqdm(range(1000))):
 
 ## Contributing
 
-Before the first commit:
-
-```bash
-pip install -e .[dev,scripts]
-pre-commit install
-pre-commit run --all-files
-```
-
-Run `pre-commit` after staging, and before committing. Make sure all the tests pass (By running `pytest`). Note that the `pytest` hook of `pre-commit` only runs the tests in the `testing/` folder. To run all the tests, which take longer, run `pytest` manually.
-
-The codebase uses:
-- `black` formatter for code style
-- `flake8` for linting
-- `pyright` for static type checking
-
-The pre-commit hooks ensure code quality and type safety across the project. The pyright configuration includes all project directories including tutorials/examples and testing.
-
-To make the docs locally:
-
-```bash
-cd docs
-make html
-open build/html/index.html
-```
+Please see the [Contributing Guidelines](.github/CONTRIBUTING.md).
 
 ## Details about the codebase
 
@@ -420,8 +397,10 @@ The repository includes several example environments and training scripts. Below
    - Shows how to extend basic GFlowNet training with sophisticated sampling
 
 Other environments available in the package include:
-- Discrete Energy Based Model: A simple environment for learning energy-based distributions
-- Box Environment: A continuous environment for sampling from distributions in bounded spaces
+- Discrete Energy Based Model (`tutorials/examples/train_discreteebm.py`): A simple environment for learning energy-based distributions
+- Box Environment (`tutorials/examples/train_box.py`): A continuous environment for sampling from distributions in bounded spaces
+- Ring Environment (`tutorials/examples/train_graph_ring.py`): A simple graph building environment for learning to generate ring graphs
+- Bayesian Structure Learning: A graph building environment for learning Bayesian structures ([Deleu et al., 2022](https://arxiv.org/abs/2202.13903))
 - Custom environments can be added by following the environment creation guide in `tutorials/ENV.md`
 
 ## Usage Examples

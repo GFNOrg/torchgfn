@@ -68,7 +68,7 @@ def get_trajectory_pfs(
     valid_states = trajectories.states[state_mask]
     valid_actions = trajectories.actions[action_mask]
 
-    if valid_states.batch_shape != tuple(valid_actions.batch_shape):
+    if valid_states.batch_shape != valid_actions.batch_shape:
         raise AssertionError("Something wrong happening with log_pf evaluations")
 
     if trajectories.has_log_probs and not recalculate_all_logprobs:
@@ -137,7 +137,7 @@ def get_trajectory_pbs(
     valid_states = trajectories.states[state_mask]
     valid_actions = trajectories.actions[action_mask]
 
-    if valid_states.batch_shape != tuple(valid_actions.batch_shape):
+    if valid_states.batch_shape != valid_actions.batch_shape:
         raise AssertionError("Something wrong happening with log_pf evaluations")
 
     if len(valid_states) == 0:

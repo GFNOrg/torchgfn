@@ -13,16 +13,17 @@ Key components:
 import math
 import time
 from argparse import ArgumentParser, Namespace
+from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import torch
 from matplotlib import patches
 
+from gfn.actions import GraphActions
 from gfn.containers import ReplayBuffer
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
-from gfn.modules import DiscretePolicyEstimator
-from gfn.preprocessors import IdentityPreprocessor
+from gfn.modules import DiscreteGraphPolicyEstimator
 from gfn.states import GraphStates
 from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
 
@@ -76,17 +77,15 @@ class RingReward(object):
         Returns:
             A tensor of rewards with the same batch shape as states.
         """
-        if states.tensor.edge_index.numel() == 0:
-            return torch.full(states.batch_shape, self.eps_val, device=self.device)
-
         out = torch.full(
             (len(states),), self.eps_val, device=self.device
         )  # Default reward.
 
         for i in range(len(states)):
             graph = states[i]
-            adj_matrix = torch.zeros(graph.tensor.num_nodes, graph.tensor.num_nodes)
-            adj_matrix[graph.tensor.edge_index[0], graph.tensor.edge_index[1]] = 1
+            graph_tensor = graph.tensor
+            adj_matrix = torch.zeros(graph_tensor.x.size(0), graph_tensor.x.size(0))
+            adj_matrix[graph_tensor.edge_index[0], graph_tensor.edge_index[1]] = 1
 
             # Check if each node has exactly one outgoing edge (row sum = 1)
             if not torch.all(adj_matrix.sum(dim=1) == 1):
@@ -107,7 +106,7 @@ class RingReward(object):
                 current = torch.where(adj_matrix[int(current)] == 1)[0].item()
 
                 # If we've visited all nodes and returned to 0, it's a valid ring
-                if len(visited) == graph.tensor.num_nodes and current == 0:
+                if len(visited) == graph_tensor.x.size(0) and current == 0:
                     out[i] = self.reward_val
                     break
 
@@ -132,18 +131,15 @@ class RingReward(object):
         Returns:
             A tensor of rewards with the same batch shape as states
         """
-        if states.tensor.edge_index.numel() == 0:
-            return torch.full(states.batch_shape, self.eps_val, device=self.device)
-
         out = torch.full(
             (len(states),), self.eps_val, device=self.device
         )  # Default reward.
 
         for i in range(len(states)):
             graph = states[i]
-            if graph.tensor.num_nodes == 0:
+            if graph.tensor.x.size(0) == 0:
                 continue
-            adj_matrix = torch.zeros(graph.tensor.num_nodes, graph.tensor.num_nodes)
+            adj_matrix = torch.zeros(graph.tensor.x.size(0), graph.tensor.x.size(0))
             adj_matrix[graph.tensor.edge_index[0], graph.tensor.edge_index[1]] = 1
             adj_matrix[graph.tensor.edge_index[1], graph.tensor.edge_index[0]] = 1
 
@@ -174,7 +170,7 @@ class RingReward(object):
                 next_node = possible[0]
                 prev, current = current, next_node
 
-            if current == start_vertex and len(visited) == graph.tensor.num_nodes:
+            if current == start_vertex and len(visited) == graph.tensor.x.size(0):
                 out[i] = self.reward_val
 
         return out.view(*states.batch_shape)
@@ -202,7 +198,7 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
     for i in range(8):
         current_ax = ax[i // 4, i % 4]
         state = states[i]
-        n_circles = state.tensor.num_nodes
+        n_circles = state.tensor.x.size(0)
         radius = 5
         xs, ys = [], []
         for j in range(n_circles):
@@ -300,48 +296,59 @@ def main(args: Namespace):
     # Choose model type based on USE_GNN flag
     if args.use_gnn:
         module_pf = GraphEdgeActionGNN(
-            env.n_nodes, args.directed, num_conv_layers=args.num_conv_layers
+            env.n_nodes,
+            args.directed,
+            num_conv_layers=args.num_conv_layers,
+            num_edge_classes=env.num_edge_classes,
         )
         module_pb = GraphEdgeActionGNN(
             env.n_nodes,
             args.directed,
             is_backward=True,
             num_conv_layers=args.num_conv_layers,
+            num_edge_classes=env.num_edge_classes,
         )
     else:
-        module_pf = GraphEdgeActionMLP(env.n_nodes, args.directed)
-        module_pb = GraphEdgeActionMLP(env.n_nodes, args.directed, is_backward=True)
+        module_pf = GraphEdgeActionMLP(
+            env.n_nodes,
+            args.directed,
+            num_edge_classes=env.num_edge_classes,
+        )
+        module_pb = GraphEdgeActionMLP(
+            env.n_nodes,
+            args.directed,
+            is_backward=True,
+            num_edge_classes=env.num_edge_classes,
+        )
 
-    pf = DiscretePolicyEstimator(
+    pf = DiscreteGraphPolicyEstimator(
         module=module_pf,
-        n_actions=env.n_actions,
-        preprocessor=IdentityPreprocessor(output_dim=1),
     )
-    pb = DiscretePolicyEstimator(
+    pb = DiscreteGraphPolicyEstimator(
         module=module_pb,
-        n_actions=env.n_actions,
-        preprocessor=IdentityPreprocessor(output_dim=1),
         is_backward=True,
     )
     gflownet = TBGFlowNet(pf, pb).to(device)
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
 
     replay_buffer = ReplayBuffer(
         env,
         capacity=args.batch_size,
-        prioritized=True,
+        prioritized_capacity=True,
     )
 
     losses = []
 
     t1 = time.time()
+    epsilon_dict = defaultdict(float)
     for iteration in range(args.n_iterations):
+        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 0.0
+
         trajectories = gflownet.sample_trajectories(
             env,
             n=args.batch_size,
             save_logprobs=True,
-            epsilon=0.2 * (1 - iteration / args.n_iterations),
+            epsilon=epsilon_dict,
         )
         training_samples = gflownet.to_training_samples(trajectories)
 
@@ -370,7 +377,6 @@ def main(args: Namespace):
         )
         loss.backward()
         optimizer.step()
-        scheduler.step()
         losses.append(loss.item())
 
     t2 = time.time()
@@ -414,12 +420,12 @@ if __name__ == "__main__":
         "--lr", type=float, default=0.001, help="Learning rate for optimizer"
     )
     parser.add_argument(
-        "--batch_size", type=int, default=1024, help="Batch size for training"
+        "--batch_size", type=int, default=128, help="Batch size for training"
     )
     parser.add_argument(
         "--use_buffer",
         action="store_true",
-        default=False,
+        default=True,
         help="Whether to use replay buffer",
     )
 
