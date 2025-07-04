@@ -1,4 +1,4 @@
-# Creating Environments
+# 5. Creating Environments
 
 To create a basic discrete environment, you need to:
 
