@@ -76,8 +76,8 @@ def warn_about_recalculating_logprobs(
     if recalculate_all_logprobs and obj.has_log_probs:
         warnings.warn(
             "Recalculating logprobs for a container that already has them. "
-            "This might be intended, if the log_probs were calculated off-policy."
+            "This might be intended, if the log_probs were calculated off-policy. "
             "However, this is inefficient when training on-policy. In this case, "
             "you should instead call loss() or loss_from_trajectories() with "
-            "recalculate_all_logprobs=False "
+            "recalculate_all_logprobs=False."
         )

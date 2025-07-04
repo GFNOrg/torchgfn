@@ -146,7 +146,12 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
 
 class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
-    """A GFlowNet that uses forward (PF) and backward (PB) policy networks."""
+    """A GFlowNet that uses forward (PF) and backward (PB) policy networks.
+
+    Attributes:
+        pf: The forward policy module.
+        pb: The backward policy module.
+    """
 
     def __init__(self, pf: GFNModule, pb: GFNModule) -> None:
         """Initializes a PFBasedGFlowNet instance.
@@ -211,7 +216,12 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
 
 
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
-    """A GFlowNet that operates on complete trajectories."""
+    """A GFlowNet that operates on complete trajectories.
+
+    Attributes:
+        pf: The forward policy module.
+        pb: The backward policy module.
+    """
 
     def get_pfs_and_pbs(
         self,

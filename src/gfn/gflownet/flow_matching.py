@@ -252,7 +252,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         assert isinstance(states_container.terminating_states, DiscreteStates)
         if recalculate_all_logprobs:
             warnings.warn(
-                "recalculate_all_logprobs is not used for FM. " "Ignoring the argument."
+                "recalculate_all_logprobs is not used for FM. Ignoring the argument."
             )
         del recalculate_all_logprobs  # Unused for FM.
         fm_loss = self.flow_matching_loss(

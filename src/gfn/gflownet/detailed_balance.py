@@ -55,6 +55,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
     3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
+        pf: The forward policy module.
+        pb: The backward policy module.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
             flow of the states.
         forward_looking: Whether to use the forward-looking GFN loss.
@@ -277,14 +279,25 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     r"""The Modified Detailed Balance GFlowNet.
 
-    Only applicable to environments where all states are terminating.
-    See [DAG-GFlowNet](https://arxiv.org/abs/2202.13903) paper for more details.
+    Only applicable to environments where all states are terminating. See section 3.2
+    of [Bayesian Structure Learning with Generative Flow Networks](https://arxiv.org/abs/2202.13903)
+    for more details.
+
+    Attributes:
+        pf: The forward policy module.
+        pb: The backward policy module.
+        logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
+            flow of the states.
+        forward_looking: Whether to use the forward-looking GFN loss.
+        log_reward_clip_min: If finite, clips log rewards to this value.
+        safe_log_prob_min: If True, uses -1e10 as the minimum log probability value
+            to avoid numerical instability, otherwise uses -1e38.
     """
 
     def get_scores(
         self, transitions: Transitions, recalculate_all_logprobs: bool = True
     ) -> torch.Tensor:
-        """Calculates DAG-GFN-style detailed balance scores.
+        """Calculates DAG-GFN-style modified detailed balance scores.
 
         Note that this method is only applicable to environments where all states are
         terminating, i.e., the sink state is reachable from all states.
