@@ -42,7 +42,7 @@ Other environments available in the package include:
 - Box Environment (`tutorials/examples/train_box.py`): A continuous environment for sampling from distributions in bounded spaces.
 - Ring Environment (`tutorials/examples/train_graph_ring.py`): A simple graph building environment for learning to generate ring graphs.
 - Bayesian Structure Learning: A graph building environment for learning Bayesian structures ([Deleu et al., 2022](https://arxiv.org/abs/2202.13903)).
-- Custom environments can be added by following the [environment creation guide](docs/markdown/defining_environments.md).
+- Custom environments can be added by following the [environment creation guide](docs/source/guides/creating_environments.rst).
 
 ## Usage Examples
 

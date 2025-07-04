@@ -26,9 +26,9 @@ Additionally, each subclass needs to define two more class variable tensors:
 
 Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Three containers are available:
 
-- [Transitions](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/transitions.py), representing a batch of transitions $s \rightarrow s'$.
-- [Trajectories](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
-- [StatePairs](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/state_pairs.py), representing pairs of states with optional conditioning, particularly useful for flow matching algorithms.
+- [Transitions](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/transitions.py), representing a batch of transitions $s \rightarrow s'$.
+- [Trajectories](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
+- [StatesContainer](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/states_container.py), representing a batch of states with optional conditioning, particularly useful for flow matching algorithms.
 
 These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of the [ReplayBuffer](https://github.com/saleml/torchgfn/tree/master/src/gfn/containers/replay_buffer.py) class.
 
