@@ -4,6 +4,7 @@ Copied and Adapted from https://github.com/Tikquuss/GflowNets_Tutorial
 
 import itertools
 import multiprocessing
+import platform
 import warnings
 from decimal import Decimal
 from functools import reduce
@@ -17,7 +18,10 @@ from gfn.actions import Actions
 from gfn.env import DiscreteEnv
 from gfn.states import DiscreteStates
 
-multiprocessing.set_start_method("fork")  # multiprocessing-torch compatibility.
+if platform.system() == "Windows":
+    multiprocessing.set_start_method("spawn", force=True)
+else:
+    multiprocessing.set_start_method("fork", force=True)
 
 
 def lcm(a, b):
@@ -119,6 +123,7 @@ class HyperGrid(DiscreteEnv):
             state_shape=state_shape,
             sf=sf,
         )
+        self.States: type[DiscreteStates] = self.States
 
     def update_masks(self, states: DiscreteStates) -> None:
         """Update the masks based on the current states."""
@@ -131,7 +136,9 @@ class HyperGrid(DiscreteEnv):
         )
         states.backward_masks = states.tensor != 0
 
-    def make_random_states_tensor(self, batch_shape: Tuple[int, ...]) -> torch.Tensor:
+    def make_random_states(
+        self, batch_shape: Tuple[int, ...], device: torch.device | None = None
+    ) -> DiscreteStates:
         """Creates a batch of random states.
 
         Args:
@@ -139,11 +146,13 @@ class HyperGrid(DiscreteEnv):
 
         Returns the batch of random states as tensor of shape (*batch_shape, *state_shape).
         """
-        return torch.randint(
-            0, self.height, batch_shape + self.s0.shape, device=self.device
+        device = self.device if device is None else device
+        tensor = torch.randint(
+            0, self.height, batch_shape + self.s0.shape, device=device
         )
+        return self.States(tensor)
 
-    def step(self, states: DiscreteStates, actions: Actions) -> torch.Tensor:
+    def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Take a step in the environment.
 
         Args:
@@ -154,9 +163,9 @@ class HyperGrid(DiscreteEnv):
         """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
         assert new_states_tensor.shape == states.tensor.shape
-        return new_states_tensor
+        return self.States(new_states_tensor)
 
-    def backward_step(self, states: DiscreteStates, actions: Actions) -> torch.Tensor:
+    def backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Take a step in the environment in the backward direction.
 
         Args:
@@ -167,7 +176,7 @@ class HyperGrid(DiscreteEnv):
         """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
         assert new_states_tensor.shape == states.tensor.shape
-        return new_states_tensor
+        return self.States(new_states_tensor)
 
     def reward(self, final_states: DiscreteStates | torch.Tensor) -> torch.Tensor:
         r"""In the normal setting, the reward is:

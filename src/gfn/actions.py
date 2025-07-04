@@ -41,21 +41,33 @@ class Actions(ABC):
         self.tensor = tensor
 
     @property
+    def device(self) -> torch.device:
+        return self.tensor.device
+
+    @property
     def batch_shape(self) -> tuple[int, ...]:
         return tuple(self.tensor.shape)[: -len(self.action_shape)]
 
     @classmethod
-    def make_dummy_actions(cls, batch_shape: tuple[int, ...]) -> Actions:
+    def make_dummy_actions(
+        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
+    ) -> Actions:
         """Creates an Actions object of dummy actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.dummy_action.repeat(*batch_shape, *((1,) * action_ndim))
+        if device is not None:
+            tensor = tensor.to(device)
         return cls(tensor)
 
     @classmethod
-    def make_exit_actions(cls, batch_shape: tuple[int, ...]) -> Actions:
+    def make_exit_actions(
+        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
+    ) -> Actions:
         """Creates an Actions object of exit actions with the given batch shape."""
         action_ndim = len(cls.action_shape)
         tensor = cls.exit_action.repeat(*batch_shape, *((1,) * action_ndim))
+        if device is not None:
+            tensor = tensor.to(device)
         return cls(tensor)
 
     def __len__(self) -> int:
@@ -64,10 +76,6 @@ class Actions(ABC):
     def __repr__(self):
         return f"""{self.__class__.__name__} object of batch shape {self.batch_shape}.
           The subclass did not implement __repr__."""
-
-    @property
-    def device(self) -> torch.device:
-        return self.tensor.device
 
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
@@ -126,7 +134,9 @@ class Actions(ABC):
             if self.batch_shape[0] >= required_first_dim:
                 return
             n = required_first_dim - self.batch_shape[0]
-            dummy_actions = self.__class__.make_dummy_actions((n, self.batch_shape[1]))
+            dummy_actions = self.__class__.make_dummy_actions(
+                (n, self.batch_shape[1]), device=self.device
+            )
             self.tensor = torch.cat((self.tensor, dummy_actions.tensor), dim=0)
         else:
             raise NotImplementedError(
@@ -185,80 +195,50 @@ class GraphActions(Actions):
     - ADD_NODE: Add a node with given features
     - ADD_EDGE: Add an edge between two nodes with given features
     - EXIT: Terminate the trajectory
-
-    Attributes:
-        features_dim: Dimension of node/edge features
-        tensor: TensorDict containing:
-            - action_type: Type of action (GraphActionType)
-            - features: Features for nodes/edges
-            - edge_index: Source/target nodes for edges
     """
 
-    features_dim: ClassVar[int]
+    ACTION_TYPE_KEY = "action_type"
+    NODE_CLASS_KEY = "node_class"
+    EDGE_CLASS_KEY = "edge_class"
+    EDGE_INDEX_KEY = "edge_index"
 
-    def __init__(self, tensor: TensorDict):
+    ACTION_INDICES = {
+        ACTION_TYPE_KEY: 0,
+        NODE_CLASS_KEY: 1,
+        EDGE_CLASS_KEY: 2,
+        EDGE_INDEX_KEY: 3,
+    }
+
+    def __init__(self, tensor: torch.Tensor):
         """Initializes a GraphAction object.
 
         Args:
-            action: a GraphActionType indicating the type of action.
-            features: a tensor of shape (batch_shape, feature_shape) representing the features
-                of the nodes or of the edges, depending on the action type. In case of EXIT
-                action, this can be None.
-            edge_index: an tensor of shape (batch_shape, 2) representing the edge to add.
-                This must defined if and only if the action type is GraphActionType.AddEdge.
+            tensor: A tensor of shape (*batch_shape, 4) containing the action type, node class, edge class, and edge index.
         """
-        self._batch_shape = tensor["action_type"].shape
-
-        features = tensor.get("features", None)
-        if features is None:
-            assert torch.all(
-                torch.logical_or(
-                    tensor["action_type"] == GraphActionType.EXIT,
-                    tensor["action_type"] == GraphActionType.DUMMY,
-                )
+        if tensor.shape[-1] != 4:
+            raise ValueError(
+                f"Expected tensor of shape (*batch_shape, 4), got {tensor.shape}.\n"
+                "The last dimension should contain the action type, node class, edge class, and edge index."
             )
-            features = torch.zeros((*self.batch_shape, self.features_dim))
-        edge_index = tensor.get("edge_index", None)
-        if edge_index is None:
-            assert torch.all(tensor["action_type"] != GraphActionType.ADD_EDGE)
-            edge_index = torch.zeros((*self.batch_shape, 2), dtype=torch.long)
-
-        self.tensor = TensorDict(
-            {
-                "action_type": tensor["action_type"],
-                "features": features,
-                "edge_index": edge_index,
-            },
-            batch_size=self.batch_shape,
-        )
+        self.tensor = tensor
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return self._batch_shape
+        assert self.tensor.shape[-1] == 4
+        return self.tensor.shape[:-1]
+
+    @classmethod
+    def from_tensor_dict(cls, tensor_dict: TensorDict) -> GraphActions:
+        """Creates a GraphActions object from a tensor dict."""
+        batch_shape = tensor_dict[cls.ACTION_TYPE_KEY].shape
+        action_type = tensor_dict[cls.ACTION_TYPE_KEY].reshape(*batch_shape, 1)
+        node_class = tensor_dict[cls.NODE_CLASS_KEY].reshape(*batch_shape, 1)
+        edge_class = tensor_dict[cls.EDGE_CLASS_KEY].reshape(*batch_shape, 1)
+        edge_index = tensor_dict[cls.EDGE_INDEX_KEY].reshape(*batch_shape, 1)
+        return cls(torch.cat([action_type, node_class, edge_class, edge_index], dim=-1))
 
     def __repr__(self):
         return f"""GraphAction object with {self.batch_shape} actions."""
-
-    def _compare(self, other: GraphActions) -> torch.Tensor:
-        """Compares the actions to another GraphAction object.
-
-        Args:
-            other: GraphAction object to compare.
-
-        Returns: boolean tensor of shape batch_shape indicating whether the actions are equal.
-        """
-        action_compare = torch.all(
-            self.tensor["action_type"] == other.tensor["action_type"]
-        )
-        exit_compare = (
-            torch.all(self.tensor["features"] == other.tensor["features"])
-            | action_compare
-            == GraphActionType.EXIT
-        )
-        edge_compare = (action_compare != GraphActionType.ADD_EDGE) | (
-            torch.all(self.tensor["edge_index"] == other.tensor["edge_index"])
-        )
-        return action_compare & exit_compare & edge_compare
 
     @property
     def is_exit(self) -> torch.Tensor:
@@ -273,47 +253,45 @@ class GraphActions(Actions):
     @property
     def action_type(self) -> torch.Tensor:
         """Returns the action type tensor."""
-        return self.tensor["action_type"]
+        return self.tensor[..., self.ACTION_INDICES[self.ACTION_TYPE_KEY]]
 
     @property
-    def features(self) -> torch.Tensor:
-        """Returns the features tensor."""
-        return self.tensor["features"]
+    def node_class(self) -> torch.Tensor:
+        """Returns the node class tensor."""
+        return self.tensor[..., self.ACTION_INDICES[self.NODE_CLASS_KEY]]
+
+    @property
+    def edge_class(self) -> torch.Tensor:
+        """Returns the edge class tensor."""
+        return self.tensor[..., self.ACTION_INDICES[self.EDGE_CLASS_KEY]]
 
     @property
     def edge_index(self) -> torch.Tensor:
         """Returns the edge index tensor."""
-        return self.tensor["edge_index"]
+        return self.tensor[..., self.ACTION_INDICES[self.EDGE_INDEX_KEY]]
 
     @classmethod
-    def make_dummy_actions(cls, batch_shape: tuple[int]) -> GraphActions:
+    def make_dummy_actions(
+        cls, batch_shape: tuple[int], device: torch.device
+    ) -> GraphActions:
         """Creates a GraphActions object of dummy actions with the given batch shape."""
-        return cls(
-            TensorDict(
-                {
-                    "action_type": torch.full(
-                        batch_shape, fill_value=GraphActionType.DUMMY
-                    ),
-                },
-                batch_size=batch_shape,
-            )
-        )
+        # TODO: make default dtype int32
+        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64, device=device)
+        tensor[..., cls.ACTION_INDICES[cls.ACTION_TYPE_KEY]] = GraphActionType.DUMMY
+        return cls(tensor)
 
     @classmethod
-    def make_exit_actions(cls, batch_shape: tuple[int]) -> Actions:
+    def make_exit_actions(
+        cls, batch_shape: tuple[int], device: torch.device
+    ) -> GraphActions:
         """Creates an GraphActions object of exit actions with the given batch shape."""
-        return cls(
-            TensorDict(
-                {
-                    "action_type": torch.full(
-                        batch_shape, fill_value=GraphActionType.EXIT
-                    ),
-                },
-                batch_size=batch_shape,
-            )
-        )
+        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64, device=device)
+        tensor[..., cls.ACTION_INDICES[cls.ACTION_TYPE_KEY]] = GraphActionType.EXIT
+        return cls(tensor)
 
-    def extend(self, other: Actions) -> None:
-        """Extends an Actions instance with another Actions instance."""
-        super().extend(other)
-        self._batch_shape = self.tensor.batch_size
+    @classmethod
+    def edge_index_action_to_src_dst(
+        cls, edge_index_action: torch.Tensor, n_nodes: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Converts the edge index action to source and destination node indices."""
+        raise NotImplementedError("Not implemented.")
