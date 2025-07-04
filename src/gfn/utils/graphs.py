@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 import hashlib
+from typing import TYPE_CHECKING
+
 import torch
 from torch_geometric.data import Batch, Data
-
 
 if TYPE_CHECKING:
     from gfn.states import GraphStates
@@ -65,7 +65,7 @@ def graph_states_share_storage(a: GraphStates, b: GraphStates) -> bool:
                 return True  # first hit confirms shared storage.
     return False
 
-  
+
 def from_edge_indices(
     ei0: int | torch.Tensor,
     ei1: int | torch.Tensor,
