@@ -1,4 +1,4 @@
-### Losses
+# Losses
 
 GFlowNets can be trained with different losses, each of which requires a different parametrization, which we call in this library a `GFlowNet`. A `GFlowNet` includes one or multiple `GFNModule`s, at least one of which implements a `to_probability_distribution` function. They also need to implement a `loss` function, that takes as input either [`States`, `Transitions`, or `Trajectories` `Container`](docs/source/guides/states_actions_containers.md) instances, depending on the loss.
 

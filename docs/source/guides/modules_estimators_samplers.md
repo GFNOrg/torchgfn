@@ -1,4 +1,6 @@
-### Modules
+# Modules, Estimators, and Samplers
+
+## Modules & Estimators
 
 Training GFlowNets requires one or multiple estimators, called `GFNModule`s, which is an abstract subclass of `torch.nn.Module`. In addition to the usual `forward` function, `GFNModule`s need to implement a `required_output_dim` attribute, to ensure that the outputs have the required dimension for the task at hand; and some (but not all) need to implement a `to_probability_distribution` function.
 
@@ -13,7 +15,7 @@ In all `GFNModule`s, note that the input of the `forward` function is a `States`
 
 For discrete environments, a `Tabular` module is provided, where a lookup table is used instead of a neural network. Additionally, a `UniformPB` module is provided, implementing a uniform backward policy. These modules are provided [here](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/utils/modules.py).
 
-### Samplers
+## Samplers
 
 A [Sampler](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/samplers.py) object defines how actions are sampled (`sample_actions()`) at each state, and trajectories  (`sample_trajectories()`), which can sample a batch of trajectories starting from a given set of initial states or starting from $s_0$. It requires a `GFNModule` that implements the `to_probability_distribution` function. For simple off-policy sampling (e.g., epsilon-noisy or tempering), you can pass appropriate `policy_kwargs` to the `Sampler` object, which will be used by the `GFNModule`. If you need more complex off-policy sampling, you can subclass the `Sampler` object, and override the `sample_actions` and `sample_trajectories` methods.
 

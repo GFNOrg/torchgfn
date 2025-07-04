@@ -7,9 +7,8 @@
 
    self
    guides/example
-   guides/creating_environments
-   guides/advanced
    guides/states_actions_containers
    guides/modules_estimators_samplers
    guides/losses
-   guides/example
+   guides/creating_environments
+   guides/advanced
