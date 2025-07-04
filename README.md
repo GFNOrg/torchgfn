@@ -57,7 +57,7 @@ Currently, the library is shipped with three environments: two discrete environm
 
 ### Getting Started with example scripts & notebooks
 
-See [this example](docs/example.md) for a concise example of how to train a simple gflownet.
+See [this example](docs/source/guides/example.md) for a concise example of how to train a simple gflownet.
 
 [Example scripts and notebooks](https://github.com/saleml/torchgfn/tree/master/tutorials/examples) for the included environments are provided. Where indicated, these scripts are intended to reproduce published results.
 
@@ -67,8 +67,8 @@ Please see the [Contributing Guidelines](.github/CONTRIBUTING.md).
 
 ## Components of the Library
 
-+ [Defining Environments](docs/markdown/defining_environments.md): For most applications of `torchgfn`, the main challenge will be to define a stateless environment which will produce a valid sampler.
-+ [States, Actions, & Containers](docs/markdown/states_actions_containers.md): The two core elements of `torchgfn` are the concepts of states, which are emitted by stateless environments, and actions, which transform states through the the environment logic. These are encapsulated with metadata in containers.
-+ [Modules, Estimators, & Samplers](docs/markdown/modules_estimators_samplers.md): The components of a GFlowNet policy (those which select actions given a state), are encapsulated in Estimators. If the policy is a neural network, that logic is captures in a Module. This estimator can then be used with a Sampler to produce states (in the form of trajectories or transitions).
-+ [Losses](docs/markdown/losses.md): Each type of `GFlowNet` has a specific parameterization related to a specific loss.
-+ [Advanced Usage: Extending `torchgfn` with Custom GFlowNets](docs/markdown/advanced.md): While `torchgfn` aims to support major usages of GFlowNets, we hope this will also serve as a platform for the community to extend the possible use cases of the technology. This guide details how one can extend
++ [Defining Environments](docs/source/guides/defining_environments.md): For most applications of `torchgfn`, the main challenge will be to define a stateless environment which will produce a valid sampler.
++ [States, Actions, & Containers](docs/source/guides/states_actions_containers.md): The two core elements of `torchgfn` are the concepts of states, which are emitted by stateless environments, and actions, which transform states through the the environment logic. These are encapsulated with metadata in containers.
++ [Modules, Estimators, & Samplers](docs/source/guides/modules_estimators_samplers.md): The components of a GFlowNet policy (those which select actions given a state), are encapsulated in Estimators. If the policy is a neural network, that logic is captures in a Module. This estimator can then be used with a Sampler to produce states (in the form of trajectories or transitions).
++ [Losses](docs/source/guides/losses.md): Each type of `GFlowNet` has a specific parameterization related to a specific loss.
++ [Advanced Usage: Extending `torchgfn` with Custom GFlowNets](docs/source/guides/advanced.md): While `torchgfn` aims to support major usages of GFlowNets, we hope this will also serve as a platform for the community to extend the possible use cases of the technology. This guide details how one can extend
