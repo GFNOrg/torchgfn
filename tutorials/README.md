@@ -15,15 +15,15 @@ The repository includes several example environments and training scripts. There
    - A starting point for understanding GFlowNets.
 
 2. `tutorials/examples/train_hypergrid.py`: The main training script with many features:
-   - Multiple loss functions (FM, TB, DB, SubTB, ZVar, ModifiedDB)
-   - Weights & Biases integration for experiment tracking
-   - Support for replay buffers (including prioritized)
+   - Multiple loss functions (FM, TB, DB, SubTB, ZVar, ModifiedDB).
+   - Weights & Biases integration for experiment tracking.
+   - Support for replay buffers (including prioritized).
    - Visualization capabilities for 2D environments:
-     * True probability distribution
-     * Learned probability distribution
-     * L1 distance evolution over training
-   - Various hyperparameter options
-   - Reproduces results from multiple papers (see script docstring)
+     * True probability distribution.
+     * Learned probability distribution.
+     * L1 distance evolution over training.
+   - Various hyperparameter options.
+   - Reproduces results from multiple papers (see script docstring).
    - Scalable, multi node training.
 
 3. `tutorials/examples/train_hypergrid_simple_ls.py`: Demonstrates advanced sampling strategies:
@@ -38,9 +38,11 @@ The repository includes several example environments and training scripts. There
 
 
 Other environments available in the package include:
-- Discrete Energy Based Model: A simple environment for learning energy-based distributions.
-- Box Environment: A continuous environment for sampling from distributions in bounded spaces.
-- Custom environments can be added by following the environment creation guide in `tutorials/ENV.md`
+- Discrete Energy Based Model (`tutorials/examples/train_discreteebm.py`): A simple environment for learning energy-based distributions.
+- Box Environment (`tutorials/examples/train_box.py`): A continuous environment for sampling from distributions in bounded spaces.
+- Ring Environment (`tutorials/examples/train_graph_ring.py`): A simple graph building environment for learning to generate ring graphs.
+- Bayesian Structure Learning: A graph building environment for learning Bayesian structures ([Deleu et al., 2022](https://arxiv.org/abs/2202.13903)).
+- Custom environments can be added by following the [environment creation guide](docs/markdown/defining_environments.md).
 
 ## Usage Examples
 

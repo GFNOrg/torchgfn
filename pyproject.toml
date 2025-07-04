@@ -49,8 +49,10 @@ tox = { version = "*", optional = true }
 
 # scripts dependencies.
 matplotlib = { version = "*", optional = true }
+networkx = { version = "*", optional = true }
+pgmpy = { version = "<1.0.0", optional = true }
 scikit-learn = {version = "*", optional = true }
-scipy = { version = "*", optional = true }
+scipy = { version = "<=1.15.3", optional = true }
 tqdm = { version = "*", optional = true }
 wandb = { version = "*", optional = true }
 
@@ -75,6 +77,8 @@ dev = [
 
 scripts = [
     "matplotlib",
+    "networkx",
+    "pgmpy",
     "scikit-learn",
     "scipy",
     "tqdm",
@@ -89,6 +93,8 @@ all = [
     "matplotlib",
     "myst-parser",
     "nbmake",
+    "networkx",
+    "pgmpy",
     "pre-commit",
     "pyright",
     "pytest",

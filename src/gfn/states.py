@@ -25,12 +25,12 @@ from gfn.utils.graphs import GeometricBatch, get_edge_indices
 
 
 class States(ABC):
-    r"""Base class for states, representing nodes in the DAG.
+    r"""Base class for states, representing nodes in the DAG of a GFlowNet.
 
-    For each environment, a subclass of `States` is needed. A `States` object
+    Each environment needs to define a subclass of `States`. A `States` object
     is a collection of multiple states (nodes of the DAG) that supports batching.
     Generally, if a state is represented with a tensor of shape (*state_shape), a batch
-    of states is represented with a States object, with the attribute `tensor` of shape
+    of states is represented with a `States` object, with the attribute `tensor` of shape
     (*batch_shape, *state_shape). Other representations are possible (e.g., state as a
     string, numpy array, graph, etc.), but these may need additional logic to support
     batching (see `GraphStates` below for an example).
@@ -51,8 +51,17 @@ class States(ABC):
     batch of states only.
 
     Attributes:
-        tensor: Tensor representing a batch of states.
-        _log_rewards: Stores the log rewards of each state.
+        tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of
+            states.
+        _log_rewards: (Optional) tensor of shape (*batch_shape,) storing the log rewards
+            of each state.
+        state_shape: Class variable, a tuple defining the shape of a single state.
+        s0: Class variable, a tensor of shape (*state_shape,) representing the initial
+            state.
+        sf: Class variable, a tensor of shape (*state_shape,) representing the sink
+            state.
+        make_random_states: Class variable, a callable that returns a random state.
+            This is used to initialize random states.
     """
 
     state_shape: ClassVar[tuple[int, ...]]
@@ -141,7 +150,7 @@ class States(ABC):
     def make_initial_states(
         cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> States:
-        r"""Creates a batch of initial states ($s_0$).
+        r"""Creates a States object with all states set to $s_0$.
 
         Args:
             batch_shape: Shape of the batch dimensions.
@@ -164,7 +173,7 @@ class States(ABC):
     def make_sink_states(
         cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> States:
-        r"""Creates a batch of sink states ($s_f$).
+        r"""Creates a States object with all states set to $s_f$.
 
         Args:
             batch_shape: Shape of the batch dimensions.
@@ -261,7 +270,7 @@ class States(ABC):
         should be 1 or 2.
 
         Args:
-            other: Batch of states to concatenate to.
+            other: States object to be concatenated to the current States object.
         """
         if len(other.batch_shape) == len(self.batch_shape) == 1:
             # This corresponds to adding a state to a trajectory

@@ -21,19 +21,25 @@
 
 ## Installing the package
 
-The codebase requires python >= 3.10. To install the latest stable version:
+The codebase requires python >= 3.10. To install the latest stable version with the core dependencies:
 
 ```bash
 pip install torchgfn
 ```
 
-Optionally, to run scripts:
+`torchgfn` supports installation with multiple sets of dependencies, under the following tags:
+
+- `dev`: dependencies required for development of the core library.
+- `scripts`: dependencies needed to run examples in `tutorials/examples/'.
+- `all`: everything.
+
+and can be called by running
 
 ```bash
 pip install torchgfn[scripts]
 ```
 
-To install the cutting edge version (from the `main` branch):
+Or to install the latest release (from the `main` branch) with all dependencies in a Conda environment:
 
 ```bash
 git clone https://github.com/GFNOrg/torchgfn.git
