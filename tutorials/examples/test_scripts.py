@@ -335,7 +335,9 @@ def test_box(delta: float, loss: str):
         test_2 = np.isclose(final_jsd, tgt2, atol=1e-2)
         test_3 = np.isclose(final_jsd, tgt3, atol=1e-2)
         test_4 = np.isclose(final_jsd, tgt4, atol=1e-2)
-        assert test_1 or test_2 or test_3 or test_4, f"final_jsd: {final_jsd} not close to [{tgt_1}, {tgt_2}, {tgt_3}, {tgt_4}]"
+        assert (
+            test_1 or test_2 or test_3 or test_4
+        ), f"final_jsd: {final_jsd} not close to [{tgt1}, {tgt2}, {tgt3}, {tgt4}]"
 
     elif loss == "DB" and delta == 0.1:
         tgt = 0.2757
