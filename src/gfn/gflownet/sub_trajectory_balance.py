@@ -294,7 +294,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories,
-            fill_value=-float("inf"),
             recalculate_all_logprobs=recalculate_all_logprobs,
         )
 

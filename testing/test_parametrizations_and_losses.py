@@ -110,18 +110,9 @@ def test_get_scores(
     )
     gflownet_on = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     gflownet_off = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
-    scores_on = gflownet_on.get_trajectories_scores(
-        trajectories, recalculate_all_logprobs=False
-    )
-    scores_off = gflownet_off.get_trajectories_scores(
-        trajectories, recalculate_all_logprobs=True
-    )
-    assert all(
-        [
-            torch.all(torch.abs(scores_on[i] - scores_off[i]) < 1e-4)
-            for i in range(len(scores_on))
-        ]
-    )
+    scores_on = gflownet_on.get_scores(trajectories, recalculate_all_logprobs=False)
+    scores_off = gflownet_off.get_scores(trajectories, recalculate_all_logprobs=True)
+    assert torch.all(torch.abs(scores_on - scores_off) < 1e-4)
 
 
 def PFBasedGFlowNet_with_return(

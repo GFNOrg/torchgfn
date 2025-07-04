@@ -18,22 +18,30 @@ warnings.filterwarnings("once", message="recalculate_all_logprobs is not used fo
 
 
 class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
-    r"""Flow Matching GFlowNet, with edge flow estimator.
+    r"""GFlowNet for the Flow Matching loss with an edge flow estimator.
 
     $\mathcal{O}_{edge}$ is the set of functions from the non-terminating edges
     to $\mathbb{R}^+$. Which is equivalent to the set of functions from the internal nodes
-    (i.e. without $s_f$) to $(\mathbb{R})^{n_actions}$, without the exit action (No need for
-    positivity if we parametrize log-flows).
+    (i.e. without $s_f$) to $(\mathbb{R})^{n_actions}$, without the exit action (No need
+    for positivity if we parametrize log-flows).
 
-    The loss is described in section
+    The flow matching loss is described in section
     3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
-        logF: an estimator of log edge flows.
-        alpha: weight for the reward matching loss.
+        logF: A DiscretePolicyEstimator or ConditionalDiscretePolicyEstimator for
+            estimating the log flow of the edges (states -> next_states).
+        alpha: A scalar weight for the reward matching loss.
     """
 
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
+        """Initializes a FMGFlowNet instance.
+
+        Args:
+            logF: A DiscretePolicyEstimator or ConditionalDiscretePolicyEstimator for
+                estimating the log flow of the edges (states -> next_states).
+            alpha: A scalar weight for the reward matching loss.
+        """
         super().__init__()
 
         assert isinstance(
@@ -52,7 +60,19 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:
-        """Sample trajectory with optional kwargs controling the policy."""
+        """Samples trajectories using the edge flow estimator.
+
+        Args:
+            env: The discrete environment to sample trajectories from.
+            n: Number of trajectories to sample.
+            conditioning: Optional conditioning tensor for conditional environments.
+            save_logprobs: Whether to save the log-probabilities of the actions.
+            save_estimator_outputs: Whether to save the estimator outputs.
+            **policy_kwargs: Additional keyword arguments for the sampler.
+
+        Returns:
+            A Trajectories object containing the sampled trajectories.
+        """
         if not env.is_discrete:
             raise NotImplementedError(
                 "Flow Matching GFlowNet only supports discrete environments for now."
@@ -75,15 +95,21 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         conditioning: torch.Tensor | None,
         reduction: str = "mean",
     ) -> torch.Tensor:
-        """Computes the FM for the provided states.
+        """Computes the flow matching loss for the (non-initial) states.
 
         The Flow Matching loss is defined as the log-sum incoming flows minus log-sum
         outgoing flows. The states should not include $s_0$. The batch shape should be
         `(n_states,)`. As of now, only discrete environments are handled.
 
-        Raises:
-            AssertionError: If the batch shape is not linear.
-            AssertionError: If any state is at $s_0$.
+        Args:
+            env: The discrete environment where the states are sampled from.
+            states: The DiscreteStates object to evaluate (should not include $s_0$).
+            conditioning: Optional conditioning tensor for conditional environments.
+            reduction: The reduction method to use ('mean', 'sum', or 'none').
+
+        Returns:
+            The computed flow matching loss as a tensor. The shape depends on the
+            reduction method.
         """
         if len(states) == 0:
             return torch.tensor(0.0, device=states.device)
@@ -168,7 +194,19 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         log_rewards: torch.Tensor | None,
         reduction: str = "mean",
     ) -> torch.Tensor:
-        """Calculates the reward matching loss from the terminating states."""
+        """Computes the reward matching loss for the terminating states.
+
+        Args:
+            env: The discrete environment where the states are sampled from (unused).
+            terminating_states: The DiscreteStates object containing terminating states.
+            conditioning: Optional conditioning tensor for conditional environments.
+            log_rewards: The log rewards for the terminating states.
+            reduction: The reduction method to use ('mean', 'sum', or 'none').
+
+        Returns:
+            The computed reward matching loss as a tensor. The shape depends on the
+            reduction method.
+        """
         if len(terminating_states) == 0:
             return torch.tensor(0.0, device=terminating_states.device)
         del env  # Unused
@@ -192,11 +230,24 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
-        """Given a batch of non-terminal and terminal states, compute a loss.
+        """Computes the flow matching loss for a batch of states.
 
-        Unlike the GFlowNets Foundations paper, we allow more flexibility by passing a
-        StatesContainer container that holds both the internal states of the trajectories
-        (i.e. non-terminal states) and the terminal states."""
+        The flow matching loss is described in section
+        3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
+        Unlike the original implementation, we allow more flexibility by treating the
+        intermediary and terminating states separately.
+
+        Args:
+            env: The discrete environment where the states are sampled from.
+            states_container: The StatesContainer object containing both intermediary and
+                terminating states.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs (unused for FM).
+            reduction: The reduction method to use ('mean', 'sum', or 'none').
+
+        Returns:
+            The computed flow matching loss as a tensor. The shape depends on the
+            reduction method.
+        """
         assert isinstance(states_container.intermediary_states, DiscreteStates)
         assert isinstance(states_container.terminating_states, DiscreteStates)
         if recalculate_all_logprobs:
@@ -208,17 +259,26 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             env,
             states_container.intermediary_states,
             states_container.intermediary_conditioning,
+            reduction=reduction,
         )
         rm_loss = self.reward_matching_loss(
             env,
             states_container.terminating_states,
             states_container.terminating_conditioning,
             states_container.terminating_log_rewards,
+            reduction=reduction,
         )
         return fm_loss + self.alpha * rm_loss
 
     def to_training_samples(
         self, trajectories: Trajectories
     ) -> StatesContainer[DiscreteStates]:
-        """Converts a batch of trajectories into a batch of training samples."""
+        """Converts trajectories to a StatesContainer for flow matching loss.
+
+        Args:
+            trajectories: The Trajectories object to convert.
+
+        Returns:
+            A StatesContainer object containing all states from the trajectories.
+        """
         return trajectories.to_states_container()

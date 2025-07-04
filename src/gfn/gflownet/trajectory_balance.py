@@ -51,6 +51,22 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
 
         self.log_reward_clip_min = log_reward_clip_min
 
+    def logz_named_parameters(self) -> dict[str, torch.Tensor]:
+        """Returns a dictionary of named parameters containing 'logZ' in their name.
+
+        Returns:
+            A dictionary of named parameters containing 'logZ' in their name.
+        """
+        return {k: v for k, v in dict(self.named_parameters()).items() if "logZ" in k}
+
+    def logz_parameters(self) -> list[torch.Tensor]:
+        """Returns a list of parameters containing 'logZ' in their name.
+
+        Returns:
+            A list of parameters containing 'logZ' in their name.
+        """
+        return [v for k, v in dict(self.named_parameters()).items() if "logZ" in k]
+
     def loss(
         self,
         env: Env,
@@ -68,7 +84,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         """
         del env  # unused
         warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
-        _, _, scores = self.get_trajectories_scores(
+        scores = self.get_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
 
@@ -123,7 +139,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         """
         del env  # unused
         warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
-        _, _, scores = self.get_trajectories_scores(
+        scores = self.get_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
         scores = (scores - scores.mean()).pow(2)
