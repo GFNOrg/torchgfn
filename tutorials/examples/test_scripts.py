@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import pytest
 
+from .train_bayesian_structure import main as train_bayesian_structure_main
 from .train_bit_sequences import main as train_bitsequence_main
 from .train_box import main as train_box_main
 from .train_discreteebm import main as train_discreteebm_main
@@ -140,6 +141,33 @@ class GraphRingArgs(CommonArgs):
     plot: bool = False
     use_buffer: bool = False
     use_gnn: bool = True
+
+
+@dataclass
+class BayesianStructureArgs(CommonArgs):
+    num_nodes: int = 3
+    num_edges: int = 3
+    num_samples: int = 100
+    graph_name: str = "erdos_renyi_lingauss"
+    prior_name: str = "uniform"
+    node_names: list[str] | None = None
+    num_samples_posterior: int = 1000
+    num_layers: int = 1
+    embedding_dim: int = 32
+    module: str = "gnn_v2"
+    max_epsilon: float = 0.9
+    min_epsilon: float = 0.1
+    use_buffer: bool = True
+    buffer_capacity: int = 1000
+    prefill: int = 5
+    sampling_batch_size: int = 32
+    lr: float = 0.001
+    lr_Z: float = 1.0
+    n_iterations: int = 10
+    batch_size: int = 32
+    n_steps_per_iteration: int = 1
+    seed: int = 0
+    use_cuda: bool = False
 
 
 @pytest.mark.parametrize("ndim", [2, 4])
@@ -330,6 +358,14 @@ def test_graph_ring_smoke():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_graph_ring_main(namespace_args)  # Just ensure it runs without errors.
+
+
+def test_bayesian_structure_smoke():
+    """Smoke test for the Bayesian structure learning training script."""
+    args = BayesianStructureArgs()
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_bayesian_structure_main(namespace_args)  # Just ensure it runs without errors.
 
 
 def test_hypergrid_simple_smoke():

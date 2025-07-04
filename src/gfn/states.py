@@ -582,7 +582,7 @@ class GraphStates(States):
         self._log_rewards: Optional[torch.Tensor] = None
         self._device = device
         if data.size > 0:
-            g = data.flatten()[0]
+            g = data.flat[0]
             if self._device is None:
                 self._device = cast(torch.Tensor, g.x).device
             else:

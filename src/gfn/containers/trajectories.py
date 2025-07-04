@@ -121,43 +121,24 @@ class Trajectories(Container):
             and self.terminating_idx.dtype == torch.long
         )
 
-        # self._log_rewards can be torch.Tensor of shape (self.n_trajectories,) or None.
-        if log_rewards is not None:
-            self._log_rewards = log_rewards
-        else:  # if log_rewards is None, there are two cases
-            if self.n_trajectories == 0:  # 1) initializing with empty Trajectories
-                self._log_rewards = torch.full(
-                    size=(0,), fill_value=0, dtype=torch.float, device=device
-                )
-            else:  # 2) we don't have log_rewards and need to compute them on the fly
-                self._log_rewards = None
+        self._log_rewards = log_rewards
         assert self._log_rewards is None or (
             self._log_rewards.shape == (self.n_trajectories,)
             and self._log_rewards.dtype == torch.float
         )
 
-        # same as self._log_rewards, but we can't compute log_probs within the class.
-        if log_probs is not None:
-            self.log_probs = log_probs
-        else:
-            if self.n_trajectories == 0:
-                self.log_probs = torch.full(
-                    size=(0, 0), fill_value=0, dtype=torch.float, device=device
-                )
-            else:
-                self.log_probs = None
+        self.log_probs = log_probs
         assert self.log_probs is None or (
             self.log_probs.shape == self.actions.batch_shape
             and self.log_probs.dtype == torch.float
         )
 
         self.estimator_outputs = estimator_outputs
-        if self.estimator_outputs is not None:
-            assert (
-                self.estimator_outputs.shape[: len(self.states.batch_shape)]
-                == self.actions.batch_shape
-            )
-            assert self.estimator_outputs.dtype == torch.float
+        assert self.estimator_outputs is None or (
+            self.estimator_outputs.shape[: len(self.states.batch_shape)]
+            == self.actions.batch_shape
+            and self.estimator_outputs.dtype == torch.float
+        )
 
     def __repr__(self) -> str:
         trajectories_representation = ""
@@ -221,10 +202,7 @@ class Trajectories(Container):
             return None
 
         if self._log_rewards is None:
-            try:
-                self._log_rewards = self.env.log_reward(self.terminating_states)
-            except NotImplementedError:
-                self._log_rewards = torch.log(self.env.reward(self.terminating_states))
+            self._log_rewards = self.env.log_reward(self.terminating_states)
 
         assert self._log_rewards.shape == (self.n_trajectories,)
         return self._log_rewards
@@ -278,40 +256,6 @@ class Trajectories(Container):
             estimator_outputs=estimator_outputs,
         )
 
-    @staticmethod
-    def extend_log_probs(log_probs: torch.Tensor, new_max_length: int) -> torch.Tensor:
-        """Extend the log_probs matrix by adding 0 until the required length is reached.
-
-        Args:
-            log_probs: The log_probs tensor of shape (max_length, n_trajectories) to extend.
-            new_max_length: The new length of the log_probs tensor.
-
-        Returns: The extended log_probs tensor of shape (new_max_length, n_trajectories).
-
-        """
-
-        max_length, n_trajectories = log_probs.shape
-        if max_length >= new_max_length:
-            return log_probs
-        else:
-            new_log_probs = torch.cat(
-                (
-                    log_probs,
-                    torch.full(
-                        size=(
-                            new_max_length - log_probs.shape[0],
-                            log_probs.shape[1],
-                        ),
-                        fill_value=0,
-                        dtype=torch.float,
-                        device=log_probs.device,
-                    ),
-                ),
-                dim=0,
-            )
-            assert new_log_probs.shape == (new_max_length, n_trajectories)
-            return new_log_probs
-
     def extend(self, other: Trajectories) -> None:
         """Extend the trajectories with another set of trajectories.
 
@@ -330,6 +274,23 @@ class Trajectories(Container):
         if len(other) == 0:
             return
 
+        if len(self) == 0:
+            if other._log_rewards is not None:
+                self._log_rewards = torch.full(
+                    (0,), fill_value=-float("inf"), dtype=torch.float, device=self.device
+                )
+            if other.log_probs is not None:
+                self.log_probs = torch.full(
+                    size=(0, 0), fill_value=0, dtype=torch.float, device=self.device
+                )
+            if other.estimator_outputs is not None:
+                self.estimator_outputs = torch.full(
+                    size=(0, 0, *other.estimator_outputs.shape[2:]),
+                    fill_value=0,
+                    dtype=other.estimator_outputs.dtype,
+                    device=self.device,
+                )
+
         # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
         self.states.extend(other.states)  # n_trajectories comes from this.
@@ -339,72 +300,35 @@ class Trajectories(Container):
 
         # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
-            self._log_rewards = torch.cat(
-                (self._log_rewards, other._log_rewards),
-                dim=0,
-            )
+            self._log_rewards = torch.cat((self._log_rewards, other._log_rewards), dim=0)
             assert len(self._log_rewards) == self.actions.batch_shape[-1]
-        # Will not be None if object is initialized as empty.
         else:
             self._log_rewards = None
 
-        # For log_probs, we first need to make the first dimensions of self.log_probs
-        # and other.log_probs equal (i.e. the number of steps in the trajectories), and
-        # then concatenate them.
+        # For log_probs, use `pad_dim0_if_needed` to ensure both tensors have the same
+        # number of steps (first dimension), padding with 0.0 if necessary, before
+        # concatenation.
         if self.log_probs is not None and other.log_probs is not None:
-            new_max_length = max(self.log_probs.shape[0], other.log_probs.shape[0])
-            self.log_probs = self.extend_log_probs(self.log_probs, new_max_length)
-            other.log_probs = self.extend_log_probs(other.log_probs, new_max_length)
+            self.log_probs, other.log_probs = pad_dim0_if_needed(
+                self.log_probs, other.log_probs, 0.0
+            )
             self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
             assert self.log_probs.shape == self.actions.batch_shape
         else:
             self.log_probs = None
 
-        # Either set, or append, estimator outputs if they exist in the submitted
-        # trajectory.
-        if self.estimator_outputs is None and other.estimator_outputs is not None:
-            self.estimator_outputs = other.estimator_outputs
-        elif self.estimator_outputs is not None and other.estimator_outputs is not None:
-            n_bs = len(self.actions.batch_shape)
-
-            # Cast other to match self.
-            output_dtype = self.estimator_outputs.dtype
-            other.estimator_outputs = other.estimator_outputs.to(dtype=output_dtype)
-
-            if n_bs == 1:
-                # Concatenate along the only batch dimension.
-                self.estimator_outputs = torch.cat(
-                    (self.estimator_outputs, other.estimator_outputs),
-                    dim=0,
-                )
-
-            elif n_bs == 2:
-                # Concatenate along the first dimension, padding where required.
-                self_dim0 = self.estimator_outputs.shape[0]
-                other_dim0 = other.estimator_outputs.shape[0]
-                if self_dim0 != other_dim0:
-                    # We need to pad the first dimension on either self or other.
-                    required_first_dim = max(self_dim0, other_dim0)
-
-                    if self_dim0 < other_dim0:
-                        self.estimator_outputs = pad_dim0_to_target(
-                            self.estimator_outputs,
-                            required_first_dim,
-                        )
-
-                    elif self_dim0 > other_dim0:
-                        other.estimator_outputs = pad_dim0_to_target(
-                            other.estimator_outputs,
-                            required_first_dim,
-                        )
-
-                # Concatenate the tensors along the second dimension.
-                self.estimator_outputs = torch.cat(
-                    (self.estimator_outputs, other.estimator_outputs),
-                    dim=1,
-                )
-
-            assert self.estimator_outputs.shape[:n_bs] == self.actions.batch_shape
+        # Do the same for estimator_outputs, but padding with -float("inf") instead of 0.0.
+        if self.estimator_outputs is not None and other.estimator_outputs is not None:
+            self.estimator_outputs, other.estimator_outputs = pad_dim0_if_needed(
+                self.estimator_outputs, other.estimator_outputs
+            )
+            self.estimator_outputs = torch.cat(
+                (self.estimator_outputs, other.estimator_outputs), dim=1
+            )
+            assert (
+                self.estimator_outputs.shape[: len(self.actions.batch_shape)]
+                == self.actions.batch_shape
+            )
 
     def to_transitions(self) -> Transitions:
         """Returns a `Transitions` object from the trajectories."""
@@ -441,12 +365,11 @@ class Trajectories(Container):
                 ],
                 dim=0,
             )
-
-        # Initialize log_probs None if not available
-        if self.has_log_probs:
-            log_probs = self.log_probs[~self.actions.is_dummy]  # type: ignore
-        else:
-            log_probs = None
+        log_probs = (
+            self.log_probs[~self.actions.is_dummy]
+            if self.log_probs is not None
+            else None
+        )
 
         return Transitions(
             env=self.env,
@@ -458,6 +381,7 @@ class Trajectories(Container):
             is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
+            # FIXME: Add estimator_outputs.
         )
 
     def to_states_container(self) -> StatesContainer:
@@ -520,6 +444,7 @@ class Trajectories(Container):
             conditioning=conditioning,
             is_terminating=is_terminating,
             log_rewards=log_rewards,
+            # FIXME: Add log_probs and estimator_outputs.
         )
 
     def reverse_backward_trajectories(self) -> Trajectories:
@@ -615,15 +540,29 @@ class Trajectories(Container):
         return reversed_trajectories
 
 
-def pad_dim0_to_target(a: torch.Tensor, target_dim0: int) -> torch.Tensor:
-    """Pads tensor a to match the dimension of b."""
-    assert a.shape[0] < target_dim0, "a is already larger than target_dim0!"
-    pad_dim = target_dim0 - a.shape[0]
-    pad_dim_full = (pad_dim,) + tuple(a.shape[1:])
+def pad_dim0_if_needed(
+    a: torch.Tensor, b: torch.Tensor, value: float = -float("inf")
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Pads tensor a or b to match the first dimension of the other."""
+    if a.shape[0] == b.shape[0]:
+        return a, b
+
+    max_dim0 = max(a.shape[0], b.shape[0])
+
+    tensor_to_pad = a if a.shape[0] < b.shape[0] else b
+
+    pad_dim = max_dim0 - min(a.shape[0], b.shape[0])
+    pad_dim_full = (pad_dim,) + tuple(tensor_to_pad.shape[1:])
     output_padding = torch.full(
         pad_dim_full,
-        fill_value=-float("inf"),
-        dtype=a.dtype,
-        device=a.device,
+        fill_value=value,
+        dtype=tensor_to_pad.dtype,
+        device=tensor_to_pad.device,
     )
-    return torch.cat((a, output_padding), dim=0)
+
+    tensor_to_pad = torch.cat((tensor_to_pad, output_padding), dim=0)
+
+    return (
+        tensor_to_pad if a.shape[0] < b.shape[0] else a,
+        tensor_to_pad if a.shape[0] > b.shape[0] else b,
+    )

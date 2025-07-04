@@ -104,31 +104,13 @@ class Transitions(Container):
         )
         assert self.next_states.batch_shape == batch_shape
 
-        # self._log_rewards can be torch.Tensor of shape (self.n_transitions,) or None.
-        if log_rewards is not None:
-            self._log_rewards = log_rewards
-        else:  # if log_rewards is None, there are two cases
-            if self.n_transitions == 0:  # 1) initializing with empty Transitions
-                self._log_rewards = torch.full(
-                    size=(0,), fill_value=0, dtype=torch.float, device=device
-                )
-            else:  # 2) we don't have log_rewards and need to compute them on the fly
-                self._log_rewards = None
+        self._log_rewards = log_rewards
         assert self._log_rewards is None or (
             self._log_rewards.shape == (self.n_transitions,)
             and self._log_rewards.dtype == torch.float
         )
 
-        # same as self._log_rewards, but we can't compute log_probs within the class.
-        if log_probs is not None:
-            self.log_probs = log_probs
-        else:
-            if self.n_transitions == 0:
-                self.log_probs = torch.full(
-                    size=(0,), fill_value=0, dtype=torch.float, device=device
-                )
-            else:
-                self.log_probs = None
+        self.log_probs = log_probs
         assert self.log_probs is None or (
             self.log_probs.shape == self.actions.batch_shape
             and self.log_probs.dtype == torch.float
@@ -184,14 +166,9 @@ class Transitions(Container):
                 dtype=torch.float,
                 device=self.states.device,
             )
-            try:
-                self._log_rewards[self.is_terminating] = self.env.log_reward(
-                    self.terminating_states
-                )
-            except NotImplementedError:
-                self._log_rewards[self.is_terminating] = torch.log(
-                    self.env.reward(self.terminating_states)
-                )
+            self._log_rewards[self.is_terminating] = self.env.log_reward(
+                self.terminating_states
+            )
 
         assert self._log_rewards.shape == (self.n_transitions,)
         return self._log_rewards
@@ -221,20 +198,10 @@ class Transitions(Container):
             dtype=torch.float,
             device=self.states.device,
         )
-        try:
-            log_rewards[~is_sink_state, 0] = self.env.log_reward(
-                self.states[~is_sink_state]
-            )
-            log_rewards[~is_sink_state, 1] = self.env.log_reward(
-                self.next_states[~is_sink_state]
-            )
-        except NotImplementedError:
-            log_rewards[~is_sink_state, 0] = torch.log(
-                self.env.reward(self.states[~is_sink_state])
-            )
-            log_rewards[~is_sink_state, 1] = torch.log(
-                self.env.reward(self.next_states[~is_sink_state])
-            )
+        log_rewards[~is_sink_state, 0] = self.env.log_reward(self.states[~is_sink_state])
+        log_rewards[~is_sink_state, 1] = self.env.log_reward(
+            self.next_states[~is_sink_state]
+        )
 
         assert (
             log_rewards.shape == (self.n_transitions, 2)
@@ -257,12 +224,7 @@ class Transitions(Container):
         is_terminating = self.is_terminating[index]
         next_states = self.next_states[index]
         log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
-
-        # Only return logprobs if they exist.
-        if self.has_log_probs:
-            log_probs = self.log_probs[index]  # type: ignore
-        else:
-            log_probs = None
+        log_probs = self.log_probs[index] if self.log_probs is not None else None
 
         return Transitions(
             env=self.env,
@@ -283,6 +245,25 @@ class Transitions(Container):
             raise NotImplementedError(
                 "`extend` is not implemented for conditional Transitions."
             )
+
+        if len(other) == 0:
+            return
+
+        if len(self) == 0:
+            if other._log_rewards is not None:
+                self._log_rewards = torch.full(
+                    size=(0,),
+                    fill_value=-float("inf"),
+                    dtype=torch.float,
+                    device=self.device,
+                )
+            if other.log_probs is not None:
+                self.log_probs = torch.full(
+                    size=(0,),
+                    fill_value=0,
+                    dtype=torch.float,
+                    device=self.device,
+                )
 
         assert len(self.states.batch_shape) == len(other.states.batch_shape) == 1
 
