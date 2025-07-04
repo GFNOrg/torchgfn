@@ -1,5 +1,5 @@
 import math
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -94,12 +94,18 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         )
 
     def get_scores(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
+        self,
+        env: Env,
+        transitions: Transitions,
+        log_rewards: Optional[torch.Tensor] = None,
+        recalculate_all_logprobs: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Given a batch of transitions, calculate the scores.
 
         Args:
             transitions: a batch of transitions.
+            log_rewards: log rewards of the transitions. If None, use the log rewards
+                from the transitions.
 
         Unless recalculate_all_logprobs=True, in which case we re-evaluate the logprobs of the transitions with
         the current self.pf. The following applies:
@@ -119,6 +125,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         states = transitions.states
         actions = transitions.actions
+
+        if log_rewards is None:
+            log_rewards = transitions.log_rewards
+        assert log_rewards is not None
+        assert log_rewards.shape == (transitions.n_transitions,)
 
         if len(states) == 0:
             return (
@@ -144,10 +155,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 log_F_s = self.logF(states).squeeze(-1)
 
         if self.forward_looking:
-            log_rewards = env.log_reward(states)
+            fl_log_rewards = env.log_reward(states)
             if math.isfinite(self.log_reward_clip_min):
-                log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
-            log_F_s = log_F_s + log_rewards
+                fl_log_rewards = fl_log_rewards.clamp_min(self.log_reward_clip_min)
+            log_F_s = log_F_s + fl_log_rewards
 
         preds = log_pf_actions + log_F_s
 
@@ -180,10 +191,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         log_F_s_next = torch.zeros_like(log_pb_actions)
         log_F_s_next[~valid_transitions_is_terminating] = valid_log_F_s_next
-        assert transitions.log_rewards is not None
-        valid_transitions_log_rewards = transitions.log_rewards[
-            ~transitions.states.is_sink_state
-        ]
+        valid_transitions_log_rewards = log_rewards[~transitions.states.is_sink_state]
         log_F_s_next[valid_transitions_is_terminating] = valid_transitions_log_rewards[
             valid_transitions_is_terminating
         ]
@@ -198,6 +206,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self,
         env: Env,
         transitions: Transitions,
+        log_rewards: Optional[torch.Tensor] = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -207,7 +216,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
         """
         warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
-        _, _, scores = self.get_scores(env, transitions, recalculate_all_logprobs)
+        _, _, scores = self.get_scores(
+            env, transitions, log_rewards, recalculate_all_logprobs
+        )
         scores = scores**2
         loss = loss_reduce(scores, reduction)
 

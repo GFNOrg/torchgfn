@@ -1,6 +1,6 @@
 import math
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Tuple, TypeVar
+from typing import Any, Generic, Optional, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
@@ -205,12 +205,15 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
     def get_trajectories_scores(
         self,
         trajectories: Trajectories,
+        log_rewards: Optional[torch.Tensor] = None,
         recalculate_all_logprobs: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Given a batch of trajectories, calculate forward & backward policy scores.
 
         Args:
             trajectories: Trajectories to evaluate.
+            log_rewards: Log rewards to use. If None, use the log_rewards from the
+                trajectories.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns: A tuple of float tensors of shape (n_trajectories,)
@@ -225,7 +228,10 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)
         total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
-        log_rewards = trajectories.log_rewards
+        if log_rewards is None:
+            log_rewards = trajectories.log_rewards
+        assert log_rewards is not None
+        assert log_rewards.shape == (trajectories.n_trajectories,)
 
         if math.isfinite(self.log_reward_clip_min) and log_rewards is not None:
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)

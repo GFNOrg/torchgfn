@@ -1,6 +1,6 @@
 import math
 import warnings
-from typing import List, Literal, Tuple
+from typing import List, Literal, Optional, Tuple
 
 import torch
 
@@ -169,6 +169,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         sink_states_mask: MaskTensor,
         full_mask: MaskTensor,
         i: int,
+        log_rewards: Optional[torch.Tensor] = None,
     ) -> TargetsTensor:
         """
         Calculate the targets tensor for the current sub-trajectory length.
@@ -182,12 +183,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             sink_states_mask: A mask tensor of shape (max_length, n_trajectories) representing sink states.
             full_mask: A mask tensor of shape (max_length, n_trajectories) representing full states.
             i: The sub-trajectory length.
+            log_rewards: Optional tensor of shape (n_trajectories) containing the log rewards. If None, use the log rewards from the trajectories.
 
         Returns: The targets tensor of shape (max_length + 1 - i, n_trajectories).
         """
         targets = torch.full_like(preds, fill_value=-float("inf"))
-        assert trajectories.log_rewards is not None
-        log_rewards = trajectories.log_rewards[trajectories.terminating_idx >= i]
+        if log_rewards is None:
+            log_rewards = trajectories.log_rewards
+        assert log_rewards is not None
+        assert log_rewards.shape == (trajectories.n_trajectories,)
+        log_rewards = log_rewards[trajectories.terminating_idx >= i]
 
         if math.isfinite(self.log_reward_clip_min):
             log_rewards.clamp_min(self.log_reward_clip_min)
@@ -246,8 +251,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 log_F = self.logF(valid_states).squeeze(-1)
 
         if self.forward_looking:
-            log_rewards = env.log_reward(states).unsqueeze(-1)
-            log_F = log_F + log_rewards
+            fl_log_rewards = env.log_reward(states).unsqueeze(-1)
+            log_F = log_F + fl_log_rewards
 
         log_state_flows[mask[:-1]] = log_F.squeeze()
         return log_state_flows
@@ -276,6 +281,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
+        log_rewards: Optional[torch.Tensor] = None,
         recalculate_all_logprobs: bool = True,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Scores all submitted trajectories.
@@ -325,6 +331,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 sink_states_mask,
                 full_mask,
                 i,
+                log_rewards,
             )
 
             flattening_mask = trajectories.terminating_idx.lt(
