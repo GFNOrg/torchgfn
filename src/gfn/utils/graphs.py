@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 from torch_geometric.data import Batch, Data
+
+if TYPE_CHECKING:
+    from gfn.states import GraphStates
 
 
 def get_edge_indices(
@@ -31,6 +36,33 @@ def get_edge_indices(
         ei0, ei1 = torch.triu_indices(n_nodes, n_nodes, offset=1, device=device)
 
     return ei0, ei1
+
+
+def graph_states_share_storage(a: GraphStates, b: GraphStates) -> bool:
+    """Helper function to check if two GraphStates objects share storage.
+
+    Returns:
+        True if *any* tensor storage is shared between the two GraphStates.
+    """
+
+    def _tensor_ptrs(g: Data) -> tuple[int, ...]:
+        """Return the data_ptr() of every tensor field in the graph."""
+        out: list[int] = []
+        for key, t in g:
+            if torch.is_tensor(t) and t.numel() > 0:  # ignore empty tensors.
+                out.append(t.data_ptr())
+
+        return tuple(out)
+
+    ptrs_a = {  # hash-set for O(1) look-ups.
+        ptr for g in a.data.flat for ptr in _tensor_ptrs(g)
+    }
+
+    for g in b.data.flat:
+        for ptr in _tensor_ptrs(g):
+            if ptr in ptrs_a:
+                return True  # first hit confirms shared storage.
+    return False
 
 
 class GeometricBatch(Batch):

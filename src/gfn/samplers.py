@@ -6,8 +6,9 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.modules import GFNModule
-from gfn.states import GraphStates, States, graph_states_share_storage
+from gfn.states import GraphStates, States
 from gfn.utils.common import ensure_same_device
+from gfn.utils.graphs import graph_states_share_storage
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,

@@ -122,13 +122,13 @@ class BitSequenceStates(DiscreteStates):
             (self.length, other.length), dim=len(self.batch_shape) - 1
         )
 
-    def extend_with_sf(self, required_first_dim: int) -> None:
+    def pad_dim0_with_sf(self, required_first_dim: int) -> None:
         """Extends the current BitSequencesStates object with sink states.
 
         Args:
             required_first_dim: The required first dimension of the extended masks.
         """
-        super().extend_with_sf(required_first_dim)
+        super().pad_dim0_with_sf(required_first_dim)
 
         def _extend(masks, first_dim):
             return torch.cat(

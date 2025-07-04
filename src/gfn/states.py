@@ -25,38 +25,33 @@ from gfn.utils.graphs import GeometricBatch, get_edge_indices
 
 
 class States(ABC):
-    """Base class for states, seen as nodes of the DAG.
+    r"""Base class for states, representing nodes in the DAG.
 
-    For each environment, a States subclass is needed. A `States` object
-    is a collection of multiple states (nodes of the DAG). A tensor representation
-    of the states is required for batching. If a state is represented with a tensor
-    of shape (*state_shape), a batch of states is represented with a States object,
-    with the attribute `tensor` of shape `(*batch_shape, *state_shape)`. Other
-    representations are possible (e.g. state as string, numpy array, graph, etc...),
-    but these representations cannot be batched.
+    For each environment, a subclass of `States` is needed. A `States` object
+    is a collection of multiple states (nodes of the DAG) that supports batching.
+    Generally, if a state is represented with a tensor of shape (*state_shape), a batch
+    of states is represented with a States object, with the attribute `tensor` of shape
+    (*batch_shape, *state_shape). Other representations are possible (e.g., state as a
+    string, numpy array, graph, etc.), but these may need additional logic to support
+    batching (see `GraphStates` below for an example).
 
-    If the environment's action space is discrete (i.e. the environment subclasses
-    `DiscreteEnv`), then each `States` object is also endowed with a `forward_masks` and
-    `backward_masks` boolean attributes representing which actions are allowed at each
-    state. This makes it possible to instantly access the allowed actions at each state,
-    without having to call the environment's `is_action_valid` method. Put different,
-    `is_action_valid` for such environments, directly calls the masks. This is handled
-    in the DiscreteState subclass.
+    Two useful subclasses of `States` are provided:
+    - `DiscreteStates` for discrete environments, which represents discrete states
+      with a tensor of shape (*batch_shape, *state_shape).
+    - `GraphStates` for graph-based environments, which represents graphs as a numpy
+      object array of shape (*batch_shape,) containing `GeometricData` objects.
 
-    A `batch_shape` attribute is also required, to keep track of the batch dimension.
-    A trajectory can be represented by a States object with `batch_shape = (n_states,)`.
-    Multiple trajectories can be represented by a States object with
-    `batch_shape = (n_states, n_trajectories)`.
+    A `batch_shape` property keeps track of the batch dimension. A trajectory can be
+    represented by a States object with `batch_shape = (n_states,)`. Multiple trajectories
+    can be represented by a States object with `batch_shape = (n_states, n_trajectories)`.
 
     Because multiple trajectories can have different lengths, batching requires
-    appending a dummy tensor to trajectories that are shorter than the longest
-    trajectory. The dummy state is the $s_f$ attribute of the environment
-    (e.g. `[-1, ..., -1]`, or `[-inf, ..., -inf]`, etc...). Which is never processed,
-    and is used to pad the batch of states only.
+    appending a dummy state ($sf$) to trajectories that are shorter than the longest
+    trajectory. This dummy state should never be processed, and is used to pad the
+    batch of states only.
 
     Attributes:
         tensor: Tensor representing a batch of states.
-        _batch_shape: Sizes of the batch dimensions.
         _log_rewards: Stores the log rewards of each state.
     """
 
@@ -70,10 +65,12 @@ class States(ABC):
         )
     )
 
-    def __init__(self, tensor: torch.Tensor):
-        """Initialize the State container with a batch of states.
+    def __init__(self, tensor: torch.Tensor) -> None:
+        """Initializes a States object with a batch of states.
+
         Args:
-            tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of states.
+            tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of
+                states.
         """
         assert self.s0.shape == self.state_shape
         assert self.sf.shape == self.state_shape
@@ -86,10 +83,20 @@ class States(ABC):
 
     @property
     def device(self) -> torch.device:
+        """The device on which the states are stored.
+
+        Returns:
+            The device of the underlying tensor.
+        """
         return self.tensor.device
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
+        """The batch shape of the states.
+
+        Returns:
+            The batch shape as a tuple.
+        """
         return tuple(self.tensor.shape)[: -len(self.state_shape)]
 
     @classmethod
@@ -100,7 +107,7 @@ class States(ABC):
         sink: bool = False,
         device: torch.device | None = None,
     ) -> States:
-        """Create a States object with the given batch shape.
+        r"""Creates a States object with the given batch shape.
 
         By default, all states are initialized to $s_0$, the initial state. Optionally,
         one can initialize random state, which requires that the environment implements
@@ -110,11 +117,12 @@ class States(ABC):
 
         Args:
             batch_shape: Shape of the batch dimensions.
-            random (optional): Initalize states randomly.
-            sink (optional): States initialized with s_f (the sink state).
+            random: If True, initialize states randomly.
+            sink: If True, initialize states as sink states ($s_f$).
+            device: The device to create the states on.
 
-        Raises:
-            ValueError: If both Random and Sink are True.
+        Returns:
+            A States object with the specified batch shape and initialization.
         """
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
@@ -133,7 +141,15 @@ class States(ABC):
     def make_initial_states(
         cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> States:
-        """Makes a tensor with a `batch_shape` of states consisting of $s_0`$s."""
+        r"""Creates a batch of initial states ($s_0$).
+
+        Args:
+            batch_shape: Shape of the batch dimensions.
+            device: The device to create the states on.
+
+        Returns:
+            A States object with all states set to $s_0$.
+        """
         state_ndim = len(cls.state_shape)
         assert cls.s0 is not None and state_ndim is not None
         device = cls.s0.device if device is None else device
@@ -148,7 +164,15 @@ class States(ABC):
     def make_sink_states(
         cls, batch_shape: tuple[int, ...], device: torch.device | None = None
     ) -> States:
-        """Makes a tensor with a `batch_shape` of states consisting of $s_f$s."""
+        r"""Creates a batch of sink states ($s_f$).
+
+        Args:
+            batch_shape: Shape of the batch dimensions.
+            device: The device to create the states on.
+
+        Returns:
+            A States object with all states set to $s_f$.
+        """
         state_ndim = len(cls.state_shape)
         assert cls.sf is not None and state_ndim is not None
         device = cls.sf.device if device is None else device
@@ -160,9 +184,19 @@ class States(ABC):
             )
 
     def __len__(self) -> int:
+        """Returns the number of states in the batch.
+
+        Returns:
+            The number of states.
+        """
         return prod(self.batch_shape)
 
     def __repr__(self) -> str:
+        """Returns a string representation of the States object.
+
+        Returns:
+            A string summary of the States object.
+        """
         parts = [
             f"{self.__class__.__name__}(",
             f"batch={self.batch_shape},",
@@ -174,7 +208,14 @@ class States(ABC):
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> States:
-        """Access particular states of the batch."""
+        """Returns a subset of the states along the batch dimension.
+
+        Args:
+            index: Indices to select states.
+
+        Returns:
+            A new States object with the selected states.
+        """
         return self.__class__(self.tensor[index])
 
     def __setitem__(
@@ -182,11 +223,20 @@ class States(ABC):
         index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor,
         states: States,
     ) -> None:
-        """Set particular states of the batch."""
+        """Sets particular states of the batch to a new States object.
+
+        Args:
+            index: Indices to set.
+            states: States object containing the new states.
+        """
         self.tensor[index] = states.tensor
 
     def clone(self) -> States:
-        """Returns a clone of the current instance."""
+        """Returns a clone of the current instance.
+
+        Returns:
+            A new States object with the same data.
+        """
         cloned = self.__class__(self.tensor.clone())
         if self._log_rewards is not None:
             cloned._log_rewards = self._log_rewards.clone()
@@ -194,25 +244,24 @@ class States(ABC):
         return cloned
 
     def flatten(self) -> States:
-        """Flatten the batch dimension of the states.
+        """Flattens the batch dimension of the states.
 
         Useful for example when extracting individual states from trajectories.
+
+        Returns:
+            A new States object with the batch dimension flattened.
         """
         states = self.tensor.view(-1, *self.state_shape)
         return self.__class__(states)
 
     def extend(self, other: States) -> None:
-        """Concatenates to another States object along the final batch dimension.
+        """Concatenates another States object along the final batch dimension.
 
         Both States objects must have the same number of batch dimensions, which
         should be 1 or 2.
 
         Args:
-            other (States): Batch of states to concatenate to.
-
-        Raises:
-            ValueError: if `self.batch_shape != other.batch_shape` or if
-            `self.batch_shape != (1,) or (2,)`.
+            other: Batch of states to concatenate to.
         """
         if len(other.batch_shape) == len(self.batch_shape) == 1:
             # This corresponds to adding a state to a trajectory
@@ -220,10 +269,10 @@ class States(ABC):
 
         elif len(other.batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
-            self.extend_with_sf(
+            self.pad_dim0_with_sf(
                 required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
-            other.extend_with_sf(
+            other.pad_dim0_with_sf(
                 required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
             self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
@@ -232,10 +281,10 @@ class States(ABC):
                 f"extend is not implemented for batch shapes {self.batch_shape} and {other.batch_shape}"
             )
 
-    def extend_with_sf(self, required_first_dim: int) -> None:
-        """Extends a 2-dimensional batch of states along the first batch dimension.
+    def pad_dim0_with_sf(self, required_first_dim: int) -> None:
+        r"""Extends a 2-dimensional batch of states along the first batch dimension.
 
-        Given a batch of states (i.e. of `batch_shape=(a, b)`), extends `a` it to a
+        Given a batch of states (i.e. of `batch_shape=(a, b)`), extends `a` to a
         States object of `batch_shape = (required_first_dim, b)`, by adding the
         required number of $s_f$ tensors. This is useful to extend trajectories of
         different lengths.
@@ -257,17 +306,20 @@ class States(ABC):
             )
         else:
             raise ValueError(
-                f"extend_with_sf is not implemented for graph states nor for batch shapes {self.batch_shape}"
+                f"pad_dim0_with_sf is not implemented for States of type "
+                f"{self.__class__.__name__} nor for batch shapes {self.batch_shape}"
             )
 
     def _compare(self, other: torch.Tensor) -> torch.Tensor:
-        """Computes elementwise equality between state tensor with an external tensor.
+        """Computes elementwise equality between state tensor and an external tensor.
 
         Args:
-            other: Tensor with shape (*batch_shape, *state_shape) representing states to compare to.
+            other: Tensor with shape (*batch_shape, *state_shape) representing states to
+            compare to.
 
-        Returns a tensor of booleans with shape `batch_shape` indicating whether the states are equal
-            to the states in self.
+        Returns:
+            A boolean tensor of shape (*batch_shape,) indicating whether the states are
+            equal to `other`.
         """
         assert other.shape == self.batch_shape + self.state_shape
         out = self.tensor == other
@@ -280,33 +332,47 @@ class States(ABC):
 
     @property
     def is_initial_state(self) -> torch.Tensor:
-        """Returns a tensor of shape `batch_shape` that is True for states that are $s_0$ of the DAG."""
+        r"""Returns a boolean tensor indicating which states are initial ($s_0$).
+
+        Returns:
+            A boolean tensor of shape (*batch_shape,) that is True for initial states.
+        """
         if isinstance(self.__class__.s0, torch.Tensor):
             source_states_tensor = self.__class__.s0.repeat(
                 *self.batch_shape, *((1,) * len(self.__class__.state_shape))
             )
         else:
             raise NotImplementedError(
-                f"is_initial_state is not implemented by default for {self.__class__.__name__}"
+                "is_initial_state is not implemented by default "
+                f"for {self.__class__.__name__}"
             )
         return self._compare(source_states_tensor)
 
     @property
     def is_sink_state(self) -> torch.Tensor:
-        """Returns a tensor of shape `batch_shape` that is True for states that are $s_f$ of the DAG."""
+        r"""Returns a boolean tensor indicating which states are sink ($s_f$).
+
+        Returns:
+            A boolean tensor of shape (*batch_shape,) that is True for sink states.
+        """
         if isinstance(self.__class__.sf, torch.Tensor):
             sink_states = self.__class__.sf.repeat(
                 *self.batch_shape, *((1,) * len(self.__class__.state_shape))
             ).to(self.tensor.device)
         else:
             raise NotImplementedError(
-                f"is_sink_state is not implemented by default for {self.__class__.__name__}"
+                "is_sink_state is not implemented by default "
+                f"for {self.__class__.__name__}"
             )
         return self._compare(sink_states)
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
-        """Returns the log rewards of the states as tensor of shape `batch_shape`."""
+        """Returns the log rewards of the states.
+
+        Returns:
+            The log rewards tensor of shape (*batch_shape,), or None if not set.
+        """
         return self._log_rewards
 
     @log_rewards.setter
@@ -314,18 +380,33 @@ class States(ABC):
         """Sets the log rewards of the states.
 
         Args:
-            log_rewards: Tensor of shape `batch_shape` representing the log rewards of the states.
+            log_rewards: Tensor of shape (*batch_shape,) representing the log rewards of
+            the states.
         """
         assert tuple(log_rewards.shape) == self.batch_shape
         self._log_rewards = log_rewards
 
     def sample(self, n_samples: int) -> States:
-        """Samples a subset of the States object."""
+        """Randomly samples a subset of states from the batch.
+
+        Args:
+            n_samples: The number of states to sample.
+
+        Returns:
+            A new States object with the sampled states.
+        """
         return self[torch.randperm(len(self))[:n_samples]]
 
     @classmethod
     def stack(cls, states: Sequence[States]) -> States:
-        """Given a list of states, stacks them along a new dimension (0)."""
+        """Stacks a list of States objects along a new dimension (0).
+
+        Args:
+            states: List of States objects to stack.
+
+        Returns:
+            A new States object with the stacked states.
+        """
         state_example = states[0]
         assert all(
             state.batch_shape == state_example.batch_shape for state in states
@@ -349,14 +430,15 @@ class States(ABC):
 class DiscreteStates(States, ABC):
     """Base class for states of discrete environments.
 
-    States are endowed with a `forward_masks` and `backward_masks`: boolean attributes
-    representing which actions are allowed at each state. This is the mechanism by
-    which all elements of the library (including an environment's `is_action_valid`
-    method) verifies the allowed actions at each state.
+    DiscreteStates are endowed with `forward_masks` and `backward_masks`: boolean
+    attributes representing which actions are allowed at each state. This is the mechanism
+    by which all elements of the library verifies the allowed actions at each state.
 
     Attributes:
-        forward_masks: A boolean tensor of allowable forward policy actions.
-        backward_masks:  A boolean tensor of allowable backward policy actions.
+        n_actions: Number of possible actions.
+        device: The device on which the states are stored.
+        forward_masks: Boolean tensor indicating forward actions allowed at each state.
+        backward_masks: Boolean tensor indicating backward actions allowed at each state.
     """
 
     n_actions: ClassVar[int]
@@ -368,13 +450,15 @@ class DiscreteStates(States, ABC):
         forward_masks: Optional[torch.Tensor] = None,
         backward_masks: Optional[torch.Tensor] = None,
     ) -> None:
-        """Initalize a DiscreteStates container with a batch of states and masks.
+        """Initializes a DiscreteStates container with a batch of states and masks.
+
         Args:
-            tensor: A tensor with shape (*batch_shape, *state_shape) representing a batch of states.
-            forward_masks: Optional boolean tensor tensor with shape (*batch_shape, n_actions) of
-                allowable forward policy actions.
-            backward_masks: Optional boolean tensor tensor with shape (*batch_shape, n_actions) of
-                allowable backward policy actions.
+            tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of
+                states.
+            forward_masks: Optional boolean tensor of shape (*batch_shape, n_actions)
+                indicating forward actions allowed at each state.
+            backward_masks: Optional boolean tensor of shape (*batch_shape, n_actions - 1)
+                indicating backward actions allowed at each state.
         """
         super().__init__(tensor)
         assert tensor.shape == self.batch_shape + self.state_shape
@@ -401,7 +485,11 @@ class DiscreteStates(States, ABC):
         assert self.backward_masks.shape == (*self.batch_shape, self.n_actions - 1)
 
     def clone(self) -> DiscreteStates:
-        """Returns a clone of the current instance."""
+        """Returns a clone of the current instance.
+
+        Returns:
+            A new DiscreteStates object with the same data and masks.
+        """
         return self.__class__(
             self.tensor.clone(),
             self.forward_masks.clone(),
@@ -411,8 +499,12 @@ class DiscreteStates(States, ABC):
     def _check_both_forward_backward_masks_exist(self):
         assert self.forward_masks is not None and self.backward_masks is not None
 
-    def __repr__(self):
-        """Returns a detailed string representation of the DiscreteStates object."""
+    def __repr__(self) -> str:
+        """Returns a detailed string representation of the DiscreteStates object.
+
+        Returns:
+            A string summary of the DiscreteStates object.
+        """
         parts = [
             f"{self.__class__.__name__}(",
             f"batch={self.batch_shape},",
@@ -426,6 +518,14 @@ class DiscreteStates(States, ABC):
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> DiscreteStates:
+        """Returns a subset of the discrete states and their masks.
+
+        Args:
+            index: Indices to select states.
+
+        Returns:
+            A new DiscreteStates object with the selected states and masks.
+        """
         states = self.tensor[index]
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks[index]
@@ -436,12 +536,23 @@ class DiscreteStates(States, ABC):
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: DiscreteStates
     ) -> None:
+        """Sets particular discrete states and their masks.
+
+        Args:
+            index: Indices to set.
+            states: DiscreteStates object containing the new states and masks.
+        """
         super().__setitem__(index, states)
         self._check_both_forward_backward_masks_exist()
         self.forward_masks[index] = states.forward_masks
         self.backward_masks[index] = states.backward_masks
 
     def flatten(self) -> DiscreteStates:
+        """Flattens the batch dimension of the discrete states and their masks.
+
+        Returns:
+            A new DiscreteStates object with the batch dimension flattened.
+        """
         states = self.tensor.view(-1, *self.state_shape)
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
@@ -449,6 +560,11 @@ class DiscreteStates(States, ABC):
         return self.__class__(states, forward_masks, backward_masks)
 
     def extend(self, other: DiscreteStates) -> None:
+        """Concatenates another DiscreteStates object along the batch dimension.
+
+        Args:
+            other: DiscreteStates object to concatenate with.
+        """
         super().extend(other)
         self.forward_masks = torch.cat(
             (self.forward_masks, other.forward_masks), dim=len(self.batch_shape) - 1
@@ -457,8 +573,8 @@ class DiscreteStates(States, ABC):
             (self.backward_masks, other.backward_masks), dim=len(self.batch_shape) - 1
         )
 
-    def extend_with_sf(self, required_first_dim: int) -> None:
-        """Extends forward and backward masks along the first batch dimension.
+    def pad_dim0_with_sf(self, required_first_dim: int) -> None:
+        r"""Extends forward and backward masks along the first batch dimension.
 
         After extending the state along the first batch dimensions with $s_f$ by
         `required_first_dim`, also extends both forward and backward masks with ones
@@ -467,7 +583,7 @@ class DiscreteStates(States, ABC):
         Args:
             required_first_dim: The size of the first batch dimension post-expansion.
         """
-        super().extend_with_sf(required_first_dim)
+        super().pad_dim0_with_sf(required_first_dim)
 
         def _extend(masks, first_dim):
             return torch.cat(
@@ -486,14 +602,34 @@ class DiscreteStates(States, ABC):
         self.forward_masks = _extend(self.forward_masks, required_first_dim)
         self.backward_masks = _extend(self.backward_masks, required_first_dim)
 
+    @classmethod
+    def stack(cls, states: Sequence[DiscreteStates]) -> DiscreteStates:
+        """Stacks a list of DiscreteStates objects along a new dimension (0).
+
+        Args:
+            states: List of DiscreteStates objects to stack.
+
+        Returns:
+            A new DiscreteStates object with the stacked states and masks.
+        """
+        out = super().stack(states)
+        assert isinstance(out, DiscreteStates)
+        out.forward_masks = torch.stack([s.forward_masks for s in states], dim=0)
+        out.backward_masks = torch.stack([s.backward_masks for s in states], dim=0)
+        return out
+
     # The helper methods are convenience functions for common mask operations.
-    def set_nonexit_action_masks(self, cond, allow_exit: bool):
+    def set_nonexit_action_masks(
+        self,
+        cond: torch.Tensor,
+        allow_exit: bool,
+    ) -> None:
         """Masks denoting disallowed actions according to cond, appending the exit mask.
 
         A convenience function for common mask operations.
 
         Args:
-            cond: a boolean of shape (batch_shape,) + (n_actions - 1,), which
+            cond: a boolean of shape (*batch_shape,) + (n_actions - 1,), which
                 denotes which actions are *not* allowed. For example, if a state element
                 represents action count, and no action can be repeated more than 5
                 times, cond might be state.tensor > 5 (assuming count starts at 0).
@@ -508,13 +644,13 @@ class DiscreteStates(States, ABC):
             exit_idx = torch.ones(self.batch_shape + (1,)).to(cond.device)
         self.forward_masks[torch.cat([cond, exit_idx], dim=-1).bool()] = False
 
-    def set_exit_masks(self, batch_idx):
+    def set_exit_masks(self, batch_idx: torch.Tensor) -> None:
         """Sets forward masks such that the only allowable next action is to exit.
 
         A convenience function for common mask operations.
 
         Args:
-            batch_idx: A Boolean index along the batch dimension, along which to
+            batch_idx: A boolean index along the batch dimension, along which to
                 enforce exits.
         """
         self.forward_masks[batch_idx, :] = torch.cat(
@@ -525,7 +661,7 @@ class DiscreteStates(States, ABC):
             dim=-1,
         ).bool()
 
-    def init_forward_masks(self, set_ones: bool = True):
+    def init_forward_masks(self, set_ones: bool = True) -> None:
         """Initalizes forward masks.
 
         A convienience function for common mask operations.
@@ -540,28 +676,22 @@ class DiscreteStates(States, ABC):
         else:
             self.forward_masks = torch.zeros(shape).bool()
 
-    @classmethod
-    def stack(cls, states: Sequence[DiscreteStates]) -> DiscreteStates:
-        """Stacks a list of DiscreteStates objects along a new dimension (0)."""
-        out = super().stack(states)
-        assert isinstance(out, DiscreteStates)
-        out.forward_masks = torch.stack([s.forward_masks for s in states], dim=0)
-        out.backward_masks = torch.stack([s.backward_masks for s in states], dim=0)
-        return out
-
 
 class GraphStates(States):
-    """
-    Base class for Graph as a state representation. The `GraphStates` object is a collection
-    of multiple graph objects stored as a numpy array of GeometricData objects.
+    """Base class for graph-based state representations.
+
+    A `GraphStates` object is a collection of multiple graph objects stored as
+    a numpy array of `GeometricData` objects. This supports batched management of graphs.
 
     Attributes:
         num_node_classes: Number of node classes.
         num_edge_classes: Number of edge classes.
         is_directed: Whether the graph is directed.
-        s0: Initial state.
-        sf: Final state.
-        data: A numpy array of GeometricData objects representing individual graphs.
+        s0: Initial state (graph).
+        sf: Final state (graph).
+        data: A numpy array of `GeometricData` objects representing individual graphs.
+        _log_rewards: Stores the log rewards of each state.
+        _device: The device on which the graphs are stored.
     """
 
     num_node_classes: ClassVar[int]
@@ -571,18 +701,19 @@ class GraphStates(States):
     s0: ClassVar[GeometricData]
     sf: ClassVar[GeometricData]
 
-    def __init__(self, data: np.ndarray, device: torch.device | None = None):
-        """Initialize the GraphStates with a numpy array of GeometricData objects.
+    def __init__(self, data: np.ndarray, device: torch.device | None = None) -> None:
+        """Initializes the GraphStates with a numpy array of `GeometricData` objects.
 
         Args:
-            data: A numpy array of GeometricData objects representing individual graphs.
+            data: A numpy array of `GeometricData` objects representing individual graphs.
+            device: The device to store the graphs on (optional).
         """
-        assert isinstance(data, np.ndarray), "Graphs must be a numpy array"
+        assert isinstance(data, np.ndarray), "data must be a numpy array"
         self.data = data
         self._log_rewards: Optional[torch.Tensor] = None
         self._device = device
         if data.size > 0:
-            g = data.flatten()[0]
+            g = data.flat[0]
             if self._device is None:
                 self._device = cast(torch.Tensor, g.x).device
             else:
@@ -590,7 +721,11 @@ class GraphStates(States):
 
     @property
     def tensor(self) -> GeometricBatch:
-        """Returns the Batch representation of the data."""
+        """Returns the batch representation of the data as a GeometricBatch.
+
+        Returns:
+            A GeometricBatch object representing the batch of graphs.
+        """
         if self.data.size == 0:
             dummy_graph = GeometricData(
                 x=torch.zeros(0, self.num_node_classes, device=self.device),
@@ -603,27 +738,35 @@ class GraphStates(States):
 
     @property
     def device(self) -> torch.device:
-        """Returns the device of the graphs."""
+        """The device on which the graphs are stored.
+
+        Returns:
+            The device of the graphs.
+        """
         assert self._device is not None
         return self._device
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        """Returns the batch shape as a tuple."""
+        """The batch shape of the graphs.
+
+        Returns:
+            The batch shape as a tuple.
+        """
         return self.data.shape
 
     @classmethod
     def make_initial_states(
         cls, batch_shape: int | Tuple, device: torch.device | None = None
     ) -> GraphStates:
-        """Makes a numpy array of graphs consisting of s0 states.
+        r"""Creates a numpy array of graphs consisting of initial states ($s_0$).
 
         Args:
             batch_shape: Shape of the batch dimensions.
             device: Device to create the graphs on.
 
         Returns:
-            A numpy array of GeometricData objects containing copies of the initial state.
+            A GraphStates object containing copies of the initial state.
         """
         assert cls.s0.edge_attr is not None
         assert cls.s0.x is not None
@@ -643,14 +786,14 @@ class GraphStates(States):
     def make_sink_states(
         cls, batch_shape: int | Tuple, device: torch.device | None = None
     ) -> GraphStates:
-        """Makes a numpy array of graphs consisting of sf states.
+        r"""Creates a numpy array of graphs consisting of sink states ($s_f$).
 
         Args:
             batch_shape: Shape of the batch dimensions.
             device: Device to create the graphs on.
 
         Returns:
-            A numpy array of GeometricData objects containing copies of the sink state.
+            A GraphStates object containing copies of the sink state.
         """
         assert cls.sf.edge_attr is not None
         assert cls.sf.x is not None
@@ -671,18 +814,18 @@ class GraphStates(States):
 
     @property
     def forward_masks(self) -> TensorDict:
-        """Compute masks for valid forward actions from the current state.
+        """Computes masks for valid forward actions from the current state.
 
         A forward action is valid if:
-        1. The edge doesn't already exist in the graph
-        2. The edge connects two distinct nodes
+            1. The edge doesn't already exist in the graph
+            2. The edge connects two distinct nodes
 
         For directed graphs, all possible src->dst edges are considered.
-        For undirected graphs, only the upper triangular portion of the
-            adjacency matrix is used.
+        For undirected graphs, only the upper triangular portion of the adjacency matrix
+        is used.
 
         Returns:
-            TensorDict: Boolean mask where True indicates valid actions
+            TensorDict: Boolean mask where True indicates valid actions.
         """
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
@@ -747,10 +890,10 @@ class GraphStates(States):
 
     @property
     def backward_masks(self) -> TensorDict:
-        """Compute masks for valid backward actions from the current state.
+        """Computes masks for valid backward actions from the current state.
 
         A backward action is valid if:
-        1. The edge exists in the current graph (i.e., can be removed)
+            1. The edge exists in the current graph (i.e., can be removed)
 
         For directed graphs, all existing edges are considered for removal.
         For undirected graphs, only the upper triangular edges are considered.
@@ -758,7 +901,7 @@ class GraphStates(States):
         The EXIT action is not included in backward masks.
 
         Returns:
-            TensorDict: Boolean mask where True indicates valid actions
+            TensorDict: Boolean mask where True indicates valid actions.
         """
         # Get max nodes across all graphs, handling None values
         max_nodes = 0
@@ -824,8 +967,12 @@ class GraphStates(States):
             batch_size=self.batch_shape,
         )
 
-    def __repr__(self):
-        """Returns a detailed string representation of the GraphStates object."""
+    def __repr__(self) -> str:
+        """Returns a detailed string representation of the GraphStates object.
+
+        Returns:
+            A string summary of the GraphStates object.
+        """
         parts = [
             f"{self.__class__.__name__}(",
             f"batch={self.batch_shape}, ",
@@ -834,14 +981,18 @@ class GraphStates(States):
         return "".join(parts)
 
     def __len__(self) -> int:
-        """Returns the total number of graphs."""
+        """Returns the total number of graphs.
+
+        Returns:
+            The number of graphs in the batch.
+        """
         return self.data.size
 
     def __getitem__(
         self,
         index: Union[int, Sequence[int], slice, torch.Tensor, Literal[1], Tuple],
     ) -> GraphStates:
-        """Get a subset of the GraphStates.
+        """Returns a subset of the GraphStates.
 
         Args:
             index: Index or indices to select.
@@ -867,7 +1018,7 @@ class GraphStates(States):
         index: Union[int, Sequence[int], slice, torch.Tensor, Tuple],
         graph: GraphStates,
     ) -> None:
-        """Set a subset of the GraphStates.
+        """Sets a subset of the GraphStates.
 
         Args:
             index: Index or indices to set.
@@ -891,6 +1042,14 @@ class GraphStates(States):
     def _get_index_np(
         self, index: Union[int, Sequence[int], slice, torch.Tensor, Tuple]
     ) -> Union[int, Sequence[int], slice, np.ndarray, Tuple]:
+        """Converts a tensor-based index to a numpy index.
+
+        Args:
+            index: The index to convert.
+
+        Returns:
+            The converted index.
+        """
         if isinstance(index, torch.Tensor):
             return index.cpu().numpy()
         elif isinstance(index, Tuple):
@@ -932,7 +1091,7 @@ class GraphStates(States):
         return out
 
     def extend(self, other: GraphStates):
-        """Concatenates to another GraphStates object along the batch dimension.
+        """Concatenates another GraphStates object along the batch dimension.
 
         Args:
             other: GraphStates object to concatenate with.
@@ -976,10 +1135,11 @@ class GraphStates(States):
         """Compares the current batch of graphs with another graph.
 
         Args:
-            other: A PyG Data object to compare with.
+            other: A `GeometricData` object to compare with.
 
         Returns:
-            A boolean tensor indicating which graphs in the batch are equal to other.
+            A boolean tensor of shape (*batch_shape,) indicating which graphs in the
+            batch are equal to `other`.
         """
         out = torch.zeros(self.data.size, dtype=torch.bool, device=self.device)
 
@@ -1033,23 +1193,31 @@ class GraphStates(States):
 
     @property
     def is_sink_state(self) -> torch.Tensor:
-        """Returns a tensor that is True for states that are sf."""
+        r"""Returns a boolean tensor indicating which graphs are sink states ($s_f$).
+
+        Returns:
+            A boolean tensor of shape (*batch_shape,) that is True for sink states.
+        """
         return self._compare(self.sf)
 
     @property
     def is_initial_state(self) -> torch.Tensor:
-        """Returns a tensor that is True for states that are s0."""
+        r"""Returns a boolean tensor indicating which graphs are initial states ($s_0$).
+
+        Returns:
+            A boolean tensor of shape (*batch_shape,) that is True for initial states.
+        """
         return self._compare(self.s0)
 
     @classmethod
     def stack(cls, states: List[GraphStates]) -> GraphStates:
-        """Given a list of states, stacks them along a new dimension (0).
+        """Stacks a list of GraphStates objects along a new dimension (0).
 
         Args:
             states: List of GraphStates objects to stack.
 
         Returns:
-            A new GraphStates object with the stacked states.
+            A new GraphStates object with the stacked graphs.
         """
         # Check that all states have the same batch shape
         state_batch_shape = states[0].batch_shape
@@ -1072,26 +1240,3 @@ class GraphStates(States):
             out._log_rewards = torch.stack(log_rewards)
 
         return out
-
-
-def graph_states_share_storage(a: GraphStates, b: GraphStates) -> bool:
-    """True if *any* tensor storage is shared between the two GraphStates."""
-
-    def _tensor_ptrs(g: GeometricData) -> tuple[int, ...]:
-        """Return the data_ptr() of every tensor field in the graph."""
-        out: list[int] = []
-        for key, t in g:
-            if torch.is_tensor(t) and t.numel() > 0:  # ignore empty tensors.
-                out.append(t.data_ptr())
-
-        return tuple(out)
-
-    ptrs_a = {  # hash-set for O(1) look-ups.
-        ptr for g in a.data.flat for ptr in _tensor_ptrs(g)
-    }
-
-    for g in b.data.flat:
-        for ptr in _tensor_ptrs(g):
-            if ptr in ptrs_a:
-                return True  # first hit confirms shared storage.
-    return False
