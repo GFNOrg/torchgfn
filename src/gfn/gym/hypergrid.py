@@ -2,6 +2,7 @@
 
 import itertools
 import multiprocessing
+import platform
 import warnings
 from decimal import Decimal
 from functools import reduce
@@ -15,7 +16,10 @@ from gfn.actions import Actions
 from gfn.env import DiscreteEnv
 from gfn.states import DiscreteStates
 
-multiprocessing.set_start_method("fork")  # multiprocessing-torch compatibility.
+if platform.system() == "Windows":
+    multiprocessing.set_start_method("spawn", force=True)
+else:
+    multiprocessing.set_start_method("fork", force=True)
 
 
 def lcm(a, b):

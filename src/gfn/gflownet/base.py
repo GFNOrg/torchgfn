@@ -55,6 +55,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         conditioning: torch.Tensor | None = None,
         save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
+        **policy_kwargs: Any,
     ) -> Trajectories:
         """Samples a specific number of complete trajectories from the environment.
 

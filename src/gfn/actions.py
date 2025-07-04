@@ -446,3 +446,10 @@ class GraphActions(Actions):
         tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64, device=device)
         tensor[..., cls.ACTION_INDICES[cls.ACTION_TYPE_KEY]] = GraphActionType.EXIT
         return cls(tensor)
+
+    @classmethod
+    def edge_index_action_to_src_dst(
+        cls, edge_index_action: torch.Tensor, n_nodes: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Converts the edge index action to source and destination node indices."""
+        raise NotImplementedError("Not implemented.")
