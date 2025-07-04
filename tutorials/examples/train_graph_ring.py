@@ -25,6 +25,7 @@ from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.modules import DiscreteGraphPolicyEstimator
 from gfn.states import GraphStates
+from gfn.utils.common import set_seed
 from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
 
 
@@ -255,70 +256,41 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
     plt.show()
 
 
-def main(args: Namespace):
-    """
-    Main execution for training a GFlowNet to generate ring graphs.
-
-    This script demonstrates the complete workflow of training a GFlowNet
-    to generate valid ring structures in both directed and undirected settings.
-
-    Configurable parameters:
-    - n_nodes: Number of nodes in the graph (default: 5)
-    - n_iterations: Number of training iterations (default: 1000)
-    - lr: Learning rate for optimizer (default: 0.001)
-    - batch_size: Batch size for training (default: 128)
-    - directed: Whether to generate directed rings (default: True)
-    - use_buffer: Whether to use a replay buffer (default: False)
-    - use_gnn: Whether to use GNN-based policy (True) or MLP-based policy (False)
-
-    The script performs the following steps:
-    1. Initialize the environment and policy networks
-    2. Train the GFlowNet using trajectory balance
-    3. Visualize sample generated graphs
-    """
-    device = torch.device(args.device)
-
-    state_evaluator = RingReward(
-        directed=args.directed,
-        reward_val=100.0,
-        eps_val=1e-6,
-        device=device,
-    )
-    torch.random.manual_seed(7)
-
-    env = GraphBuildingOnEdges(
-        n_nodes=args.n_nodes,
-        state_evaluator=state_evaluator,
-        directed=args.directed,
-        device=device,
-    )
-
+def init_gflownet(
+    num_nodes: int,
+    directed: bool,
+    use_gnn: bool,
+    embedding_dim: int,
+    num_conv_layers: int,
+    num_edge_classes: int,
+    device: torch.device,
+) -> TBGFlowNet:
     # Choose model type based on USE_GNN flag
-    if args.use_gnn:
+    if use_gnn:
         module_pf = GraphEdgeActionGNN(
-            env.n_nodes,
-            args.directed,
-            num_conv_layers=args.num_conv_layers,
-            num_edge_classes=env.num_edge_classes,
+            num_nodes,
+            directed,
+            num_conv_layers=num_conv_layers,
+            num_edge_classes=num_edge_classes,
         )
         module_pb = GraphEdgeActionGNN(
-            env.n_nodes,
-            args.directed,
+            num_nodes,
+            directed,
             is_backward=True,
-            num_conv_layers=args.num_conv_layers,
-            num_edge_classes=env.num_edge_classes,
+            num_conv_layers=num_conv_layers,
+            num_edge_classes=num_edge_classes,
         )
     else:
         module_pf = GraphEdgeActionMLP(
-            env.n_nodes,
-            args.directed,
-            num_edge_classes=env.num_edge_classes,
+            num_nodes,
+            directed,
+            num_edge_classes=num_edge_classes,
         )
         module_pb = GraphEdgeActionMLP(
-            env.n_nodes,
-            args.directed,
+            num_nodes,
+            directed,
             is_backward=True,
-            num_edge_classes=env.num_edge_classes,
+            num_edge_classes=num_edge_classes,
         )
 
     pf = DiscreteGraphPolicyEstimator(
@@ -329,12 +301,74 @@ def main(args: Namespace):
         is_backward=True,
     )
     gflownet = TBGFlowNet(pf, pb).to(device)
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
+    return gflownet
+
+
+def init_env(n_nodes: int, directed: bool, device: torch.device) -> GraphBuildingOnEdges:
+    state_evaluator = RingReward(
+        directed=directed,
+        reward_val=100.0,
+        eps_val=1e-6,
+        device=device,
+    )
+
+    return GraphBuildingOnEdges(
+        n_nodes=n_nodes,
+        state_evaluator=state_evaluator,
+        directed=directed,
+        device=device,
+    )
+
+
+def main(args: Namespace):
+    """
+    Main execution for training a GFlowNet to generate ring graphs.
+
+    This script demonstrates the complete workflow of training a GFlowNet
+    to generate valid ring structures in both directed and undirected settings.
+
+    For usage see train_graph_ring.py -h
+
+    The script performs the following steps:
+        1. Initialize the environment and policy networks.
+        2. Train the GFlowNet using trajectory balance.
+        3. Visualize sample generated graphs.
+    """
+    device = torch.device(args.device)
+    set_seed(args.seed)
+    env = init_env(args.n_nodes, args.directed, device)
+
+    gflownet = init_gflownet(
+        args.n_nodes,
+        args.directed,
+        args.use_gnn,
+        args.embedding_dim,
+        args.num_conv_layers,
+        env.num_edge_classes,
+        device,
+    )
+
+    # Create the optimizer.
+    non_logz_params = [
+        v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
+    ]
+    if "logZ" in dict(gflownet.named_parameters()):
+        logz_params = [dict(gflownet.named_parameters())["logZ"]]
+    else:
+        logz_params = []
+
+    params = [
+        {"params": non_logz_params, "lr": args.lr},
+        # Log Z gets dedicated learning rate (typically higher).
+        {"params": logz_params, "lr": args.lr_Z},
+    ]
+    optimizer = torch.optim.Adam(params)
 
     replay_buffer = ReplayBuffer(
         env,
         capacity=args.batch_size,
         prioritized_capacity=True,
+        prioritized_sampling=True,
     )
 
     losses = []
@@ -342,7 +376,8 @@ def main(args: Namespace):
     t1 = time.time()
     epsilon_dict = defaultdict(float)
     for iteration in range(args.n_iterations):
-        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = 0.0
+        epsilon_dict[GraphActions.ACTION_TYPE_KEY] = args.action_type_epsilon
+        epsilon_dict[GraphActions.EDGE_INDEX_KEY] = args.edge_index_epsilon
 
         trajectories = gflownet.sample_trajectories(
             env,
@@ -355,12 +390,12 @@ def main(args: Namespace):
         # Collect rewards for reporting.
         terminating_states = training_samples.terminating_states
         assert isinstance(terminating_states, GraphStates)
-        rewards = state_evaluator(terminating_states)
+        rewards = env.reward(terminating_states)
 
         if args.use_buffer:
             with torch.no_grad():
                 replay_buffer.add(training_samples)
-                if iteration > 20:
+                if iteration > 10:
                     training_samples = training_samples[: args.batch_size // 2]
                     buffer_samples = replay_buffer.sample(n_samples=args.batch_size // 2)
                     training_samples.extend(buffer_samples)  # type: ignore
@@ -377,20 +412,19 @@ def main(args: Namespace):
         optimizer.step()
         losses.append(loss.item())
 
-    t2 = time.time()
-    print("Time:", t2 - t1)
+    print("+ Total Training Time: {} minutes".format((time.time() - t1) / 60))
 
     # This comes from the gflownet, not the buffer.
     if args.plot:
         samples_to_render = trajectories.terminating_states[:8]
         assert isinstance(samples_to_render, GraphStates)
-        render_states(samples_to_render, state_evaluator, args.directed)
+        render_states(samples_to_render, env.reward, args.directed)
 
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Train a GFlowNet to generate ring graphs")
 
-    # Model parameters
+    # Problem size (number of modes is factorial in n_nodes for directed rings).
     parser.add_argument(
         "--n_nodes", type=int, default=4, help="Number of nodes in the graph"
     )
@@ -400,6 +434,8 @@ if __name__ == "__main__":
         default=True,
         help="Whether to generate directed rings",
     )
+
+    # GFlowNet estimator parameters.
     parser.add_argument(
         "--use_gnn",
         action="store_true",
@@ -409,22 +445,40 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_conv_layers", type=int, default=1, help="Number of convolutional layers"
     )
+    parser.add_argument(
+        "--embedding_dim", type=int, default=128, help="Embedding dimension"
+    )
 
-    # Training parameters
+    # Training parameters.
+    parser.add_argument(
+        "--batch_size", type=int, default=128, help="Batch size for training"
+    )
     parser.add_argument(
         "--n_iterations", type=int, default=200, help="Number of training iterations"
     )
     parser.add_argument(
         "--lr", type=float, default=0.001, help="Learning rate for optimizer"
     )
-    parser.add_argument(
-        "--batch_size", type=int, default=128, help="Batch size for training"
-    )
+    parser.add_argument("--lr_Z", type=float, default=0.1, help="Learning rate for logZ")
     parser.add_argument(
         "--use_buffer",
         action="store_true",
         default=True,
         help="Whether to use replay buffer",
+    )
+
+    # Exploration parameters.
+    parser.add_argument(
+        "--action_type_epsilon",
+        type=float,
+        default=0.0,
+        help="Epsilon for action type exploration",
+    )
+    parser.add_argument(
+        "--edge_index_epsilon",
+        type=float,
+        default=0.0,
+        help="Epsilon for edge index exploration",
     )
 
     # Misc parameters
@@ -440,6 +494,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Whether to plot generated graphs",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=1234,
+        help="Seed for random number generator.",
     )
 
     args = parser.parse_args()

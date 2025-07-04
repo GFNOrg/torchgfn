@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-
+import hashlib
 import torch
 from torch_geometric.data import Batch, Data
+
 
 if TYPE_CHECKING:
     from gfn.states import GraphStates
@@ -63,6 +64,112 @@ def graph_states_share_storage(a: GraphStates, b: GraphStates) -> bool:
             if ptr in ptrs_a:
                 return True  # first hit confirms shared storage.
     return False
+
+  
+def from_edge_indices(
+    ei0: int | torch.Tensor,
+    ei1: int | torch.Tensor,
+    n_nodes: int,
+    is_directed: bool,
+) -> int | torch.Tensor:
+    """Return the index (or indices) corresponding to the provided edge(s).
+
+    This is the inverse operation of :func:`get_edge_indices`.  Given the
+    source- and target-node indices of one or several edges, this function
+    returns the *position* of each edge in the enumeration produced by
+    ``get_edge_indices`` for the same ``n_nodes``/``is_directed`` setting.
+
+    The enumeration rules are the same as in ``get_edge_indices``:
+
+    1. ``is_directed = False``  →  only the strict upper–triangular part
+       (``i < j``) is enumerated using ``torch.triu_indices`` with
+       ``offset=1``.
+    2. ``is_directed = True``   →  the strict upper part is enumerated
+       first, followed by the strict lower part (``i > j``).
+
+    Parameters
+    ----------
+    ei0 / ei1
+        Source- and target-node indices. They can be Python ``int`` or
+        *matching-shape* tensors.  If undirected, the orientation is
+        ignored (``(i, j)`` and ``(j, i)`` map to the same index).
+    n_nodes
+        Number of nodes in the graph.
+    is_directed
+        Whether the graph is directed.
+
+    Returns
+    -------
+    int | torch.Tensor
+        The position(s) of each edge in the ordering returned by
+        ``get_edge_indices``.
+    """
+
+    # Convert to tensors for a unified implementation while preserving the
+    # original return type.
+    scalar_input = not torch.is_tensor(ei0) and not torch.is_tensor(ei1)
+
+    if scalar_input:
+        # Promote to tensor for easier math; keep device on CPU for ints.
+        i = torch.tensor(ei0, dtype=torch.long)
+        j = torch.tensor(ei1, dtype=torch.long)
+    else:
+        i = ei0 if torch.is_tensor(ei0) else torch.tensor(ei0, device=ei1.device)
+        j = ei1 if torch.is_tensor(ei1) else torch.tensor(ei1, device=ei0.device)
+
+    # Sanity checks
+    if torch.any(i == j):
+        raise ValueError("Self-loops (i == j) are not enumerated by get_edge_indices.")
+
+    # Ensure both tensors share the same dtype/device.
+    if i.dtype != torch.long:
+        i = i.long()
+    if j.dtype != torch.long:
+        j = j.long()
+
+    if is_directed:
+        # Number of edges in the upper triangular part.
+        n_up = n_nodes * (n_nodes - 1) // 2
+
+        # Masks for upper and lower triangles.
+        upper_mask = i < j
+        lower_mask = j < i  # same as i > j & avoids computing again.
+
+        # Allocate container for result.
+        idx = torch.empty_like(i)
+
+        # --- Upper triangle -------------------------------------------------
+        if upper_mask.any():
+            iu = i[upper_mask]
+            ju = j[upper_mask]
+
+            preceding = iu * (n_nodes - 1) - (iu * (iu - 1)) // 2
+            offset = ju - iu - 1
+            idx[upper_mask] = preceding + offset
+
+        # --- Lower triangle -------------------------------------------------
+        if lower_mask.any():
+            il = i[lower_mask]
+            jl = j[lower_mask]
+
+            preceding = (il * (il - 1)) // 2  # number of edges before row *il*
+            offset = jl  # j ranges 0..i-1
+            idx[lower_mask] = n_up + preceding + offset
+
+    else:  # undirected ------------------------------------------------------
+        # Ensure orientation is i < j for each edge.
+        swapped_mask = i > j
+        if swapped_mask.any():
+            i, j = torch.where(swapped_mask, j, i), torch.where(swapped_mask, i, j)
+
+        preceding = i * (n_nodes - 1) - (i * (i - 1)) // 2
+        offset = j - i - 1
+        idx = preceding + offset
+
+    # Return in the original type.
+    if scalar_input:
+        return int(idx.item())
+    return idx
 
 
 class GeometricBatch(Batch):
@@ -267,6 +374,7 @@ class GeometricBatch(Batch):
             )
             new_batch_shape = (max_len, self_batch_shape[1] + other_batch_shape[1])
             self.tensor.batch_shape = new_batch_shape
+            # Restore batch pointers for the concatenated batch.
             new_batch_ptrs = torch.cat(
                 [self_batch_ptrs, self_batch_ptrs.numel() + other_batch_ptrs], dim=1
             )
@@ -372,4 +480,66 @@ def data_share_storage(a: Data, b: Data) -> bool:
         tb = getattr(b, key, None)
         if not (torch.is_tensor(tb) and ta.data_ptr() == tb.data_ptr()):
             return False
+    return True
+
+
+def hash_graph(data, directed: bool) -> str:
+    """
+    Hash a PyG `Data` object (edge_index, edge_attr, x).
+    Produces the same hash for graphs that are element-wise identical.
+    """
+
+    def _hash_update(t: torch.Tensor | None, h: hashlib.blake2b):
+        """Update the hash with the contents of a tensor or placeholder."""
+        if torch.is_tensor(t):
+            h.update(t.contiguous().view(-1).cpu().numpy().tobytes())
+        else:
+            h.update(b"\0")  # placeholder for None.
+
+        return h
+
+    h = hashlib.blake2b(digest_size=16)
+
+    # First, sort edge index, to remove isomorphisms.
+    t = getattr(data, "edge_index", None)
+
+    if torch.is_tensor(t):
+        # Sorts individual edges to have source nodes < target nodes.
+        if not directed:
+            # Loop over edges.
+            for i in range(t.shape[1]):
+                idx = torch.argsort(t[:, i])  # Undirected case!
+                t[:, i] = t[idx, i]  # Undirected case!
+
+        # Sorts edges such that the source nodes are in ascending order.
+        idx_per_edge = torch.argsort(t[0, :])  # Directed & undirected case!
+        t = t[:, idx_per_edge]
+    h = _hash_update(t, h)
+
+    # Apply idx_per_edge to sort edge attributes.
+    t = getattr(data, "edge_attr", None)
+    if torch.is_tensor(t):
+        t = t[idx_per_edge, ...]  # Sort edge attributes by ascending source nodes.
+    h = _hash_update(t, h)
+
+    # Finally, hash node features.
+    t = getattr(data, "x", None)
+    h = _hash_update(t, h)
+
+    return h.hexdigest()
+
+
+def compare_data_objects(a: Data, b: Data) -> bool:
+    """Compare two Data objects along the main fields."""
+    for attr in ("edge_index", "edge_attr", "x"):
+        ta, tb = getattr(a, attr, None), getattr(b, attr, None)
+
+        # One has a tensor, the other doesn't.
+        if torch.is_tensor(ta) != torch.is_tensor(tb):
+            return False
+
+        # Both are tensors → compare contents (includes shape & dtype).
+        if torch.is_tensor(ta) and not torch.equal(ta, tb):  # type: ignore
+            return False
+
     return True

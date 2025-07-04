@@ -236,14 +236,23 @@ def test_reverse_backward_trajectories(
         n_components=1,
         n_components_s0=1,
     )
-    try:
-        _ = backward_trajectories.reverse_backward_trajectories(
-            debug=True  # <--- TRIGGER THE COMPARISON
-        )
-    except Exception as e:
-        raise ValueError(
-            f"Error while testing Trajectories.reverse_backward_trajectories in {env_name}"
-        ) from e
+
+    reversed_traj = backward_trajectories.reverse_backward_trajectories()
+
+    for i in range(len(backward_trajectories)):
+        terminating_idx = backward_trajectories.terminating_idx[i]
+        for j in range(terminating_idx):
+            assert torch.all(
+                reversed_traj.actions.tensor[j, i]
+                == backward_trajectories.actions.tensor[terminating_idx - j - 1, i]
+            )
+            assert torch.all(
+                reversed_traj.states.tensor[j, i]
+                == backward_trajectories.states.tensor[terminating_idx - j, i]
+            )
+
+        assert torch.all(reversed_traj.actions[terminating_idx, i].is_exit)
+        assert torch.all(reversed_traj.states[terminating_idx + 1, i].is_sink_state)
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
@@ -349,11 +358,6 @@ def test_to_transition(
 
     try:
         _ = trajectories.to_transitions()
-        if env_name == "GraphBuildingOnEdges":
-            pytest.skip(
-                "`reverse_backward_trajectories` is not supported for trajectories of "
-                "type `GraphStates`"
-            )
 
         bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
         # evaluate with pf_estimator
