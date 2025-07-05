@@ -25,18 +25,16 @@ class MLP(nn.Module):
         trunk: Optional[nn.Module] = None,
         add_layer_norm: bool = False,
     ):
-        """Instantiates a MLP instance.
+        """Initializes a new MLP.
 
         Args:
-            input_dim: input dimension.
-            output_dim: output dimension.
-            hidden_dim: Number of units per hidden layer.
-            n_hidden_layers: Number of hidden layers.
-            activation_fn: Activation function.
-            trunk: If provided, this module will be used as the trunk of the network
-                (i.e. all layers except last layer).
-            add_layer_norm: If True, add a LayerNorm after each linear layer.
-                (incompatible with `trunk` argument)
+            input_dim: The dimension of the input.
+            output_dim: The dimension of the output.
+            hidden_dim: The dimension of the hidden layers.
+            n_hidden_layers: The number of hidden layers.
+            activation_fn: The activation function to use.
+            trunk: A custom trunk to use. If None, a new trunk will be created.
+            add_layer_norm: Whether to add layer normalization to the hidden layers.
         """
         super().__init__()
         self._input_dim = input_dim
@@ -121,10 +119,11 @@ class Tabular(nn.Module):
     """
 
     def __init__(self, n_states: int, output_dim: int) -> None:
-        """
+        """Initializes a new Tabular module.
+
         Args:
-            n_states (int): Number of states in the environment.
-            output_dim (int): Output dimension.
+            n_states: The number of states.
+            output_dim: The dimension of the output.
         """
 
         super().__init__()
@@ -164,11 +163,10 @@ class DiscreteUniform(nn.Module):
     """
 
     def __init__(self, output_dim: int) -> None:
-        """Initializes the uniform function approximiator.
+        """Initializes a new DiscreteUniform module.
 
         Args:
-            output_dim (int): Output dimension. This is typically n_actions if it
-                implements a Uniform PF, or n_actions-1 if it implements a Uniform PB.
+            output_dim: The dimension of the output.
         """
         super().__init__()
         self.output_dim = output_dim
@@ -216,6 +214,15 @@ class LinearTransformer(nn.Module):
         n_heads: int = 8,
         causal: bool = False,
     ):
+        """Initializes a new LinearTransformer module.
+
+        Args:
+            dim: The dimension of the input.
+            depth: The depth of the transformer.
+            max_seq_len: The maximum sequence length.
+            n_heads: The number of attention heads.
+            causal: Whether to use causal attention.
+        """
         super().__init__()
         assert isinstance(dim, int) and dim > 0, "dim must be a positive integer"
         assert isinstance(depth, int) and depth > 0, "depth must be a positive integer"
@@ -268,6 +275,16 @@ class GraphEdgeActionGNN(nn.Module):
         embedding_dim: int = 128,
         is_backward: bool = False,
     ) -> None:
+        """Initializes a new GraphEdgeActionGNN module.
+
+        Args:
+            n_nodes: The number of nodes in the graph.
+            directed: Whether the graph is directed.
+            num_edge_classes: The number of edge classes.
+            num_conv_layers: The number of convolutional layers.
+            embedding_dim: The dimension of the node embeddings.
+            is_backward: Whether the GNN is used for a backward policy.
+        """
         super().__init__()
 
         assert n_nodes > 0, "n_nodes must be greater than 0"
@@ -521,6 +538,17 @@ class GraphEdgeActionMLP(nn.Module):
         embedding_dim: int = 128,
         is_backward: bool = False,
     ):
+        """Initializes a new GraphEdgeActionMLP module.
+
+        Args:
+            n_nodes: The number of nodes in the graph.
+            directed: Whether the graph is directed.
+            num_edge_classes: The number of edge classes.
+            n_hidden_layers: The number of hidden layers in the main MLP.
+            n_hidden_layers_exit: The number of hidden layers in the exit MLP.
+            embedding_dim: The dimension of the embeddings.
+            is_backward: Whether the MLP is used for a backward policy.
+        """
         super().__init__()
         assert n_nodes > 0, "n_nodes must be greater than 0"
         assert embedding_dim > 0, "embedding_dim must be greater than 0"
@@ -678,6 +706,13 @@ class GraphActionUniform(nn.Module):
         num_edge_classes: int,
         num_node_classes: int,
     ) -> None:
+        """Initializes a new GraphActionUniform module.
+
+        Args:
+            edges_dim: The dimension of edge_index in GraphActions.
+            num_edge_classes: The number of edge classes.
+            num_node_classes: The number of node classes.
+        """
         """Initializes the uniform function approximiator.
 
         Args:

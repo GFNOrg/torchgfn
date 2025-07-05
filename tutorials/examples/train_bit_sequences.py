@@ -4,22 +4,23 @@ from typing import cast
 import torch
 from tqdm import tqdm
 
-from gfn.gflownet import DBGFlowNet, FMGFlowNet, GFlowNet, TBGFlowNet
+from gfn.gflownet import DBGFlowNet, FMGFlowNet, GFlowNet, PFBasedGFlowNet, TBGFlowNet
 from gfn.gym import BitSequence
 from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP
+from gfn.utils.prob_calculations import get_trajectory_pfs
 
 DEFAULT_SEED = 4444
 
 
-def estimated_dist_pmf(gflownet, env):
+def estimated_dist_pmf(gflownet: PFBasedGFlowNet, env: BitSequence):
     states = env.terminating_states
     trajectories = env.trajectory_from_terminating_states(states.tensor)
-    scores = gflownet.get_trajectories_scores(
-        trajectories=trajectories, recalculate_all_logprobs=True
-    )[0]
-    pf = torch.exp(scores)
+    log_pf_trajectories = get_trajectory_pfs(
+        pf=gflownet.pf, trajectories=trajectories, recalculate_all_logprobs=True
+    )
+    pf = torch.exp(log_pf_trajectories.sum(dim=0))
     return pf
 
 
@@ -84,7 +85,7 @@ def main(args):
         optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
 
     gflownet = cast(GFlowNet, gflownet)
-    for iteration in tqdm(range(args.n_iterations), desc="Training"):
+    for _ in tqdm(range(args.n_iterations), desc="Training"):
         trajectories = gflownet.sample_trajectories(
             env,
             n=args.batch_size,
@@ -97,6 +98,7 @@ def main(args):
         optimizer.step()
 
     try:
+        gflownet = cast(PFBasedGFlowNet, gflownet)
         return (
             torch.abs(estimated_dist_pmf(gflownet, env) - env.true_dist_pmf)
             .mean()

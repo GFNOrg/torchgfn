@@ -9,8 +9,8 @@ import os
 import sys
 
 project = "torchgfn"
-copyright = "2022-2024, Salem Lahlou, Joseph Viviano, & Victor Schmidt"
-author = "Salem Lahlou, Joseph Viviano, & Victor Schmidt"
+copyright = "2022-2025, Joseph Viviano, Sanghyeok Choi, Omar Younis, Victor Schmidt, & Salem Lahlou"
+author = "Joseph Viviano, Sanghyeok Choi, Omar Younis, Victor Schmidt, & Salem Lahlou"
 
 
 sys.path.insert(0, os.path.abspath("../.."))
@@ -37,6 +37,7 @@ source_suffix = {
 autoapi_type = "python"
 autoapi_dirs = ["../../src/gfn", "../../tutorials"]
 autoapi_member_order = "alphabetical"
+autoapi_ignore = ["*tutorials/examples/test_*.py"]
 
 autodoc_typehints = "description"
 mathjax_path = (

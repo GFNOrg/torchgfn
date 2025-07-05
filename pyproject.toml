@@ -112,7 +112,7 @@ all = [
 
 [tool.poetry.urls]
 "Homepage" = "https://gfn.readthedocs.io/en/latest/"
-"Bug Tracker" = "https://github.com/saleml/gfn/issues"
+"Bug Tracker" = "https://github.com/gfnorg/torchgfn/issues"
 
 [tool.black]
 target_version = ["py310"]

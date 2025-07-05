@@ -272,9 +272,7 @@ def main(args: Namespace):
             # Mix of 50% replay buffer and 50% gflownet samples.
             replay_buffer.add(training_samples)
             training_samples = training_samples[: args.batch_size // 2]
-            replay_buffer_samples = replay_buffer.sample(
-                n_trajectories=args.batch_size // 2
-            )
+            replay_buffer_samples = replay_buffer.sample(n_samples=args.batch_size // 2)
             assert isinstance(replay_buffer_samples, Trajectories)
             training_samples.extend(replay_buffer_samples)
 

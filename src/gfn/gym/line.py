@@ -9,7 +9,16 @@ from gfn.states import States
 
 
 class Line(Env):
-    """Mixture of Gaussians Line environment."""
+    """Mixture of Gaussians Line environment.
+
+    Attributes:
+        mus (torch.Tensor): The means of the Gaussians.
+        sigmas (torch.Tensor): The standard deviations of the Gaussians.
+        n_sd (float): The number of standard deviations to consider for the bounds.
+        n_steps_per_trajectory (int): The number of steps per trajectory.
+        mixture (list[Normal]): The mixture of Gaussians.
+        init_value (float): The initial value of the state.
+    """
 
     def __init__(
         self,
@@ -20,6 +29,16 @@ class Line(Env):
         n_steps_per_trajectory: int = 5,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
     ):
+        """Initializes the Line environment.
+
+        Args:
+            mus: The means of the Gaussians.
+            sigmas: The standard deviations of the Gaussians.
+            init_value: The initial value of the state.
+            n_sd: The number of standard deviations to consider for the bounds.
+            n_steps_per_trajectory: The number of steps per trajectory.
+            device: The device to use.
+        """
         assert len(mus) == len(sigmas)
         self.mus = torch.tensor(mus)
         self.sigmas = torch.tensor(sigmas)
@@ -44,13 +63,14 @@ class Line(Env):
         )  # sf is -inf by default.
 
     def step(self, states: States, actions: Actions) -> States:
-        """Take a step in the environment.
+        """Performs a step in the environment.
 
         Args:
             states: The current states.
             actions: The actions to take.
 
-        Returns the new states after taking the actions as a tensor of shape (*batch_shape, 2).
+        Returns:
+            The next states.
         """
         states.tensor[..., 0] = states.tensor[..., 0] + actions.tensor.squeeze(
             -1
@@ -60,13 +80,14 @@ class Line(Env):
         return self.States(states.tensor)
 
     def backward_step(self, states: States, actions: Actions) -> States:
-        """Take a step in the environment in the backward direction.
+        """Performs a backward step in the environment.
 
         Args:
             states: The current states.
             actions: The actions to take.
 
-        Returns the new states after taking the actions as a tensor of shape (*batch_shape, 2).
+        Returns:
+            The previous states.
         """
         states.tensor[..., 0] = states.tensor[..., 0] - actions.tensor.squeeze(
             -1
@@ -78,6 +99,16 @@ class Line(Env):
     def is_action_valid(
         self, states: States, actions: Actions, backward: bool = False
     ) -> bool:
+        """Checks if the actions are valid.
+
+        Args:
+            states: The current states.
+            actions: The actions to check.
+            backward: Whether to check for backward actions.
+
+        Returns:
+            `True` if the actions are valid, `False` otherwise.
+        """
         # Can't take a backward step at the beginning of a trajectory.
         if torch.any(states[~actions.is_exit].is_initial_state) and backward:
             return False
@@ -85,12 +116,13 @@ class Line(Env):
         return True
 
     def log_reward(self, final_states: States) -> torch.Tensor:
-        """Log reward log of the environment.
+        """Computes the log reward of the environment.
 
         Args:
             final_states: The final states of the environment.
 
-        Returns the log reward as a tensor of shape `batch_shape`.
+        Returns:
+            The log reward.
         """
         s = final_states.tensor[..., 0]
         log_rewards = torch.empty((len(self.mixture),) + final_states.batch_shape)
@@ -103,6 +135,6 @@ class Line(Env):
 
     @property
     def log_partition(self) -> torch.Tensor:
-        """Log Partition log of the number of gaussians."""
+        """Returns the log partition of the reward function."""
         n_modes = torch.tensor(len(self.mus), device=self.device)
         return n_modes.log()

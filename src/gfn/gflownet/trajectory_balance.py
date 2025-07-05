@@ -19,16 +19,21 @@ from gfn.utils.handlers import (
 
 
 class TBGFlowNet(TrajectoryBasedGFlowNet):
-    r"""Holds the logZ estimate for the Trajectory Balance loss.
+    r"""GFlowNet for the Trajectory Balance loss.
 
     $\mathcal{O}_{PFZ} = \mathcal{O}_1 \times \mathcal{O}_2 \times \mathcal{O}_3$, where
     $\mathcal{O}_1 = \mathbb{R}$ represents the possible values for logZ,
     and $\mathcal{O}_2$ is the set of forward probability functions consistent with the
     DAG. $\mathcal{O}_3$ is the set of backward probability functions consistent with
-    the DAG, or a singleton thereof, if self.logit_PB is a fixed DiscretePBEstimator.
+    the DAG, or a singleton thereof, if self.pb is a fixed DiscretePBEstimator.
+
+    See [Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259)
+    for more details.
 
     Attributes:
-        logZ: a ScalarEstimator (for conditional GFNs) instance, or float.
+        pf: The forward policy module.
+        pb: The backward policy module.
+        logZ: A learnable parameter or a ScalarEstimator instance (for conditional GFNs).
         log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
@@ -39,6 +44,15 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         logZ: float | ScalarEstimator = 0.0,
         log_reward_clip_min: float = -float("inf"),
     ):
+        """Initializes a TBGFlowNet instance.
+
+        Args:
+            pf: The forward policy module.
+            pb: The backward policy module.
+            logZ: A learnable parameter or a ScalarEstimator instance (for
+                conditional GFNs).
+            log_reward_clip_min: If finite, clips log rewards to this value.
+        """
         super().__init__(pf, pb)
 
         if isinstance(logZ, float):
@@ -51,6 +65,22 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
 
         self.log_reward_clip_min = log_reward_clip_min
 
+    def logz_named_parameters(self) -> dict[str, torch.Tensor]:
+        """Returns a dictionary of named parameters containing 'logZ' in their name.
+
+        Returns:
+            A dictionary of named parameters containing 'logZ' in their name.
+        """
+        return {k: v for k, v in dict(self.named_parameters()).items() if "logZ" in k}
+
+    def logz_parameters(self) -> list[torch.Tensor]:
+        """Returns a list of parameters containing 'logZ' in their name.
+
+        Returns:
+            A list of parameters containing 'logZ' in their name.
+        """
+        return [v for k, v in dict(self.named_parameters()).items() if "logZ" in k]
+
     def loss(
         self,
         env: Env,
@@ -58,17 +88,24 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
-        """Trajectory balance loss.
+        """Computes the trajectory balance loss.
 
-        The trajectory balance loss is described in 2.3 of
-        [Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259))
+        The trajectory balance loss is described in section 2.3 of
+        [Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259).
 
-        Raises:
-            ValueError: if the loss is NaN.
+        Args:
+            env: The environment where the trajectories are sampled from (unused).
+            trajectories: The Trajectories object to compute the loss with.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            reduction: The reduction method to use ('mean', 'sum', or 'none').
+
+        Returns:
+            The computed trajectory balance loss as a tensor. The shape depends on the
+            reduction method.
         """
         del env  # unused
         warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
-        _, _, scores = self.get_trajectories_scores(
+        scores = self.get_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
 
@@ -91,13 +128,15 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
 
 
 class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
-    """Dataclass which holds the logZ estimate for the Log Partition Variance loss.
+    """GFlowNet for the Log Partition Variance loss.
+
+    The log partition variance loss is described in section 3.2 of
+    [Robust Scheduling with GFlowNets](https://arxiv.org/abs/2302.05446).
 
     Attributes:
+        pf: The forward policy module.
+        pb: The backward policy module.
         log_reward_clip_min: If finite, clips log rewards to this value.
-
-    Raises:
-        ValueError: if the loss is NaN.
     """
 
     def __init__(
@@ -106,6 +145,13 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         pb: GFNModule,
         log_reward_clip_min: float = -float("inf"),
     ):
+        """Initializes a LogPartitionVarianceGFlowNet instance.
+
+        Args:
+            pf: The forward policy module.
+            pb: The backward policy module.
+            log_reward_clip_min: If finite, clips log rewards to this value.
+        """
         super().__init__(pf, pb)
         self.log_reward_clip_min = log_reward_clip_min
 
@@ -116,14 +162,24 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
-        """Log Partition Variance loss.
+        """Computes the log partition variance loss.
 
-        This method is described in section 3.2 of
-        [ROBUST SCHEDULING WITH GFLOWNETS](https://arxiv.org/abs/2302.05446))
+        The log partition variance loss is described in section 3.2 of
+        [Robust Scheduling with GFlowNets](https://arxiv.org/abs/2302.05446).
+
+        Args:
+            env: The environment where the trajectories are sampled from (unused).
+            trajectories: The Trajectories object to compute the loss with.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            reduction: The reduction method to use ('mean', 'sum', or 'none').
+
+        Returns:
+            The computed log partition variance loss as a tensor. The shape depends on
+            the reduction method.
         """
         del env  # unused
         warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
-        _, _, scores = self.get_trajectories_scores(
+        scores = self.get_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
         scores = (scores - scores.mean()).pow(2)

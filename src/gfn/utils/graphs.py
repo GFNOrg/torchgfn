@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+from typing import TYPE_CHECKING
 
 import torch
 from torch_geometric.data import Batch, Data
+
+if TYPE_CHECKING:
+    from gfn.states import GraphStates
 
 
 def get_edge_indices(
@@ -33,6 +37,33 @@ def get_edge_indices(
         ei0, ei1 = torch.triu_indices(n_nodes, n_nodes, offset=1, device=device)
 
     return ei0, ei1
+
+
+def graph_states_share_storage(a: GraphStates, b: GraphStates) -> bool:
+    """Helper function to check if two GraphStates objects share storage.
+
+    Returns:
+        True if *any* tensor storage is shared between the two GraphStates.
+    """
+
+    def _tensor_ptrs(g: Data) -> tuple[int, ...]:
+        """Return the data_ptr() of every tensor field in the graph."""
+        out: list[int] = []
+        for key, t in g:
+            if torch.is_tensor(t) and t.numel() > 0:  # ignore empty tensors.
+                out.append(t.data_ptr())
+
+        return tuple(out)
+
+    ptrs_a = {  # hash-set for O(1) look-ups.
+        ptr for g in a.data.flat for ptr in _tensor_ptrs(g)
+    }
+
+    for g in b.data.flat:
+        for ptr in _tensor_ptrs(g):
+            if ptr in ptrs_a:
+                return True  # first hit confirms shared storage.
+    return False
 
 
 def from_edge_indices(
@@ -142,8 +173,24 @@ def from_edge_indices(
 
 
 class GeometricBatch(Batch):
+    """A batch of graphs.
+
+    This class extends `torch_geometric.data.Batch` to support extending a batch
+    with another batch, and to support stacking a list of `Data` objects into a
+    single batch.
+
+    Attributes:
+        tensor: The underlying `torch_geometric.data.Data` object.
+        batch_shape: The shape of the batch.
+        batch_ptrs: A tensor of pointers to the start of each graph in the batch.
+    """
 
     def extend(self, other: GeometricBatch) -> None:
+        """Extends the current batch with another batch.
+
+        Args:
+            other: The batch to extend with.
+        """
         self_x, other_x = self.tensor.x, other.tensor.x
         self_edge_index, other_edge_index = (
             self.tensor.edge_index,
@@ -348,6 +395,14 @@ class GeometricBatch(Batch):
 
     @classmethod
     def stack(cls, data_list: list[Data]) -> GeometricBatch:
+        """Stacks a list of `Data` objects into a single `GeometricBatch`.
+
+        Args:
+            data_list: A list of `Data` objects to stack.
+
+        Returns:
+            A new `GeometricBatch` containing the stacked graphs.
+        """
         xs = []
         edge_indices = []
         edge_attrs = []

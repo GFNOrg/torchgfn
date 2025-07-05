@@ -10,27 +10,32 @@ from gfn.states import DiscreteStates, States
 
 
 class EnergyFunction(nn.Module, ABC):
-    """Base class for energy functions"""
+    """Base class for energy functions."""
 
     @abstractmethod
     def forward(self, states: torch.Tensor) -> torch.Tensor:
-        """Forward pass of the energy function
+        """Forward pass of the energy function.
 
         Args:
-            states: tensor of states of shape (*batch_shape, *state_shape)
+            states: tensor of states of shape `(*batch_shape, *state_shape)`.
 
-        Returns tensor of energies of shape (*batch_shape)
+        Returns:
+            Tensor of energies of shape `(*batch_shape)`.
         """
 
 
 class IsingModel(EnergyFunction):
-    """Ising model energy function"""
+    """Ising model energy function.
+
+    Attributes:
+        J (torch.Tensor): Interaction matrix of shape `(state_shape, state_shape)`.
+    """
 
     def __init__(self, J: torch.Tensor):
-        """Ising model energy function
+        """Ising model energy function.
 
         Args:
-            J: interaction matrix of shape (state_shape, state_shape)
+            J: interaction matrix of shape `(state_shape, state_shape)`.
         """
         super().__init__()
         self.J = J
@@ -43,9 +48,10 @@ class IsingModel(EnergyFunction):
         """Forward pass of the ising model.
 
         Args:
-            states: tensor of states of shape (*batch_shape, *state_shape)
+            states: tensor of states of shape `(*batch_shape, *state_shape)`.
 
-        Returns tensor of energies of shape (*batch_shape)
+        Returns:
+            Tensor of energies of shape `(*batch_shape)`.
         """
         assert states.shape[-1] == self._state_shape
         states = states.float()
@@ -54,7 +60,23 @@ class IsingModel(EnergyFunction):
 
 
 class DiscreteEBM(DiscreteEnv):
-    """Environment for discrete energy-based models, based on https://arxiv.org/pdf/2202.01361.pdf"""
+    """Environment for discrete energy-based models.
+
+    This environment is based on the paper https://arxiv.org/pdf/2202.01361.pdf.
+
+    The states are represented as 1d tensors of length `ndim` with values in
+    `{-1, 0, 1}`. `s0` is empty (represented as -1), so `s0=[-1, -1, ..., -1]`.
+    An action corresponds to replacing a -1 with a 0 or a 1.
+    Action `i` in `[0, ndim - 1]` corresponds to replacing `s[i]` with 0.
+    Action `i` in `[ndim, 2 * ndim - 1]` corresponds to replacing `s[i - ndim]` with 1.
+    The last action is the exit action that is only available for complete states
+    (those with no -1).
+
+    Attributes:
+        ndim (int): Dimension D of the sampling space `{0, 1}^D`.
+        energy (EnergyFunction): Energy function of the EBM.
+        alpha (float): Interaction strength the EBM.
+    """
 
     def __init__(
         self,
@@ -65,17 +87,10 @@ class DiscreteEBM(DiscreteEnv):
     ):
         """Discrete EBM environment.
 
-        The states are represented as 1d tensors of length `ndim` with values in
-        {-1, 0, 1}. s0 is empty (represented as -1), so s0=[-1, -1, ..., -1],
-        An action corresponds to replacing a -1 with a 0 or a 1.
-        Action i in [0, ndim - 1] corresponds to replacing s[i] with 0
-        Action i in [ndim, 2 * ndim - 1] corresponds to replacing s[i - ndim] with 1
-        The last action is the exit action that is only available for complete states (those with no -1)
-
         Args:
-            ndim: dimension D of the sampling space {0, 1}^D.
-            energy: energy function of the EBM. Defaults to None. If
-                None, the Ising model with Identity matrix is used.
+            ndim: dimension D of the sampling space `{0, 1}^D`.
+            energy: energy function of the EBM. If None, the Ising model with
+                Identity matrix is used.
             alpha: interaction strength the EBM. Defaults to 1.0.
             device: Device to use for the environment.
         """
@@ -103,6 +118,11 @@ class DiscreteEBM(DiscreteEnv):
         self.States: type[DiscreteStates] = self.States
 
     def update_masks(self, states: DiscreteStates) -> None:
+        """Updates the masks of the states.
+
+        Args:
+            states: The states to update the masks of.
+        """
         states.forward_masks[..., : self.ndim] = states.tensor == -1
         states.forward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == -1
         states.forward_masks[..., -1] = torch.all(states.tensor != -1, dim=-1)
@@ -112,7 +132,15 @@ class DiscreteEBM(DiscreteEnv):
     def make_random_states(
         self, batch_shape: Tuple, device: torch.device | None = None
     ) -> DiscreteStates:
-        """Generates random states tensor of shape (*batch_shape, ndim)."""
+        """Generates random states tensor of shape `(*batch_shape, ndim)`.
+
+        Args:
+            batch_shape: The shape of the batch.
+            device: The device to use.
+
+        Returns:
+            A `DiscreteStates` object with random states.
+        """
         device = self.device if device is None else device
         tensor = torch.randint(
             -1, 2, batch_shape + (self.ndim,), dtype=torch.long, device=device
@@ -123,9 +151,10 @@ class DiscreteEBM(DiscreteEnv):
         """Determines if the actions are exit actions.
 
         Args:
-            actions: tensor of actions of shape (*batch_shape, *action_shape)
+            actions: tensor of actions of shape `(*batch_shape, *action_shape)`.
 
-        Returns tensor of booleans of shape (*batch_shape)
+        Returns:
+            Tensor of booleans of shape `(*batch_shape)`.
         """
         return actions == self.n_actions - 1
 
@@ -136,7 +165,8 @@ class DiscreteEBM(DiscreteEnv):
             states: States object representing the current states.
             actions: Actions object representing the actions to be taken.
 
-        Returns the next states as tensor of shape (*batch_shape, ndim).
+        Returns:
+            The next states as a `States` object.
         """
         # First, we select that actions that replace a -1 with a 0.
         # Remove singleton dimension for broadcasting.
@@ -158,24 +188,30 @@ class DiscreteEBM(DiscreteEnv):
     def backward_step(self, states: States, actions: Actions) -> States:
         """Performs a backward step.
 
-        In this env, states are n-dim vectors. s0 is empty (represented as -1),
-            so s0=[-1, -1, ..., -1], each action is replacing a -1 with either a
-            0 or 1. Action i in [0, ndim-1] os replacing s[i] with 0, whereas
-            action i in [ndim, 2*ndim-1] corresponds to replacing s[i - ndim] with 1.
-            A backward action asks "what index should be set back to -1", hence the fmod
-            to enable wrapping of indices.
+        In this env, states are n-dim vectors. `s0` is empty (represented as -1),
+        so `s0=[-1, -1, ..., -1]`, each action is replacing a -1 with either a
+        0 or 1. Action `i` in `[0, ndim-1]` is replacing `s[i]` with 0, whereas
+        action `i` in `[ndim, 2*ndim-1]` corresponds to replacing `s[i - ndim]` with 1.
+        A backward action asks "what index should be set back to -1", hence the fmod
+        to enable wrapping of indices.
+
+        Args:
+            states: The current states.
+            actions: The actions to be undone.
+
+        Returns:
+            The previous states.
         """
         return self.States(states.tensor.scatter(-1, actions.tensor.fmod(self.ndim), -1))
 
     def reward(self, final_states: DiscreteStates) -> torch.Tensor:
-        """Not used during training but provided for completeness.
-
-        Note the effect of clipping will be seen in these values.
+        """Computes the reward for a batch of final states.
 
         Args:
-            final_states: DiscreteStates object representing the final states.
+            final_states: A batch of final states.
 
-        Returns the reward as tensor of shape (*batch_shape).
+        Returns:
+            A tensor of rewards.
         """
         reward = torch.exp(self.log_reward(final_states))
         assert reward.shape == final_states.batch_shape
@@ -187,7 +223,9 @@ class DiscreteEBM(DiscreteEnv):
         Args:
             final_states: DiscreteStates object representing the final states.
 
-        Returns the log reward as tensor of shape (*batch_shape)."""
+        Returns:
+            The log reward as tensor of shape `(*batch_shape)`.
+        """
         raw_states = final_states.tensor
         canonical = 2 * raw_states - 1
         log_reward = -self.alpha * self.energy(canonical)
@@ -196,17 +234,18 @@ class DiscreteEBM(DiscreteEnv):
         return log_reward
 
     def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Given that each state is of length ndim with values in {-1, 0, 1},
-        there are 3**ndim states, which we can label from 0 to 3**ndim - 1.
+        """Given that each state is of length `ndim` with values in `{-1, 0, 1}`,
+        there are `3**ndim` states, which we can label from `0` to `3**ndim - 1`.
 
         The easiest way to map each state to a unique integer is to consider the
-        state as a number in base 3, where each digit can be in {0, 1, 2}.
-        We thus need to shift this number by 1 so that {-1, 0, 1} -> {0, 1, 2}.
+        state as a number in base 3, where each digit can be in `{0, 1, 2}`.
+        We thus need to shift this number by 1 so that `{-1, 0, 1} -> {0, 1, 2}`.
 
         Args:
             states: DiscreteStates object representing the states.
 
-        Returns the states indices as tensor of shape (*batch_shape).
+        Returns:
+            The states indices as tensor of shape `(*batch_shape)`.
         """
         states_raw = states.tensor
         canonical_base = 3 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
@@ -215,8 +254,8 @@ class DiscreteEBM(DiscreteEnv):
         return states_indices
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Given that each terminating state is of length ndim with values in {0, 1},
-        there are 2**ndim terminating states, which we can label from 0 to 2**ndim - 1.
+        """Given that each terminating state is of length `ndim` with values in `{0, 1}`,
+        there are `2**ndim` terminating states, which we can label from `0` to `2**ndim - 1`.
 
         The easiest way to map each state to a unique integer is to consider the
         state as a number in base 2.
@@ -224,7 +263,8 @@ class DiscreteEBM(DiscreteEnv):
         Args:
             states: DiscreteStates object representing the states.
 
-        Returns the indices of the terminating states as tensor of shape (*batch_shape).
+        Returns:
+            The indices of the terminating states as tensor of shape `(*batch_shape)`.
         """
         states_raw = states.tensor
         canonical_base = 2 ** torch.arange(self.ndim - 1, -1, -1, device=self.device)
@@ -234,14 +274,17 @@ class DiscreteEBM(DiscreteEnv):
 
     @property
     def n_states(self) -> int:
+        """Returns the number of states in the environment."""
         return 3**self.ndim
 
     @property
     def n_terminating_states(self) -> int:
+        """Returns the number of terminating states in the environment."""
         return 2**self.ndim
 
     @property
     def all_states(self) -> DiscreteStates:
+        """Returns all possible states of the environment."""
         # This is brute force !
         digits = torch.arange(3, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
@@ -250,16 +293,19 @@ class DiscreteEBM(DiscreteEnv):
 
     @property
     def terminating_states(self) -> DiscreteStates:
+        """Returns all terminating states of the environment."""
         digits = torch.arange(2, device=self.device)
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
         return self.states_from_tensor(all_states)
 
     @property
     def true_dist_pmf(self) -> torch.Tensor:
+        """Returns the true probability mass function of the reward distribution."""
         true_dist = self.reward(self.terminating_states)
         return true_dist / true_dist.sum()
 
     @property
     def log_partition(self) -> float:
+        """Returns the log partition of the reward function."""
         log_rewards = self.log_reward(self.terminating_states)
         return torch.logsumexp(log_rewards, -1).item()
