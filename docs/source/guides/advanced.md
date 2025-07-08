@@ -56,11 +56,12 @@ As mentioned earlier, your new GFlowNet must implement the following methods:
 - `loss`: Compute the loss given the training objects.
 - `to_training_samples`: Convert trajectories to training samples.
 
-These methods are defined in `src/gfn/gflownet/base.py` and are abstract
-methods, so they must be implemented in your new GFlowNet. If your GFlowNet has
-unique functionality which should be represented as additional class methods,
-implement them as required. Remember to document new methods to ensure other
-developers understand their purposes and use-cases!
+These methods are defined in
+[`src/gfn/gflownet/base.py`](https://github.com/GFNOrg/torchgfn/blob/master/src/gfn/gflownet/base.py)
+and are abstract methods, so they must be implemented in your new GFlowNet. If
+your GFlowNet has unique functionality which should be represented as additional
+class methods, implement them as required. Remember to document new methods to
+ensure other developers understand their purposes and use-cases!
 
 **Testing**
 

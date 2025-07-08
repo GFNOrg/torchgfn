@@ -2,7 +2,7 @@
 
 1. Learn the building blocks of your GflowNet with [notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/notebooks/)
 2. See `torchgfn` in action with example [training scripts](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples/)
-3. Creating your own [Environment](docs/source/guides/creating_environments.md).
+3. Creating your own [Environment](guides/creating_environments.md).
 
 ## Training Examples
 
@@ -39,7 +39,7 @@ Other environments available in the package include:
 - Bayesian Structure Learning: A graph building environment for learning Bayesian structures ([Deleu et al., 2022](https://arxiv.org/abs/2202.13903)).
 
 
-**Custom environments can be added by following the [environment creation guide](docs/source/guides/creating_environments.md)**.
+**Custom environments can be added by following the [environment creation guide](guides/creating_environments.md)**.
 
 ## Usage Examples
 

@@ -6,42 +6,7 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 import os
-import re
 import sys
-
-
-def preprocess_markdown(app, docname, source):
-    """Debug and fix markdown paths"""
-    if source and len(source) > 0:
-        content = source[0]
-        original_content = content
-
-        # Log what we're processing (for debugging)
-        print(f"Processing docname: {docname}")
-
-        # Handle root-level files
-        if docname in ['README', 'CONTRIBUTING'] or '/' not in docname:
-            # Fix docs/source/ paths from root files
-            content = re.sub(r'\]\(docs/source/([^)#]+)\.md\)', r'](\1.html)', content)
-            content = re.sub(r'\]\(docs/source/([^)#]+)\)', r'](\1)', content)
-        else:
-            # Fix paths from subdirectory files
-            content = re.sub(r'\]\(docs/source/([^)#]+)\.md\)', r'](\1.html)', content)
-            content = re.sub(r'\]\(\.\./\.\./([^)#]+)\.md\)', r'](\1.html)', content)
-
-        # Clean up any remaining problematic fragments
-        content = re.sub(r'#docs/source/', '#', content)
-        content = re.sub(r'#$', '', content)  # Remove trailing #
-
-        if content != original_content:
-            print(f"Modified content for {docname}")
-
-        source[0] = content
-
-
-def setup(app):
-    app.connect('source-read', preprocess_markdown)
-
 
 project = "torchgfn"
 copyright = "2022-2025, Joseph Viviano, Sanghyeok Choi, Omar Younis, Victor Schmidt, & Salem Lahlou"
@@ -66,8 +31,8 @@ myst_enable_extensions = [
 ]
 
 source_suffix = {
-    '.rst': None,
-    '.md': None,
+    ".rst": None,
+    ".md": None,
 }
 
 autoapi_type = "python"
