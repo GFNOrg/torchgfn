@@ -1,10 +1,10 @@
-# Configuration file for the Sphinx documentation builder.
-#
-# For the full list of built-in configuration values, see the documentation:
-# https://www.sphinx-doc.org/en/master/usage/configuration.html
+"""
+Configuration file for the Sphinx documentation builder.
 
-# -- Project information -----------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
+For the full list of built-in configuration values, see the documentation:
+https://www.sphinx-doc.org/en/master/usage/configuration.html
+"""
+
 import os
 import sys
 
@@ -15,8 +15,35 @@ author = "Joseph Viviano, Sanghyeok Choi, Omar Younis, Victor Schmidt, & Salem L
 sys.path.insert(0, os.path.abspath("../.."))
 print("sys.path=", sys.path)
 
-# -- General configuration ---------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
+
+def preprocess_markdown(app, docname, source):
+    """Fix paths for different source contexts"""
+    if source and len(source) > 0:
+        content = source[0]
+
+        # Handle README.md which is at repo root but processed by Sphinx
+        if docname == "README":
+            # Convert docs/source/path/file.md to path/file.html
+            content = re.sub(r"\]\(docs/source/([^)]+)\.md\)", r"](\1.html)", content)
+
+            # Handle any other docs/source/ references
+            content = re.sub(r"\]\(docs/source/([^)]+)\)", r"](\1)", content)
+
+            # Handle .github/ paths if you have any
+            content = re.sub(r"\]\(\.github/([^)]+)\.md\)", r"](\1.html)", content)
+
+        # Handle files that are already in docs/source/ directory
+        else:
+            # Just convert .md to .html for relative paths
+            content = re.sub(r"\]\(([^)]+)\.md\)", r"](\\1.html)", content)
+
+        source[0] = content
+
+
+def setup(app):
+    app.connect("source-read", preprocess_markdown)
+
+
 root_doc = "index"
 extensions = [
     "myst_parser",
@@ -29,7 +56,6 @@ extensions = [
 myst_enable_extensions = [
     "colon_fence",
 ]
-
 source_suffix = {
     ".rst": None,
     ".md": None,
@@ -57,12 +83,7 @@ mathjax3_config = {
 templates_path = ["_templates"]
 exclude_patterns = []
 
-
-# -- Options for HTML output -------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
-
 html_static_path = ["_static"]
-
 html_theme = "alabaster"
 html_theme_options = {
     "collapse_navigation": False,

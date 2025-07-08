@@ -3,9 +3,10 @@
 
 .. toctree::
    :hidden:
-   :maxdepth: 4
+   :maxdepth: 2
+   :caption: Guides
 
-   self
+   README
    guides/example
    guides/states_actions_containers
    guides/modules_estimators_samplers
