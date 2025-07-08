@@ -1,8 +1,7 @@
 # Tutorials
 
-1. Learn the building blocks of your GflowNet with [notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/notebooks/)
-2. See `torchgfn` in action with example [training scripts](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples/)
-3. Creating your own [Environment](guides/creating_environments.md).
+1. Learn the building blocks of your GflowNet with [notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/notebooks/).
+2. See `torchgfn` in action with example [training scripts](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples/).
 
 ## Training Examples
 
