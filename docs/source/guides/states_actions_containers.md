@@ -1,4 +1,4 @@
-# 2. States, Actions, and Containers
+# States, Actions, and Containers
 
 ## States
 

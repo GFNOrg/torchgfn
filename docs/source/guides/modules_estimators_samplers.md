@@ -1,4 +1,4 @@
-# 3. Modules, Estimators, and Samplers
+# Modules, Estimators, and Samplers
 
 ## Modules & Estimators
 

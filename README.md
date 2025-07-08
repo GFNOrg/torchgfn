@@ -53,12 +53,12 @@ pip install -e ".[all]"
 
 This repo serves the purpose of fast prototyping [GFlowNet](https://arxiv.org/abs/2111.09266) (GFN) related algorithms. It decouples the environment definition, the sampling process, and the parametrization of the function approximators used to calculate the GFN loss. It aims to accompany researchers and engineers in learning about GFlowNets, and in developing new algorithms.
 
-The library is shipped with many environments under the `gym`, including discrete environments (e.g., Discrete Energy Based Model, Hyper Grid, Graph Generation), and continuous environments (e.g., Box). The library is designed to allow users to define their own environments relatively easily. See [here](guides/creating_environments.rst) for more details.
+The library is shipped with many environments under the `gym`, including discrete environments (e.g., Discrete Energy Based Model, Hyper Grid, Graph Generation), and continuous environments (e.g., Box). The library is designed to allow users to define their own environments relatively easily. See [here](https://torchgfn.readthedocs.io/en/latest/guides/creating_environments.html) for more details.
 
 ### Getting Started with Example Scripts & Notebooks
 
-+ [Simple example](guides/example.md): a concise description of how to train a gflownet using the library.
-+ [Tutorials README](tutorials/README.md) for an overview of the included [example scripts and notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples) drawn from the included gym environments. Where indicated, these scripts are intended to reproduce published results.
++ [Simple example](https://torchgfn.readthedocs.io/en/latest/guides/example.html): a concise description of how to train a gflownet using the library.
++ [Tutorials README](https://torchgfn.readthedocs.io/en/latest/guides/tutorials.html) for an overview of the included [example scripts and notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples) drawn from the included gym environments. Where indicated, these scripts are intended to reproduce published results.
 
 ### Contributing
 
