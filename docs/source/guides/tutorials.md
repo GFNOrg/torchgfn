@@ -1,8 +1,7 @@
 # Tutorials
 
-1. Learn the building blocks of your GflowNet with [notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/notebooks/)
-2. See `torchgfn` in action with example [training scripts](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples/)
-3. Creating your own [Environment](guides/creating_environments.md).
+1. Learn the building blocks of your GflowNet with [notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/notebooks/).
+2. See `torchgfn` in action with example [training scripts](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples/).
 
 ## Training Examples
 
@@ -26,7 +25,7 @@ The repository includes several example environments and training scripts. There
    - Reproduces results from multiple papers (see script docstring).
    - Scalable, multi node training.
 
-3. [`train_hypergrid_simple_ls.py`](https://github.com/GFNOrg/torchgfn/blob/master/tutorials/examples/train_hypergrid_simple_ls.py) - Demonstrates advanced sampling strategies:
+3. [`train_hypergrid_local_search.py`](https://github.com/GFNOrg/torchgfn/blob/master/tutorials/examples/train_hypergrid_local_search.py) - Demonstrates advanced sampling strategies:
    - Implements local search sampling with configurable parameters.
    - Optional Metropolis-Hastings acceptance criterion.
    - Shows how to extend basic GFlowNet training with sophisticated sampling.
@@ -36,7 +35,7 @@ Other environments available in the package include:
 - [Discrete Energy Based Model](https://github.com/GFNOrg/torchgfn/blob/master/tutorials/examples/train_discreteebm.py): A simple environment for learning energy-based distributions.
 - [Box Environment](https://github.com/GFNOrg/torchgfn/blob/master/tutorials/examples/train_box.py): A continuous environment for sampling from distributions in bounded spaces.
 - [Ring Environment](https://github.com/GFNOrg/torchgfn/blob/master/tutorials/examples/train_graph_ring.py): A simple graph building environment for learning to generate ring graphs.
-- Bayesian Structure Learning: A graph building environment for learning Bayesian structures ([Deleu et al., 2022](https://arxiv.org/abs/2202.13903)).
+- [Bayesian Structure Learning](https://github.com/GFNOrg/torchgfn/blob/master/tutorials/examples/train_bayesian_structure.py): A graph building environment for learning Bayesian structures ([Deleu et al., 2022](https://arxiv.org/abs/2202.13903)).
 
 
 **Custom environments can be added by following the [environment creation guide](guides/creating_environments.md)**.

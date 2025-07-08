@@ -85,10 +85,11 @@ templates_path = ["_templates"]
 exclude_patterns = []
 
 html_static_path = ["_static"]
-html_theme = "alabaster"
+html_theme = "insegel"
+html_logo = "logo.png"
 html_theme_options = {
     "collapse_navigation": False,
-    "navigation_depth": 4,
+    "navigation_depth": 1,
     "logo_only": False,
     "display_version": True,
     "prev_next_buttons_location": "bottom",

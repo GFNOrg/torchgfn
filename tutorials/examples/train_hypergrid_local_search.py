@@ -1,10 +1,13 @@
 #!/usr/bin/env python
 r"""
-A version of GFlowNet training that implements local search sampling strategies on the HyperGrid environment.
-This demonstrates how to use more sophisticated sampling approaches like local search and Metropolis-Hastings.
+A version of GFlowNet training that implements local search sampling strategies on the
+HyperGrid environment. This demonstrates how to use more sophisticated sampling
+approaches like local search and Metropolis-Hastings.
+
+For usage see train_hypergrid_local_search.py -h
 
 Example usage:
-python train_hypergrid_simple_ls.py --ndim 2 --height 8 --n_local_search_loops 2 --back_ratio 0.5 --use_metropolis_hastings
+python train_hypergrid_local_search.py --ndim 2 --height 8 --n_local_search_loops 2 --back_ratio 0.5 --use_metropolis_hastings
 
 Key features:
 - Implements local search sampling

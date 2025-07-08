@@ -16,8 +16,8 @@ from .train_box import main as train_box_main
 from .train_discreteebm import main as train_discreteebm_main
 from .train_graph_ring import main as train_graph_ring_main
 from .train_hypergrid import main as train_hypergrid_main
+from .train_hypergrid_local_search import main as train_hypergrid_local_search_main
 from .train_hypergrid_simple import main as train_hypergrid_simple_main
-from .train_hypergrid_simple_ls import main as train_hypergrid_simple_ls_main
 from .train_ising import main as train_ising_main
 from .train_line import main as train_line_main
 
@@ -391,7 +391,9 @@ def test_hypergrid_simple_ls_smoke():
     )
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
-    train_hypergrid_simple_ls_main(namespace_args)  # Just ensure it runs without errors.
+    train_hypergrid_local_search_main(
+        namespace_args
+    )  # Just ensure it runs without errors.
 
 
 def test_ising_smoke():
