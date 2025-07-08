@@ -11,34 +11,36 @@ import sys
 
 
 def preprocess_markdown(app, docname, source):
-    """Preprocess markdown to fix paths for Sphinx based on source file location"""
+    """Debug and fix markdown paths"""
     if source and len(source) > 0:
         content = source[0]
+        original_content = content
 
-        # Handle root-level files (README, CONTRIBUTING)
-        if docname in ["README", "CONTRIBUTING"] or "/" not in docname:
-            # Fix paths from root-level files to docs/source/
-            content = re.sub(r"\]\(docs/source/([^)]+\.md)\)", r"](\1)", content)
+        # Log what we're processing (for debugging)
+        print(f"Processing docname: {docname}")
 
-            # Handle .github/ paths (for CONTRIBUTING.md references)
-            content = re.sub(r"\]\(\.github/([^)]+\.md)\)", r"](\1)", content)
-
-        # Handle files in subdirectories
+        # Handle root-level files
+        if docname in ['README', 'CONTRIBUTING'] or '/' not in docname:
+            # Fix docs/source/ paths from root files
+            content = re.sub(r'\]\(docs/source/([^)#]+)\.md\)', r'](\1.html)', content)
+            content = re.sub(r'\]\(docs/source/([^)#]+)\)', r'](\1)', content)
         else:
-            # Remove docs/source/ prefix if present
-            content = re.sub(r"\]\(docs/source/([^)]+\.md)\)", r"](\1)", content)
+            # Fix paths from subdirectory files
+            content = re.sub(r'\]\(docs/source/([^)#]+)\.md\)', r'](\1.html)', content)
+            content = re.sub(r'\]\(\.\./\.\./([^)#]+)\.md\)', r'](\1.html)', content)
 
-            # Handle relative navigation
-            content = re.sub(r"\]\(\.\./([^)]+\.md)\)", r"](\1)", content)
+        # Clean up any remaining problematic fragments
+        content = re.sub(r'#docs/source/', '#', content)
+        content = re.sub(r'#$', '', content)  # Remove trailing #
 
-        # Convert .md extensions to .html for all files
-        content = re.sub(r"\]\(([^)]+)\.md\)", r"](\1.html)", content)
+        if content != original_content:
+            print(f"Modified content for {docname}")
 
         source[0] = content
 
 
 def setup(app):
-    app.connect("source-read", preprocess_markdown)
+    app.connect('source-read', preprocess_markdown)
 
 
 project = "torchgfn"
