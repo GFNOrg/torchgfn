@@ -60,7 +60,6 @@ extensions = [
     "sphinx.ext.napoleon",
 ]
 myst_enable_extensions = [
-    "linkify",
     "colon_fence",
 ]
 
