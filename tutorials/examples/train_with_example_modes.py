@@ -1,7 +1,26 @@
-"""Generate expert data for ring graphs.
+"""Train a GFlowNet to generate ring graphs using example modes.
 
-This module provides functionality to generate all possible ring graphs for a given number of nodes.
-It supports both directed and undirected rings, using the same environment as train_graph_ring.py.
+This script demonstrates how to use example modes to warm-start gflownet exploration.
+We show this in the context of generating ring graphs, where the number of modes
+quickly grows with the number of nodes in the graph, making learning from scratch
+very difficult on even relatively small graphs. Here, we show how to use example
+modes to warm-start gflownet exploration allows us to learn a gflownet that can
+sample all modes.
+
+For usage see train_with_example_modes.py -h
+
+The script performs the following steps:
+    1. Initialize the environment and policy networks.
+    2. If using expert data, generates all possible ring graphs, and pre-fills the
+        replay buffer with 1/2 of their forward trajectories (found by computing the
+        backward trajectories from the final states, then reversing them).
+    3. Train the GFlowNet using trajectory balance, with each batch containing a
+        mix of 50% replay buffer and 50% gflownet samples.
+    4. At the end of training we evaluate the GFlowNet's ability to recover all
+        modes.
+    5. Optionally, we plot samples of generated graphs.
+
+This tutorial uses the same environment as train_graph_ring.py.
 """
 
 import copy
@@ -133,14 +152,9 @@ def main(args: Namespace):
     """
     Main execution for training a GFlowNet to generate ring graphs.
 
-    This script demonstrates how to use example modes to warm-start gflownet exploration.
-    We show this in the context of generating ring graphs, where the number of modes
-    quickly grows with the number of nodes in the graph, making learning from scratch
-    very difficult on even relatively small graphs.
+    For usage see train_with_example_modes.py -h
 
-    For usage see count_recovered_modes.py -h
-
-    The script performs the following steps:
+    The function performs the following steps:
         1. Initialize the environment and policy networks.
         2. If using expert data, generates all possible ring graphs, and pre-fills the
            replay buffer with 1/2 of their forward trajectories (found by computing the

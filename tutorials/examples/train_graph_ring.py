@@ -1,13 +1,18 @@
 """Train a GFlowNet to generate ring graphs.
 
-This example demonstrates training a GFlowNet to generate graphs that are rings - where each vertex
-has exactly two neighbors and the edges form a single cycle containing all vertices. The environment
-supports both directed and undirected ring generation.
+This example demonstrates training a GFlowNet to generate graphs that are rings - where
+each vertex has exactly two neighbors and the edges form a single cycle containing all
+vertices. The environment supports both directed and undirected ring generation.
+
+This problem has a number of modes that grows factorially with the number of nodes.
+This makes learning from scratch very difficult on even relatively small graphs.
+
+For usage see train_graph_ring.py -h
 
 Key components:
-- RingGraphBuilding: Environment for building ring graphs
-- RingPolicyModule: GNN-based policy network for predicting actions
-- directed_reward/undirected_reward: Reward functions for validating ring structures
+- `RingGraphBuilding`: Environment for building ring graphs
+- `RingPolicyModule`: GNN-based policy network for predicting actions
+- `directed_reward`/`undirected_reward`: Reward functions for validating ring structures.
 """
 
 import math
