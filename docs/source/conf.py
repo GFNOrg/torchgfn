@@ -48,6 +48,7 @@ def setup(app):
 root_doc = "index"
 extensions = [
     "myst_parser",
+    "insegel",
     "sphinx_math_dollar",
     "sphinx.ext.mathjax",
     "sphinx.ext.autodoc",
