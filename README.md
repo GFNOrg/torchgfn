@@ -17,9 +17,7 @@
 
 # torchgfn
 
-## A Python Package for GFLowNets
-
-<p align="center"> Please cite <a href="https://arxiv.org/abs/2305.14594">this paper</a> if you are using the library for your research </p>
+**A Python Package for GFLowNets.** Please cite [this paper](https://arxiv.org/abs/2305.14594) if you are using the library for your research!
 
 ## Installing the package
 
@@ -60,16 +58,17 @@ The library is shipped with many environments under the `gym`, including discret
 ### Getting Started with Example Scripts & Notebooks
 
 + [Simple example](guides/example.md): a concise description of how to train a gflownet using the library.
-+ [Tutorials README](../../tutorials/README.md) for an overview of the included [example scripts and notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples) drawn from the included gym environments. Where indicated, these scripts are intended to reproduce published results.
++ [Tutorials README](tutorials/README.md) for an overview of the included [example scripts and notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples) drawn from the included gym environments. Where indicated, these scripts are intended to reproduce published results.
 
-## Contributing
+### Contributing
 
-Please see the [Contributing Guidelines](../../.github/CONTRIBUTING.md).
+Please see the [Contributing Guidelines](https://github.com/GFNOrg/torchgfn/blob/master/.github/CONTRIBUTING.md).
 
 ## Components of the Library
 
-+ [States, Actions, & Containers](guides/states_actions_containers.md): The two core elements of `torchgfn` are the concepts of states, which are emitted by stateless environments, and actions, which transform states through the the environment logic. These are encapsulated with metadata in containers.
-+ [Modules, Estimators, & Samplers](guides/modules_estimators_samplers.md): The components of a GFlowNet policy (those which select actions given a state), are encapsulated in Estimators. If the policy is a neural network, that logic is captures in a Module. This estimator can then be used with a Sampler to produce states (in the form of trajectories or transitions).
-+ [Losses](guides/losses.md): Each type of `GFlowNet` has a specific parameterization related to a specific loss.
-+ [Defining Environments](guides/creating_environments.md): For most applications of `torchgfn`, the main challenge will be to define a stateless environment which will produce a valid sampler.
-+ [Advanced Usage: Extending `torchgfn` with Custom GFlowNets](guides/advanced.md): While `torchgfn` aims to support major usages of GFlowNets, we hope this will also serve as a platform for the community to extend the possible use cases of the technology. This guide details how one can extend
++ [States, Actions, & Containers](https://torchgfn.readthedocs.io/en/latest/guides/states_actions_containers.html): The two core elements of `torchgfn` are the concepts of states, which are emitted by stateless environments, and actions, which transform states through the the environment logic. These are encapsulated with metadata in containers.
++ [Modules, Estimators, & Samplers](https://torchgfn.readthedocs.io/en/latest/guides/modules_estimators_samplers.html): The components of a GFlowNet policy (those which select actions given a state), are encapsulated in Estimators. If the policy is a neural network, that logic is captures in a Module. This estimator can then be used with a Sampler to produce states (in the form of trajectories or transitions).
++ [Losses](https://torchgfn.readthedocs.io/en/latest/guides/losses.html): Each type of `GFlowNet` has a specific parameterization related to a specific loss.
++ [Defining Environments](https://torchgfn.readthedocs.io/en/latest/guides/creating_environments.html): For most applications of `torchgfn`, the main challenge will be to define a stateless environment which will produce a valid sampler.
++ [Advanced Usage: Extending `torchgfn` with Custom GFlowNets](https://torchgfn.readthedocs.io/en/latest/guides/advanced.html): While `torchgfn` aims to support major usages of GFlowNets, we hope this will also serve as a platform for the community to extend the possible use cases of the technology. This guide details how one can extend
++ [Full API Reference](https://torchgfn.readthedocs.io/en/latest/autoapi/index.html): A breakdown of all major components of both the core GFN library, the associated gym, and the included tutorials.

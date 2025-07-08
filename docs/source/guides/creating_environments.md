@@ -15,7 +15,8 @@ To create a basic discrete environment, you need to:
 
    - `make_random_states()`: For random state initialization
 
-For a complete working example, see the HyperGrid environment in `src/gfn/gym/hypergrid.py`.
+For a complete working example, see the
+[HyperGrid environment in `torchgfn/gym`](https://github.com/GFNOrg/torchgfn/blob/master/src/gfn/gym/hypergrid.py).
 This serves as a reference implementation showing how to properly implement all required methods.
 
 ## Advanced Usage
