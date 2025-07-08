@@ -64,9 +64,8 @@ myst_enable_extensions = [
 ]
 
 source_suffix = {
-    ".rst": "restructuredtext",
-    ".txt": "restructuredtext",
-    ".md": "markdown",
+    '.rst': None,
+    '.md': None,
 }
 
 autoapi_type = "python"
