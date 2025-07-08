@@ -2,7 +2,7 @@
 
 This example, which shows how to use the library for a simple discrete environment, requires [`tqdm`](https://github.com/tqdm/tqdm) package to run. Use `pip install tqdm` or install all extra requirements with `pip install .[scripts]` or `pip install torchgfn[scripts]`.
 
-For many more detailed examples on various uses of `torchgfn`, see the [tutorials](../../tutorials/README.md).
+For many more detailed examples on various uses of `torchgfn`, see the [tutorials](docs/source/guides/tutorials.md).
 
 In the first example, we will train a Trajectory Balance GFlowNet:
 

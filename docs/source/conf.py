@@ -6,44 +6,47 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 import os
+import re
 import sys
 
-from myst_parser.mdit_to_docutils.base import DocutilsRenderer
 
+def preprocess_markdown(app, docname, source):
+    """Preprocess markdown to fix paths for Sphinx based on source file location"""
+    if source and len(source) > 0:
+        content = source[0]
 
-class CustomDocutilsRenderer(DocutilsRenderer):
-    def render_link(self, token):
-        """Custom link renderer that adjusts paths"""
-        if token.attrGet("href"):
-            href = token.attrGet("href")
-            assert href is not None
+        # Handle root-level files (README, CONTRIBUTING)
+        if docname in ["README", "CONTRIBUTING"] or "/" not in docname:
+            # Fix paths from root-level files to docs/source/
+            content = re.sub(r"\]\(docs/source/([^)]+\.md)\)", r"](\1)", content)
 
-            # Handle relative .md links
-            if href.endswith(".md") and not href.startswith(("http", "https", "mailto")):
-                # Remove docs/source/ prefix for Sphinx
-                if href.startswith("docs/source/"):
-                    href = href.replace("docs/source/", "")
-                elif href.startswith("../"):
-                    # Handle relative paths from README
-                    href = href.replace("../", "")
+            # Handle .github/ paths (for CONTRIBUTING.md references)
+            content = re.sub(r"\]\(\.github/([^)]+\.md)\)", r"](\1)", content)
 
-                # Keep .md extension for now, MyST will handle .html conversion
-                token.attrSet("href", href)
+        # Handle files in subdirectories
+        else:
+            # Remove docs/source/ prefix if present
+            content = re.sub(r"\]\(docs/source/([^)]+\.md)\)", r"](\1)", content)
 
-        return super().render_link(token)
+            # Handle relative navigation
+            content = re.sub(r"\]\(\.\./([^)]+\.md)\)", r"](\1)", content)
+
+        # Convert .md extensions to .html for all files
+        content = re.sub(r"\]\(([^)]+)\.md\)", r"](\1.html)", content)
+
+        source[0] = content
 
 
 def setup(app):
-    app.add_config_value("myst_renderer", CustomDocutilsRenderer, "env")
+    app.connect("source-read", preprocess_markdown)
 
 
 project = "torchgfn"
 copyright = "2022-2025, Joseph Viviano, Sanghyeok Choi, Omar Younis, Victor Schmidt, & Salem Lahlou"
 author = "Joseph Viviano, Sanghyeok Choi, Omar Younis, Victor Schmidt, & Salem Lahlou"
 
-
 sys.path.insert(0, os.path.abspath("../.."))
-print(sys.path)
+print("sys.path=", sys.path)
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -56,7 +59,6 @@ extensions = [
     "autoapi.extension",
     "sphinx.ext.napoleon",
 ]
-
 myst_enable_extensions = [
     "linkify",
     "colon_fence",
