@@ -8,6 +8,35 @@
 import os
 import sys
 
+from myst_parser.mdit_to_docutils.base import DocutilsRenderer
+
+
+class CustomDocutilsRenderer(DocutilsRenderer):
+    def render_link(self, token):
+        """Custom link renderer that adjusts paths"""
+        if token.attrGet("href"):
+            href = token.attrGet("href")
+            assert href is not None
+
+            # Handle relative .md links
+            if href.endswith(".md") and not href.startswith(("http", "https", "mailto")):
+                # Remove docs/source/ prefix for Sphinx
+                if href.startswith("docs/source/"):
+                    href = href.replace("docs/source/", "")
+                elif href.startswith("../"):
+                    # Handle relative paths from README
+                    href = href.replace("../", "")
+
+                # Keep .md extension for now, MyST will handle .html conversion
+                token.attrSet("href", href)
+
+        return super().render_link(token)
+
+
+def setup(app):
+    app.add_config_value("myst_renderer", CustomDocutilsRenderer, "env")
+
+
 project = "torchgfn"
 copyright = "2022-2025, Joseph Viviano, Sanghyeok Choi, Omar Younis, Victor Schmidt, & Salem Lahlou"
 author = "Joseph Viviano, Sanghyeok Choi, Omar Younis, Victor Schmidt, & Salem Lahlou"
@@ -26,6 +55,11 @@ extensions = [
     "sphinx.ext.autodoc",
     "autoapi.extension",
     "sphinx.ext.napoleon",
+]
+
+myst_enable_extensions = [
+    "linkify",
+    "colon_fence",
 ]
 
 source_suffix = {
