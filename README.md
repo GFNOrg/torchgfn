@@ -17,9 +17,7 @@
 
 # torchgfn
 
-## A Python Package for GFLowNets
-
-<p align="center"> Please cite <a href="https://arxiv.org/abs/2305.14594">this paper</a> if you are using the library for your research </p>
+**A Python Package for GFLowNets.** Please cite [this paper](https://arxiv.org/abs/2305.14594) if you are using the library for your research!
 
 ## Installing the package
 
@@ -62,9 +60,9 @@ The library is shipped with many environments under the `gym`, including discret
 + [Simple example](guides/example.md): a concise description of how to train a gflownet using the library.
 + [Tutorials README](tutorials/README.md) for an overview of the included [example scripts and notebooks](https://github.com/gfnorg/torchgfn/tree/master/tutorials/examples) drawn from the included gym environments. Where indicated, these scripts are intended to reproduce published results.
 
-## Contributing
+### Contributing
 
-Please see the Contributing Guidelines](https://github.com/GFNOrg/torchgfn/blob/master/.github/CONTRIBUTING.md).
+Please see the [Contributing Guidelines](https://github.com/GFNOrg/torchgfn/blob/master/.github/CONTRIBUTING.md).
 
 ## Components of the Library
 
