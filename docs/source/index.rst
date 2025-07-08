@@ -13,3 +13,4 @@
    guides/losses
    guides/creating_environments
    guides/advanced
+   guides/tutorials
