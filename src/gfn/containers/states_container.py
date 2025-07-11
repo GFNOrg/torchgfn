@@ -15,16 +15,20 @@ StateType = TypeVar("StateType", bound="States")
 
 
 class StatesContainer(Container, Generic[StateType]):
-    """Container for states (mainly used for Flow Matching GFlowNet).
+    """Container for a batch of states (mainly used for FMGFlowNet).
 
-    This container holds states along with optional conditioning tensors.
+    This class manages a collection of states and their corresponding properties.
+    It is mainly used for Flow Matching GFlowNet algorithms.
 
     Attributes:
-        env: Environment instance
-        states: Set of states
-        is_terminating: Boolean tensor indicating whether the states are terminating
-        conditioning: Optional conditioning tensor, same shape as states.tensor
-        log_rewards: Optional log rewards for terminating states
+        env: The environment where the states are defined.
+        states: States with batch_shape (n_states,).
+        conditioning: (Optional) Tensor of shape (n_states,) containing the conditioning
+            for the states.
+        is_terminating: Boolean tensor of shape (n_states,) indicating which states
+            are terminating.
+        _log_rewards: (Optional) Tensor of shape (n_states,) containing the log rewards
+            for terminating states.
     """
 
     def __init__(
@@ -35,14 +39,18 @@ class StatesContainer(Container, Generic[StateType]):
         is_terminating: torch.Tensor | None = None,
         log_rewards: torch.Tensor | None = None,
     ):
-        """Initialize a StatesContainer.
+        """Initializes a StatesContainer instance.
 
         Args:
-            env: Environment instance
-            intermediary_states: First set of states
-            terminating_states: Second set of states
-            intermediary_conditioning: Optional conditioning for intermediary states
-            terminating_conditioning: Optional conditioning for terminating states
+            env: The environment where the states are defined.
+            states: States with batch_shape (n_states,). If None, an empty batch is
+                created.
+            conditioning: Optional tensor of shape (n_states,) containing the conditioning
+                for the states.
+            is_terminating: Boolean tensor of shape (n_states,) indicating which states
+                are terminating. If None, all are set to False.
+            log_rewards: Optional tensor of shape (n_states,) containing the log rewards
+                for terminating states. If None, computed on the fly when needed.
         """
         self.env = env
 
@@ -86,36 +94,67 @@ class StatesContainer(Container, Generic[StateType]):
 
     @property
     def device(self) -> torch.device:
+        """The device on which the states are stored.
+
+        Returns:
+            The device object of the `self.states`.
+        """
         return self.states.device
 
     @property
     def intermediary_states(self) -> StateType:
-        """Return the intermediary states."""
+        """The intermediary states (not initial states) of the StatesContainer.
+
+        Returns:
+            The intermediary states.
+        """
         return cast(StateType, self.states[~self.states.is_initial_state])
 
     @property
     def terminating_states(self) -> StateType:
-        """Return the terminating states."""
+        """The last (terminating) states of the StatesContainer.
+
+        Returns:
+            The terminating states.
+        """
         return cast(StateType, self.states[self.is_terminating])
 
     @property
     def intermediary_conditioning(self) -> torch.Tensor | None:
-        """Return the intermediary conditioning."""
+        """Conditioning for intermediary states.
+
+        Returns:
+            The conditioning tensor for intermediary states, or None if not set.
+        """
         if self.conditioning is None:
             return None
         return self.conditioning[~self.states.is_initial_state]
 
     @property
     def terminating_conditioning(self) -> torch.Tensor | None:
-        """Return the terminating conditioning."""
+        """Conditioning for terminating states.
+
+        Returns:
+            The conditioning tensor for terminating states, or None if not set.
+        """
         if self.conditioning is None:
             return None
         return self.conditioning[self.is_terminating]
 
     def __len__(self) -> int:
+        """Returns the number of states in the container.
+
+        Returns:
+            The number of states.
+        """
         return len(self.states)
 
     def __repr__(self) -> str:
+        """Returns a string representation of the StatesContainer.
+
+        Returns:
+            A string summary of the container.
+        """
         return (
             f"StatesContainer(n_states={len(self.states)}, "
             f"n_terminating={self.is_terminating.sum().item()})"
@@ -123,11 +162,15 @@ class StatesContainer(Container, Generic[StateType]):
 
     @property
     def log_rewards(self) -> torch.Tensor:
-        """
-        Returns the log rewards for the States as a tensor of shape (len(self.states),),
-        with a value of `-float('inf')`for intermediate states.
+        """The log rewards for all states.
 
-        If the `log_rewards` are not provided during initialization, they are computed on the fly.
+        Returns:
+            Log rewards tensor of shape (len(self.states),). Intermediate states have
+                value -inf.
+
+        Note:
+            If not provided at initialization, log rewards are computed on demand for
+            terminating states.
         """
         if self._log_rewards is None:
             self._log_rewards = torch.full(
@@ -145,13 +188,21 @@ class StatesContainer(Container, Generic[StateType]):
 
     @property
     def terminating_log_rewards(self) -> torch.Tensor:
-        """Return the log rewards for the terminating states."""
+        """The log rewards for terminating states only.
+
+        Returns:
+            The log rewards for terminating states.
+        """
         log_rewards = self.log_rewards
         assert log_rewards is not None
         return log_rewards[self.is_terminating]
 
     def extend(self, other: StatesContainer[StateType]) -> None:
-        """Extend this container with another StatesContainer container."""
+        """Extends this container with another StatesContainer object.
+
+        Args:
+            Another StatesContainer to append.
+        """
         assert len(self.states.batch_shape) == len(other.states.batch_shape) == 1
 
         if len(other) == 0:
@@ -187,8 +238,11 @@ class StatesContainer(Container, Generic[StateType]):
     ) -> StatesContainer[StateType]:
         """Returns a subset of the states along the batch dimension.
 
-        Note:
-            The intermediary_states and terminating_states can have different batch shapes.
+        Args:
+            index: Indices to select states.
+
+        Returns:
+            A new StatesContainer with the selected states and associated data.
         """
         if isinstance(index, int):
             index = [index]

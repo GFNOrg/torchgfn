@@ -31,7 +31,19 @@ ValidContainerTypes = (Trajectories, Transitions, StatesContainer)
 
 
 class ReplayBuffer:
-    """A replay buffer of trajectories, transitions, or states."""
+    """A replay buffer for storing containers.
+
+    Attributes:
+        env: The environment associated with the containers.
+        capacity: The maximum number of items the buffer can hold.
+        training_objects: The buffer contents (Trajectories, Transitions,
+            or StatesContainer). This is dynamically set based on the type of the
+            first added object.
+        prioritized_capacity: Whether to use prioritized capacity
+            (keep highest-reward items).
+        prioritized_sampling: Whether to sample items with probability proportional
+            to their reward.
+    """
 
     def __init__(
         self,
@@ -40,6 +52,15 @@ class ReplayBuffer:
         prioritized_capacity: bool = False,
         prioritized_sampling: bool = False,
     ):
+        """Initializes a ReplayBuffer instance.
+
+        Args:
+            env: The environment associated with the containers.
+            capacity: The maximum number of items the buffer can hold.
+            prioritized_capacity: If True, keep only the highest-reward items when full.
+            prioritized_sampling: If True, sample items with probability proportional
+                to their reward.
+        """
         self.env = env
         self.capacity = capacity
         self._is_full = False
@@ -49,17 +70,35 @@ class ReplayBuffer:
 
     @property
     def device(self) -> torch.device:
+        """The device on which the buffer's data is stored.
+
+        Returns:
+            The device object of the buffer's contents.
+        """
         assert self.training_objects is not None, "Buffer is empty, it has no device!"
         return self.training_objects.device
 
     def add(self, training_objects: ContainerUnion) -> None:
-        """Adds a training object to the buffer."""
+        """Adds a training object to the buffer.
+
+        The type of the training objects is dynamically set based on the type of the
+        first added object.
+
+        Args:
+            training_objects: The Trajectories, Transitions, or StatesContainer object
+                to add.
+        """
         if not isinstance(training_objects, ValidContainerTypes):
             raise TypeError("Must be a container type")
 
         self._add_objs(training_objects)
 
     def __repr__(self):
+        """Returns a string representation of the ReplayBuffer.
+
+        Returns:
+            A string summary of the buffer.
+        """
         if self.training_objects is None:
             type_str = "empty"
         else:
@@ -69,12 +108,20 @@ class ReplayBuffer:
         )
 
     def __len__(self):
+        """Returns the number of items in the buffer.
+
+        Returns:
+            The number of items in the buffer.
+        """
         return 0 if self.training_objects is None else len(self.training_objects)
 
     def initialize(self, training_objects: ContainerUnion) -> None:
-        """Initializes the buffer with a training object."""
+        """Initializes the buffer with the type of the first added object.
 
-        # Initialize with the same type as first added objects
+        Args:
+            training_objects: The initial Trajectories, Transitions, or StatesContainer
+                object to set the buffer type.
+        """
         if isinstance(training_objects, Trajectories):
             self.training_objects = cast(ContainerUnion, Trajectories(self.env))
         elif isinstance(training_objects, Transitions):
@@ -85,7 +132,12 @@ class ReplayBuffer:
             raise ValueError(f"Unsupported type: {type(training_objects)}")
 
     def _add_objs(self, training_objects: ContainerUnion):
-        """Adds a training object to the buffer."""
+        """Adds a training object to the buffer, handling the capacity.
+
+        Args:
+            training_objects: The Trajectories, Transitions, or StatesContainer object
+                to add.
+        """
         if self.training_objects is None:
             self.initialize(training_objects)
         assert self.training_objects is not None
@@ -111,8 +163,15 @@ class ReplayBuffer:
             ContainerUnion, self.training_objects[-self.capacity :]
         )
 
-    def sample(self, n_trajectories: int) -> ContainerUnion:
-        """Samples `n_trajectories` training objects from the buffer."""
+    def sample(self, n_samples: int) -> ContainerUnion:
+        """Samples training objects from the buffer.
+
+        Args:
+            n_samples: The number of items to sample.
+
+        Returns:
+            A sampled Trajectories, Transitions, or StatesContainer.
+        """
         if self.training_objects is None:
             raise ValueError("Buffer is empty")
 
@@ -131,36 +190,49 @@ class ReplayBuffer:
 
             # Decide whether to sample with replacement – this is required when the
             # request is larger than the buffer size.
-            replacement = n_trajectories > len(self)
+            replacement = n_samples > len(self)
 
-            indices = torch.multinomial(probs, n_trajectories, replacement=replacement)
+            indices = torch.multinomial(probs, n_samples, replacement=replacement)
             return self.training_objects[indices]
 
         # Uniform sampling (replacement-free) for the non-prioritised case.
-        return cast(ContainerUnion, self.training_objects.sample(n_trajectories))
+        return cast(ContainerUnion, self.training_objects.sample(n_samples))
 
     def save(self, directory: str):
-        """Saves the buffer to disk."""
+        """Saves the buffer to disk.
+
+        Args:
+            directory: The directory path where the buffer will be saved.
+        """
         if self.training_objects is not None:
             self.training_objects.save(os.path.join(directory, "training_objects"))
 
     def load(self, directory: str):
-        """Loads the buffer from disk."""
+        """Loads the buffer from disk.
+
+        Args:
+            directory: The directory path from which to load the buffer.
+        """
         if self.training_objects is not None:
             self.training_objects.load(os.path.join(directory, "training_objects"))
 
 
 class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
-    """A replay buffer of trajectories or transitions with diverse trajectories.
+    """A replay buffer with diversity-based prioritization.
 
     Attributes:
-        env: the Environment instance.
-        capacity: the size of the buffer.
-        training_objects: the buffer of objects used for training.
-        cutoff_distance: threshold used to determine if new terminating_states are different
-            enough from those already contained in the buffer.
-        p_norm_distance: p-norm distance value to pass to torch.cdist, for the
-            determination of novel states.
+        env: The environment associated with the containers.
+        capacity: The maximum number of items the buffer can hold.
+        training_objects: The buffer contents (Trajectories, Transitions,
+            or StatesContainer). This is dynamically set based on the type of the
+            first added object.
+        prioritized_capacity: Whether to use prioritized capacity
+            (keep highest-reward items). This is set to True by default.
+        prioritized_sampling: Whether to sample items with probability proportional
+            to their reward.
+        cutoff_distance: Threshold used to determine whether a new terminating state
+            is different enough from those already in the buffer.
+        p_norm_distance: p-norm value for distance calculation (used in torch.cdist).
     """
 
     def __init__(
@@ -170,23 +242,26 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         cutoff_distance: float = 0.0,
         p_norm_distance: float = 1.0,
     ):
-        """Instantiates a prioritized replay buffer.
+        """Initializes a NormBasedDiversePrioritizedReplayBuffer instance.
+
         Args:
-            env: the Environment instance.
-            capacity: the size of the buffer.
-            cutoff_distance: threshold used to determine if new terminating_states are
-                different enough from those already contained in the buffer. If the
-                cutoff is negative, all diversity calculations are skipped (since all
-                norms are >= 0).
-            p_norm_distance: p-norm distance value to pass to torch.cdist, for the
-                determination of novel states.
+            env: The environment associated with the containers.
+            capacity: The maximum number of items the buffer can hold.
+            cutoff_distance: Threshold used to determine whether a new terminating
+                state is different enough from those already in the buffer.
+            p_norm_distance: p-norm value for distance calculation (used in torch.cdist).
         """
         super().__init__(env, capacity, prioritized_capacity=True)
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
 
     def add(self, training_objects: ContainerUnion):
-        """Adds a training object to the buffer."""
+        """Adds a training object to the buffer with diversity-based prioritization.
+
+        Args:
+            training_objects: The Trajectories, Transitions, or StatesContainer object
+                to add.
+        """
         if not isinstance(training_objects, ValidContainerTypes):
             raise TypeError("Must be a container type")
 

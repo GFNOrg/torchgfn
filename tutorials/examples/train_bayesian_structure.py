@@ -525,7 +525,7 @@ def main(args: Namespace):
         for _ in range(args.n_steps_per_iteration):
             if args.use_buffer:
                 assert replay_buffer is not None
-                training_samples = replay_buffer.sample(n_trajectories=args.batch_size)
+                training_samples = replay_buffer.sample(n_samples=args.batch_size)
             else:
                 training_samples = _training_samples
             assert isinstance(training_samples, Trajectories)

@@ -6,18 +6,10 @@ from gfn.actions import GraphActions, GraphActionType
 
 
 class UnsqueezedCategorical(Categorical):
-    """Samples from a categorical distribution with an unsqueezed final dimension.
+    """A `torch.distributions.Categorical` that unsqueezes the last dimension.
 
-    Samples are unsqueezed to be of shape (batch_size, 1) instead of (batch_size,).
-
-    This is used in `DiscretePFEstimator` and `DiscretePBEstimator`, which in turn are
-    used in `Sampler`.
-
-    This helper class facilitates representing actions, for discrete environments, which
-    when implemented with the `DiscreteActions` class (see
-    `gfn/env.py::DiscreteEnv), use an `action_shape = (1,)`. Therefore, according
-    to `gfn/actions.py::Actions`, tensors representing actions in discrete environments
-    should be of shape (batch_shape, 1).
+    This is useful for discrete environments that have an action shape of (1,), as
+    the samples will have a shape of (batch_size, 1) instead of (batch_size,).
     """
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
@@ -45,7 +37,19 @@ class UnsqueezedCategorical(Categorical):
 
 
 class GraphActionDistribution(Distribution):
-    """A mixture distribution."""
+    """A mixture of categorical distributions for graph actions.
+
+    This class is used to sample graph actions and compute their log probabilities.
+    A graph action is a tuple of (action_type, node_class, edge_class, edge_index).
+    The distribution of each component of the tuple is a categorical distribution.
+    The components are conditionally dependent on the action_type.
+
+    - If the action_type is ADD_NODE, then the node_class is sampled from a
+        categorical distribution.
+    - If the action_type is ADD_EDGE, then the edge_class and edge_index are
+        sampled from categorical distributions.
+    - If the action_type is STOP, then no other components are sampled.
+    """
 
     def __init__(self, probs: TensorDict):
         """Initializes the mixture distribution.

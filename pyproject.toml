@@ -34,6 +34,7 @@ linear-attention-transformer = ">=0.19.1"
 black = { version = "24.3", optional = true }
 flake8 = { version = "*", optional = true }
 gitmopy = { version = "*", optional = true }
+insegel = { version = "*", optional = true }
 isort = { version = "6.0.1", optional = true }
 myst-parser = { version = "*", optional = true }
 nbmake = { version = "*", optional = true }
@@ -61,6 +62,7 @@ dev = [
     "black",
     "flake8",
     "gitmopy",
+    "insegel",
     "isort",
     "myst-parser",
     "nbmake",
@@ -89,6 +91,7 @@ all = [
     "black",
     "flake8",
     "gitmopy",
+    "insegel",
     "isort",
     "matplotlib",
     "myst-parser",
@@ -112,7 +115,7 @@ all = [
 
 [tool.poetry.urls]
 "Homepage" = "https://gfn.readthedocs.io/en/latest/"
-"Bug Tracker" = "https://github.com/saleml/gfn/issues"
+"Bug Tracker" = "https://github.com/gfnorg/torchgfn/issues"
 
 [tool.black]
 target_version = ["py310"]

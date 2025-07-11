@@ -20,10 +20,11 @@ class GraphBuilding(GraphEnv):
     - Adding edges of a given class between existing nodes
     - Terminating construction (EXIT)
 
-    Args:
-        state_evaluator: Callable that computes rewards for final states.
-            If None, uses default GCNConvEvaluator
-        device_str: Device to run computations on ('cpu' or 'cuda')
+    Attributes:
+        num_node_classes (int): The number of node classes.
+        num_edge_classes (int): The number of edge classes.
+        state_evaluator (Callable[[GraphStates], torch.Tensor]): A callable that computes rewards for final states.
+        is_directed (bool): Whether the graph is directed.
     """
 
     def __init__(
@@ -36,6 +37,17 @@ class GraphBuilding(GraphEnv):
         s0: GeometricData | None = None,
         sf: GeometricData | None = None,
     ):
+        """Initializes the GraphBuilding environment.
+
+        Args:
+            num_node_classes: The number of node classes.
+            num_edge_classes: The number of edge classes.
+            state_evaluator: A callable that computes rewards for final states.
+            is_directed: Whether the graph is directed.
+            device: The device to run computations on.
+            s0: The initial state.
+            sf: The sink state.
+        """
         if s0 is None:
             s0 = GeometricData(
                 x=torch.zeros((0, 1), dtype=torch.int64).to(device),
@@ -59,13 +71,14 @@ class GraphBuilding(GraphEnv):
         )
 
     def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
-        """Step function for the GraphBuilding environment.
+        """Performs a step in the environment.
 
         Args:
-            states: GraphStates object representing the current graph.
-            actions: Actions indicating which edge to add.
+            states: The current states.
+            actions: The actions to take.
 
-        Returns the next graph the new GraphStates.
+        Returns:
+            The next states.
         """
         if len(actions) == 0:
             return states
@@ -139,13 +152,14 @@ class GraphBuilding(GraphEnv):
         return self.States(data_array, device=states.device)
 
     def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
-        """Backward step function for the GraphBuilding environment.
+        """Performs a backward step in the environment.
 
         Args:
-            states: GraphStates object representing the current graph.
-            actions: Actions indicating which edge to remove.
+            states: The current states.
+            actions: The actions to undo.
 
-        Returns the previous graph as a new GraphStates.
+        Returns:
+            The previous states.
         """
         if len(actions) == 0:
             return states
@@ -271,26 +285,26 @@ class GraphBuilding(GraphEnv):
 
     def reward(self, final_states: GraphStates) -> torch.Tensor:
         """The environment's reward given a state.
-        This or log_reward must be implemented.
 
         Args:
             final_states: A batch of final states.
 
         Returns:
-            torch.Tensor: Tensor of shape "batch_shape" containing the rewards.
+            A tensor of shape `(batch_size,)` containing the rewards.
         """
         return self.state_evaluator(final_states)
 
     def make_random_states(
         self, batch_shape: Tuple, device: torch.device | None = None
     ) -> GraphStates:
-        """Generates random states tensor of shape (*batch_shape, feature_dim).
+        """Generates random states.
 
         Args:
-            batch_shape: Shape of the batch dimensions.
+            batch_shape: The shape of the batch.
+            device: The device to use.
 
         Returns:
-            A PyG Batch object containing random graph states.
+            A `GraphStates` object with random states.
         """
         assert self.s0.edge_attr is not None
         assert self.s0.x is not None
@@ -331,14 +345,15 @@ class GraphBuilding(GraphEnv):
         return self.States(data_array, device=device)
 
     def make_states_class(self) -> type[GraphStates]:
+        """Creates a `GraphStates` class for this environment."""
         env = self
 
         class GraphBuildingStates(GraphStates):
             """Represents the state of a graph building process.
 
             The state representation consists of:
-            - node_class: Class of each node (shape: [n_nodes, 1])
-            - edge_class: Class of each edge (shape: [n_edges, 1])
+            - node_class: Class of each node (shape: `[n_nodes, 1]`)
+            - edge_class: Class of each edge (shape: `[n_edges, 1]`)
             - edge_index: Indices representing the source and target nodes for each edge
 
             Special states:
@@ -387,13 +402,12 @@ class GraphBuildingOnEdges(GraphBuilding):
     2. Use the exit action to terminate graph building.
 
     The action space is discrete, with size:
-    - For directed graphs: n_nodes^2 - n_nodes + 1 (all possible directed edges + exit).
-    - For undirected graphs: (n_nodes^2 - n_nodes)/2 + 1 (upper triangle + exit).
+    - For directed graphs: `n_nodes^2 - n_nodes + 1` (all possible directed edges + exit).
+    - For undirected graphs: `(n_nodes^2 - n_nodes)/2 + 1` (upper triangle + exit).
 
-    Args:
-        n_nodes: The number of nodes in the graph.
-        state_evaluator: A function that evaluates a state and returns a reward.
-        directed: Whether the graph should be directed.
+    Attributes:
+        n_nodes (int): The number of nodes in the graph.
+        n_possible_edges (int): The number of possible edges.
     """
 
     def __init__(
@@ -403,6 +417,14 @@ class GraphBuildingOnEdges(GraphBuilding):
         directed: bool,
         device: Literal["cpu", "cuda"] | torch.device,
     ):
+        """Initializes the `GraphBuildingOnEdges` environment.
+
+        Args:
+            n_nodes: The number of nodes in the graph.
+            state_evaluator: A function that evaluates a state and returns a reward.
+            directed: Whether the graph should be directed.
+            device: The device to use.
+        """
         self.n_nodes = n_nodes
         if directed:
             # all off-diagonal edges.
@@ -432,20 +454,21 @@ class GraphBuildingOnEdges(GraphBuilding):
         )
 
     def make_states_class(self) -> type[GraphStates]:
+        """Creates a `GraphStates` class for this environment."""
         env = self
 
         class GraphBuildingOnEdgesStates(GraphStates):
             """Represents the state of an edge-by-edge graph building process.
 
-            This class extends GraphStates to specifically handle edge-by-edge graph
+            This class extends `GraphStates` to specifically handle edge-by-edge graph
             building states. Each state represents a graph with a fixed number of nodes
             where edges are being added incrementally.
 
             The state representation consists of:
-            - node_feature: Node IDs for each node in the graph (shape: [n_nodes, 1])
-            - edge_feature: Features for each edge (shape: [n_edges, 1])
+            - node_feature: Node IDs for each node in the graph (shape: `[n_nodes, 1]`)
+            - edge_feature: Features for each edge (shape: `[n_edges, 1]`)
             - edge_index: Indices representing the source and target nodes for each edge
-                (shape: [n_edges, 2])
+                (shape: `[n_edges, 2]`)
 
             Special states:
             - s0: Initial state with n_nodes and no edges
@@ -472,12 +495,12 @@ class GraphBuildingOnEdges(GraphBuilding):
                 1. The edge doesn't already exist in the graph
                 2. The edge connects two distinct nodes
 
-                For directed graphs, all possible src->dst edges are considered.
+                For directed graphs, all possible `src->dst` edges are considered.
                 For undirected graphs, only the upper triangular portion of the
-                    adjacency matrix is used.
+                adjacency matrix is used.
 
                 Returns:
-                    TensorDict: Boolean mask where True indicates valid actions
+                    A boolean mask where `True` indicates valid actions.
                 """
                 forward_masks = super().forward_masks
                 forward_masks[GraphActions.ACTION_TYPE_KEY][
@@ -498,7 +521,7 @@ class GraphBuildingOnEdges(GraphBuilding):
                 The EXIT action is not included in backward masks.
 
                 Returns:
-                    TensorDict: Boolean mask where True indicates valid actions
+                    A boolean mask where `True` indicates valid actions.
                 """
                 backward_masks = super().backward_masks
                 backward_masks[GraphActions.ACTION_TYPE_KEY][
@@ -508,13 +531,13 @@ class GraphBuildingOnEdges(GraphBuilding):
 
             @property
             def is_sink_state(self) -> torch.Tensor:
-                """Returns a tensor that is True for states that are sf."""
+                """Returns a tensor that is `True` for states that are `sf`."""
                 xs = torch.cat([g.x for g in self.data.flat], dim=1)  # type: ignore
                 return (xs == self.sf.x).all(dim=0).view(self.batch_shape)
 
             @property
             def is_initial_state(self) -> torch.Tensor:
-                """Returns a tensor that is True for states that are s0."""
+                """Returns a tensor that is `True` for states that are `s0`."""
                 is_not_sink = ~self.is_sink_state
                 has_edges = torch.tensor(
                     [g.edge_index.shape[1] > 0 for g in self.data.flat],  # type: ignore
@@ -531,9 +554,10 @@ class GraphBuildingOnEdges(GraphBuilding):
 
         Args:
             batch_shape: Shape of the batch dimensions.
+            device: The device to use.
 
         Returns:
-            A PyG Batch object containing random graph states.
+            A `GraphStates` object containing random graph states.
         """
         assert self.s0.edge_attr is not None
         assert self.s0.x is not None
@@ -569,6 +593,16 @@ class GraphBuildingOnEdges(GraphBuilding):
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
     ) -> bool:
+        """Checks if the actions are valid.
+
+        Args:
+            states: The current states.
+            actions: The actions to validate.
+            backward: Whether the actions are backward actions.
+
+        Returns:
+            `True` if the actions are valid, `False` otherwise.
+        """
         if not backward and (actions.action_type == GraphActionType.ADD_NODE).any():
             return False
         if backward and (actions.action_type != GraphActionType.ADD_EDGE).any():

@@ -1018,7 +1018,7 @@ def main(args):  # noqa: C901
                 with torch.no_grad():
                     replay_buffer.add(training_samples)
                     training_objects = replay_buffer.sample(
-                        n_trajectories=per_node_batch_size
+                        n_samples=per_node_batch_size
                     )
             else:
                 training_objects = training_samples

@@ -19,16 +19,26 @@ CLAMP: float = torch.finfo(torch.float).eps
 
 
 class QuarterCircle(Distribution):
-    """Represents distributions on quarter circles (or parts thereof), either the northeastern
-    ones or the southwestern ones, centered at a point in (0, 1)^2. The distributions
-    are Mixture of Beta distributions on the possible angle range.
+    """Represents distributions on quarter circles.
 
-    When a state is of norm <= delta, and northeastern=False, then the distribution is a Dirac at the
-    state (i.e. the only possible parent is s_0).
+    The distributions are Mixture of Beta distributions on the possible angle range.
+
+    When a state is of norm <= delta, and northeastern=False, then the distribution
+    is a Dirac at the state (i.e. the only possible parent is s_0).
 
     Adapted from https://github.com/saleml/continuous-gfn/blob/master/sampling.py
 
     This is useful for the `Box` environment.
+
+    Attributes:
+        delta (float): The radius of the quarter disk.
+        northeastern (bool): Whether the quarter disk is northeastern or southwestern.
+        n_states (int): The number of states.
+        n_components (int): The number of components in the mixture.
+        centers (States): The centers of the distribution.
+        base_dist (MixtureSameFamily): The base distribution.
+        min_angles (Tensor): The minimum angles.
+        max_angles (Tensor): The maximum angles.
     """
 
     delta: float
@@ -54,11 +64,13 @@ class QuarterCircle(Distribution):
         Args:
             delta: the radius of the quarter disk.
             northeastern: whether the quarter disk is northeastern or southwestern.
-            centers: the centers of the distribution with shape (n_states, 2).
-            mixture_logits: Tensor of shape (n_states", n_components) containing the logits of
-                the mixture of Beta distributions.
-            alpha: Tensor of shape (n_states", n_components) containing the alpha parameters of the Beta distributions.
-            beta: Tensor of shape (n_states", n_components) containing the beta parameters of the Beta distributions.
+            centers: the centers of the distribution with shape `(n_states, 2)`.
+            mixture_logits: Tensor of shape `(n_states, n_components)` containing the
+                logits of the mixture of Beta distributions.
+            alpha: Tensor of shape `(n_states, n_components)` containing the alpha
+                parameters of the Beta distributions.
+            beta: Tensor of shape `(n_states, n_components)` containing the beta
+                parameters of the Beta distributions.
         """
         self.delta = delta
         self.northeastern = northeastern
@@ -79,7 +91,9 @@ class QuarterCircle(Distribution):
     def get_min_and_max_angles(self) -> Tuple[Tensor, Tensor]:
         """Computes the minimum and maximum angles for the distribution.
 
-        Returns a tuple of two tensors of shape (n_states,) containing the minimum and maximum angles, respectively.
+        Returns:
+            A tuple of two tensors of shape `(n_states,)` containing the minimum and
+            maximum angles, respectively.
         """
         if self.northeastern:
             min_angles = torch.where(
@@ -114,7 +128,8 @@ class QuarterCircle(Distribution):
         Args:
             sample_shape: the shape of the samples to generate.
 
-        Returns the sampled actions of shape (sample_shape, n_states, 2).
+        Returns:
+            The sampled actions of shape `(sample_shape, n_states, 2)`.
         """
         base_01_samples = self.base_dist.sample(sample_shape=sample_shape)
 
@@ -180,9 +195,11 @@ class QuarterCircle(Distribution):
         """Computes the log probability of the sampled actions.
 
         Args:
-            sampled_actions: Tensor of shape (*batch_shape, 2) with the actions to compute the log probability of.
+            sampled_actions: Tensor of shape `(*batch_shape, 2)` with the actions to
+                compute the log probability of.
 
-        Returns the log probability of the sampled actions as a tensor of shape `batch_shape`.
+        Returns:
+            The log probability of the sampled actions as a tensor of shape `batch_shape`.
         """
         assert sampled_actions.shape[-1] == 2
         batch_shape = sampled_actions.shape[:-1]
@@ -252,12 +269,20 @@ class QuarterCircle(Distribution):
 
 
 class QuarterDisk(Distribution):
-    """Represents a distribution on the northeastern quarter disk centered at (0, 0) of maximal radius delta.
+    """Represents a distribution on the northeastern quarter disk.
+
     The radius and the angle follow Mixture of Betas distributions.
 
     Adapted from https://github.com/saleml/continuous-gfn/blob/master/sampling.py
 
-    This is useful for the `Box` environment
+    This is useful for the `Box` environment.
+
+    Attributes:
+        delta (float): The radius of the quarter disk.
+        mixture_logits (Tensor): The logits of the mixture of Beta distributions.
+        base_r_dist (MixtureSameFamily): The base distribution for the radius.
+        base_theta_dist (MixtureSameFamily): The base distribution for the angle.
+        n_components (int): The number of components in the mixture.
     """
 
     delta: float
@@ -279,16 +304,16 @@ class QuarterDisk(Distribution):
 
         Args:
             delta: the radius of the quarter disk.
-            mixture_logits: Tensor of shape (n_components,) containing the logits of
+            mixture_logits: Tensor of shape `(n_components,)` containing the logits of
                 the mixture of Beta distributions.
-            alpha_r: Tensor of shape (n_components,) containing the alpha parameters of
+            alpha_r: Tensor of shape `(n_components,)` containing the alpha parameters
+                of the Beta distributions for the radius.
+            beta_r: Tensor of shape `(n_components,)` containing the beta parameters of
                 the Beta distributions for the radius.
-            beta_r: Tensor of shape (n_components,) containing the beta parameters of the
-                Beta distributions for the radius.
-            alpha_theta: Tensor of shape (n_components,) containing the alpha parameters of
-                the Beta distributions for the angle.
-            beta_theta: Tensor of shape (n_components,) containing the beta parameters of
-                the Beta distributions for the angle.
+            alpha_theta: Tensor of shape `(n_components,)` containing the alpha
+                parameters of the Beta distributions for the angle.
+            beta_theta: Tensor of shape `(n_components,)` containing the beta
+                parameters of the Beta distributions for the angle.
         """
         self.delta = delta
         self.mixture_logits = mixture_logits
@@ -315,7 +340,8 @@ class QuarterDisk(Distribution):
         Args:
             sample_shape: the shape of the samples to generate.
 
-        Returns the sampled actions of shape (sample_shape, 2).
+        Returns:
+            The sampled actions of shape `(sample_shape, 2)`.
         """
         base_r_01_samples = self.base_r_dist.sample(sample_shape=sample_shape)
         base_theta_01_samples = self.base_theta_dist.sample(sample_shape=sample_shape)
@@ -337,9 +363,11 @@ class QuarterDisk(Distribution):
         """Computes the log probability of the sampled actions.
 
         Args:
-            sampled_actions: Tensor of shape (*batch_shape, 2) with the actions to compute the log probability of.
+            sampled_actions: Tensor of shape `(*batch_shape, 2)` with the actions to
+                compute the log probability of.
 
-        Returns the log probability of the sampled actions as a tensor of shape `batch_shape`.
+        Returns:
+            The log probability of the sampled actions as a tensor of shape `batch_shape`.
         """
         assert sampled_actions.shape[-1] == 2
         batch_shape = sampled_actions.shape[:-1]
@@ -375,9 +403,20 @@ class QuarterDisk(Distribution):
 
 
 class QuarterCircleWithExit(Distribution):
-    """Extends the previous QuarterCircle distribution by considering an extra parameter, called
-    `exit_probability` of shape (n_states,). When sampling, then with probability `exit_probability`,
-    the `exit_action` [-inf, -inf] is sampled. The `log_prob` function needs to change accordingly
+    """Extends `QuarterCircle` with an exit action.
+
+    When sampling, with probability `exit_probability`, the `exit_action`
+    `[-inf, -inf]` is sampled. The `log_prob` function is adjusted accordingly.
+
+    Attributes:
+        delta (float): The radius of the quarter disk.
+        epsilon (float): The epsilon value to consider the state as being at the
+            border of the square.
+        centers (States): The centers of the distribution.
+        dist_without_exit (QuarterCircle): The distribution without the exit action.
+        exit_probability (Tensor): The probability of exiting.
+        exit_action (Tensor): The exit action.
+        n_states (int): The number of states.
     """
 
     delta: float
@@ -402,13 +441,17 @@ class QuarterCircleWithExit(Distribution):
 
         Args:
             delta: the radius of the quarter disk.
-            centers: the centers of the distribution with shape (n_states, 2).
-            exit_probability: Tensor of shape (n_states,) containing the probability of exiting the quarter disk.
-            mixture_logits: Tensor of shape (n_states, n_components) containing the logits of the mixture of
-                Beta distributions.
-            alpha: Tensor of shape (n_states, n_components) containing the alpha parameters of the Beta distributions.
-            beta: Tensor of shape (n_states, n_components) containing the beta parameters of the Beta distributions.
-            epsilon: the epsilon value to consider the state as being at the border of the square.
+            centers: the centers of the distribution with shape `(n_states, 2)`.
+            exit_probability: Tensor of shape `(n_states,)` containing the
+                probability of exiting the quarter disk.
+            mixture_logits: Tensor of shape `(n_states, n_components)` containing the
+                logits of the mixture of Beta distributions.
+            alpha: Tensor of shape `(n_states, n_components)` containing the alpha
+                parameters of the Beta distributions.
+            beta: Tensor of shape `(n_states, n_components)` containing the beta
+                parameters of the Beta distributions.
+            epsilon: the epsilon value to consider the state as being at the border
+                of the square.
         """
         self.n_states, n_components = mixture_logits.shape
         assert centers.tensor.shape == (self.n_states, 2)
@@ -435,7 +478,8 @@ class QuarterCircleWithExit(Distribution):
     def sample(self) -> Tensor:
         """Samples from the distribution.
 
-        Returns the sampled actions with shape (n_states, 2).
+        Returns:
+            The sampled actions with shape `(n_states, 2)`.
         """
         actions = self.dist_without_exit.sample()
         repeated_exit_probability = self.exit_probability.repeat((1,))
@@ -455,9 +499,11 @@ class QuarterCircleWithExit(Distribution):
         """Computes the log probability of the sampled actions.
 
         Args:
-            sampled_actions: Tensor of shape (*batch_shape, 2) with the actions to compute the log probability of.
+            sampled_actions: Tensor of shape `(*batch_shape, 2)` with the actions to
+                compute the log probability of.
 
-        Returns the log probability of the sampled actions as a tensor of shape `batch_shape`.
+        Returns:
+            The log probability of the sampled actions as a tensor of shape `batch_shape`.
         """
         exit = torch.all(
             sampled_actions == torch.full_like(sampled_actions[0], -float("inf")), 1
@@ -474,7 +520,15 @@ class QuarterCircleWithExit(Distribution):
 
 
 class DistributionWrapper(Distribution):
-    """A wrapper class that combines QuarterDisk and QuarterCircleWithExit distributions."""
+    """A wrapper that combines `QuarterDisk` and `QuarterCircleWithExit`.
+
+    Attributes:
+        idx_is_initial (Tensor): The indices of the initial states.
+        idx_not_initial (Tensor): The indices of the non-initial states.
+        quarter_disk (Optional[QuarterDisk]): The `QuarterDisk` distribution.
+        quarter_circ (Optional[QuarterCircleWithExit]): The `QuarterCircleWithExit`
+            distribution.
+    """
 
     idx_is_initial: Tensor
     idx_not_initial: Tensor
@@ -496,6 +550,21 @@ class DistributionWrapper(Distribution):
         n_components: int,
         n_components_s0: int,
     ) -> None:
+        """Initializes the distribution.
+
+        Args:
+            states: The states.
+            delta: The radius of the quarter disk.
+            epsilon: The epsilon value.
+            mixture_logits: The logits of the mixture of Beta distributions.
+            alpha_r: The alpha parameters of the Beta distributions for the radius.
+            beta_r: The beta parameters of the Beta distributions for the radius.
+            alpha_theta: The alpha parameters of the Beta distributions for the angle.
+            beta_theta: The beta parameters of the Beta distributions for the angle.
+            exit_probability: The probability of exiting.
+            n_components: The number of components in the mixture.
+            n_components_s0: The number of components in the mixture for s0.
+        """
         self.idx_is_initial = torch.where(torch.all(states.tensor == 0, 1))[0]
         self.idx_not_initial = torch.where(torch.any(states.tensor != 0, 1))[0]
         self._output_shape = states.tensor.shape
@@ -528,7 +597,8 @@ class DistributionWrapper(Distribution):
             sample_shape: the shape of the samples to generate.
 
         Returns:
-            A tensor of shape (sample_shape + self._output_shape) containing the sampled actions.
+            A tensor of shape `(sample_shape + self._output_shape)` containing the
+            sampled actions.
         """
         output = torch.zeros(sample_shape + self._output_shape).to(
             self.idx_is_initial.device
@@ -552,10 +622,11 @@ class DistributionWrapper(Distribution):
         """Computes the log probability of the sampled actions.
 
         Args:
-            sampled_actions: Tensor of shape (*batch_shape, 2) with the actions to compute the log probability of.
+            sampled_actions: Tensor of shape `(*batch_shape, 2)` with the actions to
+                compute the log probability of.
 
         Returns:
-            A tensor of shape (*batch_shape) containing the log probabilities.
+            A tensor of shape `(*batch_shape)` containing the log probabilities.
         """
         log_prob = torch.zeros(sampled_actions.shape[:-1]).to(self.idx_is_initial.device)
         n_disk_samples = len(self.idx_is_initial)
@@ -575,12 +646,12 @@ class DistributionWrapper(Distribution):
 
 
 class BoxPFMLP(MLP):
-    """A deep neural network for the forward policy.
+    """A MLP for the forward policy of the Box environment.
 
     Attributes:
-        n_components_s0: the number of components for each s=0 distribution parameter.
-        n_components: the number of components for each s=t>0 distribution parameter.
-        PFs0: the parameters for the s=0 distribution.
+        n_components_s0 (int): The number of components for s0.
+        n_components (int): The number of components for non-s0 states.
+        PFs0 (nn.Parameter): The parameters for the s0 distribution.
     """
 
     n_components_s0: int
@@ -597,16 +668,14 @@ class BoxPFMLP(MLP):
         n_components: int,
         **kwargs: Any,
     ) -> None:
-        """Instantiates the neural network for the forward policy.
+        """Initializes the MLP.
 
         Args:
-            hidden_dim: the size of each hidden layer.
-            n_hidden_layers: the number of hidden layers.
-            n_components_s0: the number of output components for each s=0 distribution
-                parameter.
-            n_components: the number of output components for each s=t>0 distribution
-                parameter.
-            **kwargs: passed to the MLP class.
+            hidden_dim: The hidden dimension.
+            n_hidden_layers: The number of hidden layers.
+            n_components_s0: The number of components for s0.
+            n_components: The number of components for non-s0 states.
+            kwargs: Other arguments for the MLP.
         """
         self._n_comp_max = max(n_components_s0, n_components)
         self.n_components_s0 = n_components_s0
@@ -633,11 +702,10 @@ class BoxPFMLP(MLP):
         """Computes the forward pass of the neural network.
 
         Args:
-            preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute
-                the forward pass of the neural network.
+            preprocessed_states: The tensor states of shape `(*batch_shape, 2)`.
 
         Returns:
-            A tensor of shape (*batch_shape, 1 + 5 * max_n_components) containing the output.
+            A tensor of shape `(*batch_shape, 1 + 5 * max_n_components)`.
         """
         assert preprocessed_states.shape[-1] == 2
         batch_shape = preprocessed_states.shape[:-1]
@@ -705,10 +773,10 @@ class BoxPFMLP(MLP):
 
 
 class BoxPBMLP(MLP):
-    """A deep neural network for the backward policy.
+    """A MLP for the backward policy of the Box environment.
 
     Attributes:
-        n_components: the number of components for each distribution parameter.
+        n_components (int): The number of components for each distribution parameter.
     """
 
     n_components: int
@@ -721,14 +789,13 @@ class BoxPBMLP(MLP):
         n_components: int,
         **kwargs: Any,
     ) -> None:
-        """Instantiates the neural network.
+        """Initializes the MLP.
 
         Args:
-            hidden_dim: the size of each hidden layer.
-            n_hidden_layers: the number of hidden layers.
-            n_components: the number of output components for each distribution
-                parameter.
-            **kwargs: passed to the MLP class.
+            hidden_dim: The hidden dimension.
+            n_hidden_layers: The number of hidden layers.
+            n_components: The number of components for each distribution parameter.
+            kwargs: Other arguments for the MLP.
         """
         input_dim = 2
         self._input_dim = input_dim
@@ -749,11 +816,10 @@ class BoxPBMLP(MLP):
         """Computes the forward pass of the neural network.
 
         Args:
-            preprocessed_states: The tensor states of shape (*batch_shape, 2) to
-                compute the forward pass of the neural network.
+            preprocessed_states: The tensor states of shape `(*batch_shape, 2)`.
 
         Returns:
-            A tensor of shape (*batch_shape, 3 * n_components) containing the output.
+            A tensor of shape `(*batch_shape, 3 * n_components)`.
         """
         assert preprocessed_states.shape[-1] == 2
         batch_shape = preprocessed_states.shape[:-1]
@@ -768,11 +834,21 @@ class BoxPBMLP(MLP):
 
 
 class BoxStateFlowModule(MLP):
-    """A deep neural network for the state flow function."""
+    """A MLP for the state flow function of the Box environment.
+
+    Attributes:
+        logZ_value (nn.Parameter): The log partition function value.
+    """
 
     logZ_value: nn.Parameter
 
     def __init__(self, logZ_value: Tensor, **kwargs: Any) -> None:
+        """Initializes the module.
+
+        Args:
+            logZ_value: The log partition function value.
+            kwargs: Other arguments for the MLP.
+        """
         super().__init__(**kwargs)
         self.logZ_value = nn.Parameter(logZ_value)
 
@@ -780,11 +856,10 @@ class BoxStateFlowModule(MLP):
         """Computes the forward pass of the neural network.
 
         Args:
-            preprocessed_states: The tensor states of shape (*batch_shape, input_dim) to compute
-                the forward pass of the neural network.
+            preprocessed_states: The tensor states of shape `(*batch_shape, input_dim)`.
 
         Returns:
-            A tensor of shape (*batch_shape, output_dim) containing the output.
+            A tensor of shape `(*batch_shape, output_dim)`.
         """
         out = super().forward(preprocessed_states)
         idx_s0 = torch.all(preprocessed_states == 0.0, 1)
@@ -794,10 +869,11 @@ class BoxStateFlowModule(MLP):
 
 
 class BoxPBUniform(nn.Module):
-    """A module to be used to create a uniform PB distribution for the Box environment
+    """A uniform backward policy for the Box environment.
 
-    A module that returns (1, 1, 1) for all states. Used with QuarterCircle, it leads
-        to a uniform distribution over parents in the south-western part of circle.
+    This module returns `(1, 1, 1)` for all states. Used with `QuarterCircle`,
+    it leads to a uniform distribution over parents in the south-western part of
+    the circle.
     """
 
     input_dim: int = 2
@@ -806,11 +882,10 @@ class BoxPBUniform(nn.Module):
         """Computes the forward pass of the neural network.
 
         Args:
-            preprocessed_states: The tensor states of shape (*batch_shape, 2) to compute
-                the forward pass of the neural network.
+            preprocessed_states: The tensor states of shape `(*batch_shape, 2)`.
 
         Returns:
-            A tensor of shape (*batch_shape, 3) filled by ones.
+            A tensor of shape `(*batch_shape, 3)` filled with ones.
         """
         # return (1, 1, 1) for all states, thus the "+ (3,)".
         assert preprocessed_states.shape[-1] == 2
@@ -825,17 +900,18 @@ def split_PF_module_output(
 
     Args:
         output: the module_output from the P_F model as a tensor of shape
-            (*batch_shape, output_dim).
-        n_comp_max: the larger number of the two n_components and n_components_s0.
+            `(*batch_shape, output_dim)`.
+        n_comp_max: the larger number of the two `n_components` and `n_components_s0`.
 
     Returns:
         A tuple containing:
-            - exit_probability: A probability unique to QuarterCircleWithExit.
-            - mixture_logits: Parameters shared by QuarterDisk and QuarterCircleWithExit.
-            - alpha_r: Parameters shared by QuarterDisk and QuarterCircleWithExit.
-            - beta_r: Parameters shared by QuarterDisk and QuarterCircleWithExit.
-            - alpha_theta: Parameters unique to QuarterDisk.
-            - beta_theta: Parameters unique to QuarterDisk.
+            - `exit_probability`: A probability unique to `QuarterCircleWithExit`.
+            - `mixture_logits`: Parameters shared by `QuarterDisk` and
+                `QuarterCircleWithExit`.
+            - `alpha_r`: Parameters shared by `QuarterDisk` and `QuarterCircleWithExit`.
+            - `beta_r`: Parameters shared by `QuarterDisk` and `QuarterCircleWithExit`.
+            - `alpha_theta`: Parameters unique to `QuarterDisk`.
+            - `beta_theta`: Parameters unique to `QuarterDisk`.
     """
     (
         exit_probability,  # Unique to QuarterCircleWithExit.
@@ -861,7 +937,18 @@ def split_PF_module_output(
 
 
 class BoxPFEstimator(GFNModule):
-    r"""Estimator for P_F for the Box environment. Uses the BoxForwardDist distribution."""
+    r"""Estimator for `P_F` for the Box environment.
+
+    This estimator uses the `DistributionWrapper` distribution.
+
+    Attributes:
+        n_components_s0 (int): The number of components for s0.
+        n_components (int): The number of components for non-s0 states.
+        min_concentration (float): The minimum concentration for the Beta distributions.
+        max_concentration (float): The maximum concentration for the Beta distributions.
+        delta (float): The radius of the quarter disk.
+        epsilon (float): The epsilon value.
+    """
 
     _n_comp_max: int
     n_components_s0: int
@@ -880,6 +967,16 @@ class BoxPFEstimator(GFNModule):
         min_concentration: float = 0.1,
         max_concentration: float = 2.0,
     ) -> None:
+        """Initializes the estimator.
+
+        Args:
+            env: The environment.
+            module: The module to use.
+            n_components_s0: The number of components for s0.
+            n_components: The number of components for non-s0 states.
+            min_concentration: The minimum concentration for the Beta distributions.
+            max_concentration: The maximum concentration for the Beta distributions.
+        """
         super().__init__(module)
         self._n_comp_max = max(n_components_s0, n_components)
         self.n_components_s0 = n_components_s0
@@ -892,6 +989,7 @@ class BoxPFEstimator(GFNModule):
 
     @property
     def expected_output_dim(self) -> int:
+        """Returns the expected output dimension of the module."""
         return 1 + 5 * self._n_comp_max
 
     def to_probability_distribution(
@@ -900,8 +998,10 @@ class BoxPFEstimator(GFNModule):
         """Converts the module output to a probability distribution.
 
         Args:
-            states: the states for which to convert the module output to a probability distribution.
-            module_output: the output of the module for the states as a tensor of shape (*batch_shape, output_dim).
+            states: the states for which to convert the module output to a
+                probability distribution.
+            module_output: the output of the module for the states as a tensor of
+                shape `(*batch_shape, output_dim)`.
 
         Returns:
             The probability distribution for the states.
@@ -961,7 +1061,16 @@ class BoxPFEstimator(GFNModule):
 
 
 class BoxPBEstimator(GFNModule):
-    r"""Estimator for P_B for the Box environment. Uses the QuarterCircle(northeastern=False) distribution"""
+    r"""Estimator for `P_B` for the Box environment.
+
+    This estimator uses the `QuarterCircle(northeastern=False)` distribution.
+
+    Attributes:
+        n_components (int): The number of components for the mixture.
+        min_concentration (float): The minimum concentration for the Beta distributions.
+        max_concentration (float): The maximum concentration for the Beta distributions.
+        delta (float): The radius of the quarter disk.
+    """
 
     n_components: int
     min_concentration: float
@@ -976,6 +1085,15 @@ class BoxPBEstimator(GFNModule):
         min_concentration: float = 0.1,
         max_concentration: float = 2.0,
     ) -> None:
+        """Initializes the estimator.
+
+        Args:
+            env: The environment.
+            module: The module to use.
+            n_components: The number of components for the mixture.
+            min_concentration: The minimum concentration for the Beta distributions.
+            max_concentration: The maximum concentration for the Beta distributions.
+        """
         super().__init__(module, is_backward=True)
         self.module = module
         self.n_components = n_components
@@ -987,6 +1105,7 @@ class BoxPBEstimator(GFNModule):
 
     @property
     def expected_output_dim(self) -> int:
+        """Returns the expected output dimension of the module."""
         return 3 * self.n_components
 
     def to_probability_distribution(
@@ -995,8 +1114,10 @@ class BoxPBEstimator(GFNModule):
         """Converts the module output to a probability distribution.
 
         Args:
-            states: the states for which to convert the module output to a probability distribution.
-            module_output: the output of the module for the states as a tensor of shape (*batch_shape, output_dim).
+            states: the states for which to convert the module output to a
+                probability distribution.
+            module_output: the output of the module for the states as a tensor of
+                shape `(*batch_shape, output_dim)`.
 
         Returns:
             The probability distribution for the states.

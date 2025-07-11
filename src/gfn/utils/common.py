@@ -170,7 +170,15 @@ def set_seed(seed: int, performance_mode: bool = False) -> None:
 
 
 def ensure_same_device(device1: torch.device, device2: torch.device) -> None:
-    """Ensure that two tensors are on the same device."""
+    """Ensure that two tensors are on the same device.
+
+    Args:
+        device1: The first device.
+        device2: The second device.
+
+    Raises:
+        ValueError: If the devices are not the same.
+    """
     if device1 == device2:
         return
 

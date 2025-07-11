@@ -16,7 +16,15 @@ TrainingSampleType = TypeVar("TrainingSampleType", bound=Container)
 
 
 def loss_reduce(loss: torch.Tensor, method: str) -> torch.Tensor:
-    """Utility function to handle loss aggregation strategies."""
+    """Utility function to handle loss aggregation strategies.
+
+    Args:
+        loss: The tensor to reduce.
+        method: The reduction method to use ('mean', 'sum', or 'none').
+
+    Returns:
+        The reduced tensor.
+    """
     reduction_methods = {
         "mean": torch.mean,
         "sum": torch.sum,
@@ -31,9 +39,10 @@ def loss_reduce(loss: torch.Tensor, method: str) -> torch.Tensor:
 
 
 class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
-    """Abstract Base Class for GFlowNets.
+    """Abstract base class for GFlowNets.
 
-    A formal definition of GFlowNets is given in Sec. 3 of [GFlowNet Foundations](https://arxiv.org/pdf/2111.09266).
+    A formal definition of GFlowNets is given in Sec. 3 of
+    [GFlowNet Foundations](https://arxiv.org/pdf/2111.09266).
     """
 
     log_reward_clip_min = float("-inf")  # Default off.
@@ -43,45 +52,51 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         self,
         env: Env,
         n: int,
+        conditioning: torch.Tensor | None = None,
         save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:
-        """Sample a specific number of complete trajectories.
+        """Samples a specific number of complete trajectories from the environment.
 
         Args:
-            env: the environment to sample trajectories from.
-            n: number of trajectories to be sampled.
-            save_logprobs: whether to save the logprobs of the actions - useful for on-policy learning.
-            save_estimator_outputs: whether to save the estimator outputs - useful for off-policy learning
-                        with tempered policy
+            env: The environment to sample trajectories from.
+            n: Number of trajectories to sample.
+            conditioning: Optional conditioning tensor for conditional environments.
+            save_logprobs: Whether to save the logprobs of the actions (useful for
+                on-policy learning).
+            save_estimator_outputs: Whether to save the estimator outputs (useful for
+                off-policy learning with a tempered policy).
+
         Returns:
-            Trajectories: sampled trajectories object.
+            A Trajectories object containing the sampled trajectories.
         """
 
     def sample_terminating_states(self, env: Env, n: int) -> States:
-        """Rolls out the parametrization's policy and returns the terminating states.
+        """Rolls out the policy and returns the terminating states.
 
         Args:
-            env: the environment to sample terminating states from.
-            n: number of terminating states to be sampled.
+            env: The environment to sample terminating states from.
+            n: Number of terminating states to sample.
+
         Returns:
-            States: sampled terminating states object.
+            The sampled terminating states as a States object.
         """
         trajectories = self.sample_trajectories(
             env, n, save_estimator_outputs=False, save_logprobs=False
         )
         return trajectories.terminating_states
 
-    def logz_named_parameters(self):
-        return {k: v for k, v in dict(self.named_parameters()).items() if "logZ" in k}
-
-    def logz_parameters(self):
-        return [v for k, v in dict(self.named_parameters()).items() if "logZ" in k]
-
     @abstractmethod
     def to_training_samples(self, trajectories: Trajectories) -> TrainingSampleType:
-        """Converts trajectories to training samples. The type depends on the GFlowNet."""
+        """Converts trajectories to training samples.
+
+        Args:
+            trajectories: The Trajectories object to convert.
+
+        Returns:
+            The training samples, type depends on the type of GFlowNet subclass.
+        """
 
     @abstractmethod
     def loss(
@@ -93,10 +108,13 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         """Computes the loss given the training objects.
 
         Args:
-            env: The environment to compute the loss for
-            training_objects: The objects to compute the loss on
-            recalculate_all_logprobs: If True, always recalculate logprobs even
-                if they exist. If False, use existing logprobs when available.
+            env: The environment where the training objects are sampled from.
+            training_objects: The objects to compute the loss with.
+            recalculate_all_logprobs: If True, always recalculate logprobs even if they
+                exist. If False, use existing logprobs when available.
+
+        Returns:
+            The computed loss as a tensor.
         """
 
     def loss_from_trajectories(
@@ -107,17 +125,17 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
     ) -> torch.Tensor:
         """Helper method to compute loss directly from trajectories.
 
-        This method handles converting trajectories to the appropriate training samples
-        and computing the loss with the correct arguments based on the GFlowNet type.
+        This method converts trajectories to the appropriate training samples and computes
+        the loss with the correct arguments based on the type of GFlowNet subclass.
 
         Args:
-            env: The environment to compute the loss for
-            trajectories: The trajectories to compute the loss from
-            recalculate_all_logprobs: If True, always recalculate logprobs even
-                if they exist. If False, use existing logprobs when available.
+            env: The environment where the training objects are sampled from.
+            trajectories: The trajectories to compute the loss with.
+            recalculate_all_logprobs: If True, always recalculate logprobs even if they
+                exist. If False, use existing logprobs when available.
 
         Returns:
-            torch.Tensor: The computed loss
+            The computed loss as a tensor.
         """
         training_samples = self.to_training_samples(trajectories)
 
@@ -129,9 +147,20 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
 
 class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
-    """A GFlowNet that uses forward (PF) and backward (PB) policy networks."""
+    """A GFlowNet that uses forward (PF) and backward (PB) policy networks.
 
-    def __init__(self, pf: GFNModule, pb: GFNModule):
+    Attributes:
+        pf: The forward policy module.
+        pb: The backward policy module.
+    """
+
+    def __init__(self, pf: GFNModule, pb: GFNModule) -> None:
+        """Initializes a PFBasedGFlowNet instance.
+
+        Args:
+            pf: The forward policy module.
+            pb: The backward policy module.
+        """
         super().__init__()
         self.pf = pf
         self.pb = pb
@@ -145,7 +174,19 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:
-        """Samples trajectories, optionally with specified policy kwargs."""
+        """Samples trajectories using the forward policy network.
+
+        Args:
+            env: The environment to sample trajectories from.
+            n: Number of trajectories to sample.
+            conditioning: Optional conditioning tensor for conditional environments.
+            save_logprobs: Whether to save the logprobs of the actions.
+            save_estimator_outputs: Whether to save the estimator outputs.
+            **policy_kwargs: Additional keyword arguments for the sampler.
+
+        Returns:
+            A Trajectories object containing the sampled trajectories.
+        """
         sampler = Sampler(estimator=self.pf)
         trajectories = sampler.sample_trajectories(
             env,
@@ -158,64 +199,82 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
 
         return trajectories
 
-    def pf_pb_named_parameters(self):
+    def pf_pb_named_parameters(self) -> dict[str, torch.Tensor]:
+        """Returns a dictionary of named parameters containing 'pf' or 'pb' in their name.
+
+        Returns:
+            A dictionary of named parameters containing 'pf' or 'pb' in their name.
+        """
         return {k: v for k, v in self.named_parameters() if "pb" in k or "pf" in k}
 
-    def pf_pb_parameters(self):
+    def pf_pb_parameters(self) -> list[torch.Tensor]:
+        """Returns a list of parameters containing 'pf' or 'pb' in their name.
+
+        Returns:
+            A list of parameters containing 'pf' or 'pb' in their name.
+        """
         return [v for k, v in self.named_parameters() if "pb" in k or "pf" in k]
 
 
 class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
+    """A GFlowNet that operates on complete trajectories.
+
+    Attributes:
+        pf: The forward policy module.
+        pb: The backward policy module.
+    """
+
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
         fill_value: float = 0.0,
         recalculate_all_logprobs: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        r"""Evaluates logprobs for each transition in each trajectory in the batch.
+        r"""Evaluates forward and backward logprobs for each trajectory in the batch.
 
-        More specifically it evaluates $\log P_F (s' \mid s)$ and $\log P_B(s \mid s')$
+        More specifically, it evaluates $\log P_F(s' \mid s)$ and $\log P_B(s \mid s')$
         for each transition in each trajectory in the batch.
 
-        Unless recalculate_all_logprobs=True, in which case we re-evaluate the logprobs of the trajectories with
-        the current self.pf. The following applies:
-            - If trajectories have log_probs attribute, use them - this is usually for on-policy learning
-            - Else, if trajectories have estimator_outputs attribute, transform them
-                into log_probs - this is usually for off-policy learning with a tempered policy
-            - Else, if trajectories have none of them, re-evaluate the log_probs
-                using the current self.pf - this is usually for off-policy learning with replay buffer
+        If recalculate_all_logprobs=True, we re-evaluate the logprobs of the trajectories
+        using the current self.pf. Otherwise, the following applies:
+            - If trajectories have logprobs attribute, use them - this is usually for
+                on-policy learning.
+            - Elif trajectories have estimator_outputs attribute, transform them into
+                logprobs - this is usually for off-policy learning with a tempered policy.
+            - Else (trajectories have none of them), re-evaluate the logprobs using
+                the current self.pf - this is usually for off-policy learning with
+                replay buffer.
 
         Args:
-            trajectories: Trajectories to evaluate.
-            fill_value: Value to use for invalid states (i.e. $s_f$ that is added to
-                shorter trajectories).
+            trajectories: The Trajectories object to evaluate.
+            fill_value: Value to use for invalid states (e.g., $s_f$ added to shorter
+                trajectories).
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
-        Returns: A tuple of float tensors of shape (max_length, n_trajectories) containing
-            the log_pf and log_pb for each action in each trajectory. The first one can be None.
-
-        Raises:
-            ValueError: if the trajectories are backward.
-            AssertionError: when actions and states dimensions mismatch.
+        Returns:
+            A tuple of tensors of shape (max_length, n_trajectories) containing
+            the log_pf and log_pb for each action in each trajectory.
         """
         return get_trajectory_pfs_and_pbs(
             self.pf, self.pb, trajectories, fill_value, recalculate_all_logprobs
         )
 
-    def get_trajectories_scores(
+    def get_scores(
         self,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Given a batch of trajectories, calculate forward & backward policy scores.
+    ) -> torch.Tensor:
+        r"""Calculates scores for a batch of trajectories.
+
+        The scores for each trajectory are defined as:
+        $\log \left( \frac{P_F(\tau)}{P_B(\tau \mid x) R(x)} \right)$.
 
         Args:
-            trajectories: Trajectories to evaluate.
+            trajectories: The Trajectories object to evaluate.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
-        Returns: A tuple of float tensors of shape (n_trajectories,)
-            containing the total log_pf, total log_pb, and the total
-            log-likelihood of the trajectories.
+        Returns:
+            A tensor of shape (n_trajectories,) containing the scores for each trajectory.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -238,11 +297,15 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
         assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
         assert log_rewards is not None
-        return (
-            total_log_pf_trajectories,
-            total_log_pb_trajectories,
-            total_log_pf_trajectories - total_log_pb_trajectories - log_rewards,
-        )
+        return total_log_pf_trajectories - total_log_pb_trajectories - log_rewards
 
     def to_training_samples(self, trajectories: Trajectories) -> Trajectories:
+        """Returns the input trajectories as training samples.
+
+        Args:
+            trajectories: The Trajectories object to use as training samples.
+
+        Returns:
+            The same Trajectories object.
+        """
         return trajectories

@@ -13,8 +13,24 @@ NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
 
 
 class Env(ABC):
-    """Base class for all environments. Environments require that individual states be represented as a unique tensor of
-    arbitrary shape."""
+    """Base class for all environments.
+
+    Environments define the state and action spaces, as well as the forward & backward
+    transition and reward functions.
+
+    Attributes:
+        s0: The initial state (tensor or GeometricData).
+        sf: The sink (final) state (tensor or GeometricData).
+        state_shape: Tuple representing the shape of the states.
+        action_shape: Tuple representing the shape of the actions.
+        dummy_action: Tensor representing the dummy action for padding.
+        exit_action: Tensor representing the exit action.
+        States: The States class associated with this environment.
+        Actions: The Actions class associated with this environment.
+        is_discrete: Class variable, whether the environment is discrete.
+    """
+
+    is_discrete: bool = False
 
     def __init__(
         self,
@@ -28,14 +44,14 @@ class Env(ABC):
         """Initializes an environment.
 
         Args:
-            s0: Tensor of shape "state_shape" representing the initial state.
-                All individual states would be of the same shape.
+            s0: Tensor of shape (*state_shape) or GeometricData representing the initial
+                state.
             state_shape: Tuple representing the shape of the states.
             action_shape: Tuple representing the shape of the actions.
-            dummy_action: Tensor of shape "action_shape" representing a dummy action.
-            exit_action: Tensor of shape "action_shape" representing the exit action.
-            sf: Tensor of shape "state_shape" representing the final state.
-                Only used for a human readable representation of the states or trajectories.
+            dummy_action: Tensor of shape (*action_shape) representing the dummy action.
+            exit_action: Tensor of shape (*action_shape) representing the exit action.
+            sf: (Optional) Tensor of shape (*state_shape) or GeometricData representing
+                the sink (final) state.
         """
         if isinstance(s0.device, str):  # This can happen when s0 is a GeometricData.
             s0.device = torch.device(s0.device)
@@ -60,87 +76,96 @@ class Env(ABC):
         # the class. Use self.states_from_tensor or self.actions_from_tensor instead.
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
-        self.is_discrete = False
 
     @property
     def device(self) -> torch.device:
+        """The device on which the environment's elements are stored.
+
+        Returns:
+            The device of the initial state.
+        """
         return self.s0.device
 
     def states_from_tensor(self, tensor: torch.Tensor) -> States:
-        """Wraps the supplied Tensor in a States instance.
+        """Wraps the supplied tensor in a States instance.
 
         Args:
-            tensor: The tensor of shape "state_shape" representing the states.
+            tensor: Tensor of shape (*state_shape) representing the states.
 
         Returns:
-            States: An instance of States.
+            A States instance.
         """
         return self.States(tensor)
 
     def states_from_batch_shape(
         self, batch_shape: Tuple, random: bool = False, sink: bool = False
     ) -> States:
-        """Returns a batch of s0 states with a given batch_shape.
+        """Returns a batch of random, initial, or sink states with a given batch shape.
 
         Args:
             batch_shape: Tuple representing the shape of the batch of states.
-            random (optional): Initialize states randomly.
-            sink (optional): States initialized with sf (the sink state).
+            random: If True, initialize states randomly (requires implementation).
+            sink: If True, initialize states as sink states ($s_f$).
 
         Returns:
-            States: A batch of initial states.
+            A batch of random, initial, or sink states.
         """
         return self.States.from_batch_shape(
             batch_shape, random=random, sink=sink, device=self.device
         )
 
     def actions_from_tensor(self, tensor: torch.Tensor) -> Actions:
-        """Wraps the supplied Tensor an an Actions instance.
+        """Wraps the supplied tensor in an Actions instance.
 
         Args:
-            tensor: The tensor of shape "action_shape" representing the actions.
+            tensor: Tensor of shape (*action_shape) representing the actions.
 
         Returns:
-            Actions: An instance of Actions.
+            An Actions instance.
         """
         return self.Actions(tensor)
 
     def actions_from_batch_shape(self, batch_shape: Tuple) -> Actions:
-        """Returns a batch of dummy actions with the supplied batch_shape.
+        """Returns a batch of dummy actions with the supplied batch shape.
 
         Args:
             batch_shape: Tuple representing the shape of the batch of actions.
 
         Returns:
-            Actions: A batch of dummy actions.
+            A batch of dummy actions.
         """
         return self.Actions.make_dummy_actions(batch_shape, device=self.device)
 
-    # To be implemented by the User.
     @abstractmethod
     def step(self, states: States, actions: Actions) -> States:
-        """Function that takes a batch of states and actions and returns a batch of next
-        states. Does not need to check whether the actions are valid or the states are sink states.
+        """Forward transition function of the environment.
+
+        This method takes a batch of states and actions and returns a batch of next
+        states. It does not need to check whether the actions are valid or the states are
+        sink states, because the `_step` method wraps it and checks for validity.
 
         Args:
             states: A batch of states.
             actions: A batch of actions.
 
         Returns:
-            torch.Tensor: A batch of next states.
+            A batch of next states.
         """
 
     @abstractmethod
     def backward_step(self, states: States, actions: Actions) -> States:
-        """Function that takes a batch of states and actions and returns a batch of previous
-        states. Does not need to check whether the actions are valid or the states are sink states.
+        """Backward transition function of the environment.
+
+        This method takes a batch of states and actions and returns a batch of previous
+        states. It does not need to check whether the actions are valid or the states are
+        sink states, because the `_backward_step` method wraps it and checks for validity.
 
         Args:
             states: A batch of states.
             actions: A batch of actions.
 
         Returns:
-            torch.Tensor: A batch of previous states.
+            A batch of previous states.
         """
 
     @abstractmethod
@@ -150,21 +175,40 @@ class Env(ABC):
         actions: Actions,
         backward: bool = False,
     ) -> bool:
-        """Returns True if the actions are valid in the given states."""
+        """Checks whether the actions are valid in the given states.
+
+        Args:
+            states: A batch of states.
+            actions: A batch of actions.
+            backward: If True, checks validity for backward actions.
+
+        Returns:
+            True if all actions are valid in the given states, False otherwise.
+        """
 
     def make_random_states(
         self, batch_shape: Tuple, device: torch.device | None = None
     ) -> States:
-        """Optional method inherited by all States instances to emit a random tensor."""
+        """Optional method to return a batch of random states.
+
+        Args:
+            batch_shape: Tuple representing the shape of the batch of states.
+            device: The device to create the states on.
+
+        Returns:
+            A batch of random states.
+        """
         raise NotImplementedError
 
-    # Optionally implemented by the user when advanced functionality is required.
     def make_states_class(self) -> type[States]:
-        """The default States class factory for all Environments.
+        """Returns the States class for this environment.
 
-        Returns a class that inherits from States and implements assumed methods.
-        The make_states_class method should be overwritten to achieve more
-        environment-specific States functionality.
+        Defines a custom States class that inherits from States and implements assumed
+        methods. The make_states_class method should be overwritten to achieve more
+        environment-specific States functionalities.
+
+        Returns:
+            A type of a subclass of States with environment-specific functionalities.
         """
         env = self
 
@@ -179,11 +223,14 @@ class Env(ABC):
         return DefaultEnvState
 
     def make_actions_class(self) -> type[Actions]:
-        """The default Actions class factory for all Environments.
+        """Returns the Actions class for this environment.
 
-        Returns a class that inherits from Actions and implements assumed methods.
-        The make_actions_class method should be overwritten to achieve more
-        environment-specific Actions functionality.
+        Defines a custom Actions class that inherits from Actions and implements assumed
+        methods. The make_actions_class method should be overwritten to achieve more
+        environment-specific Actions functionalities.
+
+        Returns:
+            A type of a subclass of Actions with environment-specific functionalities.
         """
         env = self
 
@@ -194,7 +241,6 @@ class Env(ABC):
 
         return DefaultEnvAction
 
-    # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
         batch_shape: int | Tuple[int, ...] | list[int],
@@ -202,10 +248,16 @@ class Env(ABC):
         sink: bool = False,
         seed: Optional[int] = None,
     ) -> States:
-        """
-        Instantiates a batch of initial states. random and sink cannot be both True.
-        When random is true and seed is not None, environment randomization is fixed by
-        the submitted seed for reproducibility.
+        """Instantiates a batch of random, initial, or sink states.
+
+        Args:
+            batch_shape: Shape of the batch (int, tuple, or list).
+            random: If True, initialize states randomly.
+            sink: If True, initialize states as sink states ($s_f$).
+            seed: (Optional) Random seed for reproducibility.
+
+        Returns:
+            A batch of initial or sink states.
         """
         assert not (random and sink)
 
@@ -221,10 +273,18 @@ class Env(ABC):
         )
 
     def _step(self, states: States, actions: Actions) -> States:
-        """Core step function. Calls the user-defined self.step() function.
+        """Wrapper for the user-defined `step` function.
 
-        Function that takes a batch of states and actions and returns a batch of next
-        states and a boolean tensor indicating sink states in the new batch.
+        This wrapper ensures that the `step` is called only on valid states and actions,
+        and sets the states to the sink state when the action is exit. It also ensures
+        that the new states are a distinct object from the old states.
+
+        Args:
+            states: A batch of states.
+            actions: A batch of actions.
+
+        Returns:
+            A batch of next states.
         """
         assert states.batch_shape == actions.batch_shape
 
@@ -267,10 +327,18 @@ class Env(ABC):
         return new_states
 
     def _backward_step(self, states: States, actions: Actions) -> States:
-        """Core backward_step function. Calls the user-defined self.backward_step fn.
+        """Wrapper for the user-defined `backward_step` function.
 
-        This function takes a batch of states and actions and returns a batch of next
-        states and a boolean tensor indicating initial states in the new batch.
+        This wrapper ensures that the `backward_step` is called only on valid states and
+        actions, and sets the states to the initial state when the action is not valid.
+        It also ensures that the new states are a distinct object from the old states.
+
+        Args:
+            states: A batch of states.
+            actions: A batch of actions.
+
+        Returns:
+            A batch of previous states.
         """
         assert states.batch_shape == actions.batch_shape
 
@@ -297,57 +365,82 @@ class Env(ABC):
 
         return new_states
 
-    def reward(self, final_states: States) -> torch.Tensor:
-        """The environment's reward given a state.
-        This or log_reward must be implemented.
+    def reward(self, states: States) -> torch.Tensor:
+        """Returns the environment's rewards for a batch of states.
+
+        This or `log_reward` must be implemented by the environment.
 
         Args:
-            final_states: A batch of final states.
+            states: A batch of states with a batch_shape.
 
         Returns:
-            torch.Tensor: Tensor of shape "batch_shape" containing the rewards.
+            Tensor of shape (*batch_shape) containing the rewards.
         """
         raise NotImplementedError("Reward function is not implemented.")
 
-    def log_reward(self, final_states: States) -> torch.Tensor:
-        """Calculates the log reward.
-        This or reward must be implemented.
+    def log_reward(self, states: States) -> torch.Tensor:
+        """Returns the environment's log of rewards for a batch of states.
+
+        This or `reward` must be implemented by the environment.
 
         Args:
-            final_states: A batch of final states.
+            states: A batch of states with a batch_shape.
 
         Returns:
-            torch.Tensor: Tensor of shape "batch_shape" containing the log rewards.
+            Tensor of shape (*batch_shape) containing the log rewards.
         """
-        return torch.log(self.reward(final_states))
+        return torch.log(self.reward(states))
 
     @property
     def log_partition(self) -> float:
-        "Returns the logarithm of the partition function."
+        """Optional method to return the logarithm of the partition function.
+
+        Returns:
+            The log partition function.
+        """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     @property
     def true_dist_pmf(self) -> torch.Tensor:
-        "Returns a one-dimensional tensor representing the true distribution."
+        """Optional method to return the true distribution.
+
+        Returns:
+            The true distribution as a 1-dimensional tensor.
+        """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
 
 class DiscreteEnv(Env, ABC):
-    """Base class for discrete environments, where actions are represented by a number in
-    {0, ..., n_actions - 1}, the last one being the exit action.
+    """Base class for discrete environments, where states are defined in a discrete
+    space, and actions are represented by an integer in {0, ..., n_actions - 1}, the
+    last one being the exit action.
 
     For a guide on creating your own environments, see the documentation at:
-    :doc:`guides/creating_environments`
+    :doc:`guides/creating_environments`.
 
-    For a complete example, see the HyperGrid environment in src/gfn/gym/hypergrid.py
+    For a complete example, see the HyperGrid environment in
+    `src/gfn/gym/hypergrid.py`.
+
+    Attributes:
+        s0: Tensor of shape (*state_shape) representing the initial state.
+        sf: Tensor of shape (*state_shape) representing the sink (final) state.
+        n_actions: The number of actions in the environment.
+        state_shape: Tuple representing the shape of the states.
+        action_shape: Tuple representing the shape of the actions.
+        dummy_action: Tensor of shape (*action_shape) representing the dummy action.
+        exit_action: Tensor of shape (*action_shape) representing the exit action.
+        States: The States class associated with this environment.
+        Actions: The Actions class associated with this environment.
+        is_discrete: Class variable, whether the environment is discrete.
     """
 
     s0: torch.Tensor  # this tells the type checker that s0 is a torch.Tensor
     sf: torch.Tensor  # this tells the type checker that sf is a torch.Tensor
+    is_discrete: bool = True
 
     def __init__(
         self,
@@ -361,14 +454,17 @@ class DiscreteEnv(Env, ABC):
         sf: Optional[torch.Tensor] = None,
     ):
         """Initializes a discrete environment.
+
         Args:
             n_actions: The number of actions in the environment.
-            s0: Tensor of shape "state_shape" representing the initial state (shared among all trajectories).
+            s0: Tensor of shape (*state_shape) representing the initial state.
             state_shape: Tuple representing the shape of the states.
             action_shape: Tuple representing the shape of the actions.
-            dummy_action: Optional tensor of shape "action_shape" representing the dummy (padding) action.
-            exit_action: Optional tensor of shape "action_shape" representing the exit action.
-            sf: Tensor of shape "state_shape" representing the final state tensor (shared among all trajectories).
+            dummy_action: (Optional) Tensor of shape (*action_shape) representing the
+                dummy (padding) action.
+            exit_action: (Optional) Tensor of shape (*action_shape) representing the
+                exit action.
+            sf: (Optional) Tensor of shape (*state_shape) representing the final state.
         """
         # Add validation/warnings for advanced usage
         if dummy_action is not None or exit_action is not None or sf is not None:
@@ -422,16 +518,14 @@ class DiscreteEnv(Env, ABC):
             sf,
         )
 
-        self.is_discrete = True  # After init, else it will be overwritten.
-
     def states_from_tensor(self, tensor: torch.Tensor) -> DiscreteStates:
-        """Wraps the supplied Tensor in a States instance & updates masks.
+        """Wraps the supplied tensor in a DiscreteStates instance and updates masks.
 
         Args:
-            tensor: The tensor of shape "state_shape" representing the states.
+            tensor: Tensor of shape (*state_shape) representing the states.
 
         Returns:
-            States: An instance of States.
+            An instance of DiscreteStates.
         """
         states_instance = self.make_states_class()(tensor)
         self.update_masks(states_instance)
@@ -440,12 +534,20 @@ class DiscreteEnv(Env, ABC):
     def states_from_batch_shape(
         self, batch_shape: Tuple, random: bool = False, sink: bool = False
     ) -> DiscreteStates:
-        """Returns a batch of s0 states with a given batch_shape."""
+        r"""Returns a batch of random, initial, or sink states with a given batch shape.
+
+        Args:
+            batch_shape: Tuple representing the shape of the batch of states.
+            random: If True, initialize states randomly.
+            sink: If True, initialize states as sink states ($s_f$).
+
+        Returns:
+            DiscreteStates: A batch of random, initial, or sink states.
+        """
         out = super().states_from_batch_shape(batch_shape, random, sink)
         assert isinstance(out, DiscreteStates)
         return out
 
-    # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
         batch_shape: int | Tuple[int, ...],
@@ -453,7 +555,17 @@ class DiscreteEnv(Env, ABC):
         sink: bool = False,
         seed: Optional[int] = None,
     ) -> DiscreteStates:
-        """Instantiates a batch of initial DiscreteStates."""
+        """Instantiates a batch of random, initial, or sink states and updates masks.
+
+        Args:
+            batch_shape: Shape of the batch (int or tuple).
+            random: If True, initialize states randomly.
+            sink: If True, initialize states as sink states ($s_f$).
+            seed: (Optional) Random seed for reproducibility.
+
+        Returns:
+            A batch of initial or sink states.
+        """
         states = super().reset(batch_shape, random, sink, seed)
         states = cast(DiscreteStates, states)
         self.update_masks(states)
@@ -461,12 +573,21 @@ class DiscreteEnv(Env, ABC):
 
     @abstractmethod
     def update_masks(self, states: DiscreteStates) -> None:
-        """Updates the masks in States.
+        """Updates the masks in DiscreteStates.
 
         Called automatically after each step for discrete environments.
+
+        Args:
+            states: The DiscreteStates object whose masks will be updated.
         """
 
     def make_states_class(self) -> type[DiscreteStates]:
+        """Returns the DiscreteStates class for this environment.
+
+        Returns:
+            A type of a subclass of DiscreteStates with environment-specific
+            functionalities.
+        """
         env = self
 
         class DiscreteEnvStates(DiscreteStates):
@@ -480,7 +601,11 @@ class DiscreteEnv(Env, ABC):
         return DiscreteEnvStates
 
     def make_actions_class(self) -> type[Actions]:
-        """Same functionality as the parent class, but with a different class name."""
+        """Returns the Actions class for this environment.
+
+        Returns:
+            A type of a subclass of Actions with environment-specific functionalities.
+        """
         env = self
 
         class DiscreteEnvActions(Actions):
@@ -493,45 +618,77 @@ class DiscreteEnv(Env, ABC):
     def is_action_valid(
         self, states: DiscreteStates, actions: Actions, backward: bool = False
     ) -> bool:
+        """Checks whether the actions are valid in the given discrete states.
+
+        Args:
+            states: The batch of discrete states.
+            actions: The batch of actions.
+            backward: If True, checks validity for backward actions.
+
+        Returns:
+            True if all actions are valid in the given states, False otherwise.
+        """
         assert states.forward_masks is not None and states.backward_masks is not None
         masks_tensor = states.backward_masks if backward else states.forward_masks
         return bool(torch.gather(masks_tensor, 1, actions.tensor).all().item())
 
     def _step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
-        """Calls the core self._step method of the parent class, and updates masks."""
+        """Wrapper for the user-defined `step` function.
+
+        This calls the `_step` method of the parent class and updates masks.
+
+        Args:
+            states: The batch of discrete states.
+            actions: The batch of actions.
+
+        Returns:
+            The batch of next discrete states.
+        """
         new_states = super()._step(states, actions)
         new_states = cast(DiscreteStates, new_states)
         self.update_masks(new_states)
         return new_states
 
     def _backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
-        """Calls the core self._backward_step method of the parent class, and updates masks."""
+        """Wrapper for the user-defined `backward_step` function.
+
+        This calls the `_backward_step` method of the parent class and updates masks.
+
+        Args:
+            states: The batch of discrete states.
+            actions: The batch of actions.
+
+        Returns:
+            The batch of previous discrete states.
+        """
         new_states = super()._backward_step(states, actions)
         new_states = cast(DiscreteStates, new_states)
         self.update_masks(new_states)
         return new_states
 
     def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Returns the indices of the states in the environment.
+        """Optional method to return the indices of the states in the environment.
 
         Args:
             states: The batch of states.
 
         Returns:
-            torch.Tensor: Tensor of shape "batch_shape" containing the indices of the states.
+            Tensor of shape (*batch_shape) containing the indices of the states.
         """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
-        """Returns the indices of the terminating states in the environment.
+        """Optional method to return the indices of the terminating states in the
+            environment.
 
         Args:
             states: The batch of states.
 
         Returns:
-            torch.Tensor: Tensor of shape "batch_shape" containing the indices of the terminating states.
+            Tensor of shape (*batch_shape) containing the indices of the terminating
+            states.
         """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
@@ -539,29 +696,36 @@ class DiscreteEnv(Env, ABC):
 
     @property
     def n_states(self) -> int:
+        """Optional method to return the number of states in the environment.
+
+        Returns:
+            The number of states.
+        """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     @property
     def n_terminating_states(self) -> int:
-        raise NotImplementedError(
-            "The environment does not support enumeration of states"
-        )
+        """Optional method to return the number of terminating states in the environment.
 
-    @property
-    def true_dist_pmf(self) -> torch.Tensor:
-        "Returns a tensor of shape (n_states,) representing the true distribution."
+        Returns:
+            The number of terminating states.
+        """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
     @property
     def all_states(self) -> DiscreteStates:
-        """Returns a batch of all states.
-        The batch_shape should be (n_states,).
-        This should satisfy:
-        self.get_states_indices(self.all_states) == torch.arange(self.n_states)
+        """Optional method to return a batch of all discrete states in the environment.
+
+        Returns:
+            A batch of all discrete states (batch_shape = (n_states,)).
+
+        Note:
+            self.get_states_indices(self.all_states) and torch.arange(self.n_states)
+            should be equivalent.
         """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
@@ -569,10 +733,14 @@ class DiscreteEnv(Env, ABC):
 
     @property
     def terminating_states(self) -> DiscreteStates:
-        """Returns a batch of all terminating states for environments with enumerable states.
-        The batch_shape should be (n_terminating_states,).
-        This should satisfy:
-        self.get_terminating_states_indices(self.terminating_states) == torch.arange(self.n_terminating_states)
+        """Optional method to return a batch of all terminating states in the environment.
+
+        Returns:
+            A batch of all terminating states (batch_shape = (n_terminating_states,)).
+
+        Note:
+            self.get_terminating_states_indices(self.terminating_states) and
+            torch.arange(self.n_terminating_states) should be equivalent.
         """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
@@ -580,8 +748,22 @@ class DiscreteEnv(Env, ABC):
 
 
 class GraphEnv(Env):
-    """Base class for graph-based environments."""
+    """Base class for graph-based environments.
 
+    Graph environments represent states as graphs (torch_geometric Data objects) and
+    actions as graph modifications.
+
+    Attributes:
+        s0: GeometricData representing the initial graph state.
+        sf: GeometricData representing the sink (final) graph state.
+        num_node_classes: Number of node classes.
+        num_edge_classes: Number of edge classes.
+        is_directed: Whether the graph is directed.
+        States: The States class associated with this environment.
+        Actions: The Actions class associated with this environment.
+    """
+
+    s0: GeometricData  # this tells the type checker that s0 is a GeometricData
     sf: GeometricData  # this tells the type checker that sf is a GeometricData
 
     def __init__(
@@ -595,9 +777,11 @@ class GraphEnv(Env):
         """Initializes a graph-based environment.
 
         Args:
-            s0: The initial graph state.
-            sf: The sink graph state.
-            device_str: String representation of the device.
+            s0: GeometricData representing the initial graph state.
+            sf: GeometricData representing the sink (final) graph state.
+            num_node_classes: Number of node classes.
+            num_edge_classes: Number of edge classes.
+            is_directed: Whether the graph is directed.
         """
         assert s0.x is not None and sf.x is not None
         assert s0.edge_attr is not None and sf.edge_attr is not None
@@ -617,13 +801,30 @@ class GraphEnv(Env):
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
+        self.dummy_action = self.Actions.make_dummy_actions(
+            (1,), device=self.device
+        ).tensor
+        self.exit_action = self.Actions.make_exit_actions(
+            (1,), device=self.device
+        ).tensor
 
     @property
     def device(self) -> torch.device:
+        """The device on which the graph states are stored.
+
+        Returns:
+            The device of the initial graph state's node features.
+        """
         assert self.s0.x is not None
         return self.s0.x.device
 
     def make_states_class(self) -> type[GraphStates]:
+        """Returns the GraphStates class for this environment.
+
+        Returns:
+            A type of a subclass of GraphStates with environment-specific
+            functionalities.
+        """
         env = self
 
         class GraphEnvStates(GraphStates):
@@ -640,7 +841,12 @@ class GraphEnv(Env):
         return GraphEnvStates
 
     def make_actions_class(self) -> type[GraphActions]:
-        """The default GraphActions class factory for all GraphEnvs."""
+        """Returns the GraphActions class for this environment.
+
+        Returns:
+            A type of a subclass of GraphActions with environment-specific
+            functionalities.
+        """
         return GraphActions
 
     def reset(
@@ -650,23 +856,61 @@ class GraphEnv(Env):
         sink: bool = False,
         seed: Optional[int] = None,
     ) -> GraphStates:
-        """Reset the environment to a new batch of graphs."""
+        """Instantiates a batch of random, initial, or sink graph states.
+
+        Args:
+            batch_shape: Shape of the batch (int or tuple).
+            random: If True, initialize states randomly.
+            sink: If True, initialize states as sink states ($s_f$).
+            seed: (Optional) Random seed for reproducibility.
+
+        Returns:
+            A batch of random, initial, or sink graph states.
+        """
         states = super().reset(batch_shape, random, sink, seed)
-        assert isinstance(states, GraphStates)
+        states = cast(GraphStates, states)
         return states
 
     @abstractmethod
     def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
-        """Function that takes a batch of graph states and actions and returns a batch of next
-        graph states."""
+        """Forward transition function of the graph environment.
+
+        This method takes a batch of graph states and actions and returns a batch of next
+        graph states.
+
+        Args:
+            states: A batch of graph states.
+            actions: A batch of graph actions.
+
+        Returns:
+            A batch of next graph states.
+        """
 
     @abstractmethod
     def backward_step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
-        """Function that takes a batch of graph states and actions and returns a batch of previous
-        graph states."""
+        """Backward transition function of the graph environment.
+
+        This method takes a batch of graph states and actions and returns a batch of
+        previous graph states.
+
+        Args:
+            states: A batch of graph states.
+            actions: A batch of graph actions.
+
+        Returns:
+            A batch of previous graph states.
+        """
 
     def make_random_states(
         self, batch_shape: int | Tuple, device: torch.device | None = None
     ) -> GraphStates:
-        """Returns a batch of random graph states."""
+        """Optional method to return a batch of random graph states.
+
+        Args:
+            batch_shape: Shape of the batch (int or tuple).
+            device: The device to create the graph states on.
+
+        Returns:
+            A batch of random graph states.
+        """
         raise NotImplementedError
