@@ -1,4 +1,17 @@
 
+"""
+Tutorial: Training a GFlowNet to finetune an LLM for random number generation.
+
+This tutorial demonstrates how to use TorchGFN to finetune a language model (e.g., GPT-2)
+to generate random integers between 0 and 100. The GFlowNet learns to sample from a 
+uniform distribution over these numbers by using trajectory balance training.
+
+Usage:
+    python train_rng_gfn.py --help
+    python train_rng_gfn.py --n_steps 1000 --batch_size 16
+    python train_rng_gfn.py --model_name distilgpt2 --device cpu
+"""
+
 import torch
 import torch.nn as nn
 from typing import cast
@@ -10,7 +23,8 @@ from gfn.actions import Actions
 from gfn.states import DiscreteStates
 from gfn.modules import GFNModule
 from gfn.preprocessors import Preprocessor
-from gfn.gflownet import TBGFlowNet
+from gfn.gflownet.trajectory_balance import TBGFlowNet
+from gfn.samplers import Sampler
 
 
 class RNGEnv(DiscreteEnv):
@@ -37,8 +51,6 @@ class RNGEnv(DiscreteEnv):
         self.max_length = max_length
         self.total_length = prompt_len + max_length  #  total length of the tensor
 
-        self.state_shape = self.total_length  # keep name for clarity before tuple wrap
-
         # Initial state: prompt followed by padding.
         s0 = torch.nn.functional.pad(
             self.prompt_tokens.squeeze(0),
@@ -53,15 +65,12 @@ class RNGEnv(DiscreteEnv):
             value=tokenizer.pad_token_id,
         )
 
-        # We'll treat actions as scalars (shape = ()), so configure accordingly.
+        # Use default action handling like HyperGrid
         super().__init__(
-            s0=s0,
-            sf=sf,
             n_actions=tokenizer.vocab_size,
+            s0=s0,
             state_shape=(self.total_length,),
-            action_shape=(),
-            dummy_action=torch.tensor(-1, device=device),
-            exit_action=torch.tensor(tokenizer.eos_token_id, device=device),
+            sf=sf,
         )
 
     # ---------------------------------------------------------------------
@@ -80,6 +89,14 @@ class RNGEnv(DiscreteEnv):
         if full_idx.any():
             masks[full_idx] = False
             masks[full_idx, self.tokenizer.eos_token_id] = True
+        
+        # Debug: make sure at least some actions are valid
+        valid_actions = masks.sum(dim=1)
+        if torch.any(valid_actions == 0):
+            print(f"Warning: Some states have no valid actions. seq_lens: {seq_lens}, total_length: {self.total_length}")
+            # Allow at least EOS token
+            invalid_states = valid_actions == 0
+            masks[invalid_states, self.tokenizer.eos_token_id] = True
 
         return masks
 
@@ -88,11 +105,12 @@ class RNGEnv(DiscreteEnv):
 
         # Forward masks (valid next tokens).
         states.forward_masks = self._forward_action_masks(states)
-
-        # Backward masks exclude the exit action (EOS).
-        backward_masks = torch.ones((*states.batch_shape, self.n_actions), dtype=torch.bool, device=self.device)
-        backward_masks[..., self.tokenizer.eos_token_id] = False
-        states.backward_masks = backward_masks
+        
+        # Backward masks: can go backward unless we're at the initial state
+        prompt_len = self.prompt_tokens.shape[1]
+        seq_lens = (states.tensor != self.tokenizer.pad_token_id).sum(dim=1)
+        at_initial = seq_lens <= prompt_len
+        states.backward_masks = ~at_initial.unsqueeze(-1).expand(-1, self.n_actions - 1)
 
     # ---------------------------------------------------------------------
     # Transitions
@@ -106,7 +124,7 @@ class RNGEnv(DiscreteEnv):
             if pad_positions.numel() == 0:
                 continue  # already full, should not happen thanks to masks
             first_pad = pad_positions[0].item()
-            new_states_tensor[idx, first_pad] = actions.tensor[idx]
+            new_states_tensor[idx, first_pad] = actions.tensor[idx, 0]
         out = self.States(new_states_tensor)
         self.update_masks(cast(DiscreteStates, out))
         return cast(DiscreteStates, out)
@@ -120,7 +138,7 @@ class RNGEnv(DiscreteEnv):
             if non_pad_positions.numel() == 0:
                 continue
             last_idx = non_pad_positions[-1].item()
-            assert new_states_tensor[idx, last_idx] == actions.tensor[idx]
+            assert new_states_tensor[idx, last_idx] == actions.tensor[idx, 0]
             new_states_tensor[idx, last_idx] = pad_token_id
         out = self.States(new_states_tensor)
         self.update_masks(cast(DiscreteStates, out))
@@ -220,11 +238,38 @@ class LLMGFNModule(GFNModule):
     ):
         """Convert raw logits to a categorical distribution, respecting masks."""
 
-        masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output.clone()
+        
+        if self.is_backward:
+            # Backward masks exclude the exit action (last action)
+            masks = states.backward_masks
+            # Apply masks to all actions except the last one (exit action)
+            logits[:, :-1][~masks] = -float("inf")
+        else:
+            # Forward masks include all actions
+            masks = states.forward_masks
+            logits[~masks] = -float("inf")
 
-        # Apply masks by setting invalid logits to −inf.
-        logits[~masks] = -float("inf")
+        # Check for any completely invalid states
+        if self.is_backward:
+            valid_mask_counts = masks.sum(dim=-1)
+        else:
+            valid_mask_counts = masks.sum(dim=-1)
+        
+        if torch.any(valid_mask_counts == 0):
+            print(f"Warning: Found states with no valid actions in {'backward' if self.is_backward else 'forward'} mode")
+            print(f"Valid action counts: {valid_mask_counts}")
+            # Force at least one action to be valid (EOS for forward, or some action for backward)
+            if self.is_backward:
+                invalid_idx = valid_mask_counts == 0
+                if torch.any(invalid_idx):
+                    # For backward, allow the first non-exit action
+                    masks[invalid_idx, 0] = True
+            else:
+                invalid_idx = valid_mask_counts == 0
+                if torch.any(invalid_idx):
+                    # For forward, allow EOS
+                    logits[invalid_idx, self.tokenizer.eos_token_id] = 0.0
 
         if not self.is_backward and sf_bias != 0.0:
             logits[:, -1] -= sf_bias  # usually bias exit action
@@ -233,44 +278,80 @@ class LLMGFNModule(GFNModule):
             logits = logits / temperature
 
         probs = torch.softmax(logits, dim=-1)
+        
+        # Ensure probabilities are valid
+        probs = torch.clamp(probs, min=1e-8)
+        probs = probs / probs.sum(dim=-1, keepdim=True)
 
-        if epsilon != 0.0:
-            uniform = torch.where(
-                masks.sum(dim=-1, keepdim=True) == 0,
-                torch.zeros_like(masks, dtype=probs.dtype),
-                masks.float() / masks.sum(dim=-1, keepdim=True),
-            )
-            probs = (1 - epsilon) * probs + epsilon * uniform
-
-        return torch.distributions.Categorical(probs=probs)
+        # Create a custom distribution that samples with the right shape
+        categorical = torch.distributions.Categorical(probs=probs)
+        
+        class ShapedCategorical:
+            def __init__(self, cat_dist):
+                self.cat_dist = cat_dist
+            
+            def sample(self):
+                # Sample from categorical and reshape to (batch_size, 1)
+                samples = self.cat_dist.sample()
+                return samples.unsqueeze(-1)
+            
+            def log_prob(self, value):
+                # value should have shape (batch_size, 1), squeeze for categorical
+                if value.dim() > 1:
+                    value = value.squeeze(-1)
+                return self.cat_dist.log_prob(value)
+        
+        return ShapedCategorical(categorical)
 
 
 def main():
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Train GFlowNet to generate random numbers 0-100")
+    parser.add_argument("--device", default="auto", help="Device to use (auto, cpu, cuda)")
+    parser.add_argument("--model_name", default="gpt2", help="Model name from HuggingFace")
+    parser.add_argument("--n_steps", type=int, default=500, help="Number of training steps")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--max_length", type=int, default=5, help="Max tokens to generate")
+    parser.add_argument("--eval_samples", type=int, default=100, help="Number of samples for evaluation")
+    
+    args = parser.parse_args()
+    
+    # Device setup
+    if args.device == "auto":
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    else:
+        device = args.device
     print(f"Using device: {device}")
     
-    tokenizer = AutoTokenizer.from_pretrained('gpt2')
+    # Model and tokenizer setup
+    print(f"Loading model: {args.model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    model = AutoModelForCausalLM.from_pretrained('gpt2').to(device)
+    model = AutoModelForCausalLM.from_pretrained(args.model_name).to(device)
 
+    # Environment setup
     prompt = "The following is a random integer drawn uniformly between 0 and 100: "
-    env = RNGEnv(tokenizer, prompt, device=device, max_length=5)
+    env = RNGEnv(tokenizer, prompt, device=device, max_length=args.max_length)
+    print(f"Environment set up with prompt: '{prompt}'")
 
-    state_dim = env.state_shape[0]
+    # GFlowNet setup
+    state_dim = env.total_length
     pf_module = LLMGFNModule(model, tokenizer, state_dim, is_backward=False)
     pb_module = LLMGFNModule(model, tokenizer, state_dim, is_backward=True)
 
     gflownet = TBGFlowNet(pf_module, pb_module)
+    sampler = Sampler(pf_module)
 
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-4)
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
+    print(f"Training for {args.n_steps} steps with batch size {args.batch_size}")
 
-    # ------------------------------------------------------------------
     # Training Loop
-    # ------------------------------------------------------------------
-    for step in range(501):  # quick demo run
-        trajectories = gflownet.sample_trajectories(env, n=8, save_logprobs=False)
+    for step in range(args.n_steps):
+        trajectories = sampler.sample_trajectories(env, n=args.batch_size, save_logprobs=False)
         loss = gflownet.loss(env, trajectories)
 
         optimizer.zero_grad()
@@ -278,12 +359,13 @@ def main():
         optimizer.step()
 
         if step % 100 == 0:
-            print(f"Step {step}: loss = {loss.item():.4f}")
+            print(f"Step {step:4d}: loss = {loss.item():.4f}")
 
-    # 5. Evaluation
+    # Evaluation
     print("\n--- Evaluation ---")
+    print(f"Sampling {args.eval_samples} trajectories for evaluation...")
     with torch.no_grad():
-        trajectories = gflownet.sample_trajectories(env, n=100)
+        trajectories = sampler.sample_trajectories(env, n=args.eval_samples)
         final_states = trajectories.last_states
         
         numbers = []
@@ -300,15 +382,19 @@ def main():
             generated_tokens = seq[prompt_len:-1]  # exclude prompt and eos
             decoded_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
             try:
-                numbers.append(int(decoded_text.strip()))
+                number = int(decoded_text.strip())
+                if 0 <= number <= 100:  # Only count valid numbers in range
+                    numbers.append(number)
             except (ValueError, IndexError):
                 pass
                 
-        print(f"Generated numbers: {numbers}")
+        print(f"Generated valid numbers: {numbers[:20]}...")  # Show first 20
         if numbers:
             counts = np.bincount(numbers, minlength=101)
-            print(f"Counts of numbers 0-100: {counts}")
-            print(f"Number of valid samples: {len(numbers)}")
+            valid_counts = counts[:101]  # Only 0-100
+            print(f"Number of valid samples: {len(numbers)} / {args.eval_samples} ({100*len(numbers)/args.eval_samples:.1f}%)")
+            print(f"Unique numbers generated: {np.count_nonzero(valid_counts)} / 101")
+            print(f"Mean: {np.mean(numbers):.1f}, Std: {np.std(numbers):.1f}")
         else:
             print("No valid numbers generated.")
 
