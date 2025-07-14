@@ -1,101 +1,250 @@
 
 import torch
 import torch.nn as nn
+from typing import cast
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
 
-from gfn.env import Env
+from gfn.env import DiscreteEnv
+from gfn.actions import Actions
 from gfn.states import DiscreteStates
 from gfn.modules import GFNModule
-from gfn.gflownet import GFlowNet, SubTrajectoryBalance
-from gfn.samplers import Sampler
+from gfn.preprocessors import Preprocessor
+from gfn.gflownet import TBGFlowNet
 
 
+class RNGEnv(DiscreteEnv):
+    """Environment that builds a number token-by-token after a fixed prompt.
 
-# 1. Environment Definition
-class RNGEnv(Env):
-    def __init__(self, tokenizer, prompt, max_length=5, device='cuda'):
+    A state is a fixed-length tensor of token ids consisting of the prompt
+    followed by up to ``max_length`` generated tokens. Padding is done with the
+    tokenizer pad token id. The episode terminates when an ``eos`` token is
+    generated **or** when the maximum length is reached (in which case only the
+    ``eos`` token is allowed). The reward is the uniform probability over the
+    integers 0-100.
+    """
+
+    def __init__(self, tokenizer, prompt, max_length: int = 5, device: str | torch.device = "cuda"):
         self.tokenizer = tokenizer
         self.prompt = prompt
-        self.prompt_tokens = tokenizer.encode(prompt, return_tensors='pt').to(device)
-        self.max_length = max_length
-        self.device = device
-        
-        s0 = DiscreteStates(self.prompt_tokens.squeeze(0))
-        sf = DiscreteStates(torch.tensor([self.tokenizer.eos_token_id], device=self.device))
-        
-        super().__init__(s0=s0, sf=sf, n_actions=tokenizer.vocab_size)
+        device = torch.device(device)
 
-    def get_actions_masks(self, states: DiscreteStates) -> torch.Tensor:
-        masks = torch.ones(len(states), self.n_actions, dtype=torch.bool, device=self.device)
-        for i in range(len(states)):
-            if states.masks[i].sum() >= self.max_length + self.prompt_tokens.shape[1]:
-                masks[i, :] = False
-                masks[i, self.tokenizer.eos_token_id] = True
+        # Prompt tokens (1, prompt_len)
+        self.prompt_tokens = tokenizer.encode(prompt, return_tensors="pt").to(device)
+        prompt_len = self.prompt_tokens.shape[1]
+
+        # Fixed state length (prompt + generated tokens).
+        self.max_length = max_length
+        self.total_length = prompt_len + max_length  #  total length of the tensor
+
+        self.state_shape = self.total_length  # keep name for clarity before tuple wrap
+
+        # Initial state: prompt followed by padding.
+        s0 = torch.nn.functional.pad(
+            self.prompt_tokens.squeeze(0),
+            (0, max_length),
+            value=tokenizer.pad_token_id,
+        )  # (state_shape,)
+
+        # Sink state: only the EOS token followed by padding.
+        sf = torch.nn.functional.pad(
+            torch.tensor([tokenizer.eos_token_id], device=device),
+            (0, self.total_length - 1),
+            value=tokenizer.pad_token_id,
+        )
+
+        # We'll treat actions as scalars (shape = ()), so configure accordingly.
+        super().__init__(
+            s0=s0,
+            sf=sf,
+            n_actions=tokenizer.vocab_size,
+            state_shape=(self.total_length,),
+            action_shape=(),
+            dummy_action=torch.tensor(-1, device=device),
+            exit_action=torch.tensor(tokenizer.eos_token_id, device=device),
+        )
+
+    # ---------------------------------------------------------------------
+    # Masks helpers
+    # ---------------------------------------------------------------------
+    def _forward_action_masks(self, states: DiscreteStates) -> torch.Tensor:
+        """Returns a bool mask (*batch, n_actions) of valid *forward* actions."""
+        batch_size = states.batch_shape[0]
+        masks = torch.ones((batch_size, self.n_actions), dtype=torch.bool, device=self.device)
+
+        # Current sequence length (non-pad tokens).
+        seq_lens = (states.tensor != self.tokenizer.pad_token_id).sum(dim=1)
+
+        # If the state is already full forbid everything but EOS.
+        full_idx = seq_lens >= self.total_length
+        if full_idx.any():
+            masks[full_idx] = False
+            masks[full_idx, self.tokenizer.eos_token_id] = True
+
         return masks
 
-    def forward_step(self, states: DiscreteStates, actions: torch.Tensor) -> DiscreteStates:
-        new_states_list = []
-        for i in range(len(states)):
-            state_tensor = states.tensor[i][states.masks[i]]
-            action = actions[i]
-            new_state_tensor = torch.cat([state_tensor, action.unsqueeze(0)])
-            new_states_list.append(new_state_tensor)
-        return DiscreteStates(new_states_list)
+    def update_masks(self, states: DiscreteStates) -> None:  # type: ignore[override]
+        """Populate ``states.forward_masks`` and ``states.backward_masks`` in-place."""
 
+        # Forward masks (valid next tokens).
+        states.forward_masks = self._forward_action_masks(states)
+
+        # Backward masks exclude the exit action (EOS).
+        backward_masks = torch.ones((*states.batch_shape, self.n_actions), dtype=torch.bool, device=self.device)
+        backward_masks[..., self.tokenizer.eos_token_id] = False
+        states.backward_masks = backward_masks
+
+    # ---------------------------------------------------------------------
+    # Transitions
+    # ---------------------------------------------------------------------
+    def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
+        # Insert the new token at the first padding position (keeps shape constant).
+        new_states_tensor = states.tensor.clone()
+        pad_token_id = self.tokenizer.pad_token_id
+        for idx in range(len(states)):
+            pad_positions = (new_states_tensor[idx] == pad_token_id).nonzero(as_tuple=False)
+            if pad_positions.numel() == 0:
+                continue  # already full, should not happen thanks to masks
+            first_pad = pad_positions[0].item()
+            new_states_tensor[idx, first_pad] = actions.tensor[idx]
+        out = self.States(new_states_tensor)
+        self.update_masks(cast(DiscreteStates, out))
+        return cast(DiscreteStates, out)
+
+    def backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
+        # Remove the last token (it should match ``actions``).
+        pad_token_id = self.tokenizer.pad_token_id
+        new_states_tensor = states.tensor.clone()
+        for idx in range(len(states)):
+            non_pad_positions = (new_states_tensor[idx] != pad_token_id).nonzero(as_tuple=False)
+            if non_pad_positions.numel() == 0:
+                continue
+            last_idx = non_pad_positions[-1].item()
+            assert new_states_tensor[idx, last_idx] == actions.tensor[idx]
+            new_states_tensor[idx, last_idx] = pad_token_id
+        out = self.States(new_states_tensor)
+        self.update_masks(cast(DiscreteStates, out))
+        return cast(DiscreteStates, out)
+
+    # ---------------------------------------------------------------------
+    # Reward
+    # ---------------------------------------------------------------------
     def log_reward(self, states: DiscreteStates) -> torch.Tensor:
-        rewards = torch.full((len(states),), -20.0, device=self.device)
-        
+        """Uniform log-probability for numbers 0-100; −∞ elsewhere."""
+        rewards = torch.full((len(states),), float("-inf"), device=self.device)
+
         prompt_len = self.prompt_tokens.shape[1]
-        
-        sequences_to_decode = []
-        valid_indices = []
-        for i in range(len(states)):
-            if states.masks[i].sum() > prompt_len:
-                seq = states.tensor[i][states.masks[i]]
-                # Only reward terminal states
-                if seq[-1] == self.tokenizer.eos_token_id:
-                    sequences_to_decode.append(seq[prompt_len:-1])
-                    valid_indices.append(i)
 
-        if not sequences_to_decode:
-            return rewards
+        for idx in range(len(states)):
+            # Identify generated part (after prompt) ignoring padding and eos.
+            seq = states.tensor[idx]
+            # Determine where padding starts.
+            pad_mask = seq == self.tokenizer.pad_token_id
+            if pad_mask.all():
+                continue  # empty
 
-        decoded_texts = self.tokenizer.batch_decode(sequences_to_decode, skip_special_tokens=True)
-        
-        for i, decoded_text in enumerate(decoded_texts):
-            original_index = valid_indices[i]
+            # Extract tokens between prompt and eos.
+            # First generated index after prompt.
+            gen_start = prompt_len
+            # Find eos position.
+            try:
+                eos_pos = (seq == self.tokenizer.eos_token_id).nonzero(as_tuple=False)[0].item()
+            except IndexError:
+                continue  # not terminated yet
+
+            # Only consider when eos is present and sequence beyond prompt.
+            if eos_pos <= gen_start:
+                continue
+
+            generated_tokens = seq[gen_start:eos_pos]
+            if len(generated_tokens) == 0:
+                continue
+
+            decoded_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
             try:
                 number = int(decoded_text.strip())
                 if 0 <= number <= 100:
-                    rewards[original_index] = torch.log(torch.tensor(1.0 / 101.0, device=self.device))
-            except (ValueError, IndexError):
+                    rewards[idx] = torch.log(torch.tensor(1.0 / 101.0, device=self.device))
+            except ValueError:
                 pass
-            
+
         return rewards
 
-    def reset(self, batch_size: int = 1) -> DiscreteStates:
-        return DiscreteStates([self.s0.tensor for _ in range(batch_size)])
 
-# 2. GFN Module (wrapping the LLM)
+class PassThroughPreprocessor(Preprocessor):
+    """Returns the raw tensor representation of states (no preprocessing)."""
+
+    def __init__(self, output_dim: int):
+        super().__init__(output_dim=output_dim)
+
+    def preprocess(self, states):  # type: ignore[override]
+        return states.tensor
+
+
 class LLMGFNModule(GFNModule):
-    def __init__(self, model, tokenizer):
-        super().__init__()
+    """GFNModule wrapping a pretrained LLM to act as a policy."""
+
+    def __init__(self, model, tokenizer, state_dim: int, is_backward: bool = False):
+        super().__init__(module=model, preprocessor=PassThroughPreprocessor(output_dim=state_dim), is_backward=is_backward)
         self.model = model
         self.tokenizer = tokenizer
-        self.log_z = nn.Parameter(torch.tensor(0.0))
 
-    def forward(self, states: States):
+    # ------------------------------------------------------------------
+    # GFNModule interface
+    # ------------------------------------------------------------------
+    @property
+    def expected_output_dim(self):
+        return self.tokenizer.vocab_size
+
+    def forward(self, states: DiscreteStates):  # type: ignore[override]
         input_ids = states.tensor
-        attention_mask = states.masks
-        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
-        
-        sequence_lengths = attention_mask.sum(dim=1)
-        last_token_logits = outputs.logits[torch.arange(len(outputs.logits)), sequence_lengths - 1, :]
-        
-        return last_token_logits, self.log_z
+        # Build an attention mask: 1 for non-pad.
+        attention_mask = (input_ids != self.tokenizer.pad_token_id).long()
 
-# 3. Training Setup
+        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+
+        # Select logits corresponding to the last *non-pad* token.
+        seq_lengths = attention_mask.sum(dim=1)  # (batch,)
+        last_token_logits = outputs.logits[torch.arange(len(outputs.logits)), seq_lengths - 1, :]
+
+        return last_token_logits
+
+    def to_probability_distribution(
+        self,
+        states: DiscreteStates,
+        module_output: torch.Tensor,
+        temperature: float = 1.0,
+        epsilon: float = 0.0,
+        sf_bias: float = 0.0,
+        **kwargs,
+    ):
+        """Convert raw logits to a categorical distribution, respecting masks."""
+
+        masks = states.backward_masks if self.is_backward else states.forward_masks
+        logits = module_output.clone()
+
+        # Apply masks by setting invalid logits to −inf.
+        logits[~masks] = -float("inf")
+
+        if not self.is_backward and sf_bias != 0.0:
+            logits[:, -1] -= sf_bias  # usually bias exit action
+
+        if temperature != 1.0:
+            logits = logits / temperature
+
+        probs = torch.softmax(logits, dim=-1)
+
+        if epsilon != 0.0:
+            uniform = torch.where(
+                masks.sum(dim=-1, keepdim=True) == 0,
+                torch.zeros_like(masks, dtype=probs.dtype),
+                masks.float() / masks.sum(dim=-1, keepdim=True),
+            )
+            probs = (1 - epsilon) * probs + epsilon * uniform
+
+        return torch.distributions.Categorical(probs=probs)
+
+
 def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
@@ -108,35 +257,47 @@ def main():
 
     prompt = "The following is a random integer drawn uniformly between 0 and 100: "
     env = RNGEnv(tokenizer, prompt, device=device, max_length=5)
-    gfn_module = LLMGFNModule(model, tokenizer)
-    gflownet = GFlowNet(gfn_module, loss=SubTrajectoryBalance())
-    sampler = Sampler(gfn_module, env)
 
-    optimizer = torch.optim.Adam(gfn_module.parameters(), lr=1e-4)
+    state_dim = env.state_shape[0]
+    pf_module = LLMGFNModule(model, tokenizer, state_dim, is_backward=False)
+    pb_module = LLMGFNModule(model, tokenizer, state_dim, is_backward=True)
 
-    print("Starting training...")
-    # 4. Training Loop
-    for i in range(501): # A short training loop for demonstration
-        trajectories = sampler.sample_trajectories(n_trajectories=8)
-        loss = gflownet.loss(trajectories)
-        
+    gflownet = TBGFlowNet(pf_module, pb_module)
+
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-4)
+
+    # ------------------------------------------------------------------
+    # Training Loop
+    # ------------------------------------------------------------------
+    for step in range(501):  # quick demo run
+        trajectories = gflownet.sample_trajectories(env, n=8, save_logprobs=False)
+        loss = gflownet.loss(env, trajectories)
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        
-        if i % 100 == 0:
-            print(f"Step {i}, Loss: {loss.item()}")
+
+        if step % 100 == 0:
+            print(f"Step {step}: loss = {loss.item():.4f}")
 
     # 5. Evaluation
     print("\n--- Evaluation ---")
     with torch.no_grad():
-        trajectories = sampler.sample_trajectories(n_trajectories=100)
+        trajectories = gflownet.sample_trajectories(env, n=100)
         final_states = trajectories.last_states
         
         numbers = []
         for i in range(len(final_states)):
-            state_tensor = final_states.tensor[i][final_states.masks[i]]
-            generated_tokens = state_tensor[len(env.prompt_tokens[0]):-1] # Exclude prompt and EOS
+            state_tensor = final_states.tensor[i]
+            # Identify non-pad tokens
+            non_pad = state_tensor != tokenizer.pad_token_id
+            seq = state_tensor[non_pad]
+
+            # Remove prompt and EOS
+            prompt_len = env.prompt_tokens.shape[1]
+            if len(seq) <= prompt_len + 1:
+                continue
+            generated_tokens = seq[prompt_len:-1]  # exclude prompt and eos
             decoded_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
             try:
                 numbers.append(int(decoded_text.strip()))
