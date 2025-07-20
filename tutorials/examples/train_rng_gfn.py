@@ -7,13 +7,11 @@ to generate random integers between 0 and 100. The GFlowNet learns to sample fro
 uniform distribution over these numbers by using trajectory balance training.
 
 Usage:
-    python train_rng_gfn.py --help
     python train_rng_gfn.py --n_steps 1000 --batch_size 16
     python train_rng_gfn.py --model_name distilgpt2 --device cpu
 """
 
 import torch
-import torch.nn as nn
 from typing import cast
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
@@ -21,8 +19,8 @@ import numpy as np
 from gfn.env import DiscreteEnv
 from gfn.actions import Actions
 from gfn.states import DiscreteStates
-from gfn.modules import GFNModule
-from gfn.preprocessors import Preprocessor
+from gfn.modules import DiscretePolicyEstimator, GFNModule
+from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.samplers import Sampler
 
@@ -90,27 +88,36 @@ class RNGEnv(DiscreteEnv):
             masks[full_idx] = False
             masks[full_idx, self.tokenizer.eos_token_id] = True
         
-        # Debug: make sure at least some actions are valid
-        valid_actions = masks.sum(dim=1)
-        if torch.any(valid_actions == 0):
-            print(f"Warning: Some states have no valid actions. seq_lens: {seq_lens}, total_length: {self.total_length}")
-            # Allow at least EOS token
-            invalid_states = valid_actions == 0
-            masks[invalid_states, self.tokenizer.eos_token_id] = True
-
         return masks
-
-    def update_masks(self, states: DiscreteStates) -> None:  # type: ignore[override]
-        """Populate ``states.forward_masks`` and ``states.backward_masks`` in-place."""
-
-        # Forward masks (valid next tokens).
-        states.forward_masks = self._forward_action_masks(states)
-        
-        # Backward masks: can go backward unless we're at the initial state
+    
+    def _backward_action_masks(self, states: DiscreteStates) -> torch.Tensor:
+        """Returns a bool mask (*batch, n_actions) of valid *backward* actions."""
         prompt_len = self.prompt_tokens.shape[1]
         seq_lens = (states.tensor != self.tokenizer.pad_token_id).sum(dim=1)
         at_initial = seq_lens <= prompt_len
-        states.backward_masks = ~at_initial.unsqueeze(-1).expand(-1, self.n_actions - 1)
+        
+        # Backward mask: only the last non-pad token can be removed (one True per row, rest False)
+        batch_size = states.tensor.shape[0]
+        backward_masks = torch.zeros((batch_size, self.n_actions - 1), dtype=torch.bool, device=states.tensor.device)
+        
+        # Find which sequences can go backward (not at initial state)
+        can_go_back = ~at_initial
+        if can_go_back.any():
+            # Get the last token ID for each sequence that can go backward
+            last_token_indices = seq_lens[can_go_back] - 1
+            batch_indices = torch.arange(0, batch_size, device=states.tensor.device)[can_go_back]
+            last_token_ids = states.tensor[batch_indices, last_token_indices]
+            
+            assert (last_token_ids < self.n_actions - 1).all()
+            backward_masks[batch_indices, last_token_ids] = True
+        return backward_masks
+
+    def update_masks(self, states: DiscreteStates) -> None:  # type: ignore[override]
+        """Populate ``states.forward_masks`` and ``states.backward_masks`` in-place."""
+        # Forward masks (valid next tokens).
+        states.forward_masks = self._forward_action_masks(states)
+        # Backward masks: can go backward unless we're at the initial state
+        states.backward_masks = self._backward_action_masks(states)
 
     # ---------------------------------------------------------------------
     # Transitions
@@ -149,10 +156,9 @@ class RNGEnv(DiscreteEnv):
     # ---------------------------------------------------------------------
     def log_reward(self, states: DiscreteStates) -> torch.Tensor:
         """Uniform log-probability for numbers 0-100; −∞ elsewhere."""
-        rewards = torch.full((len(states),), float("-inf"), device=self.device)
+        rewards = torch.full((len(states),), -1e4, device=self.device)
 
         prompt_len = self.prompt_tokens.shape[1]
-
         for idx in range(len(states)):
             # Identify generated part (after prompt) ignoring padding and eos.
             seq = states.tensor[idx]
@@ -165,15 +171,10 @@ class RNGEnv(DiscreteEnv):
             # First generated index after prompt.
             gen_start = prompt_len
             # Find eos position.
-            try:
-                eos_pos = (seq == self.tokenizer.eos_token_id).nonzero(as_tuple=False)[0].item()
-            except IndexError:
+            eos_positions = (seq == self.tokenizer.eos_token_id).nonzero(as_tuple=False)
+            if eos_positions.numel() == 0:
                 continue  # not terminated yet
-
-            # Only consider when eos is present and sequence beyond prompt.
-            if eos_pos <= gen_start:
-                continue
-
+            eos_pos = eos_positions[0].item()
             generated_tokens = seq[gen_start:eos_pos]
             if len(generated_tokens) == 0:
                 continue
@@ -182,28 +183,23 @@ class RNGEnv(DiscreteEnv):
             try:
                 number = int(decoded_text.strip())
                 if 0 <= number <= 100:
-                    rewards[idx] = torch.log(torch.tensor(1.0 / 101.0, device=self.device))
+                    rewards[idx] = 0.0
             except ValueError:
                 pass
 
         return rewards
 
 
-class PassThroughPreprocessor(Preprocessor):
-    """Returns the raw tensor representation of states (no preprocessing)."""
-
-    def __init__(self, output_dim: int):
-        super().__init__(output_dim=output_dim)
-
-    def preprocess(self, states):  # type: ignore[override]
-        return states.tensor
-
-
-class LLMGFNModule(GFNModule):
+class LLMGFNModule(DiscretePolicyEstimator):
     """GFNModule wrapping a pretrained LLM to act as a policy."""
 
     def __init__(self, model, tokenizer, state_dim: int, is_backward: bool = False):
-        super().__init__(module=model, preprocessor=PassThroughPreprocessor(output_dim=state_dim), is_backward=is_backward)
+        super().__init__(
+            module=model,
+            n_actions=tokenizer.vocab_size,
+            preprocessor=IdentityPreprocessor(state_dim),
+            is_backward=is_backward
+        )
         self.model = model
         self.tokenizer = tokenizer
 
@@ -310,8 +306,8 @@ def main():
     parser = argparse.ArgumentParser(description="Train GFlowNet to generate random numbers 0-100")
     parser.add_argument("--device", default="auto", help="Device to use (auto, cpu, cuda)")
     parser.add_argument("--model_name", default="gpt2", help="Model name from HuggingFace")
-    parser.add_argument("--n_steps", type=int, default=500, help="Number of training steps")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
+    parser.add_argument("--n_steps", type=int, default=50, help="Number of training steps")
+    parser.add_argument("--batch_size", type=int, default=128, help="Batch size for training")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--max_length", type=int, default=5, help="Max tokens to generate")
     parser.add_argument("--eval_samples", type=int, default=100, help="Number of samples for evaluation")
@@ -358,7 +354,7 @@ def main():
         loss.backward()
         optimizer.step()
 
-        if step % 100 == 0:
+        if step % 1 == 0:
             print(f"Step {step:4d}: loss = {loss.item():.4f}")
 
     # Evaluation
@@ -366,7 +362,7 @@ def main():
     print(f"Sampling {args.eval_samples} trajectories for evaluation...")
     with torch.no_grad():
         trajectories = sampler.sample_trajectories(env, n=args.eval_samples)
-        final_states = trajectories.last_states
+        final_states = trajectories.terminating_states
         
         numbers = []
         for i in range(len(final_states)):
