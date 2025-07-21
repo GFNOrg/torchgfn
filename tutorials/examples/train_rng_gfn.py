@@ -4,17 +4,25 @@ Tutorial: Training a GFlowNet to finetune an LLM for random number generation.
 
 This tutorial demonstrates how to use TorchGFN to finetune a language model (e.g., GPT-2)
 to generate random integers between 0 and 100. The GFlowNet learns to sample from a 
-uniform distribution over these numbers by using trajectory balance training.
+uniform distribution over these numbers by using trajectory balance training. 
+
+Supports both parameter-efficient fine-tuning with LoRA (default) and full fine-tuning.
 
 Usage:
+    # LoRA training (default)
     python train_rng_gfn.py --n_steps 1000 --batch_size 16
-    python train_rng_gfn.py --model_name distilgpt2 --device cpu
+    
+    # Custom LoRA configuration
+    python train_rng_gfn.py --lora_r 16 --use_lora --lora_alpha 32 --target_modules c_attn c_proj
 """
 
 import torch
 from typing import cast
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
+from peft.tuners.lora import LoraConfig
+from peft.mapping import get_peft_model
+from peft.utils.peft_types import TaskType
 
 from gfn.env import DiscreteEnv
 from gfn.actions import Actions
@@ -307,10 +315,18 @@ def main():
     parser.add_argument("--device", default="auto", help="Device to use (auto, cpu, cuda)")
     parser.add_argument("--model_name", default="gpt2", help="Model name from HuggingFace")
     parser.add_argument("--n_steps", type=int, default=50, help="Number of training steps")
-    parser.add_argument("--batch_size", type=int, default=128, help="Batch size for training")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--max_length", type=int, default=5, help="Max tokens to generate")
     parser.add_argument("--eval_samples", type=int, default=100, help="Number of samples for evaluation")
+    
+    # LoRA-specific arguments
+    parser.add_argument("--use_lora", action="store_true", default=False, help="Use LoRA for parameter-efficient fine-tuning")
+    parser.add_argument("--lora_r", type=int, default=8, help="LoRA rank")
+    parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha scaling parameter")
+    parser.add_argument("--lora_dropout", type=float, default=0.1, help="LoRA dropout probability")
+    parser.add_argument("--target_modules", nargs="+", default=["c_attn", "c_proj"], 
+                       help="Target modules for LoRA adaptation (default for GPT-2)")
     
     args = parser.parse_args()
     
@@ -327,7 +343,30 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
+    # Load base model
     model = AutoModelForCausalLM.from_pretrained(args.model_name).to(device)
+    
+    if args.use_lora:
+        # Configure LoRA
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            target_modules=args.target_modules,
+            bias="none",
+        )
+        
+        # Apply LoRA to the model
+        model = get_peft_model(model, lora_config)
+        model.print_trainable_parameters()
+        print(f"Applied LoRA with rank={args.lora_r}, alpha={args.lora_alpha}, target_modules={args.target_modules}")
+    else:
+        print("Using full fine-tuning (LoRA disabled)")
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Total parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,} ({100 * trainable_params / total_params:.2f}%)")
 
     # Environment setup
     prompt = "The following is a random integer drawn uniformly between 0 and 100: "
@@ -342,8 +381,13 @@ def main():
     gflownet = TBGFlowNet(pf_module, pb_module)
     sampler = Sampler(pf_module)
 
-    optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
+    # Set up optimizer for trainable parameters
+    trainable_params = [p for p in gflownet.parameters() if p.requires_grad]
+    optimizer = torch.optim.Adam(trainable_params, lr=args.lr)
+    
+    param_count = sum(p.numel() for p in trainable_params)
     print(f"Training for {args.n_steps} steps with batch size {args.batch_size}")
+    print(f"Optimizing {param_count:,} trainable parameters across {len(trainable_params)} parameter groups")
 
     # Training Loop
     for step in range(args.n_steps):
