@@ -6,14 +6,22 @@ This tutorial demonstrates how to use TorchGFN to finetune a language model (e.g
 to generate random integers between 0 and 100. The GFlowNet learns to sample from a 
 uniform distribution over these numbers by using trajectory balance training. 
 
-Supports both parameter-efficient fine-tuning with LoRA (default) and full fine-tuning.
+Features:
+- Supports both parameter-efficient fine-tuning with LoRA and full fine-tuning
+- Uses AdamW optimizer with weight decay (standard for transformer models)
+- Configurable learning rate scheduling (cosine, linear, or constant)
+- Gradient clipping for training stability
+- Warmup steps for better convergence
 
 Usage:
-    # LoRA training (default)
-    python train_rng_gfn.py --n_steps 1000 --batch_size 16
+    # LoRA training with cosine scheduler (recommended)
+    python train_rng_gfn.py --use_lora --n_steps 1000 --batch_size 16 --warmup_steps 100
     
-    # Custom LoRA configuration
-    python train_rng_gfn.py --lora_r 16 --use_lora --lora_alpha 32 --target_modules c_attn c_proj
+    # Full fine-tuning with linear scheduler
+    python train_rng_gfn.py --n_steps 500 --scheduler_type linear --lr 1e-5 --weight_decay 0.01
+    
+    # Custom LoRA configuration with different scheduler
+    python train_rng_gfn.py --lora_r 16 --use_lora --lora_alpha 32 --target_modules c_attn c_proj --scheduler_type constant
 """
 
 import torch
@@ -21,8 +29,9 @@ from typing import cast
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
 from peft.tuners.lora import LoraConfig
-from peft.mapping import get_peft_model
+from peft import get_peft_model
 from peft.utils.peft_types import TaskType
+from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 
 from gfn.env import DiscreteEnv
 from gfn.actions import Actions
@@ -79,13 +88,19 @@ class RNGEnv(DiscreteEnv):
             sf=sf,
         )
 
+    @property
+    def device(self) -> torch.device:
+        """Returns the device of the environment."""
+        return self.s0.device
+
     # ---------------------------------------------------------------------
     # Masks helpers
     # ---------------------------------------------------------------------
     def _forward_action_masks(self, states: DiscreteStates) -> torch.Tensor:
         """Returns a bool mask (*batch, n_actions) of valid *forward* actions."""
         batch_size = states.batch_shape[0]
-        masks = torch.ones((batch_size, self.n_actions), dtype=torch.bool, device=self.device)
+        # Use the device from the states tensor instead of self.device
+        masks = torch.ones((batch_size, self.n_actions), dtype=torch.bool, device=states.tensor.device)
 
         # Current sequence length (non-pad tokens).
         seq_lens = (states.tensor != self.tokenizer.pad_token_id).sum(dim=1)
@@ -113,11 +128,15 @@ class RNGEnv(DiscreteEnv):
         if can_go_back.any():
             # Get the last token ID for each sequence that can go backward
             last_token_indices = seq_lens[can_go_back] - 1
-            batch_indices = torch.arange(0, batch_size, device=states.tensor.device)[can_go_back]
+            batch_indices = torch.arange(batch_size, device=states.tensor.device)[can_go_back]
             last_token_ids = states.tensor[batch_indices, last_token_indices]
             
-            assert (last_token_ids < self.n_actions - 1).all()
-            backward_masks[batch_indices, last_token_ids] = True
+            # Ensure token IDs are valid for backward actions (exclude exit action)
+            valid_token_mask = last_token_ids < self.n_actions - 1
+            if valid_token_mask.any():
+                valid_batch_indices = batch_indices[valid_token_mask]
+                valid_token_ids = last_token_ids[valid_token_mask]
+                backward_masks[valid_batch_indices, valid_token_ids] = True
         return backward_masks
 
     def update_masks(self, states: DiscreteStates) -> None:  # type: ignore[override]
@@ -164,7 +183,7 @@ class RNGEnv(DiscreteEnv):
     # ---------------------------------------------------------------------
     def log_reward(self, states: DiscreteStates) -> torch.Tensor:
         """Uniform log-probability for numbers 0-100; −∞ elsewhere."""
-        rewards = torch.full((len(states),), -1e4, device=self.device)
+        rewards = torch.full((len(states),), -1e2, device=self.device)
 
         prompt_len = self.prompt_tokens.shape[1]
         for idx in range(len(states)):
@@ -249,31 +268,31 @@ class LLMGFNModule(DiscretePolicyEstimator):
             masks = states.backward_masks
             # Apply masks to all actions except the last one (exit action)
             logits[:, :-1][~masks] = -float("inf")
+            # Always mask out the exit action for backward steps
+            logits[:, -1] = -float("inf")
         else:
             # Forward masks include all actions
             masks = states.forward_masks
             logits[~masks] = -float("inf")
 
-        # Check for any completely invalid states
-        if self.is_backward:
-            valid_mask_counts = masks.sum(dim=-1)
-        else:
-            valid_mask_counts = masks.sum(dim=-1)
+        # Check for any completely invalid states and fix them
+        valid_mask_counts = masks.sum(dim=-1)
+        invalid_idx = valid_mask_counts == 0
         
-        if torch.any(valid_mask_counts == 0):
-            print(f"Warning: Found states with no valid actions in {'backward' if self.is_backward else 'forward'} mode")
-            print(f"Valid action counts: {valid_mask_counts}")
-            # Force at least one action to be valid (EOS for forward, or some action for backward)
+        if torch.any(invalid_idx):
+            print(f"Warning: Found {invalid_idx.sum().item()} states with no valid actions in {'backward' if self.is_backward else 'forward'} mode")
+            # Force at least one action to be valid
             if self.is_backward:
-                invalid_idx = valid_mask_counts == 0
-                if torch.any(invalid_idx):
-                    # For backward, allow the first non-exit action
-                    masks[invalid_idx, 0] = True
+                # For backward, allow the first non-exit action (typically action 0)
+                masks[invalid_idx, 0] = True
+                logits[invalid_idx, :-1] = -float("inf")  # mask out all non-exit actions
+                logits[invalid_idx, 0] = 0.0  # set action 0 to be valid
+                logits[invalid_idx, -1] = -float("inf")  # ensure exit action remains masked
             else:
-                invalid_idx = valid_mask_counts == 0
-                if torch.any(invalid_idx):
-                    # For forward, allow EOS
-                    logits[invalid_idx, self.tokenizer.eos_token_id] = 0.0
+                # For forward, allow EOS token
+                masks[invalid_idx, self.tokenizer.eos_token_id] = True
+                logits[invalid_idx, :] = -float("inf")  # mask out all actions
+                logits[invalid_idx, self.tokenizer.eos_token_id] = 0.0  # allow EOS
 
         if not self.is_backward and sf_bias != 0.0:
             logits[:, -1] -= sf_bias  # usually bias exit action
@@ -308,25 +327,98 @@ class LLMGFNModule(DiscretePolicyEstimator):
         return ShapedCategorical(categorical)
 
 
+def evaluate_model(env, sampler, tokenizer, n_samples=100, step_name="Evaluation"):
+    """Evaluate the model by sampling trajectories and analyzing generated numbers."""
+    print(f"\n--- {step_name} ---")
+    print(f"Sampling {n_samples} trajectories for evaluation...")
+    
+    with torch.no_grad():
+        trajectories = sampler.sample_trajectories(env, n=n_samples)
+        final_states = trajectories.terminating_states
+        
+        numbers = []
+        for i in range(len(final_states)):
+            state_tensor = final_states.tensor[i]
+            # Identify non-pad tokens
+            non_pad = state_tensor != tokenizer.pad_token_id
+            seq = state_tensor[non_pad]
+
+            # Remove prompt and EOS
+            prompt_len = env.prompt_tokens.shape[1]
+            if len(seq) <= prompt_len + 1:
+                continue
+            generated_tokens = seq[prompt_len:-1]  # exclude prompt and eos
+            decoded_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            try:
+                number = int(decoded_text.strip())
+                if 0 <= number <= 100:  # Only count valid numbers in range
+                    numbers.append(number)
+            except (ValueError, IndexError):
+                pass
+                
+        print(f"Generated valid numbers: {numbers[:20]}...")  # Show first 20
+        
+        results = {}
+        if numbers:
+            counts = np.bincount(numbers, minlength=101)
+            valid_counts = counts[:101]  # Only 0-100
+            success_rate = len(numbers) / n_samples
+            unique_numbers = np.count_nonzero(valid_counts)
+            mean_val = np.mean(numbers)
+            std_val = np.std(numbers)
+            
+            print(f"Number of valid samples: {len(numbers)} / {n_samples} ({100*success_rate:.1f}%)")
+            print(f"Unique numbers generated: {unique_numbers} / 101")
+            print(f"Mean: {mean_val:.1f}, Std: {std_val:.1f}")
+            
+            results = {
+                'valid_numbers': numbers,
+                'success_rate': success_rate,
+                'unique_count': unique_numbers,
+                'mean': mean_val,
+                'std': std_val,
+                'total_valid': len(numbers)
+            }
+        else:
+            print("No valid numbers generated.")
+            results = {
+                'valid_numbers': [],
+                'success_rate': 0.0,
+                'unique_count': 0,
+                'mean': 0.0,
+                'std': 0.0,
+                'total_valid': 0
+            }
+        
+        return results
+
+
 def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Train GFlowNet to generate random numbers 0-100")
     parser.add_argument("--device", default="auto", help="Device to use (auto, cpu, cuda)")
     parser.add_argument("--model_name", default="gpt2", help="Model name from HuggingFace")
-    parser.add_argument("--n_steps", type=int, default=50, help="Number of training steps")
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
+    parser.add_argument("--n_steps", type=int, default=200, help="Number of training steps")
+    parser.add_argument("--batch_size", type=int, default=128, help="Batch size for training")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
-    parser.add_argument("--max_length", type=int, default=5, help="Max tokens to generate")
+    parser.add_argument("--max_length", type=int, default=2, help="Max tokens to generate")
     parser.add_argument("--eval_samples", type=int, default=100, help="Number of samples for evaluation")
     
     # LoRA-specific arguments
     parser.add_argument("--use_lora", action="store_true", default=False, help="Use LoRA for parameter-efficient fine-tuning")
-    parser.add_argument("--lora_r", type=int, default=8, help="LoRA rank")
+    parser.add_argument("--lora_r", type=int, default=32, help="LoRA rank")
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha scaling parameter")
     parser.add_argument("--lora_dropout", type=float, default=0.1, help="LoRA dropout probability")
     parser.add_argument("--target_modules", nargs="+", default=["c_attn", "c_proj"], 
                        help="Target modules for LoRA adaptation (default for GPT-2)")
+    
+    # Optimizer and scheduler arguments
+    parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay for AdamW optimizer")
+    parser.add_argument("--warmup_steps", type=int, default=100, help="Number of warmup steps for learning rate scheduler")
+    parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Maximum gradient norm for clipping")
+    parser.add_argument("--scheduler_type", default="cosine", choices=["cosine", "linear", "constant"], 
+                       help="Learning rate scheduler type")
     
     args = parser.parse_args()
     
@@ -381,14 +473,45 @@ def main():
     gflownet = TBGFlowNet(pf_module, pb_module)
     sampler = Sampler(pf_module)
 
-    # Set up optimizer for trainable parameters
+    # Set up optimizer and scheduler for trainable parameters
     trainable_params = [p for p in gflownet.parameters() if p.requires_grad]
-    optimizer = torch.optim.Adam(trainable_params, lr=args.lr)
+    
+    # Use AdamW optimizer (preferred for transformers)
+    optimizer = torch.optim.AdamW(
+        trainable_params, 
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        betas=(0.9, 0.999),
+        eps=1e-8
+    )
+    
+    # Set up learning rate scheduler
+    if args.scheduler_type == "cosine":
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=args.n_steps
+        )
+    elif args.scheduler_type == "linear":
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=args.n_steps
+        )
+    else:  # constant
+        scheduler = None
     
     param_count = sum(p.numel() for p in trainable_params)
     print(f"Training for {args.n_steps} steps with batch size {args.batch_size}")
     print(f"Optimizing {param_count:,} trainable parameters across {len(trainable_params)} parameter groups")
+    print(f"Using AdamW optimizer with lr={args.lr}, weight_decay={args.weight_decay}")
+    print(f"Learning rate scheduler: {args.scheduler_type}, warmup_steps={args.warmup_steps}")
+    print(f"Gradient clipping: max_norm={args.max_grad_norm}")
 
+    # Pre-training evaluation
+    print("Evaluating model performance before training...")
+    pre_training_results = evaluate_model(env, sampler, tokenizer, args.eval_samples, "Pre-training Evaluation")
+    
     # Training Loop
     for step in range(args.n_steps):
         trajectories = sampler.sample_trajectories(env, n=args.batch_size, save_logprobs=False)
@@ -396,47 +519,39 @@ def main():
 
         optimizer.zero_grad()
         loss.backward()
+        
+        # Gradient clipping for stability
+        if args.max_grad_norm > 0:
+            grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, args.max_grad_norm)
+        
         optimizer.step()
+        
+        # Update learning rate scheduler
+        if scheduler is not None:
+            scheduler.step()
 
         if step % 1 == 0:
-            print(f"Step {step:4d}: loss = {loss.item():.4f}")
+            current_lr = optimizer.param_groups[0]['lr']
+            if args.max_grad_norm > 0:
+                print(f"Step {step:4d}: loss = {loss.item():.4f}, lr = {current_lr:.6f}, grad_norm = {grad_norm:.4f}")
+            else:
+                print(f"Step {step:4d}: loss = {loss.item():.4f}, lr = {current_lr:.6f}")
 
-    # Evaluation
-    print("\n--- Evaluation ---")
-    print(f"Sampling {args.eval_samples} trajectories for evaluation...")
-    with torch.no_grad():
-        trajectories = sampler.sample_trajectories(env, n=args.eval_samples)
-        final_states = trajectories.terminating_states
-        
-        numbers = []
-        for i in range(len(final_states)):
-            state_tensor = final_states.tensor[i]
-            # Identify non-pad tokens
-            non_pad = state_tensor != tokenizer.pad_token_id
-            seq = state_tensor[non_pad]
+    # Post-training evaluation
+    post_training_results = evaluate_model(env, sampler, tokenizer, args.eval_samples, "Post-training Evaluation")
+    
+    # Compare results
+    print("\n--- Training Results Comparison ---")
+    print(f"Success Rate: {pre_training_results['success_rate']:.1%} → {post_training_results['success_rate']:.1%} "
+          f"(Δ: {post_training_results['success_rate'] - pre_training_results['success_rate']:+.1%})")
+    print(f"Unique Numbers: {pre_training_results['unique_count']} → {post_training_results['unique_count']} "
+          f"(Δ: {post_training_results['unique_count'] - pre_training_results['unique_count']:+d})")
+    print(f"Mean Value: {pre_training_results['mean']:.1f} → {post_training_results['mean']:.1f} "
+          f"(Δ: {post_training_results['mean'] - pre_training_results['mean']:+.1f})")
+    print(f"Std Deviation: {pre_training_results['std']:.1f} → {post_training_results['std']:.1f} "
+          f"(Δ: {post_training_results['std'] - pre_training_results['std']:+.1f})")
 
-            # Remove prompt and EOS
-            prompt_len = env.prompt_tokens.shape[1]
-            if len(seq) <= prompt_len + 1:
-                continue
-            generated_tokens = seq[prompt_len:-1]  # exclude prompt and eos
-            decoded_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            try:
-                number = int(decoded_text.strip())
-                if 0 <= number <= 100:  # Only count valid numbers in range
-                    numbers.append(number)
-            except (ValueError, IndexError):
-                pass
-                
-        print(f"Generated valid numbers: {numbers[:20]}...")  # Show first 20
-        if numbers:
-            counts = np.bincount(numbers, minlength=101)
-            valid_counts = counts[:101]  # Only 0-100
-            print(f"Number of valid samples: {len(numbers)} / {args.eval_samples} ({100*len(numbers)/args.eval_samples:.1f}%)")
-            print(f"Unique numbers generated: {np.count_nonzero(valid_counts)} / 101")
-            print(f"Mean: {np.mean(numbers):.1f}, Std: {np.std(numbers):.1f}")
-        else:
-            print("No valid numbers generated.")
+
 
 if __name__ == '__main__':
     main()
