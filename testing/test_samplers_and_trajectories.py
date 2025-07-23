@@ -5,10 +5,14 @@ import torch
 
 from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
+from gfn.estimators import (
+    DiscreteGraphPolicyEstimator,
+    DiscretePolicyEstimator,
+    Estimator,
+)
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
-from gfn.modules import DiscreteGraphPolicyEstimator, DiscretePolicyEstimator, GFNModule
 from gfn.preprocessors import (
     EnumPreprocessor,
     IdentityPreprocessor,
@@ -27,7 +31,7 @@ def trajectory_sampling_with_return(
     delta: float,
     n_components: int,
     n_components_s0: int,
-) -> Tuple[Trajectories, Trajectories, GFNModule, GFNModule]:
+) -> Tuple[Trajectories, Trajectories, Estimator, Estimator]:
     if preprocessor_name != "Identity" and env_name != "HyperGrid":
         pytest.skip("Useless tests")
     if (delta != 0.1 or n_components != 1 or n_components_s0 != 1) and env_name != "Box":

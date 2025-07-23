@@ -10,8 +10,8 @@ import torch.nn as nn
 
 from gfn.containers import Trajectories
 from gfn.env import Env
+from gfn.estimators import Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
-from gfn.modules import GFNModule, ScalarEstimator
 from gfn.utils.handlers import (
     is_callable_exception_handler,
     warn_about_recalculating_logprobs,
@@ -39,8 +39,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
 
     def __init__(
         self,
-        pf: GFNModule,
-        pb: GFNModule,
+        pf: Estimator,
+        pb: Estimator,
         logZ: float | ScalarEstimator = 0.0,
         log_reward_clip_min: float = -float("inf"),
     ):
@@ -141,8 +141,8 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
 
     def __init__(
         self,
-        pf: GFNModule,
-        pb: GFNModule,
+        pf: Estimator,
+        pb: Estimator,
         log_reward_clip_min: float = -float("inf"),
     ):
         """Initializes a LogPartitionVarianceGFlowNet instance.

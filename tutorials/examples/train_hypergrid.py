@@ -33,6 +33,7 @@ from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
+from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -43,7 +44,6 @@ from gfn.gflownet import (
     TBGFlowNet,
 )
 from gfn.gym import HyperGrid
-from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
 from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
@@ -377,8 +377,8 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
     # Get the forward policy distribution for all states
     with torch.no_grad():
         # Handle both FM and other GFlowNet types
-        policy: GFNModule = cast(
-            GFNModule, gflownet.logF if isinstance(gflownet, FMGFlowNet) else gflownet.pf
+        policy: Estimator = cast(
+            Estimator, gflownet.logF if isinstance(gflownet, FMGFlowNet) else gflownet.pf
         )
 
         estimator_outputs = policy(grid)

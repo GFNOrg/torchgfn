@@ -6,8 +6,8 @@ import torch
 from gfn.actions import Actions
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
+from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import PFBasedGFlowNet, loss_reduce
-from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.states import States
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -67,8 +67,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
     def __init__(
         self,
-        pf: GFNModule,
-        pb: GFNModule,
+        pf: Estimator,
+        pb: Estimator,
         logF: ScalarEstimator | ConditionalScalarEstimator,
         forward_looking: bool = False,
         log_reward_clip_min: float = -float("inf"),

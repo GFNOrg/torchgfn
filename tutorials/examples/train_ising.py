@@ -4,10 +4,10 @@ import torch
 import wandb
 from tqdm import tqdm
 
+from gfn.estimators import DiscretePolicyEstimator
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
 from gfn.gym.discrete_ebm import IsingModel
-from gfn.modules import DiscretePolicyEstimator
 from gfn.utils.modules import MLP
 
 

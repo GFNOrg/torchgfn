@@ -19,7 +19,7 @@ REDUCTION_FUNCTIONS = {
 }
 
 
-class GFNModule(ABC, nn.Module):
+class Estimator(ABC, nn.Module):
     r"""Base class for modules mapping states to distributions or scalar values.
 
     Training a GFlowNet requires parameterizing one or more of the following functions:
@@ -144,7 +144,7 @@ class GFNModule(ABC, nn.Module):
         raise NotImplementedError
 
 
-class ScalarEstimator(GFNModule):
+class ScalarEstimator(Estimator):
     r"""Class for estimating scalars such as logZ of TB or state/edge flows of DB/SubTB.
 
     Training a GFlowNet sometimes requires the estimation of precise scalar values,
@@ -210,7 +210,7 @@ class ScalarEstimator(GFNModule):
         return out
 
 
-class DiscretePolicyEstimator(GFNModule):
+class DiscretePolicyEstimator(Estimator):
     r"""Forward or backward policy estimators for discrete environments.
 
     Estimates either:
@@ -497,7 +497,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-class DiscreteGraphPolicyEstimator(GFNModule):
+class DiscreteGraphPolicyEstimator(Estimator):
     r"""Forward or backward policy estimators for graph-based environments.
 
     Estimates either, where $s$ and $s'$ are graph states:
