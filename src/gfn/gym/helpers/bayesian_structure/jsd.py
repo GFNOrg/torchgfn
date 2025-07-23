@@ -19,9 +19,9 @@ from torch_geometric.data import Data as GeometricData
 from tqdm import tqdm
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.estimators import Estimator
 from gfn.gym.bayesian_structure import BayesianStructure
 from gfn.gym.helpers.bayesian_structure.scores import BaseScore
-from gfn.modules import GFNModule
 
 # https://oeis.org/A003024
 NUM_DAGS = [1, 1, 3, 25, 543, 29281, 3781503]
@@ -190,7 +190,7 @@ def get_gfn_exact_posterior(
 
 def posterior_exact(
     env: BayesianStructure,
-    estimator: GFNModule,
+    estimator: Estimator,
     nodelist: list[str],
     batch_size: int = 256,
 ) -> nx.DiGraph:
@@ -206,7 +206,7 @@ def posterior_exact(
 
 def get_gflownet_cache(
     env: BayesianStructure,
-    estimator: GFNModule,
+    estimator: Estimator,
     nodelist: list[str],
     batch_size: int = 256,
 ) -> dict[frozenset, np.ndarray]:
@@ -219,7 +219,7 @@ def get_gflownet_cache(
     ----------
     env : BayesianStructure
         The Bayesian structure learning environment.
-    estimator : GFNModule
+    estimator : Estimator
         The GFlowNet policy estimator.
     nodelist : list[str]
         List of node names to ensure consistent node encoding in adjacency matrices.

@@ -9,10 +9,11 @@ from tensordict import TensorDict
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.modules import GFNModule
 from gfn.utils.graphs import GeometricBatch
 
 
-class MLP(nn.Module):
+class MLP(GFNModule):
     """Implements a basic MLP."""
 
     def __init__(
@@ -92,23 +93,15 @@ class MLP(nn.Module):
         return out
 
     @property
-    def input_dim(self):
+    def input_dim(self) -> int:
         return self._input_dim
 
     @property
-    def output_dim(self):
+    def output_dim(self) -> int:
         return self._output_dim
 
-    @input_dim.setter
-    def input_dim(self, value: int):
-        self._input_dim = value
 
-    @output_dim.setter
-    def output_dim(self, value: int):
-        self._output_dim = value
-
-
-class Tabular(nn.Module):
+class Tabular(GFNModule):
     """Implements a tabular policy.
 
     This class is only compatible with the EnumPreprocessor.
@@ -151,8 +144,16 @@ class Tabular(nn.Module):
         outputs = self.table[preprocessed_states.squeeze(-1)]
         return outputs
 
+    @property
+    def input_dim(self) -> int:
+        return 1  # has no effect
 
-class DiscreteUniform(nn.Module):
+    @property
+    def output_dim(self) -> int:
+        return self.table.shape[1]
+
+
+class DiscreteUniform(GFNModule):
     """Implements a uniform distribution over discrete actions.
 
     It uses a zero function approximator (a function that always outputs 0) to be used as
@@ -170,6 +171,7 @@ class DiscreteUniform(nn.Module):
         """
         super().__init__()
         self.output_dim = output_dim
+        self.input_dim = 1  # has no effect
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the uniform distribution.
@@ -186,7 +188,7 @@ class DiscreteUniform(nn.Module):
         return out
 
 
-class LinearTransformer(nn.Module):
+class LinearTransformer(GFNModule):
     """The Linear Transformer module.
 
     Implements Transformers are RNNs: Fast Autoregressive Transformers with Linear
@@ -255,15 +257,13 @@ class LinearTransformer(nn.Module):
             context_linformer_settings=None,
             shift_tokens=False,
         )
-        # TODO: Should we have a final linear layer as part of this module?
-        # The output dimension is the same as the embedding dimension.
-        self.output_dim = dim
+        self.input_dim = 1  # has no effect
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.module(x)
 
 
-class GraphEdgeActionGNN(nn.Module):
+class GraphEdgeActionGNN(GFNModule):
     """Implements a GNN for graph edge action prediction."""
 
     def __init__(
@@ -504,7 +504,7 @@ class GraphEdgeActionGNN(nn.Module):
         )
 
 
-class GraphEdgeActionMLP(nn.Module):
+class GraphEdgeActionMLP(GFNModule):
     """Network that processes flattened adjacency matrices to predict graph actions.
 
     Unlike the GNN-based GraphEdgeActionGNN, this module uses standard MLPs to process
@@ -690,7 +690,7 @@ class GraphEdgeActionMLP(nn.Module):
         )
 
 
-class GraphActionUniform(nn.Module):
+class GraphActionUniform(GFNModule):
     """Implements a uniform distribution over discrete actions given a graph state.
 
     It uses a zero function approximator (a function that always outputs 0) to be used as

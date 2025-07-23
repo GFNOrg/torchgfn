@@ -33,6 +33,7 @@ from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
+from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -43,7 +44,6 @@ from gfn.gflownet import (
     TBGFlowNet,
 )
 from gfn.gym import HyperGrid
-from gfn.modules import DiscretePolicyEstimator, GFNModule, ScalarEstimator
 from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
@@ -377,8 +377,8 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
     # Get the forward policy distribution for all states
     with torch.no_grad():
         # Handle both FM and other GFlowNet types
-        policy: GFNModule = cast(
-            GFNModule, gflownet.logF if isinstance(gflownet, FMGFlowNet) else gflownet.pf
+        policy: Estimator = cast(
+            Estimator, gflownet.logF if isinstance(gflownet, FMGFlowNet) else gflownet.pf
         )
 
         estimator_outputs = policy(grid)
@@ -484,7 +484,7 @@ def set_up_fm_gflownet(args, env, preprocessor, agent_group_list, my_agent_group
         module = DDP(module, process_group=agent_group_list[my_agent_group_id])
 
     estimator = DiscretePolicyEstimator(
-        module=module,
+        module=module,  # type: ignore  # FIXME
         n_actions=env.n_actions,
         preprocessor=preprocessor,
     )
@@ -531,12 +531,12 @@ def set_up_pb_pf_estimators(
     assert pf_module is not None
     assert pb_module is not None
     pf_estimator = DiscretePolicyEstimator(
-        module=pf_module,
+        module=pf_module,  # type: ignore  # FIXME
         n_actions=env.n_actions,
         preprocessor=preprocessor,
     )
     pb_estimator = DiscretePolicyEstimator(
-        module=pb_module,
+        module=pb_module,  # type: ignore  # FIXME
         n_actions=env.n_actions,
         is_backward=True,
         preprocessor=preprocessor,
@@ -567,7 +567,7 @@ def set_up_logF_estimator(
     if args.distributed:
         module = DDP(module, process_group=agent_group_list[my_agent_group_id])
 
-    return ScalarEstimator(module=module, preprocessor=preprocessor)
+    return ScalarEstimator(module=module, preprocessor=preprocessor)  # type: ignore  # FIXME
 
 
 def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id):
