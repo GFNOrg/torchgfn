@@ -31,8 +31,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
     for more details.
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         logZ: A learnable parameter or a ScalarEstimator instance (for conditional GFNs).
         log_reward_clip_min: If finite, clips log rewards to this value.
     """
@@ -47,8 +47,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         """Initializes a TBGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
             logZ: A learnable parameter or a ScalarEstimator instance (for
                 conditional GFNs).
             log_reward_clip_min: If finite, clips log rewards to this value.
@@ -134,8 +134,8 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
     [Robust Scheduling with GFlowNets](https://arxiv.org/abs/2302.05446).
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
@@ -148,8 +148,8 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         """Initializes a LogPartitionVarianceGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
             log_reward_clip_min: If finite, clips log rewards to this value.
         """
         super().__init__(pf, pb)

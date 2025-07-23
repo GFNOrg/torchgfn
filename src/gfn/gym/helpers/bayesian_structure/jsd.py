@@ -219,7 +219,7 @@ def get_gflownet_cache(
     ----------
     env : BayesianStructure
         The Bayesian structure learning environment.
-    estimator : GFNModule
+    estimator : Estimator
         The GFlowNet policy estimator.
     nodelist : list[str]
         List of node names to ensure consistent node encoding in adjacency matrices.

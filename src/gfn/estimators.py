@@ -59,7 +59,7 @@ class Estimator(ABC, nn.Module):
         preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
     ) -> None:
-        """Initializes a GFNModule with a neural network module and a preprocessor.
+        """Initializes an Estimator with a neural network module and a preprocessor.
 
         Args:
             module: The neural network module to use.
@@ -97,10 +97,10 @@ class Estimator(ABC, nn.Module):
         return out
 
     def __repr__(self):
-        """Returns a string representation of the GFNModule.
+        """Returns a string representation of the Estimator.
 
         Returns:
-            A string summary of the GFNModule.
+            A string summary of the Estimator.
         """
         return f"{self.__class__.__name__} module"
 

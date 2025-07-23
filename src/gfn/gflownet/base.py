@@ -150,16 +150,16 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     """A GFlowNet that uses forward (PF) and backward (PB) policy networks.
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
     """
 
     def __init__(self, pf: Estimator, pb: Estimator) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
         """
         super().__init__()
         self.pf = pf

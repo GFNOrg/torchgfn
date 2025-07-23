@@ -54,8 +54,8 @@ def get_trajectory_pfs_and_pbs(
     """Calculates the log probabilities of forward and backward trajectories.
 
     Args:
-        pf: The forward policy GFN module.
-        pb: The backward policy GFN module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
@@ -89,7 +89,7 @@ def get_trajectory_pfs(
     """Calculates the log probabilities of forward trajectories.
 
     Args:
-        pf: The forward policy GFN module.
+        pf: The forward policy estimator.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
@@ -162,7 +162,7 @@ def get_trajectory_pbs(
     """Calculates the log probabilities of backward trajectories.
 
     Args:
-        pb: The backward policy GFN module.
+        pb: The backward policy estimator.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
 
@@ -239,8 +239,8 @@ def get_transition_pfs_and_pbs(
     """Calculates the log probabilities of forward and backward transitions.
 
     Args:
-        pf: The forward policy GFN module.
-        pb: The backward policy GFN module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         transitions: The transitions to calculate probabilities for.
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
             already exist in the transitions object.
@@ -269,7 +269,7 @@ def get_transition_pfs(
     """Calculates the log probabilities of forward transitions.
 
     Args:
-        pf: The forward policy GFN module.
+        pf: The forward policy estimator.
         transitions: The transitions to calculate probabilities for.
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
             already exist in the transitions object.

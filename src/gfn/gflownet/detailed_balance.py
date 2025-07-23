@@ -55,8 +55,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
     3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
             flow of the states.
         forward_looking: Whether to use the forward-looking GFN loss.
@@ -77,8 +77,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         """Initializes a DBGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
             logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
                 flow of the states.
             forward_looking: Whether to use the forward-looking GFN loss.
@@ -284,8 +284,8 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     for more details.
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
             flow of the states.
         forward_looking: Whether to use the forward-looking GFN loss.

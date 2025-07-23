@@ -32,8 +32,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782).
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log flow
             of the states.
         weighting: The sub-trajectories weighting scheme.
@@ -83,8 +83,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         """Initializes a SubTBGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
             logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the
                 log flow of the states.
             weighting: The sub-trajectory weighting scheme (see class docstring for
