@@ -11,7 +11,6 @@ from gfn.actions import GraphActions, GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
-from gfn.utils.graphs import GeometricBatch
 
 REDUCTION_FUNCTIONS = {
     "mean": torch.mean,
@@ -80,18 +79,22 @@ class GFNModule(ABC, nn.Module):
         self.preprocessor = preprocessor
         self.is_backward = is_backward
 
-    def forward(self, input: States | torch.Tensor) -> torch.Tensor:
+    def forward(self, input: States) -> torch.Tensor:
         """Forward pass of the module.
 
         Args:
-            input: The input to the module, as states or a tensor.
+            input: The input to the module as states.
 
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        # If the input is a States object, preprocess it.
-        out = self.preprocessor(input) if isinstance(input, States) else input
-        return self.module(out)
+        out = self.module(self.preprocessor(input))
+        if self.expected_output_dim is not None:
+            assert out.shape[-1] == self.expected_output_dim, (
+                f"Module output shape {out.shape} does not match expected output "
+                f"dimension {self.expected_output_dim}"
+            )
+        return out
 
     def __repr__(self):
         """Returns a string representation of the GFNModule.
@@ -187,18 +190,16 @@ class ScalarEstimator(GFNModule):
         """
         return 1
 
-    def forward(self, input: States | torch.Tensor) -> torch.Tensor:
+    def forward(self, input: States) -> torch.Tensor:
         """Forward pass of the module.
 
         Args:
-            input: The input to the module, as states or a tensor.
+            input: The input to the module as states.
 
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, 1).
         """
-        # If the input is a States object, preprocess it.
-        out = self.preprocessor(input) if isinstance(input, States) else input
-        out = self.module(out)
+        out = self.module(self.preprocessor(input))
 
         # Ensures estimator outputs are always scalar.
         if out.shape[-1] != 1:
@@ -286,9 +287,10 @@ class DiscretePolicyEstimator(GFNModule):
         Returns:
             A Categorical distribution over the actions.
         """
-        assert (
-            module_output.shape[-1] == self.expected_output_dim
-        ), f"module_output.shape[-1] = {module_output.shape[-1]}, expected_output_dim = {self.expected_output_dim}"
+        assert module_output.shape[-1] == self.expected_output_dim, (
+            f"Module output shape {module_output.shape} does not match "
+            f"expected output dimension {self.expected_output_dim}"
+        )
         assert temperature > 0.0
         assert 0.0 <= epsilon <= 1.0
 
@@ -392,7 +394,10 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
             The output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
         out = self._forward_trunk(states, conditioning)
-        assert out.shape[-1] == self.expected_output_dim
+        assert out.shape[-1] == self.expected_output_dim, (
+            f"Module output shape {out.shape} does not match expected output "
+            f"dimension {self.expected_output_dim}"
+        )
         return out
 
 
@@ -460,7 +465,10 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         if out.shape[-1] != 1:
             out = self.reduction_function(out, -1)
 
-        assert out.shape[-1] == self.expected_output_dim
+        assert out.shape[-1] == self.expected_output_dim, (
+            f"Module output shape {out.shape} does not match expected output "
+            f"dimension {self.expected_output_dim}"
+        )
         return out
 
     @property
@@ -506,38 +514,6 @@ class DiscreteGraphPolicyEstimator(GFNModule):
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
     """
-
-    def __init__(
-        self,
-        module: nn.Module,
-        preprocessor: Preprocessor | None = None,
-        is_backward: bool = False,
-    ):
-        """Initializes a DiscreteGraphPolicyEstimator.
-
-        Args:
-            module: The neural network module to use.
-            preprocessor: Preprocessor object that transforms GraphStates to tensors.
-            is_backward: Flag indicating whether this estimator is for backward policy,
-                i.e., is used for predicting probability distributions over parents.
-        """
-        super().__init__(module, preprocessor, is_backward)
-
-    def forward(self, input: States | torch.Tensor | GeometricBatch) -> torch.Tensor:
-        """Forward pass of the module.
-
-        Args:
-            input: The input to the module, as states, tensor, or GeometricBatch.
-
-        Returns:
-            The output of the module, as a tensor of shape (*batch_shape, output_dim).
-        """
-        if isinstance(input, States):
-            input = self.preprocessor(input)
-
-        out = self.module(input)
-
-        return out
 
     def to_probability_distribution(
         self,
