@@ -5,6 +5,7 @@ import torch
 from test_samplers_and_trajectories import trajectory_sampling_with_return
 
 from gfn.containers import Trajectories
+from gfn.estimators import DiscretePolicyEstimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
@@ -22,7 +23,6 @@ from gfn.gym.helpers.box_utils import (
     BoxPFEstimator,
     BoxPFMLP,
 )
-from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor, KHotPreprocessor
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 

@@ -3,7 +3,7 @@ from typing import Tuple
 import torch
 
 from gfn.containers import Trajectories, Transitions
-from gfn.modules import GFNModule
+from gfn.estimators import Estimator
 from gfn.states import States
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -12,7 +12,7 @@ from gfn.utils.handlers import (
 
 
 def check_cond_forward(
-    module: GFNModule,
+    module: Estimator,
     module_name: str,
     states: States,
     condition: torch.Tensor | None = None,
@@ -45,8 +45,8 @@ def check_cond_forward(
 
 
 def get_trajectory_pfs_and_pbs(
-    pf: GFNModule,
-    pb: GFNModule,
+    pf: Estimator,
+    pb: Estimator,
     trajectories: Trajectories,
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
@@ -54,8 +54,8 @@ def get_trajectory_pfs_and_pbs(
     """Calculates the log probabilities of forward and backward trajectories.
 
     Args:
-        pf: The forward policy GFN module.
-        pb: The backward policy GFN module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
@@ -81,7 +81,7 @@ def get_trajectory_pfs_and_pbs(
 
 
 def get_trajectory_pfs(
-    pf: GFNModule,
+    pf: Estimator,
     trajectories: Trajectories,
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
@@ -89,7 +89,7 @@ def get_trajectory_pfs(
     """Calculates the log probabilities of forward trajectories.
 
     Args:
-        pf: The forward policy GFN module.
+        pf: The forward policy estimator.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
@@ -157,12 +157,12 @@ def get_trajectory_pfs(
 
 
 def get_trajectory_pbs(
-    pb: GFNModule, trajectories: Trajectories, fill_value: float = 0.0
+    pb: Estimator, trajectories: Trajectories, fill_value: float = 0.0
 ) -> torch.Tensor:
     """Calculates the log probabilities of backward trajectories.
 
     Args:
-        pb: The backward policy GFN module.
+        pb: The backward policy estimator.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
 
@@ -231,16 +231,16 @@ def get_trajectory_pbs(
 
 
 def get_transition_pfs_and_pbs(
-    pf: GFNModule,
-    pb: GFNModule,
+    pf: Estimator,
+    pb: Estimator,
     transitions: Transitions,
     recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Calculates the log probabilities of forward and backward transitions.
 
     Args:
-        pf: The forward policy GFN module.
-        pb: The backward policy GFN module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         transitions: The transitions to calculate probabilities for.
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
             already exist in the transitions object.
@@ -264,12 +264,12 @@ def get_transition_pfs_and_pbs(
 
 
 def get_transition_pfs(
-    pf: GFNModule, transitions: Transitions, recalculate_all_logprobs: bool = True
+    pf: Estimator, transitions: Transitions, recalculate_all_logprobs: bool = True
 ) -> torch.Tensor:
     """Calculates the log probabilities of forward transitions.
 
     Args:
-        pf: The forward policy GFN module.
+        pf: The forward policy estimator.
         transitions: The transitions to calculate probabilities for.
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
             already exist in the transitions object.
@@ -300,7 +300,7 @@ def get_transition_pfs(
     return log_pf_actions
 
 
-def get_transition_pbs(pb: GFNModule, transitions: Transitions) -> torch.Tensor:
+def get_transition_pbs(pb: Estimator, transitions: Transitions) -> torch.Tensor:
     # automatically removes invalid transitions (i.e. s_f -> s_f)
     valid_next_states = transitions.next_states[~transitions.is_terminating]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]

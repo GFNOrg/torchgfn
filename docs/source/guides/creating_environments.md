@@ -113,7 +113,7 @@ assigns a unique integer number to each state, and a `n_states` property that
 returns an integer representing the number of states (excluding $s_f$) in the environment. The function `get_terminating_states_indices` can also be
 implemented and serves the purpose of uniquely identifying terminating states of
 the environment, which is useful for
-[tabular `GFNModule`s](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/utils/modules.py).
+[tabular modules](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/utils/modules.py).
 Other properties and functions can be implemented as well, such as the
 `log_partition` or the `true_dist_pmf` properties.
 

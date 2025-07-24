@@ -18,6 +18,7 @@ from scipy.special import logsumexp
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm, trange
 
+from gfn.estimators import ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
     LogPartitionVarianceGFlowNet,
@@ -33,7 +34,6 @@ from gfn.gym.helpers.box_utils import (
     BoxPFMLP,
     BoxStateFlowModule,
 )
-from gfn.modules import ScalarEstimator
 from gfn.preprocessors import IdentityPreprocessor
 from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.utils.common import set_seed
