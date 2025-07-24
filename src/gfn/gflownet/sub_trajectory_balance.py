@@ -6,8 +6,8 @@ import torch
 
 from gfn.containers import Trajectories
 from gfn.env import Env
+from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
-from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -32,8 +32,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782).
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log flow
             of the states.
         weighting: The sub-trajectories weighting scheme.
@@ -64,8 +64,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def __init__(
         self,
-        pf: GFNModule,
-        pb: GFNModule,
+        pf: Estimator,
+        pb: Estimator,
         logF: ScalarEstimator | ConditionalScalarEstimator,
         weighting: Literal[
             "DB",
@@ -83,8 +83,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         """Initializes a SubTBGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
             logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the
                 log flow of the states.
             weighting: The sub-trajectory weighting scheme (see class docstring for

@@ -6,8 +6,8 @@ import torch
 from gfn.actions import Actions
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
+from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import PFBasedGFlowNet, loss_reduce
-from gfn.modules import ConditionalScalarEstimator, GFNModule, ScalarEstimator
 from gfn.states import States
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -55,8 +55,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
     3.2 of [GFlowNet Foundations](https://arxiv.org/abs/2111.09266).
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
             flow of the states.
         forward_looking: Whether to use the forward-looking GFN loss.
@@ -67,8 +67,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
     def __init__(
         self,
-        pf: GFNModule,
-        pb: GFNModule,
+        pf: Estimator,
+        pb: Estimator,
         logF: ScalarEstimator | ConditionalScalarEstimator,
         forward_looking: bool = False,
         log_reward_clip_min: float = -float("inf"),
@@ -77,8 +77,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         """Initializes a DBGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
             logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
                 flow of the states.
             forward_looking: Whether to use the forward-looking GFN loss.
@@ -284,8 +284,8 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     for more details.
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
             flow of the states.
         forward_looking: Whether to use the forward-looking GFN loss.

@@ -76,7 +76,7 @@ class IdentityPreprocessor(Preprocessor):
         output_dim: The dimensionality of the input states.
     """
 
-    def preprocess(self, states: States | GraphStates) -> torch.Tensor | GeometricBatch:
+    def preprocess(self, states: States) -> torch.Tensor | GeometricBatch:
         """Returns the states without any preprocessing.
 
         Args:

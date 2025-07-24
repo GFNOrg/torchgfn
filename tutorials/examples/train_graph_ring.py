@@ -26,9 +26,9 @@ from matplotlib import patches
 
 from gfn.actions import GraphActions
 from gfn.containers import ReplayBuffer
+from gfn.estimators import DiscreteGraphPolicyEstimator
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
-from gfn.modules import DiscreteGraphPolicyEstimator
 from gfn.states import GraphStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP

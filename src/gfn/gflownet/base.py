@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from gfn.containers import Container, Trajectories
 from gfn.env import Env
-from gfn.modules import GFNModule
+from gfn.estimators import Estimator
 from gfn.samplers import Sampler
 from gfn.states import States
 from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
@@ -150,16 +150,16 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     """A GFlowNet that uses forward (PF) and backward (PB) policy networks.
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
     """
 
-    def __init__(self, pf: GFNModule, pb: GFNModule) -> None:
+    def __init__(self, pf: Estimator, pb: Estimator) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
         """
         super().__init__()
         self.pf = pf

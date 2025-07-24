@@ -4,9 +4,9 @@ from typing import cast
 import torch
 from tqdm import tqdm
 
+from gfn.estimators import DiscretePolicyEstimator, ScalarEstimator
 from gfn.gflownet import DBGFlowNet, FMGFlowNet, GFlowNet, PFBasedGFlowNet, TBGFlowNet
 from gfn.gym import BitSequence
-from gfn.modules import DiscretePolicyEstimator, ScalarEstimator
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP
 from gfn.utils.prob_calculations import get_trajectory_pfs

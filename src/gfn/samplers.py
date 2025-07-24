@@ -5,7 +5,7 @@ import torch
 from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
-from gfn.modules import GFNModule
+from gfn.estimators import Estimator
 from gfn.states import GraphStates, States
 from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import graph_states_share_storage
@@ -28,7 +28,7 @@ class Sampler:
             probability distributions.
     """
 
-    def __init__(self, estimator: GFNModule) -> None:
+    def __init__(self, estimator: Estimator) -> None:
         """Initializes a Sampler with a PolicyEstimator.
 
         Args:
@@ -326,17 +326,17 @@ class LocalSearchSampler(Sampler):
     3. Optionally applying Metropolis-Hastings acceptance criterion
 
     Attributes:
-        estimator: The forward PolicyEstimator (inherited from Sampler).
-        backward_sampler: A Sampler instance with the backward PolicyEstimator.
+        estimator: The forward policy estimator (inherited from Sampler).
+        backward_sampler: A Sampler instance with the backward policy estimator.
     """
 
-    def __init__(self, pf_estimator: GFNModule, pb_estimator: GFNModule):
+    def __init__(self, pf_estimator: Estimator, pb_estimator: Estimator):
         """Initializes a LocalSearchSampler with forward and backward estimators.
 
         Args:
-            pf_estimator: The forward PolicyEstimator for sampling and reconstructing
+            pf_estimator: The forward policy estimator for sampling and reconstructing
                 trajectories.
-            pb_estimator: The backward PolicyEstimator for backtracking trajectories.
+            pb_estimator: The backward policy estimator for backtracking trajectories.
         """
         super().__init__(pf_estimator)
         self.backward_sampler = Sampler(pb_estimator)

@@ -10,8 +10,8 @@ import torch.nn as nn
 
 from gfn.containers import Trajectories
 from gfn.env import Env
+from gfn.estimators import Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
-from gfn.modules import GFNModule, ScalarEstimator
 from gfn.utils.handlers import (
     is_callable_exception_handler,
     warn_about_recalculating_logprobs,
@@ -31,24 +31,24 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
     for more details.
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         logZ: A learnable parameter or a ScalarEstimator instance (for conditional GFNs).
         log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
     def __init__(
         self,
-        pf: GFNModule,
-        pb: GFNModule,
+        pf: Estimator,
+        pb: Estimator,
         logZ: float | ScalarEstimator = 0.0,
         log_reward_clip_min: float = -float("inf"),
     ):
         """Initializes a TBGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
             logZ: A learnable parameter or a ScalarEstimator instance (for
                 conditional GFNs).
             log_reward_clip_min: If finite, clips log rewards to this value.
@@ -134,22 +134,22 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
     [Robust Scheduling with GFlowNets](https://arxiv.org/abs/2302.05446).
 
     Attributes:
-        pf: The forward policy module.
-        pb: The backward policy module.
+        pf: The forward policy estimator.
+        pb: The backward policy estimator.
         log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
     def __init__(
         self,
-        pf: GFNModule,
-        pb: GFNModule,
+        pf: Estimator,
+        pb: Estimator,
         log_reward_clip_min: float = -float("inf"),
     ):
         """Initializes a LogPartitionVarianceGFlowNet instance.
 
         Args:
-            pf: The forward policy module.
-            pb: The backward policy module.
+            pf: The forward policy estimator.
+            pb: The backward policy estimator.
             log_reward_clip_min: If finite, clips log rewards to this value.
         """
         super().__init__(pf, pb)
