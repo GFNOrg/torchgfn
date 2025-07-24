@@ -18,9 +18,9 @@ import torch
 import wandb
 from tqdm import tqdm, trange
 
+from gfn.estimators import DiscretePolicyEstimator
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
-from gfn.modules import DiscretePolicyEstimator
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, Tabular

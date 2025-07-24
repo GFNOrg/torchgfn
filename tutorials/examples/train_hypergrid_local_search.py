@@ -23,9 +23,9 @@ from typing import cast
 import torch
 from tqdm import tqdm
 
+from gfn.estimators import DiscretePolicyEstimator
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
-from gfn.modules import DiscretePolicyEstimator
 from gfn.preprocessors import KHotPreprocessor
 from gfn.samplers import LocalSearchSampler
 from gfn.states import DiscreteStates

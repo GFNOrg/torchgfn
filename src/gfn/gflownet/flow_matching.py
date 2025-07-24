@@ -5,8 +5,8 @@ import torch
 
 from gfn.containers import StatesContainer, Trajectories
 from gfn.env import DiscreteEnv
+from gfn.estimators import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
 from gfn.gflownet.base import GFlowNet, loss_reduce
-from gfn.modules import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
 from gfn.utils.handlers import (

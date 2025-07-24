@@ -8,8 +8,8 @@ import torch.nn as nn
 from torch import Size, Tensor
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
 
+from gfn.estimators import Estimator
 from gfn.gym import Box
-from gfn.modules import GFNModule
 from gfn.states import States
 from gfn.utils.modules import MLP
 
@@ -936,7 +936,7 @@ def split_PF_module_output(
     return (exit_probability, mixture_logits, alpha_theta, beta_theta, alpha_r, beta_r)
 
 
-class BoxPFEstimator(GFNModule):
+class BoxPFEstimator(Estimator):
     r"""Estimator for `P_F` for the Box environment.
 
     This estimator uses the `DistributionWrapper` distribution.
@@ -1060,7 +1060,7 @@ class BoxPFEstimator(GFNModule):
         )
 
 
-class BoxPBEstimator(GFNModule):
+class BoxPBEstimator(Estimator):
     r"""Estimator for `P_B` for the Box environment.
 
     This estimator uses the `QuarterCircle(northeastern=False)` distribution.

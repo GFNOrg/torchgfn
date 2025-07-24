@@ -43,6 +43,7 @@ from tqdm import trange
 from gfn.actions import GraphActions, GraphActionType
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.containers.trajectories import Trajectories
+from gfn.estimators import DiscreteGraphPolicyEstimator
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.bayesian_structure import BayesianStructure
 from gfn.gym.helpers.bayesian_structure.evaluation import (
@@ -58,7 +59,6 @@ from gfn.gym.helpers.bayesian_structure.jsd import (
     jensen_shannon_divergence,
     posterior_exact,
 )
-from gfn.modules import DiscreteGraphPolicyEstimator
 from gfn.utils.common import set_seed
 from gfn.utils.modules import GraphActionUniform, GraphEdgeActionGNN, GraphEdgeActionMLP
 
