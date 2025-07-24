@@ -9,6 +9,7 @@ from torch_geometric.data import Data as GeometricData
 from gfn.actions import GraphActions, GraphActionType
 from gfn.gym.graph_building import GraphBuilding
 from gfn.states import GraphStates
+from gfn.utils.common import parse_dtype
 
 
 class BayesianStructure(GraphBuilding):
@@ -31,22 +32,24 @@ class BayesianStructure(GraphBuilding):
         n_nodes: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        dtype: torch.dtype | None = None,
     ):
         if isinstance(device, str):
             device = torch.device(device)
 
         self.n_nodes = n_nodes
         self.n_actions = n_nodes**2 + 1
+        self._dtype = parse_dtype(dtype)
 
         s0 = GeometricData(
-            x=torch.arange(n_nodes, dtype=torch.float)[:, None].to(device),
-            edge_attr=torch.ones((0, 1), dtype=torch.float).to(device),
+            x=torch.arange(n_nodes, dtype=self._dtype)[:, None].to(device),
+            edge_attr=torch.ones((0, 1), dtype=self._dtype).to(device),
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )
         sf = GeometricData(
-            x=-torch.ones(n_nodes, dtype=torch.float)[:, None].to(device),
-            edge_attr=torch.zeros((0, 1), dtype=torch.float).to(device),
+            x=-torch.ones(n_nodes, dtype=self._dtype)[:, None].to(device),
+            edge_attr=torch.zeros((0, 1), dtype=self._dtype).to(device),
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )

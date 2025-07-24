@@ -9,6 +9,7 @@ from tensordict import TensorDict
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.utils.common import parse_dtype
 from gfn.utils.graphs import GeometricBatch
 
 
@@ -24,6 +25,7 @@ class MLP(nn.Module):
         activation_fn: Optional[Literal["relu", "tanh", "elu"]] = "relu",
         trunk: Optional[nn.Module] = None,
         add_layer_norm: bool = False,
+        dtype: torch.dtype | None = None,
     ):
         """Initializes a new MLP.
 
@@ -37,6 +39,7 @@ class MLP(nn.Module):
             add_layer_norm: Whether to add layer normalization to the hidden layers.
         """
         super().__init__()
+        self._dtype = parse_dtype(dtype)
         self._input_dim = input_dim
         self._output_dim = output_dim
 
@@ -46,25 +49,32 @@ class MLP(nn.Module):
                 n_hidden_layers is not None and n_hidden_layers >= 0
             ), "n_hidden_layers must be >= 0"
             assert activation_fn is not None, "activation_fn must be provided"
+
             if activation_fn == "elu":
                 activation = nn.ELU
             elif activation_fn == "relu":
                 activation = nn.ReLU
             elif activation_fn == "tanh":
                 activation = nn.Tanh
+
             if add_layer_norm:
                 arch = [
-                    nn.Linear(input_dim, hidden_dim),
+                    nn.Linear(input_dim, hidden_dim, dtype=self._dtype),
                     nn.LayerNorm(hidden_dim),
                     activation(),
                 ]
             else:
-                arch = [nn.Linear(input_dim, hidden_dim), activation()]
+                arch = [
+                    nn.Linear(input_dim, hidden_dim, dtype=self._dtype),
+                    activation(),
+                ]
+
             for _ in range(n_hidden_layers - 1):
-                arch.append(nn.Linear(hidden_dim, hidden_dim))
+                arch.append(nn.Linear(hidden_dim, hidden_dim, dtype=self._dtype))
                 if add_layer_norm:
                     arch.append(nn.LayerNorm(hidden_dim))
                 arch.append(activation())
+
             self.trunk = nn.Sequential(*arch)
             self.trunk.hidden_dim = torch.tensor(hidden_dim)
             self._hidden_dim = hidden_dim
@@ -74,7 +84,7 @@ class MLP(nn.Module):
                 trunk.hidden_dim, torch.Tensor
             ), "trunk must have a hidden_dim attribute"
             self._hidden_dim = int(trunk.hidden_dim.item())
-        self.last_layer = nn.Linear(self._hidden_dim, output_dim)
+        self.last_layer = nn.Linear(self._hidden_dim, output_dim, dtype=self._dtype)
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the neural network.
@@ -84,8 +94,8 @@ class MLP(nn.Module):
                 ingestion by the MLP. The shape of the tensor should be (*batch_shape, input_dim).
         Returns: a tensor of shape (*batch_shape, output_dim).
         """
-        if preprocessed_states.dtype != torch.float:
-            preprocessed_states = preprocessed_states.float()  # TODO: handle precision.
+        if preprocessed_states.dtype != self._dtype:
+            preprocessed_states = preprocessed_states.to(self._dtype)
 
         out = self.trunk(preprocessed_states)
         out = self.last_layer(out)
@@ -118,22 +128,19 @@ class Tabular(nn.Module):
         device: the device that holds this policy.
     """
 
-    def __init__(self, n_states: int, output_dim: int) -> None:
+    def __init__(
+        self, n_states: int, output_dim: int, dtype: torch.dtype | None = None
+    ) -> None:
         """Initializes a new Tabular module.
 
         Args:
             n_states: The number of states.
             output_dim: The dimension of the output.
         """
-
         super().__init__()
-
-        self.table = torch.zeros(
-            (n_states, output_dim),
-            dtype=torch.float,
+        self.table = nn.parameter.Parameter(
+            torch.zeros((n_states, output_dim), dtype=parse_dtype(dtype))
         )
-
-        self.table = nn.parameter.Parameter(self.table)
         self.device = None
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
@@ -274,6 +281,7 @@ class GraphEdgeActionGNN(nn.Module):
         num_conv_layers: int = 1,
         embedding_dim: int = 128,
         is_backward: bool = False,
+        dtype: torch.dtype | None = None,
     ) -> None:
         """Initializes a new GraphEdgeActionGNN module.
 
@@ -286,7 +294,6 @@ class GraphEdgeActionGNN(nn.Module):
             is_backward: Whether the GNN is used for a backward policy.
         """
         super().__init__()
-
         assert n_nodes > 0, "n_nodes must be greater than 0"
         assert embedding_dim > 0, "embedding_dim must be greater than 0"
         assert num_conv_layers > 0, "num_conv_layers must be greater than 0"
@@ -295,6 +302,7 @@ class GraphEdgeActionGNN(nn.Module):
         assert isinstance(num_conv_layers, int), "num_conv_layers must be an integer"
         assert isinstance(directed, bool), "directed must be a boolean"
         assert isinstance(is_backward, bool), "is_backward must be a boolean"
+        self._dtype = parse_dtype(dtype)
         self._input_dim = 1  # Each node input is a single integer before embedding.
         self._n_nodes = n_nodes
         self.hidden_dim = self.embedding_dim = embedding_dim
@@ -325,6 +333,7 @@ class GraphEdgeActionGNN(nn.Module):
             hidden_dim=self.hidden_dim,
             n_hidden_layers=1,
             add_layer_norm=True,
+            dtype=self._dtype,
         )
 
         if directed:
@@ -344,11 +353,15 @@ class GraphEdgeActionGNN(nn.Module):
                             [
                                 nn.Sequential(
                                     nn.Linear(
-                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                        self.hidden_dim // 2,
+                                        self.hidden_dim // 2,
+                                        dtype=self._dtype,
                                     ),
                                     nn.ReLU(),
                                     nn.Linear(
-                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                        self.hidden_dim // 2,
+                                        self.hidden_dim // 2,
+                                        dtype=self._dtype,
                                     ),
                                 )
                                 for _ in range(2)  # 1 for in & 1 for out-features.
@@ -369,12 +382,17 @@ class GraphEdgeActionGNN(nn.Module):
                                 hidden_dim=self.hidden_dim,
                                 n_hidden_layers=1,
                                 add_layer_norm=True,
+                                dtype=self._dtype,
                             ),
                         ),
                         nn.Sequential(
-                            nn.Linear(self.hidden_dim, self.hidden_dim),
+                            nn.Linear(
+                                self.hidden_dim, self.hidden_dim, dtype=self._dtype
+                            ),
                             nn.ReLU(),
-                            nn.Linear(self.hidden_dim, self.hidden_dim),
+                            nn.Linear(
+                                self.hidden_dim, self.hidden_dim, dtype=self._dtype
+                            ),
                         ),
                     ]
                 )
@@ -387,6 +405,7 @@ class GraphEdgeActionGNN(nn.Module):
             hidden_dim=self.hidden_dim,
             n_hidden_layers=1,
             add_layer_norm=True,
+            dtype=self._dtype,
         )
 
     @property
@@ -422,7 +441,7 @@ class GraphEdgeActionGNN(nn.Module):
         node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
 
         # Multiple action type convolutions with residual connections.
-        x = self.embedding(node_features.squeeze().int())
+        x = self.embedding(node_features.squeeze().long())
         for i in range(0, len(self.conv_blks), 2):
             x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
             if self.is_directed:
@@ -537,6 +556,7 @@ class GraphEdgeActionMLP(nn.Module):
         n_hidden_layers_exit: int = 1,
         embedding_dim: int = 128,
         is_backward: bool = False,
+        dtype: torch.dtype | None = None,
     ):
         """Initializes a new GraphEdgeActionMLP module.
 
@@ -562,6 +582,7 @@ class GraphEdgeActionMLP(nn.Module):
         ), "n_hidden_layers_exit must be an integer"
         assert isinstance(directed, bool), "directed must be a boolean"
         assert isinstance(is_backward, bool), "is_backward must be a boolean"
+        self._dtype = parse_dtype(dtype)
         self._input_dim = n_nodes**2
         self.n_nodes = n_nodes
         self.is_directed = directed
@@ -576,6 +597,7 @@ class GraphEdgeActionMLP(nn.Module):
             hidden_dim=embedding_dim,
             n_hidden_layers=n_hidden_layers,
             add_layer_norm=True,
+            dtype=self._dtype,
         )
 
         # Exit action MLP
@@ -585,6 +607,7 @@ class GraphEdgeActionMLP(nn.Module):
             hidden_dim=embedding_dim,
             n_hidden_layers=n_hidden_layers_exit,
             add_layer_norm=True,
+            dtype=self._dtype,
         )
 
         # Edge prediction MLP
@@ -607,6 +630,7 @@ class GraphEdgeActionMLP(nn.Module):
             hidden_dim=embedding_dim,
             n_hidden_layers=1,
             add_layer_norm=True,
+            dtype=self._dtype,
         )
 
         self.edge_class_mlp = MLP(
@@ -615,6 +639,7 @@ class GraphEdgeActionMLP(nn.Module):
             hidden_dim=embedding_dim,
             n_hidden_layers=1,
             add_layer_norm=True,
+            dtype=self._dtype,
         )
 
     @property
@@ -648,6 +673,7 @@ class GraphEdgeActionMLP(nn.Module):
         adj_matrices = torch.zeros(
             (len(states_tensor), self.n_nodes, self.n_nodes),
             device=device,
+            dtype=self._dtype,
         )
 
         # Fill the adjacency matrices from edge indices

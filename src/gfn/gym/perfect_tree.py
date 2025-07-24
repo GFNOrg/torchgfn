@@ -105,7 +105,6 @@ class PerfectBinaryTree(DiscreteEnv):
         next_states_tns = [
             self.inverse_transition_table.get(tuple(tuple_)) for tuple_ in tuples
         ]
-        next_states_tns = torch.tensor(next_states_tns).reshape(-1, 1)
         next_states_tns = torch.tensor(next_states_tns).reshape(-1, 1).long()
         return self.States(next_states_tns)
 

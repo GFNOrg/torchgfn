@@ -20,7 +20,7 @@ from tensordict import TensorDict
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import GraphActions, GraphActionType
-from gfn.utils.common import ensure_same_device
+from gfn.utils.common import ensure_same_device, parse_dtype
 from gfn.utils.graphs import GeometricBatch, get_edge_indices
 
 
@@ -710,11 +710,17 @@ class GraphStates(States):
     s0: ClassVar[GeometricData]
     sf: ClassVar[GeometricData]
 
-    def __init__(self, data: np.ndarray, device: torch.device | None = None) -> None:
+    def __init__(
+        self,
+        data: np.ndarray,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+    ) -> None:
         """Initializes the GraphStates with a numpy array of `GeometricData` objects.
 
         Args:
             data: A numpy array of `GeometricData` objects representing individual graphs.
+            dtype: The dtype of floating point numbers. If None, uses pytorch default dtype.
             device: The device to store the graphs on (optional).
         """
         assert isinstance(data, np.ndarray), "data must be a numpy array"
@@ -727,6 +733,7 @@ class GraphStates(States):
                 self._device = cast(torch.Tensor, g.x).device
             else:
                 ensure_same_device(self._device, cast(torch.Tensor, g.x).device)
+        self._dtype = parse_dtype(dtype)
 
     @property
     def tensor(self) -> GeometricBatch:
@@ -737,9 +744,13 @@ class GraphStates(States):
         """
         if self.data.size == 0:
             dummy_graph = GeometricData(
-                x=torch.zeros(0, self.num_node_classes, device=self.device),
+                x=torch.zeros(
+                    0, self.num_node_classes, dtype=self._dtype, device=self.device
+                ),
                 edge_index=torch.zeros(2, 0, dtype=torch.long, device=self.device),
-                edge_attr=torch.zeros(0, self.num_edge_classes, device=self.device),
+                edge_attr=torch.zeros(
+                    0, self.num_edge_classes, dtype=self._dtype, device=self.device
+                ),
             )
             return GeometricBatch.from_data_list([dummy_graph])
 
@@ -789,7 +800,7 @@ class GraphStates(States):
         for i in range(num_graphs):
             data_array.flat[i] = cls.s0.clone()
 
-        return cls(data_array, device=device)
+        return cls(data_array, dtype=cls.s0.x.dtype, device=device)
 
     @classmethod
     def make_sink_states(
@@ -819,7 +830,7 @@ class GraphStates(States):
         for i in range(num_graphs):
             data_array.flat[i] = cls.sf.clone()
 
-        return cls(data_array, device=device)
+        return cls(data_array, dtype=cls.sf.x.dtype, device=device)
 
     @property
     def forward_masks(self) -> TensorDict:

@@ -51,7 +51,7 @@ def sample_erdos_renyi_graph(
     perm = rng.permutation(num_nodes)
     adjacency = adjacency[perm, :]
     adjacency = adjacency[:, perm]
-    adjacency = torch.tensor(adjacency, dtype=torch.int64)
+    adjacency = torch.tensor(adjacency, dtype=torch.long)
 
     # Get edge indices using torch.nonzero and transpose to shape (2, num_edges)
     edge_index = torch.nonzero(adjacency, as_tuple=False).t().contiguous()

@@ -104,7 +104,6 @@ def from_edge_indices(
         The position(s) of each edge in the ordering returned by
         ``get_edge_indices``.
     """
-
     # Convert to tensors for a unified implementation while preserving the
     # original return type.
     scalar_input = not torch.is_tensor(ei0) and not torch.is_tensor(ei1)
@@ -114,18 +113,20 @@ def from_edge_indices(
         i = torch.tensor(ei0, dtype=torch.long)
         j = torch.tensor(ei1, dtype=torch.long)
     else:
-        i = ei0 if torch.is_tensor(ei0) else torch.tensor(ei0, device=ei1.device)
-        j = ei1 if torch.is_tensor(ei1) else torch.tensor(ei1, device=ei0.device)
+        i = (
+            ei0.to(torch.long)
+            if torch.is_tensor(ei0)
+            else torch.tensor(ei0, dtype=torch.long)
+        )
+        j = (
+            ei1.to(torch.long)
+            if torch.is_tensor(ei1)
+            else torch.tensor(ei1, dtype=torch.long)
+        )
 
     # Sanity checks
     if torch.any(i == j):
         raise ValueError("Self-loops (i == j) are not enumerated by get_edge_indices.")
-
-    # Ensure both tensors share the same dtype/device.
-    if i.dtype != torch.long:
-        i = i.long()
-    if j.dtype != torch.long:
-        j = j.long()
 
     if is_directed:
         # Number of edges in the upper triangular part.

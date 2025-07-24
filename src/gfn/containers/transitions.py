@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from gfn.states import States
 
 from gfn.containers.base import Container
-from gfn.utils.common import ensure_same_device
+from gfn.utils.common import ensure_same_device, parse_dtype
 
 
 class Transitions(Container):
@@ -50,6 +50,7 @@ class Transitions(Container):
         is_backward: bool = False,
         log_rewards: torch.Tensor | None = None,
         log_probs: torch.Tensor | None = None,
+        dtype: torch.dtype | None = None,
     ):
         """Initializes a Transitions instance.
 
@@ -70,6 +71,7 @@ class Transitions(Container):
                 rewards for the transitions. If None, computed on the fly when needed.
             log_probs: Optional tensor of shape (n_transitions,) containing the log
                 probabilities of the actions.
+            dtype: The dtype of floating point numbers. If None, uses pytorch default fp dtype.
 
         Note:
             When states and next_states are not None, the Transitions is initialized as
@@ -77,6 +79,7 @@ class Transitions(Container):
         """
         self.env = env
         self.is_backward = is_backward
+        self._dtype = parse_dtype(dtype)
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
@@ -117,13 +120,13 @@ class Transitions(Container):
         self._log_rewards = log_rewards
         assert self._log_rewards is None or (
             self._log_rewards.shape == (self.n_transitions,)
-            and self._log_rewards.dtype == torch.float
+            and self._log_rewards.dtype == self._dtype
         )
 
         self.log_probs = log_probs
         assert self.log_probs is None or (
             self.log_probs.shape == self.actions.batch_shape
-            and self.log_probs.dtype == torch.float
+            and self.log_probs.dtype == self._dtype
         )
 
     @property
@@ -200,7 +203,7 @@ class Transitions(Container):
             self._log_rewards = torch.full(
                 (self.n_transitions,),
                 fill_value=-float("inf"),
-                dtype=torch.float,
+                dtype=self._dtype,
                 device=self.states.device,
             )
             self._log_rewards[self.is_terminating] = self.env.log_reward(
@@ -228,7 +231,7 @@ class Transitions(Container):
         log_rewards = torch.full(
             (self.n_transitions, 2),
             fill_value=-float("inf"),
-            dtype=torch.float,
+            dtype=self._dtype,
             device=self.states.device,
         )
         log_rewards[~is_sink_state, 0] = self.env.log_reward(self.states[~is_sink_state])
@@ -238,7 +241,7 @@ class Transitions(Container):
 
         assert (
             log_rewards.shape == (self.n_transitions, 2)
-            and log_rewards.dtype == torch.float
+            and log_rewards.dtype == self._dtype
         )
         return log_rewards
 
@@ -298,14 +301,14 @@ class Transitions(Container):
                 self._log_rewards = torch.full(
                     size=(0,),
                     fill_value=-float("inf"),
-                    dtype=torch.float,
+                    dtype=self._dtype,
                     device=self.device,
                 )
             if other.log_probs is not None:
                 self.log_probs = torch.full(
                     size=(0,),
                     fill_value=0,
-                    dtype=torch.float,
+                    dtype=self._dtype,
                     device=self.device,
                 )
 

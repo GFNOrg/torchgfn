@@ -9,6 +9,7 @@ from torch_geometric.data import Data as GeometricData
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import GraphEnv
 from gfn.states import GraphStates
+from gfn.utils.common import parse_dtype
 from gfn.utils.graphs import get_edge_indices
 
 
@@ -21,10 +22,10 @@ class GraphBuilding(GraphEnv):
     - Terminating construction (EXIT)
 
     Attributes:
-        num_node_classes (int): The number of node classes.
-        num_edge_classes (int): The number of edge classes.
-        state_evaluator (Callable[[GraphStates], torch.Tensor]): A callable that computes rewards for final states.
-        is_directed (bool): Whether the graph is directed.
+        num_node_classes: The number of node classes.
+        num_edge_classes: The number of edge classes.
+        state_evaluator: A callable that computes rewards for final states.
+        is_directed: Whether the graph is directed.
     """
 
     def __init__(
@@ -36,6 +37,7 @@ class GraphBuilding(GraphEnv):
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         s0: GeometricData | None = None,
         sf: GeometricData | None = None,
+        dtype: torch.dtype | None = None,
     ):
         """Initializes the GraphBuilding environment.
 
@@ -47,17 +49,20 @@ class GraphBuilding(GraphEnv):
             device: The device to run computations on.
             s0: The initial state.
             sf: The sink state.
+            dtype: The dtype of the graph building environment's floating point numbers.
         """
+        self._dtype = parse_dtype(dtype)
+
         if s0 is None:
             s0 = GeometricData(
-                x=torch.zeros((0, 1), dtype=torch.int64).to(device),
-                edge_attr=torch.zeros((0, 1), dtype=torch.int64).to(device),
+                x=torch.zeros((0, 1), dtype=self._dtype).to(device),
+                edge_attr=torch.zeros((0, 1), dtype=self._dtype).to(device),
                 edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             )
         if sf is None:
             sf = GeometricData(
-                x=torch.full((1, 1), -1, dtype=torch.int64).to(device),
-                edge_attr=torch.full((0, 1), -1, dtype=torch.int64).to(device),
+                x=torch.full((1, 1), -1, dtype=self._dtype).to(device),
+                edge_attr=torch.full((0, 1), -1, dtype=self._dtype).to(device),
                 edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             )
 
@@ -416,6 +421,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         state_evaluator: callable,
         directed: bool,
         device: Literal["cpu", "cuda"] | torch.device,
+        dtype: torch.dtype | None = None,
     ):
         """Initializes the `GraphBuildingOnEdges` environment.
 
@@ -425,6 +431,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             directed: Whether the graph should be directed.
             device: The device to use.
         """
+        dtype = parse_dtype(dtype)
         self.n_nodes = n_nodes
         if directed:
             # all off-diagonal edges.
@@ -434,13 +441,13 @@ class GraphBuildingOnEdges(GraphBuilding):
             self.n_possible_edges = (n_nodes**2 - n_nodes) // 2
 
         s0 = GeometricData(
-            x=torch.arange(self.n_nodes)[:, None].to(device),
-            edge_attr=torch.ones((0, 1), device=device),
+            x=torch.arange(self.n_nodes, dtype=dtype)[:, None].to(device),
+            edge_attr=torch.ones((0, 1), dtype=dtype, device=device),
             edge_index=torch.ones((2, 0), dtype=torch.long, device=device),
         )
         sf = GeometricData(
-            x=-torch.ones(self.n_nodes)[:, None].to(device),
-            edge_attr=torch.zeros((0, 1), device=device),
+            x=-torch.ones(self.n_nodes, dtype=dtype)[:, None].to(device),
+            edge_attr=torch.zeros((0, 1), dtype=dtype, device=device),
             edge_index=torch.zeros((2, 0), dtype=torch.long, device=device),
         )
         super().__init__(
@@ -451,6 +458,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             device=device,
             s0=s0,
             sf=sf,
+            dtype=dtype,
         )
 
     def make_states_class(self) -> type[GraphStates]:

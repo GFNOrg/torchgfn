@@ -118,10 +118,10 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         assert not torch.any(states.is_initial_state)
 
         incoming_log_flows = torch.full_like(
-            states.backward_masks, -float("inf"), dtype=torch.float
+            states.backward_masks, -float("inf"), dtype=torch.get_default_dtype()
         )
         outgoing_log_flows = torch.full_like(
-            states.forward_masks, -float("inf"), dtype=torch.float
+            states.forward_masks, -float("inf"), dtype=torch.get_default_dtype()
         )
 
         # TODO: Need to vectorize this loop.

@@ -125,7 +125,7 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
         node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
 
         # Multiple action type convolutions with residual connections.
-        x = self.embedding(node_features.squeeze().int())
+        x = self.embedding(node_features.squeeze().long())
         for i in range(0, len(self.conv_blks), 2):
             x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
             assert isinstance(self.conv_blks[i + 1], nn.ModuleList)
@@ -309,7 +309,7 @@ class DAGEdgeActionGNNv2(nn.Module):
         )
         # batch_idx: (n_graphs * n_nodes)
 
-        node_embs = self.node_embedding(node_features.squeeze().int())
+        node_embs = self.node_embedding(node_features.squeeze().long())
         # node_embs: (n_graphs * n_nodes, embedding_dim)
 
         edge_embs = self.edge_embedding.repeat(edge_index.shape[1], 1)

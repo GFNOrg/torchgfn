@@ -284,7 +284,7 @@ class BitSequence(DiscreteEnv):
         """
         if length is None:
             mask = tensor != -1
-            length = mask.int().sum(dim=-1)
+            length = mask.long().sum(dim=-1)
         states_instance = self.make_states_class()(tensor, length=length)
         self.update_masks(states_instance)
         return states_instance
@@ -817,7 +817,7 @@ class BitSequencePlus(BitSequence):
         old_tensor[is_exit] = torch.full_like(
             old_tensor[is_exit],
             self.n_actions - 1,
-            dtype=torch.long,
+            dtype=old_tensor.dtype,
             device=old_tensor.device,
         )
         return self.States(old_tensor)

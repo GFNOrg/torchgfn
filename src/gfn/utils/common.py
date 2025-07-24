@@ -13,6 +13,21 @@ import torch.distributed as dist
 # -----------------------------------------------------------------------------
 
 
+def parse_dtype(dtype: torch.dtype | None) -> torch.dtype:
+    """Sets floating point dtypes (optionally using the current default).
+
+    Args:
+        dtype: floating point torch.dtype to set, or None (use pytorch default fp dtype).
+    """
+    if dtype is None:
+        return torch.get_default_dtype()
+
+    assert (
+        dtype.is_floating_point
+    ), f"submitted dtype: {dtype} is not a floating point dtype"
+    return dtype
+
+
 def get_available_cpus() -> int:
     """Return the number of *usable* CPUs for the current process.
 

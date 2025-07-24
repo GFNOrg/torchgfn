@@ -5,6 +5,7 @@ import torch
 from gfn.containers import Trajectories, Transitions
 from gfn.modules import GFNModule
 from gfn.states import States
+from gfn.utils.common import parse_dtype
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -85,6 +86,7 @@ def get_trajectory_pfs(
     trajectories: Trajectories,
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
+    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Calculates the log probabilities of forward trajectories.
 
@@ -120,7 +122,7 @@ def get_trajectory_pfs(
         log_pf_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],
             fill_value=fill_value,
-            dtype=torch.float,
+            dtype=parse_dtype(dtype),
         )
 
         if len(valid_states) == 0:
@@ -157,7 +159,10 @@ def get_trajectory_pfs(
 
 
 def get_trajectory_pbs(
-    pb: GFNModule, trajectories: Trajectories, fill_value: float = 0.0
+    pb: GFNModule,
+    trajectories: Trajectories,
+    fill_value: float = 0.0,
+    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Calculates the log probabilities of backward trajectories.
 
@@ -165,6 +170,7 @@ def get_trajectory_pbs(
         pb: The backward policy GFN module.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
+        dtype: The dtype of the log probabilities.
 
     Returns:
         A tensor containing the log probabilities of the backward trajectories.
@@ -178,7 +184,7 @@ def get_trajectory_pbs(
     log_pb_trajectories = torch.full_like(
         trajectories.actions.tensor[..., 0],
         fill_value=fill_value,
-        dtype=torch.float,
+        dtype=parse_dtype(dtype),
     )
 
     # Note the different mask for valid states and actions compared to the pf case.
@@ -300,7 +306,16 @@ def get_transition_pfs(
     return log_pf_actions
 
 
-def get_transition_pbs(pb: GFNModule, transitions: Transitions) -> torch.Tensor:
+def get_transition_pbs(
+    pb: GFNModule, transitions: Transitions, dtype: torch.dtype | None = None
+) -> torch.Tensor:
+    """Calculates the log probabilities of backward transitions.
+
+    Args:
+        pb: The backward policy Estimator.
+        transitions: The transitions to calculate probabilities for.
+        dtype: The dtype of the log probabilities.
+    """
     # automatically removes invalid transitions (i.e. s_f -> s_f)
     valid_next_states = transitions.next_states[~transitions.is_terminating]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]
@@ -316,7 +331,7 @@ def get_transition_pbs(pb: GFNModule, transitions: Transitions) -> torch.Tensor:
     # Evaluate the log PB of the actions.
     log_pb_actions = torch.zeros(
         (transitions.n_transitions,),
-        dtype=torch.float,
+        dtype=parse_dtype(dtype),
         device=transitions.states.device,
     )
 
