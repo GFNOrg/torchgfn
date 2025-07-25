@@ -130,6 +130,7 @@ def test_capacity_limit(simple_env, trajectories):
     # Should keep the last 3 trajectories
     assert isinstance(buffer.training_objects, Trajectories)
     assert isinstance(buffer.training_objects.log_rewards, torch.Tensor)
+    assert buffer.training_objects.log_rewards is not None
     assert buffer.training_objects.log_rewards[-3:].tolist() == [2.0, 3.0, 4.0]
 
 
@@ -241,7 +242,10 @@ def test_add_with_diversity(simple_env, trajectories):
     assert len(buffer) == 5
     assert isinstance(buffer.training_objects, Trajectories)
     assert isinstance(buffer.training_objects.log_rewards, torch.Tensor)
-    assert torch.all(buffer.training_objects.log_rewards >= 0)
+
+    log_rewards = buffer.training_objects.log_rewards
+    assert log_rewards is not None
+    assert torch.all(log_rewards >= 0)
 
 
 def test_skip_diversity_check(simple_env, trajectories):

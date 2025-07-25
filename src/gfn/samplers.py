@@ -296,6 +296,15 @@ class Sampler:
             torch.stack(all_estimator_outputs, dim=0) if save_estimator_outputs else None
         )
 
+        # If there are no logprobs or estimator outputs, set them to None.
+        # TODO: This is a hack to avoid errors when no logprobs or estimator outputs are
+        # saved. This bug was introduced when I changed the dtypes library-wide -- why
+        # is this happening?
+        if stacked_logprobs is not None and len(stacked_logprobs) == 0:
+            stacked_logprobs = None
+        if stacked_estimator_outputs is not None and len(stacked_estimator_outputs) == 0:
+            stacked_estimator_outputs = None
+
         trajectories = Trajectories(
             env=env,
             states=stacked_states,
@@ -728,12 +737,14 @@ class LocalSearchSampler(Sampler):
             prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)
             recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(0, 1)
             new_trajectories_log_pf = torch.full((bs, max_traj_len), 0.0).to(
-                device=device, dtype=prev_trajectories_log_pf.dtype
+                device=device, dtype=prev_trajectories_log_pf.dtype  # type: ignore
             )
-            new_trajectories_log_pf[prev_mask[:, :-1]] = prev_trajectories_log_pf[
+            new_trajectories_log_pf[prev_mask[:, :-1]] = prev_trajectories_log_pf[  # type: ignore
                 :, :max_n_prev
-            ][prev_mask_truc]
-            new_trajectories_log_pf[action_recon_mask] = recon_trajectories_log_pf[
+            ][
+                prev_mask_truc
+            ]
+            new_trajectories_log_pf[action_recon_mask] = recon_trajectories_log_pf[  # type: ignore
                 action_recon_mask2
             ]
             new_trajectories_log_pf = new_trajectories_log_pf.transpose(0, 1)
@@ -744,12 +755,14 @@ class LocalSearchSampler(Sampler):
             prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)
             recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(0, 1)
             new_trajectories_log_pb = torch.full((bs, max_traj_len), 0.0).to(
-                device=device, dtype=prev_trajectories_log_pb.dtype
+                device=device, dtype=prev_trajectories_log_pb.dtype  # type: ignore
             )
-            new_trajectories_log_pb[prev_mask[:, :-1]] = prev_trajectories_log_pb[
+            new_trajectories_log_pb[prev_mask[:, :-1]] = prev_trajectories_log_pb[  # type: ignore
                 :, :max_n_prev
-            ][prev_mask_truc]
-            new_trajectories_log_pb[action_recon_mask] = recon_trajectories_log_pb[
+            ][
+                prev_mask_truc
+            ]
+            new_trajectories_log_pb[action_recon_mask] = recon_trajectories_log_pb[  # type: ignore
                 action_recon_mask2
             ]
             new_trajectories_log_pb = new_trajectories_log_pb.transpose(0, 1)

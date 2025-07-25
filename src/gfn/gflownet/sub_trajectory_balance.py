@@ -1,6 +1,6 @@
 import math
 import warnings
-from typing import List, Literal, Tuple
+from typing import List, Literal, Tuple, TypeAlias
 
 import torch
 
@@ -14,15 +14,15 @@ from gfn.utils.handlers import (
     warn_about_recalculating_logprobs,
 )
 
-ContributionsTensor = (
+ContributionsTensor: TypeAlias = (
     torch.Tensor
-)  # shape: [max_len * (1 + max_len) / 2, n_trajectories]
-CumulativeLogProbsTensor = torch.Tensor  # shape: [max_length + 1, n_trajectories]
-LogStateFlowsTensor = torch.Tensor  # shape: [max_length, n_trajectories]
-LogTrajectoriesTensor = torch.Tensor  # shape: [max_length, n_trajectories]
-MaskTensor = torch.Tensor  # shape: [max_length, n_trajectories]
-PredictionsTensor = torch.Tensor  # shape: [max_length + 1 - i, n_trajectories]
-TargetsTensor = torch.Tensor  # shape: [max_length + 1 - i, n_trajectories]
+)  # shape: [maxlen * (1 + maxlen) / 2, n_traj]
+CumulativeLogProbsTensor: TypeAlias = torch.Tensor  # shape: [maxlen + 1, n_traj]
+LogStateFlowsTensor: TypeAlias = torch.Tensor  # shape: [maxlen, n_traj]
+LogTrajectoriesTensor: TypeAlias = torch.Tensor  # shape: [maxlen, n_traj]
+MaskTensor: TypeAlias = torch.Tensor  # shape: [maxlen, n_traj]
+PredictionsTensor: TypeAlias = torch.Tensor  # shape: [maxlen + 1 - i, n_traj]
+TargetsTensor: TypeAlias = torch.Tensor  # shape: [maxlen + 1 - i, n_traj]
 
 
 class SubTBGFlowNet(TrajectoryBasedGFlowNet):

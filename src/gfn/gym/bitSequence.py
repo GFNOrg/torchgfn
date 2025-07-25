@@ -21,9 +21,14 @@ class BitSequenceStates(DiscreteStates):
         word_size (ClassVar[int]): The size of each word in the bit sequence.
         tensor (torch.Tensor): The tensor representing the states.
         length (torch.Tensor): The tensor representing the length of each bit sequence.
+        forward_masks (torch.Tensor): The tensor representing the forward masks.
+        backward_masks (torch.Tensor): The tensor representing the backward masks.
     """
 
     word_size: ClassVar[int]
+    length: torch.Tensor
+    forward_masks: torch.Tensor
+    backward_masks: torch.Tensor
 
     def __init__(
         self,
@@ -49,6 +54,9 @@ class BitSequenceStates(DiscreteStates):
             )
         assert is_int_dtype(length)
         self.length = length
+        assert self.length is not None
+        assert self.forward_masks is not None
+        assert self.backward_masks is not None
 
     def clone(self) -> BitSequenceStates:
         """Returns a clone of the current BitSequencesStates object.
@@ -78,7 +86,6 @@ class BitSequenceStates(DiscreteStates):
             A subset of the BitSequencesStates object.
         """
         self._check_both_forward_backward_masks_exist()
-
         return self.__class__(
             self.tensor[index],
             self.length[index],
