@@ -10,13 +10,11 @@ from gfn.gflownet import GFlowNet, TBGFlowNet
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
 from gfn.states import DiscreteStates
-from gfn.utils.common import parse_dtype
 
 
 def get_terminating_state_dist_pmf(
     env: DiscreteEnv,
     states: DiscreteStates,
-    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Computes the empirical distribution of the terminating states.
 
@@ -36,7 +34,9 @@ def get_terminating_state_dist_pmf(
         for state_idx in range(env.n_terminating_states)
     ]
 
-    return torch.tensor(counter_list, dtype=parse_dtype(dtype)) / len(states_indices)
+    return torch.tensor(counter_list, dtype=torch.get_default_dtype()) / len(
+        states_indices
+    )
 
 
 def validate(

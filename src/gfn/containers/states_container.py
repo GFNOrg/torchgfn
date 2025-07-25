@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from gfn.states import States
 
 from gfn.containers.base import Container
-from gfn.utils.common import ensure_same_device, parse_dtype
+from gfn.utils.common import ensure_same_device
 
 StateType = TypeVar("StateType", bound="States")
 
@@ -38,7 +38,6 @@ class StatesContainer(Container, Generic[StateType]):
         conditioning: torch.Tensor | None = None,
         is_terminating: torch.Tensor | None = None,
         log_rewards: torch.Tensor | None = None,
-        dtype: torch.dtype | None = None,
     ):
         """Initializes a StatesContainer instance.
 
@@ -52,10 +51,8 @@ class StatesContainer(Container, Generic[StateType]):
                 are terminating. If None, all are set to False.
             log_rewards: Optional tensor of shape (n_states,) containing the log rewards
                 for terminating states. If None, computed on the fly when needed.
-            dtype: The dtype of floating point numbers. If None, uses pytorch default fp dtype.
         """
         self.env = env
-        self._dtype = parse_dtype(dtype)
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
@@ -92,7 +89,7 @@ class StatesContainer(Container, Generic[StateType]):
         self._log_rewards = log_rewards
         assert self._log_rewards is None or (
             self._log_rewards.shape == batch_shape
-            and self._log_rewards.dtype == self._dtype
+            and self._log_rewards.is_floating_point()
         )
 
     @property
@@ -179,7 +176,6 @@ class StatesContainer(Container, Generic[StateType]):
             self._log_rewards = torch.full(
                 size=(len(self.states),),
                 fill_value=-float("inf"),
-                dtype=self._dtype,
                 device=self.states.device,
             )
             self._log_rewards[self.is_terminating] = self.env.log_reward(
@@ -215,7 +211,6 @@ class StatesContainer(Container, Generic[StateType]):
             self._log_rewards = torch.full(
                 size=(0,),
                 fill_value=-float("inf"),
-                dtype=self._dtype,
                 device=self.device,
             )
 

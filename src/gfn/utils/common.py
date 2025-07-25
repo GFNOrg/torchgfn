@@ -13,19 +13,9 @@ import torch.distributed as dist
 # -----------------------------------------------------------------------------
 
 
-def parse_dtype(dtype: torch.dtype | None) -> torch.dtype:
-    """Sets floating point dtypes (optionally using the current default).
-
-    Args:
-        dtype: floating point torch.dtype to set, or None (use pytorch default fp dtype).
-    """
-    if dtype is None:
-        return torch.get_default_dtype()
-
-    assert (
-        dtype.is_floating_point
-    ), f"submitted dtype: {dtype} is not a floating point dtype"
-    return dtype
+def is_int_dtype(tensor: torch.Tensor) -> bool:
+    """Check if a tensor is an integer dtype."""
+    return not torch.is_floating_point(tensor) and not torch.is_complex(tensor)
 
 
 def get_available_cpus() -> int:

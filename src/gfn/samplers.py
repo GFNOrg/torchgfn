@@ -7,7 +7,7 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator
 from gfn.states import GraphStates, States
-from gfn.utils.common import ensure_same_device, parse_dtype
+from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import graph_states_share_storage
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
@@ -31,7 +31,6 @@ class Sampler:
     def __init__(
         self,
         estimator: Estimator,
-        dtype: torch.dtype | None = None,
     ) -> None:
         """Initializes a Sampler with a PolicyEstimator.
 
@@ -41,7 +40,6 @@ class Sampler:
             dtype: The dtype of floating point numbers. If None, uses pytorch default fp dtype.
         """
         self.estimator = estimator
-        self._dtype = parse_dtype(dtype)
 
     def sample_actions(
         self,
@@ -191,23 +189,19 @@ class Sampler:
             env.actions_from_batch_shape((n_trajectories,))
         ]
         trajectories_logprobs: List[torch.Tensor] = [
-            torch.full((n_trajectories,), fill_value=0, dtype=self._dtype, device=device)
+            torch.full((n_trajectories,), fill_value=0, device=device)
         ]
         trajectories_terminating_idx = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
-        trajectories_log_rewards = torch.zeros(
-            n_trajectories, dtype=self._dtype, device=device
-        )
+        trajectories_log_rewards = torch.zeros(n_trajectories, device=device)
 
         step = 0
         all_estimator_outputs = []
 
         while not all(dones):
             actions = env.actions_from_batch_shape((n_trajectories,))
-            log_probs = torch.full(
-                (n_trajectories,), fill_value=0, dtype=self._dtype, device=device
-            )
+            log_probs = torch.full((n_trajectories,), fill_value=0.0, device=device)
             # This optionally allows you to retrieve the estimator_outputs collected
             # during sampling. This is useful if, for example, you want to evaluate off
             # policy actions later without repeating calculations to obtain the env
@@ -231,7 +225,6 @@ class Sampler:
                 estimator_outputs_padded = torch.full(
                     (n_trajectories,) + estimator_outputs.shape[1:],
                     fill_value=-float("inf"),
-                    dtype=self._dtype,
                     device=device,
                 )
                 estimator_outputs_padded[~dones] = estimator_outputs
@@ -340,7 +333,6 @@ class LocalSearchSampler(Sampler):
         self,
         pf_estimator: Estimator,
         pb_estimator: Estimator,
-        dtype: torch.dtype | None = None,
     ):
         """Initializes a LocalSearchSampler with forward and backward estimators.
 
@@ -348,10 +340,9 @@ class LocalSearchSampler(Sampler):
             pf_estimator: The forward policy estimator for sampling and reconstructing
                 trajectories.
             pb_estimator: The backward policy estimator for backtracking trajectories.
-            dtype: The dtype of floating point numbers. If None, uses pytorch default fp dtype.
         """
-        super().__init__(pf_estimator, dtype)
-        self.backward_sampler = Sampler(pb_estimator, dtype)
+        super().__init__(pf_estimator)
+        self.backward_sampler = Sampler(pb_estimator)
 
     def local_search(
         self,
@@ -592,11 +583,7 @@ class LocalSearchSampler(Sampler):
         if n is None:
             n = int(trajectories.n_trajectories)
 
-        search_indices = torch.arange(
-            n,
-            dtype=torch.long,
-            device=trajectories.states.device,
-        )
+        search_indices = torch.arange(n, device=trajectories.states.device)
 
         for it in range(n_local_search_loops):
             # Search phase
@@ -614,10 +601,7 @@ class LocalSearchSampler(Sampler):
             trajectories.extend(ls_trajectories)
 
             last_indices = torch.arange(
-                n * it,
-                n * (it + 1),
-                dtype=torch.long,
-                device=trajectories.states.device,
+                n * it, n * (it + 1), device=trajectories.states.device
             )
             search_indices[is_updated] = last_indices[is_updated]
 
@@ -685,12 +669,7 @@ class LocalSearchSampler(Sampler):
         max_traj_len = int(new_trajectories_dones.max().item())
 
         # Create helper indices and masks
-        idx = (
-            torch.arange(max_traj_len + 1, dtype=torch.long)
-            .unsqueeze(1)
-            .expand(-1, bs)
-            .to(n_prevs)
-        )
+        idx = torch.arange(max_traj_len + 1).unsqueeze(1).expand(-1, bs).to(n_prevs)
 
         prev_mask = idx < n_prevs
         state_recon_mask = (idx >= n_prevs) * (idx <= n_prevs + n_recons)

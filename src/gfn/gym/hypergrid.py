@@ -121,7 +121,7 @@ class HyperGrid(DiscreteEnv):
             device = torch.device(device)
 
         s0 = torch.zeros(ndim, dtype=torch.long, device=device)
-        sf = torch.full((ndim,), fill_value=-1, dtype=torch.long, device=device)
+        sf = torch.full((ndim,), fill_value=-1, device=device)
         n_actions = ndim + 1
 
         state_shape = (self.ndim,)

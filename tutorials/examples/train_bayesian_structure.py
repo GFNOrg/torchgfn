@@ -309,7 +309,7 @@ class DAGEdgeActionGNNv2(nn.Module):
         )
         # batch_idx: (n_graphs * n_nodes)
 
-        node_embs = self.node_embedding(node_features.squeeze().long())
+        node_embs = self.node_embedding(node_features.squeeze())
         # node_embs: (n_graphs * n_nodes, embedding_dim)
 
         edge_embs = self.edge_embedding.repeat(edge_index.shape[1], 1)

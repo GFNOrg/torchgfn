@@ -5,7 +5,6 @@ import torch
 from gfn.containers import Trajectories, Transitions
 from gfn.estimators import Estimator
 from gfn.states import States
-from gfn.utils.common import parse_dtype
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -86,7 +85,6 @@ def get_trajectory_pfs(
     trajectories: Trajectories,
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
-    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Calculates the log probabilities of forward trajectories.
 
@@ -122,7 +120,7 @@ def get_trajectory_pfs(
         log_pf_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],
             fill_value=fill_value,
-            dtype=parse_dtype(dtype),
+            dtype=torch.get_default_dtype(),  # Floating point dtype.
         )
 
         if len(valid_states) == 0:
@@ -162,7 +160,6 @@ def get_trajectory_pbs(
     pb: Estimator,
     trajectories: Trajectories,
     fill_value: float = 0.0,
-    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Calculates the log probabilities of backward trajectories.
 
@@ -184,7 +181,7 @@ def get_trajectory_pbs(
     log_pb_trajectories = torch.full_like(
         trajectories.actions.tensor[..., 0],
         fill_value=fill_value,
-        dtype=parse_dtype(dtype),
+        dtype=torch.get_default_dtype(),  # Floating point dtype.
     )
 
     # Note the different mask for valid states and actions compared to the pf case.
@@ -330,9 +327,7 @@ def get_transition_pbs(
 
     # Evaluate the log PB of the actions.
     log_pb_actions = torch.zeros(
-        (transitions.n_transitions,),
-        dtype=parse_dtype(dtype),
-        device=transitions.states.device,
+        (transitions.n_transitions,), device=transitions.states.device
     )
 
     if len(valid_next_states) != 0:

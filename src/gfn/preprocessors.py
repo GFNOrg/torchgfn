@@ -6,6 +6,7 @@ from einops import rearrange
 from torch.nn.functional import one_hot
 
 from gfn.states import DiscreteStates, GraphStates, States
+from gfn.utils.common import is_int_dtype
 from gfn.utils.graphs import GeometricBatch
 
 
@@ -213,8 +214,8 @@ class KHotPreprocessor(Preprocessor):
             This preprocessor only works for integer state tensors.
         """
         states_tensor = states.tensor
-        assert (
-            states_tensor.dtype == torch.long
+        assert is_int_dtype(
+            states_tensor
         ), "K Hot preprocessing only works for integer states"
         states_tensor = states_tensor.long()
         hot = one_hot(states_tensor, self.height).float()

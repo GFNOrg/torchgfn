@@ -10,7 +10,7 @@ from gfn.containers.states_container import StatesContainer
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 from gfn.states import DiscreteStates, GraphStates, States
-from gfn.utils.common import ensure_same_device, parse_dtype
+from gfn.utils.common import ensure_same_device, is_int_dtype
 
 
 # TODO: remove env from this class?
@@ -56,7 +56,6 @@ class Trajectories(Container):
         log_rewards: torch.Tensor | None = None,
         log_probs: torch.Tensor | None = None,
         estimator_outputs: torch.Tensor | None = None,
-        dtype: torch.dtype | None = None,
     ) -> None:
         """Initializes a Trajectories instance.
 
@@ -77,15 +76,12 @@ class Trajectories(Container):
                 the log probabilities of the trajectories' actions.
             estimator_outputs: Optional tensor of shape (max_length, n_trajectories, ...)
                 containing outputs of a function approximator for each step.
-            dtype: The dtype of floating point numbers. If None, uses pytorch default fp dtype.
-
         Note:
             When states and actions are not None, the Trajectories is initialized as
             an empty container that can be populated later with the `extend` method.
         """
         self.env = env
         self.is_backward = is_backward
-        self._dtype = parse_dtype(dtype)
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
@@ -128,30 +124,29 @@ class Trajectories(Container):
         self.terminating_idx = (
             terminating_idx
             if terminating_idx is not None
-            else torch.full(size=(0,), fill_value=-1, dtype=torch.long, device=device)
+            else torch.full(size=(0,), fill_value=-1, device=device)
         )
-        assert (
-            self.terminating_idx.shape == (self.n_trajectories,)
-            and self.terminating_idx.dtype == torch.long
+        assert self.terminating_idx.shape == (self.n_trajectories,) and is_int_dtype(
+            self.terminating_idx
         )
 
         self._log_rewards = log_rewards
         assert self._log_rewards is None or (
             self._log_rewards.shape == (self.n_trajectories,)
-            and self._log_rewards.dtype == self._dtype
+            and self._log_rewards.is_floating_point()
         )
 
         self.log_probs = log_probs
         assert self.log_probs is None or (
             self.log_probs.shape == self.actions.batch_shape
-            and self.log_probs.dtype == self._dtype
+            and self.log_probs.is_floating_point()
         )
 
         self.estimator_outputs = estimator_outputs
         assert self.estimator_outputs is None or (
             self.estimator_outputs.shape[: len(self.states.batch_shape)]
             == self.actions.batch_shape
-            and self.estimator_outputs.dtype == self._dtype
+            and self.estimator_outputs.is_floating_point()
         )
 
     def __repr__(self) -> str:
@@ -332,16 +327,16 @@ class Trajectories(Container):
         if len(self) == 0:
             if other._log_rewards is not None:
                 self._log_rewards = torch.full(
-                    (0,), fill_value=-float("inf"), dtype=self._dtype, device=self.device
+                    (0,), fill_value=-float("inf"), device=self.device
                 )
             if other.log_probs is not None:
                 self.log_probs = torch.full(
-                    size=(0, 0), fill_value=0, dtype=self._dtype, device=self.device
+                    size=(0, 0), fill_value=0.0, device=self.device
                 )
             if other.estimator_outputs is not None:
                 self.estimator_outputs = torch.full(
                     size=(0, 0, *other.estimator_outputs.shape[2:]),
-                    fill_value=0,
+                    fill_value=0.0,
                     dtype=other.estimator_outputs.dtype,  # TODO: Should this be self.float_dtype?
                     device=self.device,
                 )
@@ -416,7 +411,6 @@ class Trajectories(Container):
             log_rewards = torch.full(
                 actions.batch_shape,
                 fill_value=-float("inf"),
-                dtype=self._dtype,
                 device=actions.device,
             )
             # TODO: Can we vectorize this?
@@ -482,7 +476,6 @@ class Trajectories(Container):
             log_rewards = torch.full(
                 (len(states),),
                 fill_value=-float("inf"),
-                dtype=self._dtype,
                 device=states.device,
             )
             # Get the original indices (before flattening and filtering).

@@ -52,7 +52,7 @@ class PerfectBinaryTree(DiscreteEnv):
         self.n_nodes = 2 ** (self.depth + 1) - 1
 
         self.s0 = torch.zeros((1,), dtype=torch.long)
-        self.sf = torch.full((1,), fill_value=-1, dtype=torch.long)
+        self.sf = torch.full((1,), fill_value=-1)
         super().__init__(self.n_actions, self.s0, (1,), sf=self.sf)
         self.States: type[DiscreteStates] = self.States
 

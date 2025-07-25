@@ -8,6 +8,7 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import DiscreteEnv
 from gfn.states import DiscreteStates
+from gfn.utils.common import is_int_dtype
 
 # This environment is the torchgfn implmentation of the bit sequences task presented in :Malkin, Nikolay & Jain, Moksh & Bengio, Emmanuel & Sun, Chen & Bengio, Yoshua. (2022).
 # Trajectory Balance: Improved Credit Assignment in GFlowNets. https://arxiv.org/pdf/2201.13259
@@ -46,8 +47,7 @@ class BitSequenceStates(DiscreteStates):
             length = torch.zeros(
                 self.batch_shape, dtype=torch.long, device=self.__class__.device
             )
-        assert length is not None
-        assert length.dtype == torch.long
+        assert is_int_dtype(length)
         self.length = length
 
     def clone(self) -> BitSequenceStates:
@@ -475,18 +475,14 @@ class BitSequence(DiscreteEnv):
         """Convert a tensor of integers to their binary representation using k bits.
 
         Args:
-            tensor: A tensor containing integers. The tensor must have a dtype
-                of torch.int32 or torch.int64.
+            tensor: A tensor containing integers.
             k: The number of bits to use for the binary representation of each
                 integer.
 
         Returns:
             A tensor containing the binary representation of the input integers.
         """
-        assert tensor.dtype in [
-            torch.int32,
-            torch.int64,
-        ], "Tensor must contain integers"
+        assert is_int_dtype(tensor), "Tensor must contain integers"
 
         batch_shape = tensor.shape[:-1]
         length = tensor.shape[-1]
@@ -520,7 +516,10 @@ class BitSequence(DiscreteEnv):
         Returns:
             A tensor of integers obtained from the binary tensor.
         """
-        assert binary_tensor.dtype == torch.int64, "Binary tensor must be of type int64"
+        assert binary_tensor.dtype in [
+            torch.int64,
+            torch.long,
+        ], "Binary tensor must be of type int64"
         batch_shape = binary_tensor.shape[:-1]
         length = binary_tensor.shape[-1] // k
 
