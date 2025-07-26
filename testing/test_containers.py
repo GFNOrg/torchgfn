@@ -93,7 +93,8 @@ def trajectories_containers(env: Env):
                 [[1, 0], [0, 1]],  # Step 1
                 [[2, 0], [0, 2]],  # Step 2
                 [[2, 0], [0, 2]],  # Padding for trajectory 1
-            ]
+            ],
+            dtype=torch.int,  # Tests type compatibility with int32.
         )
     )
 
@@ -103,11 +104,12 @@ def trajectories_containers(env: Env):
                 [[0], [1]],  # Step 0
                 [[0], [1]],  # Step 1
                 [[2], [2]],  # Exit action for both trajectories
-            ]
+            ],
+            dtype=torch.int,  # Tests type compatibility with int32.
         )
     )
 
-    terminating_idx1 = torch.tensor([2, 2])
+    terminating_idx1 = torch.tensor([2, 2], dtype=torch.int)
     log_rewards1 = torch.tensor([-2.0, -2.0])
 
     trajectories1 = Trajectories(
@@ -126,7 +128,8 @@ def trajectories_containers(env: Env):
                 [[1, 0], [0, 1]],  # Step 1
                 [[1, 1], [1, 1]],  # Step 2
                 [[2, 1], [1, 1]],  # Step 3 (only for trajectory 1)
-            ]
+            ],
+            dtype=torch.long,  # Tests type compatibility with int64.
         )
     )
 
@@ -136,11 +139,14 @@ def trajectories_containers(env: Env):
                 [[0], [1]],  # Step 0
                 [[1], [1]],  # Step 1
                 [[2], [2]],  # Exit action for both trajectories
-            ]
+            ],
+            dtype=torch.long,  # Tests type compatibility with int64.
         )
     )
 
-    terminating_idx2 = torch.tensor([3, 2])
+    terminating_idx2 = torch.tensor(
+        [3, 2], dtype=torch.long
+    )  # Tests type compatibility with int64.
     log_rewards2 = torch.tensor([-3.0, -2.0])
 
     trajectories2 = Trajectories(

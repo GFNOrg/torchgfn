@@ -224,7 +224,9 @@ def train(env, gflownet, seed):
     print("+ Training Conditional {}!".format(type(gflownet)))
     for _ in (pbar := tqdm(range(n_iterations))):
         conditioning = torch.rand((batch_size, 1)).to(gflownet.device)  # type: ignore
-        conditioning = (conditioning > 0.5).to(torch.float)  # Randomly 1 and zero.
+        conditioning = (conditioning > 0.5).to(
+            torch.get_default_dtype()
+        )  # Randomly 1 and zero.
 
         trajectories = gflownet.sample_trajectories(
             env,

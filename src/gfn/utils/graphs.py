@@ -104,7 +104,6 @@ def from_edge_indices(
         The position(s) of each edge in the ordering returned by
         ``get_edge_indices``.
     """
-
     # Convert to tensors for a unified implementation while preserving the
     # original return type.
     scalar_input = not torch.is_tensor(ei0) and not torch.is_tensor(ei1)
@@ -114,18 +113,20 @@ def from_edge_indices(
         i = torch.tensor(ei0, dtype=torch.long)
         j = torch.tensor(ei1, dtype=torch.long)
     else:
-        i = ei0 if torch.is_tensor(ei0) else torch.tensor(ei0, device=ei1.device)
-        j = ei1 if torch.is_tensor(ei1) else torch.tensor(ei1, device=ei0.device)
+        i = (
+            ei0.to(torch.long)
+            if torch.is_tensor(ei0)
+            else torch.tensor(ei0, dtype=torch.long)
+        )
+        j = (
+            ei1.to(torch.long)
+            if torch.is_tensor(ei1)
+            else torch.tensor(ei1, dtype=torch.long)
+        )
 
     # Sanity checks
     if torch.any(i == j):
         raise ValueError("Self-loops (i == j) are not enumerated by get_edge_indices.")
-
-    # Ensure both tensors share the same dtype/device.
-    if i.dtype != torch.long:
-        i = i.long()
-    if j.dtype != torch.long:
-        j = j.long()
 
     if is_directed:
         # Number of edges in the upper triangular part.
@@ -478,8 +479,9 @@ def data_share_storage(a: Data, b: Data) -> bool:
         if not torch.is_tensor(ta):
             continue
         tb = getattr(b, key, None)
-        if not (torch.is_tensor(tb) and ta.data_ptr() == tb.data_ptr()):
+        if tb is None or not torch.is_tensor(tb) or ta.data_ptr() != tb.data_ptr():
             return False
+
     return True
 
 
@@ -492,6 +494,7 @@ def hash_graph(data, directed: bool) -> str:
     def _hash_update(t: torch.Tensor | None, h: hashlib.blake2b):
         """Update the hash with the contents of a tensor or placeholder."""
         if torch.is_tensor(t):
+            assert t is not None  # Help type checker understand t is not None.
             h.update(t.contiguous().view(-1).cpu().numpy().tobytes())
         else:
             h.update(b"\0")  # placeholder for None.
@@ -502,8 +505,11 @@ def hash_graph(data, directed: bool) -> str:
 
     # First, sort edge index, to remove isomorphisms.
     t = getattr(data, "edge_index", None)
+    idx_per_edge = None  # Initialize for later use.
 
     if torch.is_tensor(t):
+        assert t is not None  # Help type checker understand t is not None
+
         # Sorts individual edges to have source nodes < target nodes.
         if not directed:
             # Loop over edges.
@@ -514,11 +520,13 @@ def hash_graph(data, directed: bool) -> str:
         # Sorts edges such that the source nodes are in ascending order.
         idx_per_edge = torch.argsort(t[0, :])  # Directed & undirected case!
         t = t[:, idx_per_edge]
+
     h = _hash_update(t, h)
 
     # Apply idx_per_edge to sort edge attributes.
     t = getattr(data, "edge_attr", None)
-    if torch.is_tensor(t):
+    if torch.is_tensor(t) and idx_per_edge is not None:
+        assert t is not None  # Help type checker understand t is not None
         t = t[idx_per_edge, ...]  # Sort edge attributes by ascending source nodes.
     h = _hash_update(t, h)
 

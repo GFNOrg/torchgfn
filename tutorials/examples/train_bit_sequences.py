@@ -31,7 +31,7 @@ def main(args):
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
     H = torch.randint(
-        0, 2, (args.n_modes, args.seq_size), dtype=torch.int64, device=device
+        0, 2, (args.n_modes, args.seq_size), dtype=torch.long, device=device
     )
     env = BitSequence(args.word_size, args.seq_size, args.n_modes, H=H)
 

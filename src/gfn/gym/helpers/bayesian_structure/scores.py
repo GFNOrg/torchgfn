@@ -19,13 +19,9 @@ def logdet(matrix: torch.Tensor) -> torch.Tensor:
 class BaseScore(ABC):
     """Base class for the scorer.
 
-    Parameters
-    ----------
-    data : pd.DataFrame
-        The dataset.
-
-    prior : `BasePrior` instance
-        The prior over graphs p(G).
+    Args:
+        data: The dataset.
+        prior: The prior over graphs p(G).
     """
 
     def __init__(self, data: pd.DataFrame, prior: BasePrior):
@@ -44,25 +40,15 @@ class BGeScore(BaseScore):
     r"""
     BGe score.
 
-    Parameters
-    ----------
-    data : pd.DataFrame
-        A DataFrame containing the (continuous) dataset D. Each column
-        corresponds to one variable.
-
-    prior : callable or BasePrior instance
-        A callable that returns the log prior contribution given num_parents.
-
-    mean_obs : np.ndarray, optional
-        Mean parameter of the Normal prior over the mean μ. This array must
-        have size (N,), where N is the number of variables. Default is 0.
-
-    alpha_mu : float, default=1.
-        Precision parameter for the Normal prior over the mean μ.
-
-    alpha_w : float, optional
-        Degrees of freedom for the Wishart prior over the precision matrix W.
-        Must satisfy alpha_w > N - 1. Default is N + 2.
+    Args:
+        data: A DataFrame containing the (continuous) dataset D. Each column
+            corresponds to one variable.
+        prior: A callable that returns the log prior contribution given num_parents.
+        mean_obs: Mean parameter of the Normal prior over the mean μ. This array must
+            have size (N,), where N is the number of variables.
+        alpha_mu: Precision parameter for the Normal prior over the mean μ.
+        alpha_w: Degrees of freedom for the Wishart prior over the precision matrix W.
+            Must satisfy alpha_w > N - 1.
     """
 
     def __init__(
@@ -76,7 +62,7 @@ class BGeScore(BaseScore):
         super().__init__(data, prior)
         self.num_nodes = len(self.column_names)
         if mean_obs is None:
-            mean_obs = torch.zeros((self.num_nodes,), dtype=torch.float32)
+            mean_obs = torch.zeros((self.num_nodes,)).to(torch.get_default_dtype())
         if alpha_w is None:
             alpha_w = self.num_nodes + 2.0
         self.mean_obs = mean_obs
@@ -91,7 +77,7 @@ class BGeScore(BaseScore):
 
         # Build the regularized matrix R
         T = self.t * torch.eye(self.num_nodes)
-        data_array = torch.tensor(self.data.values, dtype=torch.float32)
+        data_array = torch.tensor(self.data.values).to(torch.get_default_dtype())
         data_mean = torch.mean(data_array, dim=0, keepdim=True)
         data_centered = data_array - data_mean
         self.R = (

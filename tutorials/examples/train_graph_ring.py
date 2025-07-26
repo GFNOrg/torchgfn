@@ -407,7 +407,7 @@ def main(args: Namespace):
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
-        pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
+        pct_rings = torch.mean(rewards > 0.1, dtype=torch.get_default_dtype()) * 100
         print(
             "Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(
                 iteration, loss.item(), pct_rings

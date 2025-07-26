@@ -294,12 +294,12 @@ class GraphActions(Actions):
         ACTION_INDICES: Class variable, mapping from keys to tensor indices.
     """
 
-    ACTION_TYPE_KEY = "action_type"
-    NODE_CLASS_KEY = "node_class"
-    EDGE_CLASS_KEY = "edge_class"
-    EDGE_INDEX_KEY = "edge_index"
+    ACTION_TYPE_KEY: ClassVar[str] = "action_type"
+    NODE_CLASS_KEY: ClassVar[str] = "node_class"
+    EDGE_CLASS_KEY: ClassVar[str] = "edge_class"
+    EDGE_INDEX_KEY: ClassVar[str] = "edge_index"
 
-    ACTION_INDICES = {
+    ACTION_INDICES: ClassVar[dict[str, int]] = {
         ACTION_TYPE_KEY: 0,
         NODE_CLASS_KEY: 1,
         EDGE_CLASS_KEY: 2,
@@ -425,8 +425,7 @@ class GraphActions(Actions):
             A GraphActions object with the specified batch shape filled with dummy
             actions.
         """
-        # TODO: make default dtype int32
-        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64, device=device)
+        tensor = torch.zeros(batch_shape + (4,), dtype=torch.long, device=device)
         tensor[..., cls.ACTION_INDICES[cls.ACTION_TYPE_KEY]] = GraphActionType.DUMMY
         return cls(tensor)
 
@@ -443,7 +442,7 @@ class GraphActions(Actions):
         Returns:
             A GraphActions object with the specified batch shape filled with exit actions.
         """
-        tensor = torch.zeros(batch_shape + (4,), dtype=torch.int64, device=device)
+        tensor = torch.zeros(batch_shape + (4,), dtype=torch.long, device=device)
         tensor[..., cls.ACTION_INDICES[cls.ACTION_TYPE_KEY]] = GraphActionType.EXIT
         return cls(tensor)
 

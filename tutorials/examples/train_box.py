@@ -8,7 +8,7 @@ python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
 
 from argparse import ArgumentParser, Namespace
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
 import torch
@@ -111,9 +111,6 @@ def main(args: Namespace) -> float:  # noqa: C901
     # 2. Create the gflownet.
     #    For this we need modules and estimators.
     #    Depending on the loss, we may need several estimators:
-    gflownet: Optional[
-        Union[DBGFlowNet, TBGFlowNet, SubTBGFlowNet, LogPartitionVarianceGFlowNet]
-    ] = None
     pf_module = BoxPFMLP(
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
@@ -147,6 +144,13 @@ def main(args: Namespace) -> float:  # noqa: C901
     )
     module: Optional[BoxStateFlowModule] = None
     logZ: Optional[torch.Tensor] = None
+
+    assert args.loss in ("DB", "SubTB", "TB", "ZVar"), f"Invalid loss: {args.loss}"
+    assert args.subTB_weighting in (
+        "geometric_within",
+        "geometric_between",
+    ), f"Invalid subTB weighting: {args.subTB_weighting}"
+
     if args.loss in ("DB", "SubTB"):
         # We always need a LogZEstimator
         logZ = torch.tensor(0.0, device=env.device, requires_grad=True)
@@ -173,7 +177,7 @@ def main(args: Namespace) -> float:  # noqa: C901
                 pf=pf_estimator,
                 pb=pb_estimator,
                 logF=logF_estimator,
-                weighting=args.subTB_weighting,
+                weighting=args.subTB_weighting,  # type: ignore
                 lamda=args.subTB_lambda,
             )
     elif args.loss == "TB":
@@ -187,7 +191,6 @@ def main(args: Namespace) -> float:  # noqa: C901
             pb=pb_estimator,
         )
 
-    assert gflownet is not None, f"No gflownet for loss {args.loss}"
     gflownet = gflownet.to(device)
 
     if not args.use_local_search:

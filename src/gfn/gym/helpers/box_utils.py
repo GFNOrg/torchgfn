@@ -15,7 +15,7 @@ from gfn.utils.modules import MLP
 
 PI_2_INV: float = 2.0 / torch.pi
 PI_2: float = torch.pi / 2.0
-CLAMP: float = torch.finfo(torch.float).eps
+CLAMP: float = torch.finfo(torch.get_default_dtype()).eps
 
 
 class QuarterCircle(Distribution):
@@ -31,14 +31,14 @@ class QuarterCircle(Distribution):
     This is useful for the `Box` environment.
 
     Attributes:
-        delta (float): The radius of the quarter disk.
-        northeastern (bool): Whether the quarter disk is northeastern or southwestern.
-        n_states (int): The number of states.
-        n_components (int): The number of components in the mixture.
-        centers (States): The centers of the distribution.
-        base_dist (MixtureSameFamily): The base distribution.
-        min_angles (Tensor): The minimum angles.
-        max_angles (Tensor): The maximum angles.
+        delta: The radius of the quarter disk.
+        northeastern: Whether the quarter disk is northeastern or southwestern.
+        n_states: The number of states.
+        n_components: The number of components in the mixture.
+        centers: The centers of the distribution.
+        base_dist: The base distribution.
+        min_angles: The minimum angles.
+        max_angles: The maximum angles.
     """
 
     delta: float
@@ -239,7 +239,7 @@ class QuarterCircle(Distribution):
                 torch.ones_like(base_01_samples) * CLAMP,
                 base_01_samples,
             ).clamp_(min=CLAMP, max=1 - CLAMP)
-        base_01_samples = base_01_samples.to(torch.float)
+        base_01_samples = base_01_samples.to(torch.get_default_dtype())
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
 
         if not self.northeastern:
@@ -278,11 +278,11 @@ class QuarterDisk(Distribution):
     This is useful for the `Box` environment.
 
     Attributes:
-        delta (float): The radius of the quarter disk.
-        mixture_logits (Tensor): The logits of the mixture of Beta distributions.
-        base_r_dist (MixtureSameFamily): The base distribution for the radius.
-        base_theta_dist (MixtureSameFamily): The base distribution for the angle.
-        n_components (int): The number of components in the mixture.
+        delta: The radius of the quarter disk.
+        mixture_logits: The logits of the mixture of Beta distributions.
+        base_r_dist: The base distribution for the radius.
+        base_theta_dist: The base distribution for the angle.
+        n_components: The number of components in the mixture.
     """
 
     delta: float
@@ -385,8 +385,8 @@ class QuarterDisk(Distribution):
             / PI_2
         ).clamp_(CLAMP, 1 - CLAMP)
 
-        base_r_01_samples = base_r_01_samples.to(torch.float)
-        base_theta_01_samples = base_theta_01_samples.to(torch.float)
+        base_r_01_samples = base_r_01_samples.to(torch.get_default_dtype())
+        base_theta_01_samples = base_theta_01_samples.to(torch.get_default_dtype())
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
             + self.base_theta_dist.log_prob(base_theta_01_samples)
@@ -409,14 +409,14 @@ class QuarterCircleWithExit(Distribution):
     `[-inf, -inf]` is sampled. The `log_prob` function is adjusted accordingly.
 
     Attributes:
-        delta (float): The radius of the quarter disk.
-        epsilon (float): The epsilon value to consider the state as being at the
+        delta: The radius of the quarter disk.
+        epsilon: The epsilon value to consider the state as being at the
             border of the square.
-        centers (States): The centers of the distribution.
-        dist_without_exit (QuarterCircle): The distribution without the exit action.
-        exit_probability (Tensor): The probability of exiting.
-        exit_action (Tensor): The exit action.
-        n_states (int): The number of states.
+        centers: The centers of the distribution.
+        dist_without_exit: The distribution without the exit action.
+        exit_probability: The probability of exiting.
+        exit_action: The exit action.
+        n_states: The number of states.
     """
 
     delta: float
@@ -523,10 +523,10 @@ class DistributionWrapper(Distribution):
     """A wrapper that combines `QuarterDisk` and `QuarterCircleWithExit`.
 
     Attributes:
-        idx_is_initial (Tensor): The indices of the initial states.
-        idx_not_initial (Tensor): The indices of the non-initial states.
-        quarter_disk (Optional[QuarterDisk]): The `QuarterDisk` distribution.
-        quarter_circ (Optional[QuarterCircleWithExit]): The `QuarterCircleWithExit`
+        idx_is_initial: The indices of the initial states.
+        idx_not_initial: The indices of the non-initial states.
+        quarter_disk: The `QuarterDisk` distribution.
+        quarter_circ: The `QuarterCircleWithExit`
             distribution.
     """
 
@@ -942,12 +942,12 @@ class BoxPFEstimator(Estimator):
     This estimator uses the `DistributionWrapper` distribution.
 
     Attributes:
-        n_components_s0 (int): The number of components for s0.
-        n_components (int): The number of components for non-s0 states.
-        min_concentration (float): The minimum concentration for the Beta distributions.
-        max_concentration (float): The maximum concentration for the Beta distributions.
-        delta (float): The radius of the quarter disk.
-        epsilon (float): The epsilon value.
+        n_components_s0: The number of components for s0.
+        n_components: The number of components for non-s0 states.
+        min_concentration: The minimum concentration for the Beta distributions.
+        max_concentration: The maximum concentration for the Beta distributions.
+        delta: The radius of the quarter disk.
+        epsilon: The epsilon value.
     """
 
     _n_comp_max: int
@@ -1066,10 +1066,10 @@ class BoxPBEstimator(Estimator):
     This estimator uses the `QuarterCircle(northeastern=False)` distribution.
 
     Attributes:
-        n_components (int): The number of components for the mixture.
-        min_concentration (float): The minimum concentration for the Beta distributions.
-        max_concentration (float): The maximum concentration for the Beta distributions.
-        delta (float): The radius of the quarter disk.
+        n_components: The number of components for the mixture.
+        min_concentration: The minimum concentration for the Beta distributions.
+        max_concentration: The maximum concentration for the Beta distributions.
+        delta: The radius of the quarter disk.
     """
 
     n_components: int
