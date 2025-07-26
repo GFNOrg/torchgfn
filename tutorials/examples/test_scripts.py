@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 import pytest
+import torch
 
 from .train_bayesian_structure import main as train_bayesian_structure_main
 from .train_bit_sequences import main as train_bitsequence_main
@@ -387,6 +388,20 @@ def test_hypergrid_simple_smoke():
     train_hypergrid_simple_main(namespace_args)  # Just ensure it runs without errors.
 
 
+def test_hypergrid_simple_smoke_fp64():
+    """Smoke test for the simple hypergrid training script at fp64 precision."""
+    torch.set_default_dtype(torch.float64)
+    args = HypergridArgs(
+        batch_size=4,
+        hidden_dim=64,
+        n_hidden=1,
+        n_trajectories=10,  # Small number for smoke test
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_hypergrid_simple_main(namespace_args)  # Just ensure it runs without errors.
+
+
 def test_hypergrid_simple_ls_smoke():
     """Smoke test for the simple hypergrid with local search training script."""
     args = HypergridArgs(
@@ -415,8 +430,31 @@ def test_ising_smoke():
     train_ising_main(namespace_args)  # Just ensure it runs without errors.
 
 
+def test_ising_smoke_fp64():
+    """Smoke test for the Ising model training script at fp64 precision."""
+    torch.set_default_dtype(torch.float64)
+    args = IsingArgs(
+        n_iterations=10,  # Small number for smoke test
+        batch_size=4,
+        hidden_dim=64,
+        n_hidden=1,
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_ising_main(namespace_args)  # Just ensure it runs without errors.
+
+
 def test_line_smoke():
     """Smoke test for the line training script."""
+    args = LineArgs()
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_line_main(namespace_args)  # Just ensure it runs without errors.
+
+
+def test_line_smoke_fp64():
+    """Smoke test for the line training script at fp64 precision."""
+    torch.set_default_dtype(torch.float64)
     args = LineArgs()
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
