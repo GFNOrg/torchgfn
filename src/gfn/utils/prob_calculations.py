@@ -303,15 +303,12 @@ def get_transition_pfs(
     return log_pf_actions
 
 
-def get_transition_pbs(
-    pb: Estimator, transitions: Transitions, dtype: torch.dtype | None = None
-) -> torch.Tensor:
+def get_transition_pbs(pb: Estimator, transitions: Transitions) -> torch.Tensor:
     """Calculates the log probabilities of backward transitions.
 
     Args:
         pb: The backward policy Estimator.
         transitions: The transitions to calculate probabilities for.
-        dtype: The dtype of the log probabilities.
     """
     # automatically removes invalid transitions (i.e. s_f -> s_f)
     valid_next_states = transitions.next_states[~transitions.is_terminating]

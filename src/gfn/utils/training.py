@@ -21,7 +21,6 @@ def get_terminating_state_dist_pmf(
     Args:
         env: The environment.
         states: The states to compute the distribution of.
-        dtype: The dtype of the PMF.
 
     Returns:
         The empirical distribution of the terminating states as a tensor of shape

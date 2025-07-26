@@ -721,7 +721,6 @@ class GraphStates(States):
 
         Args:
             data: A numpy array of `GeometricData` objects representing individual graphs.
-            dtype: The dtype of floating point numbers. If None, uses pytorch default dtype.
             categorical_node_features: Whether the node features are categorical.
             categorical_edge_features: Whether the edge features are categorical.
             device: The device to store the graphs on (optional).

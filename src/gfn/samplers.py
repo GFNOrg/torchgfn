@@ -28,16 +28,12 @@ class Sampler:
             probability distributions.
     """
 
-    def __init__(
-        self,
-        estimator: Estimator,
-    ) -> None:
+    def __init__(self, estimator: Estimator) -> None:
         """Initializes a Sampler with a PolicyEstimator.
 
         Args:
             estimator: The PolicyEstimator to use for sampling actions and computing
                 probability distributions.
-            dtype: The dtype of floating point numbers. If None, uses pytorch default fp dtype.
         """
         self.estimator = estimator
 
