@@ -167,7 +167,7 @@ class OneHotPreprocessor(Preprocessor):
         """
         state_indices = self.get_states_indices(states)
 
-        return one_hot(state_indices, self.output_dim).float()
+        return one_hot(state_indices, self.output_dim).to(torch.get_default_dtype())
 
 
 class KHotPreprocessor(Preprocessor):
@@ -218,7 +218,7 @@ class KHotPreprocessor(Preprocessor):
             states_tensor
         ), "K Hot preprocessing only works for integer states"
         states_tensor = states_tensor.long()
-        hot = one_hot(states_tensor, self.height).float()
+        hot = one_hot(states_tensor, self.height)
         hot = rearrange(hot, "... a b -> ... (a b)")
 
         return hot

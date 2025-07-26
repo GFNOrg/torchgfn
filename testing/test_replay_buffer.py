@@ -30,7 +30,7 @@ def trajectories(simple_env):
         states=state_class(torch.randn(10, 5, 2)),
         actions=action_class(torch.ones(9, 5, 1)),
         log_probs=torch.ones(9, 5),
-        log_rewards=torch.arange(5, dtype=torch.float),
+        log_rewards=torch.arange(5, dtype=torch.get_default_dtype()),
         terminating_idx=torch.randint(0, 5, (5,), dtype=torch.long),
     )
 
@@ -49,7 +49,7 @@ def transitions(simple_env):
         next_states=state_class(torch.randn(5, 2)),
         actions=action_class(torch.ones(5, 1)),
         log_probs=torch.zeros(5),
-        log_rewards=torch.ones((5,), dtype=torch.float),
+        log_rewards=torch.ones((5,), dtype=torch.get_default_dtype()),
         is_terminating=torch.zeros(5, dtype=torch.bool),
     )
 
@@ -70,7 +70,7 @@ def state_pairs(simple_env):
         ),
         log_rewards=torch.tensor(
             [torch.inf, torch.inf, torch.inf, torch.inf, torch.inf, 1, 1, 1, 1, 1],
-            dtype=torch.float,
+            dtype=torch.get_default_dtype(),
         ),
     )
 
@@ -230,7 +230,7 @@ def test_add_with_diversity(simple_env, trajectories):
             states=state_class(torch.randn(2, 1, 2)),
             actions=action_class(torch.ones(1, 1, 1)),
             log_probs=torch.zeros(1, 1),
-            log_rewards=torch.tensor([i + 10], dtype=torch.float),
+            log_rewards=torch.tensor([i + 10], dtype=torch.get_default_dtype()),
             terminating_idx=torch.tensor([1], dtype=torch.long),
         )
         similar_trajs.extend(new_traj)
@@ -270,7 +270,7 @@ def test_skip_diversity_check(simple_env, trajectories):
             states=state_class(torch.randn(2, 1, 2)),
             actions=action_class(torch.ones(1, 1, 1)),
             log_probs=torch.zeros(1, 1),
-            log_rewards=torch.tensor([i + 10], dtype=torch.float),
+            log_rewards=torch.tensor([i + 10], dtype=torch.get_default_dtype()),
             terminating_idx=torch.tensor([1], dtype=torch.long),
         )
         better_trajs.extend(new_traj)

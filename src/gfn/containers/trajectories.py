@@ -337,7 +337,7 @@ class Trajectories(Container):
                 self.estimator_outputs = torch.full(
                     size=(0, 0, *other.estimator_outputs.shape[2:]),
                     fill_value=0.0,
-                    dtype=other.estimator_outputs.dtype,  # TODO: Should this be self.float_dtype?
+                    dtype=other.estimator_outputs.dtype,
                     device=self.device,
                 )
 

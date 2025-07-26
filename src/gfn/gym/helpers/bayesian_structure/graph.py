@@ -19,11 +19,11 @@ def sample_erdos_renyi_graph(
     Sample an Erdos-Renyi graph.
 
     Args:
-        num_nodes (int): Number of nodes in the graph.
-        rng (np.random.Generator): Numpy random number generator.
-        p (Optional[float]): Probability of creating an edge.
-        num_edges (Optional[int]): Total number of edges (used to compute p if p is None).
-        node_names (Optional[List[str]]): Optional list of node names.
+        num_nodes: Number of nodes in the graph.
+        rng: Numpy random number generator.
+        p: Probability of creating an edge.
+        num_edges: Total number of edges (used to compute p if p is None).
+        node_names: Optional list of node names.
 
     Returns:
         Data: A PyTorch Geometric Data object representing the sampled graph with
@@ -77,14 +77,14 @@ def sample_erdos_renyi_linear_gaussian(
     based on the node's parent set determined from the graph structure.
 
     Args:
-        num_nodes (int): Number of nodes.
-        rng (np.random.Generator): Random number generator for reproducibility.
-        p (Optional[float]): Probability of creating an edge.
-        num_edges (Optional[int]): Total number of edges (used to compute p if p is None).
-        node_names (Optional[List[str]]): Optional list of node names.
-        loc_edges (float): Mean value for edge parameters.
-        scale_edges (float): Standard deviation for edge parameters.
-        obs_noise (float): Observation noise for each node.
+        num_nodes: Number of nodes.
+        rng: Random number generator for reproducibility.
+        p: Probability of creating an edge.
+        num_edges: Total number of edges (used to compute p if p is None).
+        node_names: Optional list of node names.
+        loc_edges: Mean value for edge parameters.
+        scale_edges: Standard deviation for edge parameters.
+        obs_noise: Observation noise for each node.
 
     Returns:
         Data: A PyTorch Geometric Data object with additional attributes 'nodes' and 'cpds'.

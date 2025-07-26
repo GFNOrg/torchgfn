@@ -12,11 +12,11 @@ class Box(Env):
     """Box environment, corresponding to the one in Section 4.1 of https://arxiv.org/abs/2301.12594
 
     Attributes:
-        delta (float): The step size.
-        R0 (float): The base reward.
-        R1 (float): The reward for being outside the first box.
-        R2 (float): The reward for being inside the second box.
-        epsilon (float): A small value to avoid numerical issues.
+        delta: The step size.
+        R0: The base reward.
+        R1: The reward for being outside the first box.
+        R2: The reward for being inside the second box.
+        epsilon: A small value to avoid numerical issues.
         device (Literal["cpu", "cuda"] | torch.device): The device to use.
     """
 

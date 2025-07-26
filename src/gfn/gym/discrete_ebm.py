@@ -54,7 +54,7 @@ class IsingModel(EnergyFunction):
             Tensor of energies of shape `(*batch_shape)`.
         """
         assert states.shape[-1] == self._state_shape
-        states = states.float()
+        states = states.to(torch.get_default_dtype())
         tmp = self.linear(states)
         return -(states * tmp).sum(-1)
 

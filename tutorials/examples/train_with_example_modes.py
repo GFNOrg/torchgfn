@@ -276,7 +276,7 @@ def main(args: Namespace):
         terminating_states = training_samples.terminating_states
         assert isinstance(terminating_states, GraphStates)
         rewards = env.reward(terminating_states)
-        pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
+        pct_rings = torch.mean(rewards > 0.1, dtype=torch.get_default_dtype()) * 100
 
         # Add the training samples to the replay buffer. If the user requested the use
         # of expert data, gflownet samples are only added after the first

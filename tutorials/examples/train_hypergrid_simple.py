@@ -95,7 +95,14 @@ def main(args):
                 args.validation_samples,
                 visited_terminating_states,
             )
-            print(f"Iter {it + 1}: L1 distance {validation_info['l1_dist']:.8f}")
+            str_info = f"Iter {it + 1}: "
+            if "l1_dist" in validation_info:
+                str_info += f"L1 distance={validation_info['l1_dist']:.8f} "
+            if "n_modes" in validation_info:
+                str_info += f"modes discovered={validation_info['n_modes']} "
+            str_info += f"n terminating states {len(visited_terminating_states)}"
+            print(str_info)
+
         pbar.set_postfix({"loss": loss.item()})
 
 

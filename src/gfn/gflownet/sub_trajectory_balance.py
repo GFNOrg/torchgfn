@@ -498,7 +498,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         # sub-trajectory length.
         contributions = (
             L ** torch.arange(max_len, device=terminating_idx.device).double()
-        ).float()
+        ).to(torch.get_default_dtype())
         contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
         contributions = contributions.repeat_interleave(
             torch.arange(max_len, 0, -1, device=terminating_idx.device),
@@ -517,7 +517,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 L * (L ** terminating_idx.double() - 1)
                 + (1 - L) * terminating_idx.double()
             )
-        ).float()
+        ).to(torch.get_default_dtype())
         contributions = contributions / per_trajectory_denom / len(trajectories)
 
         return contributions
