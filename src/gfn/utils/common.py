@@ -13,6 +13,11 @@ import torch.distributed as dist
 # -----------------------------------------------------------------------------
 
 
+def is_int_dtype(tensor: torch.Tensor) -> bool:
+    """Check if a tensor is an integer dtype."""
+    return not torch.is_floating_point(tensor) and not torch.is_complex(tensor)
+
+
 def get_available_cpus() -> int:
     """Return the number of *usable* CPUs for the current process.
 

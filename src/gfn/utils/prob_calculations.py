@@ -120,7 +120,7 @@ def get_trajectory_pfs(
         log_pf_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],
             fill_value=fill_value,
-            dtype=torch.float,
+            dtype=torch.get_default_dtype(),  # Floating point dtype.
         )
 
         if len(valid_states) == 0:
@@ -157,7 +157,9 @@ def get_trajectory_pfs(
 
 
 def get_trajectory_pbs(
-    pb: Estimator, trajectories: Trajectories, fill_value: float = 0.0
+    pb: Estimator,
+    trajectories: Trajectories,
+    fill_value: float = 0.0,
 ) -> torch.Tensor:
     """Calculates the log probabilities of backward trajectories.
 
@@ -165,6 +167,7 @@ def get_trajectory_pbs(
         pb: The backward policy estimator.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
+        dtype: The dtype of the log probabilities.
 
     Returns:
         A tensor containing the log probabilities of the backward trajectories.
@@ -178,7 +181,7 @@ def get_trajectory_pbs(
     log_pb_trajectories = torch.full_like(
         trajectories.actions.tensor[..., 0],
         fill_value=fill_value,
-        dtype=torch.float,
+        dtype=torch.get_default_dtype(),  # Floating point dtype.
     )
 
     # Note the different mask for valid states and actions compared to the pf case.
@@ -301,6 +304,12 @@ def get_transition_pfs(
 
 
 def get_transition_pbs(pb: Estimator, transitions: Transitions) -> torch.Tensor:
+    """Calculates the log probabilities of backward transitions.
+
+    Args:
+        pb: The backward policy Estimator.
+        transitions: The transitions to calculate probabilities for.
+    """
     # automatically removes invalid transitions (i.e. s_f -> s_f)
     valid_next_states = transitions.next_states[~transitions.is_terminating]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]
@@ -315,9 +324,7 @@ def get_transition_pbs(pb: Estimator, transitions: Transitions) -> torch.Tensor:
 
     # Evaluate the log PB of the actions.
     log_pb_actions = torch.zeros(
-        (transitions.n_transitions,),
-        dtype=torch.float,
-        device=transitions.states.device,
+        (transitions.n_transitions,), device=transitions.states.device
     )
 
     if len(valid_next_states) != 0:
