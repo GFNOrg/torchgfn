@@ -13,7 +13,8 @@ from gfn.states import DiscreteStates
 
 
 def get_terminating_state_dist_pmf(
-    env: DiscreteEnv, states: DiscreteStates
+    env: DiscreteEnv,
+    states: DiscreteStates,
 ) -> torch.Tensor:
     """Computes the empirical distribution of the terminating states.
 
@@ -32,7 +33,9 @@ def get_terminating_state_dist_pmf(
         for state_idx in range(env.n_terminating_states)
     ]
 
-    return torch.tensor(counter_list, dtype=torch.float) / len(states_indices)
+    return torch.tensor(counter_list, dtype=torch.get_default_dtype()) / len(
+        states_indices
+    )
 
 
 def validate(

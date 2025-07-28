@@ -71,6 +71,7 @@ class Transitions(Container):
             log_probs: Optional tensor of shape (n_transitions,) containing the log
                 probabilities of the actions.
 
+
         Note:
             When states and next_states are not None, the Transitions is initialized as
             an empty container that can be populated later with the `extend` method.
@@ -117,13 +118,13 @@ class Transitions(Container):
         self._log_rewards = log_rewards
         assert self._log_rewards is None or (
             self._log_rewards.shape == (self.n_transitions,)
-            and self._log_rewards.dtype == torch.float
+            and self._log_rewards.is_floating_point()
         )
 
         self.log_probs = log_probs
         assert self.log_probs is None or (
             self.log_probs.shape == self.actions.batch_shape
-            and self.log_probs.dtype == torch.float
+            and self.log_probs.is_floating_point()
         )
 
     @property
@@ -200,7 +201,6 @@ class Transitions(Container):
             self._log_rewards = torch.full(
                 (self.n_transitions,),
                 fill_value=-float("inf"),
-                dtype=torch.float,
                 device=self.states.device,
             )
             self._log_rewards[self.is_terminating] = self.env.log_reward(
@@ -228,7 +228,6 @@ class Transitions(Container):
         log_rewards = torch.full(
             (self.n_transitions, 2),
             fill_value=-float("inf"),
-            dtype=torch.float,
             device=self.states.device,
         )
         log_rewards[~is_sink_state, 0] = self.env.log_reward(self.states[~is_sink_state])
@@ -238,7 +237,7 @@ class Transitions(Container):
 
         assert (
             log_rewards.shape == (self.n_transitions, 2)
-            and log_rewards.dtype == torch.float
+            and log_rewards.is_floating_point()
         )
         return log_rewards
 
@@ -298,14 +297,12 @@ class Transitions(Container):
                 self._log_rewards = torch.full(
                     size=(0,),
                     fill_value=-float("inf"),
-                    dtype=torch.float,
                     device=self.device,
                 )
             if other.log_probs is not None:
                 self.log_probs = torch.full(
                     size=(0,),
-                    fill_value=0,
-                    dtype=torch.float,
+                    fill_value=0.0,
                     device=self.device,
                 )
 

@@ -53,15 +53,15 @@ class HyperGrid(DiscreteEnv):
     `{0, 1, ..., height - 1}`.
 
     Attributes:
-        ndim (int): The dimension of the grid.
-        height (int): The height of the grid.
-        R0 (float): The reward parameter R0.
-        R1 (float): The reward parameter R1.
-        R2 (float): The reward parameter R2.
-        reward_cos (bool): Whether to use the cosine reward.
-        calculate_partition (bool): Whether to calculate the log partition function.
-        calculate_all_states (bool): Whether to store all states.
-        scale_factor (int): The scale factor for the reward.
+        ndim: The dimension of the grid.
+        height: The height of the grid.
+        R0: The reward parameter R0.
+        R1: The reward parameter R1.
+        R2: The reward parameter R2.
+        reward_cos: Whether to use the cosine reward.
+        calculate_partition: Whether to calculate the log partition function.
+        calculate_all_states: Whether to store all states.
+        scale_factor: The scale factor for the reward.
     """
 
     def __init__(
@@ -121,7 +121,7 @@ class HyperGrid(DiscreteEnv):
             device = torch.device(device)
 
         s0 = torch.zeros(ndim, dtype=torch.long, device=device)
-        sf = torch.full((ndim,), fill_value=-1, dtype=torch.long, device=device)
+        sf = torch.full((ndim,), fill_value=-1, device=device)
         n_actions = ndim + 1
 
         state_shape = (self.ndim,)

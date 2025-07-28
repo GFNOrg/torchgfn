@@ -313,7 +313,9 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
 
             if self.cutoff_distance >= 0:
                 # Filter the batch for diverse final_states with high reward.
-                batch = training_objects.terminating_states.tensor.float()
+                batch = training_objects.terminating_states.tensor.to(
+                    torch.get_default_dtype()
+                )
                 batch_dim = training_objects.terminating_states.batch_shape[0]
                 batch_batch_dist = torch.cdist(
                     batch.view(batch_dim, -1).unsqueeze(0),
@@ -329,8 +331,12 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
                 training_objects = training_objects[idx_batch_batch]
 
                 # Compute all pairwise distances between the remaining batch & buffer.
-                batch = training_objects.terminating_states.tensor.float()
-                buffer = self.training_objects.terminating_states.tensor.float()
+                batch = training_objects.terminating_states.tensor.to(
+                    torch.get_default_dtype()
+                )
+                buffer = self.training_objects.terminating_states.tensor.to(
+                    torch.get_default_dtype()
+                )
                 batch_dim = training_objects.terminating_states.batch_shape[0]
                 tmp = self.training_objects.terminating_states
                 buffer_dim = tmp.batch_shape[0]

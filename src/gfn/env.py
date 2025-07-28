@@ -61,9 +61,7 @@ class Env(ABC):
 
         if sf is None:
             sf = torch.full(s0.shape, -float("inf"))
-        self.sf = sf.to(
-            s0.device  # pyright: ignore / torch_geometric has weird type hints.
-        )
+        self.sf = sf.to(s0.device)  # pyright: ignore - torch_geometric type hint fix
 
         assert self.s0.shape == self.sf.shape == state_shape
 

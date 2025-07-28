@@ -12,12 +12,12 @@ class Line(Env):
     """Mixture of Gaussians Line environment.
 
     Attributes:
-        mus (torch.Tensor): The means of the Gaussians.
-        sigmas (torch.Tensor): The standard deviations of the Gaussians.
-        n_sd (float): The number of standard deviations to consider for the bounds.
-        n_steps_per_trajectory (int): The number of steps per trajectory.
-        mixture (list[Normal]): The mixture of Gaussians.
-        init_value (float): The initial value of the state.
+        mus: The means of the Gaussians.
+        sigmas: The standard deviations of the Gaussians.
+        n_sd: The number of standard deviations to consider for the bounds.
+        n_steps_per_trajectory: The number of steps per trajectory.
+        mixture: The mixture of Gaussians.
+        init_value: The initial value of the state.
     """
 
     def __init__(

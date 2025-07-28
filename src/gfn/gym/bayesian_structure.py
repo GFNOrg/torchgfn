@@ -39,14 +39,22 @@ class BayesianStructure(GraphBuilding):
         self.n_actions = n_nodes**2 + 1
 
         s0 = GeometricData(
-            x=torch.arange(n_nodes, dtype=torch.float)[:, None].to(device),
-            edge_attr=torch.ones((0, 1), dtype=torch.float).to(device),
+            x=torch.arange(n_nodes, dtype=torch.long)[:, None].to(
+                device
+            ),  # TODO: should dtype be allowed to be float?
+            edge_attr=torch.ones((0, 1), dtype=torch.long).to(
+                device
+            ),  # TODO: should dtype be allowed to be float?
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )
         sf = GeometricData(
-            x=-torch.ones(n_nodes, dtype=torch.float)[:, None].to(device),
-            edge_attr=torch.zeros((0, 1), dtype=torch.float).to(device),
+            x=-torch.ones(n_nodes, dtype=torch.long)[:, None].to(
+                device
+            ),  # TODO: should dtype be allowed to be float?
+            edge_attr=torch.zeros((0, 1), dtype=torch.long).to(
+                device
+            ),  # TODO: should dtype be allowed to be float?
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )

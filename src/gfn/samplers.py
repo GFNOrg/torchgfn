@@ -185,23 +185,19 @@ class Sampler:
             env.actions_from_batch_shape((n_trajectories,))
         ]
         trajectories_logprobs: List[torch.Tensor] = [
-            torch.full((n_trajectories,), fill_value=0, dtype=torch.float, device=device)
+            torch.full((n_trajectories,), fill_value=0, device=device)
         ]
         trajectories_terminating_idx = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
-        trajectories_log_rewards = torch.zeros(
-            n_trajectories, dtype=torch.float, device=device
-        )
+        trajectories_log_rewards = torch.zeros(n_trajectories, device=device)
 
         step = 0
         all_estimator_outputs = []
 
         while not all(dones):
             actions = env.actions_from_batch_shape((n_trajectories,))
-            log_probs = torch.full(
-                (n_trajectories,), fill_value=0, dtype=torch.float, device=device
-            )
+            log_probs = torch.full((n_trajectories,), fill_value=0.0, device=device)
             # This optionally allows you to retrieve the estimator_outputs collected
             # during sampling. This is useful if, for example, you want to evaluate off
             # policy actions later without repeating calculations to obtain the env
@@ -225,7 +221,6 @@ class Sampler:
                 estimator_outputs_padded = torch.full(
                     (n_trajectories,) + estimator_outputs.shape[1:],
                     fill_value=-float("inf"),
-                    dtype=torch.float,
                     device=device,
                 )
                 estimator_outputs_padded[~dones] = estimator_outputs
@@ -297,6 +292,15 @@ class Sampler:
             torch.stack(all_estimator_outputs, dim=0) if save_estimator_outputs else None
         )
 
+        # If there are no logprobs or estimator outputs, set them to None.
+        # TODO: This is a hack to avoid errors when no logprobs or estimator outputs are
+        # saved. This bug was introduced when I changed the dtypes library-wide -- why
+        # is this happening?
+        if stacked_logprobs is not None and len(stacked_logprobs) == 0:
+            stacked_logprobs = None
+        if stacked_estimator_outputs is not None and len(stacked_estimator_outputs) == 0:
+            stacked_estimator_outputs = None
+
         trajectories = Trajectories(
             env=env,
             states=stacked_states,
@@ -330,7 +334,11 @@ class LocalSearchSampler(Sampler):
         backward_sampler: A Sampler instance with the backward policy estimator.
     """
 
-    def __init__(self, pf_estimator: Estimator, pb_estimator: Estimator):
+    def __init__(
+        self,
+        pf_estimator: Estimator,
+        pb_estimator: Estimator,
+    ):
         """Initializes a LocalSearchSampler with forward and backward estimators.
 
         Args:
@@ -423,7 +431,7 @@ class LocalSearchSampler(Sampler):
         prev_trajectories = prev_trajectories.reverse_backward_trajectories()
         assert prev_trajectories.log_rewards is not None
 
-        ### Reconstructing with self.estimator
+        # Reconstructing with self.estimator
         n_prevs = prev_trajectories.terminating_idx - K - 1
         junction_states_tsr = torch.gather(
             prev_trajectories.states.tensor,
@@ -580,11 +588,7 @@ class LocalSearchSampler(Sampler):
         if n is None:
             n = int(trajectories.n_trajectories)
 
-        search_indices = torch.arange(
-            n,
-            dtype=torch.long,
-            device=trajectories.states.device,
-        )
+        search_indices = torch.arange(n, device=trajectories.states.device)
 
         for it in range(n_local_search_loops):
             # Search phase
@@ -602,10 +606,7 @@ class LocalSearchSampler(Sampler):
             trajectories.extend(ls_trajectories)
 
             last_indices = torch.arange(
-                n * it,
-                n * (it + 1),
-                dtype=torch.long,
-                device=trajectories.states.device,
+                n * it, n * (it + 1), device=trajectories.states.device
             )
             search_indices[is_updated] = last_indices[is_updated]
 
@@ -673,15 +674,7 @@ class LocalSearchSampler(Sampler):
         max_traj_len = int(new_trajectories_dones.max().item())
 
         # Create helper indices and masks
-        idx = (
-            torch.arange(
-                max_traj_len + 1,
-                dtype=torch.long,
-            )
-            .unsqueeze(1)
-            .expand(-1, bs)
-            .to(n_prevs)
-        )
+        idx = torch.arange(max_traj_len + 1).unsqueeze(1).expand(-1, bs).to(n_prevs)
 
         prev_mask = idx < n_prevs
         state_recon_mask = (idx >= n_prevs) * (idx <= n_prevs + n_recons)
@@ -740,12 +733,14 @@ class LocalSearchSampler(Sampler):
             prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)
             recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(0, 1)
             new_trajectories_log_pf = torch.full((bs, max_traj_len), 0.0).to(
-                device=device, dtype=torch.float
+                device=device, dtype=prev_trajectories_log_pf.dtype  # type: ignore
             )
-            new_trajectories_log_pf[prev_mask[:, :-1]] = prev_trajectories_log_pf[
+            new_trajectories_log_pf[prev_mask[:, :-1]] = prev_trajectories_log_pf[  # type: ignore
                 :, :max_n_prev
-            ][prev_mask_truc]
-            new_trajectories_log_pf[action_recon_mask] = recon_trajectories_log_pf[
+            ][
+                prev_mask_truc
+            ]
+            new_trajectories_log_pf[action_recon_mask] = recon_trajectories_log_pf[  # type: ignore
                 action_recon_mask2
             ]
             new_trajectories_log_pf = new_trajectories_log_pf.transpose(0, 1)
@@ -756,12 +751,14 @@ class LocalSearchSampler(Sampler):
             prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)
             recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(0, 1)
             new_trajectories_log_pb = torch.full((bs, max_traj_len), 0.0).to(
-                device=device, dtype=torch.float
+                device=device, dtype=prev_trajectories_log_pb.dtype  # type: ignore
             )
-            new_trajectories_log_pb[prev_mask[:, :-1]] = prev_trajectories_log_pb[
+            new_trajectories_log_pb[prev_mask[:, :-1]] = prev_trajectories_log_pb[  # type: ignore
                 :, :max_n_prev
-            ][prev_mask_truc]
-            new_trajectories_log_pb[action_recon_mask] = recon_trajectories_log_pb[
+            ][
+                prev_mask_truc
+            ]
+            new_trajectories_log_pb[action_recon_mask] = recon_trajectories_log_pb[  # type: ignore
                 action_recon_mask2
             ]
             new_trajectories_log_pb = new_trajectories_log_pb.transpose(0, 1)
@@ -782,7 +779,7 @@ class LocalSearchSampler(Sampler):
                 and recon_trajectories_log_pf is not None
             ):
                 _new_trajectories_log_pf = torch.full((max_traj_len, bs), 0.0).to(
-                    device=device, dtype=torch.float
+                    device=device, dtype=prev_trajectories_log_pf.dtype
                 )
                 prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)
                 recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(0, 1)
@@ -792,7 +789,7 @@ class LocalSearchSampler(Sampler):
                 and recon_trajectories_log_pb is not None
             ):
                 _new_trajectories_log_pb = torch.full((max_traj_len, bs), 0.0).to(
-                    device=device, dtype=torch.float
+                    device=device, dtype=prev_trajectories_log_pb.dtype
                 )
                 prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)
                 recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(0, 1)
