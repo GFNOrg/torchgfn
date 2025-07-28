@@ -8,7 +8,7 @@ name = "torchgfn"
 [tool.poetry]
 name = "torchgfn"
 packages = [{include = "gfn", from = "src"}]
-version = "2.0.0"
+version = "2.1.0"
 description = "A torch implementation of GFlowNets"
 authors = ["Salem Lahlou <salemlahlou9@gmail.com>", "Joseph Viviano <joseph@viviano.ca>", "Victor Schmidt <vsch@pm.me>"]
 license = "MIT"
