@@ -24,7 +24,7 @@ def format_tensor(list_, discrete=True):
     if discrete:
         return torch.tensor(list_, dtype=torch.long).unsqueeze(-1)
     else:
-        return torch.tensor(list_, dtype=torch.float)
+        return torch.tensor(list_, dtype=torch.get_default_dtype())
 
 
 def format_random_tensor(env, n, h):
@@ -600,13 +600,17 @@ def test_set_addition_fwd_step():
     # Add item 0 and 1
     actions = env.actions_from_tensor(format_tensor([0, 1]))
     states = env._step(states, actions)
-    expected_states = torch.tensor([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=torch.float)
+    expected_states = torch.tensor(
+        [[1, 0, 0, 0], [0, 1, 0, 0]], dtype=torch.get_default_dtype()
+    )
     assert torch.equal(states.tensor, expected_states)
 
     # Add item 2 and 3
     actions = env.actions_from_tensor(format_tensor([2, 3]))
     states = env._step(states, actions)
-    expected_states = torch.tensor([[1, 0, 1, 0], [0, 1, 0, 1]], dtype=torch.float)
+    expected_states = torch.tensor(
+        [[1, 0, 1, 0], [0, 1, 0, 1]], dtype=torch.get_default_dtype()
+    )
     assert torch.equal(states.tensor, expected_states)
 
     # Try adding existing items (invalid)
@@ -617,7 +621,9 @@ def test_set_addition_fwd_step():
     # Add item 3 and 0
     actions = env.actions_from_tensor(format_tensor([3, 0]))
     states = env._step(states, actions)
-    expected_states = torch.tensor([[1, 0, 1, 1], [1, 1, 0, 1]], dtype=torch.float)
+    expected_states = torch.tensor(
+        [[1, 0, 1, 1], [1, 1, 0, 1]], dtype=torch.get_default_dtype()
+    )
     assert torch.equal(states.tensor, expected_states)  # Now has 3 items
 
     # Try adding another item (invalid, max_items reached)
@@ -646,13 +652,17 @@ def test_set_addition_bwd_step():
     )
 
     # Start from a state with 3 items
-    initial_tensor = torch.tensor([[1, 1, 0, 1, 0], [0, 1, 1, 0, 1]], dtype=torch.float)
+    initial_tensor = torch.tensor(
+        [[1, 1, 0, 1, 0], [0, 1, 1, 0, 1]], dtype=torch.get_default_dtype()
+    )
     states = env.states_from_tensor(initial_tensor)
 
     # Remove item 1 and 2
     actions = env.actions_from_tensor(format_tensor([1, 2]))
     states = env._backward_step(states, actions)
-    expected_states = torch.tensor([[1, 0, 0, 1, 0], [0, 1, 0, 0, 1]], dtype=torch.float)
+    expected_states = torch.tensor(
+        [[1, 0, 0, 1, 0], [0, 1, 0, 0, 1]], dtype=torch.get_default_dtype()
+    )
     assert torch.equal(states.tensor, expected_states)
 
     # Try removing non-existent item (invalid)
@@ -663,13 +673,15 @@ def test_set_addition_bwd_step():
     # Remove item 0 and 4
     actions = env.actions_from_tensor(format_tensor([0, 4]))
     states = env._backward_step(states, actions)
-    expected_states = torch.tensor([[0, 0, 0, 1, 0], [0, 1, 0, 0, 0]], dtype=torch.float)
+    expected_states = torch.tensor(
+        [[0, 0, 0, 1, 0], [0, 1, 0, 0, 0]], dtype=torch.get_default_dtype()
+    )
     assert torch.equal(states.tensor, expected_states)
 
     # Remove item 3 and 1 (last items)
     actions = env.actions_from_tensor(format_tensor([3, 1]))
     states = env._backward_step(states, actions)
-    expected_states = torch.zeros((BATCH_SIZE, N_ITEMS), dtype=torch.float)
+    expected_states = torch.zeros((BATCH_SIZE, N_ITEMS), dtype=torch.get_default_dtype())
     assert torch.equal(states.tensor, expected_states)
     assert torch.all(states.is_initial_state)
 
@@ -679,7 +691,10 @@ def test_perfect_binary_tree_fwd_step():
     BATCH_SIZE = 2
     N_ACTIONS = 3  # 0=left, 1=right, 2=exit
 
-    env = PerfectBinaryTree(depth=DEPTH, reward_fn=lambda s: s.float() + 1)
+    env = PerfectBinaryTree(
+        depth=DEPTH,
+        reward_fn=lambda s: s.to(torch.get_default_dtype()) + 1,
+    )
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.tensor.shape == (BATCH_SIZE, 1)
     assert torch.all(states.tensor == 0)

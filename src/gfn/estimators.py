@@ -310,7 +310,7 @@ class DiscretePolicyEstimator(Estimator):
             uniform_dist_probs = torch.where(
                 masks.sum(dim=-1, keepdim=True) == 0,
                 torch.zeros_like(masks),
-                masks.float() / masks.sum(dim=-1, keepdim=True),
+                masks.to(torch.get_default_dtype()) / masks.sum(dim=-1, keepdim=True),
             )
             probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
 

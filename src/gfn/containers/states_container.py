@@ -89,7 +89,7 @@ class StatesContainer(Container, Generic[StateType]):
         self._log_rewards = log_rewards
         assert self._log_rewards is None or (
             self._log_rewards.shape == batch_shape
-            and self._log_rewards.dtype == torch.float
+            and self._log_rewards.is_floating_point()
         )
 
     @property
@@ -176,7 +176,6 @@ class StatesContainer(Container, Generic[StateType]):
             self._log_rewards = torch.full(
                 size=(len(self.states),),
                 fill_value=-float("inf"),
-                dtype=torch.float,
                 device=self.states.device,
             )
             self._log_rewards[self.is_terminating] = self.env.log_reward(
@@ -212,7 +211,6 @@ class StatesContainer(Container, Generic[StateType]):
             self._log_rewards = torch.full(
                 size=(0,),
                 fill_value=-float("inf"),
-                dtype=torch.float,
                 device=self.device,
             )
 

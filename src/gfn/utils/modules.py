@@ -9,6 +9,7 @@ from tensordict import TensorDict
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.utils.common import is_int_dtype
 from gfn.utils.graphs import GeometricBatch
 
 
@@ -46,12 +47,14 @@ class MLP(nn.Module):
                 n_hidden_layers is not None and n_hidden_layers >= 0
             ), "n_hidden_layers must be >= 0"
             assert activation_fn is not None, "activation_fn must be provided"
+
             if activation_fn == "elu":
                 activation = nn.ELU
             elif activation_fn == "relu":
                 activation = nn.ReLU
             elif activation_fn == "tanh":
                 activation = nn.Tanh
+
             if add_layer_norm:
                 arch = [
                     nn.Linear(input_dim, hidden_dim),
@@ -59,12 +62,17 @@ class MLP(nn.Module):
                     activation(),
                 ]
             else:
-                arch = [nn.Linear(input_dim, hidden_dim), activation()]
+                arch = [
+                    nn.Linear(input_dim, hidden_dim),
+                    activation(),
+                ]
+
             for _ in range(n_hidden_layers - 1):
                 arch.append(nn.Linear(hidden_dim, hidden_dim))
                 if add_layer_norm:
                     arch.append(nn.LayerNorm(hidden_dim))
                 arch.append(activation())
+
             self.trunk = nn.Sequential(*arch)
             self.trunk.hidden_dim = torch.tensor(hidden_dim)
             self._hidden_dim = hidden_dim
@@ -84,8 +92,8 @@ class MLP(nn.Module):
                 ingestion by the MLP. The shape of the tensor should be (*batch_shape, input_dim).
         Returns: a tensor of shape (*batch_shape, output_dim).
         """
-        if preprocessed_states.dtype != torch.float:
-            preprocessed_states = preprocessed_states.float()  # TODO: handle precision.
+        if not preprocessed_states.is_floating_point():
+            preprocessed_states = preprocessed_states.to(torch.get_default_dtype())
 
         out = self.trunk(preprocessed_states)
         out = self.last_layer(out)
@@ -125,15 +133,8 @@ class Tabular(nn.Module):
             n_states: The number of states.
             output_dim: The dimension of the output.
         """
-
         super().__init__()
-
-        self.table = torch.zeros(
-            (n_states, output_dim),
-            dtype=torch.float,
-        )
-
-        self.table = nn.parameter.Parameter(self.table)
+        self.table = nn.parameter.Parameter(torch.zeros((n_states, output_dim)))
         self.device = None
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
@@ -147,7 +148,7 @@ class Tabular(nn.Module):
         if self.device is None:
             self.device = preprocessed_states.device
             self.table = self.table.to(self.device)
-        assert preprocessed_states.dtype == torch.long
+        assert is_int_dtype(preprocessed_states)
         outputs = self.table[preprocessed_states.squeeze(-1)]
         return outputs
 
@@ -204,6 +205,7 @@ class LinearTransformer(nn.Module):
         depth: The depth of the transformer.
         max_seq_len: The maximum sequence length.
         n_heads: The number of attention heads.
+        causal: Whether to use causal attention.
     """
 
     def __init__(
@@ -286,7 +288,6 @@ class GraphEdgeActionGNN(nn.Module):
             is_backward: Whether the GNN is used for a backward policy.
         """
         super().__init__()
-
         assert n_nodes > 0, "n_nodes must be greater than 0"
         assert embedding_dim > 0, "embedding_dim must be greater than 0"
         assert num_conv_layers > 0, "num_conv_layers must be greater than 0"
@@ -344,11 +345,13 @@ class GraphEdgeActionGNN(nn.Module):
                             [
                                 nn.Sequential(
                                     nn.Linear(
-                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                        self.hidden_dim // 2,
+                                        self.hidden_dim // 2,
                                     ),
                                     nn.ReLU(),
                                     nn.Linear(
-                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                        self.hidden_dim // 2,
+                                        self.hidden_dim // 2,
                                     ),
                                 )
                                 for _ in range(2)  # 1 for in & 1 for out-features.
@@ -422,7 +425,7 @@ class GraphEdgeActionGNN(nn.Module):
         node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
 
         # Multiple action type convolutions with residual connections.
-        x = self.embedding(node_features.squeeze().int())
+        x = self.embedding(node_features.squeeze())
         for i in range(0, len(self.conv_blks), 2):
             x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
             if self.is_directed:

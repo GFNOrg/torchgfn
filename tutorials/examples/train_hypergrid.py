@@ -395,6 +395,10 @@ def gather_distributed_data(
     if rank is None:
         rank = dist.get_rank()
 
+    # Add type assertions to help the type checker
+    assert isinstance(world_size, int), "world_size must be an integer"
+    assert isinstance(rank, int), "rank must be an integer"
+
     # First gather batch_sizes to allocate correct buffer sizes.
     local_batch_size = torch.tensor(
         [local_tensor.shape[0]], device=local_tensor.device, dtype=local_tensor.dtype

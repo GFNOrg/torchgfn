@@ -7,22 +7,22 @@ from torch_geometric.data import Data as GeometricData
 def topological_sort_data(graph: GeometricData) -> list[int]:
     # Compute topological order for a torch_geometric graph DAG
     assert graph.node_names is not None, "Graph must have nodes"
-    indegree = torch.zeros(len(graph.node_names), dtype=torch.int)
+    in_degree = torch.zeros(len(graph.node_names), dtype=torch.long)
     # Assert edge_index is present
     assert graph.edge_index is not None, "Graph must have a valid edge_index attribute."
     edge_index = graph.edge_index
     for child in edge_index[1]:
-        indegree[child] += 1
+        in_degree[child] += 1
     order = []
-    queue = [int(i) for i in torch.nonzero(indegree == 0, as_tuple=False)]
+    queue = [int(i) for i in torch.nonzero(in_degree == 0, as_tuple=False)]
     while queue:
         node = queue.pop(0)
         order.append(node)
         mask = edge_index[0] == node
         children = edge_index[1][mask]
         for child in children.tolist():
-            indegree[child] -= 1
-            if indegree[child] == 0:
+            in_degree[child] -= 1
+            if in_degree[child] == 0:
                 queue.append(child)
     return order
 
