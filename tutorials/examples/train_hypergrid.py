@@ -1243,6 +1243,8 @@ def main(args):  # noqa: C901
 
 
 if __name__ == "__main__":
+    torch.set_default_dtype(torch.bfloat16)
+    print("Using dtype: ", torch.get_default_dtype())
     parser = ArgumentParser()
 
     # Machine setting.

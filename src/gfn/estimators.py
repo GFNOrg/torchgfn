@@ -304,7 +304,13 @@ class DiscretePolicyEstimator(Estimator):
         if temperature != 1.0:
             logits /= temperature
 
-        probs = torch.softmax(logits, dim=-1)
+        # Set dtype only if default is lower precision (fp16 or bf16)
+        dtype = (
+            torch.float32
+            if torch.get_default_dtype() in (torch.float16, torch.bfloat16)
+            else None
+        )
+        probs = torch.softmax(logits, dim=-1, dtype=dtype)
 
         if epsilon != 0.0:
             uniform_dist_probs = torch.where(
