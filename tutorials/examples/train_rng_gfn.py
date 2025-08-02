@@ -113,7 +113,7 @@ class RNGEnv(DiscreteEnv):
         seq_lens = (states.tensor != self.tokenizer.pad_token_id).sum(dim=1)
 
         # If the state is already full forbid everything but EOS.
-        full_idx = seq_lens >= self.total_length
+        full_idx = seq_lens >= self.total_length - 1
         if full_idx.any():
             masks[full_idx] = False
             masks[full_idx, self.tokenizer.eos_token_id] = True
@@ -128,7 +128,7 @@ class RNGEnv(DiscreteEnv):
         
         # Backward mask: only the last non-pad token can be removed (one True per row, rest False)
         batch_size = states.tensor.shape[0]
-        backward_masks = torch.zeros((batch_size, self.n_actions), dtype=torch.bool, device=states.tensor.device)
+        backward_masks = torch.zeros((batch_size, self.n_actions - 1), dtype=torch.bool, device=states.tensor.device)
         
         # Find which sequences can go backward (not at initial state)
         can_go_back = ~at_initial
@@ -267,7 +267,9 @@ class LLMGFNModule(DiscretePolicyEstimator):
         if self.is_backward:
             # Backward masks
             masks = states.backward_masks
-            logits[~masks] = -float("inf")
+            assert self.tokenizer.eos_token_id == logits.shape[1] - 1
+            logits[:, :-1][~masks] = -float("inf")
+            logits[:, -1] = -float("inf")
         else:
             # Forward masks include all actions
             masks = states.forward_masks
