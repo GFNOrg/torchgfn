@@ -155,7 +155,7 @@ class RNGEnv(DiscreteEnv):
         new_states_tensor = states.tensor.clone()
         pad_token_id = self.tokenizer.pad_token_id
         for idx in range(len(states)):
-            pad_positions = (new_states_tensor[idx] == pad_token_id).nonzero(as_tuple=False)
+            pad_positions = (new_states_tensor[idx] == pad_token_id).nonzero()
             if pad_positions.numel() == 0:
                 continue  # already full, should not happen thanks to masks
             first_pad = pad_positions[0].item()
@@ -169,7 +169,7 @@ class RNGEnv(DiscreteEnv):
         pad_token_id = self.tokenizer.pad_token_id
         new_states_tensor = states.tensor.clone()
         for idx in range(len(states)):
-            non_pad_positions = (new_states_tensor[idx] != pad_token_id).nonzero(as_tuple=False)
+            non_pad_positions = (new_states_tensor[idx] != pad_token_id).nonzero()
             if non_pad_positions.numel() == 0:
                 continue
             last_idx = non_pad_positions[-1].item()
@@ -240,9 +240,7 @@ class LLMGFNModule(DiscretePolicyEstimator):
 
     def forward(self, states: DiscreteStates):  # type: ignore[override]
         input_ids = states.tensor
-        # Build an attention mask: 1 for non-pad.
         attention_mask = (input_ids != self.tokenizer.pad_token_id).long()
-
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
 
         # Select logits corresponding to the last *non-pad* token.
@@ -326,14 +324,16 @@ def evaluate_model(env, trajectories, tokenizer, step_name="Evaluation"):
         counts = np.bincount(numbers, minlength=101)
         valid_counts = counts[:101]  # Only 0-100
         success_rate = len(numbers) / total_trajectories
-        unique_numbers = np.count_nonzero(valid_counts)
+        unique_numbers = np.arange(101)[valid_counts > 0]
+        unique_count = len(unique_numbers)
         mean_val = np.mean(numbers)
         std_val = np.std(numbers)
         
         results = {
             'valid_numbers': numbers,
             'success_rate': success_rate,
-            'unique_count': unique_numbers,
+            'unique_count': unique_count,
+            'unique_numbers': unique_numbers,
             'mean': mean_val,
             'std': std_val,
             'total_valid': len(numbers),
@@ -371,9 +371,9 @@ def main():
     parser.add_argument("--device", default="auto", help="Device to use (auto, cpu, cuda)")
     parser.add_argument("--model_name", default="gpt2", help="Model name from HuggingFace")
     parser.add_argument("--n_steps", type=int, default=400, help="Number of training steps")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
-    parser.add_argument("--max_length", type=int, default=2, help="Max tokens to generate")
+    parser.add_argument("--max_length", type=int, default=3, help="Max tokens to generate")
     parser.add_argument("--eval_samples", type=int, default=100, help="Number of samples for evaluation")
     
     # LoRA-specific arguments
@@ -510,11 +510,13 @@ def main():
     print(f"Generated valid numbers: {pre_training_results['valid_numbers'][:20]}...")  # Show first 20
     success_rate = pre_training_results['success_rate']
     unique_count = pre_training_results['unique_count']
+    unique_numbers = pre_training_results['unique_numbers']
     mean_val = pre_training_results['mean']
     std_val = pre_training_results['std']
     total_valid = pre_training_results['total_valid']
     print(f"Number of valid samples: {total_valid} / {len(trajectories)} ({100*success_rate:.1f}%)")
     print(f"Unique numbers generated: {unique_count} / 101")
+    print(f"Unique numbers: {unique_numbers}")
     print(f"Mean: {mean_val:.1f}, Std: {std_val:.1f}")
     
     # Initialize loss tracking
@@ -560,7 +562,7 @@ def main():
             current_lr = optimizer.param_groups[0]['lr']
             training_results = evaluate_model(env, trajectories, tokenizer, "Training Evaluation")
             buffer_info = f", buffer_size = {len(replay_buffer) if replay_buffer else 0}" if args.use_buffer else ""
-            print(f"Step {step:4d}: loss = {loss.item():.4f}, lr = {current_lr:.6f}, grad_norm = {grad_norm:.4f}, success_rate = {training_results['success_rate']:.1%}, unique_numbers = {training_results['unique_count']}{buffer_info}")
+            print(f"Step {step:4d}: loss = {loss.item():.4f}, lr = {current_lr:.6f}, grad_norm = {grad_norm:.4f}, success_rate = {training_results['success_rate']:.1%}, unique_numbers = {training_results['unique_count']}, unique_numbers = {training_results['unique_numbers']}{buffer_info}")
 
     # Post-training evaluation
     with torch.no_grad():
