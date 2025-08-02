@@ -21,6 +21,7 @@ from .train_hypergrid_local_search import main as train_hypergrid_local_search_m
 from .train_hypergrid_simple import main as train_hypergrid_simple_main
 from .train_ising import main as train_ising_main
 from .train_line import main as train_line_main
+from .train_rng_gfn import main as train_rng_gfn_main
 
 
 @dataclass
@@ -170,6 +171,25 @@ class BayesianStructureArgs(CommonArgs):
     n_steps_per_iteration: int = 1
     seed: int = 0
     use_cuda: bool = False
+
+
+@dataclass
+class RNGGFNArgs(CommonArgs):
+    batch_size: int = 8
+    n_trajectories: int = 8
+    n_iterations: int = 10
+    lr: float = 1e-4
+    max_length: int = 5
+    prompt: str = "The following is a random integer drawn uniformly between 0 and 100: "
+
+
+@pytest.mark.parametrize("n_iterations", [10])
+def test_rng_gfn_smoke(n_iterations: int):
+    """Smoke test for the RNG GFN training script."""
+    args = RNGGFNArgs(n_iterations=n_iterations)
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_rng_gfn_main(namespace_args)  # Just ensure it runs without errors.
 
 
 @pytest.mark.parametrize("ndim", [2, 4])
