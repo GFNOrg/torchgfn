@@ -47,6 +47,7 @@ from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.samplers import Sampler
 from gfn.containers import ReplayBuffer
+from gfn.containers.trajectories import Trajectories
 
 
 class RNGEnv(DiscreteEnv):
@@ -216,6 +217,142 @@ class RNGEnv(DiscreteEnv):
                 pass
 
         return rewards
+
+
+class ExpertReplayBuffer(ReplayBuffer):
+    """Custom replay buffer that is prefilled with expert trajectories and has no-op add operation."""
+    
+    def __init__(self, env, expert_trajectories, capacity=1000, prioritized_capacity=True, prioritized_sampling=True):
+        """Initialize with expert trajectories.
+        
+        Args:
+            env: The environment
+            expert_trajectories: Trajectories object containing expert demonstrations
+            capacity: Buffer capacity (ignored since we use fixed expert data)
+            prioritized_capacity: Whether to use prioritized capacity 
+            prioritized_sampling: Whether to use prioritized sampling
+        """
+        super().__init__(env, capacity, prioritized_capacity, prioritized_sampling)
+        
+        # Initialize the buffer with expert trajectories
+        self.training_objects = expert_trajectories
+        print(f"ExpertReplayBuffer initialized with {len(expert_trajectories)} expert trajectories")
+    
+    def add(self, training_objects):
+        """No-op add operation - keeps the expert trajectories unchanged."""
+        # Do nothing - we want to keep only the expert trajectories
+        pass
+    
+    def __len__(self):
+        """Return the number of expert trajectories."""
+        return len(self.training_objects) if self.training_objects is not None else 0
+
+
+def generate_expert_trajectories(env, tokenizer):
+    """Generate expert trajectories for numbers 0-100."""
+    from gfn.samplers import Sampler
+    
+    # We'll create a simple expert policy and use it to generate trajectories
+    class ExpertPolicy:
+        def __init__(self, env, tokenizer, target_numbers):
+            self.env = env
+            self.tokenizer = tokenizer
+            self.target_numbers = target_numbers
+            self.current_targets = None
+            
+        def __call__(self, states, *args, **kwargs):
+            # Return logits that strongly favor the correct next token
+            batch_size = states.batch_shape[0]
+            logits = torch.full((batch_size, self.tokenizer.vocab_size), -10.0, device=states.device)
+            
+            for i in range(batch_size):
+                if self.current_targets is not None and i < len(self.current_targets):
+                    target_num = self.current_targets[i]
+                    # Check current state to see what token should come next
+                    state_tensor = states.tensor[i]
+                    prompt_len = self.env.prompt_tokens.shape[1]
+                    
+                    # Get non-pad positions after prompt
+                    non_pad_mask = state_tensor[prompt_len:] != self.tokenizer.pad_token_id
+                    num_generated = non_pad_mask.sum().item()
+                    
+                    # Get target tokens for this number
+                    target_str = str(target_num)
+                    target_tokens = self.tokenizer.encode(target_str, add_special_tokens=False)
+                    
+                    if num_generated < len(target_tokens):
+                        # Next token should be the next digit
+                        next_token = target_tokens[num_generated]
+                        logits[i, next_token] = 10.0  # Strong preference
+                    else:
+                        # Should terminate with EOS
+                        logits[i, self.tokenizer.eos_token_id] = 10.0
+                        
+                else:
+                    # Default to EOS if no target specified
+                    logits[i, self.tokenizer.eos_token_id] = 10.0
+                    
+            return logits
+            
+        def to_probability_distribution(self, states, logits, **kwargs):
+            # Apply forward mask and return categorical distribution
+            masks = states.forward_masks
+            logits_masked = logits.clone()
+            logits_masked[~masks] = -float("inf")
+            
+            # Create a custom distribution that samples with the right shape
+            categorical = torch.distributions.Categorical(logits=logits_masked)
+            class ShapedCategorical:
+                def __init__(self, cat_dist):
+                    self.cat_dist = cat_dist
+                
+                def sample(self):
+                    # Sample from categorical and reshape to (batch_size, 1)
+                    samples = self.cat_dist.sample()
+                    return samples.unsqueeze(-1)
+                
+                def log_prob(self, value):
+                    # value should have shape (batch_size, 1), squeeze for categorical
+                    if value.dim() > 1:
+                        value = value.squeeze(-1)
+                    return self.cat_dist.log_prob(value)
+            
+            return ShapedCategorical(categorical)
+    
+    # Use batched generation for efficiency
+    expert_trajectories = Trajectories(env)
+    batch_size = 32  # Process numbers in batches
+    
+    for start_num in range(0, 101, batch_size):
+        end_num = min(start_num + batch_size, 101)
+        current_batch_size = end_num - start_num
+        target_numbers = list(range(start_num, end_num))
+        
+        # Create expert policy for this batch
+        expert_policy = ExpertPolicy(env, tokenizer, target_numbers)
+        expert_policy.current_targets = target_numbers
+        
+        # Create a dummy module that uses our expert policy
+        class ExpertModule:
+            def __init__(self, expert_policy):
+                self.expert_policy = expert_policy
+                self.is_backward = False
+                
+            def __call__(self, states, *args, **kwargs):
+                return self.expert_policy(states, *args, **kwargs)
+                
+            def to_probability_distribution(self, states, logits, **kwargs):
+                return self.expert_policy.to_probability_distribution(states, logits, **kwargs)
+        
+        expert_module = ExpertModule(expert_policy)
+        expert_sampler = Sampler(expert_module)
+        
+        # Sample trajectories for this batch
+        batch_trajectories = expert_sampler.sample_trajectories(env, n=current_batch_size)
+        expert_trajectories.extend(batch_trajectories)
+    
+    print(f"Generated {len(expert_trajectories)} expert trajectories")
+    return expert_trajectories
 
 
 class LLMGFNModule(DiscretePolicyEstimator):
@@ -450,9 +587,15 @@ def main():
     # Initialize replay buffer if requested
     replay_buffer = None
     if args.use_buffer:
-        replay_buffer = ReplayBuffer(
+        # Generate expert trajectories for numbers 0-100
+        print("Generating expert trajectories for numbers 0-100...")
+        expert_trajectories = generate_expert_trajectories(env, tokenizer)
+        
+        # Use custom replay buffer with expert trajectories
+        replay_buffer = ExpertReplayBuffer(
             env,
-            capacity=args.batch_size * 4,  # Use 4x batch size as capacity
+            expert_trajectories,
+            capacity=args.batch_size * 4,  # Use 4x batch size as capacity (ignored)
             prioritized_capacity=True,
             prioritized_sampling=True,
         )
@@ -498,7 +641,7 @@ def main():
     print(f"Learning rate scheduler: {args.scheduler_type}, warmup_steps={args.warmup_steps}")
     print(f"Gradient clipping: max_norm={args.max_grad_norm}")
     if args.use_buffer:
-        print(f"Using replay buffer with capacity: {args.batch_size * 4}")
+        print(f"Using expert replay buffer with {len(replay_buffer)} expert trajectories")
     else:
         print("Not using replay buffer (--use_buffer flag not set)")
 
@@ -562,7 +705,7 @@ def main():
             current_lr = optimizer.param_groups[0]['lr']
             training_results = evaluate_model(env, trajectories, tokenizer, "Training Evaluation")
             buffer_info = f", buffer_size = {len(replay_buffer) if replay_buffer else 0}" if args.use_buffer else ""
-            print(f"Step {step:4d}: loss = {loss.item():.4f}, lr = {current_lr:.6f}, grad_norm = {grad_norm:.4f}, success_rate = {training_results['success_rate']:.1%}, unique_numbers = {training_results['unique_count']}, unique_numbers = {training_results['unique_numbers']}{buffer_info}")
+            print(f"Step {step:4d}: loss = {loss.item():.4f}, lr = {current_lr:.6f}, grad_norm = {grad_norm:.4f}, success_rate = {training_results['success_rate']:.1%}, unique_count = {training_results['unique_count']}{buffer_info}")
 
     # Post-training evaluation
     with torch.no_grad():
