@@ -231,6 +231,7 @@ def main(args: Namespace):
         idx = np.arange(n_modes_total)
         np.random.shuffle(idx)
         ring_expert_data = ring_modes[idx[:n_expert_data]]  # type: ignore
+        assert gflownet.pb is not None
         backward_sampler = Sampler(gflownet.pb)
 
         trajectories = backward_sampler.sample_trajectories(
