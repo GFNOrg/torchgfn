@@ -3,6 +3,7 @@ Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.1325
 and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
+import warnings
 from typing import cast
 
 import torch
@@ -32,7 +33,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
 
     Attributes:
         pf: The forward policy estimator.
-        pb: The backward policy estimator.
+        pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
         logZ: A learnable parameter or a ScalarEstimator instance (for conditional GFNs).
         log_reward_clip_min: If finite, clips log rewards to this value.
     """
@@ -40,19 +42,39 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
     def __init__(
         self,
         pf: Estimator,
-        pb: Estimator,
+        pb: Estimator | None,
         logZ: float | ScalarEstimator = 0.0,
         log_reward_clip_min: float = -float("inf"),
+        dag_is_tree: bool = False,
     ):
         """Initializes a TBGFlowNet instance.
 
         Args:
             pf: The forward policy estimator.
-            pb: The backward policy estimator.
+            pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+                pb is therefore always 1.
             logZ: A learnable parameter or a ScalarEstimator instance (for
                 conditional GFNs).
             log_reward_clip_min: If finite, clips log rewards to this value.
+            dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always
+                1. Must be set explicitly by user to ensure that pb is an Estimator
+                except under this special case.
         """
+        if pb is None and not dag_is_tree:
+            raise ValueError(
+                "pb must be an Estimator unless dag_is_tree is True. "
+                "If the gflownet DAG is a tree, set dag_is_tree to True."
+            )
+        if isinstance(pb, Estimator) and dag_is_tree:
+            warnings.warn(
+                "The user specified that the GFlowNet DAG is a tree, and specified a "
+                "backward policy estimator. Under normal circumstances, pb should be "
+                "None if the GFlowNet DAG is a tree, because the backward policy "
+                "probability is always 1, and therefore learning a backward policy "
+                "estimator is not necessary and will slow down training. Please ensure "
+                "this is the intended experimental setup."
+            )
+
         super().__init__(pf, pb)
 
         if isinstance(logZ, float):

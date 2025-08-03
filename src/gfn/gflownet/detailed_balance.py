@@ -1,4 +1,5 @@
 import math
+import warnings
 from typing import Tuple
 
 import torch
@@ -68,24 +69,44 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
     def __init__(
         self,
         pf: Estimator,
-        pb: Estimator,
+        pb: Estimator | None,
         logF: ScalarEstimator | ConditionalScalarEstimator,
         forward_looking: bool = False,
         log_reward_clip_min: float = -float("inf"),
         safe_log_prob_min: bool = True,
+        dag_is_tree: bool = False,
     ) -> None:
         """Initializes a DBGFlowNet instance.
 
         Args:
             pf: The forward policy estimator.
-            pb: The backward policy estimator.
+            pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+                pb is therefore always 1.
             logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
                 flow of the states.
             forward_looking: Whether to use the forward-looking GFN loss.
             log_reward_clip_min: If finite, clips log rewards to this value.
             safe_log_prob_min: If True, uses -1e10 as the minimum log probability value
                 to avoid numerical instability, otherwise uses -1e38.
+            dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always 1.
+                Must be set explicitly by user to ensure that pb is an Estimator
+                except under this special case.
         """
+        if pb is None and not dag_is_tree:
+            raise ValueError(
+                "pb must be an Estimator unless dag_is_tree is True. "
+                "If the gflownet DAG is a tree, set dag_is_tree to True."
+            )
+        if isinstance(pb, Estimator) and dag_is_tree:
+            warnings.warn(
+                "The user specified that the GFlowNet DAG is a tree, and specified a "
+                "backward policy estimator. Under normal circumstances, pb should be "
+                "None if the GFlowNet DAG is a tree, because the backward policy "
+                "probability is always 1, and therefore learning a backward policy "
+                "estimator is not necessary and will slow down training. Please ensure "
+                "this is the intended experimental setup."
+            )
+
         super().__init__(pf, pb)
         assert any(
             isinstance(logF, cls)
@@ -98,6 +119,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             self.log_prob_min = -1e10
         else:
             self.log_prob_min = -1e38
+        self.dag_is_tree = dag_is_tree
 
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
         """Returns a dictionary of named parameters containing 'logF' in their name.
@@ -285,13 +307,17 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
     Attributes:
         pf: The forward policy estimator.
-        pb: The backward policy estimator.
+        pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
             flow of the states.
         forward_looking: Whether to use the forward-looking GFN loss.
         log_reward_clip_min: If finite, clips log rewards to this value.
         safe_log_prob_min: If True, uses -1e10 as the minimum log probability value
             to avoid numerical instability, otherwise uses -1e38.
+        dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always 1.
+            Must be set explicitly by user to ensure that pb is an Estimator
+            except under this special case.
     """
 
     def get_scores(
@@ -371,18 +397,23 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         non_exit_actions = actions[~actions.is_exit]
 
-        if transitions.conditioning is not None:
-            with has_conditioning_exception_handler("pb", self.pb):
-                module_output = self.pb(
-                    valid_next_states, transitions.conditioning[mask]
-                )
-        else:
-            with no_conditioning_exception_handler("pb", self.pb):
-                module_output = self.pb(valid_next_states)
+        if self.pb is not None:
+            if transitions.conditioning is not None:
+                with has_conditioning_exception_handler("pb", self.pb):
+                    module_output = self.pb(
+                        valid_next_states, transitions.conditioning[mask]
+                    )
+            else:
+                with no_conditioning_exception_handler("pb", self.pb):
+                    module_output = self.pb(valid_next_states)
 
-        valid_log_pb_actions = self.pb.to_probability_distribution(
-            valid_next_states, module_output
-        ).log_prob(non_exit_actions.tensor)
+            valid_log_pb_actions = self.pb.to_probability_distribution(
+                valid_next_states, module_output
+            ).log_prob(non_exit_actions.tensor)
+        else:
+            # If pb is None, we assume that the gflownet DAG is a tree, and therefore
+            # the backward policy probability is always 1 (log probs are 0).
+            valid_log_pb_actions = torch.zeros_like(valid_log_pf_s_exit)
 
         preds = all_log_rewards[:, 0] + valid_log_pf_actions + valid_log_pf_s_prime_exit
         targets = all_log_rewards[:, 1] + valid_log_pb_actions + valid_log_pf_s_exit

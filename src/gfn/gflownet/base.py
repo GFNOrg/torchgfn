@@ -151,15 +151,17 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
 
     Attributes:
         pf: The forward policy estimator.
-        pb: The backward policy estimator.
+        pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
     """
 
-    def __init__(self, pf: Estimator, pb: Estimator) -> None:
+    def __init__(self, pf: Estimator, pb: Estimator | None) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
         Args:
             pf: The forward policy estimator.
-            pb: The backward policy estimator.
+            pb: The backward policy estimator, or None if the gflownet DAG is a tree,
+                and pb is therefore always 1.
         """
         super().__init__()
         self.pf = pf
@@ -221,7 +223,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
 
     Attributes:
         pf: The forward policy module.
-        pb: The backward policy module.
+        pb: The backward policy module, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
     """
 
     def get_pfs_and_pbs(

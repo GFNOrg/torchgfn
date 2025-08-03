@@ -33,7 +33,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     Attributes:
         pf: The forward policy estimator.
-        pb: The backward policy estimator.
+        pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log flow
             of the states.
         weighting: The sub-trajectories weighting scheme.
@@ -60,12 +61,13 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         lamda: Discount factor for longer trajectories (used in geometric weighting).
         log_reward_clip_min: If finite, clips log rewards to this value.
         forward_looking: Whether to use the forward-looking GFN loss.
+        dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always 1.
     """
 
     def __init__(
         self,
         pf: Estimator,
-        pb: Estimator,
+        pb: Estimator | None,
         logF: ScalarEstimator | ConditionalScalarEstimator,
         weighting: Literal[
             "DB",
@@ -79,6 +81,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         lamda: float = 0.9,
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
+        dag_is_tree: bool = False,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -92,7 +95,25 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             lamda: Discount factor for longer trajectories (used in geometric weighting).
             log_reward_clip_min: If finite, clips log rewards to this value.
             forward_looking: Whether to use the forward-looking GFN loss.
+            dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always
+                1. Must be set explicitly by user to ensure that pb is an Estimator
+                except under this special case.
         """
+        if pb is None and not dag_is_tree:
+            raise ValueError(
+                "pb must be an Estimator unless dag_is_tree is True. "
+                "If the gflownet DAG is a tree, set dag_is_tree to True."
+            )
+        if isinstance(pb, Estimator) and dag_is_tree:
+            warnings.warn(
+                "The user specified that the GFlowNet DAG is a tree, and specified a "
+                "backward policy estimator. Under normal circumstances, pb should be "
+                "None if the GFlowNet DAG is a tree, because the backward policy "
+                "probability is always 1, and therefore learning a backward policy "
+                "estimator is not necessary and will slow down training. Please ensure "
+                "this is the intended experimental setup."
+            )
+
         super().__init__(pf, pb)
         assert any(
             isinstance(logF, cls)
@@ -103,6 +124,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self.lamda = lamda
         self.log_reward_clip_min = log_reward_clip_min
         self.forward_looking = forward_looking
+        self.dag_is_tree = dag_is_tree
 
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
         """Returns a dictionary of named parameters containing 'logF' in their name.
