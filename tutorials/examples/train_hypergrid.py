@@ -18,9 +18,10 @@ better performing ones. Use the following flags:
 --use_selective_averaging: Enable selective averaging instead of standard averaging
 --replacement_ratio 0.2: Replace the worst 20% of models (adjustable 0.0-1.0)
 --averaging_strategy mean: How to combine good models ("mean", "weighted_mean", "best_only")
+--momentum 0.0: Momentum factor for combining with previous weights (0.0-1.0, default 0.0)
 
 Example with selective averaging:
-python train_hypergrid.py --distributed --use_selective_averaging --replacement_ratio 0.3 --averaging_strategy mean
+python train_hypergrid.py --distributed --use_selective_averaging --replacement_ratio 0.3 --averaging_strategy mean --momentum 0.1
 
 This script also provides a function `get_exact_P_T` that computes the exact terminating state
 distribution for the HyperGrid environment, which is useful for evaluation and visualization.
@@ -327,9 +328,10 @@ def _broadcast_rank_info(ranks_to_replace: set, ranks_to_average: set, averaging
 
 def _compute_averaged_weights(param: torch.nn.Parameter, ranks_to_average_list: list, 
                             averaging_weights: torch.Tensor, averaging_strategy: str, 
-                            rank: int, ranks_to_replace: set):
+                            rank: int, ranks_to_replace: set, momentum: float = 0.0):
     """Compute averaged weights based on the specified strategy."""
     param_sum = torch.zeros_like(param.data)
+    old_weights = param.data.clone()  # Store original weights for momentum
     
     # All ranks participate in broadcasts in the same order
     for i, contributing_rank in enumerate(ranks_to_average_list):
@@ -349,16 +351,21 @@ def _compute_averaged_weights(param: torch.nn.Parameter, ranks_to_average_list: 
                 param_sum += weight * param_copy
             elif averaging_strategy == "best_only":
                 if i == 0:  # Only use the first (best) rank
-                    return param_copy
+                    averaged_weights = param_copy
+                    # Apply momentum: new_weights = momentum * old_weights + (1 - momentum) * averaged_weights
+                    return momentum * old_weights + (1.0 - momentum) * averaged_weights
     
     if averaging_strategy == "mean":
-        return param_sum / len(ranks_to_average_list)
+        averaged_weights = param_sum / len(ranks_to_average_list)
     elif averaging_strategy == "weighted_mean":
-        return param_sum
+        averaged_weights = param_sum
     elif averaging_strategy == "best_only":
-        return param_sum  # Should have returned early above
+        averaged_weights = param_sum  # Should have returned early above
     else:
         raise ValueError(f"Unknown averaging strategy: {averaging_strategy}")
+    
+    # Apply momentum: new_weights = momentum * old_weights + (1 - momentum) * averaged_weights
+    return momentum * old_weights + (1.0 - momentum) * averaged_weights
 
 
 def selective_model_averaging(model, local_performance_metric: float,
@@ -413,7 +420,7 @@ def selective_model_averaging(model, local_performance_metric: float,
     for name, param in model.named_parameters():
         # All ranks participate in the averaging computation (broadcasts happen inside)
         new_weights = _compute_averaged_weights(
-            param, ranks_to_average_list, averaging_weights, averaging_strategy, rank, ranks_to_replace
+            param, ranks_to_average_list, averaging_weights, averaging_strategy, rank, ranks_to_replace, momentum
         )
         
         # Only ranks that need replacement update their weights
@@ -1297,6 +1304,7 @@ def main(args):  # noqa: C901
                         -loss.item(),
                         replacement_ratio=args.replacement_ratio,
                         averaging_strategy=args.averaging_strategy,
+                        momentum=args.momentum,
                     )
                 else:
                     # Use original averaging approach
@@ -1520,6 +1528,12 @@ if __name__ == "__main__":
         choices=["mean", "weighted_mean", "best_only"],
         default="mean",
         help="Strategy for combining good models",
+    )
+    parser.add_argument(
+        "--momentum",
+        type=float,
+        default=0.01,
+        help="Momentum factor for combining with previous weights (0.0 = no momentum, 1.0 = keep old weights)",
     )
 
     # Environment settings.
