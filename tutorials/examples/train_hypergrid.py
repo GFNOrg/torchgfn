@@ -1164,14 +1164,6 @@ def main(args):  # noqa: C901
                         discovered_modes,
                     )
 
-                    print(
-                        "all_visited_terminating_states = ",
-                        len(all_visited_terminating_states),
-                    )
-                    print(
-                        "visited_terminating_states = ", len(visited_terminating_states)
-                    )
-
                     if use_wandb:
                         wandb.log(validation_info, step=iteration)
 
@@ -1181,6 +1173,8 @@ def main(args):  # noqa: C901
                         loss=to_log["loss"],
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
+                        AVTS=len(all_visited_terminating_states),
+                        VTS=len(visited_terminating_states),
                     )
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
