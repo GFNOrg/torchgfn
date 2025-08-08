@@ -1,4 +1,4 @@
-from argparse import Namespace
+import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -279,7 +279,7 @@ def train(
     return gflownet
 
 
-def main(args: Namespace):
+def main(args):
     if not isinstance(args.device, torch.device):
         device = torch.device(args.device)
 
@@ -331,12 +331,37 @@ def main(args: Namespace):
 
 
 if __name__ == "__main__":
-    args = Namespace(
-        n_trajectories=1.28e6,
-        batch_size=256,
-        lr_base=1e-3,
-        gradient_clip_value=5,
-        exploration_var_starting_val=2,  # Used for off-policy training.
-        device="cpu",
+    parser = argparse.ArgumentParser(
+        description="Train a GFlowNet on the Line environment"
     )
+    parser.add_argument(
+        "--n_trajectories",
+        type=float,
+        default=1.28e6,
+        help="Total budget of trajectories to train on",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=256,
+        help="Batch size, i.e. number of trajectories to sample per training iteration",
+    )
+    parser.add_argument("--lr_base", type=float, default=1e-3, help="Base learning rate")
+    parser.add_argument(
+        "--gradient_clip_value", type=float, default=5, help="Gradient clipping value"
+    )
+    parser.add_argument(
+        "--exploration_var_starting_val",
+        type=float,
+        default=2,
+        help="Starting value for exploration variance (used for off-policy training)",
+    )
+    parser.add_argument(
+        "--device", type=str, default="cpu", help="Device to use (cpu or cuda)"
+    )
+    parser.add_argument(
+        "--plot", action="store_true", default=False, help="Whether to plot the results"
+    )
+
+    args = parser.parse_args()
     main(args)

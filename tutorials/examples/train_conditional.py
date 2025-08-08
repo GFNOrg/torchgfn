@@ -19,6 +19,7 @@ from gfn.gflownet import (
     TBGFlowNet,
 )
 from gfn.gym import HyperGrid
+from gfn.preprocessors import KHotPreprocessor
 from gfn.utils.modules import MLP
 
 DEFAULT_SEED: int = 4444
@@ -35,14 +36,17 @@ def build_conditional_pf_pb(
     Returns:
         A tuple of (forward policy estimator, backward policy estimator)
     """
+    # Create preprocessor for the environment
+    preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
+
     CONCAT_SIZE = 16
     module_PF = MLP(
-        input_dim=env.n_states,
+        input_dim=preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
     )
     module_PB = MLP(
-        input_dim=env.n_states,
+        input_dim=preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
         trunk=module_PF.trunk,
@@ -71,6 +75,7 @@ def build_conditional_pf_pb(
         module_cond,
         module_final_PF,
         env.n_actions,
+        preprocessor=preprocessor,
         is_backward=False,
     )
     pb_estimator = ConditionalDiscretePolicyEstimator(
@@ -78,6 +83,7 @@ def build_conditional_pf_pb(
         module_cond,
         module_final_PB,
         env.n_actions,
+        preprocessor=preprocessor,
         is_backward=True,
     )
 
@@ -95,9 +101,12 @@ def build_conditional_logF_scalar_estimator(
     Returns:
         A conditional scalar estimator for log flow
     """
+    # Create preprocessor for the environment
+    preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
+
     CONCAT_SIZE = 16
     module_state_logF = MLP(
-        input_dim=env.n_states,
+        input_dim=preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
         n_hidden_layers=1,
@@ -119,6 +128,7 @@ def build_conditional_logF_scalar_estimator(
         module_state_logF,
         module_conditioning_logF,
         module_final_logF,
+        preprocessor=preprocessor,
     )
 
     return logF_estimator
@@ -136,14 +146,56 @@ def build_tb_gflownet(env: HyperGrid) -> TBGFlowNet:
     """
     pf_estimator, pb_estimator = build_conditional_pf_pb(env)
 
-    module_logZ = MLP(
+    # Create conditional logZ estimator
+    # Use the same preprocessor as the policy estimators
+    preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
+    module_logZ_state = MLP(
+        input_dim=preprocessor.output_dim,
+        output_dim=16,
+        hidden_dim=16,
+        n_hidden_layers=2,
+    )
+    module_logZ_cond = MLP(
         input_dim=1,
+        output_dim=16,
+        hidden_dim=16,
+        n_hidden_layers=2,
+    )
+    module_logZ_final = MLP(
+        input_dim=32,  # 16 + 16
         output_dim=1,
         hidden_dim=16,
         n_hidden_layers=2,
     )
 
-    logZ_estimator = ScalarEstimator(module_logZ)
+    # Create a wrapper class to make ConditionalScalarEstimator compatible with TBGFlowNet
+    class ConditionalLogZWrapper(ScalarEstimator):
+        def __init__(self, conditional_estimator, env):
+            super().__init__(
+                conditional_estimator.module, conditional_estimator.preprocessor
+            )
+            self.conditional_estimator = conditional_estimator
+            self.env = env
+
+        def forward(self, conditioning):
+            # Create dummy states for the conditional estimator
+            # The conditional estimator expects states, but we only have conditioning
+            # We'll create dummy states with the same batch shape as conditioning
+            batch_shape = (
+                conditioning.shape[:-1]
+                if len(conditioning.shape) > 1
+                else conditioning.shape
+            )
+            dummy_states = self.env.reset(batch_shape)
+            return self.conditional_estimator(dummy_states, conditioning)
+
+    conditional_logZ = ConditionalScalarEstimator(
+        module_logZ_state,
+        module_logZ_cond,
+        module_logZ_final,
+        preprocessor=preprocessor,
+    )
+    logZ_estimator = ConditionalLogZWrapper(conditional_logZ, env)
     gflownet = TBGFlowNet(logZ=logZ_estimator, pf=pf_estimator, pb=pb_estimator)
 
     return gflownet
@@ -165,9 +217,12 @@ def build_db_mod_gflownet(env):
 
 
 def build_fm_gflownet(env):
+    # Create preprocessor for the environment
+    preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
+
     CONCAT_SIZE = 16
     module_logF = MLP(
-        input_dim=env.n_states,
+        input_dim=preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
     )
@@ -185,6 +240,7 @@ def build_fm_gflownet(env):
         module_cond,
         module_final_logF,
         env.n_actions,
+        preprocessor=preprocessor,
         is_backward=False,
     )
 
@@ -201,7 +257,7 @@ def build_subTB_gflownet(env):
     return gflownet
 
 
-def train(env, gflownet, seed):
+def train(env, gflownet, seed, device, n_iterations=10, batch_size=1000):
     torch.manual_seed(seed)
     exploration_rate = 0.5
     lr = 0.0005
@@ -218,15 +274,14 @@ def train(env, gflownet, seed):
     else:
         print("unknown gflownet type: {}".format(type(gflownet)))
 
-    n_iterations = int(10)  # 1e4)
-    batch_size = int(1e4)
-
     print("+ Training Conditional {}!".format(type(gflownet)))
+    final_loss = None
     for _ in (pbar := tqdm(range(n_iterations))):
-        conditioning = torch.rand((batch_size, 1)).to(gflownet.device)  # type: ignore
+        conditioning = torch.rand((batch_size,)).to(device)
         conditioning = (conditioning > 0.5).to(
             torch.get_default_dtype()
         )  # Randomly 1 and zero.
+        conditioning = conditioning.unsqueeze(-1)  # Add feature dimension for MLP
 
         trajectories = gflownet.sample_trajectories(
             env,
@@ -242,9 +297,11 @@ def train(env, gflownet, seed):
         )
         loss.backward()
         optimizer.step()
-        pbar.set_postfix({"loss": loss.item()})
+        final_loss = loss.item()
+        pbar.set_postfix({"loss": final_loss})
 
     print("+ Training complete!")
+    return final_loss
 
 
 GFN_FNS = {
@@ -261,27 +318,36 @@ def main(args):
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
     environment = HyperGrid(
-        ndim=5,
-        height=2,
+        ndim=args.ndim,
+        height=args.height,
         device=device,
     )
     seed = int(args.seed) if args.seed is not None else DEFAULT_SEED
+    n_iterations = args.n_iterations
+    batch_size = args.batch_size
 
     if args.gflownet == "all":
+        final_losses = []
         for fn in GFN_FNS.values():
             gflownet = fn(environment)
             gflownet = gflownet.to(device)
-            train(environment, gflownet, seed)
+            final_loss = train(
+                environment, gflownet, seed, device, n_iterations, batch_size
+            )
+            final_losses.append(final_loss)
+        return sum(final_losses) / len(final_losses)  # Return average loss
     else:
         assert args.gflownet in GFN_FNS, "invalid gflownet name\n{}".format(GFN_FNS)
         gflownet = GFN_FNS[args.gflownet](environment)
         gflownet = gflownet.to(device)
-        train(environment, gflownet, seed)
+        final_loss = train(environment, gflownet, seed, device, n_iterations, batch_size)
+        return final_loss
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
 
+    # Machine settings
     parser.add_argument(
         "--seed",
         type=int,
@@ -289,10 +355,45 @@ if __name__ == "__main__":
         help="Random seed, if not set, then {} is used".format(DEFAULT_SEED),
     )
     parser.add_argument(
+        "--no_cuda",
+        action="store_true",
+        help="Prevent CUDA usage",
+    )
+
+    # Environment settings
+    parser.add_argument(
+        "--ndim",
+        type=int,
+        default=5,
+        help="Number of dimensions in the environment",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=2,
+        help="Height of the environment",
+    )
+
+    # Training settings
+    parser.add_argument(
+        "--n_iterations",
+        type=int,
+        default=1000,
+        help="Number of training iterations",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=1000,
+        help="Batch size, i.e. number of trajectories to sample per training iteration",
+    )
+
+    # GFlowNet settings
+    parser.add_argument(
         "--gflownet",
         "-g",
         type=str,
-        default="all",
+        default="tb",
         help="Name of the gflownet. From {}".format(list(GFN_FNS.keys())),
     )
 
