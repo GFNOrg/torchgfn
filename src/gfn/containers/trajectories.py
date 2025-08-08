@@ -390,10 +390,11 @@ class Trajectories(Container):
             current Trajectories.
         """
         if self.conditioning is not None:
-            expand_dims = (self.max_length,) + tuple(self.conditioning.shape)
-            conditioning = self.conditioning.unsqueeze(0).expand(expand_dims)[
-                ~self.actions.is_dummy
-            ]
+            # The conditioning tensor has shape (max_length, n_trajectories, 1)
+            # The actions have shape (max_length, n_trajectories)
+            # We need to index the conditioning tensor to match the actions
+            # The actions exclude the last step, so we need to exclude the last step from conditioning
+            conditioning = self.conditioning[:-1][~self.actions.is_dummy]
         else:
             conditioning = None
 
@@ -466,9 +467,12 @@ class Trajectories(Container):
 
         conditioning = None
         if self.conditioning is not None:
-            conditioning = self.conditioning.repeat(
-                self.max_length + 1, *((1,) * (len(self.conditioning.shape) - 1))
-            )[is_valid]
+            # The conditioning tensor has shape (max_length, n_trajectories, 1)
+            # We need to flatten it to match the flattened states
+            # First, we need to repeat it to match the flattened shape
+            # The flattened states have shape (max_length * n_trajectories,)
+            # So we need to repeat the conditioning tensor accordingly
+            conditioning = self.conditioning.flatten(0, 1)[is_valid]
 
         if self.log_rewards is None:
             log_rewards = None

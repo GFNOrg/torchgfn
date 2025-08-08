@@ -301,6 +301,24 @@ class Sampler:
         if stacked_estimator_outputs is not None and len(stacked_estimator_outputs) == 0:
             stacked_estimator_outputs = None
 
+        # Broadcast conditioning tensor to match states batch shape if needed
+        if conditioning is not None:
+            # The states have batch shape (max_length, n_trajectories)
+            # The conditioning tensor should have shape (n_trajectories,) or (n_trajectories, 1)
+            # We need to broadcast it to (max_length, n_trajectories, 1) for the estimator
+            if len(conditioning.shape) == 1:
+                # conditioning has shape (n_trajectories,)
+                conditioning = (
+                    conditioning.unsqueeze(0)
+                    .unsqueeze(-1)
+                    .expand(stacked_states.batch_shape[0], -1, 1)
+                )
+            elif len(conditioning.shape) == 2 and conditioning.shape[1] == 1:
+                # conditioning has shape (n_trajectories, 1)
+                conditioning = conditioning.unsqueeze(0).expand(
+                    stacked_states.batch_shape[0], -1, -1
+                )
+
         trajectories = Trajectories(
             env=env,
             states=stacked_states,
