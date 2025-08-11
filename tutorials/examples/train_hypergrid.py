@@ -62,6 +62,10 @@ from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
+from tutorials.examples.multinode.spawn_policy import (
+    AverageAllPolicy,
+    SelectiveAveragingPolicy,
+)
 
 r"""
 Helper class for timing code execution blocks and accumulating elapsed time in a dictionary.
@@ -195,241 +199,6 @@ def report_timing(all_timing_dict, world_size):
 
     # print("Load Imbalance (LI) is as follows:")
     report_load_imbalance(all_timing_dict, world_size)
-
-
-def average_gradients(model):
-    """All-Reduce gradients across all models."""
-    size = float(dist.get_world_size())
-    for param in model.parameters():
-        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
-        param.grad.data /= size
-
-
-def average_models(model):
-    """Averages model weights across all ranks."""
-    world_size = float(dist.get_world_size())
-    for param in model.parameters():
-        param_tensor = param.data.clone()  # clone to avoid inplace operations
-        dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
-        param.data = param_tensor / world_size
-
-
-def gather_performance_metrics(local_metric: float) -> torch.Tensor:
-    """
-    Gather performance metrics from all ranks.
-    
-    Args:
-        local_metric: Performance metric from current rank (e.g., loss value)
-        
-    Returns:
-        Tensor containing metrics from all ranks (only valid on rank 0)
-    """
-    world_size = dist.get_world_size()
-    rank = dist.get_rank()
-    
-    # Convert local metric to tensor
-    local_tensor = torch.tensor([local_metric], dtype=torch.float32)
-    
-    # Gather all metrics on rank 0
-    if rank == 0:
-        gathered_metrics = [torch.zeros(1, dtype=torch.float32) for _ in range(world_size)]
-    else:
-        gathered_metrics = None
-    
-    dist.gather(local_tensor, gather_list=gathered_metrics, dst=0)
-    
-    if rank == 0:
-        return torch.cat(gathered_metrics)
-    else:
-        return torch.empty(0)
-
-
-def _validate_selective_averaging_params(replacement_ratio: float, averaging_strategy: str, momentum: float):
-    """Validate parameters for selective model averaging."""
-    if not 0.0 <= replacement_ratio <= 1.0:
-        raise ValueError(f"replacement_ratio must be between 0 and 1, got {replacement_ratio}")
-    if averaging_strategy not in ["mean", "weighted_mean", "best_only"]:
-        raise ValueError(f"Unknown averaging_strategy: {averaging_strategy}")
-    if not 0.0 <= momentum <= 1.0:
-        raise ValueError(f"momentum must be between 0 and 1, got {momentum}")
-
-
-def _determine_ranks_for_averaging(all_metrics: torch.Tensor, world_size: int, replacement_ratio: float, averaging_strategy: str):
-    """Determine which ranks to replace and which to use for averaging."""
-    n_replace = max(1, int(world_size * replacement_ratio))
-    sorted_ranks = torch.argsort(all_metrics)  # Ascending order (worst to best)
-    
-    ranks_to_replace = set(sorted_ranks[:n_replace].tolist())
-    ranks_to_average = set(range(world_size)) - ranks_to_replace
-    
-    # Special case for best_only strategy
-    if averaging_strategy == "best_only":
-        best_rank = sorted_ranks[-1].item()  # Best performing rank
-        ranks_to_average = {best_rank}
-    
-    print(f"Replacing {len(ranks_to_replace)} worst performing ranks: {sorted(ranks_to_replace)}")
-    print(f"Using {len(ranks_to_average)} best performing ranks for averaging: {sorted(ranks_to_average)}")
-    
-    return ranks_to_replace, ranks_to_average
-
-
-def _compute_averaging_weights(all_metrics: torch.Tensor, ranks_to_average: set, averaging_strategy: str):
-    """Compute weights for weighted averaging strategy."""
-    if averaging_strategy != "weighted_mean":
-        return None
-    
-    # Get metrics for contributing ranks - use inverse performance for weighting
-    # (lower loss = better performance = higher weight)
-    contributing_metrics = torch.tensor([all_metrics[r] for r in sorted(ranks_to_average)])
-    # Use reciprocal for weighting (lower loss gets higher weight)
-    weights = 1.0 / (contributing_metrics + 1e-8)  # Add epsilon to avoid division by zero
-    return weights / weights.sum()  # Normalize
-
-
-def _broadcast_rank_info(ranks_to_replace: set, ranks_to_average: set, averaging_weights: torch.Tensor, averaging_strategy: str):
-    """Broadcast rank information and weights to all processes."""
-    rank = dist.get_rank()
-    
-    # Convert to tensors for broadcasting
-    ranks_to_replace_tensor = torch.tensor(list(ranks_to_replace) if ranks_to_replace else [], dtype=torch.long)
-    ranks_to_average_tensor = torch.tensor(sorted(ranks_to_average) if ranks_to_average else [], dtype=torch.long)
-    
-    # Broadcast sizes first
-    replace_size = torch.tensor([len(ranks_to_replace_tensor)], dtype=torch.long)
-    average_size = torch.tensor([len(ranks_to_average_tensor)], dtype=torch.long)
-    
-    dist.broadcast(replace_size, src=0)
-    dist.broadcast(average_size, src=0)
-    
-    # Resize tensors on non-zero ranks
-    if rank != 0:
-        ranks_to_replace_tensor = torch.zeros(replace_size.item(), dtype=torch.long)
-        ranks_to_average_tensor = torch.zeros(average_size.item(), dtype=torch.long)
-    
-    dist.broadcast(ranks_to_replace_tensor, src=0)
-    dist.broadcast(ranks_to_average_tensor, src=0)
-    
-    # Broadcast averaging weights if using weighted mean
-    weights_tensor = None
-    if averaging_strategy == "weighted_mean":
-        if rank == 0:
-            weights_tensor = averaging_weights
-        else:
-            weights_tensor = torch.zeros(average_size.item())
-        dist.broadcast(weights_tensor, src=0)
-    
-    return (
-        set(ranks_to_replace_tensor.tolist()),
-        ranks_to_average_tensor.tolist(),
-        set(ranks_to_average_tensor.tolist()),
-        weights_tensor
-    )
-
-
-def _compute_averaged_weights(param: torch.nn.Parameter, ranks_to_average_list: list, 
-                            averaging_weights: torch.Tensor, averaging_strategy: str, 
-                            rank: int, ranks_to_replace: set, momentum: float = 0.0):
-    """Compute averaged weights based on the specified strategy."""
-    param_sum = torch.zeros_like(param.data)
-    old_weights = param.data.clone()  # Store original weights for momentum
-    
-    # All ranks participate in broadcasts in the same order
-    for i, contributing_rank in enumerate(ranks_to_average_list):
-        param_copy = param.data.clone() if contributing_rank == rank else torch.zeros_like(param.data)
-        
-        # All ranks participate in this broadcast
-        dist.broadcast(param_copy, src=contributing_rank)
-        
-        # Only ranks that need replacement accumulate the weights
-        if rank in ranks_to_replace:
-            if averaging_strategy == "mean":
-                param_sum += param_copy
-            elif averaging_strategy == "weighted_mean":
-                if averaging_weights is None:
-                    raise RuntimeError("averaging_weights should not be None for weighted_mean strategy")
-                weight = averaging_weights[i]
-                param_sum += weight * param_copy
-            elif averaging_strategy == "best_only":
-                if i == 0:  # Only use the first (best) rank
-                    averaged_weights = param_copy
-                    # Apply momentum: new_weights = momentum * old_weights + (1 - momentum) * averaged_weights
-                    return momentum * old_weights + (1.0 - momentum) * averaged_weights
-    
-    if averaging_strategy == "mean":
-        averaged_weights = param_sum / len(ranks_to_average_list)
-    elif averaging_strategy == "weighted_mean":
-        averaged_weights = param_sum
-    elif averaging_strategy == "best_only":
-        averaged_weights = param_sum  # Should have returned early above
-    else:
-        raise ValueError(f"Unknown averaging strategy: {averaging_strategy}")
-    
-    # Apply momentum: new_weights = momentum * old_weights + (1 - momentum) * averaged_weights
-    return momentum * old_weights + (1.0 - momentum) * averaged_weights
-
-
-def selective_model_averaging(model, local_performance_metric: float,
-                             replacement_ratio: float = 0.2,
-                             averaging_strategy: str = "mean",
-                             momentum: float = 0.0):
-    """
-    Replace worst performing models with averaged weights from better performing ones.
-    Supports different averaging strategies and momentum.
-    
-    Args:
-        model: The model to potentially update
-        local_performance_metric: Performance metric for current rank (e.g., reward)
-        replacement_ratio: Fraction of worst models to replace (0.0 to 1.0)
-        averaging_strategy: How to combine good models ("mean", "weighted_mean", "best_only")
-        momentum: Momentum factor for combining with previous weights (0.0 = no momentum)
-    """
-    world_size = dist.get_world_size()
-    rank = dist.get_rank()
-    
-    # Validate inputs
-    _validate_selective_averaging_params(replacement_ratio, averaging_strategy, momentum)
-    
-    if world_size == 1 or replacement_ratio <= 0.0:
-        return
-    
-    # Gather performance metrics from all ranks
-    all_metrics = gather_performance_metrics(local_performance_metric)
-    
-    # Determine which ranks to replace and average (only on rank 0)
-    if rank == 0:
-        ranks_to_replace, ranks_to_average = _determine_ranks_for_averaging(
-            all_metrics, world_size, replacement_ratio, averaging_strategy
-        )
-        averaging_weights = _compute_averaging_weights(all_metrics, ranks_to_average, averaging_strategy)
-    else:
-        ranks_to_replace, ranks_to_average, averaging_weights = set(), set(), None
-    
-    # Broadcast rank information to all processes
-    ranks_to_replace, ranks_to_average_list, ranks_to_average, averaging_weights = _broadcast_rank_info(
-        ranks_to_replace, ranks_to_average, averaging_weights, averaging_strategy
-    )
-    
-    # Synchronization barrier before weight updates
-    dist.barrier()
-    
-    # Update weights for ranks that need replacement
-    if rank in ranks_to_replace:
-        print(f"Rank {rank}: Updating weights with {averaging_strategy} averaging")
-    
-    # All ranks need to participate in the communication for each parameter
-    for name, param in model.named_parameters():
-        # All ranks participate in the averaging computation (broadcasts happen inside)
-        new_weights = _compute_averaged_weights(
-            param, ranks_to_average_list, averaging_weights, averaging_strategy, rank, ranks_to_replace, momentum
-        )
-        
-        # Only ranks that need replacement update their weights
-        if rank in ranks_to_replace:
-            param.data = new_weights
-    
-    # Final synchronization barrier
-    dist.barrier()
-
 
 def initialize_distributed_compute(dist_backend: str = "ccl"):
     """Initalizes distributed compute using either ccl or mpi backends."""
@@ -1212,6 +981,19 @@ def main(args):  # noqa: C901
         if args.distributed and args.timing:
             dist.barrier()
 
+    # Set up averaging policy (called every iteration; internal guard checks cadence/distributed)
+    averaging_policy = None
+    if args.distributed:
+        if args.use_selective_averaging:
+            averaging_policy = SelectiveAveragingPolicy(
+                average_every=args.average_every,
+                replacement_ratio=args.replacement_ratio,
+                averaging_strategy=args.averaging_strategy,
+                momentum=args.momentum,
+            )
+        else:
+            averaging_policy = AverageAllPolicy(average_every=args.average_every)
+
     # Training loop.
     pbar = trange(n_iterations)
     for iteration in pbar:
@@ -1291,26 +1073,10 @@ def main(args):  # noqa: C901
             if args.distributed and args.timing:
                 dist.barrier()
 
-        # Model averaging.
-        with Timer(
-            timing, "averaging_model", enabled=args.timing
-        ) as model_averaging_timer:
-            if args.distributed and (iteration % args.average_every == 0):
-                print("before averaging model, iteration = ", iteration)
-                
-                if args.use_selective_averaging:
-                    selective_model_averaging(
-                        gflownet,
-                        -loss.item(),
-                        replacement_ratio=args.replacement_ratio,
-                        averaging_strategy=args.averaging_strategy,
-                        momentum=args.momentum,
-                    )
-                else:
-                    # Use original averaging approach
-                    average_models(gflownet)
-                    
-                print("after averaging model, iteration = ", iteration)
+        # Model averaging via policy
+        with Timer(timing, "averaging_model", enabled=args.timing) as model_averaging_timer:
+            if averaging_policy is not None:
+                averaging_policy(iteration=iteration, model=gflownet, local_metric=-loss.item())
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
