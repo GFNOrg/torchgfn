@@ -838,18 +838,6 @@ def main(args):  # noqa: C901
         if args.ndim != 2:
             raise ValueError("plotting is only supported for 2D environments")
 
-    # Initialize WandB.
-    use_wandb = args.wandb_project != ""
-    if use_wandb:
-
-        if args.wandb_local:
-            os.environ["WANDB_MODE"] = "offline"
-
-        import wandb
-
-        wandb.init(project=args.wandb_project)
-        wandb.config.update(args)
-
     # Initialize distributed compute.
     if args.distributed:
         my_rank, my_size, agent_group_size, agent_group_list = (
@@ -866,6 +854,20 @@ def main(args):  # noqa: C901
         world_size = 1  # Single machine.
         my_rank = 0  # Single machine.
         agent_group_list = my_agent_group_id = None
+    
+
+    # Initialize WandB.
+    use_wandb = args.wandb_project != ""
+    if use_wandb:
+
+        if args.wandb_local:
+            os.environ["WANDB_MODE"] = "offline"
+
+        import wandb
+
+        if my_rank == 0:
+            wandb.init(project=args.wandb_project)
+            wandb.config.update(args)
 
     set_seed(args.seed + my_rank)
 
@@ -1261,7 +1263,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--average_every",
         type=int,
-        default=20,
+        default=100,
         help="Number of epochs after which we average model across all agents",
     )
     parser.add_argument(
@@ -1441,7 +1443,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="",
+        default="torchgfn",
         help="Name of the wandb project. If empty, don't use wandb",
     )
     parser.add_argument(
