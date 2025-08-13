@@ -65,6 +65,7 @@ from gfn.utils.training import validate
 from tutorials.examples.multinode.spawn_policy import (
     AverageAllPolicy,
     SelectiveAveragingPolicy,
+    AsyncSelectiveAveragingPolicy,
 )
 
 r"""
@@ -986,7 +987,14 @@ def main(args):  # noqa: C901
     # Set up averaging policy (called every iteration; internal guard checks cadence/distributed)
     averaging_policy = None
     if args.distributed:
-        if args.use_selective_averaging:
+        if args.async_selective_averaging:
+            averaging_policy = AsyncSelectiveAveragingPolicy(
+                average_every=args.average_every,
+                replacement_ratio=args.replacement_ratio,
+                averaging_strategy=args.averaging_strategy,
+                momentum=args.momentum,
+            )
+        elif args.use_selective_averaging:
             averaging_policy = SelectiveAveragingPolicy(
                 average_every=args.average_every,
                 replacement_ratio=args.replacement_ratio,
@@ -1202,6 +1210,13 @@ def main(args):  # noqa: C901
     if args.distributed:
         dist.barrier()
 
+    # Ensure background comms threads are stopped cleanly (async policy)
+    try:
+        if 'averaging_policy' in locals() and hasattr(averaging_policy, 'shutdown'):
+            averaging_policy.shutdown()
+    except Exception:
+        pass
+
     # Log the final timing results.
     if args.timing:
         print("\n" + "=" * 80)
@@ -1283,6 +1298,11 @@ if __name__ == "__main__":
         "--use_selective_averaging",
         action="store_true",
         help="Use selective averaging instead of standard averaging",
+    )
+    parser.add_argument(
+        "--async_selective_averaging",
+        action="store_true",
+        help="Use asynchronous selective averaging (non-blocking, background comms)",
     )
     parser.add_argument(
         "--replacement_ratio",
