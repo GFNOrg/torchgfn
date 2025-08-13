@@ -10,6 +10,19 @@ And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 
+SELECTIVE AVERAGING:
+This script also supports selective model averaging for distributed training, where instead of 
+averaging all models, the worst performing models are replaced with averaged weights from the 
+better performing ones. Use the following flags:
+
+--use_selective_averaging: Enable selective averaging instead of standard averaging
+--replacement_ratio 0.2: Replace the worst 20% of models (adjustable 0.0-1.0)
+--averaging_strategy mean: How to combine good models ("mean", "weighted_mean", "best_only")
+--momentum 0.0: Momentum factor for combining with previous weights (0.0-1.0, default 0.0)
+
+Example with selective averaging:
+python train_hypergrid.py --distributed --use_selective_averaging --replacement_ratio 0.3 --averaging_strategy mean --momentum 0.1
+
 This script also provides a function `get_exact_P_T` that computes the exact terminating state
 distribution for the HyperGrid environment, which is useful for evaluation and visualization.
 """
@@ -49,6 +62,11 @@ from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
+from tutorials.examples.multinode.spawn_policy import (
+    AverageAllPolicy,
+    SelectiveAveragingPolicy,
+    AsyncSelectiveAveragingPolicy,
+)
 
 r"""
 Helper class for timing code execution blocks and accumulating elapsed time in a dictionary.
@@ -182,24 +200,6 @@ def report_timing(all_timing_dict, world_size):
 
     # print("Load Imbalance (LI) is as follows:")
     report_load_imbalance(all_timing_dict, world_size)
-
-
-def average_gradients(model):
-    """All-Reduce gradients across all models."""
-    size = float(dist.get_world_size())
-    for param in model.parameters():
-        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
-        param.grad.data /= size
-
-
-def average_models(model):
-    """Averages model weights across all ranks."""
-    world_size = float(dist.get_world_size())
-    for param in model.parameters():
-        param_tensor = param.data.clone()  # clone to avoid inplace operations
-        dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
-        param.data = param_tensor / world_size
-
 
 def initialize_distributed_compute(dist_backend: str = "ccl"):
     """Initalizes distributed compute using either ccl or mpi backends."""
@@ -843,18 +843,6 @@ def main(args):  # noqa: C901
         if args.ndim != 2:
             raise ValueError("plotting is only supported for 2D environments")
 
-    # Initialize WandB.
-    use_wandb = args.wandb_project != ""
-    if use_wandb:
-
-        if args.wandb_local:
-            os.environ["WANDB_MODE"] = "offline"
-
-        import wandb
-
-        wandb.init(project=args.wandb_project)
-        wandb.config.update(args)
-
     # Initialize distributed compute.
     if args.distributed:
         my_rank, my_size, agent_group_size, agent_group_list = (
@@ -871,6 +859,20 @@ def main(args):  # noqa: C901
         world_size = 1  # Single machine.
         my_rank = 0  # Single machine.
         agent_group_list = my_agent_group_id = None
+    
+
+    # Initialize WandB.
+    use_wandb = args.wandb_project != ""
+    if use_wandb:
+
+        if args.wandb_local:
+            os.environ["WANDB_MODE"] = "offline"
+
+        import wandb
+
+        if my_rank == 0:
+            wandb.init(project=args.wandb_project)
+            wandb.config.update(args)
 
     set_seed(args.seed + my_rank)
 
@@ -986,6 +988,26 @@ def main(args):  # noqa: C901
         if args.distributed and args.timing:
             dist.barrier()
 
+    # Set up averaging policy (called every iteration; internal guard checks cadence/distributed)
+    averaging_policy = None
+    if args.distributed:
+        if args.async_selective_averaging:
+            averaging_policy = AsyncSelectiveAveragingPolicy(
+                average_every=args.average_every,
+                replacement_ratio=args.replacement_ratio,
+                averaging_strategy=args.averaging_strategy,
+                momentum=args.momentum,
+            )
+        elif args.use_selective_averaging:
+            averaging_policy = SelectiveAveragingPolicy(
+                average_every=args.average_every,
+                replacement_ratio=args.replacement_ratio,
+                averaging_strategy=args.averaging_strategy,
+                momentum=args.momentum,
+            )
+        else:
+            averaging_policy = AverageAllPolicy(average_every=args.average_every)
+
     # Training loop.
     pbar = trange(n_iterations)
     for iteration in pbar:
@@ -1065,14 +1087,10 @@ def main(args):  # noqa: C901
             if args.distributed and args.timing:
                 dist.barrier()
 
-        # Model averaging.
-        with Timer(
-            timing, "averaging_model", enabled=args.timing
-        ) as model_averaging_timer:
-            if args.distributed and (iteration % args.average_every == 0):
-                print("before averaging model, iteration = ", iteration)
-                average_models(gflownet)
-                print("after averaging model, iteration = ", iteration)
+        # Model averaging via policy
+        with Timer(timing, "averaging_model", enabled=args.timing) as model_averaging_timer:
+            if averaging_policy is not None:
+                averaging_policy(iteration=iteration, model=gflownet, local_metric=-loss.item())
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
@@ -1196,6 +1214,13 @@ def main(args):  # noqa: C901
     if args.distributed:
         dist.barrier()
 
+    # Ensure background comms threads are stopped cleanly (async policy)
+    try:
+        if 'averaging_policy' in locals() and hasattr(averaging_policy, 'shutdown'):
+            averaging_policy.shutdown()
+    except Exception:
+        pass
+
     # Log the final timing results.
     if args.timing:
         if my_rank == 0:
@@ -1258,7 +1283,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--average_every",
         type=int,
-        default=20,
+        default=100,
         help="Number of epochs after which we average model across all agents",
     )
     parser.add_argument(
@@ -1271,6 +1296,37 @@ if __name__ == "__main__":
         "--distributed",
         action="store_true",
         help="Initializes distributed computation (torch.distributed)",
+    )
+    
+    # Selective averaging settings.
+    parser.add_argument(
+        "--use_selective_averaging",
+        action="store_true",
+        help="Use selective averaging instead of standard averaging",
+    )
+    parser.add_argument(
+        "--async_selective_averaging",
+        action="store_true",
+        help="Use asynchronous selective averaging (non-blocking, background comms)",
+    )
+    parser.add_argument(
+        "--replacement_ratio",
+        type=float,
+        default=0.2,
+        help="Fraction of worst performing models to replace (0.0 to 1.0)",
+    )
+    parser.add_argument(
+        "--averaging_strategy",
+        type=str,
+        choices=["mean", "weighted_mean", "best_only"],
+        default="mean",
+        help="Strategy for combining good models",
+    )
+    parser.add_argument(
+        "--momentum",
+        type=float,
+        default=0.01,
+        help="Momentum factor for combining with previous weights (0.0 = no momentum, 1.0 = keep old weights)",
     )
 
     # Environment settings.
@@ -1412,7 +1468,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="",
+        default="torchgfn",
         help="Name of the wandb project. If empty, don't use wandb",
     )
     parser.add_argument(
