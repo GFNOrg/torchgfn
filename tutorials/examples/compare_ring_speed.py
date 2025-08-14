@@ -44,10 +44,10 @@ if SRC_DIR not in sys.path:
 
 import torch
 
-from gfn.actions import GraphActions
 from gfn.containers import ReplayBuffer
 from gfn.utils.common import set_seed
 from tutorials.examples import train_graph_ring as ring_mod
+from gflownet.tasks import make_rings as recursion_make_rings
 
 
 @dataclass
@@ -104,11 +104,6 @@ def benchmark_local(
             prioritized_sampling=True,
         )
 
-    epsilon_dict = {
-        GraphActions.ACTION_TYPE_KEY: action_type_epsilon,
-        GraphActions.EDGE_INDEX_KEY: edge_index_epsilon,
-    }
-
     t0 = time.perf_counter()
     last_loss_val = float("nan")
     for iteration in range(n_iterations):
@@ -116,7 +111,6 @@ def benchmark_local(
             env,
             n=batch_size,
             save_logprobs=True,
-            epsilon=epsilon_dict,
         )
         training_samples = gflownet.to_training_samples(trajectories)
 
@@ -151,13 +145,7 @@ def benchmark_recursion_inprocess(
     Returns the wall-clock seconds for the call. Iterations/sec can be computed
     by the caller using `n_iterations`.
     """
-    try:
-        import importlib
-        mod = importlib.import_module("gflownet.tasks.make_rings")
-    except Exception as e:  # noqa: BLE001
-        raise RuntimeError(
-            "Failed to import 'gflownet.tasks.make_rings'. Please install recursionpharma/gflownet."
-        ) from e
+    mod = recursion_make_rings
 
     # Try call styles in order: main(args), main(), train(args), train()
     t0 = time.perf_counter()
