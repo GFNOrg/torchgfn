@@ -47,7 +47,10 @@ import torch
 from gfn.containers import ReplayBuffer
 from gfn.utils.common import set_seed
 from tutorials.examples import train_graph_ring as ring_mod
-from gflownet.tasks import make_rings as recursion_make_rings
+from gflownet.tasks.make_rings import MakeRingsTrainer
+from gflownet.config import Config, init_empty
+
+WARMUP_STEPS = 10
 
 
 @dataclass
@@ -117,7 +120,7 @@ def benchmark_local(
         if use_buffer and replay_buffer is not None:
             with torch.no_grad():
                 replay_buffer.add(training_samples)
-                if iteration > 10:
+                if iteration > WARMUP_STEPS:
                     training_samples = training_samples[: batch_size // 2]
                     buffer_samples = replay_buffer.sample(n_samples=batch_size // 2)
                     training_samples.extend(buffer_samples)  # type: ignore[arg-type]
@@ -139,42 +142,30 @@ def benchmark_recursion_inprocess(
     n_iterations: int,
     batch_size: int,
     device: str,
+    use_buffer: bool,
 ) -> float:
     """Import recursionpharma's make_rings and invoke its main (best-effort) in-process.
 
     Returns the wall-clock seconds for the call. Iterations/sec can be computed
     by the caller using `n_iterations`.
     """
-    mod = recursion_make_rings
-
-    # Try call styles in order: main(args), main(), train(args), train()
+    config = init_empty(Config())
+    config.log_dir = "./logs/debug_run_mr4"
+    config.overwrite_existing_exp = True
+    config.num_workers = 6
+    config.num_training_steps = n_iterations
+    config.num_validation_gen_steps = 1
+    config.algo.max_nodes = n_nodes
+    config.algo.num_from_policy = batch_size // 2
+    config.algo.num_from_dataset = batch_size // 2
+    config.algo.tb.do_parameterize_p_b = True
+    config.replay.use = use_buffer
+    config.replay.capacity = batch_size
+    config.replay.warmup_steps = WARMUP_STEPS
+    config.device = device
+    trainer = MakeRingsTrainer(config)
     t0 = time.perf_counter()
-    called = False
-    err: Optional[BaseException] = None
-    for fname in ("main", "train", "run"):
-        if hasattr(mod, fname):
-            fn = getattr(mod, fname)
-            # Construct a simple Namespace commonly used
-            simple_args = argparse.Namespace(
-                n_nodes=n_nodes,
-                n_iterations=n_iterations,
-                batch_size=batch_size,
-                device=device,
-            )
-            try:
-                try:
-                    fn(simple_args)  # type: ignore[misc]
-                except TypeError:
-                    fn()  # type: ignore[misc]
-                called = True
-                break
-            except BaseException as ex:  # noqa: BLE001
-                err = ex
-                continue
-    if not called:
-        raise RuntimeError(
-            "Could not call a known entrypoint (main/train/run) in gflownet.tasks.make_rings"
-        ) from err
+    trainer.run()
     t1 = time.perf_counter()
     return t1 - t0
 
@@ -229,18 +220,15 @@ def main() -> None:
     )
 
     if args.use_recursion:
-        print("\nRunning Recursion (in-process import)...")
-        try:
-            wall = benchmark_recursion_inprocess(
-                n_nodes=args.n_nodes,
-                n_iterations=args.n_iterations,
-                batch_size=args.batch_size,
-                device=args.device,
-            )
-            ips = args.n_iterations / wall if wall > 0 else float("inf")
-            print("Recursion (import): {:.2f}s total, {:.2f} it/s, iterations={}".format(wall, ips, args.n_iterations))
-        except Exception as e:  # noqa: BLE001
-            print(f"Recursion (import) failed: {e}")
+        wall = benchmark_recursion_inprocess(
+            n_nodes=args.n_nodes,
+            n_iterations=args.n_iterations,
+            batch_size=args.batch_size,
+            device=args.device,
+            use_buffer=args.use_buffer,
+        )
+        ips = args.n_iterations / wall if wall > 0 else float("inf")
+        print("Recursion: {:.2f}s total, {:.2f} it/s, iterations={}".format(wall, ips, args.n_iterations))
     else:
         print("\nSkip Recursion run (pass --use-recursion to enable).")
 
