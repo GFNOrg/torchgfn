@@ -143,6 +143,8 @@ def benchmark_recursion_inprocess(
     batch_size: int,
     device: str,
     use_buffer: bool,
+    num_layers: int,
+    embedding_dim: int,
 ) -> float:
     """Import recursionpharma's make_rings and invoke its main (best-effort) in-process.
 
@@ -157,11 +159,13 @@ def benchmark_recursion_inprocess(
     config.num_validation_gen_steps = 1
     config.algo.max_nodes = n_nodes
     config.algo.num_from_policy = batch_size // 2
-    config.algo.num_from_dataset = batch_size // 2
     config.algo.tb.do_parameterize_p_b = True
     config.replay.use = use_buffer
     config.replay.capacity = batch_size
-    config.replay.warmup_steps = WARMUP_STEPS
+    config.replay.warmup = WARMUP_STEPS
+    config.replay.num_from_replay = batch_size // 2
+    config.model.num_layers = num_layers
+    config.model.num_emb = embedding_dim
     config.device = device
     trainer = MakeRingsTrainer(config)
     t0 = time.perf_counter()
@@ -189,10 +193,10 @@ def main() -> None:
     parser.add_argument("--action-type-epsilon", type=float, default=0.0)
     parser.add_argument("--edge-index-epsilon", type=float, default=0.0)
     # Misc
-    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])
+    parser.add_argument("--device", type=str, default="cuda", choices=["cpu", "cuda"])
     parser.add_argument("--seed", type=int, default=1234)
     # External bench (import-based)
-    parser.add_argument("--use-recursion", action="store_true", default=False, help="Also run recursionpharma's make_rings via import")
+    parser.add_argument("--use-recursion", action="store_true", default=False, help="Also run recursionpharma's make_rings")
 
     args = parser.parse_args()
 
@@ -226,6 +230,8 @@ def main() -> None:
             batch_size=args.batch_size,
             device=args.device,
             use_buffer=args.use_buffer,
+            num_layers=args.num_conv_layers,
+            embedding_dim=args.embedding_dim,
         )
         ips = args.n_iterations / wall if wall > 0 else float("inf")
         print("Recursion: {:.2f}s total, {:.2f} it/s, iterations={}".format(wall, ips, args.n_iterations))
