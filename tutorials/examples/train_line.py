@@ -313,7 +313,7 @@ def main(args):
         policy_std_max=policy_std_max,
     )
     pb = StepEstimator(environment, pb_module, backward=True)
-    gflownet = TBGFlowNet(pf=pf, pb=pb, logZ=0.0).to(device)
+    gflownet = TBGFlowNet(pf=pf, pb=pb, init_logZ=0.0).to(device)
 
     gflownet = train(
         gflownet,
