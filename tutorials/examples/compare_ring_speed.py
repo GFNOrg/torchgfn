@@ -1,46 +1,15 @@
 """Compare ring-graph training speed vs recursionpharma/gflownet make_rings.
 
-This script measures iterations/sec and wall-clock time for:
-- Our local ring training loop built on `train_graph_ring.py` components
-- Optionally, an external command that runs Recursion's `make_rings.py`
-
 Usage examples:
-  # Benchmark our implementation only (CPU)
-  python tutorials/examples/compare_ring_speed.py \
-    --n-nodes 6 --batch-size 128 --n-iterations 200 --device cpu
-
-  # Benchmark ours and Recursion (in-process import, no subprocess CLI)
-  python tutorials/examples/compare_ring_speed.py \
-    --n-nodes 6 --batch-size 128 --n-iterations 200 --device cpu \
-    --use-recursion
-
-Notes:
-- For the external benchmark, we import `gflownet.tasks.make_rings` and try to call its
-  `main` function programmatically. If its signature differs, we fallback to calling it
-  with no arguments. No subprocess is used.
-- We import and reuse only definitions from `tutorials/examples/train_graph_ring.py` for
-  the local benchmark.
--- To keep imports robust when running from the project root, we ensure both the repo
-  root and `src/` are on `sys.path`.
+  python -m tutorials.examples.compare_ring_speed --n-nodes 6 --batch-size 128 --n-iterations 200
 """
 
 from __future__ import annotations
 
 import argparse
-import os
-import sys
 import time
 from dataclasses import dataclass
 from typing import Optional
-
-
-# Ensure local package import works when running from repo root
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-SRC_DIR = os.path.join(REPO_ROOT, "src")
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-if SRC_DIR not in sys.path:
-    sys.path.insert(0, SRC_DIR)
 
 import torch
 
@@ -71,8 +40,6 @@ def benchmark_local(
     n_iterations: int,
     lr: float,
     lr_Z: float,
-    action_type_epsilon: float,
-    edge_index_epsilon: float,
     use_buffer: bool,
     device_str: str,
     seed: int,
@@ -189,14 +156,9 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--lr-Z", type=float, default=0.1)
     parser.add_argument("--use-buffer", action="store_true", default=True)
-    # Exploration
-    parser.add_argument("--action-type-epsilon", type=float, default=0.0)
-    parser.add_argument("--edge-index-epsilon", type=float, default=0.0)
     # Misc
     parser.add_argument("--device", type=str, default="cuda", choices=["cpu", "cuda"])
     parser.add_argument("--seed", type=int, default=1234)
-    # External bench (import-based)
-    parser.add_argument("--use-recursion", action="store_true", default=False, help="Also run recursionpharma's make_rings")
 
     args = parser.parse_args()
 
@@ -211,8 +173,6 @@ def main() -> None:
         n_iterations=args.n_iterations,
         lr=args.lr,
         lr_Z=args.lr_Z,
-        action_type_epsilon=args.action_type_epsilon,
-        edge_index_epsilon=args.edge_index_epsilon,
         use_buffer=args.use_buffer,
         device_str=args.device,
         seed=args.seed,
@@ -223,20 +183,17 @@ def main() -> None:
         )
     )
 
-    if args.use_recursion:
-        wall = benchmark_recursion_inprocess(
-            n_nodes=args.n_nodes,
-            n_iterations=args.n_iterations,
-            batch_size=args.batch_size,
-            device=args.device,
-            use_buffer=args.use_buffer,
-            num_layers=args.num_conv_layers,
-            embedding_dim=args.embedding_dim,
-        )
-        ips = args.n_iterations / wall if wall > 0 else float("inf")
-        print("Recursion: {:.2f}s total, {:.2f} it/s, iterations={}".format(wall, ips, args.n_iterations))
-    else:
-        print("\nSkip Recursion run (pass --use-recursion to enable).")
+    wall = benchmark_recursion_inprocess(
+        n_nodes=args.n_nodes,
+        n_iterations=args.n_iterations,
+        batch_size=args.batch_size,
+        device=args.device,
+        use_buffer=args.use_buffer,
+        num_layers=args.num_conv_layers,
+        embedding_dim=args.embedding_dim,
+    )
+    ips = args.n_iterations / wall if wall > 0 else float("inf")
+    print("Recursion: {:.2f}s total, {:.2f} it/s, iterations={}".format(wall, ips, args.n_iterations))
 
 
 if __name__ == "__main__":
