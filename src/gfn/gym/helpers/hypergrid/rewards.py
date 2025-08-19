@@ -50,7 +50,7 @@ class OriginalReward(GridReward):
         return (
             R0
             + (0.25 + EPS < ax).prod(-1) * R1
-            + ((0.3 + EPS < ax) * (ax < 0.4 + EPS)).prod(-1) * R2
+            + ((0.3 + EPS < ax) * (ax < 0.4 - EPS)).prod(-1) * R2
         )
 
 
@@ -110,5 +110,5 @@ class DeceptiveReward(GridReward):
             R0
             + R1
             - (0.1 + EPS < ax).prod(-1) * R1
-            + ((0.3 + EPS < ax) * (ax < 0.4 + EPS)).prod(-1) * R2
+            + ((0.3 + EPS < ax) * (ax < 0.4 - EPS)).prod(-1) * R2
         )

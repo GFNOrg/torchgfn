@@ -18,6 +18,7 @@ from .train_conditional import main as train_conditional_main
 from .train_discreteebm import main as train_discreteebm_main
 from .train_graph_ring import main as train_graph_ring_main
 from .train_hypergrid import main as train_hypergrid_main
+from .train_hypergrid_gafn import main as train_hypergrid_gafn_main
 from .train_hypergrid_local_search import main as train_hypergrid_local_search_main
 from .train_hypergrid_simple import main as train_hypergrid_simple_main
 from .train_ising import main as train_ising_main
@@ -67,7 +68,6 @@ class HypergridArgs(CommonArgs):
     loss: str = "TB"
     lr_logz: float = 1e-3
     n_iterations: int = 10
-    n_local_search_loops: int = 3
     n_threads: int = 1
     ndim: int = 2
     plot: bool = False
@@ -77,6 +77,21 @@ class HypergridArgs(CommonArgs):
     R2: float = 2.0
     replay_buffer_size: int = 0
     timing: bool = True
+
+
+@dataclass
+class HypergridGAFNArgs(HypergridArgs):
+    use_edge_ri: bool = True
+    lr_rnd: float = 1e-3
+    rnd_reward_scale: float = 0.1
+    rnd_loss_scale: float = 1.0
+    rnd_hidden_dim: int = 256
+    rnd_s_latent_dim: int = 128
+
+
+@dataclass
+class HypergridLocalSearchArgs(HypergridArgs):
+    n_local_search_loops: int = 3
     use_metropolis_hastings: bool = True
 
 
@@ -413,9 +428,22 @@ def test_hypergrid_simple_smoke_fp64():
     train_hypergrid_simple_main(namespace_args)  # Just ensure it runs without errors.
 
 
+def test_hypergrid_gafn_smoke():
+    """Smoke test for the GAFN training script."""
+    args = HypergridGAFNArgs(
+        batch_size=4,
+        hidden_dim=64,
+        n_hidden=1,
+        n_trajectories=10,  # Small number for smoke test
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_hypergrid_gafn_main(namespace_args)  # Just ensure it runs without errors.
+
+
 def test_hypergrid_simple_ls_smoke():
     """Smoke test for the simple hypergrid with local search training script."""
-    args = HypergridArgs(
+    args = HypergridLocalSearchArgs(
         batch_size=4,
         hidden_dim=64,
         n_hidden=1,
