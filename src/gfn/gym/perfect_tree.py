@@ -38,7 +38,12 @@ class PerfectBinaryTree(DiscreteEnv):
         term_states (DiscreteStates): The terminating states.
     """
 
-    def __init__(self, reward_fn: Callable, depth: int = 4):
+    def __init__(
+        self,
+        reward_fn: Callable,
+        depth: int = 4,
+        check_action_validity: bool = True,
+    ):
         """Initializes the PerfectBinaryTree environment.
 
         Args:
@@ -53,7 +58,13 @@ class PerfectBinaryTree(DiscreteEnv):
 
         self.s0 = torch.zeros((1,), dtype=torch.long)
         self.sf = torch.full((1,), fill_value=-1)
-        super().__init__(self.n_actions, self.s0, (1,), sf=self.sf)
+        super().__init__(
+            self.n_actions,
+            self.s0,
+            (1,),
+            sf=self.sf,
+            check_action_validity=check_action_validity,
+        )
         self.States: type[DiscreteStates] = self.States
 
         (

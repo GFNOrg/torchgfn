@@ -75,6 +75,7 @@ class HyperGrid(DiscreteEnv):
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         calculate_partition: bool = False,
         calculate_all_states: bool = False,
+        check_action_validity: bool = True,
     ):
         """Initializes the HyperGrid environment.
 
@@ -131,6 +132,7 @@ class HyperGrid(DiscreteEnv):
             s0=s0,
             state_shape=state_shape,
             sf=sf,
+            check_action_validity=check_action_validity,
         )
         self.States: type[DiscreteStates] = self.States
 

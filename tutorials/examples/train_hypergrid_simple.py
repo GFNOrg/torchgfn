@@ -38,7 +38,12 @@ def main(args):
     )
 
     # Setup the Environment.
-    env = HyperGrid(ndim=args.ndim, height=args.height, device=device)
+    env = HyperGrid(
+        ndim=args.ndim,
+        height=args.height,
+        device=device,
+        check_action_validity=__debug__,
+    )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Build the GFlowNet.

@@ -28,6 +28,7 @@ class Line(Env):
         n_sd: float = 4.5,
         n_steps_per_trajectory: int = 5,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        check_action_validity: bool = True,
     ):
         """Initializes the Line environment.
 
@@ -60,6 +61,7 @@ class Line(Env):
             action_shape=(1,),  # [x_pos]
             dummy_action=dummy_action,
             exit_action=exit_action,
+            check_action_validity=check_action_validity,
         )  # sf is -inf by default.
 
     def step(self, states: States, actions: Actions) -> States:

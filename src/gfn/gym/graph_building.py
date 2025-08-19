@@ -36,6 +36,7 @@ class GraphBuilding(GraphEnv):
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         s0: GeometricData | None = None,
         sf: GeometricData | None = None,
+        check_action_validity: bool = True,
     ):
         """Initializes the GraphBuilding environment.
 
@@ -76,6 +77,7 @@ class GraphBuilding(GraphEnv):
             num_node_classes=num_node_classes,
             num_edge_classes=num_edge_classes,
             is_directed=is_directed,
+            check_action_validity=check_action_validity,
         )
 
     def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
@@ -424,6 +426,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         state_evaluator: callable,
         directed: bool,
         device: Literal["cpu", "cuda"] | torch.device,
+        check_action_validity: bool = True,
     ):
         """Initializes the `GraphBuildingOnEdges` environment.
 
@@ -467,6 +470,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             device=device,
             s0=s0,
             sf=sf,
+            check_action_validity=check_action_validity,
         )
 
     def make_states_class(self) -> type[GraphStates]:

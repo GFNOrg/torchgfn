@@ -84,6 +84,7 @@ class DiscreteEBM(DiscreteEnv):
         energy: EnergyFunction | None = None,
         alpha: float = 1.0,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        check_action_validity: bool = True,
     ):
         """Discrete EBM environment.
 
@@ -114,6 +115,7 @@ class DiscreteEBM(DiscreteEnv):
             # exit_action=,
             n_actions=n_actions,
             sf=sf,
+            check_action_validity=check_action_validity,
         )
         self.States: type[DiscreteStates] = self.States
 

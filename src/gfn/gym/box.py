@@ -28,6 +28,7 @@ class Box(Env):
         R2: float = 2.0,
         epsilon: float = 1e-4,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        check_action_validity: bool = True,
     ):
         """Initializes the Box environment.
 
@@ -57,6 +58,7 @@ class Box(Env):
             action_shape=(2,),
             dummy_action=dummy_action,
             exit_action=exit_action,
+            check_action_validity=check_action_validity,
         )
 
     def make_random_states(

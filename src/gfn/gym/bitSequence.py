@@ -216,6 +216,7 @@ class BitSequence(DiscreteEnv):
         H: Optional[torch.Tensor] = None,
         device_str: str = "cpu",
         seed: int = 0,
+        check_action_validity: bool = True,
     ):
         """Initializes the BitSequence environment.
 
@@ -252,6 +253,7 @@ class BitSequence(DiscreteEnv):
             dummy_action,
             exit_action,
             sf,
+            check_action_validity=check_action_validity,
         )
         self.H = H
         self.modes = self.make_modes_set(seed)  # set of modes written as binary

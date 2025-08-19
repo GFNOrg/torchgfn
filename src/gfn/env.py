@@ -40,6 +40,7 @@ class Env(ABC):
         dummy_action: torch.Tensor,
         exit_action: torch.Tensor,
         sf: Optional[torch.Tensor | GeometricData] = None,
+        check_action_validity: bool = True,
     ):
         """Initializes an environment.
 
@@ -69,6 +70,7 @@ class Env(ABC):
         self.action_shape = action_shape
         self.dummy_action = dummy_action.to(s0.device)
         self.exit_action = exit_action.to(s0.device)
+        self.check_action_validity = check_action_validity
 
         # Warning: don't use self.States or self.Actions to initialize an instance of
         # the class. Use self.states_from_tensor or self.actions_from_tensor instead.
@@ -285,43 +287,41 @@ class Env(ABC):
             A batch of next states.
         """
         assert states.batch_shape == actions.batch_shape
+        assert len(states.batch_shape) == 1, "Batch shape must be 1 for the step method."
+
+        valid_states_idx: torch.Tensor = ~states.is_sink_state
+        assert valid_states_idx.shape == states.batch_shape
+        assert valid_states_idx.dtype == torch.bool
+
+        if self.check_action_validity:
+            valid_actions = actions[valid_states_idx]
+            valid_states = states[valid_states_idx]
+
+            if not self.is_action_valid(valid_states, valid_actions):
+                raise NonValidActionsError(
+                    "Some actions are not valid in the given states. See `is_action_valid`."
+                )
+
+        new_valid_states_idx = valid_states_idx & ~actions.is_exit
 
         # IMPORTANT: states.clone() is used to ensure that the new states are a
         # distinct object from the old states. This is important for the sampler to
         # work correctly when building the trajectories. If you want to override this
         # method in your custom environment, you must ensure that the `new_states`
         # returned is a distinct object from the submitted states.
-        new_states = states.clone()
 
-        valid_states_idx: torch.Tensor = ~states.is_sink_state
-        assert valid_states_idx.shape == states.batch_shape
-        assert valid_states_idx.dtype == torch.bool
-        valid_actions = actions[valid_states_idx]
-        valid_states = states[valid_states_idx]
-
-        if not self.is_action_valid(valid_states, valid_actions):
-            raise NonValidActionsError(
-                "Some actions are not valid in the given states. See `is_action_valid`."
-            )
-
-        # Set to the sink state when the action is exit.
-        new_sink_states_idx = actions.is_exit
-        sf_states = self.States.make_sink_states(
-            (int(new_sink_states_idx.sum().item()),), device=states.device
-        )
-        new_states[new_sink_states_idx] = sf_states
-        new_sink_states_idx = ~valid_states_idx | new_sink_states_idx
-        assert new_sink_states_idx.shape == states.batch_shape
-
-        not_done_states = new_states[~new_sink_states_idx]
-        not_done_actions = actions[~new_sink_states_idx]
+        not_done_states = states[new_valid_states_idx].clone()
+        not_done_actions = actions[new_valid_states_idx]
 
         not_done_states = self.step(not_done_states, not_done_actions)
-        if not isinstance(not_done_states, States):
-            raise ValueError(
-                f"The step function must return a States instance, but got {type(not_done_states)} instead."
-            )
-        new_states[~new_sink_states_idx] = not_done_states
+        assert isinstance(
+            not_done_states, States
+        ), f"The step function must return a States instance, but got {type(not_done_states)} instead."
+
+        new_states = self.States.make_sink_states(
+            states.batch_shape, device=states.device
+        )
+        new_states[new_valid_states_idx] = not_done_states
         return new_states
 
     def _backward_step(self, states: States, actions: Actions) -> States:
@@ -353,7 +353,9 @@ class Env(ABC):
         valid_actions = actions[valid_states_idx]
         valid_states = new_states[valid_states_idx]
 
-        if not self.is_action_valid(valid_states, valid_actions, backward=True):
+        if self.check_action_validity and not self.is_action_valid(
+            valid_states, valid_actions, backward=True
+        ):
             raise NonValidActionsError(
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
@@ -450,6 +452,7 @@ class DiscreteEnv(Env, ABC):
         dummy_action: Optional[torch.Tensor] = None,
         exit_action: Optional[torch.Tensor] = None,
         sf: Optional[torch.Tensor] = None,
+        check_action_validity: bool = True,
     ):
         """Initializes a discrete environment.
 
@@ -514,6 +517,7 @@ class DiscreteEnv(Env, ABC):
             dummy_action,
             exit_action,
             sf,
+            check_action_validity,
         )
 
     def states_from_tensor(self, tensor: torch.Tensor) -> DiscreteStates:
@@ -771,6 +775,7 @@ class GraphEnv(Env):
         num_node_classes: int,
         num_edge_classes: int,
         is_directed: bool,
+        check_action_validity: bool = True,
     ):
         """Initializes a graph-based environment.
 
@@ -793,6 +798,8 @@ class GraphEnv(Env):
         self.num_node_classes = num_node_classes
         self.num_edge_classes = num_edge_classes
         self.is_directed = is_directed
+        self.check_action_validity = check_action_validity
+
         assert s0.x is not None
         assert sf.x is not None
         assert s0.x.shape[-1] == sf.x.shape[-1]
