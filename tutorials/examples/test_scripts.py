@@ -163,6 +163,7 @@ class GraphTriangleArgs(CommonArgs):
     epsilon_edge_class: float = 0.0
     epsilon_edge_index: float = 0.0
 
+
 @dataclass
 class BayesianStructureArgs(CommonArgs):
     num_nodes: int = 3
