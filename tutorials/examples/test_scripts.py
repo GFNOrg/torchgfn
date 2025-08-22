@@ -150,12 +150,18 @@ class GraphRingArgs(CommonArgs):
 @dataclass
 class GraphTriangleArgs(CommonArgs):
     device: str = "cpu"
+    batch_size: int = 32
     n_iterations: int = 4
     embedding_dim: int = 32
     num_conv_layers: int = 1
-    num_node_classes: int = 5
-    num_edge_classes: int = 1
-
+    use_buffer: bool = False
+    plot: bool = False
+    lr_Z: float = 0.1
+    lr: float = 0.001
+    epsilon_action_type: float = 0.0
+    epsilon_node_class: float = 0.0
+    epsilon_edge_class: float = 0.0
+    epsilon_edge_index: float = 0.0
 
 @dataclass
 class BayesianStructureArgs(CommonArgs):
