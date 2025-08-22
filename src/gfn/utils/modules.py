@@ -297,7 +297,6 @@ class GraphActionGNN(nn.Module):
         assert isinstance(num_conv_layers, int), "num_conv_layers must be an integer"
         assert isinstance(directed, bool), "directed must be a boolean"
         assert isinstance(is_backward, bool), "is_backward must be a boolean"
-        self._input_dim = 1  # Each node input is a single integer before embedding.
         self.num_node_classes = num_node_classes
         self.hidden_dim = self.embedding_dim = embedding_dim
         self.is_backward = is_backward
@@ -397,11 +396,7 @@ class GraphActionGNN(nn.Module):
 
     @property
     def input_dim(self):
-        return self._input_dim
-
-    @property
-    def output_dim(self) -> int:
-        return self._output_dim
+        return 1  # placeholder TODO: remove this
 
     @staticmethod
     def _group_mean(tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
