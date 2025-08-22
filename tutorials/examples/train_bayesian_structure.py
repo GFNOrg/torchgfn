@@ -119,7 +119,7 @@ class DAGEdgeActionGNN(GraphActionGNN):
 
     @property
     def edges_dim(self) -> int:
-        return self.n_nodes**2
+        return self.num_node_classes**2
 
     def forward(self, states_tensor: GeometricBatch) -> TensorDict:
         node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
