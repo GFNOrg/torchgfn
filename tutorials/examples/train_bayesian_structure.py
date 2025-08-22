@@ -60,7 +60,7 @@ from gfn.gym.helpers.bayesian_structure.jsd import (
     posterior_exact,
 )
 from gfn.utils.common import set_seed
-from gfn.utils.modules import GraphActionUniform, GraphEdgeActionGNN, GraphEdgeActionMLP
+from gfn.utils.modules import GraphActionGNN, GraphActionUniform, GraphEdgeActionMLP
 
 
 class DAGEdgeActionMLP(GraphEdgeActionMLP):
@@ -89,7 +89,7 @@ class DAGEdgeActionMLP(GraphEdgeActionMLP):
         return self.n_nodes**2
 
 
-class DAGEdgeActionGNN(GraphEdgeActionGNN):
+class DAGEdgeActionGNN(GraphActionGNN):
     """Simple GNN-based edge action module
 
     Args:
@@ -109,7 +109,7 @@ class DAGEdgeActionGNN(GraphEdgeActionGNN):
         is_backward: bool = False,
     ):
         super().__init__(
-            n_nodes=n_nodes,
+            num_node_classes=n_nodes,
             directed=True,
             num_edge_classes=num_edge_classes,
             num_conv_layers=num_conv_layers,
