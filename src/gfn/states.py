@@ -888,9 +888,13 @@ class GraphStates(States):
         edge_masks = torch.ones(
             self.data.size, max_possible_edges, dtype=torch.bool, device=self.device
         )
+        node_class_masks = torch.ones(
+            self.data.size, self.num_node_classes, dtype=torch.bool, device=self.device
+        )
 
         # Remove existing edges
         for i, graph in enumerate(self.data.flat):
+            node_class_masks[i, graph.x.flatten()] = False
             if graph.x is None:
                 continue
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
@@ -906,24 +910,21 @@ class GraphStates(States):
                 if len(edge_idx.shape) == 2:
                     edge_idx = edge_idx.sum(0).bool()
 
-                edge_masks[i, edge_idx] = False
+                edge_masks[i, :len(edge_idx)][edge_idx] = False
 
+        node_class_masks = node_class_masks.view(*self.batch_shape, self.num_node_classes)
         edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
         action_type = torch.ones(
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
+        action_type[..., GraphActionType.ADD_NODE] = torch.any(node_class_masks, dim=-1)
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
-                GraphActions.NODE_CLASS_KEY: torch.ones(
-                    *self.batch_shape,
-                    self.num_node_classes,
-                    dtype=torch.bool,
-                    device=self.device,
-                ),
+                GraphActions.NODE_CLASS_KEY: node_class_masks,
                 GraphActions.EDGE_CLASS_KEY: torch.ones(
                     *self.batch_shape,
                     self.num_edge_classes,
@@ -965,8 +966,12 @@ class GraphStates(States):
         edge_masks = torch.zeros(
             self.data.size, max_possible_edges, dtype=torch.bool, device=self.device
         )
+        node_class_masks = torch.zeros(
+            self.data.size, self.num_node_classes, dtype=torch.bool, device=self.device
+        )
 
         for i, graph in enumerate(self.data.flat):
+            node_class_masks[i, graph.x.flatten()] = True
             if graph.x is None:
                 continue
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
@@ -980,29 +985,21 @@ class GraphStates(States):
                 if len(edge_idx.shape) == 2:
                     edge_idx = edge_idx.sum(0).bool()
 
-                # Allow the removal of this edge
-                edge_masks[i, edge_idx] = True
-
+                edge_masks[i, :len(edge_idx)][edge_idx] = True
+        
+        node_class_masks = node_class_masks.view(*self.batch_shape, self.num_node_classes)
         edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
         action_type = torch.zeros(
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
-        action_type[..., GraphActionType.ADD_NODE] = torch.tensor(
-            [graph.x is not None and graph.x.size(0) > 0 for graph in self.data.flat],
-            device=self.device,
-        ).view(self.batch_shape)
+        action_type[..., GraphActionType.ADD_NODE] = torch.any(node_class_masks, dim=-1)
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
-                GraphActions.NODE_CLASS_KEY: torch.ones(
-                    *self.batch_shape,
-                    self.num_node_classes,
-                    dtype=torch.bool,
-                    device=self.device,
-                ),
+                GraphActions.NODE_CLASS_KEY: node_class_masks,
                 GraphActions.EDGE_CLASS_KEY: torch.ones(
                     *self.batch_shape,
                     self.num_edge_classes,
