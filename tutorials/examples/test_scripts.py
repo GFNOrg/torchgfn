@@ -17,6 +17,7 @@ from .train_box import main as train_box_main
 from .train_conditional import main as train_conditional_main
 from .train_discreteebm import main as train_discreteebm_main
 from .train_graph_ring import main as train_graph_ring_main
+from .train_graph_triangle import main as train_graph_triangle_main
 from .train_hypergrid import main as train_hypergrid_main
 from .train_hypergrid_local_search import main as train_hypergrid_local_search_main
 from .train_hypergrid_simple import main as train_hypergrid_simple_main
@@ -144,6 +145,16 @@ class GraphRingArgs(CommonArgs):
     plot: bool = False
     use_buffer: bool = False
     use_gnn: bool = True
+
+
+@dataclass
+class GraphTriangleArgs(CommonArgs):
+    device: str = "cpu"
+    n_iterations: int = 4
+    embedding_dim: int = 32
+    num_conv_layers: int = 1
+    num_node_classes: int = 5
+    num_edge_classes: int = 1
 
 
 @dataclass
@@ -376,6 +387,14 @@ def test_graph_ring_smoke():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_graph_ring_main(namespace_args)  # Just ensure it runs without errors.
+
+
+def test_graph_triangle_smoke():
+    """Smoke test for the graph triangle training script."""
+    args = GraphTriangleArgs()
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_graph_triangle_main(namespace_args)  # Just ensure it runs without errors.
 
 
 def test_bayesian_structure_smoke():
