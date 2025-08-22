@@ -910,9 +910,11 @@ class GraphStates(States):
                 if len(edge_idx.shape) == 2:
                     edge_idx = edge_idx.sum(0).bool()
 
-                edge_masks[i, :len(edge_idx)][edge_idx] = False
+                edge_masks[i, : len(edge_idx)][edge_idx] = False
 
-        node_class_masks = node_class_masks.view(*self.batch_shape, self.num_node_classes)
+        node_class_masks = node_class_masks.view(
+            *self.batch_shape, self.num_node_classes
+        )
         edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
@@ -985,9 +987,11 @@ class GraphStates(States):
                 if len(edge_idx.shape) == 2:
                     edge_idx = edge_idx.sum(0).bool()
 
-                edge_masks[i, :len(edge_idx)][edge_idx] = True
-        
-        node_class_masks = node_class_masks.view(*self.batch_shape, self.num_node_classes)
+                edge_masks[i, : len(edge_idx)][edge_idx] = True
+
+        node_class_masks = node_class_masks.view(
+            *self.batch_shape, self.num_node_classes
+        )
         edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT

@@ -38,7 +38,12 @@ class TriangleReward:
     - Undirected triangle: exactly 3 nodes and edges {(0,1),(1,2),(0,2)} ignoring labels.
     """
 
-    def __init__(self, reward_val: float = 100.0, eps_val: float = 1e-6, device: torch.device | str = "cpu"):
+    def __init__(
+        self,
+        reward_val: float = 100.0,
+        eps_val: float = 1e-6,
+        device: torch.device | str = "cpu",
+    ):
         self.reward_val = reward_val
         self.eps_val = eps_val
         self.device = torch.device(device)
@@ -108,9 +113,13 @@ class GraphNodeEdgeAction(nn.Module):
                         nn.ModuleList(
                             [
                                 nn.Sequential(
-                                    nn.Linear(self.hidden_dim // 2, self.hidden_dim // 2),
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
                                     nn.ReLU(),
-                                    nn.Linear(self.hidden_dim // 2, self.hidden_dim // 2),
+                                    nn.Linear(
+                                        self.hidden_dim // 2, self.hidden_dim // 2
+                                    ),
                                 )
                                 for _ in range(2)
                             ]
@@ -215,7 +224,11 @@ class GraphNodeEdgeAction(nn.Module):
             x = self.norm(x)
 
         # Pool to graph features
-        graph_emb = self._group_mean(x, states_tensor.ptr) if x.numel() > 0 else torch.zeros(B, self.hidden_dim, device=device)
+        graph_emb = (
+            self._group_mean(x, states_tensor.ptr)
+            if x.numel() > 0
+            else torch.zeros(B, self.hidden_dim, device=device)
+        )
 
         # Action type logits
         action_type = torch.ones(B, 3, device=device) * float("-inf")
@@ -234,14 +247,18 @@ class GraphNodeEdgeAction(nn.Module):
         # Pad to max_nodes across batch for gathering candidate edges
         max_nodes = 0
         for b in range(B):
-            start, end = int(states_tensor.ptr[b].item()), int(states_tensor.ptr[b + 1].item())
+            start, end = int(states_tensor.ptr[b].item()), int(
+                states_tensor.ptr[b + 1].item()
+            )
             max_nodes = max(max_nodes, end - start)
         if max_nodes == 0:
             edge_index_logits = torch.zeros(B, 0, device=device)
         else:
             padded = torch.zeros(B, max_nodes, self.hidden_dim, device=device)
             for b in range(B):
-                start, end = int(states_tensor.ptr[b].item()), int(states_tensor.ptr[b + 1].item())
+                start, end = int(states_tensor.ptr[b].item()), int(
+                    states_tensor.ptr[b + 1].item()
+                )
                 if end > start:
                     padded[b, : (end - start)] = x[start:end]
 
@@ -282,7 +299,9 @@ def init_env(device: torch.device) -> GraphBuilding:
     return env
 
 
-def init_gflownet(env: GraphBuilding, embedding_dim: int, num_conv_layers: int, device: torch.device) -> TBGFlowNet:
+def init_gflownet(
+    env: GraphBuilding, embedding_dim: int, num_conv_layers: int, device: torch.device
+) -> TBGFlowNet:
     pf_module = GraphNodeEdgeAction(
         num_node_classes=env.num_node_classes,
         num_edge_classes=env.num_edge_classes,
@@ -324,7 +343,9 @@ def render_states(states: GraphStates, evaluator: Callable[[GraphStates], torch.
             y = radius * math.sin(ang)
             xs.append(x)
             ys.append(y)
-            a.add_patch(patches.Circle((x, y), 0.25, facecolor="none", edgecolor="black"))
+            a.add_patch(
+                patches.Circle((x, y), 0.25, facecolor="none", edgecolor="black")
+            )
         if g.edge_index.numel() > 0:
             for e in g.edge_index.T:
                 sx, sy = xs[int(e[0])], ys[int(e[0])]
@@ -347,15 +368,28 @@ def main(args: argparse.Namespace) -> None:
     gflownet = init_gflownet(env, args.embedding_dim, args.num_conv_layers, device)
 
     # Optimizer
-    non_logz_params = [v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"]
-    logz_params = [dict(gflownet.named_parameters())["logZ"]] if "logZ" in dict(gflownet.named_parameters()) else []
-    optimizer = torch.optim.Adam([
-        {"params": non_logz_params, "lr": args.lr},
-        {"params": logz_params, "lr": args.lr_Z},
-    ])
+    non_logz_params = [
+        v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
+    ]
+    logz_params = (
+        [dict(gflownet.named_parameters())["logZ"]]
+        if "logZ" in dict(gflownet.named_parameters())
+        else []
+    )
+    optimizer = torch.optim.Adam(
+        [
+            {"params": non_logz_params, "lr": args.lr},
+            {"params": logz_params, "lr": args.lr_Z},
+        ]
+    )
 
     # Optional replay buffer
-    replay_buffer = ReplayBuffer(env, capacity=args.batch_size, prioritized_capacity=True, prioritized_sampling=True)
+    replay_buffer = ReplayBuffer(
+        env,
+        capacity=args.batch_size,
+        prioritized_capacity=True,
+        prioritized_sampling=True,
+    )
 
     epsilon = {
         GraphActions.ACTION_TYPE_KEY: args.epsilon_action_type,
@@ -391,7 +425,9 @@ def main(args: argparse.Namespace) -> None:
         assert isinstance(final_states, GraphStates)
         rewards = env.reward(final_states)
         pct_tri = (rewards > 0.1).to(torch.get_default_dtype()).mean() * 100
-        print(f"Iter {it:04d} | Loss {loss.item():.3f} | triangles {pct_tri.item():.1f}%")
+        print(
+            f"Iter {it:04d} | Loss {loss.item():.3f} | triangles {pct_tri.item():.1f}%"
+        )
         loss.backward()
         optimizer.step()
 
@@ -404,16 +440,30 @@ def main(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train a GFlowNet with ADD_NODE and ADD_EDGE actions")
-    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"], help="Device")
+    parser = argparse.ArgumentParser(
+        description="Train a GFlowNet with ADD_NODE and ADD_EDGE actions"
+    )
+    parser.add_argument(
+        "--device", type=str, default="cpu", choices=["cpu", "cuda"], help="Device"
+    )
     parser.add_argument("--seed", type=int, default=1234, help="Random seed")
-    parser.add_argument("--embedding_dim", type=int, default=64, help="Embedding dim for policy heads")
-    parser.add_argument("--num_conv_layers", type=int, default=1, help="Number of GNN layers")
+    parser.add_argument(
+        "--embedding_dim", type=int, default=64, help="Embedding dim for policy heads"
+    )
+    parser.add_argument(
+        "--num_conv_layers", type=int, default=1, help="Number of GNN layers"
+    )
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size")
-    parser.add_argument("--n_iterations", type=int, default=300, help="Training iterations")
+    parser.add_argument(
+        "--n_iterations", type=int, default=300, help="Training iterations"
+    )
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--lr_Z", type=float, default=1e-1, help="Learning rate for logZ")
-    parser.add_argument("--use_buffer", action="store_true", default=True, help="Use replay buffer")
+    parser.add_argument(
+        "--lr_Z", type=float, default=1e-1, help="Learning rate for logZ"
+    )
+    parser.add_argument(
+        "--use_buffer", action="store_true", default=True, help="Use replay buffer"
+    )
     # Exploration epsilons per action component
     parser.add_argument("--epsilon_action_type", type=float, default=0.0)
     parser.add_argument("--epsilon_node_class", type=float, default=0.0)
@@ -422,4 +472,3 @@ if __name__ == "__main__":
     parser.add_argument("--plot", action="store_true", default=False)
     args = parser.parse_args()
     main(args)
-
