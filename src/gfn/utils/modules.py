@@ -473,9 +473,9 @@ class GraphActionGNN(nn.Module):
             # Preserve original assumption: all sequences non-empty if max_nodes > 0
             assert torch.all(lengths > 0)
 
-            seqs = x.split(lengths.tolist())
+            seqs = torch.split(x, lengths.tolist())
             padded = torch.nn.utils.rnn.pad_sequence(
-                seqs, batch_first=True
+                list(seqs), batch_first=True
             )  # (B, max_nodes, hidden_dim)
 
             feature_dim = (self.hidden_dim // 2) if self.is_directed else self.hidden_dim
