@@ -474,7 +474,9 @@ class GraphActionGNN(nn.Module):
             assert torch.all(lengths > 0)
 
             seqs = x.split(lengths.tolist())
-            padded = torch.nn.utils.rnn.pad_sequence(seqs, batch_first=True)  # (B, max_nodes, hidden_dim)
+            padded = torch.nn.utils.rnn.pad_sequence(
+                seqs, batch_first=True
+            )  # (B, max_nodes, hidden_dim)
 
             feature_dim = (self.hidden_dim // 2) if self.is_directed else self.hidden_dim
             if self.is_directed:
