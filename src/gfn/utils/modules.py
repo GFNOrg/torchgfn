@@ -464,32 +464,26 @@ class GraphActionGNN(nn.Module):
 
         # Edge-index logits via pairwise dot products
         # Pad to max_nodes across batch for gathering candidate edges
-        max_nodes = 0
-        for b in range(B):
-            start, end = int(states_tensor.ptr[b].item()), int(
-                states_tensor.ptr[b + 1].item()
-            )
-            max_nodes = max(max_nodes, end - start)
+        lengths = (states_tensor.ptr[1:] - states_tensor.ptr[:-1]).to(torch.long)
+        max_nodes = int(lengths.max().item())
+
         if max_nodes == 0:
             edge_index_logits = torch.zeros(B, 0, device=device)
         else:
-            padded = torch.zeros(B, max_nodes, self.hidden_dim, device=device)
-            for b in range(B):
-                start, end = int(states_tensor.ptr[b].item()), int(
-                    states_tensor.ptr[b + 1].item()
-                )
-                if end > start:
-                    padded[b, : (end - start)] = x[start:end]
+            # Preserve original assumption: all sequences non-empty if max_nodes > 0
+            assert torch.all(lengths > 0)
 
+            seqs = x.split(lengths.tolist())
+            padded = torch.nn.utils.rnn.pad_sequence(seqs, batch_first=True)  # (B, max_nodes, hidden_dim)
+
+            feature_dim = (self.hidden_dim // 2) if self.is_directed else self.hidden_dim
             if self.is_directed:
-                feature_dim = self.hidden_dim // 2
                 source_features = padded[..., :feature_dim]
                 target_features = padded[..., feature_dim:]
                 scores = torch.einsum("bnf,bmf->bnm", source_features, target_features)
-                scores = scores / math.sqrt(max(1, feature_dim))
             else:
                 scores = torch.einsum("bnf,bmf->bnm", padded, padded)
-                scores = scores / math.sqrt(max(1, self.hidden_dim))
+            scores = scores / math.sqrt(max(1, feature_dim))
 
             ei0, ei1 = get_edge_indices(max_nodes, self.is_directed, device)
             edge_index_logits = scores[:, ei0, ei1]
