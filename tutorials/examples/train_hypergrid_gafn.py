@@ -185,18 +185,26 @@ class TBGAFN(TBGFlowNet):
             # Also, they define r(s_t \to s_{t+1}) = r(s_{t+1}) and here we follow
             # this definition.
             assert self.flow_estimator is not None
+
+            # Note: These two computations below may require a lot of memory if trajectory
+            # length is very long, because this operation is performed on the entire
+            # batch of trajectories, i.e., batch_size becomes O(T x B).
+            # Consider mini-batching if this is a problem for your use case.
             log_state_flows = torch.zeros(
-                trajectories.states.tensor.shape[:-1],
-                device=trajectories.states.device,
+                trajectories.states.batch_shape, device=trajectories.states.device
             )
-            # Note: These two lines below may require a lot of memory if trajectory length
-            # is very long, because this operation is performed on the entire batch of trajectories, 
-            # i.e., batch_size becomes O(T x B).
             log_state_flows[~trajectories.states.is_sink_state] = self.flow_estimator(
                 trajectories.states[~trajectories.states.is_sink_state]
             ).squeeze(-1)
-            edge_ri = self.rnd.compute_intrinsic_reward(trajectories.states)
-            # shape: (max_length, n_trajectories)
+            edge_ri = torch.zeros(
+                trajectories.states.batch_shape, device=trajectories.states.device
+            )
+            edge_ri[~trajectories.states.is_sink_state] = (
+                self.rnd.compute_intrinsic_reward(
+                    trajectories.states[~trajectories.states.is_sink_state]
+                )
+            )
+
             terminal_ri = edge_ri[
                 trajectories.terminating_idx - 1,
                 torch.arange(trajectories.n_trajectories, device=edge_ri.device),

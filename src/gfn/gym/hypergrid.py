@@ -16,6 +16,7 @@ from gfn.actions import Actions
 from gfn.env import DiscreteEnv
 from gfn.gym.helpers.hypergrid.rewards import get_reward_fn
 from gfn.states import DiscreteStates
+from gfn.utils.common import ensure_same_device
 
 if platform.system() == "Windows":
     multiprocessing.set_start_method("spawn", force=True)
@@ -376,6 +377,11 @@ class HyperGrid(DiscreteEnv):
             self._store_all_states_tensor()
 
         assert self._all_states_tensor is not None
+        try:
+            ensure_same_device(self._all_states_tensor.device, self.device)
+        except ValueError:
+            self._all_states_tensor = self._all_states_tensor.to(self.device)
+
         all_states = self.States(self._all_states_tensor)
         return all_states
 
