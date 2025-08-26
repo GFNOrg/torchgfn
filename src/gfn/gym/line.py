@@ -39,6 +39,7 @@ class Line(Env):
             n_sd: The number of standard deviations to consider for the bounds.
             n_steps_per_trajectory: The number of steps per trajectory.
             device: The device to use.
+            check_action_validity: Whether to check the action validity.
         """
         assert len(mus) == len(sigmas)
         self.mus = torch.tensor(mus)

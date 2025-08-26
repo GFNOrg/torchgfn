@@ -48,6 +48,7 @@ class GraphBuilding(GraphEnv):
             device: The device to run computations on.
             s0: The initial state.
             sf: The sink state.
+            check_action_validity: Whether to check the action validity.
         """
         if s0 is None:
             s0 = GeometricData(
@@ -435,6 +436,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             state_evaluator: A function that evaluates a state and returns a reward.
             directed: Whether the graph should be directed.
             device: The device to use.
+            check_action_validity: Whether to check the action validity.
         """
         self.n_nodes = n_nodes
         if directed:

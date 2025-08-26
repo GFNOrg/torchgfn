@@ -53,6 +53,7 @@ class Env(ABC):
             exit_action: Tensor of shape (*action_shape) representing the exit action.
             sf: (Optional) Tensor of shape (*state_shape) or GeometricData representing
                 the sink (final) state.
+            check_action_validity: Whether to check the action validity.
         """
         if isinstance(s0.device, str):  # This can happen when s0 is a GeometricData.
             s0.device = torch.device(s0.device)
@@ -302,14 +303,16 @@ class Env(ABC):
                     "Some actions are not valid in the given states. See `is_action_valid`."
                 )
 
+        # We only step on states that are not sink states.
+        # Note that exit actions directly set the states to the sink state, so they
+        # are not included in the valid_states_idx.
         new_valid_states_idx = valid_states_idx & ~actions.is_exit
 
-        # IMPORTANT: states.clone() is used to ensure that the new states are a
+        # IMPORTANT: .clone() is used to ensure that the new states are a
         # distinct object from the old states. This is important for the sampler to
         # work correctly when building the trajectories. If you want to override this
         # method in your custom environment, you must ensure that the `new_states`
         # returned is a distinct object from the submitted states.
-
         not_done_states = states[new_valid_states_idx].clone()
         not_done_actions = actions[new_valid_states_idx]
 
@@ -318,6 +321,10 @@ class Env(ABC):
             not_done_states, States
         ), f"The step function must return a States instance, but got {type(not_done_states)} instead."
 
+        # Create a batch of sink states with the same batch shape as the input states.
+        # For the indices where the new states are not sink states (i.e., where the
+        # state is not already a sink and the action is not exit), update those
+        # positions with the result of the environment's step function.
         new_states = self.States.make_sink_states(
             states.batch_shape, device=states.device
         )
@@ -466,6 +473,7 @@ class DiscreteEnv(Env, ABC):
             exit_action: (Optional) Tensor of shape (*action_shape) representing the
                 exit action.
             sf: (Optional) Tensor of shape (*state_shape) representing the final state.
+            check_action_validity: Whether to check the action validity.
         """
         # Add validation/warnings for advanced usage
         if dummy_action is not None or exit_action is not None or sf is not None:
@@ -785,6 +793,7 @@ class GraphEnv(Env):
             num_node_classes: Number of node classes.
             num_edge_classes: Number of edge classes.
             is_directed: Whether the graph is directed.
+            check_action_validity: Whether to check the action validity.
         """
         assert s0.x is not None and sf.x is not None
         assert s0.edge_attr is not None and sf.edge_attr is not None

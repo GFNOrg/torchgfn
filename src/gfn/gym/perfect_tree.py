@@ -49,6 +49,7 @@ class PerfectBinaryTree(DiscreteEnv):
         Args:
             reward_fn: A function that computes the reward for a given state.
             depth: The depth of the tree.
+            check_action_validity: Whether to check the action validity.
         """
         self.reward_fn = reward_fn
         self.depth = depth

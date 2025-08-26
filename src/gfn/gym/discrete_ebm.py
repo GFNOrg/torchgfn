@@ -94,6 +94,7 @@ class DiscreteEBM(DiscreteEnv):
                 Identity matrix is used.
             alpha: interaction strength the EBM. Defaults to 1.0.
             device: Device to use for the environment.
+            check_action_validity: Whether to check the action validity.
         """
         self.ndim = ndim
 

@@ -37,6 +37,7 @@ class SetAddition(DiscreteEnv):
             max_items: The maximum number of items that can be added to the set.
             reward_fn: The reward function.
             fixed_length: Whether the trajectories have a fixed length.
+            check_action_validity: Whether to check the action validity.
         """
         self.n_items = n_items
         self.reward_fn = reward_fn

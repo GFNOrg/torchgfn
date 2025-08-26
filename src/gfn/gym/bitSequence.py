@@ -228,6 +228,7 @@ class BitSequence(DiscreteEnv):
             H: A tensor used to create the modes.
             device_str: The device to run the computations on ("cpu" or "cuda").
             seed: The seed for the random number generator.
+            check_action_validity: Whether to check the action validity.
         """
         assert seq_size % word_size == 0, "word_size must divide seq_size."
         self.words_per_seq: int = seq_size // word_size

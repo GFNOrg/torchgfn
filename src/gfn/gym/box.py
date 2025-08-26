@@ -39,6 +39,7 @@ class Box(Env):
             R2: The reward for being inside the second box.
             epsilon: A small value to avoid numerical issues.
             device: The device to use.
+            check_action_validity: Whether to check the action validity.
         """
         assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
