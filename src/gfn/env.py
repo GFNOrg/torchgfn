@@ -403,7 +403,7 @@ class Env(ABC):
         )
 
     @property
-    def true_dist_pmf(self) -> torch.Tensor:
+    def true_dist(self) -> torch.Tensor:
         """Optional method to return the true distribution.
 
         Returns:

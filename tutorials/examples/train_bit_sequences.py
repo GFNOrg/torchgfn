@@ -14,7 +14,7 @@ from gfn.utils.prob_calculations import get_trajectory_pfs
 DEFAULT_SEED = 4444
 
 
-def estimated_dist_pmf(gflownet: PFBasedGFlowNet, env: BitSequence):
+def estimated_dist(gflownet: PFBasedGFlowNet, env: BitSequence):
     states = env.terminating_states
     trajectories = env.trajectory_from_terminating_states(states.tensor)
     log_pf_trajectories = get_trajectory_pfs(
@@ -44,7 +44,7 @@ def main(args):
             pb, n_actions=env.n_actions, is_backward=True
         )
 
-        gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0).to(device)
+        gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0).to(device)
         non_logz_params = [
             v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
         ]
@@ -99,11 +99,7 @@ def main(args):
 
     try:
         gflownet = cast(PFBasedGFlowNet, gflownet)
-        return (
-            torch.abs(estimated_dist_pmf(gflownet, env) - env.true_dist_pmf)
-            .mean()
-            .item()
-        )
+        return torch.abs(estimated_dist(gflownet, env) - env.true_dist).mean().item()
     except AttributeError:
         print(
             "Training was completed succesfully. However computing the L1 distance is only implemented for TB for now."

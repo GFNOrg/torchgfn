@@ -298,9 +298,10 @@ def test_get_grid():
     NDIM = 2
 
     env = HyperGrid(
-        height=HEIGHT, ndim=NDIM, calculate_all_states=True, calculate_partition=True
+        height=HEIGHT, ndim=NDIM, store_all_states=True, calculate_partition=True
     )
     all_states = env.all_states
+    assert all_states is not None
 
     assert all_states.batch_shape == (HEIGHT**2,)
     assert all_states.state_shape == (NDIM,)

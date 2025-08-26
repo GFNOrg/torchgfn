@@ -299,7 +299,7 @@ class DiscreteEBM(DiscreteEnv):
         return self.states_from_tensor(all_states)
 
     @property
-    def true_dist_pmf(self) -> torch.Tensor:
+    def true_dist(self) -> torch.Tensor:
         """Returns the true probability mass function of the reward distribution."""
         true_dist = self.reward(self.terminating_states)
         return true_dist / true_dist.sum()

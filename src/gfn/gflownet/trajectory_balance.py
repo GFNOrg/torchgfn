@@ -41,7 +41,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         pf: Estimator,
         pb: Estimator,
-        logZ: float | ScalarEstimator = 0.0,
+        logZ: nn.Parameter | ScalarEstimator | None = None,
+        init_logZ: float = 0.0,
         log_reward_clip_min: float = -float("inf"),
     ):
         """Initializes a TBGFlowNet instance.
@@ -51,18 +52,12 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             pb: The backward policy estimator.
             logZ: A learnable parameter or a ScalarEstimator instance (for
                 conditional GFNs).
+            init_logZ: The initial value for the logZ parameter (used if logZ is None).
             log_reward_clip_min: If finite, clips log rewards to this value.
         """
         super().__init__(pf, pb)
 
-        if isinstance(logZ, float):
-            self.logZ = nn.Parameter(torch.tensor(logZ))
-        else:
-            assert isinstance(
-                logZ, ScalarEstimator
-            ), "logZ must be either float or a ScalarEstimator"
-            self.logZ = logZ
-
+        self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
         self.log_reward_clip_min = log_reward_clip_min
 
     def logz_named_parameters(self) -> dict[str, torch.Tensor]:

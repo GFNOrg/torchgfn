@@ -706,7 +706,7 @@ class BitSequence(DiscreteEnv):
         return 2 ** (self.seq_size + 1) - 1
 
     @property
-    def true_dist_pmf(self) -> torch.Tensor:
+    def true_dist(self) -> torch.Tensor:
         """Returns the true probability mass function of the reward distribution."""
         states = self.terminating_states
         rewards = self.reward(states)

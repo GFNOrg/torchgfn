@@ -22,7 +22,7 @@ class MLP(nn.Module):
         output_dim: int,
         hidden_dim: int = 256,
         n_hidden_layers: Optional[int] = 2,
-        activation_fn: Optional[Literal["relu", "tanh", "elu"]] = "relu",
+        activation_fn: Optional[Literal["relu", "leaky_relu", "tanh", "elu"]] = "relu",
         trunk: Optional[nn.Module] = None,
         add_layer_norm: bool = False,
     ):
@@ -52,6 +52,8 @@ class MLP(nn.Module):
                 activation = nn.ELU
             elif activation_fn == "relu":
                 activation = nn.ReLU
+            elif activation_fn == "leaky_relu":
+                activation = nn.LeakyReLU
             elif activation_fn == "tanh":
                 activation = nn.Tanh
 

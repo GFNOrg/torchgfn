@@ -58,7 +58,7 @@ def main(args):
     )
 
     # 2. Create the gflownet.
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0).to(device)
+    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0).to(device)
     sampler = Sampler(estimator=pf_estimator)
 
     # 3. Create the optimizer and Lr scheduler
