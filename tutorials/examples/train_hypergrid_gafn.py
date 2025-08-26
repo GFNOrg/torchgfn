@@ -190,7 +190,8 @@ class TBGAFN(TBGFlowNet):
                 device=trajectories.states.device,
             )
             # Note: These two lines below may require a lot of memory if trajectory length
-            # is very long.
+            # is very long, because this operation is performed on the entire batch of trajectories, 
+            # i.e., batch_size becomes O(T x B).
             log_state_flows[~trajectories.states.is_sink_state] = self.flow_estimator(
                 trajectories.states[~trajectories.states.is_sink_state]
             ).squeeze(-1)
