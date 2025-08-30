@@ -423,6 +423,8 @@ class GraphActionGNN(nn.Module):
         # Embed node classes
         if node_features.numel() > 0:
             x = self.embedding(node_features.squeeze(-1))
+        # Handle the case where the graph has no nodes. We use zeros as features, 
+        # so we can continue the forward pass.
         else:
             x = torch.zeros(0, self.hidden_dim, device=device)
 
