@@ -208,6 +208,12 @@ class GraphBuilding(GraphEnv):
                 # Update node features
                 graph.x = graph.x[mask]
 
+                # Update edge indices
+                edge_mask = torch.logical_and(graph.edge_index[0] != node_idx, graph.edge_index[1] != node_idx)
+                graph.edge_index[graph.edge_index > node_idx] -= 1
+                graph.edge_index = graph.edge_index[edge_mask]
+
+
         # Handle ADD_EDGE action
         if torch.any(add_edge_mask):
             add_edge_index = torch.where(add_edge_mask)[0]
