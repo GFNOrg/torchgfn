@@ -115,7 +115,7 @@ implemented and serves the purpose of uniquely identifying terminating states of
 the environment, which is useful for
 [tabular modules](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/utils/modules.py).
 Other properties and functions can be implemented as well, such as the
-`log_partition` or the `true_dist_pmf` properties.
+`log_partition` or the `true_dist` properties.
 
 ## Environment Examples
 

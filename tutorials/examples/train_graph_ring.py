@@ -31,7 +31,7 @@ from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.states import GraphStates
 from gfn.utils.common import set_seed
-from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
+from gfn.utils.modules import GraphActionGNN, GraphEdgeActionMLP
 
 
 class RingReward(object):
@@ -272,30 +272,34 @@ def init_gflownet(
 ) -> TBGFlowNet:
     # Choose model type based on USE_GNN flag
     if use_gnn:
-        module_pf = GraphEdgeActionGNN(
-            num_nodes,
-            directed,
+        module_pf = GraphActionGNN(
+            num_node_classes=num_nodes,
+            directed=directed,
             num_conv_layers=num_conv_layers,
             num_edge_classes=num_edge_classes,
+            embedding_dim=embedding_dim,
         )
-        module_pb = GraphEdgeActionGNN(
-            num_nodes,
-            directed,
+        module_pb = GraphActionGNN(
+            num_node_classes=num_nodes,
+            directed=directed,
             is_backward=True,
             num_conv_layers=num_conv_layers,
             num_edge_classes=num_edge_classes,
+            embedding_dim=embedding_dim,
         )
     else:
         module_pf = GraphEdgeActionMLP(
             num_nodes,
             directed,
             num_edge_classes=num_edge_classes,
+            embedding_dim=embedding_dim,
         )
         module_pb = GraphEdgeActionMLP(
             num_nodes,
             directed,
             is_backward=True,
             num_edge_classes=num_edge_classes,
+            embedding_dim=embedding_dim,
         )
 
     pf = DiscreteGraphPolicyEstimator(

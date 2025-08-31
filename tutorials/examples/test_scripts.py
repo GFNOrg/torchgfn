@@ -14,9 +14,12 @@ import torch
 from .train_bayesian_structure import main as train_bayesian_structure_main
 from .train_bit_sequences import main as train_bitsequence_main
 from .train_box import main as train_box_main
+from .train_conditional import main as train_conditional_main
 from .train_discreteebm import main as train_discreteebm_main
 from .train_graph_ring import main as train_graph_ring_main
+from .train_graph_triangle import main as train_graph_triangle_main
 from .train_hypergrid import main as train_hypergrid_main
+from .train_hypergrid_gafn import main as train_hypergrid_gafn_main
 from .train_hypergrid_local_search import main as train_hypergrid_local_search_main
 from .train_hypergrid_simple import main as train_hypergrid_simple_main
 from .train_ising import main as train_ising_main
@@ -57,7 +60,7 @@ class DiscreteEBMArgs(CommonArgs):
 @dataclass
 class HypergridArgs(CommonArgs):
     back_ratio: float = 0.5
-    calculate_all_states: bool = True
+    store_all_states: bool = True
     calculate_partition: bool = True
     distributed: bool = False
     diverse_replay_buffer: bool = False
@@ -66,7 +69,6 @@ class HypergridArgs(CommonArgs):
     loss: str = "TB"
     lr_logz: float = 1e-3
     n_iterations: int = 10
-    n_local_search_loops: int = 3
     n_threads: int = 1
     ndim: int = 2
     plot: bool = False
@@ -76,6 +78,21 @@ class HypergridArgs(CommonArgs):
     R2: float = 2.0
     replay_buffer_size: int = 0
     timing: bool = True
+
+
+@dataclass
+class HypergridGAFNArgs(HypergridArgs):
+    use_edge_ri: bool = True
+    lr_rnd: float = 1e-3
+    rnd_reward_scale: float = 0.1
+    rnd_loss_scale: float = 1.0
+    rnd_hidden_dim: int = 256
+    rnd_s_latent_dim: int = 128
+
+
+@dataclass
+class HypergridLocalSearchArgs(HypergridArgs):
+    n_local_search_loops: int = 3
     use_metropolis_hastings: bool = True
 
 
@@ -146,6 +163,23 @@ class GraphRingArgs(CommonArgs):
 
 
 @dataclass
+class GraphTriangleArgs(CommonArgs):
+    device: str = "cpu"
+    batch_size: int = 32
+    n_iterations: int = 4
+    embedding_dim: int = 32
+    num_conv_layers: int = 1
+    use_buffer: bool = False
+    plot: bool = False
+    lr_Z: float = 0.1
+    lr: float = 0.001
+    epsilon_action_type: float = 0.0
+    epsilon_node_class: float = 0.0
+    epsilon_edge_class: float = 0.0
+    epsilon_edge_index: float = 0.0
+
+
+@dataclass
 class BayesianStructureArgs(CommonArgs):
     num_nodes: int = 3
     num_edges: int = 3
@@ -170,6 +204,16 @@ class BayesianStructureArgs(CommonArgs):
     n_steps_per_iteration: int = 1
     seed: int = 0
     use_cuda: bool = False
+
+
+@dataclass
+class ConditionalArgs(CommonArgs):
+    gflownet: str = "tb"
+    ndim: int = 5
+    height: int = 2
+    n_iterations: int = 10
+    batch_size: int = 1000
+    seed: int = 4444
 
 
 @pytest.mark.parametrize("ndim", [2, 4])
@@ -367,6 +411,14 @@ def test_graph_ring_smoke():
     train_graph_ring_main(namespace_args)  # Just ensure it runs without errors.
 
 
+def test_graph_triangle_smoke():
+    """Smoke test for the graph triangle training script."""
+    args = GraphTriangleArgs()
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_graph_triangle_main(namespace_args)  # Just ensure it runs without errors.
+
+
 def test_bayesian_structure_smoke():
     """Smoke test for the Bayesian structure learning training script."""
     args = BayesianStructureArgs()
@@ -402,9 +454,22 @@ def test_hypergrid_simple_smoke_fp64():
     train_hypergrid_simple_main(namespace_args)  # Just ensure it runs without errors.
 
 
+def test_hypergrid_gafn_smoke():
+    """Smoke test for the GAFN training script."""
+    args = HypergridGAFNArgs(
+        batch_size=4,
+        hidden_dim=64,
+        n_hidden=1,
+        n_trajectories=10,  # Small number for smoke test
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_hypergrid_gafn_main(namespace_args)  # Just ensure it runs without errors.
+
+
 def test_hypergrid_simple_ls_smoke():
     """Smoke test for the simple hypergrid with local search training script."""
-    args = HypergridArgs(
+    args = HypergridLocalSearchArgs(
         batch_size=4,
         hidden_dim=64,
         n_hidden=1,
@@ -478,3 +543,32 @@ def test_bitsequence(seq_size: int, n_modes: int):
         assert final_l1_dist <= 1e-3
     if seq_size == 8 and n_modes == 4:
         assert final_l1_dist <= 1e-3
+
+
+@pytest.mark.parametrize("gflownet", ["tb", "db", "subtb", "fm"])
+def test_conditional_smoke(gflownet: str):
+    """Smoke test for the conditional training script."""
+    args = ConditionalArgs(
+        gflownet=gflownet,
+        n_iterations=5,  # Small number for smoke test
+        batch_size=100,  # Small batch for smoke test
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    final_loss = train_conditional_main(namespace_args)
+    assert final_loss is not None
+    assert final_loss > 0  # Loss should be positive
+
+
+def test_conditional_all_smoke():
+    """Smoke test for the conditional training script with all GFlowNet types."""
+    args = ConditionalArgs(
+        gflownet="all",
+        n_iterations=3,  # Small number for smoke test
+        batch_size=50,  # Small batch for smoke test
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    final_loss = train_conditional_main(namespace_args)
+    assert final_loss is not None
+    assert final_loss > 0  # Average loss should be positive

@@ -28,6 +28,7 @@ class SetAddition(DiscreteEnv):
         max_items: int,
         reward_fn: Callable,
         fixed_length: bool = False,
+        check_action_validity: bool = True,
     ):
         """Initializes the SetAddition environment.
 
@@ -36,6 +37,7 @@ class SetAddition(DiscreteEnv):
             max_items: The maximum number of items that can be added to the set.
             reward_fn: The reward function.
             fixed_length: Whether the trajectories have a fixed length.
+            check_action_validity: Whether to check the action validity.
         """
         self.n_items = n_items
         self.reward_fn = reward_fn
@@ -45,7 +47,12 @@ class SetAddition(DiscreteEnv):
         s0 = torch.zeros(n_items)
         state_shape = (n_items,)
 
-        super().__init__(n_actions, s0, state_shape)
+        super().__init__(
+            n_actions,
+            s0,
+            state_shape,
+            check_action_validity=check_action_validity,
+        )
         self.States: type[DiscreteStates] = self.States
 
     def get_states_indices(self, states: DiscreteStates):

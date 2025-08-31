@@ -207,11 +207,9 @@ def get_trajectory_pbs(
     masked_cond = None
     if trajectories.conditioning is not None:
         # We need to index the conditioning vector to broadcast over the states.
-        cond_dim = (-1,) * len(trajectories.conditioning.shape)
-        traj_len = trajectories.states.tensor.shape[0]
-        masked_cond = trajectories.conditioning.unsqueeze(0).expand(
-            (traj_len,) + cond_dim
-        )[state_mask]
+        # The conditioning tensor has shape (max_length, n_trajectories, 1)
+        # We need to index it with the state_mask to get the valid states
+        masked_cond = trajectories.conditioning[state_mask]
 
     if pb is not None:
         estimator_outputs = check_cond_forward(pb, "pb", valid_states, masked_cond)

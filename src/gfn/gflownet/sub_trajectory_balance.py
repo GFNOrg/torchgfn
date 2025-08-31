@@ -280,11 +280,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         if trajectories.conditioning is not None:
             # Compute the conditioning matrix broadcast to match valid_states.
-            traj_len = states.batch_shape[0]
-            expand_dims = (traj_len,) + tuple(trajectories.conditioning.shape)
-            conditioning = trajectories.conditioning.unsqueeze(0).expand(expand_dims)[
-                mask
-            ]
+            # The conditioning tensor has shape (max_length, n_trajectories, 1)
+            # We need to index it to match the valid states
+            conditioning = trajectories.conditioning[mask]
 
             with has_conditioning_exception_handler("logF", self.logF):
                 log_F = self.logF(valid_states, conditioning)

@@ -510,6 +510,7 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
         raise ValueError("plotting is only supported for 2D environments")
 
     grid = env.all_states
+    assert grid is not None, "all_states is not implemented in the environment"
 
     # Get the forward policy distribution for all states
     with torch.no_grad():
@@ -738,7 +739,7 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
             return ModifiedDBGFlowNet(pf_estimator, pb_estimator)
 
         elif args.loss == "TB":
-            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
+            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
         elif args.loss == "ZVar":
             return LogPartitionVarianceGFlowNet(pf=pf_estimator, pb=pb_estimator)
@@ -781,7 +782,7 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     ax3 = fig.add_subplot(gs[3])
 
     # Get distributions and find global min/max for consistent color scaling
-    true_dist = env.true_dist_pmf.reshape(args.height, args.height).cpu().numpy()
+    true_dist = env.true_dist.reshape(args.height, args.height).cpu().numpy()
     learned_dist = get_exact_P_T(env, gflownet).reshape(args.height, args.height).numpy()
 
     # Ensure consistent orientation by transposing
@@ -878,12 +879,15 @@ def main(args):  # noqa: C901
     env = HyperGrid(
         args.ndim,
         args.height,
-        args.R0,
-        args.R1,
-        args.R2,
         device=device,
+        reward_fn_str="original",
+        reward_fn_kwargs={
+            "R0": args.R0,
+            "R1": args.R1,
+            "R2": args.R2,
+        },
         calculate_partition=args.calculate_partition,
-        calculate_all_states=args.calculate_all_states,
+        store_all_states=args.store_all_states,
     )
 
     # Initialize the preprocessor.
@@ -1164,14 +1168,6 @@ def main(args):  # noqa: C901
                         discovered_modes,
                     )
 
-                    print(
-                        "all_visited_terminating_states = ",
-                        len(all_visited_terminating_states),
-                    )
-                    print(
-                        "visited_terminating_states = ", len(visited_terminating_states)
-                    )
-
                     if use_wandb:
                         wandb.log(validation_info, step=iteration)
 
@@ -1181,6 +1177,8 @@ def main(args):  # noqa: C901
                         loss=to_log["loss"],
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
+                        AVTS=len(all_visited_terminating_states),
+                        VTS=len(visited_terminating_states),
                     )
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
@@ -1422,16 +1420,16 @@ if __name__ == "__main__":
 
     # Settings relevant to the problem size -- toggle off for larger problems.
     parser.add_argument(
-        "--calculate_all_states",
+        "--store_all_states",
         action="store_true",
         default=False,
-        help="Disable enumeration of all states.",
+        help="Whether to store all states.",
     )
     parser.add_argument(
         "--calculate_partition",
         action="store_true",
         default=False,
-        help="Disable calculation of the true partition function.",
+        help="Whether to calculate the true partition function.",
     )
     parser.add_argument(
         "--profile",

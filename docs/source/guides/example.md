@@ -18,7 +18,7 @@ from gfn.samplers import Sampler
 from gfn.utils.modules import MLP  # is a simple multi-layer perceptron (MLP)
 
 # 1 - We define the environment.
-env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
+env = HyperGrid(ndim=4, height=8)  # Grid of size 8x8x8x8
 preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
 
 # 2 - We define the needed modules (neural networks).
@@ -38,7 +38,7 @@ pf_estimator = DiscretePolicyEstimator(module_PF, env.n_actions, is_backward=Fal
 pb_estimator = DiscretePolicyEstimator(module_PB, env.n_actions, is_backward=True, preprocessor=preprocessor)
 
 # 4 - We define the GFlowNet.
-gfn = TBGFlowNet(logZ=0., pf=pf_estimator, pb=pb_estimator)  # We initialize logZ to 0
+gfn = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)  # We initialize logZ to 0
 
 # 5 - We define the sampler and the optimizer.
 sampler = Sampler(estimator=pf_estimator)  # We use an on-policy sampler, based on the forward policy
@@ -75,7 +75,7 @@ from gfn.samplers import Sampler
 from gfn.utils.modules import MLP  # MLP is a simple multi-layer perceptron (MLP)
 
 # 1 - We define the environment.
-env = HyperGrid(ndim=4, height=8, R0=0.01)  # Grid of size 8x8x8x8
+env = HyperGrid(ndim=4, height=8)  # Grid of size 8x8x8x8
 preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
 
 # 2 - We define the needed modules (neural networks).

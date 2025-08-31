@@ -84,6 +84,7 @@ class DiscreteEBM(DiscreteEnv):
         energy: EnergyFunction | None = None,
         alpha: float = 1.0,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        check_action_validity: bool = True,
     ):
         """Discrete EBM environment.
 
@@ -93,6 +94,7 @@ class DiscreteEBM(DiscreteEnv):
                 Identity matrix is used.
             alpha: interaction strength the EBM. Defaults to 1.0.
             device: Device to use for the environment.
+            check_action_validity: Whether to check the action validity.
         """
         self.ndim = ndim
 
@@ -114,6 +116,7 @@ class DiscreteEBM(DiscreteEnv):
             # exit_action=,
             n_actions=n_actions,
             sf=sf,
+            check_action_validity=check_action_validity,
         )
         self.States: type[DiscreteStates] = self.States
 
@@ -297,7 +300,7 @@ class DiscreteEBM(DiscreteEnv):
         return self.states_from_tensor(all_states)
 
     @property
-    def true_dist_pmf(self) -> torch.Tensor:
+    def true_dist(self) -> torch.Tensor:
         """Returns the true probability mass function of the reward distribution."""
         true_dist = self.reward(self.terminating_states)
         return true_dist / true_dist.sum()
