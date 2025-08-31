@@ -28,6 +28,7 @@ class Line(Env):
         n_sd: float = 4.5,
         n_steps_per_trajectory: int = 5,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        check_action_validity: bool = True,
     ):
         """Initializes the Line environment.
 
@@ -38,6 +39,7 @@ class Line(Env):
             n_sd: The number of standard deviations to consider for the bounds.
             n_steps_per_trajectory: The number of steps per trajectory.
             device: The device to use.
+            check_action_validity: Whether to check the action validity.
         """
         assert len(mus) == len(sigmas)
         self.mus = torch.tensor(mus)
@@ -60,6 +62,7 @@ class Line(Env):
             action_shape=(1,),  # [x_pos]
             dummy_action=dummy_action,
             exit_action=exit_action,
+            check_action_validity=check_action_validity,
         )  # sf is -inf by default.
 
     def step(self, states: States, actions: Actions) -> States:
