@@ -208,6 +208,10 @@ class GraphBuilding(GraphEnv):
                 # Update node features
                 graph.x = graph.x[mask]
 
+                # Update edge indices
+                assert torch.all(graph.edge_index != node_idx)
+                graph.edge_index[graph.edge_index > node_idx] -= 1
+
         # Handle ADD_EDGE action
         if torch.any(add_edge_mask):
             add_edge_index = torch.where(add_edge_mask)[0]
@@ -264,8 +268,13 @@ class GraphBuilding(GraphEnv):
                 )
 
                 if backward:
-                    # For backward actions, we need at least one matching node
-                    if not torch.any(equal_nodes):
+                    # For backward actions, we need one matching node
+                    num_equal_nodes = torch.sum(equal_nodes)
+                    if num_equal_nodes != 1:
+                        return False
+                    # And no edges from/to the node
+                    equal_node_idx = torch.where(equal_nodes)[0][0]
+                    if torch.any(graph.edge_index == equal_node_idx):
                         return False
                 else:
                     # For forward actions, we should not have any matching nodes
