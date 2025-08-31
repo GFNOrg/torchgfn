@@ -182,19 +182,12 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_NODE action
         if torch.any(add_node_mask):
             add_node_index = torch.where(add_node_mask)[0]
-            node_class_action_flat = actions.node_class.flatten()
+            node_idx_action_flat = actions.node_class.flatten()
 
             # Remove nodes with matching features
             for i in add_node_index:
                 graph = data_array[i]
-
-                # Find nodes with matching features
-                is_equal = torch.all(
-                    graph.x == node_class_action_flat[i].unsqueeze(0), dim=1
-                )
-
-                # Remove the first matching node
-                node_idx = int(torch.where(is_equal)[0][0].item())
+                node_idx = node_idx_action_flat[i]
 
                 # Remove the node
                 mask = torch.ones(
@@ -255,19 +248,8 @@ class GraphBuilding(GraphEnv):
 
             graph = data_array[i]
             if action_type == GraphActionType.ADD_NODE:
-                # Check if a node with these features already exists
-                equal_nodes = torch.all(
-                    graph.x == node_class_action_flat[i].unsqueeze(0), dim=1
-                )
-
-                if backward:
-                    # For backward actions, we need at least one matching node
-                    if not torch.any(equal_nodes):
-                        return False
-                else:
-                    # For forward actions, we should not have any matching nodes
-                    if torch.any(equal_nodes):
-                        return False
+                if backward and len(graph.x) <= node_class_action_flat[i].item():
+                    return False
 
             elif action_type == GraphActionType.ADD_EDGE:
                 edge_idx = edge_index_action_flat[i]

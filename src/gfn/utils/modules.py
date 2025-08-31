@@ -381,7 +381,7 @@ class GraphActionGNN(nn.Module):
         )
         self.node_class_mlp = MLP(
             input_dim=self.hidden_dim,
-            output_dim=self.num_node_classes,
+            output_dim=1 if self.is_backward else self.num_node_classes,
             hidden_dim=self.hidden_dim,
             n_hidden_layers=1,
             add_layer_norm=True,
@@ -459,7 +459,13 @@ class GraphActionGNN(nn.Module):
         action_type[..., GraphActionType.EXIT] = exit_logit
 
         # Class logits
-        node_class_logits = self.node_class_mlp(graph_emb)
+        if self.is_backward:
+            node_class_logits = self.node_class_mlp(x).squeeze(-1)
+            lengths = states_tensor.ptr[1:] - states_tensor.ptr[:-1]
+            node_class_logits = torch.split(node_class_logits, lengths.tolist(), dim=0)
+            node_class_logits = torch.nn.utils.rnn.pad_sequence(list(node_class_logits), batch_first=True)
+        else:
+            node_class_logits = self.node_class_mlp(graph_emb)
         edge_class_logits = self.edge_class_mlp(graph_emb)
 
         # Edge-index logits via pairwise dot products
