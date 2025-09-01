@@ -213,7 +213,7 @@ class GraphBuilding(GraphEnv):
                     graph.edge_index[0] != node_idx, graph.edge_index[1] != node_idx
                 )
                 graph.edge_index[graph.edge_index > node_idx] -= 1
-                graph.edge_index = graph.edge_index[edge_mask]
+                graph.edge_index = graph.edge_index[:, edge_mask]
 
         # Handle ADD_EDGE action
         if torch.any(add_edge_mask):

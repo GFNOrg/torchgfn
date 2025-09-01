@@ -358,15 +358,15 @@ def test_graph_env():
         states = env._step(states, actions)
 
     # Add nodes.
-    for _ in range(NUM_NODES):
+    for i in range(NUM_NODES):
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
                     GraphActions.ACTION_TYPE_KEY: torch.full(
                         (BATCH_SIZE,), GraphActionType.ADD_NODE
                     ),
-                    GraphActions.NODE_CLASS_KEY: torch.randint(
-                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    GraphActions.NODE_CLASS_KEY: torch.full(
+                        (BATCH_SIZE,), i, dtype=torch.long
                     ),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
