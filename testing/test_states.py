@@ -525,9 +525,9 @@ def test_backward_masks(datas):
 
     # Check action type mask
     assert masks[GraphActions.ACTION_TYPE_KEY].shape == (1, 3)
-    assert masks[GraphActions.ACTION_TYPE_KEY][
+    assert not masks[GraphActions.ACTION_TYPE_KEY][
         0, GraphActionType.ADD_NODE
-    ].item()  # Can remove node
+    ].item()  # Can't remove node as it has an edge
     assert masks[GraphActions.ACTION_TYPE_KEY][
         0, GraphActionType.ADD_EDGE
     ].item()  # Can remove edge
@@ -540,7 +540,14 @@ def test_backward_masks(datas):
     available_nodes = (
         torch.bincount(states.tensor.x.flatten(), minlength=states.num_node_classes) > 0
     )
-    assert torch.all(available_nodes == masks[GraphActions.NODE_CLASS_KEY])
+    nodes_with_edges = (
+        torch.bincount(
+            states.tensor.edge_index.flatten(), minlength=states.num_node_classes
+        )
+        > 0
+    )
+    removable_node = available_nodes & ~nodes_with_edges
+    assert torch.all(removable_node == masks[GraphActions.NODE_CLASS_KEY])
 
     # Check edge_class mask
     assert masks[GraphActions.EDGE_CLASS_KEY].shape == (1, states.num_edge_classes)
