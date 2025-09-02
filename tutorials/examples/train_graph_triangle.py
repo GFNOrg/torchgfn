@@ -231,7 +231,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size")
     parser.add_argument(
-        "--n_iterations", type=int, default=600, help="Training iterations"
+        "--n_iterations", type=int, default=300, help="Training iterations"
     )
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument(

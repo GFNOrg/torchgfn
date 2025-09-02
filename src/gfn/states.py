@@ -988,7 +988,10 @@ class GraphStates(States):
         )
 
         for i, graph in enumerate(self.data.flat):
-            has_edge = torch.any(graph.x.flatten()[:, None] == graph.edge_index.flatten()[None], dim=1)
+            node_idxs = torch.arange(len(graph.x.flatten()))
+            has_edge = torch.any(
+                node_idxs[:, None] == graph.edge_index.flatten()[None], dim=1
+            )
             node_class_masks[i, graph.x.flatten()] = ~has_edge
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
 
