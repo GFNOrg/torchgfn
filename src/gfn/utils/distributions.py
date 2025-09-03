@@ -59,8 +59,9 @@ class GraphActionDistribution(Distribution):
         """
         super().__init__()
 
+        validate_args = False  # edge_index.numel() == 0 when no nodes are present
         self.dists = {
-            key: Categorical(probs=probs[key])
+            key: Categorical(probs=probs[key], validate_args=validate_args)
             for key in GraphActions.ACTION_INDICES.keys()
         }
 

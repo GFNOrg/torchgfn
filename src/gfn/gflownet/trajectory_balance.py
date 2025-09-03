@@ -43,7 +43,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         pf: Estimator,
         pb: Estimator | None,
-        logZ: float | ScalarEstimator = 0.0,
+        logZ: nn.Parameter | ScalarEstimator | None = None,
+        init_logZ: float = 0.0,
         log_reward_clip_min: float = -float("inf"),
         dag_is_tree: bool = False,
     ):
@@ -55,6 +56,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
                 pb is therefore always 1.
             logZ: A learnable parameter or a ScalarEstimator instance (for
                 conditional GFNs).
+            init_logZ: The initial value for the logZ parameter (used if logZ is None).
             log_reward_clip_min: If finite, clips log rewards to this value.
             dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always
                 1. Must be set explicitly by user to ensure that pb is an Estimator
@@ -62,14 +64,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         """
         super().__init__(pf, pb, dag_is_tree=dag_is_tree)
 
-        if isinstance(logZ, float):
-            self.logZ = nn.Parameter(torch.tensor(logZ))
-        else:
-            assert isinstance(
-                logZ, ScalarEstimator
-            ), "logZ must be either float or a ScalarEstimator"
-            self.logZ = logZ
-
+        self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
         self.log_reward_clip_min = log_reward_clip_min
 
     def logz_named_parameters(self) -> dict[str, torch.Tensor]:

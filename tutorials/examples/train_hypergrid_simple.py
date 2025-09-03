@@ -27,7 +27,7 @@ from gfn.preprocessors import KHotPreprocessor
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
-from gfn.utils.modules import MLP
+from gfn.utils.modules import MLP, DiscreteUniform
 from gfn.utils.training import validate
 
 
@@ -38,7 +38,14 @@ def main(args):
     )
 
     # Setup the Environment.
-    env = HyperGrid(ndim=args.ndim, height=args.height, device=device)
+    env = HyperGrid(
+        ndim=args.ndim,
+        height=args.height,
+        device=device,
+        calculate_partition=True,
+        store_all_states=True,
+        check_action_validity=__debug__,
+    )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Build the GFlowNet.
@@ -46,18 +53,21 @@ def main(args):
         input_dim=preprocessor.output_dim,
         output_dim=env.n_actions,
     )
-    module_PB = MLP(
-        input_dim=preprocessor.output_dim,
-        output_dim=env.n_actions - 1,
-        trunk=module_PF.trunk,
-    )
+    if not args.uniform_pb:
+        module_PB = MLP(
+            input_dim=preprocessor.output_dim,
+            output_dim=env.n_actions - 1,
+            trunk=module_PF.trunk,
+        )
+    else:
+        module_PB = DiscreteUniform(output_dim=env.n_actions - 1)
     pf_estimator = DiscretePolicyEstimator(
         module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
     )
     pb_estimator = DiscretePolicyEstimator(
         module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
     )
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
+    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
     # Feed pf to the sampler.
     sampler = Sampler(estimator=pf_estimator)
@@ -127,6 +137,9 @@ if __name__ == "__main__":
         type=float,
         default=1e-1,
         help="Learning rate for the logZ parameter",
+    )
+    parser.add_argument(
+        "--uniform_pb", action="store_true", help="Use a uniform backward policy"
     )
     parser.add_argument(
         "--n_iterations", type=int, default=1000, help="Number of iterations"

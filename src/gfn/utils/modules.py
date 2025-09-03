@@ -1,5 +1,6 @@
 """This file contains some examples of modules that can be used with GFN."""
 
+import math
 from typing import Literal, Optional
 
 import torch
@@ -10,7 +11,7 @@ from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.common import is_int_dtype
-from gfn.utils.graphs import GeometricBatch
+from gfn.utils.graphs import GeometricBatch, get_edge_indices
 
 
 class MLP(nn.Module):
@@ -22,7 +23,7 @@ class MLP(nn.Module):
         output_dim: int,
         hidden_dim: int = 256,
         n_hidden_layers: Optional[int] = 2,
-        activation_fn: Optional[Literal["relu", "tanh", "elu"]] = "relu",
+        activation_fn: Optional[Literal["relu", "leaky_relu", "tanh", "elu"]] = "relu",
         trunk: Optional[nn.Module] = None,
         add_layer_norm: bool = False,
     ):
@@ -52,6 +53,8 @@ class MLP(nn.Module):
                 activation = nn.ELU
             elif activation_fn == "relu":
                 activation = nn.ReLU
+            elif activation_fn == "leaky_relu":
+                activation = nn.LeakyReLU
             elif activation_fn == "tanh":
                 activation = nn.Tanh
 
@@ -265,19 +268,19 @@ class LinearTransformer(nn.Module):
         return self.module(x)
 
 
-class GraphEdgeActionGNN(nn.Module):
-    """Implements a GNN for graph edge action prediction."""
+class GraphActionGNN(nn.Module):
+    """Implements a GNN for graph action prediction."""
 
     def __init__(
         self,
-        n_nodes: int,
-        directed: bool,
+        num_node_classes: int,
         num_edge_classes: int,
-        num_conv_layers: int = 1,
+        directed: bool,
         embedding_dim: int = 128,
+        num_conv_layers: int = 1,
         is_backward: bool = False,
     ) -> None:
-        """Initializes a new GraphEdgeActionGNN module.
+        """Initializes a new GraphActionGNN module.
 
         Args:
             n_nodes: The number of nodes in the graph.
@@ -288,45 +291,24 @@ class GraphEdgeActionGNN(nn.Module):
             is_backward: Whether the GNN is used for a backward policy.
         """
         super().__init__()
-        assert n_nodes > 0, "n_nodes must be greater than 0"
+        assert num_node_classes > 0, "num_node_classes must be greater than 0"
         assert embedding_dim > 0, "embedding_dim must be greater than 0"
         assert num_conv_layers > 0, "num_conv_layers must be greater than 0"
-        assert isinstance(n_nodes, int), "n_nodes must be an integer"
+        assert isinstance(num_node_classes, int), "n_nodes must be an integer"
         assert isinstance(embedding_dim, int), "embedding_dim must be an integer"
         assert isinstance(num_conv_layers, int), "num_conv_layers must be an integer"
         assert isinstance(directed, bool), "directed must be a boolean"
         assert isinstance(is_backward, bool), "is_backward must be a boolean"
-        self._input_dim = 1  # Each node input is a single integer before embedding.
-        self._n_nodes = n_nodes
+        self.num_node_classes = num_node_classes
         self.hidden_dim = self.embedding_dim = embedding_dim
         self.is_backward = is_backward
         self.is_directed = directed
         self.num_conv_layers = num_conv_layers
         self.num_edge_classes = num_edge_classes
 
-        # Output dimension.
-        edges_dim = self.n_nodes**2 - self.n_nodes
-        if not self.is_directed:
-            edges_dim = edges_dim // 2  # No double-counting.
-
-        if not self.is_backward:
-            out_dim = edges_dim + 1  # +1 for exit action.
-        else:
-            out_dim = edges_dim
-
-        self._output_dim = int(out_dim)
-        self._edges_dim = int(edges_dim)
-
         # Node embedding layer.
-        self.embedding = nn.Embedding(n_nodes, self.embedding_dim)
+        self.embedding = nn.Embedding(num_node_classes, self.embedding_dim)
         self.conv_blks = nn.ModuleList()
-        self.exit_mlp = MLP(
-            input_dim=self.hidden_dim,
-            output_dim=1,
-            hidden_dim=self.hidden_dim,
-            n_hidden_layers=1,
-            add_layer_norm=True,
-        )
 
         if directed:
             for i in range(num_conv_layers):
@@ -384,6 +366,28 @@ class GraphEdgeActionGNN(nn.Module):
 
         self.norm = nn.LayerNorm(self.hidden_dim)
 
+        # Heads operating on per-graph pooled features
+        self.exit_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=1,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+        self.add_node_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=1,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+        self.node_class_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=self.num_node_classes,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
         self.edge_class_mlp = MLP(
             input_dim=self.hidden_dim,
             output_dim=self.num_edge_classes,
@@ -394,38 +398,39 @@ class GraphEdgeActionGNN(nn.Module):
 
     @property
     def input_dim(self):
-        return self._input_dim
-
-    @property
-    def n_nodes(self):
-        return self._n_nodes
-
-    @property
-    def output_dim(self) -> int:
-        return self._output_dim
-
-    @property
-    def edges_dim(self) -> int:
-        return self._edges_dim
+        return 1  # placeholder TODO: remove this
 
     @staticmethod
     def _group_mean(tensor: torch.Tensor, batch_ptr: torch.Tensor) -> torch.Tensor:
+        # Safe mean over ragged graphs using ptr; returns zeros for empty graphs
+        if tensor.numel() == 0:
+            B = batch_ptr.numel() - 1
+            return torch.zeros(B, 0, device=batch_ptr.device)
         cumsum = torch.zeros(
-            (len(tensor) + 1, *tensor.shape[1:]),
-            dtype=tensor.dtype,
-            device=tensor.device,
+            (len(tensor) + 1, tensor.size(-1)), dtype=tensor.dtype, device=tensor.device
         )
         cumsum[1:] = torch.cumsum(tensor, dim=0)
-
-        # Subtract the end val from each batch idx from the start val of each batch idx.
         size = batch_ptr[1:] - batch_ptr[:-1]
-        return (cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]) / size[:, None]
+        denom = torch.clamp(size, min=1).to(tensor.dtype)
+        sums = cumsum[batch_ptr[1:]] - cumsum[batch_ptr[:-1]]
+        means = sums / denom[:, None]
+        means[size == 0] = 0
+        return means
 
     def forward(self, states_tensor: GeometricBatch) -> TensorDict:
-        node_features, batch_ptr = (states_tensor.x, states_tensor.ptr)
+        node_features = states_tensor.x
+        B = len(states_tensor)
+        device = node_features.device
 
-        # Multiple action type convolutions with residual connections.
-        x = self.embedding(node_features.squeeze())
+        # Embed node classes
+        if node_features.numel() > 0:
+            x = self.embedding(node_features.squeeze(-1))
+        # Handle the case where the graph has no nodes. We use zeros as
+        # features, so we can continue the forward pass.
+        else:
+            x = torch.zeros(0, self.hidden_dim, device=device)
+
+        # Message passing with residual connections and layer norms
         for i in range(0, len(self.conv_blks), 2):
             x_new = self.conv_blks[i](x, states_tensor.edge_index)  # GIN/GCN conv.
             if self.is_directed:
@@ -443,74 +448,61 @@ class GraphEdgeActionGNN(nn.Module):
             x = x_new + x if i > 0 else x_new  # Residual connection.
             x = self.norm(x)  # Layernorm.
 
-        x_reshaped = x.reshape(len(states_tensor), self.n_nodes, self.hidden_dim)
+            # Pool to graph features
+        graph_emb = (
+            self._group_mean(x, states_tensor.ptr)
+            if x.numel() > 0
+            else torch.zeros(B, self.hidden_dim, device=device)
+        )
 
-        # Undirected.
+        # Action type logits
+        action_type = torch.zeros(B, 3, device=device)
+        add_node_logit = self.add_node_mlp(graph_emb).squeeze(-1)
+        action_type[..., GraphActionType.ADD_NODE] = add_node_logit
+        exit_logit = self.exit_mlp(graph_emb).squeeze(-1)
+        action_type[..., GraphActionType.EXIT] = exit_logit
+
+        # Class logits
+        node_class_logits = self.node_class_mlp(graph_emb)
+        edge_class_logits = self.edge_class_mlp(graph_emb)
+
+        # Edge-index logits via pairwise dot products
+        # Pad to max_nodes across batch for gathering candidate edges
+        lengths = (states_tensor.ptr[1:] - states_tensor.ptr[:-1]).to(torch.long)
+        max_nodes = int(lengths.max().item())
+
+        seqs = torch.split(x, lengths.tolist())
+        padded = torch.nn.utils.rnn.pad_sequence(
+            list(seqs), batch_first=True
+        )  # (B, max_nodes, hidden_dim)
+
+        feature_dim = (self.hidden_dim // 2) if self.is_directed else self.hidden_dim
         if self.is_directed:
-            feature_dim = self.hidden_dim // 2
-            source_features = x_reshaped[..., :feature_dim]
-            target_features = x_reshaped[..., feature_dim:]
-
-            # Dot product between source and target features (asymmetric).
-            edgewise_dot_prod = torch.einsum(
-                "bnf,bmf->bnm", source_features, target_features
-            )
-            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(torch.tensor(feature_dim))
-
-            i_up, j_up = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
-            i_lo, j_lo = torch.tril_indices(self.n_nodes, self.n_nodes, offset=-1)
-
-            # Combine them.
-            i0 = torch.cat([i_up, i_lo])
-            i1 = torch.cat([j_up, j_lo])
-
+            source_features = padded[..., :feature_dim]
+            target_features = padded[..., feature_dim:]
+            scores = torch.einsum("bnf,bmf->bnm", source_features, target_features)
         else:
-            # Dot product between all node features (symmetric).
-            edgewise_dot_prod = torch.einsum("bnf,bmf->bnm", x_reshaped, x_reshaped)
-            edgewise_dot_prod = edgewise_dot_prod / torch.sqrt(
-                torch.tensor(self.hidden_dim)
-            )
-            i0, i1 = torch.triu_indices(self.n_nodes, self.n_nodes, offset=1)
+            scores = torch.einsum("bnf,bmf->bnm", padded, padded)
+        scores = scores / math.sqrt(max(1, feature_dim))
 
-        # Grab the needed elements from the adjacency matrix and reshape.
-        edge_actions = edgewise_dot_prod[
-            torch.arange(len(states_tensor))[:, None, None], i0, i1
-        ]
-        edge_actions = edge_actions.reshape(
-            len(states_tensor),
-            self.edges_dim,
-        )
-
-        action_type = torch.ones(len(states_tensor), 3, device=x.device) * float("-inf")
-        edge_class_logits = torch.zeros(
-            len(states_tensor), self.num_edge_classes, device=x.device
-        )
-        if self.is_backward:
-            action_type[..., GraphActionType.ADD_EDGE] = 0.0
-        else:
-            node_feature_means = self._group_mean(x, batch_ptr)
-            exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
-            action_type[..., GraphActionType.ADD_EDGE] = 0.0
-            action_type[..., GraphActionType.EXIT] = exit_action
-            edge_class_logits = self.edge_class_mlp(node_feature_means)
+        ei0, ei1 = get_edge_indices(max_nodes, self.is_directed, device)
+        edge_index_logits = scores[:, ei0, ei1]
 
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
+                GraphActions.NODE_CLASS_KEY: node_class_logits,
                 GraphActions.EDGE_CLASS_KEY: edge_class_logits,
-                GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    len(states_tensor), 1, device=x.device
-                ),
-                GraphActions.EDGE_INDEX_KEY: edge_actions,
+                GraphActions.EDGE_INDEX_KEY: edge_index_logits,
             },
-            batch_size=len(states_tensor),
+            batch_size=B,
         )
 
 
 class GraphEdgeActionMLP(nn.Module):
     """Network that processes flattened adjacency matrices to predict graph actions.
 
-    Unlike the GNN-based GraphEdgeActionGNN, this module uses standard MLPs to process
+    Unlike the GNN-based GraphActionGNN, this module uses standard MLPs to process
     the entire adjacency matrix as a flattened vector. This approach:
 
     1. Can directly process global graph structure without message passing.

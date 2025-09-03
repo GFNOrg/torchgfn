@@ -232,16 +232,22 @@ class Actions(ABC):
             A boolean tensor of shape (*batch_shape,) indicating whether the actions are
             equal.
         """
-        assert (
-            other.shape == self.batch_shape + self.action_shape
-        ), f"Expected shape {self.batch_shape + self.action_shape}, got {other.shape}."
-        out = self.tensor == other
         n_batch_dims = len(self.batch_shape)
+        if n_batch_dims == 1:
+            assert (other.shape == self.action_shape) or (
+                other.shape == self.batch_shape + self.action_shape
+            ), f"Expected shape {self.action_shape} or {self.batch_shape + self.action_shape}, got {other.shape}."
+        else:
+            assert (
+                other.shape == self.batch_shape + self.action_shape
+            ), f"Expected shape {self.batch_shape + self.action_shape}, got {other.shape}."
 
-        # Flattens all action dims, which we reduce all over.
-        out = out.flatten(start_dim=n_batch_dims).all(dim=-1)
+        out = self.tensor == other
+        if len(self.action_shape) > 1:
+            out = out.flatten(start_dim=n_batch_dims)
+        out = out.all(dim=-1)
 
-        assert out.dtype == torch.bool and out.shape == self.batch_shape
+        assert out.shape == self.batch_shape
         return out
 
     @property
@@ -251,9 +257,12 @@ class Actions(ABC):
         Returns:
             A boolean tensor of shape (*batch_shape,) that is True for dummy actions.
         """
-        dummy_actions_tensor = self.__class__.dummy_action.repeat(
-            *self.batch_shape, *((1,) * len(self.__class__.action_shape))
-        )
+        if len(self.batch_shape) == 1:
+            dummy_actions_tensor = self.__class__.dummy_action
+        else:
+            dummy_actions_tensor = self.__class__.dummy_action.repeat(
+                *self.batch_shape, *((1,) * len(self.__class__.action_shape))
+            )
         return self._compare(dummy_actions_tensor)
 
     @property
@@ -263,9 +272,12 @@ class Actions(ABC):
         Returns:
             A boolean tensor of shape (*batch_shape,) that is True for exit actions.
         """
-        exit_actions_tensor = self.__class__.exit_action.repeat(
-            *self.batch_shape, *((1,) * len(self.__class__.action_shape))
-        )
+        if len(self.batch_shape) == 1:
+            exit_actions_tensor = self.__class__.exit_action
+        else:
+            exit_actions_tensor = self.__class__.exit_action.repeat(
+                *self.batch_shape, *((1,) * len(self.__class__.action_shape))
+            )
         return self._compare(exit_actions_tensor)
 
 

@@ -88,7 +88,8 @@ class Estimator(ABC, nn.Module):
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        out = self.module(self.preprocessor(input))
+        preprocessed_input = self.preprocessor(input)
+        out = self.module(preprocessed_input)
         if self.expected_output_dim is not None:
             assert out.shape[-1] == self.expected_output_dim, (
                 f"Module output shape {out.shape} does not match expected output "
@@ -295,6 +296,7 @@ class DiscretePolicyEstimator(Estimator):
         assert 0.0 <= epsilon <= 1.0
 
         masks = states.backward_masks if self.is_backward else states.forward_masks
+        assert masks.any(dim=-1).all(), "No possible actions"
         logits = module_output
         logits[~masks] = -float("inf")
 
@@ -307,11 +309,7 @@ class DiscretePolicyEstimator(Estimator):
         probs = torch.softmax(logits, dim=-1)
 
         if epsilon != 0.0:
-            uniform_dist_probs = torch.where(
-                masks.sum(dim=-1, keepdim=True) == 0,
-                torch.zeros_like(masks),
-                masks.to(torch.get_default_dtype()) / masks.sum(dim=-1, keepdim=True),
-            )
+            uniform_dist_probs = masks / masks.sum(dim=-1, keepdim=True)
             probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
 
         return UnsqueezedCategorical(probs=probs)

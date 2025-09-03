@@ -152,21 +152,24 @@ class Sampler:
             For backward trajectories, the reward is computed at the initial state
             (s0) rather than the terminal state (sf).
         """
-        if states is None:
-            assert n is not None, "Either kwarg `states` or `n` must be specified"
-            states = env.reset(batch_shape=(n,))
-            n_trajectories = n
-        else:
+        if self.estimator.is_backward:
+            # [ASSUMPTION] When backward sampling, all provided states are the
+            # terminating states (can be passed to log_reward fn)
             assert (
-                len(states.batch_shape) == 1
-            ), "States should have len(states.batch_shape) == 1, w/ no trajectory dim!"
-            n_trajectories = states.batch_shape[0]
-            # Backward trajectories should have the reward at the beginning (terminating state)
-            if self.estimator.is_backward:
-                # [ASSUMPTION] all provided states are part of the terminating states (can be passed to reward fn)
-                # assert states in env.terminating_states # This assert would be useful, unfortunately, not every environment implements this.
-                trajectories_log_rewards = env.log_reward(states)
+                states is not None
+            ), "When backward sampling, `states` must be provided"
+            # assert states in env.terminating_states # This assert would be useful,
+            # unfortunately, not every environment implements this.
+        else:
+            if states is None:
+                assert n is not None, "Either kwarg `states` or `n` must be specified"
+                states = env.reset(batch_shape=(n,))
+            else:
+                assert (
+                    len(states.batch_shape) == 1
+                ), "States should have a batch_shape of length 1, w/ no trajectory dim!"
 
+        n_trajectories = states.batch_shape[0]
         device = states.device
 
         if conditioning is not None:
@@ -190,7 +193,6 @@ class Sampler:
         trajectories_terminating_idx = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
-        trajectories_log_rewards = torch.zeros(n_trajectories, device=device)
 
         step = 0
         all_estimator_outputs = []
@@ -244,7 +246,6 @@ class Sampler:
             # Ensure that the new state is a distinct object from the old state.
             assert new_states is not states
             assert isinstance(new_states, States)
-            assert type(new_states) is type(states)
             if isinstance(new_states, GraphStates) and isinstance(states, GraphStates):
                 # Asserts that there exists no shared storage between the two
                 # GraphStates.
@@ -267,10 +268,6 @@ class Sampler:
                 else new_states.is_sink_state
             ) & ~dones
             trajectories_terminating_idx[new_dones] = step
-
-            # Only forward trajectories should fetch a reward at the end.
-            if not self.estimator.is_backward:
-                trajectories_log_rewards[new_dones] = env.log_reward(states[new_dones])
 
             states = new_states
             dones = dones | new_dones
@@ -301,6 +298,24 @@ class Sampler:
         if stacked_estimator_outputs is not None and len(stacked_estimator_outputs) == 0:
             stacked_estimator_outputs = None
 
+        # Broadcast conditioning tensor to match states batch shape if needed
+        if conditioning is not None:
+            # The states have batch shape (max_length, n_trajectories)
+            # The conditioning tensor should have shape (n_trajectories,) or (n_trajectories, 1)
+            # We need to broadcast it to (max_length, n_trajectories, 1) for the estimator
+            if len(conditioning.shape) == 1:
+                # conditioning has shape (n_trajectories,)
+                conditioning = (
+                    conditioning.unsqueeze(0)
+                    .unsqueeze(-1)
+                    .expand(stacked_states.batch_shape[0], -1, 1)
+                )
+            elif len(conditioning.shape) == 2 and conditioning.shape[1] == 1:
+                # conditioning has shape (n_trajectories, 1)
+                conditioning = conditioning.unsqueeze(0).expand(
+                    stacked_states.batch_shape[0], -1, -1
+                )
+
         trajectories = Trajectories(
             env=env,
             states=stacked_states,
@@ -308,7 +323,7 @@ class Sampler:
             actions=stacked_actions,
             terminating_idx=trajectories_terminating_idx,
             is_backward=self.estimator.is_backward,
-            log_rewards=trajectories_log_rewards,
+            log_rewards=None,  # will be calculated later
             log_probs=stacked_logprobs,
             estimator_outputs=stacked_estimator_outputs,
         )
