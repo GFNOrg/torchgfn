@@ -164,7 +164,9 @@ class DAGEdgeActionGNN(GraphActionGNN):
         else:
             # This MLP computes the exit action.
             node_feature_means = self._group_mean(x, batch_ptr)
-            exit_action = self.exit_mlp(node_feature_means).squeeze(-1)
+            exit_action = self.action_type_mlp(node_feature_means)[
+                ..., GraphActionType.EXIT
+            ]
             action_type[..., GraphActionType.ADD_EDGE] = F.logsigmoid(-exit_action)
             action_type[..., GraphActionType.EXIT] = F.logsigmoid(exit_action)
 

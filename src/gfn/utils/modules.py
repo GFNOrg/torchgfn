@@ -367,16 +367,9 @@ class GraphActionGNN(nn.Module):
         self.norm = nn.LayerNorm(self.hidden_dim)
 
         # Heads operating on per-graph pooled features
-        self.exit_mlp = MLP(
+        self.action_type_mlp = MLP(
             input_dim=self.hidden_dim,
-            output_dim=1,
-            hidden_dim=self.hidden_dim,
-            n_hidden_layers=1,
-            add_layer_norm=True,
-        )
-        self.add_node_mlp = MLP(
-            input_dim=self.hidden_dim,
-            output_dim=1,
+            output_dim=3,
             hidden_dim=self.hidden_dim,
             n_hidden_layers=1,
             add_layer_norm=True,
@@ -425,7 +418,7 @@ class GraphActionGNN(nn.Module):
         # Embed node classes
         if node_features.numel() > 0:
             x = self.embedding(node_features.squeeze(-1))
-        # Handle the case where the graph has no nodes. We use zeros as 
+        # Handle the case where the graph has no nodes. We use zeros as
         # features, so we can continue the forward pass.
         else:
             x = torch.zeros(0, self.hidden_dim, device=device)
@@ -455,14 +448,8 @@ class GraphActionGNN(nn.Module):
             else torch.zeros(B, self.hidden_dim, device=device)
         )
 
-        # Action type logits
-        action_type = torch.zeros(B, 3, device=device)
-        add_node_logit = self.add_node_mlp(graph_emb).squeeze(-1)
-        action_type[..., GraphActionType.ADD_NODE] = add_node_logit
-        exit_logit = self.exit_mlp(graph_emb).squeeze(-1)
-        action_type[..., GraphActionType.EXIT] = exit_logit
-
-        # Class logits
+        # Action type and class logits
+        action_type = self.action_type_mlp(graph_emb)
         node_class_logits = self.node_class_mlp(graph_emb)
         edge_class_logits = self.edge_class_mlp(graph_emb)
 
