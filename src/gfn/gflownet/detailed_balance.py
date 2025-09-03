@@ -1,5 +1,4 @@
 import math
-import warnings
 from typing import Tuple
 
 import torch
@@ -64,6 +63,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         log_reward_clip_min: If finite, clips log rewards to this value.
         safe_log_prob_min: If True, uses -1e10 as the minimum log probability value
             to avoid numerical instability, otherwise uses -1e38.
+        dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always 1.
     """
 
     def __init__(
@@ -92,22 +92,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 Must be set explicitly by user to ensure that pb is an Estimator
                 except under this special case.
         """
-        if pb is None and not dag_is_tree:
-            raise ValueError(
-                "pb must be an Estimator unless dag_is_tree is True. "
-                "If the gflownet DAG is a tree, set dag_is_tree to True."
-            )
-        if isinstance(pb, Estimator) and dag_is_tree:
-            warnings.warn(
-                "The user specified that the GFlowNet DAG is a tree, and specified a "
-                "backward policy estimator. Under normal circumstances, pb should be "
-                "None if the GFlowNet DAG is a tree, because the backward policy "
-                "probability is always 1, and therefore learning a backward policy "
-                "estimator is not necessary and will slow down training. Please ensure "
-                "this is the intended experimental setup."
-            )
-
-        super().__init__(pf, pb)
+        super().__init__(pf, pb, dag_is_tree=dag_is_tree)
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
@@ -119,7 +104,6 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             self.log_prob_min = -1e10
         else:
             self.log_prob_min = -1e38
-        self.dag_is_tree = dag_is_tree
 
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
         """Returns a dictionary of named parameters containing 'logF' in their name.

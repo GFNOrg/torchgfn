@@ -99,22 +99,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 1. Must be set explicitly by user to ensure that pb is an Estimator
                 except under this special case.
         """
-        if pb is None and not dag_is_tree:
-            raise ValueError(
-                "pb must be an Estimator unless dag_is_tree is True. "
-                "If the gflownet DAG is a tree, set dag_is_tree to True."
-            )
-        if isinstance(pb, Estimator) and dag_is_tree:
-            warnings.warn(
-                "The user specified that the GFlowNet DAG is a tree, and specified a "
-                "backward policy estimator. Under normal circumstances, pb should be "
-                "None if the GFlowNet DAG is a tree, because the backward policy "
-                "probability is always 1, and therefore learning a backward policy "
-                "estimator is not necessary and will slow down training. Please ensure "
-                "this is the intended experimental setup."
-            )
-
-        super().__init__(pf, pb)
+        super().__init__(pf, pb, dag_is_tree=dag_is_tree)
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
@@ -124,7 +109,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self.lamda = lamda
         self.log_reward_clip_min = log_reward_clip_min
         self.forward_looking = forward_looking
-        self.dag_is_tree = dag_is_tree
 
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
         """Returns a dictionary of named parameters containing 'logF' in their name.

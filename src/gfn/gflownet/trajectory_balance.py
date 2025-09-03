@@ -3,7 +3,6 @@ Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.1325
 and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
-import warnings
 from typing import cast
 
 import torch
@@ -37,6 +36,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             pb is therefore always 1.
         logZ: A learnable parameter or a ScalarEstimator instance (for conditional GFNs).
         log_reward_clip_min: If finite, clips log rewards to this value.
+        dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always 1.
     """
 
     def __init__(
@@ -60,22 +60,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
                 1. Must be set explicitly by user to ensure that pb is an Estimator
                 except under this special case.
         """
-        if pb is None and not dag_is_tree:
-            raise ValueError(
-                "pb must be an Estimator unless dag_is_tree is True. "
-                "If the gflownet DAG is a tree, set dag_is_tree to True."
-            )
-        if isinstance(pb, Estimator) and dag_is_tree:
-            warnings.warn(
-                "The user specified that the GFlowNet DAG is a tree, and specified a "
-                "backward policy estimator. Under normal circumstances, pb should be "
-                "None if the GFlowNet DAG is a tree, because the backward policy "
-                "probability is always 1, and therefore learning a backward policy "
-                "estimator is not necessary and will slow down training. Please ensure "
-                "this is the intended experimental setup."
-            )
-
-        super().__init__(pf, pb)
+        super().__init__(pf, pb, dag_is_tree=dag_is_tree)
 
         if isinstance(logZ, float):
             self.logZ = nn.Parameter(torch.tensor(logZ))
