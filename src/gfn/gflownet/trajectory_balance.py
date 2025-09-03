@@ -32,30 +32,37 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
 
     Attributes:
         pf: The forward policy estimator.
-        pb: The backward policy estimator.
+        pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
         logZ: A learnable parameter or a ScalarEstimator instance (for conditional GFNs).
         log_reward_clip_min: If finite, clips log rewards to this value.
+        constant_pb: Whether the gflownet DAG is a tree, and pb is therefore always 1.
     """
 
     def __init__(
         self,
         pf: Estimator,
-        pb: Estimator,
+        pb: Estimator | None,
         logZ: nn.Parameter | ScalarEstimator | None = None,
         init_logZ: float = 0.0,
         log_reward_clip_min: float = -float("inf"),
+        constant_pb: bool = False,
     ):
         """Initializes a TBGFlowNet instance.
 
         Args:
             pf: The forward policy estimator.
-            pb: The backward policy estimator.
+            pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+                pb is therefore always 1.
             logZ: A learnable parameter or a ScalarEstimator instance (for
                 conditional GFNs).
             init_logZ: The initial value for the logZ parameter (used if logZ is None).
             log_reward_clip_min: If finite, clips log rewards to this value.
+            constant_pb: Whether to ignore pb e.g., the GFlowNet DAG is a tree, and pb
+                is therefore always 1. Must be set explicitly by user to ensure that pb
+                is an Estimator except under this special case.
         """
-        super().__init__(pf, pb)
+        super().__init__(pf, pb, constant_pb=constant_pb)
 
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
         self.log_reward_clip_min = log_reward_clip_min
