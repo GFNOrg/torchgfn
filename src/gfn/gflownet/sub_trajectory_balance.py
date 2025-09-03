@@ -61,7 +61,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         lamda: Discount factor for longer trajectories (used in geometric weighting).
         log_reward_clip_min: If finite, clips log rewards to this value.
         forward_looking: Whether to use the forward-looking GFN loss.
-        dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always 1.
+        constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+            gflownet DAG is a tree, and pb is therefore always 1.
     """
 
     def __init__(
@@ -81,7 +82,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         lamda: float = 0.9,
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
-        dag_is_tree: bool = False,
+        constant_pb: bool = False,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -95,11 +96,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             lamda: Discount factor for longer trajectories (used in geometric weighting).
             log_reward_clip_min: If finite, clips log rewards to this value.
             forward_looking: Whether to use the forward-looking GFN loss.
-            dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always
-                1. Must be set explicitly by user to ensure that pb is an Estimator
-                except under this special case.
+            constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+                gflownet DAG is a tree, and pb is therefore always 1. Must be set
+                explicitly by user to ensure that pb is an Estimator except under this
+                special case.
         """
-        super().__init__(pf, pb, dag_is_tree=dag_is_tree)
+        super().__init__(pf, pb, constant_pb=constant_pb)
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]

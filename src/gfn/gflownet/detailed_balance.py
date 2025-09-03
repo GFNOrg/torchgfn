@@ -63,7 +63,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         log_reward_clip_min: If finite, clips log rewards to this value.
         safe_log_prob_min: If True, uses -1e10 as the minimum log probability value
             to avoid numerical instability, otherwise uses -1e38.
-        dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always 1.
+        constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+            gflownet DAG is a tree, and pb is therefore always 1.
     """
 
     def __init__(
@@ -74,7 +75,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         forward_looking: bool = False,
         log_reward_clip_min: float = -float("inf"),
         safe_log_prob_min: bool = True,
-        dag_is_tree: bool = False,
+        constant_pb: bool = False,
     ) -> None:
         """Initializes a DBGFlowNet instance.
 
@@ -88,11 +89,12 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             log_reward_clip_min: If finite, clips log rewards to this value.
             safe_log_prob_min: If True, uses -1e10 as the minimum log probability value
                 to avoid numerical instability, otherwise uses -1e38.
-            dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always 1.
-                Must be set explicitly by user to ensure that pb is an Estimator
-                except under this special case.
+            constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+                gflownet DAG is a tree, and pb is therefore always 1. Must be set
+                explicitly by user to ensure that pb is an Estimator except under this
+                special case.
         """
-        super().__init__(pf, pb, dag_is_tree=dag_is_tree)
+        super().__init__(pf, pb, constant_pb=constant_pb)
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
@@ -293,16 +295,16 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         pf: The forward policy estimator.
         pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
             pb is therefore always 1.
-        logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
-            flow of the states.
-        forward_looking: Whether to use the forward-looking GFN loss.
-        log_reward_clip_min: If finite, clips log rewards to this value.
-        safe_log_prob_min: If True, uses -1e10 as the minimum log probability value
-            to avoid numerical instability, otherwise uses -1e38.
-        dag_is_tree: Whether the gflownet DAG is a tree, and pb is therefore always 1.
-            Must be set explicitly by user to ensure that pb is an Estimator
-            except under this special case.
+        constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+            gflownet DAG is a tree, and pb is therefore always 1. Must be set explicitly
+            by user to ensure that pb is an Estimator except under this special case.
     """
+
+    def __init__(
+        self, pf: Estimator, pb: Estimator | None, constant_pb: bool = False
+    ) -> None:
+        """Initializes a ModifiedDBGFlowNet instance."""
+        super().__init__(pf, pb, constant_pb=constant_pb)
 
     def get_scores(
         self, transitions: Transitions, recalculate_all_logprobs: bool = True
