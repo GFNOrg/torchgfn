@@ -88,6 +88,8 @@ def main(args):
 
     validation_info = {"l1_dist": float("inf")}
     visited_terminating_states = env.states_from_batch_shape((0,))
+    discovered_modes = set()
+    n_pixels_per_mode = round(env.height / 10) ** env.ndim
     for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
         trajectories = sampler.sample_trajectories(
             env,
@@ -111,25 +113,35 @@ def main(args):
                 args.validation_samples,
                 visited_terminating_states,
             )
+            # Modes will have a reward greater than R2+R1+R0.
+            mode_reward_threshold = env.reward_fn_kwargs["R2"] + env.reward_fn_kwargs["R1"] + env.reward_fn_kwargs["R0"] 
+
+            assert isinstance(visited_terminating_states, DiscreteStates)
+            modes = visited_terminating_states[
+                env.reward(visited_terminating_states) >= mode_reward_threshold
+            ].tensor
+            # Finds all the unique modes in visited_terminating_states.
+            modes_found = set([tuple(s.tolist()) for s in modes])
+            discovered_modes.update(modes_found)
+            # torch.tensor(list(modes_found)).shape ==[batch_size, 2]
             str_info = f"Iter {it + 1}: "
             if "l1_dist" in validation_info:
                 str_info += f"L1 distance={validation_info['l1_dist']:.8f} "
-            if "n_modes" in validation_info:
-                str_info += f"modes discovered={validation_info['n_modes']} "
+            str_info += f"modes discovered={len(discovered_modes) / n_pixels_per_mode} "
             str_info += f"n terminating states {len(visited_terminating_states)}"
             print(str_info)
 
-        pbar.set_postfix({"loss": loss.item()})
+        pbar.set_postfix({"loss": loss.item(), "trajectories_sampled": (it + 1) * args.batch_size})
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
     parser.add_argument(
-        "--ndim", type=int, default=4, help="Number of dimensions in the environment"
+        "--ndim", type=int, default=2, help="Number of dimensions in the environment"
     )
     parser.add_argument(
-        "--height", type=int, default=16, help="Height of the environment"
+        "--height", type=int, default=64, help="Height of the environment"
     )
     parser.add_argument(
         "--R0",

@@ -573,9 +573,8 @@ def validate_hypergrid(
         visited_terminating_states,
     )
 
-    # validation_info = {}
-    # Modes will have a reward greater than 1.
-    mode_reward_threshold = 1.0  # Assumes height >= 5. TODO - verify.
+    # Modes will have a reward greater than R2+R1+R0.
+    mode_reward_threshold = env.reward_fn_kwargs["R2"] + env.reward_fn_kwargs["R1"] + env.reward_fn_kwargs["R0"] 
 
     assert isinstance(visited_terminating_states, DiscreteStates)
     modes = visited_terminating_states[
@@ -940,6 +939,7 @@ def main(args):  # noqa: C901
     per_node_batch_size = args.batch_size // world_size
     validation_info = {"l1_dist": float("inf")}
     discovered_modes = set()
+    n_pixels_per_mode = round(env.height / 10) ** env.ndim
     is_on_policy = args.replay_buffer_size == 0
 
     print("+ n_iterations = ", n_iterations)
@@ -1176,7 +1176,7 @@ def main(args):  # noqa: C901
                     pbar.set_postfix(
                         loss=to_log["loss"],
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
-                        n_modes_found=to_log["n_modes_found"],
+                        n_modes_found=to_log["n_modes_found"] / n_pixels_per_mode,
                         AVTS=len(all_visited_terminating_states),
                         VTS=len(visited_terminating_states),
                     )
@@ -1232,7 +1232,7 @@ def main(args):  # noqa: C901
     try:
         result = validation_info["l1_dist"]
     except KeyError:
-        result = validation_info["n_modes_found"]
+        result = validation_info["n_modes_found"] / n_pixels_per_mode
 
     if my_rank == 0:
         print("+ Training complete - final_score={:.6f}".format(result))
