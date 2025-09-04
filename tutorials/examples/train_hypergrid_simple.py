@@ -114,7 +114,11 @@ def main(args):
                 visited_terminating_states,
             )
             # Modes will have a reward greater than R2+R1+R0.
-            mode_reward_threshold = env.reward_fn_kwargs["R2"] + env.reward_fn_kwargs["R1"] + env.reward_fn_kwargs["R0"] 
+            mode_reward_threshold = (
+                env.reward_fn_kwargs["R2"]
+                + env.reward_fn_kwargs["R1"]
+                + env.reward_fn_kwargs["R0"]
+            )
 
             assert isinstance(visited_terminating_states, DiscreteStates)
             modes = visited_terminating_states[
@@ -131,7 +135,9 @@ def main(args):
             str_info += f"n terminating states {len(visited_terminating_states)}"
             print(str_info)
 
-        pbar.set_postfix({"loss": loss.item(), "trajectories_sampled": (it + 1) * args.batch_size})
+        pbar.set_postfix(
+            {"loss": loss.item(), "trajectories_sampled": (it + 1) * args.batch_size}
+        )
 
 
 if __name__ == "__main__":
@@ -191,7 +197,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument(
-        "--epsilon", type=float, default=0.0, help="Exploration parameter for the sampler"
+        "--epsilon",
+        type=float,
+        default=0.0,
+        help="Exploration parameter for the sampler",
     )
 
     args = parser.parse_args()
