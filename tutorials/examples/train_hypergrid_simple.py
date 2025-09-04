@@ -186,12 +186,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--validation_samples",
         type=int,
-        default=100000,
+        default=200000,
         help="Number of validation samples to use to evaluate the probability mass function.",
     )
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument(
-        "--epsilon", type=float, default=0.1, help="Epsilon for the sampler"
+        "--epsilon", type=float, default=0.0, help="Exploration parameter for the sampler"
     )
 
     args = parser.parse_args()
