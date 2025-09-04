@@ -91,6 +91,9 @@ class HyperGrid(DiscreteEnv):
 
         self.ndim = ndim
         self.height = height
+        if reward_fn_kwargs is None:
+            reward_fn_kwargs = {"R0": 0.1, "R1": 0.5, "R2": 2.0}
+        self.reward_fn_kwargs = reward_fn_kwargs
         self.reward_fn = get_reward_fn(reward_fn_str, height, ndim, reward_fn_kwargs)
         self._all_states_tensor = None  # Populated optionally in init.
         self._log_partition = None  # Populated optionally in init.
