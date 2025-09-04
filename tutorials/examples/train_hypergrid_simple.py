@@ -41,6 +41,12 @@ def main(args):
     env = HyperGrid(
         ndim=args.ndim,
         height=args.height,
+        reward_fn_str="original",
+        reward_fn_kwargs={
+            "R0": args.R0,
+            "R1": args.R1,
+            "R2": args.R2,
+        },
         device=device,
         calculate_partition=True,
         store_all_states=True,
@@ -124,6 +130,24 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--height", type=int, default=16, help="Height of the environment"
+    )
+    parser.add_argument(
+        "--R0",
+        type=float,
+        default=0.1,
+        help="Environment's R0",
+    )
+    parser.add_argument(
+        "--R1",
+        type=float,
+        default=0.5,
+        help="Environment's R1",
+    )
+    parser.add_argument(
+        "--R2",
+        type=float,
+        default=2.0,
+        help="Environment's R2",
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument(
