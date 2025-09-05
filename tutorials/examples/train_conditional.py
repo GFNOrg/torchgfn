@@ -32,8 +32,8 @@ from tqdm import tqdm
 
 from gfn.estimators import (
     ConditionalDiscretePolicyEstimator,
+    ConditionalLogZEstimator,
     ConditionalScalarEstimator,
-    ScalarEstimator,
 )
 from gfn.gflownet import (
     DBGFlowNet,
@@ -250,20 +250,7 @@ def build_tb_gflownet(env: HyperGrid) -> TBGFlowNet:
         n_hidden_layers=2,
     )
 
-    # Create a wrapper class to make conditioning-only logZ compatible with TBGFlowNet
-    class ConditionalLogZWrapper(ScalarEstimator):
-        def __init__(self, logz_module):
-            # Use a dummy preprocessor since we don't process states
-            dummy_preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
-            super().__init__(module=logz_module, preprocessor=dummy_preprocessor)
-            self.logz_module = logz_module
-
-        def forward(self, conditioning):
-            # LogZ only depends on conditioning, not states
-            # conditioning shape: (batch_size, 1)
-            return self.logz_module(conditioning)
-
-    logZ_estimator = ConditionalLogZWrapper(module_logZ)
+    logZ_estimator = ConditionalLogZEstimator(module_logZ, reduction="sum")
     gflownet = TBGFlowNet(logZ=logZ_estimator, pf=pf_estimator, pb=pb_estimator)
 
     return gflownet
