@@ -604,7 +604,7 @@ def test_conditional_convergence():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     final_loss = train_conditional_main(namespace_args)
-    
+
     assert final_loss is not None
     assert final_loss > 0  # Loss should be positive
     assert final_loss < 100  # Loss should be reasonable, not exploded
@@ -626,7 +626,7 @@ def test_conditional_different_dims(gflownet: str):
         args_dict = asdict(args)
         namespace_args = Namespace(**args_dict)
         final_loss = train_conditional_main(namespace_args)
-        
+
         assert final_loss is not None
         assert 0 < final_loss < 1000  # Reasonable loss range
 
@@ -646,7 +646,7 @@ def test_conditional_with_exploration():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     final_loss = train_conditional_main(namespace_args)
-    
+
     assert final_loss is not None
     assert final_loss > 0
 
@@ -655,7 +655,7 @@ def test_conditional_loss_types():
     """Test that different GFlowNet loss types work with conditioning."""
     loss_types = ["tb", "db", "subtb", "fm"]
     losses = []
-    
+
     for loss_type in loss_types:
         args = ConditionalArgs(
             gflownet=loss_type,
@@ -669,10 +669,10 @@ def test_conditional_loss_types():
         args_dict = asdict(args)
         namespace_args = Namespace(**args_dict)
         final_loss = train_conditional_main(namespace_args)
-        
+
         assert final_loss is not None, f"Loss type {loss_type} returned None"
         assert final_loss > 0, f"Loss type {loss_type} returned non-positive loss"
         losses.append(final_loss)
-    
+
     # All loss types should produce finite losses
-    assert all(0 < loss < float('inf') for loss in losses)
+    assert all(0 < loss < float("inf") for loss in losses)
