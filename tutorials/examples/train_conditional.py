@@ -506,9 +506,6 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
         # Get terminal states
         term_states = cast(DiscreteStates, trajectories.terminating_states)
 
-        # Compute empirical distribution
-        from gfn.utils.training import get_terminating_state_dist
-
         empirical_dist = get_terminating_state_dist(env, term_states)
 
         # Get true distribution for this conditioning
@@ -559,7 +556,7 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
             expected_uniform_prob = 1.0 / env.n_states
             uniformity_ratio = max_prob / expected_uniform_prob
 
-            print(f"\nUniformity Metrics:")
+            print("\nUniformity Metrics:")
             print(
                 f"  Max probability: {max_prob:.6f} (expected: {expected_uniform_prob:.6f})"
             )
@@ -574,7 +571,7 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
                 print("  Successfully learned uniform distribution")
 
         elif cond_value == 1.0:
-            print(f"\nOriginal HyperGrid Distribution:")
+            print("\nOriginal HyperGrid Distribution:")
             # Check concentration on high-probability states
             mode_prob_mass = empirical_dist[empirical_dist > 0.01].sum().item()
             print(
@@ -588,7 +585,7 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
 
         else:  # Intermediate conditioning values
             # Show interpolation quality metrics
-            print(f"\nInterpolation Metrics:")
+            print("\nInterpolation Metrics:")
             # Compute variance as a measure of spread
             emp_var = empirical_dist.var().item()
             true_var = true_dist.var().item()
