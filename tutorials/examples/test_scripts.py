@@ -592,7 +592,7 @@ def test_conditional_convergence():
     args = ConditionalArgs(
         gflownet="tb",
         ndim=2,
-        height=4,  # Small environment for quick convergence
+        height=8,  # Small environment for quick convergence
         n_iterations=20,  # Small but enough to see improvement
         batch_size=100,
         validation_interval=10,
@@ -617,7 +617,7 @@ def test_conditional_different_dims(gflownet: str):
         args = ConditionalArgs(
             gflownet=gflownet,
             ndim=ndim,
-            height=4,
+            height=8,
             n_iterations=10,
             batch_size=64,
             validation_interval=5,
@@ -636,7 +636,7 @@ def test_conditional_with_exploration():
     args = ConditionalArgs(
         gflownet="tb",
         ndim=2,
-        height=4,
+        height=8,
         n_iterations=10,
         batch_size=100,
         epsilon=0.1,  # Enable exploration
@@ -660,7 +660,7 @@ def test_conditional_loss_types():
         args = ConditionalArgs(
             gflownet=loss_type,
             ndim=2,
-            height=4,
+            height=8,
             n_iterations=5,
             batch_size=50,
             validation_interval=10,
