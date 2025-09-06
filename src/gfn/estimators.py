@@ -191,6 +191,9 @@ class ScalarEstimator(Estimator):
         """
         return 1
 
+    def _calculate_module_output(self, input: States) -> torch.Tensor:
+        return self.module(self.preprocessor(input))
+
     def forward(self, input: States) -> torch.Tensor:
         """Forward pass of the module.
 
@@ -200,7 +203,7 @@ class ScalarEstimator(Estimator):
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, 1).
         """
-        out = self.module(self.preprocessor(input))
+        out = self._calculate_module_output(input)
 
         # Ensures estimator outputs are always scalar.
         if out.shape[-1] != 1:
@@ -209,6 +212,21 @@ class ScalarEstimator(Estimator):
         assert out.shape[-1] == 1
 
         return out
+
+
+class ConditionalLogZEstimator(ScalarEstimator):
+    """Conditional logZ estimator.
+
+    This estimator is used to estimate the logZ of a GFlowNet from a conditioning tensor.
+    Since conditioning is a tensor, it does not have a preprocessor. Reduction is used
+    to aggregate the outputs of the module into a single scalar.
+    """
+
+    def __init__(self, module: nn.Module, reduction: str = "mean"):
+        super().__init__(module, preprocessor=None, reduction=reduction)
+
+    def _calculate_module_output(self, input: torch.Tensor) -> torch.Tensor:
+        return self.module(input)
 
 
 class DiscretePolicyEstimator(Estimator):
