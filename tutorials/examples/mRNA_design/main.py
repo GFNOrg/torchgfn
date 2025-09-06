@@ -133,7 +133,7 @@ def main(args):
     with open(filename, "w") as f:
         for i, (seq, reward) in enumerate(sorted_samples):
             f.write(
-                f"Sequence {i+1}: {seq}, "
+                f"Sequence {i + 1}: {seq}, "
                 f"Reward: {reward[0]:.2f}, "
                 f"GC Content: {reward[1][0]:.2f}, "
                 f"MFE: {reward[1][1]:.2f}, "

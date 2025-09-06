@@ -320,7 +320,7 @@ def train(
     n_iterations=10,
     batch_size=1000,
     validation_interval=100,
-    validation_samples=200000,
+    validation_samples=20000,
     lr=1e-3,
     lr_logz=1e-2,
     epsilon=0.0,
@@ -354,6 +354,7 @@ def train(
         + env.reward_fn_kwargs.get("R1", 0.5)
         + env.reward_fn_kwargs.get("R0", 0.1)
     )
+    n_pixels_per_mode = round(env.height / 10) ** env.ndim
 
     final_loss = None
     for it in (pbar := tqdm(range(n_iterations), dynamic_ncols=True)):
@@ -422,7 +423,6 @@ def train(
 
                 # Update discovered modes for conditioning=1
                 if cond_val == 1.0:
-                    env.set_conditioning(torch.ones((1, 1), device=device))
                     rewards = env.reward(sampled_states)
                     modes = sampled_states[rewards >= mode_reward_threshold].tensor
                     modes_found = set([tuple(s.tolist()) for s in modes])
@@ -445,7 +445,7 @@ def train(
 
             # Print concise results
             print(
-                f"Iter {it + 1}: L1=[{l1_dists[0]:.6f}, {l1_dists[1]:.6f}, {l1_dists[2]:.6f}, {l1_dists[3]:.6f}, {l1_dists[4]:.6f}] modes={len(discovered_modes)}"
+                f"Iter {it + 1}: L1=[{l1_dists[0]:.6f}, {l1_dists[1]:.6f}, {l1_dists[2]:.6f}, {l1_dists[3]:.6f}, {l1_dists[4]:.6f}] modes={len(discovered_modes) / n_pixels_per_mode}"
             )
 
     print("\n" + "=" * 60)
@@ -467,9 +467,9 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
     test_cond_values = [0.0, 0.25, 0.5, 0.75, 1.0]
 
     for cond_value in test_cond_values:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Evaluating Conditioning={cond_value}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # Set fixed conditioning for evaluation
         conditioning = torch.full(
@@ -641,7 +641,7 @@ def main(args):
         print("Note: Evaluation will only be shown for the last trained GFlowNet")
         final_losses = []
         for fn_name, fn in GFN_FNS.items():
-            print(f"\n{'='*50}")
+            print(f"\n{'=' * 50}")
             print(f"Training {fn_name.upper()} GFlowNet")
             print("=" * 50)
             gflownet = fn(environment)
@@ -715,13 +715,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ndim",
         type=int,
-        default=5,
+        default=2,
         help="Number of dimensions in the environment",
     )
     parser.add_argument(
         "--height",
         type=int,
-        default=2,
+        default=8,
         help="Height of the environment",
     )
 
@@ -765,7 +765,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--validation_samples",
         type=int,
-        default=50000,
+        default=20000,
         help="Number of validation samples to use to evaluate the probability mass function.",
     )
 

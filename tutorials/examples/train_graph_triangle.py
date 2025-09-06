@@ -207,7 +207,7 @@ def main(args: argparse.Namespace) -> None:
         loss.backward()
         optimizer.step()
 
-    print(f"Training time: {(time.time() - t0)/60:.2f} min")
+    print(f"Training time: {(time.time() - t0) / 60:.2f} min")
 
     if args.plot:
         samples_to_render = trajectories.terminating_states[:8]
