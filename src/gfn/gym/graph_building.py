@@ -101,11 +101,13 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_NODE action
         if torch.any(add_node_mask):
             batch_indices_flat = torch.arange(len(states))[add_node_mask]
-            node_class_action_flat = actions.node_class.flatten()
+            add_node_action = actions[add_node_mask]
+            node_class_action_flat = add_node_action.node_class.flatten()
+            node_index_action_flat = add_node_action.node_index.flatten()
 
             # Add nodes to the specified graphs
-            for graph_idx, new_node_class in zip(
-                batch_indices_flat, node_class_action_flat
+            for graph_idx, new_node_class, new_node_index in zip(
+                batch_indices_flat, node_class_action_flat, node_index_action_flat
             ):
                 # Get the graph to modify
                 graph = data_array[graph_idx]
@@ -120,6 +122,7 @@ class GraphBuilding(GraphEnv):
                     )
 
                 # Add new nodes to the graph
+                assert new_node_index == len(graph.x)
                 graph.x = torch.cat([graph.x, new_node_class], dim=0)
 
         # Handle ADD_EDGE action
@@ -182,20 +185,13 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_NODE action
         if torch.any(add_node_mask):
             add_node_index = torch.where(add_node_mask)[0]
-            node_idx_action_flat = actions.node_class.flatten()
+            node_idx_action_flat = actions.node_index.flatten()
 
-            # Remove nodes with matching features
+            # Remove node with matching index
             for i in add_node_index:
                 graph = data_array[i]
                 node_idx = node_idx_action_flat[i]
-
-                # Remove the node
-                mask = torch.ones(
-                    graph.x.size(0), dtype=torch.bool, device=graph.x.device
-                )
-                mask[node_idx] = False
-
-                # Update node features
+                mask = torch.arange(len(graph.x)) != node_idx
                 graph.x = graph.x[mask]
 
         # Handle ADD_EDGE action
@@ -238,7 +234,7 @@ class GraphBuilding(GraphEnv):
         # Get the data list from the batch
         data_array = states.data.flat
         action_type_action_flat = actions.action_type.flatten()
-        node_class_action_flat = actions.node_class.flatten()
+        node_index_action_flat = actions.node_index.flatten()
         edge_index_action_flat = actions.edge_index.flatten()
 
         for i in range(len(actions)):
@@ -248,8 +244,12 @@ class GraphBuilding(GraphEnv):
 
             graph = data_array[i]
             if action_type == GraphActionType.ADD_NODE:
-                if backward and len(graph.x) <= node_class_action_flat[i].item():
-                    return False
+                if backward:
+                    if node_index_action_flat[i] >= len(graph.x):
+                        return False
+                else:
+                    if node_index_action_flat[i] != len(graph.x):
+                        return False
 
             elif action_type == GraphActionType.ADD_EDGE:
                 edge_idx = edge_index_action_flat[i]

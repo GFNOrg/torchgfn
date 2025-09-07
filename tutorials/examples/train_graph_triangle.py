@@ -17,7 +17,6 @@ from typing import Callable
 
 import torch
 
-from gfn.actions import GraphActions
 from gfn.containers import ReplayBuffer
 from gfn.estimators import DiscreteGraphPolicyEstimator
 from gfn.gflownet.trajectory_balance import TBGFlowNet
@@ -167,20 +166,12 @@ def main(args: argparse.Namespace) -> None:
         prioritized_sampling=True,
     )
 
-    epsilon = {
-        GraphActions.ACTION_TYPE_KEY: args.epsilon_action_type,
-        GraphActions.NODE_CLASS_KEY: args.epsilon_node_class,
-        GraphActions.EDGE_CLASS_KEY: args.epsilon_edge_class,
-        GraphActions.EDGE_INDEX_KEY: args.epsilon_edge_index,
-    }
-
     t0 = time.time()
     for it in range(args.n_iterations):
         trajectories = gflownet.sample_trajectories(
             env,
             n=args.batch_size,
             save_logprobs=True,
-            epsilon=epsilon,
         )
         training_samples = gflownet.to_training_samples(trajectories)
         gflownet_training_samples = training_samples
@@ -240,11 +231,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_buffer", action="store_true", default=True, help="Use replay buffer"
     )
-    # Exploration epsilons per action component
-    parser.add_argument("--epsilon_action_type", type=float, default=0.0)
-    parser.add_argument("--epsilon_node_class", type=float, default=0.0)
-    parser.add_argument("--epsilon_edge_class", type=float, default=0.0)
-    parser.add_argument("--epsilon_edge_index", type=float, default=0.0)
     parser.add_argument("--plot", action="store_true", default=False)
     args = parser.parse_args()
     main(args)

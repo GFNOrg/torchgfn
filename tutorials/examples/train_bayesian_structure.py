@@ -177,6 +177,9 @@ class DAGEdgeActionGNN(GraphActionGNN):
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
                     len(states_tensor), 1, device=x.device
                 ),
+                GraphActions.NODE_INDEX_KEY: torch.zeros(
+                    len(states_tensor), self.n_nodes, device=x.device
+                ),
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
             batch_size=len(states_tensor),
@@ -389,6 +392,9 @@ class DAGEdgeActionGNNv2(nn.Module):
                 ),  # TODO: make it learnable.
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
                     len(states_tensor), 1, device=node_embs.device
+                ),
+                GraphActions.NODE_INDEX_KEY: torch.zeros(
+                    len(states_tensor), self.n_nodes, device=node_embs.device
                 ),
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },

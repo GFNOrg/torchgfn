@@ -296,27 +296,29 @@ class GraphActions(Actions):
 
     ACTION_TYPE_KEY: ClassVar[str] = "action_type"
     NODE_CLASS_KEY: ClassVar[str] = "node_class"
+    NODE_INDEX_KEY: ClassVar[str] = "node_index"
     EDGE_CLASS_KEY: ClassVar[str] = "edge_class"
     EDGE_INDEX_KEY: ClassVar[str] = "edge_index"
 
     ACTION_INDICES: ClassVar[dict[str, int]] = {
         ACTION_TYPE_KEY: 0,
         NODE_CLASS_KEY: 1,
-        EDGE_CLASS_KEY: 2,
-        EDGE_INDEX_KEY: 3,
+        NODE_INDEX_KEY: 2,
+        EDGE_CLASS_KEY: 3,
+        EDGE_INDEX_KEY: 4,
     }
 
     def __init__(self, tensor: torch.Tensor):
         """Initializes a GraphActions object.
 
         Args:
-            tensor: A tensor of shape (*batch_shape, 4) containing the action type,
+            tensor: A tensor of shape (*batch_shape, 5) containing the action type,
                 node class, edge class, and edge index components.
         """
-        if tensor.shape[-1] != 4:
+        if tensor.shape[-1] != 5:
             raise ValueError(
-                f"Expected tensor of shape (*batch_shape, 4), got {tensor.shape}.\n"
-                "The last dimension should contain the action type, node class, edge class, and edge index."
+                f"Expected tensor of shape (*batch_shape, 5), got {tensor.shape}.\n"
+                "The last dimension should contain the action type, node class, node index, edge class, and edge index."
             )
         self.tensor = tensor
 
@@ -327,7 +329,7 @@ class GraphActions(Actions):
         Returns:
             The batch shape as a tuple.
         """
-        assert self.tensor.shape[-1] == 4
+        assert self.tensor.shape[-1] == 5
         return self.tensor.shape[:-1]
 
     @classmethod
@@ -336,7 +338,7 @@ class GraphActions(Actions):
 
         Args:
             tensor_dict: A TensorDict containing the action components with keys
-                ACTION_TYPE_KEY, NODE_CLASS_KEY, EDGE_CLASS_KEY, and EDGE_INDEX_KEY.
+                ACTION_TYPE_KEY, NODE_CLASS_KEY, NODE_INDEX_KEY, EDGE_CLASS_KEY, and EDGE_INDEX_KEY.
 
         Returns:
             A GraphActions object constructed from the tensor dict.
@@ -344,10 +346,11 @@ class GraphActions(Actions):
         batch_shape = tensor_dict[cls.ACTION_TYPE_KEY].shape
         action_type = tensor_dict[cls.ACTION_TYPE_KEY].reshape(*batch_shape, 1)
         node_class = tensor_dict[cls.NODE_CLASS_KEY].reshape(*batch_shape, 1)
+        node_index = tensor_dict[cls.NODE_INDEX_KEY].reshape(*batch_shape, 1)
         edge_class = tensor_dict[cls.EDGE_CLASS_KEY].reshape(*batch_shape, 1)
         edge_index = tensor_dict[cls.EDGE_INDEX_KEY].reshape(*batch_shape, 1)
 
-        return cls(torch.cat([action_type, node_class, edge_class, edge_index], dim=-1))
+        return cls(torch.cat([action_type, node_class, node_index, edge_class, edge_index], dim=-1))
 
     def __repr__(self):
         """Returns a string representation of the GraphActions object.
@@ -394,6 +397,15 @@ class GraphActions(Actions):
         return self.tensor[..., self.ACTION_INDICES[self.NODE_CLASS_KEY]]
 
     @property
+    def node_index(self) -> torch.Tensor:
+        """Returns the node index tensor.
+
+        Returns:
+            A tensor of shape (*batch_shape,) containing the node indices.
+        """
+        return self.tensor[..., self.ACTION_INDICES[self.NODE_INDEX_KEY]]
+
+    @property
     def edge_class(self) -> torch.Tensor:
         """Returns the edge class tensor.
 
@@ -425,7 +437,7 @@ class GraphActions(Actions):
             A GraphActions object with the specified batch shape filled with dummy
             actions.
         """
-        tensor = torch.zeros(batch_shape + (4,), dtype=torch.long, device=device)
+        tensor = torch.zeros(batch_shape + (5,), dtype=torch.long, device=device)
         tensor[..., cls.ACTION_INDICES[cls.ACTION_TYPE_KEY]] = GraphActionType.DUMMY
         return cls(tensor)
 
@@ -442,7 +454,7 @@ class GraphActions(Actions):
         Returns:
             A GraphActions object with the specified batch shape filled with exit actions.
         """
-        tensor = torch.zeros(batch_shape + (4,), dtype=torch.long, device=device)
+        tensor = torch.zeros(batch_shape + (5,), dtype=torch.long, device=device)
         tensor[..., cls.ACTION_INDICES[cls.ACTION_TYPE_KEY]] = GraphActionType.EXIT
         return cls(tensor)
 

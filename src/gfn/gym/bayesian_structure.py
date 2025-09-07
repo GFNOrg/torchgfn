@@ -146,9 +146,15 @@ class BayesianStructure(GraphBuilding):
                 return TensorDict(
                     {
                         GraphActions.ACTION_TYPE_KEY: action_type,
-                        GraphActions.NODE_CLASS_KEY: torch.ones(
+                        GraphActions.NODE_CLASS_KEY: torch.zeros(
                             *self.batch_shape,
                             self.num_node_classes,
+                            dtype=torch.bool,
+                            device=self.device,
+                        ),
+                        GraphActions.NODE_INDEX_KEY: torch.zeros(
+                            *self.batch_shape,
+                            self.n_nodes,
                             dtype=torch.bool,
                             device=self.device,
                         ),
@@ -200,9 +206,15 @@ class BayesianStructure(GraphBuilding):
                 return TensorDict(
                     {
                         GraphActions.ACTION_TYPE_KEY: action_type,
-                        GraphActions.NODE_CLASS_KEY: torch.ones(
+                        GraphActions.NODE_CLASS_KEY: torch.zeros(
                             *self.batch_shape,
                             self.num_node_classes,
+                            dtype=torch.bool,
+                            device=self.device,
+                        ),
+                        GraphActions.NODE_INDEX_KEY: torch.zeros(
+                            *self.batch_shape,
+                            self.n_nodes,
                             dtype=torch.bool,
                             device=self.device,
                         ),
