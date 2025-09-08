@@ -385,30 +385,6 @@ def test_graph_env():
 
     assert states.tensor.x.shape == (BATCH_SIZE * NUM_NODES, 1)
 
-    # We can't add a node with the same features.
-    with pytest.raises(NonValidActionsError):
-        actions = action_cls.from_tensor_dict(
-            TensorDict(
-                {
-                    GraphActions.ACTION_TYPE_KEY: torch.full(
-                        (BATCH_SIZE,), GraphActionType.ADD_NODE
-                    ),
-                    GraphActions.NODE_CLASS_KEY: torch.randint(
-                        0, 10, (BATCH_SIZE,), dtype=torch.long
-                    ),
-                    GraphActions.NODE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
-                    GraphActions.EDGE_CLASS_KEY: torch.randint(
-                        0, 10, (BATCH_SIZE,), dtype=torch.long
-                    ),
-                    GraphActions.EDGE_INDEX_KEY: torch.randint(
-                        0, 10, (BATCH_SIZE,), dtype=torch.long
-                    ),
-                },
-                batch_size=BATCH_SIZE,
-            )
-        )
-        states = env._step(states, actions)
-
     # Add edges.
     for i in range(NUM_NODES**2 - NUM_NODES):
         actions = action_cls.from_tensor_dict(

@@ -87,10 +87,12 @@ class GraphActionDistribution(Distribution):
                 sample_shape
             )
             node_classes[add_node_idx] = node_classes_all[add_node_idx]
-            node_indices_all = self.dists[GraphActions.NODE_INDEX_KEY].sample(
-                sample_shape
-            )
-            node_indices[add_node_idx] = node_indices_all[add_node_idx]
+
+            if self.is_backward:
+                node_indices_all = self.dists[GraphActions.NODE_INDEX_KEY].sample(
+                    sample_shape
+                )
+                node_indices[add_node_idx] = node_indices_all[add_node_idx]
 
         add_edge_idx = action_types == GraphActionType.ADD_EDGE
         if add_edge_idx.any():
@@ -145,10 +147,11 @@ class GraphActionDistribution(Distribution):
                 sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_CLASS_KEY]]
             )
             log_prob[add_node_idx] += log_prob_node_class_all[add_node_idx]
-            log_prob_node_index_all = self.dists[GraphActions.NODE_INDEX_KEY].log_prob(
-                sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_INDEX_KEY]]
-            )
-            log_prob[add_node_idx] += log_prob_node_index_all[add_node_idx]
+            if self.is_backward:
+                log_prob_node_index_all = self.dists[GraphActions.NODE_INDEX_KEY].log_prob(
+                    sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_INDEX_KEY]]
+                )
+                log_prob[add_node_idx] += log_prob_node_index_all[add_node_idx]
 
         # If action_type is ADD_EDGE, add log_prob for EDGE_CLASS_KEY and EDGE_INDEX_KEY
         add_edge_idx = action_types == GraphActionType.ADD_EDGE

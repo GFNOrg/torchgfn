@@ -588,15 +588,15 @@ class DiscreteGraphPolicyEstimator(Estimator):
 
         # Check if no possible node can be added,
         # and assert that action type cannot be ADD_NODE
-        no_possible_node = torch.isneginf(logits[GraphActions.NODE_CLASS_KEY]).all(-1)
-        no_possible_node &= torch.isneginf(logits[GraphActions.NODE_INDEX_KEY]).all(-1)
+        no_possible_node_class = torch.isneginf(logits[GraphActions.NODE_CLASS_KEY]).all(-1)
+        no_possible_node_index = torch.isneginf(logits[GraphActions.NODE_INDEX_KEY]).all(-1)
         assert torch.isneginf(
             logits[GraphActions.ACTION_TYPE_KEY][
-                no_possible_node, GraphActionType.ADD_NODE
+                no_possible_node_class & no_possible_node_index, GraphActionType.ADD_NODE
             ]
         ).all()
-        logits[GraphActions.NODE_CLASS_KEY][no_possible_node] = 0.0
-        logits[GraphActions.NODE_INDEX_KEY][no_possible_node] = 0.0
+        logits[GraphActions.NODE_CLASS_KEY][no_possible_node_class] = 0.0
+        logits[GraphActions.NODE_INDEX_KEY][no_possible_node_index] = 0.0
 
         probs = {}
         for key in logits.keys():

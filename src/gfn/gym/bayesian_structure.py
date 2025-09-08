@@ -60,7 +60,7 @@ class BayesianStructure(GraphBuilding):
         )
 
         super().__init__(
-            num_node_classes=1,
+            num_node_classes=n_nodes,
             num_edge_classes=1,
             state_evaluator=state_evaluator,
             is_directed=True,

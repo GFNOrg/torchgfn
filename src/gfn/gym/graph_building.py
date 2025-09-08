@@ -103,11 +103,10 @@ class GraphBuilding(GraphEnv):
             batch_indices_flat = torch.arange(len(states))[add_node_mask]
             add_node_action = actions[add_node_mask]
             node_class_action_flat = add_node_action.node_class.flatten()
-            node_index_action_flat = add_node_action.node_index.flatten()
 
             # Add nodes to the specified graphs
-            for graph_idx, new_node_class, new_node_index in zip(
-                batch_indices_flat, node_class_action_flat, node_index_action_flat
+            for graph_idx, new_node_class in zip(
+                batch_indices_flat, node_class_action_flat
             ):
                 # Get the graph to modify
                 graph = data_array[graph_idx]
@@ -121,8 +120,6 @@ class GraphBuilding(GraphEnv):
                         f"Node features must have dimension {graph.x.shape[1]}"
                     )
 
-                # Add new nodes to the graph
-                assert new_node_index == len(graph.x)
                 graph.x = torch.cat([graph.x, new_node_class], dim=0)
 
         # Handle ADD_EDGE action
@@ -243,13 +240,9 @@ class GraphBuilding(GraphEnv):
                 continue
 
             graph = data_array[i]
-            if action_type == GraphActionType.ADD_NODE:
-                if backward:
-                    if node_index_action_flat[i] >= len(graph.x):
-                        return False
-                else:
-                    if node_index_action_flat[i] != len(graph.x):
-                        return False
+            if action_type == GraphActionType.ADD_NODE and backward:
+                if node_index_action_flat[i] >= len(graph.x):
+                    return False
 
             elif action_type == GraphActionType.ADD_EDGE:
                 edge_idx = edge_index_action_flat[i]

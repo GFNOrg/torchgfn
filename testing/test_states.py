@@ -502,9 +502,8 @@ def test_forward_masks(datas):
     assert torch.all(masks[GraphActions.NODE_CLASS_KEY])
 
     # Check node index mask
-    assert masks[GraphActions.NODE_INDEX_KEY].shape == (1, states.tensor.x.size(0) + 1)
-    assert torch.all(~masks[GraphActions.NODE_INDEX_KEY][0, :states.tensor.x.size(0)])
-    assert masks[GraphActions.NODE_INDEX_KEY][0, states.tensor.x.size(0)]
+    assert masks[GraphActions.NODE_INDEX_KEY].shape == (1, states.tensor.x.size(0))
+    assert not torch.any(masks[GraphActions.NODE_INDEX_KEY])
 
     # Check edge_class mask
     assert masks[GraphActions.EDGE_CLASS_KEY].shape == (1, states.num_edge_classes)
@@ -539,7 +538,7 @@ def test_backward_masks(datas):
 
     # Check node_class mask
     assert masks[GraphActions.NODE_CLASS_KEY].shape == (1, states.num_node_classes)
-    assert torch.all(masks[GraphActions.NODE_CLASS_KEY])
+    assert not torch.any(masks[GraphActions.NODE_CLASS_KEY])
 
     # Check node index mask
     assert masks[GraphActions.NODE_INDEX_KEY].shape == (1, states.tensor.x.size(0))

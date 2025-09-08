@@ -473,7 +473,7 @@ class GraphActionGNN(nn.Module):
             node_index_logits = torch.split(node_index_logits, lengths.tolist(), dim=0)
             node_index_logits = torch.nn.utils.rnn.pad_sequence(list(node_index_logits), batch_first=True)
         else:
-            node_index_logits = torch.zeros(B, max_nodes + 1, device=device)
+            node_index_logits = torch.zeros(B, max_nodes, device=device)
 
         # Class logits
         node_class_logits = self.node_class_mlp(graph_emb)
@@ -617,6 +617,14 @@ class GraphEdgeActionMLP(nn.Module):
             n_hidden_layers=1,
             add_layer_norm=True,
         )
+        self.features_embedding = nn.Embedding(self.num_node_classes, embedding_dim)
+        self.node_index_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=1,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
         self.edge_mlp = MLP(
             input_dim=embedding_dim,
             output_dim=self.edges_dim,
@@ -685,19 +693,26 @@ class GraphEdgeActionMLP(nn.Module):
         edge_class_logits = torch.zeros(
             len(states_tensor), self.num_edge_classes, device=device
         )
+        lengths = states_tensor.ptr[1:] - states_tensor.ptr[:-1]
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
+            node_features = self.features_embedding(states_tensor.x)
+            node_index_logits = self.node_index_mlp(node_features).squeeze(-1)
+            node_index_logits = torch.split(node_index_logits, lengths.tolist(), dim=0)
+            node_index_logits = torch.nn.utils.rnn.pad_sequence(list(node_index_logits), batch_first=True)
         else:
             exit_action = self.exit_mlp(embedding).squeeze(-1)
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
             action_type[..., GraphActionType.EXIT] = exit_action
             edge_class_logits = self.edge_class_mlp(embedding)
             node_class_logits = self.node_class_mlp(embedding)
+            node_index_logits = torch.zeros(len(states_tensor), self.n_nodes, device=device)
 
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
                 GraphActions.NODE_CLASS_KEY: node_class_logits,
+                GraphActions.NODE_INDEX_KEY: node_index_logits,
                 GraphActions.EDGE_CLASS_KEY: edge_class_logits,
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
