@@ -33,7 +33,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     Attributes:
         pf: The forward policy estimator.
-        pb: The backward policy estimator.
+        pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log flow
             of the states.
         weighting: The sub-trajectories weighting scheme.
@@ -60,12 +61,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         lamda: Discount factor for longer trajectories (used in geometric weighting).
         log_reward_clip_min: If finite, clips log rewards to this value.
         forward_looking: Whether to use the forward-looking GFN loss.
+        constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+            gflownet DAG is a tree, and pb is therefore always 1.
     """
 
     def __init__(
         self,
         pf: Estimator,
-        pb: Estimator,
+        pb: Estimator | None,
         logF: ScalarEstimator | ConditionalScalarEstimator,
         weighting: Literal[
             "DB",
@@ -79,6 +82,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         lamda: float = 0.9,
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
+        constant_pb: bool = False,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -92,8 +96,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             lamda: Discount factor for longer trajectories (used in geometric weighting).
             log_reward_clip_min: If finite, clips log rewards to this value.
             forward_looking: Whether to use the forward-looking GFN loss.
+            constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+                gflownet DAG is a tree, and pb is therefore always 1. Must be set
+                explicitly by user to ensure that pb is an Estimator except under this
+                special case.
         """
-        super().__init__(pf, pb)
+        super().__init__(pf, pb, constant_pb=constant_pb)
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]

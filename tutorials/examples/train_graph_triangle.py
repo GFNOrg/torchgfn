@@ -198,7 +198,7 @@ def main(args: argparse.Namespace) -> None:
         loss.backward()
         optimizer.step()
 
-    print(f"Training time: {(time.time() - t0)/60:.2f} min")
+    print(f"Training time: {(time.time() - t0) / 60:.2f} min")
 
     if args.plot:
         samples_to_render = trajectories.terminating_states[:8]
@@ -215,7 +215,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--seed", type=int, default=1234, help="Random seed")
     parser.add_argument(
-        "--embedding_dim", type=int, default=64, help="Embedding dim for policy heads"
+        "--embedding_dim", type=int, default=128, help="Embedding dim for policy heads"
     )
     parser.add_argument(
         "--num_conv_layers", type=int, default=1, help="Number of GNN layers"
@@ -226,7 +226,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument(
-        "--lr_Z", type=float, default=1e-1, help="Learning rate for logZ"
+        "--lr_Z", type=float, default=5e-2, help="Learning rate for logZ"
     )
     parser.add_argument(
         "--use_buffer", action="store_true", default=True, help="Use replay buffer"

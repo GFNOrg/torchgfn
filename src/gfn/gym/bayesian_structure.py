@@ -31,6 +31,7 @@ class BayesianStructure(GraphBuilding):
         n_nodes: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        check_action_validity: bool = True,
     ):
         if isinstance(device, str):
             device = torch.device(device)
@@ -67,6 +68,7 @@ class BayesianStructure(GraphBuilding):
             device=device,
             s0=s0,
             sf=sf,
+            check_action_validity=check_action_validity,
         )
 
     def make_states_class(self) -> type[GraphStates]:

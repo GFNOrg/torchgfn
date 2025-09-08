@@ -27,7 +27,7 @@ from gfn.preprocessors import KHotPreprocessor
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
-from gfn.utils.modules import MLP
+from gfn.utils.modules import MLP, DiscreteUniform
 from gfn.utils.training import validate
 
 
@@ -38,7 +38,20 @@ def main(args):
     )
 
     # Setup the Environment.
-    env = HyperGrid(ndim=args.ndim, height=args.height, device=device)
+    env = HyperGrid(
+        ndim=args.ndim,
+        height=args.height,
+        reward_fn_str="original",
+        reward_fn_kwargs={
+            "R0": args.R0,
+            "R1": args.R1,
+            "R2": args.R2,
+        },
+        device=device,
+        calculate_partition=True,
+        store_all_states=True,
+        check_action_validity=__debug__,
+    )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Build the GFlowNet.
@@ -46,18 +59,21 @@ def main(args):
         input_dim=preprocessor.output_dim,
         output_dim=env.n_actions,
     )
-    module_PB = MLP(
-        input_dim=preprocessor.output_dim,
-        output_dim=env.n_actions - 1,
-        trunk=module_PF.trunk,
-    )
+    if not args.uniform_pb:
+        module_PB = MLP(
+            input_dim=preprocessor.output_dim,
+            output_dim=env.n_actions - 1,
+            trunk=module_PF.trunk,
+        )
+    else:
+        module_PB = DiscreteUniform(output_dim=env.n_actions - 1)
     pf_estimator = DiscretePolicyEstimator(
         module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
     )
     pb_estimator = DiscretePolicyEstimator(
         module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
     )
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
+    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
     # Feed pf to the sampler.
     sampler = Sampler(estimator=pf_estimator)
@@ -72,6 +88,8 @@ def main(args):
 
     validation_info = {"l1_dist": float("inf")}
     visited_terminating_states = env.states_from_batch_shape((0,))
+    discovered_modes = set()
+    n_pixels_per_mode = round(env.height / 10) ** env.ndim
     for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
         trajectories = sampler.sample_trajectories(
             env,
@@ -95,25 +113,59 @@ def main(args):
                 args.validation_samples,
                 visited_terminating_states,
             )
+            # Modes will have a reward greater than R2+R1+R0.
+            mode_reward_threshold = (
+                env.reward_fn_kwargs["R2"]
+                + env.reward_fn_kwargs["R1"]
+                + env.reward_fn_kwargs["R0"]
+            )
+
+            assert isinstance(visited_terminating_states, DiscreteStates)
+            modes = visited_terminating_states[
+                env.reward(visited_terminating_states) >= mode_reward_threshold
+            ].tensor
+            # Finds all the unique modes in visited_terminating_states.
+            modes_found = set([tuple(s.tolist()) for s in modes])
+            discovered_modes.update(modes_found)
+            # torch.tensor(list(modes_found)).shape ==[batch_size, 2]
             str_info = f"Iter {it + 1}: "
             if "l1_dist" in validation_info:
                 str_info += f"L1 distance={validation_info['l1_dist']:.8f} "
-            if "n_modes" in validation_info:
-                str_info += f"modes discovered={validation_info['n_modes']} "
+            str_info += f"modes discovered={len(discovered_modes) / n_pixels_per_mode} "
             str_info += f"n terminating states {len(visited_terminating_states)}"
             print(str_info)
 
-        pbar.set_postfix({"loss": loss.item()})
+        pbar.set_postfix(
+            {"loss": loss.item(), "trajectories_sampled": (it + 1) * args.batch_size}
+        )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
     parser.add_argument(
-        "--ndim", type=int, default=4, help="Number of dimensions in the environment"
+        "--ndim", type=int, default=2, help="Number of dimensions in the environment"
     )
     parser.add_argument(
-        "--height", type=int, default=16, help="Height of the environment"
+        "--height", type=int, default=64, help="Height of the environment"
+    )
+    parser.add_argument(
+        "--R0",
+        type=float,
+        default=0.1,
+        help="Environment's R0",
+    )
+    parser.add_argument(
+        "--R1",
+        type=float,
+        default=0.5,
+        help="Environment's R1",
+    )
+    parser.add_argument(
+        "--R2",
+        type=float,
+        default=2.0,
+        help="Environment's R2",
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument(
@@ -129,6 +181,9 @@ if __name__ == "__main__":
         help="Learning rate for the logZ parameter",
     )
     parser.add_argument(
+        "--uniform_pb", action="store_true", help="Use a uniform backward policy"
+    )
+    parser.add_argument(
         "--n_iterations", type=int, default=1000, help="Number of iterations"
     )
     parser.add_argument(
@@ -137,12 +192,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--validation_samples",
         type=int,
-        default=100000,
+        default=200000,
         help="Number of validation samples to use to evaluate the probability mass function.",
     )
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument(
-        "--epsilon", type=float, default=0.1, help="Epsilon for the sampler"
+        "--epsilon",
+        type=float,
+        default=0.0,
+        help="Exploration parameter for the sampler",
     )
 
     args = parser.parse_args()

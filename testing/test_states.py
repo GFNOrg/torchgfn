@@ -526,9 +526,9 @@ def test_backward_masks(datas):
 
     # Check action type mask
     assert masks[GraphActions.ACTION_TYPE_KEY].shape == (1, 3)
-    assert masks[GraphActions.ACTION_TYPE_KEY][
+    assert not masks[GraphActions.ACTION_TYPE_KEY][
         0, GraphActionType.ADD_NODE
-    ].item()  # Can remove node
+    ].item()  # Can't remove node as it has an edge
     assert masks[GraphActions.ACTION_TYPE_KEY][
         0, GraphActionType.ADD_EDGE
     ].item()  # Can remove edge

@@ -510,6 +510,7 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
         raise ValueError("plotting is only supported for 2D environments")
 
     grid = env.all_states
+    assert grid is not None, "all_states is not implemented in the environment"
 
     # Get the forward policy distribution for all states
     with torch.no_grad():
@@ -572,9 +573,12 @@ def validate_hypergrid(
         visited_terminating_states,
     )
 
-    # validation_info = {}
-    # Modes will have a reward greater than 1.
-    mode_reward_threshold = 1.0  # Assumes height >= 5. TODO - verify.
+    # Modes will have a reward greater than R2+R1+R0.
+    mode_reward_threshold = (
+        env.reward_fn_kwargs["R2"]
+        + env.reward_fn_kwargs["R1"]
+        + env.reward_fn_kwargs["R0"]
+    )
 
     assert isinstance(visited_terminating_states, DiscreteStates)
     modes = visited_terminating_states[
@@ -738,7 +742,7 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
             return ModifiedDBGFlowNet(pf_estimator, pb_estimator)
 
         elif args.loss == "TB":
-            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
+            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
         elif args.loss == "ZVar":
             return LogPartitionVarianceGFlowNet(pf=pf_estimator, pb=pb_estimator)
@@ -781,7 +785,7 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     ax3 = fig.add_subplot(gs[3])
 
     # Get distributions and find global min/max for consistent color scaling
-    true_dist = env.true_dist_pmf.reshape(args.height, args.height).cpu().numpy()
+    true_dist = env.true_dist.reshape(args.height, args.height).cpu().numpy()
     learned_dist = get_exact_P_T(env, gflownet).reshape(args.height, args.height).numpy()
 
     # Ensure consistent orientation by transposing
@@ -878,12 +882,15 @@ def main(args):  # noqa: C901
     env = HyperGrid(
         args.ndim,
         args.height,
-        args.R0,
-        args.R1,
-        args.R2,
         device=device,
+        reward_fn_str="original",
+        reward_fn_kwargs={
+            "R0": args.R0,
+            "R1": args.R1,
+            "R2": args.R2,
+        },
         calculate_partition=args.calculate_partition,
-        calculate_all_states=args.calculate_all_states,
+        store_all_states=args.store_all_states,
     )
 
     # Initialize the preprocessor.
@@ -936,6 +943,7 @@ def main(args):  # noqa: C901
     per_node_batch_size = args.batch_size // world_size
     validation_info = {"l1_dist": float("inf")}
     discovered_modes = set()
+    n_pixels_per_mode = round(env.height / 10) ** env.ndim
     is_on_policy = args.replay_buffer_size == 0
 
     print("+ n_iterations = ", n_iterations)
@@ -1172,7 +1180,7 @@ def main(args):  # noqa: C901
                     pbar.set_postfix(
                         loss=to_log["loss"],
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
-                        n_modes_found=to_log["n_modes_found"],
+                        n_modes_found=to_log["n_modes_found"] / n_pixels_per_mode,
                         AVTS=len(all_visited_terminating_states),
                         VTS=len(visited_terminating_states),
                     )
@@ -1228,7 +1236,7 @@ def main(args):  # noqa: C901
     try:
         result = validation_info["l1_dist"]
     except KeyError:
-        result = validation_info["n_modes_found"]
+        result = validation_info["n_modes_found"] / n_pixels_per_mode
 
     if my_rank == 0:
         print("+ Training complete - final_score={:.6f}".format(result))
@@ -1416,16 +1424,16 @@ if __name__ == "__main__":
 
     # Settings relevant to the problem size -- toggle off for larger problems.
     parser.add_argument(
-        "--calculate_all_states",
+        "--store_all_states",
         action="store_true",
         default=False,
-        help="Disable enumeration of all states.",
+        help="Whether to store all states.",
     )
     parser.add_argument(
         "--calculate_partition",
         action="store_true",
         default=False,
-        help="Disable calculation of the true partition function.",
+        help="Whether to calculate the true partition function.",
     )
     parser.add_argument(
         "--profile",

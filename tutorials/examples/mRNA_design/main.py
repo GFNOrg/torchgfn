@@ -58,7 +58,7 @@ def main(args):
     )
 
     # 2. Create the gflownet.
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0).to(device)
+    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0).to(device)
     sampler = Sampler(estimator=pf_estimator)
 
     # 3. Create the optimizer and Lr scheduler
@@ -133,7 +133,7 @@ def main(args):
     with open(filename, "w") as f:
         for i, (seq, reward) in enumerate(sorted_samples):
             f.write(
-                f"Sequence {i+1}: {seq}, "
+                f"Sequence {i + 1}: {seq}, "
                 f"Reward: {reward[0]:.2f}, "
                 f"GC Content: {reward[1][0]:.2f}, "
                 f"MFE: {reward[1][1]:.2f}, "

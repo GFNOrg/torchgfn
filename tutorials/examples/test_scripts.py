@@ -19,6 +19,7 @@ from .train_discreteebm import main as train_discreteebm_main
 from .train_graph_ring import main as train_graph_ring_main
 from .train_graph_triangle import main as train_graph_triangle_main
 from .train_hypergrid import main as train_hypergrid_main
+from .train_hypergrid_gafn import main as train_hypergrid_gafn_main
 from .train_hypergrid_local_search import main as train_hypergrid_local_search_main
 from .train_hypergrid_simple import main as train_hypergrid_simple_main
 from .train_ising import main as train_ising_main
@@ -59,7 +60,7 @@ class DiscreteEBMArgs(CommonArgs):
 @dataclass
 class HypergridArgs(CommonArgs):
     back_ratio: float = 0.5
-    calculate_all_states: bool = True
+    store_all_states: bool = True
     calculate_partition: bool = True
     distributed: bool = False
     diverse_replay_buffer: bool = False
@@ -68,7 +69,6 @@ class HypergridArgs(CommonArgs):
     loss: str = "TB"
     lr_logz: float = 1e-3
     n_iterations: int = 10
-    n_local_search_loops: int = 3
     n_threads: int = 1
     ndim: int = 2
     plot: bool = False
@@ -78,6 +78,21 @@ class HypergridArgs(CommonArgs):
     R2: float = 2.0
     replay_buffer_size: int = 0
     timing: bool = True
+
+
+@dataclass
+class HypergridGAFNArgs(HypergridArgs):
+    use_edge_ri: bool = True
+    lr_rnd: float = 1e-3
+    rnd_reward_scale: float = 0.1
+    rnd_loss_scale: float = 1.0
+    rnd_hidden_dim: int = 256
+    rnd_s_latent_dim: int = 128
+
+
+@dataclass
+class HypergridLocalSearchArgs(HypergridArgs):
+    n_local_search_loops: int = 3
     use_metropolis_hastings: bool = True
 
 
@@ -199,6 +214,13 @@ class ConditionalArgs(CommonArgs):
     n_iterations: int = 10
     batch_size: int = 1000
     seed: int = 4444
+    lr: float = 1e-3
+    lr_logz: float = 1e-2
+    epsilon: float = 0.0
+    validation_interval: int = 100
+    validation_samples: int = 200000
+    n_eval_samples: int = 10000
+    no_cuda: bool = True  # Disable CUDA for tests
 
 
 @pytest.mark.parametrize("ndim", [2, 4])
@@ -439,9 +461,22 @@ def test_hypergrid_simple_smoke_fp64():
     train_hypergrid_simple_main(namespace_args)  # Just ensure it runs without errors.
 
 
+def test_hypergrid_gafn_smoke():
+    """Smoke test for the GAFN training script."""
+    args = HypergridGAFNArgs(
+        batch_size=4,
+        hidden_dim=64,
+        n_hidden=1,
+        n_trajectories=10,  # Small number for smoke test
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_hypergrid_gafn_main(namespace_args)  # Just ensure it runs without errors.
+
+
 def test_hypergrid_simple_ls_smoke():
     """Smoke test for the simple hypergrid with local search training script."""
-    args = HypergridArgs(
+    args = HypergridLocalSearchArgs(
         batch_size=4,
         hidden_dim=64,
         n_hidden=1,
@@ -518,29 +553,126 @@ def test_bitsequence(seq_size: int, n_modes: int):
 
 
 @pytest.mark.parametrize("gflownet", ["tb", "db", "subtb", "fm"])
-def test_conditional_smoke(gflownet: str):
-    """Smoke test for the conditional training script."""
+def test_conditional_basic(gflownet: str):
+    """Test basic conditional training with different GFlowNet types."""
     args = ConditionalArgs(
         gflownet=gflownet,
-        n_iterations=5,  # Small number for smoke test
-        batch_size=100,  # Small batch for smoke test
+        n_iterations=5,
+        batch_size=100,
+        validation_interval=10,
+        validation_samples=100,
     )
     args_dict = asdict(args)
+    # Don't set evaluate flag - defaults to False (no action="store_true" triggered)
     namespace_args = Namespace(**args_dict)
     final_loss = train_conditional_main(namespace_args)
     assert final_loss is not None
     assert final_loss > 0  # Loss should be positive
 
 
-def test_conditional_all_smoke():
-    """Smoke test for the conditional training script with all GFlowNet types."""
+def test_conditional_all_gflownets():
+    """Test conditional training with all GFlowNet types sequentially."""
     args = ConditionalArgs(
         gflownet="all",
-        n_iterations=3,  # Small number for smoke test
-        batch_size=50,  # Small batch for smoke test
+        n_iterations=3,
+        batch_size=50,
+        validation_interval=10,
+        validation_samples=50,
     )
     args_dict = asdict(args)
+    # Don't set evaluate flag - defaults to False (no action="store_true" triggered)
     namespace_args = Namespace(**args_dict)
     final_loss = train_conditional_main(namespace_args)
     assert final_loss is not None
     assert final_loss > 0  # Average loss should be positive
+
+
+def test_conditional_convergence():
+    """Test that conditional GFlowNet training converges to reasonable loss values."""
+    args = ConditionalArgs(
+        gflownet="tb",
+        ndim=2,
+        height=8,  # Small environment for quick convergence
+        n_iterations=20,  # Small but enough to see improvement
+        batch_size=100,
+        validation_interval=10,
+        validation_samples=500,  # Small but enough for rough L1 estimate
+        lr=1e-3,
+        lr_logz=1e-2,
+        epsilon=0.0,
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    final_loss = train_conditional_main(namespace_args)
+
+    assert final_loss is not None
+    assert final_loss > 0  # Loss should be positive
+    assert final_loss < 100  # Loss should be reasonable, not exploded
+
+
+@pytest.mark.parametrize("gflownet", ["tb", "db"])
+def test_conditional_different_dims(gflownet: str):
+    """Test conditional training with different environment dimensions."""
+    for ndim in [2, 3]:
+        args = ConditionalArgs(
+            gflownet=gflownet,
+            ndim=ndim,
+            height=8,
+            n_iterations=10,
+            batch_size=64,
+            validation_interval=5,
+            validation_samples=100,
+        )
+        args_dict = asdict(args)
+        namespace_args = Namespace(**args_dict)
+        final_loss = train_conditional_main(namespace_args)
+
+        assert final_loss is not None
+        assert 0 < final_loss < 1000  # Reasonable loss range
+
+
+def test_conditional_with_exploration():
+    """Test conditional training with exploration (epsilon > 0)."""
+    args = ConditionalArgs(
+        gflownet="tb",
+        ndim=2,
+        height=8,
+        n_iterations=10,
+        batch_size=100,
+        epsilon=0.1,  # Enable exploration
+        validation_interval=10,
+        validation_samples=200,
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    final_loss = train_conditional_main(namespace_args)
+
+    assert final_loss is not None
+    assert final_loss > 0
+
+
+def test_conditional_loss_types():
+    """Test that different GFlowNet loss types work with conditioning."""
+    loss_types = ["tb", "db", "subtb", "fm"]
+    losses = []
+
+    for loss_type in loss_types:
+        args = ConditionalArgs(
+            gflownet=loss_type,
+            ndim=2,
+            height=8,
+            n_iterations=5,
+            batch_size=50,
+            validation_interval=10,
+            validation_samples=50,
+        )
+        args_dict = asdict(args)
+        namespace_args = Namespace(**args_dict)
+        final_loss = train_conditional_main(namespace_args)
+
+        assert final_loss is not None, f"Loss type {loss_type} returned None"
+        assert final_loss > 0, f"Loss type {loss_type} returned non-positive loss"
+        losses.append(final_loss)
+
+    # All loss types should produce finite losses
+    assert all(0 < loss < float("inf") for loss in losses)
