@@ -620,6 +620,7 @@ class DiscreteGraphPolicyEstimator(Estimator):
 
         probs = {}
         for key in logits.keys():
+            assert isinstance(key, str)
             probs[key] = self.logits_to_probs(
                 logits[key],
                 masks[key],
