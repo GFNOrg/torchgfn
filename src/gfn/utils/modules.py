@@ -471,7 +471,9 @@ class GraphActionGNN(nn.Module):
         if self.is_backward:
             node_index_logits = self.node_index_mlp(x).squeeze(-1)
             node_index_logits = torch.split(node_index_logits, lengths.tolist(), dim=0)
-            node_index_logits = torch.nn.utils.rnn.pad_sequence(list(node_index_logits), batch_first=True)
+            node_index_logits = torch.nn.utils.rnn.pad_sequence(
+                list(node_index_logits), batch_first=True
+            )
         else:
             node_index_logits = torch.zeros(B, max_nodes, device=device)
 
@@ -699,14 +701,18 @@ class GraphEdgeActionMLP(nn.Module):
             node_features = self.features_embedding(states_tensor.x)
             node_index_logits = self.node_index_mlp(node_features).squeeze(-1)
             node_index_logits = torch.split(node_index_logits, lengths.tolist(), dim=0)
-            node_index_logits = torch.nn.utils.rnn.pad_sequence(list(node_index_logits), batch_first=True)
+            node_index_logits = torch.nn.utils.rnn.pad_sequence(
+                list(node_index_logits), batch_first=True
+            )
         else:
             exit_action = self.exit_mlp(embedding).squeeze(-1)
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
             action_type[..., GraphActionType.EXIT] = exit_action
             edge_class_logits = self.edge_class_mlp(embedding)
             node_class_logits = self.node_class_mlp(embedding)
-            node_index_logits = torch.zeros(len(states_tensor), self.n_nodes, device=device)
+            node_index_logits = torch.zeros(
+                len(states_tensor), self.n_nodes, device=device
+            )
 
         return TensorDict(
             {

@@ -350,7 +350,11 @@ class GraphActions(Actions):
         edge_class = tensor_dict[cls.EDGE_CLASS_KEY].reshape(*batch_shape, 1)
         edge_index = tensor_dict[cls.EDGE_INDEX_KEY].reshape(*batch_shape, 1)
 
-        return cls(torch.cat([action_type, node_class, node_index, edge_class, edge_index], dim=-1))
+        return cls(
+            torch.cat(
+                [action_type, node_class, node_index, edge_class, edge_index], dim=-1
+            )
+        )
 
     def __repr__(self):
         """Returns a string representation of the GraphActions object.

@@ -291,6 +291,7 @@ def init_gflownet(
         module_pf = GraphEdgeActionMLP(
             num_nodes,
             directed,
+            num_node_classes=num_nodes,
             num_edge_classes=num_edge_classes,
             embedding_dim=embedding_dim,
         )
@@ -298,6 +299,7 @@ def init_gflownet(
             num_nodes,
             directed,
             is_backward=True,
+            num_node_classes=num_nodes,
             num_edge_classes=num_edge_classes,
             embedding_dim=embedding_dim,
         )

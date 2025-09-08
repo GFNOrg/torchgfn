@@ -921,7 +921,7 @@ class GraphStates(States):
                     *self.batch_shape,
                     self.num_node_classes,
                     dtype=torch.bool,
-                    device=self.device
+                    device=self.device,
                 ),
                 GraphActions.NODE_INDEX_KEY: torch.zeros(
                     *self.batch_shape,
@@ -975,7 +975,7 @@ class GraphStates(States):
         )
 
         for i, graph in enumerate(self.data.flat):
-            node_index_masks[i, :len(graph.x)] = True
+            node_index_masks[i, : len(graph.x)] = True
             if graph.x is None:
                 continue
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
@@ -991,9 +991,7 @@ class GraphStates(States):
 
                 edge_masks[i, : len(edge_idx)][edge_idx] = True
 
-        node_index_masks = node_index_masks.view(
-            *self.batch_shape, max_nodes
-        )
+        node_index_masks = node_index_masks.view(*self.batch_shape, max_nodes)
         edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
