@@ -8,14 +8,28 @@ import torch.nn as nn
 from linear_attention_transformer import LinearAttentionTransformer
 from tensordict import TensorDict
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
+from torchrl.modules import NoisyLinear
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.common import is_int_dtype
 from gfn.utils.graphs import GeometricBatch, get_edge_indices
 
+ACTIVATION_FNS = {
+    "relu": nn.ReLU,
+    "leaky_relu": nn.LeakyReLU,
+    "tanh": nn.Tanh,
+    "elu": nn.ELU,
+}
+
 
 class MLP(nn.Module):
-    """Implements a basic MLP."""
+    """Implements a basic MLP with optional noisy layers for exploration.
+
+    When `trunk` is provided, the MLP will be a wrapper around the trunk.
+
+    See `Noisy Networks for Exploration (Fortunato et al., ICLR 2018)` for more details
+    on the noisy layers.
+    """
 
     def __init__(
         self,
@@ -23,9 +37,11 @@ class MLP(nn.Module):
         output_dim: int,
         hidden_dim: int = 256,
         n_hidden_layers: Optional[int] = 2,
-        activation_fn: Optional[Literal["relu", "leaky_relu", "tanh", "elu"]] = "relu",
+        n_noisy_layers: int = 0,
+        activation_fn: Literal["relu", "leaky_relu", "tanh", "elu"] = "relu",
         trunk: Optional[nn.Module] = None,
         add_layer_norm: bool = False,
+        noise_std: float = 0.5,
     ):
         """Initializes a new MLP.
 
@@ -34,30 +50,47 @@ class MLP(nn.Module):
             output_dim: The dimension of the output.
             hidden_dim: The dimension of the hidden layers.
             n_hidden_layers: The number of hidden layers.
+            n_noisy_layers: The number of layers which are noisy, including the
+                input and output layers.
             activation_fn: The activation function to use.
             trunk: A custom trunk to use. If None, a new trunk will be created.
             add_layer_norm: Whether to add layer normalization to the hidden layers.
+            noise_std: The standard deviation of the noise.
         """
         super().__init__()
         self._input_dim = input_dim
         self._output_dim = output_dim
 
-        if trunk is None:
+        # Validate hidden layer inputs
+        assert n_noisy_layers >= 0, "n_noisy_layers must be non-negative (>= 0)."
+        assert noise_std > 0, "noise_std must be positive (> 0)."
+
+        # If a trunk is provided, the MLP will be a wrapper around the trunk.
+        if trunk is not None:
+            assert (
+                n_noisy_layers <= 1
+            ), "when trunk is provided, n_noisy_layers must be 0 or 1."
+            self.trunk = trunk
+            assert hasattr(trunk, "hidden_dim") and isinstance(
+                trunk.hidden_dim, torch.Tensor
+            ), "trunk must have a hidden_dim attribute"
+            self._hidden_dim = int(trunk.hidden_dim.item())
+        # If no trunk is provided, we build the MLP from scratch. Noisy layers are added
+        # to the end of the network.
+        else:
+            assert n_hidden_layers is not None, "n_hidden_layers must be provided"
+            assert n_hidden_layers >= 0, "n_hidden_layers must be non-negative (>= 0)."
+            assert (
+                n_noisy_layers <= n_hidden_layers + 1
+            ), "n_noisy_layers must be <= n_hidden_layers + the output layer."
             assert hidden_dim is not None, "hidden_dim must be provided"
             assert (
-                n_hidden_layers is not None and n_hidden_layers >= 0
-            ), "n_hidden_layers must be >= 0"
-            assert activation_fn is not None, "activation_fn must be provided"
+                activation_fn in ACTIVATION_FNS
+            ), "activation_fn must be one of " + str(ACTIVATION_FNS.keys())
 
-            if activation_fn == "elu":
-                activation = nn.ELU
-            elif activation_fn == "relu":
-                activation = nn.ReLU
-            elif activation_fn == "leaky_relu":
-                activation = nn.LeakyReLU
-            elif activation_fn == "tanh":
-                activation = nn.Tanh
+            activation = ACTIVATION_FNS[activation_fn]
 
+            # Initialize the input layer (never noisy).
             if add_layer_norm:
                 arch = [
                     nn.Linear(input_dim, hidden_dim),
@@ -70,22 +103,34 @@ class MLP(nn.Module):
                     activation(),
                 ]
 
-            for _ in range(n_hidden_layers - 1):
-                arch.append(nn.Linear(hidden_dim, hidden_dim))
+            # Add the hidden layers. Put all noisy layers near the output.
+            n_noiseless_hidden_layers = n_hidden_layers - (n_noisy_layers - 1)
+            hidden_layer_types = [nn.Linear] * n_noiseless_hidden_layers + [
+                NoisyLinear
+            ] * (n_noisy_layers - 1)
+
+            for layer_type in hidden_layer_types:
+                if isinstance(layer_type, NoisyLinear):
+                    arch.append(layer_type(hidden_dim, hidden_dim, noise_std=noise_std))
+                else:
+                    arch.append(layer_type(hidden_dim, hidden_dim))
+
                 if add_layer_norm:
                     arch.append(nn.LayerNorm(hidden_dim))
+
                 arch.append(activation())
 
             self.trunk = nn.Sequential(*arch)
             self.trunk.hidden_dim = torch.tensor(hidden_dim)
             self._hidden_dim = hidden_dim
+
+        # Initialize the output layer.
+        if n_noisy_layers == 0:
+            self.last_layer = nn.Linear(self._hidden_dim, output_dim)
         else:
-            self.trunk = trunk
-            assert hasattr(trunk, "hidden_dim") and isinstance(
-                trunk.hidden_dim, torch.Tensor
-            ), "trunk must have a hidden_dim attribute"
-            self._hidden_dim = int(trunk.hidden_dim.item())
-        self.last_layer = nn.Linear(self._hidden_dim, output_dim)
+            self.last_layer = NoisyLinear(
+                self._hidden_dim, output_dim, noise_std=noise_std  # type: ignore
+            )
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
         """Forward method for the neural network.
