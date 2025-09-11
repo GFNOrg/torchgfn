@@ -38,7 +38,7 @@ export I_MPI_HYDRA_BOOTSTRAP=slurm
 export KMP_AFFINITY=none
 export MASTER_ADDR=$(hostname  | head -n 1)
 export MASTER_PORT=29500
-export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}  # Default 1 CPU per task.
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 
 echo "***Running run_dist_ht.sh with: ***"
 echo " + Master Addr: ${MASTER_ADDR}"
@@ -46,7 +46,7 @@ echo " + Slurm Job Num Nodes: ${SLURM_JOB_NUM_NODES}"
 echo " + Slurm NodeList: ${SLURM_NODELIST}"
 
 #mpiexec.hydra -np 2 -ppn 2 -l -genv I_MPI_PIN_DOMAIN=[0xFFFF,0xFFFF0000] -genv CCL_WORKER_AFFINITY=32,48 -genv CCL_WORKER_COUNT=1 -genv O     MP_NUM_THREADS=16 python -u train_hypergrid_multinode.py --ndim 8 --height 8 --R0 0.01 --tied --loss TB --n_trajectories 512000 --batch_size 256000
-mpiexec.hydra -np 4 -ppn 4 -l -genv CCL_WORKER_COUNT=8 python -u ../train_hypergrid.py --ndim 8 --height 8 --R0 0.01 --tied --loss TB --n_trajectories 512000 --batch_size 256
+mpiexec.hydra -np 4 -ppn 4 -l -genv CCL_WORKER_COUNT=8 python -u -m tutorials.examples.train_hypergrid --ndim 10 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 8192000 --batch_size 256 --distributed
 
 #./run_dist_ht.sh python -u train_hypergrid_multinode.py --ndim 8 --height 8 --R0 0.01 --tied --loss TB --n_trajectories 512000 --batch_size 256000
 
