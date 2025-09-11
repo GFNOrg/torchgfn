@@ -218,15 +218,15 @@ if __name__ == "__main__":
         "--embedding_dim", type=int, default=128, help="Embedding dim for policy heads"
     )
     parser.add_argument(
-        "--num_conv_layers", type=int, default=1, help="Number of GNN layers"
+        "--num_conv_layers", type=int, default=2, help="Number of GNN layers"
     )
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size")
     parser.add_argument(
-        "--n_iterations", type=int, default=300, help="Training iterations"
+        "--n_iterations", type=int, default=600, help="Training iterations"
     )
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate")
     parser.add_argument(
-        "--lr_Z", type=float, default=5e-2, help="Learning rate for logZ"
+        "--lr_Z", type=float, default=1e-1, help="Learning rate for logZ"
     )
     parser.add_argument(
         "--use_buffer", action="store_true", default=True, help="Use replay buffer"
