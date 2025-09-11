@@ -455,6 +455,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             num_edge_classes=1,
             state_evaluator=state_evaluator,
             is_directed=directed,
+            max_nodes=n_nodes,
             device=device,
             s0=s0,
             sf=sf,
@@ -491,6 +492,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             is_directed = env.is_directed
             n_nodes = env.n_nodes
             n_possible_edges = env.n_possible_edges
+            max_nodes = env.max_nodes
             s0 = env.s0
             sf = env.sf
             make_random_states = env.make_random_states

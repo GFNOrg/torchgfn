@@ -9,6 +9,7 @@ from gfn.states import DiscreteStates, GraphStates, States
 
 class MyGraphStates(GraphStates):
     num_node_classes = 10
+    max_nodes = 5
     num_edge_classes = 10
     is_directed = True
 
