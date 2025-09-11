@@ -33,6 +33,7 @@ class GraphBuilding(GraphEnv):
         num_edge_classes: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         is_directed: bool = True,
+        max_nodes: int | None = None,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         s0: GeometricData | None = None,
         sf: GeometricData | None = None,
@@ -45,6 +46,8 @@ class GraphBuilding(GraphEnv):
             num_edge_classes: The number of edge classes.
             state_evaluator: A callable that computes rewards for final states.
             is_directed: Whether the graph is directed.
+            max_nodes: The maximum number of nodes in the graph.
+                If None (default), the number of nodes is unbounded.
             device: The device to run computations on.
             s0: The initial state.
             sf: The sink state.
@@ -72,6 +75,7 @@ class GraphBuilding(GraphEnv):
             )
 
         self.state_evaluator = state_evaluator
+        self.max_nodes = max_nodes
         super().__init__(
             s0=s0,
             sf=sf,
@@ -307,7 +311,8 @@ class GraphBuilding(GraphEnv):
         data_array = np.empty(batch_shape, dtype=object)
         for i in range(num_graphs):
             # Create a random graph with random number of nodes
-            n_nodes = np.random.randint(1, 10)  # TODO: make the max n_nodes a parameter
+            max_nodes = self.max_nodes or 10
+            n_nodes = np.random.randint(1, max_nodes + 1)
             n_possible_edges = (
                 n_nodes**2 - n_nodes if self.is_directed else (n_nodes**2 - n_nodes) // 2
             )
@@ -362,6 +367,7 @@ class GraphBuilding(GraphEnv):
             s0 = env.s0
             sf = env.sf
             make_random_states = env.make_random_states
+            max_nodes = env.max_nodes
 
         return GraphBuildingStates
 
@@ -449,6 +455,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             num_edge_classes=1,
             state_evaluator=state_evaluator,
             is_directed=directed,
+            max_nodes=n_nodes,
             device=device,
             s0=s0,
             sf=sf,
@@ -485,6 +492,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             is_directed = env.is_directed
             n_nodes = env.n_nodes
             n_possible_edges = env.n_possible_edges
+            max_nodes = env.max_nodes
             s0 = env.s0
             sf = env.sf
             make_random_states = env.make_random_states

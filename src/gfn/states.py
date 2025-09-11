@@ -721,6 +721,7 @@ class GraphStates(States):
     num_node_classes: ClassVar[int]
     num_edge_classes: ClassVar[int]
     is_directed: ClassVar[bool]
+    max_nodes: ClassVar[int | None]
 
     s0: ClassVar[GeometricData]
     sf: ClassVar[GeometricData]
@@ -903,10 +904,18 @@ class GraphStates(States):
         edge_masks = torch.ones(
             self.data.size, max_possible_edges, dtype=torch.bool, device=self.device
         )
+        can_add_node = torch.ones(self.data.size, dtype=torch.bool, device=self.device)
+        node_class_masks = torch.ones(
+            self.data.size, self.num_node_classes, dtype=torch.bool, device=self.device
+        )
 
         for i, graph in enumerate(self.data.flat):
             if graph.x is None:
                 continue
+            if self.max_nodes is not None and graph.x.size(0) >= self.max_nodes:
+                can_add_node[i] = False
+            node_class_masks[i] = can_add_node[i]
+
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
             edge_masks[i, len(ei0) :] = False
 
@@ -923,21 +932,20 @@ class GraphStates(States):
                 edge_masks[i, : len(edge_idx)][edge_idx] = False
 
         edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
+        node_class_masks = node_class_masks.view(
+            *self.batch_shape, self.num_node_classes
+        )
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
         action_type = torch.ones(
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
+        action_type[..., GraphActionType.ADD_NODE] = can_add_node
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
-                GraphActions.NODE_CLASS_KEY: torch.ones(
-                    *self.batch_shape,
-                    self.num_node_classes,
-                    dtype=torch.bool,
-                    device=self.device,
-                ),
+                GraphActions.NODE_CLASS_KEY: node_class_masks,
                 GraphActions.NODE_INDEX_KEY: torch.zeros(
                     *self.batch_shape,
                     max_nodes,
