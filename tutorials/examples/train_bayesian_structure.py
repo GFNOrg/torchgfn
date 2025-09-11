@@ -68,6 +68,7 @@ class DAGEdgeActionMLP(GraphEdgeActionMLP):
     def __init__(
         self,
         n_nodes: int,
+        num_node_classes: int,
         num_edge_classes: int,
         n_hidden_layers: int = 2,
         n_hidden_layers_exit: int = 1,
@@ -76,6 +77,7 @@ class DAGEdgeActionMLP(GraphEdgeActionMLP):
     ):
         super().__init__(
             n_nodes=n_nodes,
+            num_node_classes=num_node_classes,
             directed=True,
             num_edge_classes=num_edge_classes,
             n_hidden_layers=n_hidden_layers,
@@ -103,13 +105,15 @@ class DAGEdgeActionGNN(GraphActionGNN):
     def __init__(
         self,
         n_nodes: int,
+        num_node_classes: int,
         num_edge_classes: int,
         num_conv_layers: int = 1,
         embedding_dim: int = 128,
         is_backward: bool = False,
     ):
+        self.n_nodes = n_nodes
         super().__init__(
-            num_node_classes=n_nodes,
+            num_node_classes=num_node_classes,
             directed=True,
             num_edge_classes=num_edge_classes,
             num_conv_layers=num_conv_layers,
@@ -177,7 +181,10 @@ class DAGEdgeActionGNN(GraphActionGNN):
                     len(states_tensor), self.num_edge_classes, device=x.device
                 ),  # TODO: make it learnable.
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    len(states_tensor), 1, device=x.device
+                    len(states_tensor), self.num_node_classes, device=x.device
+                ),
+                GraphActions.NODE_INDEX_KEY: torch.zeros(
+                    len(states_tensor), self.n_nodes, device=x.device
                 ),
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
@@ -202,6 +209,7 @@ class DAGEdgeActionGNNv2(nn.Module):
     def __init__(
         self,
         n_nodes: int,
+        num_node_classes: int,
         num_edge_classes: int,
         num_conv_layers: int = 2,
         embedding_dim: int = 128,
@@ -217,6 +225,7 @@ class DAGEdgeActionGNNv2(nn.Module):
         assert isinstance(is_backward, bool), "is_backward must be a boolean"
         self._input_dim = 1  # Each node input is a single integer before embedding.
         self._n_nodes = n_nodes
+        self.num_node_classes = num_node_classes
         self.embedding_dim = embedding_dim
         self.is_backward = is_backward
         self.num_edge_classes = num_edge_classes
@@ -225,7 +234,7 @@ class DAGEdgeActionGNNv2(nn.Module):
         if not self.is_backward:
             self._output_dim += 1  # +1 for exit action.
 
-        self.node_embedding = nn.Embedding(n_nodes, embedding_dim)
+        self.node_embedding = nn.Embedding(num_node_classes, embedding_dim)
         self.edge_embedding = nn.Parameter(
             torch.randn(1, embedding_dim).clamp(min=-2.0, max=2.0)
         )
@@ -390,7 +399,10 @@ class DAGEdgeActionGNNv2(nn.Module):
                     device=node_embs.device,
                 ),  # TODO: make it learnable.
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    len(states_tensor), 1, device=node_embs.device
+                    len(states_tensor), self.num_node_classes, device=node_embs.device
+                ),
+                GraphActions.NODE_INDEX_KEY: torch.zeros(
+                    len(states_tensor), self.n_nodes, device=node_embs.device
                 ),
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
@@ -426,6 +438,7 @@ def main(args: Namespace):
     if args.module == "mlp":
         pf_module = DAGEdgeActionMLP(
             n_nodes=env.n_nodes,
+            num_node_classes=env.num_node_classes,
             num_edge_classes=env.num_edge_classes,
             n_hidden_layers=args.num_layers,
             n_hidden_layers_exit=1,
@@ -434,6 +447,7 @@ def main(args: Namespace):
     elif args.module == "gnn":
         pf_module = DAGEdgeActionGNN(
             n_nodes=env.n_nodes,
+            num_node_classes=env.num_node_classes,
             num_edge_classes=env.num_edge_classes,
             num_conv_layers=args.num_layers,
             embedding_dim=args.embedding_dim,
@@ -441,6 +455,7 @@ def main(args: Namespace):
     elif args.module == "gnn_v2":
         pf_module = DAGEdgeActionGNNv2(
             n_nodes=env.n_nodes,
+            num_node_classes=env.num_node_classes,
             num_edge_classes=env.num_edge_classes,
             num_conv_layers=args.num_layers,
             embedding_dim=args.embedding_dim,

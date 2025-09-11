@@ -104,7 +104,8 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_NODE action
         if torch.any(add_node_mask):
             batch_indices_flat = torch.arange(len(states))[add_node_mask]
-            node_class_action_flat = actions.node_class.flatten()
+            add_node_action = actions[add_node_mask]
+            node_class_action_flat = add_node_action.node_class.flatten()
 
             # Add nodes to the specified graphs
             for graph_idx, new_node_class in zip(
@@ -122,7 +123,6 @@ class GraphBuilding(GraphEnv):
                         f"Node features must have dimension {graph.x.shape[1]}"
                     )
 
-                # Add new nodes to the graph
                 graph.x = torch.cat([graph.x, new_node_class], dim=0)
 
         # Handle ADD_EDGE action
@@ -185,27 +185,13 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_NODE action
         if torch.any(add_node_mask):
             add_node_index = torch.where(add_node_mask)[0]
-            node_class_action_flat = actions.node_class.flatten()
+            node_idx_action_flat = actions.node_index.flatten()
 
-            # Remove nodes with matching features
+            # Remove node with matching index
             for i in add_node_index:
                 graph = data_array[i]
-
-                # Find nodes with matching features
-                is_equal = torch.all(
-                    graph.x == node_class_action_flat[i].unsqueeze(0), dim=1
-                )
-
-                # Remove the first matching node
-                node_idx = int(torch.where(is_equal)[0][0].item())
-
-                # Remove the node
-                mask = torch.ones(
-                    graph.x.size(0), dtype=torch.bool, device=graph.x.device
-                )
-                mask[node_idx] = False
-
-                # Update node features
+                node_idx = node_idx_action_flat[i]
+                mask = torch.arange(len(graph.x)) != node_idx
                 graph.x = graph.x[mask]
 
                 # Update edge indices
@@ -252,7 +238,7 @@ class GraphBuilding(GraphEnv):
         # Get the data list from the batch
         data_array = states.data.flat
         action_type_action_flat = actions.action_type.flatten()
-        node_class_action_flat = actions.node_class.flatten()
+        node_index_action_flat = actions.node_index.flatten()
         edge_index_action_flat = actions.edge_index.flatten()
 
         for i in range(len(actions)):
@@ -261,25 +247,10 @@ class GraphBuilding(GraphEnv):
                 continue
 
             graph = data_array[i]
-            if action_type == GraphActionType.ADD_NODE:
-                # Check if a node with these features already exists
-                equal_nodes = torch.all(
-                    graph.x == node_class_action_flat[i].unsqueeze(0), dim=1
-                )
-
-                if backward:
-                    # For backward actions, we need one matching node
-                    num_equal_nodes = torch.sum(equal_nodes)
-                    if num_equal_nodes != 1:
-                        return False
-                    # And no edges from/to the node
-                    equal_node_idx = torch.where(equal_nodes)[0][0]
-                    if torch.any(graph.edge_index == equal_node_idx):
-                        return False
-                else:
-                    # For forward actions, we should not have any matching nodes
-                    if torch.any(equal_nodes):
-                        return False
+            if action_type == GraphActionType.ADD_NODE and backward:
+                node_idx = node_index_action_flat[i]
+                if node_idx >= len(graph.x) or torch.any(graph.edge_index == node_idx):
+                    return False
 
             elif action_type == GraphActionType.ADD_EDGE:
                 edge_idx = edge_index_action_flat[i]

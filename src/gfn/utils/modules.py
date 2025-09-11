@@ -381,6 +381,13 @@ class GraphActionGNN(nn.Module):
             n_hidden_layers=1,
             add_layer_norm=True,
         )
+        self.node_index_mlp = MLP(
+            input_dim=self.hidden_dim,
+            output_dim=1,
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
         self.edge_class_mlp = MLP(
             input_dim=self.hidden_dim,
             output_dim=self.num_edge_classes,
@@ -413,6 +420,8 @@ class GraphActionGNN(nn.Module):
     def forward(self, states_tensor: GeometricBatch) -> TensorDict:
         node_features = states_tensor.x
         B = len(states_tensor)
+        lengths = states_tensor.ptr[1:] - states_tensor.ptr[:-1]
+        max_nodes = int(lengths.max().item())
         device = node_features.device
 
         # Embed node classes
@@ -453,11 +462,18 @@ class GraphActionGNN(nn.Module):
         node_class_logits = self.node_class_mlp(graph_emb)
         edge_class_logits = self.edge_class_mlp(graph_emb)
 
+        # Node index logits
+        if self.is_backward:
+            node_index_logits = self.node_index_mlp(x).squeeze(-1)
+            node_index_logits = torch.split(node_index_logits, lengths.tolist(), dim=0)
+            node_index_logits = torch.nn.utils.rnn.pad_sequence(
+                list(node_index_logits), batch_first=True
+            )
+        else:
+            node_index_logits = torch.zeros(B, max_nodes, device=device)
+
         # Edge-index logits via pairwise dot products
         # Pad to max_nodes across batch for gathering candidate edges
-        lengths = (states_tensor.ptr[1:] - states_tensor.ptr[:-1]).to(torch.long)
-        max_nodes = int(lengths.max().item())
-
         seqs = torch.split(x, lengths.tolist())
         padded = torch.nn.utils.rnn.pad_sequence(
             list(seqs), batch_first=True
@@ -479,6 +495,7 @@ class GraphActionGNN(nn.Module):
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
                 GraphActions.NODE_CLASS_KEY: node_class_logits,
+                GraphActions.NODE_INDEX_KEY: node_index_logits,
                 GraphActions.EDGE_CLASS_KEY: edge_class_logits,
                 GraphActions.EDGE_INDEX_KEY: edge_index_logits,
             },
@@ -514,6 +531,7 @@ class GraphEdgeActionMLP(nn.Module):
         self,
         n_nodes: int,
         directed: bool,
+        num_node_classes: int,
         num_edge_classes: int,
         n_hidden_layers: int = 2,
         n_hidden_layers_exit: int = 1,
@@ -525,6 +543,7 @@ class GraphEdgeActionMLP(nn.Module):
         Args:
             n_nodes: The number of nodes in the graph.
             directed: Whether the graph is directed.
+            num_node_classes: The number of node classes.
             num_edge_classes: The number of edge classes.
             n_hidden_layers: The number of hidden layers in the main MLP.
             n_hidden_layers_exit: The number of hidden layers in the exit MLP.
@@ -549,6 +568,7 @@ class GraphEdgeActionMLP(nn.Module):
         self.is_directed = directed
         self.is_backward = is_backward
         self.hidden_dim = embedding_dim
+        self.num_node_classes = num_node_classes
         self.num_edge_classes = num_edge_classes
 
         # MLP for processing the flattened adjacency matrix
@@ -583,6 +603,21 @@ class GraphEdgeActionMLP(nn.Module):
         self._output_dim = int(out_dim)
         self._edges_dim = int(edges_dim)
 
+        self.node_class_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=self.num_node_classes,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+        self.features_embedding = nn.Embedding(self.num_node_classes, embedding_dim)
+        self.node_index_mlp = MLP(
+            input_dim=embedding_dim,
+            output_dim=1,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
         self.edge_mlp = MLP(
             input_dim=embedding_dim,
             output_dim=self.edges_dim,
@@ -651,20 +686,30 @@ class GraphEdgeActionMLP(nn.Module):
         edge_class_logits = torch.zeros(
             len(states_tensor), self.num_edge_classes, device=device
         )
+        lengths = states_tensor.ptr[1:] - states_tensor.ptr[:-1]
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
+            node_features = self.features_embedding(states_tensor.x)
+            node_index_logits = self.node_index_mlp(node_features).squeeze(-1)
+            node_index_logits = torch.split(node_index_logits, lengths.tolist(), dim=0)
+            node_index_logits = torch.nn.utils.rnn.pad_sequence(
+                list(node_index_logits), batch_first=True
+            )
         else:
             exit_action = self.exit_mlp(embedding).squeeze(-1)
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
             action_type[..., GraphActionType.EXIT] = exit_action
             edge_class_logits = self.edge_class_mlp(embedding)
+            node_class_logits = self.node_class_mlp(embedding)
+            node_index_logits = torch.zeros(
+                len(states_tensor), self.n_nodes, device=device
+            )
 
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
-                GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    len(states_tensor), 1, device=device
-                ),
+                GraphActions.NODE_CLASS_KEY: node_class_logits,
+                GraphActions.NODE_INDEX_KEY: node_index_logits,
                 GraphActions.EDGE_CLASS_KEY: edge_class_logits,
                 GraphActions.EDGE_INDEX_KEY: edge_actions,
             },
@@ -723,6 +768,7 @@ class GraphActionUniform(nn.Module):
             - GraphActions.EDGE_INDEX_KEY: Tensor of shape [*batch_shape, edges_dim] for edge index logits
         """
         device = states_tensor.x.device
+        max_nodes = int(torch.max(states_tensor.ptr[1:] - states_tensor.ptr[:-1]))
         return TensorDict(
             {
                 GraphActions.ACTION_TYPE_KEY: torch.ones(
@@ -733,6 +779,9 @@ class GraphActionUniform(nn.Module):
                 ),
                 GraphActions.NODE_CLASS_KEY: torch.ones(
                     len(states_tensor), self.num_node_classes, device=device
+                ),
+                GraphActions.NODE_INDEX_KEY: torch.ones(
+                    len(states_tensor), max_nodes, device=device
                 ),
                 GraphActions.EDGE_INDEX_KEY: torch.ones(
                     len(states_tensor), self.edges_dim, device=device

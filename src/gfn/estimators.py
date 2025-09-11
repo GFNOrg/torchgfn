@@ -568,6 +568,9 @@ class DiscreteGraphPolicyEstimator(Estimator):
         logits[GraphActions.NODE_CLASS_KEY][~masks[GraphActions.NODE_CLASS_KEY]] = (
             -float("inf")
         )
+        logits[GraphActions.NODE_INDEX_KEY][~masks[GraphActions.NODE_INDEX_KEY]] = (
+            -float("inf")
+        )
         logits[GraphActions.EDGE_CLASS_KEY][~masks[GraphActions.EDGE_CLASS_KEY]] = (
             -float("inf")
         )
@@ -601,16 +604,23 @@ class DiscreteGraphPolicyEstimator(Estimator):
 
         # Check if no possible node can be added,
         # and assert that action type cannot be ADD_NODE
-        no_possible_node = torch.isneginf(logits[GraphActions.NODE_CLASS_KEY]).all(-1)
+        no_possible_node_class = torch.isneginf(logits[GraphActions.NODE_CLASS_KEY]).all(
+            -1
+        )
+        no_possible_node_index = torch.isneginf(logits[GraphActions.NODE_INDEX_KEY]).all(
+            -1
+        )
         assert torch.isneginf(
             logits[GraphActions.ACTION_TYPE_KEY][
-                no_possible_node, GraphActionType.ADD_NODE
+                no_possible_node_class & no_possible_node_index, GraphActionType.ADD_NODE
             ]
         ).all()
-        logits[GraphActions.NODE_CLASS_KEY][no_possible_node] = 0.0
+        logits[GraphActions.NODE_CLASS_KEY][no_possible_node_class] = 0.0
+        logits[GraphActions.NODE_INDEX_KEY][no_possible_node_index] = 0.0
 
         probs = {}
         for key in logits.keys():
+            assert isinstance(key, str)
             probs[key] = self.logits_to_probs(
                 logits[key],
                 masks[key],
@@ -619,7 +629,9 @@ class DiscreteGraphPolicyEstimator(Estimator):
                 epsilon=epsilon[key],
             )
 
-        return GraphActionDistribution(probs=TensorDict(probs))
+        return GraphActionDistribution(
+            probs=TensorDict(probs), is_backward=self.is_backward
+        )
 
     @staticmethod
     def logits_to_probs(
