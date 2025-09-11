@@ -905,7 +905,9 @@ class GraphStates(States):
             self.data.size, max_possible_edges, dtype=torch.bool, device=self.device
         )
         can_add_node = torch.ones(self.data.size, dtype=torch.bool, device=self.device)
-        node_class_masks = torch.ones(self.data.size, self.num_node_classes, dtype=torch.bool, device=self.device)
+        node_class_masks = torch.ones(
+            self.data.size, self.num_node_classes, dtype=torch.bool, device=self.device
+        )
 
         for i, graph in enumerate(self.data.flat):
             if graph.x is None:
@@ -913,7 +915,7 @@ class GraphStates(States):
             if self.max_nodes is not None and graph.x.size(0) >= self.max_nodes:
                 can_add_node[i] = False
             node_class_masks[i] = can_add_node[i]
-    
+
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
             edge_masks[i, len(ei0) :] = False
 
@@ -930,7 +932,9 @@ class GraphStates(States):
                 edge_masks[i, : len(edge_idx)][edge_idx] = False
 
         edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
-        node_class_masks = node_class_masks.view(*self.batch_shape, self.num_node_classes)
+        node_class_masks = node_class_masks.view(
+            *self.batch_shape, self.num_node_classes
+        )
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
         action_type = torch.ones(
