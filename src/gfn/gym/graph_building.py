@@ -47,7 +47,7 @@ class GraphBuilding(GraphEnv):
             state_evaluator: A callable that computes rewards for final states.
             is_directed: Whether the graph is directed.
             max_nodes: The maximum number of nodes in the graph.
-                If None (default), the maximum number of nodes is unbounded.
+                If None (default), the number of nodes is unbounded.
             device: The device to run computations on.
             s0: The initial state.
             sf: The sink state.
