@@ -8,7 +8,6 @@ import torch.nn as nn
 from linear_attention_transformer import LinearAttentionTransformer
 from tensordict import TensorDict
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
-from torchrl.modules import NoisyLinear
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.common import is_int_dtype
@@ -41,7 +40,7 @@ class MLP(nn.Module):
         activation_fn: Literal["relu", "leaky_relu", "tanh", "elu"] = "relu",
         trunk: Optional[nn.Module] = None,
         add_layer_norm: bool = False,
-        noise_std: float = 0.5,
+        std_init: float = 0.1,
     ):
         """Initializes a new MLP.
 
@@ -55,7 +54,7 @@ class MLP(nn.Module):
             activation_fn: The activation function to use.
             trunk: A custom trunk to use. If None, a new trunk will be created.
             add_layer_norm: Whether to add layer normalization to the hidden layers.
-            noise_std: The standard deviation of the noise.
+            noise_std: The inital value of the noise standard deviation for noisy layers.
         """
         super().__init__()
         self._input_dim = input_dim
@@ -63,7 +62,7 @@ class MLP(nn.Module):
 
         # Validate hidden layer inputs
         assert n_noisy_layers >= 0, "n_noisy_layers must be non-negative (>= 0)."
-        assert noise_std > 0, "noise_std must be positive (> 0)."
+        assert std_init > 0, "std_init must be positive (> 0)."
 
         # If a trunk is provided, the MLP will be a wrapper around the trunk.
         if trunk is not None:
@@ -111,7 +110,7 @@ class MLP(nn.Module):
 
             for layer_type in hidden_layer_types:
                 if isinstance(layer_type, NoisyLinear):
-                    arch.append(layer_type(hidden_dim, hidden_dim, noise_std=noise_std))
+                    arch.append(layer_type(hidden_dim, hidden_dim, std_init=std_init))
                 else:
                     arch.append(layer_type(hidden_dim, hidden_dim))
 
@@ -129,7 +128,7 @@ class MLP(nn.Module):
             self.last_layer = nn.Linear(self._hidden_dim, output_dim)
         else:
             self.last_layer = NoisyLinear(
-                self._hidden_dim, output_dim, noise_std=noise_std  # type: ignore
+                self._hidden_dim, output_dim, std_init=std_init  # type: ignore
             )
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
@@ -785,3 +784,130 @@ class GraphActionUniform(nn.Module):
             },
             batch_size=len(states_tensor),
         )
+
+
+class NoisyLinear(nn.Linear):
+    """Noisy Linear Layer.
+
+    Presented in "Noisy Networks for Exploration", https://arxiv.org/abs/1706.10295v3
+
+    A Noisy Linear Layer is a linear layer with parametric noise added to the weights. This induced stochasticity can
+    be used in RL networks for the agent's policy to aid efficient exploration. The parameters of the noise are learned
+    with gradient descent along with any other remaining network weights. Factorized Gaussian
+    noise is the type of noise usually employed.
+
+    Taken from torchrl v0.9.2.
+
+    Args:
+        in_features (int): input features dimension
+        out_features (int): out features dimension
+        bias (bool, optional): if ``True``, a bias term will be added to the matrix multiplication: Ax + b.
+            Defaults to ``True``
+        device (DEVICE_TYPING, optional): device of the layer.
+            Defaults to ``"cpu"``
+        dtype (torch.dtype, optional): dtype of the parameters.
+            Defaults to ``None`` (default pytorch dtype)
+        std_init (scalar, optional): initial value of the Gaussian standard deviation before optimization.
+            Defaults to ``0.1``
+
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        std_init: float = 0.1,
+    ):
+        nn.Module.__init__(self)
+        self.in_features = int(in_features)
+        self.out_features = int(out_features)
+        self.std_init = std_init
+
+        self.weight_mu = nn.Parameter(
+            torch.empty(
+                out_features,
+                in_features,
+                device=device,
+                dtype=dtype,
+                requires_grad=True,
+            )
+        )
+        self.weight_sigma = nn.Parameter(
+            torch.empty(
+                out_features,
+                in_features,
+                device=device,
+                dtype=dtype,
+                requires_grad=True,
+            )
+        )
+        self.register_buffer(
+            "weight_epsilon",
+            torch.empty(out_features, in_features, device=device, dtype=dtype),
+        )
+        if bias:
+            self.bias_mu = nn.Parameter(
+                torch.empty(
+                    out_features,
+                    device=device,
+                    dtype=dtype,
+                    requires_grad=True,
+                )
+            )
+            self.bias_sigma = nn.Parameter(
+                torch.empty(
+                    out_features,
+                    device=device,
+                    dtype=dtype,
+                    requires_grad=True,
+                )
+            )
+            self.register_buffer(
+                "bias_epsilon",
+                torch.empty(out_features, device=device, dtype=dtype),
+            )
+        else:
+            self.bias_mu = None
+        self.reset_parameters()
+        self.reset_noise()
+
+    def reset_parameters(self) -> None:
+        mu_range = 1 / math.sqrt(self.in_features)
+        self.weight_mu.data.uniform_(-mu_range, mu_range)
+        self.weight_sigma.data.fill_(self.std_init / math.sqrt(self.in_features))
+        if self.bias_mu is not None:
+            self.bias_mu.data.uniform_(-mu_range, mu_range)
+            self.bias_sigma.data.fill_(self.std_init / math.sqrt(self.out_features))
+
+    def reset_noise(self) -> None:
+        epsilon_in = self._scale_noise(self.in_features)
+        epsilon_out = self._scale_noise(self.out_features)
+        self.weight_epsilon.copy_(epsilon_out.outer(epsilon_in))  # type: ignore
+        if self.bias_mu is not None:
+            self.bias_epsilon.copy_(epsilon_out)  # type: ignore
+
+    def _scale_noise(self, size: int | torch.Size) -> torch.Tensor:
+        if isinstance(size, int):
+            size = (size,)  # type: ignore
+        x = torch.randn(*size, device=self.weight_mu.device)
+        return x.sign().mul_(x.abs().sqrt_())
+
+    @property
+    def weight(self) -> torch.Tensor:
+        if self.training:
+            return self.weight_mu + self.weight_sigma * self.weight_epsilon  # type: ignore
+        else:
+            return self.weight_mu
+
+    @property
+    def bias(self) -> torch.Tensor | None:
+        if self.bias_mu is not None:
+            if self.training:
+                return self.bias_mu + self.bias_sigma * self.bias_epsilon  # type: ignore
+            else:
+                return self.bias_mu
+        else:
+            return None
