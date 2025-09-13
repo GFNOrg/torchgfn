@@ -45,9 +45,12 @@ from gfn.states import DiscreteStates
 from gfn.modules import DiscretePolicyEstimator, GFNModule
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.gflownet.trajectory_balance import TBGFlowNet
+from gfn.gflownet.sub_trajectory_balance import SubTBGFlowNet
 from gfn.samplers import Sampler
 from gfn.containers import ReplayBuffer
 from gfn.containers.trajectories import Trajectories
+from gfn.utils.modules import MLP
+from gfn.modules import ScalarEstimator
 
 
 class RNGEnv(DiscreteEnv):
@@ -240,7 +243,6 @@ class ExpertReplayBuffer(ReplayBuffer):
     
     def add(self, training_objects):
         """No-op add operation - keeps the expert trajectories unchanged."""
-        # Do nothing - we want to keep only the expert trajectories
         pass
     
     def __len__(self):
@@ -379,6 +381,7 @@ class LLMGFNModule(DiscretePolicyEstimator):
         input_ids = states.tensor
         attention_mask = (input_ids != self.tokenizer.pad_token_id).long()
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+        outputs.logits = outputs.logits[..., :self.tokenizer.vocab_size]  # remove extra tokens
 
         # Select logits corresponding to the last *non-pad* token.
         seq_lengths = attention_mask.sum(dim=1)  # (batch,)
@@ -482,6 +485,7 @@ def evaluate_model(env, trajectories, tokenizer, step_name="Evaluation"):
             'valid_numbers': [],
             'success_rate': 0.0,
             'unique_count': 0,
+            'unique_numbers': [],
             'mean': 0.0,
             'std': 0.0,
             'total_valid': 0,
@@ -506,9 +510,10 @@ def main():
     
     parser = argparse.ArgumentParser(description="Train GFlowNet to generate random numbers 0-100")
     parser.add_argument("--device", default="auto", help="Device to use (auto, cpu, cuda)")
-    parser.add_argument("--model_name", default="gpt2", help="Model name from HuggingFace")
+    parser.add_argument("--model_name", default="EleutherAI/gpt-j-6B", help="Model name from HuggingFace")
     parser.add_argument("--n_steps", type=int, default=400, help="Number of training steps")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=8, help="Number of gradient accumulation steps")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
     parser.add_argument("--max_length", type=int, default=3, help="Max tokens to generate")
     parser.add_argument("--eval_samples", type=int, default=100, help="Number of samples for evaluation")
@@ -519,7 +524,7 @@ def main():
     parser.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha scaling parameter")
     parser.add_argument("--lora_dropout", type=float, default=0.1, help="LoRA dropout probability")
     parser.add_argument("--target_modules", nargs="+", default=["c_attn", "c_proj"], 
-                       help="Target modules for LoRA adaptation (default for GPT-2)")
+                       help="Target modules for LoRA adaptation (default for GPT-J)")
     
     # Optimizer and scheduler arguments
     parser.add_argument("--weight_decay", type=float, default=0.00, help="Weight decay for AdamW optimizer")
@@ -538,6 +543,7 @@ def main():
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     else:
         device = args.device
+    torch.set_default_device(device)
     print(f"Using device: {device}")
     
     # Model and tokenizer setup
@@ -547,7 +553,7 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
     
     # Load base model
-    model = AutoModelForCausalLM.from_pretrained(args.model_name).to(device)
+    model = AutoModelForCausalLM.from_pretrained(args.model_name, use_safetensors=True).to(device)
     
     if args.use_lora:
         # Configure LoRA
@@ -556,7 +562,7 @@ def main():
             r=args.lora_r,
             lora_alpha=args.lora_alpha,
             lora_dropout=args.lora_dropout,
-            target_modules=args.target_modules,
+            #target_modules=args.target_modules,
             bias="none",
         )
         
@@ -580,8 +586,13 @@ def main():
     state_dim = env.total_length
     pf_module = LLMGFNModule(model, tokenizer, state_dim, is_backward=False)
     pb_module = LLMGFNModule(model, tokenizer, state_dim, is_backward=True)
+    module_logF = MLP(
+        input_dim=state_dim,
+        output_dim=1,  # Important for ScalarEstimators!
+    )
+    logF_module = ScalarEstimator(module_logF)
 
-    gflownet = TBGFlowNet(pf_module, pb_module)
+    gflownet = SubTBGFlowNet(pf_module, pb_module, logF_module) #TBGFlowNet(pf_module, pb_module)
     sampler = Sampler(pf_module)
     
     # Initialize replay buffer if requested
@@ -595,7 +606,6 @@ def main():
         replay_buffer = ExpertReplayBuffer(
             env,
             expert_trajectories,
-            capacity=args.batch_size * 4,  # Use 4x batch size as capacity (ignored)
             prioritized_capacity=True,
             prioritized_sampling=True,
         )
@@ -635,7 +645,10 @@ def main():
         scheduler = None
     
     param_count = sum(p.numel() for p in trainable_params)
-    print(f"Training for {args.n_steps} steps with batch size {args.batch_size}")
+    effective_batch_size = args.batch_size * args.gradient_accumulation_steps
+    print(f"Training for {args.n_steps} steps with batch size {args.batch_size} (effective batch size: {effective_batch_size})")
+    if args.gradient_accumulation_steps > 1:
+        print(f"Using gradient accumulation: {args.gradient_accumulation_steps} steps per optimizer update")
     print(f"Optimizing {param_count:,} trainable parameters across {len(trainable_params)} parameter groups")
     print(f"Using AdamW optimizer with lr={args.lr}, weight_decay={args.weight_decay}")
     print(f"Learning rate scheduler: {args.scheduler_type}, warmup_steps={args.warmup_steps}")
@@ -665,37 +678,52 @@ def main():
     # Initialize loss tracking
     loss_history = []
     
-    # Training Loop
+    # Training Loop with Gradient Accumulation
+    optimizer.zero_grad()
+    accumulated_loss = 0.0
+    grad_norm = 0.0
+    
     for step in range(args.n_steps):
-        # Sample trajectories using gflownet for compatibility with replay buffer
-        trajectories = gflownet.sample_trajectories(env, n=args.batch_size, save_logprobs=True)
-        training_samples = gflownet.to_training_samples(trajectories)
+        step_loss = 0.0
         
-        # Use replay buffer if enabled
-        if args.use_buffer and replay_buffer is not None:
-            with torch.no_grad():
-                replay_buffer.add(training_samples)
-                # After some initial steps, use half fresh samples and half from buffer
-                if step > 10:
-                    training_samples = training_samples[: args.batch_size // 2]
-                    buffer_samples = replay_buffer.sample(n_samples=args.batch_size // 2)
-                    training_samples.extend(buffer_samples)  # type: ignore
+        # Accumulate gradients over multiple mini-batches
+        for accum_step in range(args.gradient_accumulation_steps):
+            # Sample trajectories using gflownet for compatibility with replay buffer
+            trajectories = gflownet.sample_trajectories(env, n=args.batch_size, save_logprobs=True)
+            training_samples = gflownet.to_training_samples(trajectories)
+            
+            # Use replay buffer if enabled
+            if args.use_buffer and replay_buffer is not None:
+                with torch.no_grad():
+                    replay_buffer.add(training_samples)
+                    # After some initial steps, use half fresh samples and half from buffer
+                    if step > 10:
+                        training_samples = training_samples[: args.batch_size // 2]
+                        buffer_samples = replay_buffer.sample(n_samples=args.batch_size // 2)
+                        training_samples.extend(buffer_samples)  # type: ignore
+            
+            # Calculate loss with recalculated logprobs for buffer compatibility
+            recalculate_logprobs = args.use_buffer and replay_buffer is not None
+            loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=recalculate_logprobs)
+            
+            # Scale loss by accumulation steps to maintain same effective learning rate
+            loss = loss / args.gradient_accumulation_steps
+            step_loss += loss.item()
+            
+            # Backward pass (gradients accumulate)
+            loss.backward()
         
-        # Calculate loss with recalculated logprobs for buffer compatibility
-        recalculate_logprobs = args.use_buffer and replay_buffer is not None
-        loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=recalculate_logprobs)
-        
-        # Store loss for plotting
-        loss_history.append(loss.item())
-
-        optimizer.zero_grad()
-        loss.backward()
+        # Store total loss for this step for plotting
+        loss_history.append(step_loss)
+        accumulated_loss += step_loss
         
         # Gradient clipping for stability
         if args.max_grad_norm > 0:
             grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, args.max_grad_norm)
         
+        # Optimizer step after accumulating gradients
         optimizer.step()
+        optimizer.zero_grad()
         
         # Update learning rate scheduler
         if scheduler is not None:
@@ -704,8 +732,10 @@ def main():
         if step % 1 == 0:
             current_lr = optimizer.param_groups[0]['lr']
             training_results = evaluate_model(env, trajectories, tokenizer, "Training Evaluation")
+            effective_batch_size = args.batch_size * args.gradient_accumulation_steps
             buffer_info = f", buffer_size = {len(replay_buffer) if replay_buffer else 0}" if args.use_buffer else ""
-            print(f"Step {step:4d}: loss = {loss.item():.4f}, lr = {current_lr:.6f}, grad_norm = {grad_norm:.4f}, success_rate = {training_results['success_rate']:.1%}, unique_count = {training_results['unique_count']}{buffer_info}")
+            accum_info = f", grad_accum = {args.gradient_accumulation_steps}, eff_bs = {effective_batch_size}" if args.gradient_accumulation_steps > 1 else ""
+            print(f"Step {step:4d}: loss = {step_loss:.4f}, lr = {current_lr:.6f}, grad_norm = {grad_norm:.4f}, success_rate = {training_results['success_rate']:.1%}, unique_count = {training_results['unique_count']}{buffer_info}{accum_info}")
 
     # Post-training evaluation
     with torch.no_grad():
@@ -725,7 +755,8 @@ def main():
     os.makedirs('plots', exist_ok=True)
     
     # Save the plot with a descriptive filename
-    plot_filename = f'plots/loss_plot_steps{args.n_steps}_bs{args.batch_size}_lr{args.lr}.png'
+    effective_bs = args.batch_size * args.gradient_accumulation_steps
+    plot_filename = f'plots/loss_plot_steps{args.n_steps}_bs{args.batch_size}_effbs{effective_bs}_lr{args.lr}.png'
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     print(f"\nLoss plot saved to: {plot_filename}")
     
