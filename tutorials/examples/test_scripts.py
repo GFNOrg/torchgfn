@@ -19,6 +19,9 @@ from .train_discreteebm import main as train_discreteebm_main
 from .train_graph_ring import main as train_graph_ring_main
 from .train_graph_triangle import main as train_graph_triangle_main
 from .train_hypergrid import main as train_hypergrid_main
+from .train_hypergrid_exploration_examples import (
+    main as train_hypergrid_exploration_main,
+)
 from .train_hypergrid_gafn import main as train_hypergrid_gafn_main
 from .train_hypergrid_local_search import main as train_hypergrid_local_search_main
 from .train_hypergrid_simple import main as train_hypergrid_simple_main
@@ -78,6 +81,25 @@ class HypergridArgs(CommonArgs):
     R2: float = 2.0
     replay_buffer_size: int = 0
     timing: bool = True
+
+
+@dataclass
+class HypergridExplorationArgs:
+    ndim: int = 2
+    height: int = 8
+    lr: float = 1e-3
+    lr_logz: float = 1e-1
+    batch_size: int = 16
+    n_iterations: int = 10
+    uniform_pb: bool = False
+    validation_interval: int = 5
+    validation_samples: int = 100
+    n_seeds: int = 3
+    R1: float = 0.5
+    R2: float = 2.0
+    R0: float = 0.1
+    no_cuda: bool = True
+    plot: bool = False
 
 
 @dataclass
@@ -676,3 +698,9 @@ def test_conditional_loss_types():
 
     # All loss types should produce finite losses
     assert all(0 < loss < float("inf") for loss in losses)
+
+
+def test_hypergrid_exploration_smoke():
+    """Smoke test for the hypergrid exploration training script."""
+    args = asdict(HypergridExplorationArgs())  # type: ignore
+    train_hypergrid_exploration_main(**args)  # Runs without errors.
