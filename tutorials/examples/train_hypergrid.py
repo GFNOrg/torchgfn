@@ -33,6 +33,7 @@ from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
+from gfn.containers.replay_buffer_manager import ReplayBufferManager
 from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
@@ -192,16 +193,16 @@ def average_gradients(model):
         param.grad.data /= size
 
 
-def average_models(model):
+def average_models(model, group=None):
     """Averages model weights across all ranks."""
     world_size = float(dist.get_world_size())
     for param in model.parameters():
         param_tensor = param.data.clone()  # clone to avoid inplace operations
-        dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
+        dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=group)
         param.data = param_tensor / world_size
 
 
-def initialize_distributed_compute(dist_backend: str = "ccl"):
+def initialize_distributed_compute():
     """Initalizes distributed compute using either ccl or mpi backends."""
     # global my_rank  # TODO: remove globals?
     # global my_size  # TODO: remove globals?
@@ -210,7 +211,7 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
     print("+ Initalizing distributed compute, PMI_SIZE={}".format(pmi_size))
 
     if pmi_size > 1:
-        if dist_backend == "ccl":
+        if args.dist_backend == "ccl":
             print("+ CCL backend requested...")
             try:
                 # Note - intel must be imported before oneccl!
@@ -220,15 +221,20 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
                     "import oneccl_bindings_for_pytorch failed, {}".format(e)
                 )
 
-        elif dist_backend == "mpi":
+        elif args.dist_backend == "mpi":
             print("+ MPI backend requested...")
             assert torch.distributed.is_mpi_available()
             try:
                 import torch_mpi  # noqa: F401
             except ImportError as e:
                 raise Exception("import torch_mpi failed, {}".format(e))
+
+        elif args.dist_backend == "gloo":
+            print("+ Gloo backend requested...")
+            assert torch.distributed.is_gloo_available()
+
         else:
-            raise Exception(f"Invalid backend requested: {dist_backend}")
+            raise Exception(f"Invalid backend requested: {args.dist_backend}")
 
         os.environ["RANK"] = os.environ.get("PMI_RANK", "0")
         os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
@@ -243,37 +249,89 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
             raise ValueError("RANK is not set")
 
         dist.init_process_group(
-            backend=dist_backend,
+            backend=args.dist_backend,
             init_method="env://",
             world_size=int(world_size),
             rank=int(rank),
             timeout=datetime.timedelta(minutes=5),
         )
 
+        dist.barrier()
+        print(
+            "+ Distributed compute initialized, backend = {}".format(args.dist_backend)
+        )
+
         my_rank = dist.get_rank()  # Global!
         my_size = dist.get_world_size()  # Global!
 
+        train_size = my_size - args.num_remote_buffers
+
+        assert (
+            train_size >= args.num_remote_buffers
+        )  # make sure that we have atmost 1 remote buffer per training rank.
+        print("num_train = ", train_size)
+        print("args.num_remote_buffers = ", args.num_remote_buffers)
+
         # for now, let us enforce that each agent gets equal number of ranks.
         # TODO: later, we can relax this condition.
-        assert my_size % args.num_agent_groups == 0
-        agent_group_size = my_size // args.num_agent_groups
+        assert train_size % args.num_agent_groups == 0
+        agent_group_size = train_size // args.num_agent_groups
         agent_group_rank_list = [
             list(range(i * agent_group_size, (i + 1) * agent_group_size))
             for i in range(args.num_agent_groups)
         ]
-        print(agent_group_rank_list)
+        print(f"Agent group ranks: {agent_group_rank_list}")
         agent_group_list = [
             dist.new_group(
                 agent_group_rank_list[i],
-                backend=dist_backend,
+                backend=args.dist_backend,
                 timeout=datetime.timedelta(minutes=5),
             )
             for i in range(args.num_agent_groups)
         ]
 
-        print(f"+ My rank: {my_rank} size: {my_size}")
+        # all training ranks in one global group
+        training_ranks = [r for r in range(train_size)]  # e.g., 0..train_size-1
+        train_global_group = dist.new_group(
+            ranks=training_ranks,
+            backend=args.dist_backend,
+            timeout=datetime.timedelta(minutes=5),
+        )
 
-        return (my_rank, my_size, agent_group_size, agent_group_list)
+        buffer_group = None
+        assigned_buffer = None
+        if args.num_remote_buffers > 0:
+            buffer_ranks = list(range(train_size, train_size + args.num_remote_buffers))
+            buffer_group = dist.new_group(
+                buffer_ranks,
+                backend=args.dist_backend,
+                timeout=datetime.timedelta(minutes=5),
+            )
+            print(f"Buffer group ranks: {buffer_ranks}")
+
+            # Each training rank gets assigned to a buffer rank
+
+            if my_rank < (train_size):
+                assigned_buffer = train_size + (my_rank % args.num_remote_buffers)
+
+            print(f"+ My rank: {my_rank} size: {my_size}")
+            if my_rank < (train_size):
+                print(f"  -> Training group, assigned buffer rank = {assigned_buffer}")
+            else:
+                print("  -> Buffer group")
+
+        dist.barrier()
+        print("+ Distributed compute initialized, rank = ", my_rank)
+
+        return (
+            my_rank,
+            train_size,
+            agent_group_size,
+            agent_group_list,
+            train_global_group,
+            assigned_buffer,
+            buffer_group,
+        )
 
 
 class DistributedErrorHandler:
@@ -374,6 +432,7 @@ def gather_distributed_data(
     world_size: int | None = None,
     rank: int | None = None,
     verbose: bool = False,
+    group=None,
 ) -> torch.Tensor | None:
     """
     Gather data from all processes in a distributed setting.
@@ -417,8 +476,8 @@ def gather_distributed_data(
         print(
             "+ gather of local_batch_size={} to batch_size_list".format(local_batch_size)
         )
-    dist.gather(local_batch_size, gather_list=batch_size_list, dst=0)
-    dist.barrier()  # Add synchronization
+    dist.gather(local_batch_size, gather_list=batch_size_list, dst=0, group=group)
+    dist.barrier(group=group)  # Add synchronization
 
     # Pad local tensor to maximum size.
     if verbose:
@@ -434,7 +493,7 @@ def gather_distributed_data(
 
     # Broadcast max_size to all processes for padding
     max_batch_size_tensor = torch.tensor(max_batch_size, device=local_tensor.device)
-    dist.broadcast(max_batch_size_tensor, src=0)
+    dist.broadcast(max_batch_size_tensor, src=0, group=group)
 
     # Pad local tensor to maximum size.
     if local_tensor.shape[0] < max_batch_size:
@@ -461,8 +520,8 @@ def gather_distributed_data(
     if verbose:
         print("+ gathering all tensors from world_size={}".format(world_size))
         print("rank={}, tensor_list={}".format(rank, tensor_list))
-    dist.gather(local_tensor, gather_list=tensor_list, dst=0)
-    dist.barrier()  # Add synchronization
+    dist.gather(local_tensor, gather_list=tensor_list, dst=0, group=group)
+    dist.barrier(group=group)  # Add synchronization
 
     # Only rank 0 processes the results
     if rank == 0:
@@ -857,9 +916,15 @@ def main(args):  # noqa: C901
 
     # Initialize distributed compute.
     if args.distributed:
-        my_rank, my_size, agent_group_size, agent_group_list = (
-            initialize_distributed_compute()
-        )
+        (
+            my_rank,
+            train_size,
+            agent_group_size,
+            agent_group_list,
+            train_global_group,
+            assigned_buffer,
+            buffer_group,
+        ) = initialize_distributed_compute()
         my_rank = dist.get_rank()
         world_size = torch.distributed.get_world_size()
         my_agent_group_id = my_rank // agent_group_size
@@ -867,12 +932,17 @@ def main(args):  # noqa: C901
         print(
             f"agent_group_size, my_agent_group_id = {agent_group_size, my_agent_group_id}"
         )
+        print(f"Rank = {my_rank}, assigned_buffer = {assigned_buffer}")
     else:
         world_size = 1  # Single machine.
         my_rank = 0  # Single machine.
         agent_group_list = my_agent_group_id = None
 
     set_seed(args.seed + my_rank)
+
+    if args.distributed and my_rank >= train_size:
+        replay_buffer_manager = ReplayBufferManager(my_rank)
+        replay_buffer_manager.run()
 
     # Initialize the environment.
     env = HyperGrid(
@@ -911,6 +981,8 @@ def main(args):  # noqa: C901
                 env,
                 capacity=args.replay_buffer_size,
                 prioritized_capacity=False,
+                remote_manager_rank=assigned_buffer,
+                remote_buffer_freq=1,
             )
 
     gflownet = gflownet.to(device)
@@ -984,7 +1056,7 @@ def main(args):  # noqa: C901
         timing, "Pre-processing_barrier", enabled=(args.timing and args.distributed)
     ):
         if args.distributed and args.timing:
-            dist.barrier()
+            dist.barrier(group=train_global_group)
 
     # Training loop.
     pbar = trange(n_iterations)
@@ -1048,7 +1120,7 @@ def main(args):  # noqa: C901
             timing, "barrier 0", enabled=(args.timing and args.distributed)
         ) as bar0_timer:
             if args.distributed and args.timing:
-                dist.barrier()
+                dist.barrier(group=train_global_group)
 
         # Backpropagation.
         with Timer(timing, "loss_backward", enabled=args.timing) as loss_backward_timer:
@@ -1063,7 +1135,7 @@ def main(args):  # noqa: C901
             timing, "barrier 1", enabled=(args.timing and args.distributed)
         ) as bar1_timer:
             if args.distributed and args.timing:
-                dist.barrier()
+                dist.barrier(group=train_global_group)
 
         # Model averaging.
         with Timer(
@@ -1071,7 +1143,7 @@ def main(args):  # noqa: C901
         ) as model_averaging_timer:
             if args.distributed and (iteration % args.average_every == 0):
                 print("before averaging model, iteration = ", iteration)
-                average_models(gflownet)
+                average_models(gflownet, group=train_global_group)
                 print("after averaging model, iteration = ", iteration)
 
         # Calculate how long this iteration took.
@@ -1110,7 +1182,9 @@ def main(args):  # noqa: C901
                     assert visited_terminating_states is not None
                     # Gather all visited terminating states from all nodes.
                     gathered_visited_terminating_states = gather_distributed_data(
-                        visited_terminating_states.tensor
+                        visited_terminating_states.tensor,
+                        group=train_global_group,
+                        world_size=train_size,
                     )
                 except Exception as e:
                     print("Process {}: Caught error: {}".format(my_rank, e))
@@ -1185,8 +1259,9 @@ def main(args):  # noqa: C901
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
             if args.distributed and args.timing:
-                dist.barrier()
+                dist.barrier(group=train_global_group)
 
+    print("+ Finished all iterations")
     total_time = time.time() - time_start
     if args.timing:
         timing["total_rest_time"] = [total_time - sum(sum(v) for k, v in timing.items())]
@@ -1194,7 +1269,7 @@ def main(args):  # noqa: C901
     timing["total_time"] = [total_time]
 
     if args.distributed:
-        dist.barrier()
+        dist.barrier(group=train_global_group)
 
     # Log the final timing results.
     if args.timing:
@@ -1208,11 +1283,11 @@ def main(args):  # noqa: C901
 
         if args.distributed:
             # Gather timing data from all ranks
-            all_timings = [None] * world_size
-            dist.all_gather_object(all_timings, timing)
+            all_timings = [None] * train_size
+            dist.all_gather_object(all_timings, timing, group=train_global_group)
 
             if my_rank == 0:
-                report_timing(all_timings, world_size)
+                report_timing(all_timings, train_size)
         else:
             # Single machine case
             # Header
@@ -1271,6 +1346,18 @@ if __name__ == "__main__":
         "--distributed",
         action="store_true",
         help="Initializes distributed computation (torch.distributed)",
+    )
+    parser.add_argument(
+        "--num_remote_buffers",
+        type=int,
+        default=1,
+        help="Number of remote replay buffer managers (only if using distributed computation)",
+    )
+    parser.add_argument(
+        "--dist-backend",
+        type=str,
+        default="gloo",
+        help="Distributed backend to use: gloo, ccl or mpi",
     )
 
     # Environment settings.
