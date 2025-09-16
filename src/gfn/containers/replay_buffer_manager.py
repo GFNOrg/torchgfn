@@ -9,13 +9,18 @@ from .message import Message, MessageType
 class ReplayBufferManager:
 
     def __init__(
-        self, rank: int, reward_function: Optional[Callable[[object], float]] = None
+        self,
+        rank: int,
+        num_training_ranks: int,
+        scoring_function: Optional[Callable[[object], float]] = None,
     ):
         self.rank = rank
         self.is_running = True
-        self.reward_function = reward_function or self._default_reward
+        self.exit_counter = 0
+        self.num_training_ranks = num_training_ranks
+        self.scoring_function = scoring_function or self.default_scoring_function
 
-    def _default_reward(self, obj) -> float:
+    def default_scoring_function(self, obj) -> float:
         """Default reward function if none provided"""
         return float(len(str(obj)) * 0.1)
 
@@ -27,10 +32,17 @@ class ReplayBufferManager:
             sender_rank, msg, msg_data_len = self._recv_object()
 
             if msg.type == MessageType.DATA:
-                reward = self.reward_function(msg.data)
+                reward = self.scoring_function(msg.data)
                 reward_tensor = torch.tensor([reward], dtype=torch.float32)
                 dist.send(reward_tensor, dst=sender_rank)
 
+            elif msg.type == MessageType.EXIT:
+                self.exit_counter = self.exit_counter + 1
+                if self.exit_counter == self.num_training_ranks:
+                    self.is_running = False
+                    print(
+                        f"Replay buffer manager {self.rank} received exit signals from all training ranks. Exiting."
+                    )
             else:
                 raise ValueError(
                     f"Rank {self.rank} received unknown message type: {msg.type}"
@@ -50,3 +62,16 @@ class ReplayBufferManager:
         # obj_bytes = bytes(byte_tensor.tolist())
         msg = Message.deserialize(byte_tensor)
         return sender_rank, msg, length
+
+    @staticmethod
+    def send_termination_signal(manager_rank: int):
+        """Sends a termination signal to the replay buffer manager."""
+        rank = dist.get_rank()
+        msg = Message(type=MessageType.EXIT, data=None)
+        msg_bytes = msg.serialize()
+        length_tensor = torch.IntTensor([len(msg_bytes)])
+        dist.send(length_tensor, dst=manager_rank)
+        dist.send(msg_bytes, dst=manager_rank)
+        print(
+            f"Rank {rank} sent termination signal to replay buffer manager {manager_rank}."
+        )
