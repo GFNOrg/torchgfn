@@ -129,6 +129,7 @@ def main(args):
                 # TODO: log rewards, conditioning, ...
             )
             buffer_trajectories = bwd_trajectories.reverse_backward_trajectories()
+            buffer_trajectories._log_rewards = terminating_states_container.log_rewards
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, buffer_trajectories, recalculate_all_logprobs=True)
