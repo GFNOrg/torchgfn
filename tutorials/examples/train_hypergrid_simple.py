@@ -131,7 +131,9 @@ def main(args):
             str_info = f"Iter {it + 1}: "
             if "l1_dist" in validation_info:
                 str_info += f"L1 distance={validation_info['l1_dist']:.8f} "
-            str_info += f"modes discovered={len(discovered_modes) / n_pixels_per_mode} "
+            str_info += (
+                f"modes discovered={len(discovered_modes) / n_pixels_per_mode:.3f} "
+            )
             str_info += f"n terminating states {len(visited_terminating_states)}"
             print(str_info)
 
