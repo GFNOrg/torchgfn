@@ -146,7 +146,9 @@ def get_trajectory_pfs(
             valid_actions.tensor
         )  # Using the actions sampled off-policy.
 
-        log_pf_trajectories[action_mask] = valid_log_pf_actions
+        log_pf_trajectories[action_mask] = valid_log_pf_actions.to(
+            log_pf_trajectories.dtype, copy=False
+        )
 
     assert log_pf_trajectories.shape == (
         trajectories.max_length,
@@ -218,7 +220,9 @@ def get_trajectory_pbs(
         valid_states, estimator_outputs
     ).log_prob(valid_actions.tensor)
 
-    log_pb_trajectories[action_mask] = valid_log_pb_actions
+    log_pb_trajectories[action_mask] = valid_log_pb_actions.to(
+        log_pb_trajectories.dtype, copy=False
+    )
 
     assert log_pb_trajectories.shape == (
         trajectories.max_length,
