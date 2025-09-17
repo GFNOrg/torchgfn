@@ -117,8 +117,7 @@ def count_modes(env: Env, visited_terminating_states: DiscreteStates):
 
 
 def calculate_mode_stats(env: Env, verbose: bool = False):
-
-    # Calculate the number of pixels per mode to normalize results.
+    """Calculate the number of pixels per mode to normalize results."""
     n_pixels_in_all_modes = len(count_modes(env, env.all_states))
     n_modes = 2**env.ndim
     n_pixels_per_mode = n_pixels_in_all_modes / n_modes
