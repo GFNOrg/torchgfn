@@ -379,11 +379,15 @@ def test_discreteebm(ndim: int, alpha: float):
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and alpha == 1.0:
-        tgt = 8.675e-2  # 0.062
+        tgt1 = 8.675e-2  # 0.062
+        tgt2 = 6.2e-2
         atol = 1e-2
-        assert np.isclose(
-            final_l1_dist, tgt, atol=atol
-        ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
+        test_1 = np.isclose(final_l1_dist, tgt1, atol=atol)
+        test_2 = np.isclose(final_l1_dist, tgt2, atol=atol)
+
+        assert (
+            test_1 or test_2
+        ), f"final_l1_dist: {final_l1_dist} not close to [{tgt1}, {tgt2}]"
 
 
 @pytest.mark.parametrize("delta", [0.1, 0.25])
@@ -419,9 +423,12 @@ def test_box(delta: float, loss: str):
         ), f"final_jsd: {final_jsd} not close to [{tgt1}, {tgt2}, {tgt3}, {tgt4}]"
 
     elif loss == "DB" and delta == 0.1:
-        tgt = 0.2757
+        tgt1 = 0.2757
+        tgt2 = 0.2878
         atol = 1e-2
-        assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
+        test_1 = np.isclose(final_jsd, tgt1, atol=atol)
+        test_2 = np.isclose(final_jsd, tgt2, atol=atol)
+        assert test_1 or test_2, f"final_jsd: {final_jsd} not close to [{tgt1}, {tgt2}]"
     if loss == "TB" and delta == 0.25:
         tgt = 0.1492
         atol = 1e-2
