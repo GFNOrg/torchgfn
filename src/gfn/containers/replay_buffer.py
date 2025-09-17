@@ -142,6 +142,12 @@ class ReplayBuffer:
         assert self.training_objects is not None
         assert isinstance(training_objects, type(self.training_objects))  # type: ignore
 
+        # Clear fields that must be recomputed for Trajectories and Transitions.
+        if isinstance(training_objects, (Trajectories, Transitions)):
+            training_objects.log_probs = None
+        if isinstance(training_objects, Trajectories):
+            training_objects.estimator_outputs = None
+
         # Adds the objects to the buffer.
         self.training_objects.extend(training_objects)  # type: ignore
 
