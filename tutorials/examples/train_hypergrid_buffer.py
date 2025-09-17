@@ -1,7 +1,12 @@
 #!/usr/bin/env python
-r"""
-In this example, we will use backward sampling from the terminating states to train a GFlowNet.
-To do so, we will use the `TerminatingStateBuffer` to store the terminating states and sample from them.
+"""
+Example script for training a GFlowNet using replay buffers.
+
+This script demonstrates two approaches for off-policy training:
+1. Trajectory buffer: Stores and samples entire trajectories for training.
+2. Terminating state buffer: Stores terminating states, from which backward trajectories are sampled.
+
+Both buffer types can be selected to improve training efficiency and diversity.
 """
 
 import argparse
