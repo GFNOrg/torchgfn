@@ -1,5 +1,9 @@
 from .base import Container
-from .replay_buffer import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
+from .replay_buffer import (
+    NormBasedDiversePrioritizedReplayBuffer,
+    ReplayBuffer,
+    TerminatingStateBuffer,
+)
 from .states_container import StatesContainer
 from .trajectories import Trajectories
 from .transitions import Transitions
@@ -8,6 +12,7 @@ __all__ = [
     "NormBasedDiversePrioritizedReplayBuffer",
     "ReplayBuffer",
     "StatesContainer",
+    "TerminatingStateBuffer",
     "Trajectories",
     "Transitions",
     "Container",

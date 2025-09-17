@@ -19,6 +19,7 @@ from .train_discreteebm import main as train_discreteebm_main
 from .train_graph_ring import main as train_graph_ring_main
 from .train_graph_triangle import main as train_graph_triangle_main
 from .train_hypergrid import main as train_hypergrid_main
+from .train_hypergrid_buffer import main as train_hypergrid_buffer_main
 from .train_hypergrid_exploration_examples import (
     main as train_hypergrid_exploration_main,
 )
@@ -84,21 +85,19 @@ class HypergridArgs(CommonArgs):
 
 
 @dataclass
-class HypergridExplorationArgs:
-    ndim: int = 2
-    height: int = 8
-    lr: float = 1e-3
-    lr_logz: float = 1e-1
-    batch_size: int = 16
-    n_iterations: int = 10
-    uniform_pb: bool = False
+class HypergridBufferArgs(HypergridArgs):
+    buffer_type: str = "terminating_state"
+    buffer_capacity: int = 100
+    prefill: int = 0
+    prioritized_capacity: bool = False
+    prioritized_sampling: bool = False
+
+
+@dataclass
+class HypergridExplorationArgs(HypergridArgs):
     validation_interval: int = 5
     validation_samples: int = 100
     n_seeds: int = 3
-    R1: float = 0.5
-    R2: float = 2.0
-    R0: float = 0.1
-    no_cuda: bool = True
     plot: bool = False
 
 
@@ -490,6 +489,19 @@ def test_hypergrid_simple_smoke_fp64():
     train_hypergrid_simple_main(namespace_args)  # Just ensure it runs without errors.
 
 
+def test_hypergrid_buffer_smoke():
+    """Smoke test for the hypergrid buffer training script."""
+    args = HypergridBufferArgs(
+        batch_size=4,
+        hidden_dim=64,
+        n_hidden=1,
+        n_trajectories=10,  # Small number for smoke test
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_hypergrid_buffer_main(namespace_args)  # Just ensure it runs without errors.
+
+
 def test_hypergrid_gafn_smoke():
     """Smoke test for the GAFN training script."""
     args = HypergridGAFNArgs(
@@ -709,5 +721,7 @@ def test_conditional_loss_types():
 
 def test_hypergrid_exploration_smoke():
     """Smoke test for the hypergrid exploration training script."""
-    args = asdict(HypergridExplorationArgs())  # type: ignore
-    train_hypergrid_exploration_main(**args)  # Runs without errors.
+    args = HypergridExplorationArgs()
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_hypergrid_exploration_main(namespace_args)  # Runs without errors.

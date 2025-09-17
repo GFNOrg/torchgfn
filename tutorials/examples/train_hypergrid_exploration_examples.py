@@ -313,33 +313,19 @@ def train(
     return results
 
 
-def main(
-    ndim: int = 2,
-    height: int = 8,
-    lr: float = 1e-3,
-    lr_logz: float = 1e-1,
-    batch_size: int = 16,
-    n_iterations: int = 1000,
-    uniform_pb: bool = False,
-    validation_interval: int = 100,
-    validation_samples: int = 100,
-    n_seeds: int = 3,
-    R1: float = 0.5,
-    R2: float = 2.0,
-    R0: float = 0.1,
-    no_cuda: bool = False,
-    plot: bool = True,
-):
+def main(args):
     # Setup the Environment.
-    device = torch.device("cuda" if torch.cuda.is_available() and not no_cuda else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
     env = HyperGrid(
-        ndim=ndim,
-        height=height,
+        ndim=args.ndim,
+        height=args.height,
         reward_fn_str="original",
         reward_fn_kwargs={
-            "R0": R0,
-            "R1": R1,
-            "R2": R2,
+            "R0": args.R0,
+            "R1": args.R1,
+            "R2": args.R2,
         },
         device=device,
         calculate_partition=True,
@@ -353,13 +339,13 @@ def main(
         "env": env,
         "preprocessor": preprocessor,
         "device": device,
-        "lr": lr,
-        "lr_logz": lr_logz,
-        "batch_size": batch_size,
-        "n_iterations": n_iterations,
-        "uniform_pb": uniform_pb,
-        "validation_interval": validation_interval,
-        "validation_samples": validation_samples,
+        "lr": args.lr,
+        "lr_logz": args.lr_logz,
+        "batch_size": args.batch_size,
+        "n_iterations": args.n_iterations,
+        "uniform_pb": args.uniform_pb,
+        "validation_interval": args.validation_interval,
+        "validation_samples": args.validation_samples,
     }
 
     # Intalize our four configurations.
@@ -443,7 +429,7 @@ def main(
         "logZ_diff",
     ]
     all_results = pd.DataFrame(columns=cols)  # type: ignore
-    for i, seed in enumerate(range(1234, 1234 + (42 * n_seeds), 42)):
+    for i, seed in enumerate(range(1234, 1234 + (42 * args.n_seeds), 42)):
         for experiment_name, experiment_kwargs in experiments.items():
             these_results = pd.DataFrame(columns=cols)  # type: ignore
             this_experiments_kwargs = {**experiment_kwargs, "seed": seed}
@@ -465,7 +451,7 @@ def main(
             all_results = pd.concat([all_results, these_results])
 
     # Adjust layout and save to home directory.
-    if plot:
+    if args.plot:
         # Create a figure with 3 subplots arranged horizontally
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
 
@@ -518,7 +504,7 @@ def main(
         # Print the result path
         print(f"\nPlot saved successfully to: {output_path}")
         print(
-            f"The figure shows comparison of exploration methods across {n_seeds} seeds."
+            f"The figure shows comparison of exploration methods across {args.n_seeds} seeds."
         )
 
     else:
@@ -598,4 +584,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    main(**args.__dict__)
+    main(args)

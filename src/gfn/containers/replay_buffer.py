@@ -27,7 +27,6 @@ class Container(Protocol):
 
 
 ContainerUnion = Union[Trajectories, Transitions, StatesContainer]
-ValidContainerTypes = (Trajectories, Transitions, StatesContainer)
 
 
 class ReplayBuffer:
@@ -88,7 +87,7 @@ class ReplayBuffer:
             training_objects: The Trajectories, Transitions, or StatesContainer object
                 to add.
         """
-        if not isinstance(training_objects, ValidContainerTypes):
+        if not isinstance(training_objects, ContainerUnion):
             raise TypeError("Must be a container type")
 
         self._add_objs(training_objects)
@@ -142,6 +141,12 @@ class ReplayBuffer:
             self.initialize(training_objects)
         assert self.training_objects is not None
         assert isinstance(training_objects, type(self.training_objects))  # type: ignore
+
+        # Clear fields that must be recomputed for Trajectories and Transitions.
+        if isinstance(training_objects, (Trajectories, Transitions)):
+            training_objects.log_probs = None
+        if isinstance(training_objects, Trajectories):
+            training_objects.estimator_outputs = None
 
         # Adds the objects to the buffer.
         self.training_objects.extend(training_objects)  # type: ignore
@@ -262,7 +267,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             training_objects: The Trajectories, Transitions, or StatesContainer object
                 to add.
         """
-        if not isinstance(training_objects, ValidContainerTypes):
+        if not isinstance(training_objects, ContainerUnion):
             raise TypeError("Must be a container type")
 
         to_add = len(training_objects)
@@ -359,3 +364,38 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             # If any training object remain after filtering, add them.
             if len(training_objects):
                 self._add_objs(training_objects)
+
+
+class TerminatingStateBuffer(ReplayBuffer):
+    """A replay buffer for storing terminating states.
+
+    Attributes:
+        env: The environment associated with the containers.
+        capacity: The maximum number of items the buffer can hold.
+        training_objects: The buffer contents (StatesContainer).
+    """
+
+    def __init__(self, env: Env, capacity: int = 1000, **kwargs):
+        super().__init__(env, capacity, **kwargs)
+        self.training_objects = StatesContainer(env)
+
+    def add(self, training_objects: ContainerUnion):
+        # Extract the terminating states from the training objects.
+        if not isinstance(training_objects, ContainerUnion):
+            raise TypeError("Must be a StatesContainer")
+
+        terminating_states = training_objects.terminating_states
+        conditioning = training_objects.conditioning
+        log_rewards = training_objects.log_rewards
+
+        terminating_states_container = StatesContainer(
+            env=self.env,
+            states=terminating_states,
+            conditioning=conditioning,
+            is_terminating=torch.ones(
+                len(terminating_states), dtype=torch.bool, device=self.env.device
+            ),
+            log_rewards=log_rewards,
+        )
+
+        self._add_objs(terminating_states_container)

@@ -1,17 +1,12 @@
 #!/usr/bin/env python
-r"""
-A simplified version of GFlowNet training on the HyperGrid environment, focusing on the core concepts.
-This script implements Trajectory Balance (TB) training with minimal features to aid understanding.
+"""
+Example script for training a GFlowNet using replay buffers.
 
-Example usage:
-python train_hypergrid_simple.py --ndim 2 --height 8 --epsilon 0.1
+This script demonstrates two approaches for off-policy training:
+1. Trajectory buffer: Stores and samples entire trajectories for training.
+2. Terminating state buffer: Stores terminating states, from which backward trajectories are sampled.
 
-Key differences from the full version:
-- Only implements TB loss
-- No replay buffer
-- No wandb integration
-- Simpler architecture with shared trunks
-- Basic command line options
+Both buffer types can be selected to improve training efficiency and diversity.
 """
 
 import argparse
@@ -20,6 +15,7 @@ from typing import cast
 import torch
 from tqdm import tqdm
 
+from gfn.containers import ReplayBuffer, TerminatingStateBuffer, Trajectories
 from gfn.estimators import DiscretePolicyEstimator
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
@@ -41,16 +37,9 @@ def main(args):
     env = HyperGrid(
         ndim=args.ndim,
         height=args.height,
-        reward_fn_str="original",
-        reward_fn_kwargs={
-            "R0": args.R0,
-            "R1": args.R1,
-            "R2": args.R2,
-        },
         device=device,
         calculate_partition=True,
         store_all_states=True,
-        check_action_validity=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
@@ -74,24 +63,35 @@ def main(args):
         module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
     )
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
+    gflownet = gflownet.to(device)
 
     # Feed pf to the sampler.
-    sampler = Sampler(estimator=pf_estimator)
-
-    # Move the gflownet to the GPU.
-    gflownet = gflownet.to(device)
+    forward_sampler = Sampler(estimator=pf_estimator)
+    backward_sampler = Sampler(estimator=pb_estimator)
 
     # Policy parameters have their own LR. Log Z gets dedicated learning rate
     # (typically higher).
     optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=args.lr)
     optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": args.lr_logz})
 
+    buffer_args = {
+        "capacity": args.buffer_capacity,
+        "prioritized_capacity": args.prioritized_capacity,
+        "prioritized_sampling": args.prioritized_sampling,
+    }
+    if args.buffer_type == "trajectory":
+        replay_buffer = ReplayBuffer(env, **buffer_args)
+    elif args.buffer_type == "terminating_state":
+        replay_buffer = TerminatingStateBuffer(env, **buffer_args)
+    else:
+        raise ValueError(f"Invalid buffer type: {args.buffer_type}")
+
     validation_info = {"l1_dist": float("inf")}
     visited_terminating_states = env.states_from_batch_shape((0,))
     discovered_modes = set()
     n_pixels_per_mode = round(env.height / 10) ** env.ndim
     for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
-        trajectories = sampler.sample_trajectories(
+        trajectories = forward_sampler.sample_trajectories(
             env,
             n=args.batch_size,
             save_logprobs=True,
@@ -102,10 +102,45 @@ def main(args):
             cast(DiscreteStates, trajectories.terminating_states)
         )
 
+        with torch.no_grad():
+            replay_buffer.add(trajectories)  # This will add only the terminating states.
+
+        if it < args.prefill or len(replay_buffer) < args.batch_size:
+            continue
+
+        # First, train with on-policy trajectories
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
         loss.backward()
         optimizer.step()
+
+        if args.buffer_type == "trajectory":
+            buffer_trajectories = cast(
+                Trajectories, replay_buffer.sample(n_samples=args.batch_size)
+            )
+        else:  # args.buffer_type == "terminating_state"
+            # Second, train with off-policy trajectories
+            # Terminating states are sampled from the replay buffer, and then
+            # backward trajectories are sampled starting from them using pb_estimator
+            terminating_states_container = replay_buffer.sample(
+                n_samples=args.batch_size
+            )
+            terminating_states = terminating_states_container.states
+            bwd_trajectories = backward_sampler.sample_trajectories(
+                env,
+                states=terminating_states,
+                save_logprobs=False,  # TODO: enable this
+                save_estimator_outputs=False,
+                # TODO: log rewards, conditioning, ...
+            )
+            buffer_trajectories = bwd_trajectories.reverse_backward_trajectories()
+            buffer_trajectories._log_rewards = terminating_states_container.log_rewards
+
+        optimizer.zero_grad()
+        loss = gflownet.loss(env, buffer_trajectories, recalculate_all_logprobs=True)
+        loss.backward()
+        optimizer.step()
+
         if (it + 1) % args.validation_interval == 0:
             validation_info, _ = validate(
                 env,
@@ -151,24 +186,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--height", type=int, default=64, help="Height of the environment"
     )
-    parser.add_argument(
-        "--R0",
-        type=float,
-        default=0.1,
-        help="Environment's R0",
-    )
-    parser.add_argument(
-        "--R1",
-        type=float,
-        default=0.5,
-        help="Environment's R1",
-    )
-    parser.add_argument(
-        "--R2",
-        type=float,
-        default=2.0,
-        help="Environment's R2",
-    )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument(
         "--lr",
@@ -204,7 +221,35 @@ if __name__ == "__main__":
         default=0.0,
         help="Exploration parameter for the sampler",
     )
-
+    parser.add_argument(
+        "--buffer_type",
+        type=str,
+        default="trajectory",
+        choices=["trajectory", "terminating_state"],
+        help="Type of buffer to use",
+    )
+    parser.add_argument(
+        "--buffer_capacity",
+        type=int,
+        default=10000,
+        help="Capacity of the replay buffer",
+    )
+    parser.add_argument(
+        "--prioritized_capacity",
+        action="store_true",
+        help="Use prioritized capacity",
+    )
+    parser.add_argument(
+        "--prioritized_sampling",
+        action="store_true",
+        help="Use prioritized sampling",
+    )
+    parser.add_argument(
+        "--prefill",
+        type=int,
+        default=10,
+        help="Number of iterations to prefill the replay buffer",
+    )
     args = parser.parse_args()
 
     main(args)
