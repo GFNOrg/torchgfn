@@ -266,6 +266,7 @@ class DiscretePolicyEstimator(Estimator):
         sf_bias: float = 0.0,
         temperature: float = 1.0,
         epsilon: float = 0.0,
+        numerical_stability_eps: float = 1e-8,
     ) -> Categorical:
         """Returns a probability distribution given a batch of states and module output.
 
@@ -283,6 +284,8 @@ class DiscretePolicyEstimator(Estimator):
                 if set to 1.0 (default), in which case it's on policy.
             epsilon: With probability epsilon, a random action is chosen. Does nothing
                 if set to 0.0 (default), in which case it's on policy.
+            numerical_stability_eps: Small epsilon to add to the probabilities for
+                stability.
 
         Returns:
             A Categorical distribution over the actions.
@@ -304,13 +307,13 @@ class DiscretePolicyEstimator(Estimator):
         if temperature != 1.0:
             logits /= temperature
 
-        # Set dtype only if default is lower precision (fp16 or bf16)
-        dtype = (
-            torch.float32
-            if torch.get_default_dtype() in (torch.float16, torch.bfloat16)
-            else None
-        )
-        probs = torch.softmax(logits, dim=-1, dtype=dtype)
+        # Disable autocast (always use fp32) to avoid numerical instability issues.
+        with torch.autocast(
+            device_type="cuda" if logits.is_cuda else "cpu", enabled=False
+        ):
+            probs = torch.softmax(logits, dim=-1)
+            probs = probs + numerical_stability_eps  # Add small epsilon for stability.
+            probs = probs / probs.sum(dim=-1, keepdim=True)
 
         if epsilon != 0.0:
             uniform_dist_probs = torch.where(
@@ -528,6 +531,7 @@ class DiscreteGraphPolicyEstimator(Estimator):
         sf_bias: float = 0.0,
         temperature: dict[str, float] = defaultdict(lambda: 1.0),
         epsilon: dict[str, float] = defaultdict(lambda: 0.0),
+        numerical_stability_eps: float = 1e-8,
     ) -> Distribution:
         """Returns a probability distribution given a batch of states and module output.
 
@@ -546,6 +550,8 @@ class DiscreteGraphPolicyEstimator(Estimator):
                 for scaling logits.
             epsilon: Dictionary mapping action component keys to epsilon values for
                 exploration.
+            numerical_stability_eps: Small epsilon to add to the probabilities for
+                stability.
 
         Returns:
             A GraphActionDistribution over the graph actions.
@@ -607,6 +613,7 @@ class DiscreteGraphPolicyEstimator(Estimator):
                 sf_bias=sf_bias if key == GraphActions.ACTION_TYPE_KEY else 0.0,
                 temperature=temperature[key],
                 epsilon=epsilon[key],
+                numerical_stability_eps=numerical_stability_eps,
             )
 
         return GraphActionDistribution(probs=TensorDict(probs))
@@ -618,6 +625,7 @@ class DiscreteGraphPolicyEstimator(Estimator):
         sf_bias: float = 0.0,
         temperature: float = 1.0,
         epsilon: float = 0.0,
+        numerical_stability_eps: float = 1e-8,
     ) -> torch.Tensor:
         """Convert logits to probabilities with optional bias, temperature, and epsilon.
 
@@ -631,12 +639,15 @@ class DiscreteGraphPolicyEstimator(Estimator):
             sf_bias: Scalar to subtract from the exit action logit.
             temperature: Scalar to divide the logits by before softmax.
             epsilon: Probability of choosing a random action.
+            numerical_stability_eps: Small epsilon to add to the probabilities for
+                stability.
 
         Returns:
             A tensor of probabilities.
         """
         assert temperature > 0.0
         assert 0.0 <= epsilon <= 1.0
+        assert numerical_stability_eps >= 0.0
 
         if sf_bias != 0.0:
             logits[..., GraphActionType.EXIT] = (
@@ -646,7 +657,13 @@ class DiscreteGraphPolicyEstimator(Estimator):
         if temperature != 1.0:
             logits = logits / temperature
 
-        probs = torch.softmax(logits, dim=-1)
+        # Disable autocast (always use fp32) to avoid numerical instability issues.
+        with torch.autocast(
+            device_type="cuda" if logits.is_cuda else "cpu", enabled=False
+        ):
+            probs = torch.softmax(logits, dim=-1)
+            probs = probs + numerical_stability_eps  # Add small epsilon for stability
+            probs = probs / probs.sum(dim=-1, keepdim=True)
 
         if epsilon != 0.0:
             masks_sum = masks.sum(dim=-1, keepdim=True)
