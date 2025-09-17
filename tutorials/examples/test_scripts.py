@@ -93,6 +93,7 @@ class HypergridBufferArgs(HypergridArgs):
     prioritized_sampling: bool = False
 
 
+@dataclass
 class HypergridExplorationArgs(HypergridArgs):
     validation_interval: int = 5
     validation_samples: int = 100
@@ -720,5 +721,7 @@ def test_conditional_loss_types():
 
 def test_hypergrid_exploration_smoke():
     """Smoke test for the hypergrid exploration training script."""
-    args = asdict(HypergridExplorationArgs())  # type: ignore
-    train_hypergrid_exploration_main(**args)  # Runs without errors.
+    args = HypergridExplorationArgs()
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_hypergrid_exploration_main(namespace_args)  # Runs without errors.
