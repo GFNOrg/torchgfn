@@ -388,7 +388,7 @@ class TerminatingStateBuffer(ReplayBuffer):
         conditioning = training_objects.conditioning
         log_rewards = training_objects.log_rewards
 
-        terminal_states_container = StatesContainer(
+        terminating_states_container = StatesContainer(
             env=self.env,
             states=terminating_states,
             conditioning=conditioning,
@@ -398,4 +398,4 @@ class TerminatingStateBuffer(ReplayBuffer):
             log_rewards=log_rewards,
         )
 
-        self._add_objs(terminal_states_container)
+        self._add_objs(terminating_states_container)
