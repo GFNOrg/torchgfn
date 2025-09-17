@@ -266,7 +266,7 @@ class DiscretePolicyEstimator(Estimator):
         sf_bias: float = 0.0,
         temperature: float = 1.0,
         epsilon: float = 0.0,
-        numerical_stability_eps: float = 1e-8,
+        numerical_stability_eps: float = 1e-12,
     ) -> Categorical:
         """Returns a probability distribution given a batch of states and module output.
 
@@ -531,7 +531,7 @@ class DiscreteGraphPolicyEstimator(Estimator):
         sf_bias: float = 0.0,
         temperature: dict[str, float] = defaultdict(lambda: 1.0),
         epsilon: dict[str, float] = defaultdict(lambda: 0.0),
-        numerical_stability_eps: float = 1e-8,
+        numerical_stability_eps: float = 1e-12,
     ) -> Distribution:
         """Returns a probability distribution given a batch of states and module output.
 
