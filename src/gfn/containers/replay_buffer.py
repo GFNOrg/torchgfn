@@ -4,11 +4,14 @@ import os
 from typing import Protocol, Union, cast, runtime_checkable
 
 import torch
+import torch.distributed as dist
 
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
+
+from .message import Message, MessageType
 
 
 @runtime_checkable
@@ -51,6 +54,8 @@ class ReplayBuffer:
         capacity: int = 1000,
         prioritized_capacity: bool = False,
         prioritized_sampling: bool = False,
+        remote_manager_rank: int | None = None,
+        remote_buffer_freq: int = 1,
     ):
         """Initializes a ReplayBuffer instance.
 
@@ -60,6 +65,10 @@ class ReplayBuffer:
             prioritized_capacity: If True, keep only the highest-reward items when full.
             prioritized_sampling: If True, sample items with probability proportional
                 to their reward.
+            remote_manager_rank: Rank of the assigned remote replay buffer manager, or
+                None if no remote manager is assigned.
+            remote_buffer_freq: Frequency (in number of add() calls) at which to contact
+                the remote buffer manager.
         """
         self.env = env
         self.capacity = capacity
@@ -67,6 +76,11 @@ class ReplayBuffer:
         self.training_objects: ContainerUnion | None = None
         self.prioritized_capacity = prioritized_capacity
         self.prioritized_sampling = prioritized_sampling
+
+        # Remote buffer fields
+        self.remote_manager_rank = remote_manager_rank
+        self.remote_buffer_freq = remote_buffer_freq
+        self._add_counter = 0
 
     @property
     def device(self) -> torch.device:
@@ -92,6 +106,36 @@ class ReplayBuffer:
             raise TypeError("Must be a container type")
 
         self._add_objs(training_objects)
+
+        # Handle remote buffer communication
+        if self.remote_manager_rank is not None:
+            self._add_counter += 1
+            if self._add_counter % self.remote_buffer_freq == 0:
+                reward = self._send_objs(len(training_objects))
+                print(
+                    f"[Rank {dist.get_rank()}] Sent to remote {self.remote_manager_rank}, got reward {reward}"
+                )
+
+    def _send_objs(self, training_objects):
+
+        msg = Message(MessageType.DATA, training_objects)
+        msg_tensor = msg.serialize()
+
+        # First send the length so the receiver knows how many bytes
+        length_tensor = torch.IntTensor([len(msg_tensor)])
+        print(
+            f"Sending object of length {len(msg_tensor)} to rank {self.remote_manager_rank}"
+        )
+        dist.send(length_tensor, dst=self.remote_manager_rank)
+
+        print(f"Sent length tensor to rank {self.remote_manager_rank}, now sending data")
+        # Now send the actual content
+        dist.send(msg_tensor, dst=self.remote_manager_rank)
+
+        # Receive a dummy reward
+        reward = torch.zeros(1, dtype=torch.float32)
+        dist.recv(reward, src=self.remote_manager_rank)
+        return reward.item()
 
     def __repr__(self):
         """Returns a string representation of the ReplayBuffer.
