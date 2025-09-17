@@ -19,6 +19,7 @@ from .train_discreteebm import main as train_discreteebm_main
 from .train_graph_ring import main as train_graph_ring_main
 from .train_graph_triangle import main as train_graph_triangle_main
 from .train_hypergrid import main as train_hypergrid_main
+from .train_hypergrid_buffer import main as train_hypergrid_buffer_main
 from .train_hypergrid_gafn import main as train_hypergrid_gafn_main
 from .train_hypergrid_local_search import main as train_hypergrid_local_search_main
 from .train_hypergrid_simple import main as train_hypergrid_simple_main
@@ -78,6 +79,15 @@ class HypergridArgs(CommonArgs):
     R2: float = 2.0
     replay_buffer_size: int = 0
     timing: bool = True
+
+
+@dataclass
+class HypergridBufferArgs(HypergridArgs):
+    buffer_type: str = "terminating_state"
+    buffer_capacity: int = 100
+    prefill: int = 0
+    prioritized_capacity: bool = False
+    prioritized_sampling: bool = False
 
 
 @dataclass
@@ -459,6 +469,19 @@ def test_hypergrid_simple_smoke_fp64():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_hypergrid_simple_main(namespace_args)  # Just ensure it runs without errors.
+
+
+def test_hypergrid_buffer_smoke():
+    """Smoke test for the hypergrid buffer training script."""
+    args = HypergridBufferArgs(
+        batch_size=4,
+        hidden_dim=64,
+        n_hidden=1,
+        n_trajectories=10,  # Small number for smoke test
+    )
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_hypergrid_buffer_main(namespace_args)  # Just ensure it runs without errors.
 
 
 def test_hypergrid_gafn_smoke():
