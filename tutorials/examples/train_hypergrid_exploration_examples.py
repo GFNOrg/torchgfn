@@ -116,6 +116,22 @@ def count_modes(env: Env, visited_terminating_states: DiscreteStates):
     return set([tuple(s.tolist()) for s in modes])
 
 
+def calculate_mode_stats(env: Env, verbose: bool = False):
+
+    # Calculate the number of pixels per mode to normalize results.
+    n_pixels_in_all_modes = len(count_modes(env, env.all_states))
+    n_modes = 2**env.ndim
+    n_pixels_per_mode = n_pixels_in_all_modes / n_modes
+
+    if verbose:
+        print("\nMode Stats:")
+        print(f"+ Number of pixels per mode: {n_pixels_per_mode}")
+        print(f"+ Number of modes: {n_modes}")
+        print(f"+ Number of pixels in all modes: {n_pixels_in_all_modes}\n")
+
+    return n_pixels_per_mode, n_modes, n_pixels_in_all_modes
+
+
 def build_gflownet(
     preprocessor: Preprocessor,
     env: Env,
@@ -163,6 +179,7 @@ def train(
     batch_size: int,
     n_iterations: int,
     epsilon: float,
+    temperature: float,
     use_noisy_layers: bool,
     use_replay_buffer: bool,
     seed: int,
@@ -172,7 +189,9 @@ def train(
 ):
 
     set_seed(seed)
-    off_policy = epsilon > 0.0 or use_noisy_layers or use_replay_buffer
+    off_policy = (
+        epsilon > 0.0 or temperature != 1.0 or use_noisy_layers or use_replay_buffer
+    )
 
     if use_replay_buffer:
         replay_buffer = ReplayBuffer(
@@ -203,7 +222,8 @@ def train(
     val_info = {"l1_dist": float("inf")}
     visited_terminating_states = env.states_from_batch_shape((0,))
     discovered_modes = set()
-    n_pixels_per_mode = round(env.height / 10) ** env.ndim
+
+    n_pixels_per_mode, _, _ = calculate_mode_stats(env, verbose=False)
 
     # Training loop.
     results = {
@@ -222,11 +242,12 @@ def train(
         trajectories = gflownet.sample_trajectories(
             env,
             n=batch_size // 2 if use_replay_buffer else batch_size,
-            save_logprobs=True,
-            # When training on-policy, we can re-use the estimator outputs during
-            # the loss calculation.
-            save_estimator_outputs=False if off_policy else True,
+            save_logprobs=False if off_policy else True,
+            # When training off-policy, we can re-use the estimator outputs during
+            # the loss calculation (for the calculation of on-policy log probs).
+            save_estimator_outputs=True if off_policy else False,
             epsilon=epsilon,
+            temperature=temperature,
         )
 
         # Possibly add trajectories to the replay buffer and sample from it.
@@ -327,6 +348,7 @@ def main(
         check_action_validity=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
+    _, _, _ = calculate_mode_stats(env, verbose=True)
 
     common_kwargs = {
         "env": env,
@@ -350,26 +372,65 @@ def main(
         "on_policy": {
             **common_kwargs,
             "epsilon": 0.0,
+            "temperature": 1.0,
             "use_noisy_layers": False,
             "use_replay_buffer": False,
         },
         "replay_buffer": {
             **common_kwargs,
             "epsilon": 0.0,
+            "temperature": 1.0,
             "use_noisy_layers": False,
             "use_replay_buffer": True,
         },
-        "epsilon_greedy": {
+        "epsilon_greedy_0.1": {
             **common_kwargs,
             "epsilon": 0.1,
+            "temperature": 1.0,
+            "use_noisy_layers": False,
+            "use_replay_buffer": False,
+        },
+        "epsilon_greedy_0.2": {
+            **common_kwargs,
+            "epsilon": 0.2,
+            "temperature": 1.0,
             "use_noisy_layers": False,
             "use_replay_buffer": False,
         },
         "noisy_layers": {
             **common_kwargs,
             "epsilon": 0,
+            "temperature": 1.0,
             "use_noisy_layers": True,
             "use_replay_buffer": False,
+        },
+        "temperature_2.0": {
+            **common_kwargs,
+            "epsilon": 0,
+            "temperature": 2.0,
+            "use_noisy_layers": False,
+            "use_replay_buffer": False,
+        },
+        "temperature_1.5": {
+            **common_kwargs,
+            "epsilon": 0,
+            "temperature": 1.5,
+            "use_noisy_layers": False,
+            "use_replay_buffer": False,
+        },
+        "temp=1.5_noisy": {
+            **common_kwargs,
+            "epsilon": 0,
+            "temperature": 1.5,
+            "use_noisy_layers": True,
+            "use_replay_buffer": False,
+        },
+        "temp=1.5_epsilon=0.1_buffer": {
+            **common_kwargs,
+            "epsilon": 0.1,
+            "temperature": 1.5,
+            "use_noisy_layers": False,
+            "use_replay_buffer": True,
         },
     }
 
@@ -471,7 +532,7 @@ if __name__ == "__main__":
 
     # Environment settings.
     parser.add_argument(
-        "--ndim", type=int, default=4, help="Number of dimensions in the environment"
+        "--ndim", type=int, default=3, help="Number of dimensions in the environment"
     )
 
     parser.add_argument(
@@ -517,21 +578,21 @@ if __name__ == "__main__":
 
     # Training settings.
     parser.add_argument(
-        "--n_iterations", type=int, default=5000, help="Number of iterations"
+        "--n_iterations", type=int, default=1000, help="Number of iterations"
     )
     parser.add_argument(
-        "--validation_interval", type=int, default=500, help="Validation interval"
+        "--validation_interval", type=int, default=200, help="Validation interval"
     )
     parser.add_argument(
         "--validation_samples",
         type=int,
-        default=500000,
+        default=200000,
         help="Number of validation samples to use to evaluate the probability mass function.",
     )
     parser.add_argument(
         "--plot", action="store_true", default=False, help="Whether to plot the results"
     )
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
     parser.add_argument(
         "--n_seeds", type=int, default=5, help="Number of seeds per experiment."
     )
