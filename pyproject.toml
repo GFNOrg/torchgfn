@@ -23,12 +23,12 @@ classifiers = [
 [tool.poetry.dependencies]
 # core dependencies.
 einops = ">=0.6.1"
+linear-attention-transformer = ">=0.19.1"
 numpy = "<2.*"
 python = "^3.10"
-torch = ">=2.6.0"
 tensordict = ">=0.6.1"
+torch = ">=2.6.0"
 torch_geometric = ">=2.6.1"
-linear-attention-transformer = ">=0.19.1"
 
 # dev dependencies.
 black = { version = "24.3", optional = true }
@@ -50,6 +50,7 @@ tox = { version = "*", optional = true }
 
 # scripts dependencies.
 matplotlib = { version = "*", optional = true }
+seaborn = { version = "*", optional = true }
 networkx = { version = "*", optional = true }
 pgmpy = { version = "<1.0.0", optional = true }
 scikit-learn = {version = "*", optional = true }
@@ -83,6 +84,7 @@ scripts = [
     "pgmpy",
     "scikit-learn",
     "scipy",
+    "seaborn",
     "tqdm",
     "wandb",
 ]
@@ -104,6 +106,7 @@ all = [
     "renku-sphinx-theme",
     "scikit-learn",
     "scipy",
+    "seaborn",
     "sphinx_rtd_theme",
     "sphinx-autoapi",
     "sphinx-math-dollar",
