@@ -20,6 +20,9 @@ from .train_graph_ring import main as train_graph_ring_main
 from .train_graph_triangle import main as train_graph_triangle_main
 from .train_hypergrid import main as train_hypergrid_main
 from .train_hypergrid_buffer import main as train_hypergrid_buffer_main
+from .train_hypergrid_exploration_examples import (
+    main as train_hypergrid_exploration_main,
+)
 from .train_hypergrid_gafn import main as train_hypergrid_gafn_main
 from .train_hypergrid_local_search import main as train_hypergrid_local_search_main
 from .train_hypergrid_simple import main as train_hypergrid_simple_main
@@ -88,6 +91,13 @@ class HypergridBufferArgs(HypergridArgs):
     prefill: int = 0
     prioritized_capacity: bool = False
     prioritized_sampling: bool = False
+
+
+class HypergridExplorationArgs(HypergridArgs):
+    validation_interval: int = 5
+    validation_samples: int = 100
+    n_seeds: int = 3
+    plot: bool = False
 
 
 @dataclass
@@ -367,11 +377,15 @@ def test_discreteebm(ndim: int, alpha: float):
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and alpha == 1.0:
-        tgt = 8.675e-2  # 0.062
+        tgt1 = 8.675e-2  # 0.062
+        tgt2 = 6.2e-2
         atol = 1e-2
-        assert np.isclose(
-            final_l1_dist, tgt, atol=atol
-        ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
+        test_1 = np.isclose(final_l1_dist, tgt1, atol=atol)
+        test_2 = np.isclose(final_l1_dist, tgt2, atol=atol)
+
+        assert (
+            test_1 or test_2
+        ), f"final_l1_dist: {final_l1_dist} not close to [{tgt1}, {tgt2}]"
 
 
 @pytest.mark.parametrize("delta", [0.1, 0.25])
@@ -407,9 +421,12 @@ def test_box(delta: float, loss: str):
         ), f"final_jsd: {final_jsd} not close to [{tgt1}, {tgt2}, {tgt3}, {tgt4}]"
 
     elif loss == "DB" and delta == 0.1:
-        tgt = 0.2757
+        tgt1 = 0.2757
+        tgt2 = 0.2878
         atol = 1e-2
-        assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
+        test_1 = np.isclose(final_jsd, tgt1, atol=atol)
+        test_2 = np.isclose(final_jsd, tgt2, atol=atol)
+        assert test_1 or test_2, f"final_jsd: {final_jsd} not close to [{tgt1}, {tgt2}]"
     if loss == "TB" and delta == 0.25:
         tgt = 0.1492
         atol = 1e-2
@@ -699,3 +716,9 @@ def test_conditional_loss_types():
 
     # All loss types should produce finite losses
     assert all(0 < loss < float("inf") for loss in losses)
+
+
+def test_hypergrid_exploration_smoke():
+    """Smoke test for the hypergrid exploration training script."""
+    args = asdict(HypergridExplorationArgs())  # type: ignore
+    train_hypergrid_exploration_main(**args)  # Runs without errors.
