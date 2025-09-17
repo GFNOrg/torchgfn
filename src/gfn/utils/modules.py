@@ -103,10 +103,11 @@ class MLP(nn.Module):
                 ]
 
             # Add the hidden layers. Put all noisy layers near the output.
-            n_noiseless_hidden_layers = n_hidden_layers - (n_noisy_layers - 1)
+            n_noisy_hidden_layers = max(0, n_noisy_layers - 1)
+            n_noiseless_hidden_layers = n_hidden_layers - n_noisy_hidden_layers
             hidden_layer_types = [nn.Linear] * n_noiseless_hidden_layers + [
                 NoisyLinear
-            ] * (n_noisy_layers - 1)
+            ] * n_noisy_hidden_layers
 
             for layer_type in hidden_layer_types:
                 if isinstance(layer_type, NoisyLinear):
