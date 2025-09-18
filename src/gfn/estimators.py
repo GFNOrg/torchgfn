@@ -686,6 +686,7 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         transformed_logits = {}
         for key in logits.keys():
             # This allows for off-policy exploration.
+            assert isinstance(key, str)
             transformed_logits[key] = self._transform_logits(
                 logits[key],
                 masks[key],
