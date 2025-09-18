@@ -210,7 +210,101 @@ class ScalarEstimator(Estimator):
         return out
 
 
-class DiscretePolicyEstimator(Estimator):
+class LogitBasedEstimator(Estimator):
+    r"""Base class for estimators that output logits.
+
+    This class is used to define estimators that output logits, which can be used to
+    construct probability distributions.
+    """
+
+    @staticmethod
+    def _prepare_logits(
+        logits: torch.Tensor,
+        masks: torch.Tensor,
+        sf_bias_index: int | None,
+        sf_bias: float,
+        temperature: float,
+    ) -> torch.Tensor:
+        """Clone and apply mask, bias and temperature to logits."""
+        assert temperature > 0.0
+        x = logits.clone()
+        x[~masks] = -float("inf")
+
+        if sf_bias_index is not None and sf_bias != 0.0:
+            x[..., sf_bias_index] = x[..., sf_bias_index] - sf_bias
+
+        if temperature != 1.0:
+            x = x / temperature
+
+        return x
+
+    @staticmethod
+    def _uniform_log_probs(masks: torch.Tensor) -> torch.Tensor:
+        """Uniform log-probs over valid actions; -inf for invalid."""
+        masks_sum = masks.sum(dim=-1, keepdim=True)
+        log_uniform = torch.full_like(
+            masks, fill_value=-float("inf"), dtype=torch.get_default_dtype()
+        )
+        valid_rows = (masks_sum > 0).squeeze(-1)
+        if valid_rows.any():
+            log_uniform[valid_rows] = torch.where(
+                masks[valid_rows],
+                -torch.log(masks_sum[valid_rows].to(torch.get_default_dtype())),
+                torch.full_like(
+                    masks[valid_rows],
+                    fill_value=-float("inf"),
+                    dtype=torch.get_default_dtype(),
+                ),
+            )
+        return log_uniform
+
+    @staticmethod
+    def _mix_with_uniform_in_log_space(
+        lsm: torch.Tensor, masks: torch.Tensor, epsilon: float
+    ) -> torch.Tensor:
+        """Compute log((1-eps) p + eps u) in log space."""
+        assert 0.0 <= epsilon <= 1.0
+        if epsilon == 0.0:
+            return lsm
+
+        log_uniform = LogitBasedEstimator._uniform_log_probs(masks).to(lsm.dtype)
+        log1m_eps = torch.log1p(
+            -torch.as_tensor(epsilon, dtype=lsm.dtype, device=lsm.device)
+        )
+        log_eps = torch.log(torch.as_tensor(epsilon, dtype=lsm.dtype, device=lsm.device))
+
+        return torch.logsumexp(
+            torch.stack((lsm + log1m_eps, log_uniform + log_eps), dim=0), dim=0
+        )
+
+    @staticmethod
+    def _compute_logits_for_distribution(
+        logits: torch.Tensor,
+        masks: torch.Tensor,
+        sf_bias_index: int | None,
+        sf_bias: float,
+        temperature: float,
+        epsilon: float,
+    ) -> torch.Tensor:
+        """Return logits to feed a Categorical:
+        - If epsilon == 0: masked, biased, temperature-scaled logits.
+        - Else: normalized log-probs of the epsilon-greedy mixture (valid as logits).
+        """
+        with torch.autocast(
+            device_type="cuda" if logits.is_cuda else "cpu", enabled=False
+        ):
+            x = LogitBasedEstimator._prepare_logits(
+                logits, masks, sf_bias_index, sf_bias, temperature
+            )
+            if epsilon == 0.0:
+                return x
+            lsm = torch.log_softmax(x, dim=-1)
+            return LogitBasedEstimator._mix_with_uniform_in_log_space(
+                lsm, masks, epsilon
+            )
+
+
+class DiscretePolicyEstimator(LogitBasedEstimator):
     r"""Forward or backward policy estimators for discrete environments.
 
     Estimates either:
@@ -267,7 +361,12 @@ class DiscretePolicyEstimator(Estimator):
         temperature: float = 1.0,
         epsilon: float = 0.0,
     ) -> Categorical:
-        """Returns a probability distribution given a batch of states and module output.
+        """Returns a Categorical distribution given a batch of states and module output.
+
+        This implementation stays in logit/log-prob space for numerical stability.
+        When epsilon > 0, we construct the epsilon-greedy distribution by mixing the
+        original distribution with a uniform distribution and pass the resuling
+        normalized log-probs as logits.
 
         The kwargs may contain parameters to modify a base distribution, for example to
         encourage exploration.
@@ -295,26 +394,17 @@ class DiscretePolicyEstimator(Estimator):
         assert 0.0 <= epsilon <= 1.0
 
         masks = states.backward_masks if self.is_backward else states.forward_masks
-        logits = module_output
-        logits[~masks] = -float("inf")
 
-        if sf_bias != 0.0:
-            logits[:, -1] -= sf_bias
+        logits = LogitBasedEstimator._compute_logits_for_distribution(
+            module_output,
+            masks,
+            sf_bias_index=None,
+            sf_bias=sf_bias,
+            temperature=temperature,
+            epsilon=epsilon,
+        )
 
-        if temperature != 1.0:
-            logits /= temperature
-
-        probs = torch.softmax(logits, dim=-1)
-
-        if epsilon != 0.0:
-            uniform_dist_probs = torch.where(
-                masks.sum(dim=-1, keepdim=True) == 0,
-                torch.zeros_like(masks),
-                masks.to(torch.get_default_dtype()) / masks.sum(dim=-1, keepdim=True),
-            )
-            probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
-
-        return UnsqueezedCategorical(probs=probs)
+        return UnsqueezedCategorical(logits=logits)
 
 
 class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
@@ -497,7 +587,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-class DiscreteGraphPolicyEstimator(Estimator):
+class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
     r"""Forward or backward policy estimators for graph-based environments.
 
     Estimates either, where $s$ and $s'$ are graph states:
@@ -593,9 +683,11 @@ class DiscreteGraphPolicyEstimator(Estimator):
         ).all()
         logits[GraphActions.NODE_CLASS_KEY][no_possible_node] = 0.0
 
-        probs = {}
+        transformed_logits = {}
         for key in logits.keys():
-            probs[key] = self.logits_to_probs(
+            # This allows for off-policy exploration.
+            assert isinstance(key, str)
+            transformed_logits[key] = self._transform_logits(
                 logits[key],
                 masks[key],
                 sf_bias=sf_bias if key == GraphActions.ACTION_TYPE_KEY else 0.0,
@@ -603,20 +695,25 @@ class DiscreteGraphPolicyEstimator(Estimator):
                 epsilon=epsilon[key],
             )
 
-        return GraphActionDistribution(probs=TensorDict(probs))
+        return GraphActionDistribution(logits=TensorDict(transformed_logits))
 
     @staticmethod
-    def logits_to_probs(
+    def _transform_logits(
         logits: torch.Tensor,
         masks: torch.Tensor,
         sf_bias: float = 0.0,
         temperature: float = 1.0,
         epsilon: float = 0.0,
     ) -> torch.Tensor:
-        """Convert logits to probabilities with optional bias, temperature, and epsilon.
+        """Return logits to feed a categorical distribution with optional bias,
+        temperature tempering, and epsilon exploration.
+
+        If epsilon > 0, we construct the epsilon-greedy distribution by mixing the
+        original distribution with a uniform distribution and pass the resuling
+        normalized log-probs as logits.
 
         This static method implements the same logic as `DiscretePolicyEstimator`'s
-        probability conversion, but is separated to handle each action component
+        logit manipilations, but is separated to handle each action component
         independently in graph environments.
 
         Args:
@@ -627,30 +724,16 @@ class DiscreteGraphPolicyEstimator(Estimator):
             epsilon: Probability of choosing a random action.
 
         Returns:
-            A tensor of probabilities.
+            A tensor of logits.
         """
-        assert temperature > 0.0
-        assert 0.0 <= epsilon <= 1.0
-
-        if sf_bias != 0.0:
-            logits[..., GraphActionType.EXIT] = (
-                logits[..., GraphActionType.EXIT] - sf_bias
-            )
-
-        if temperature != 1.0:
-            logits = logits / temperature
-
-        probs = torch.softmax(logits, dim=-1)
-
-        if epsilon != 0.0:
-            masks_sum = masks.sum(dim=-1, keepdim=True)
-            probs = torch.where(
-                masks_sum == 0,
-                probs,
-                (1 - epsilon) * probs + epsilon * masks.to(logits.dtype) / masks_sum,
-            )
-
-        return probs
+        return LogitBasedEstimator._compute_logits_for_distribution(
+            logits=logits,
+            masks=masks,
+            sf_bias_index=GraphActionType.EXIT if sf_bias != 0.0 else None,
+            sf_bias=sf_bias,
+            temperature=temperature,
+            epsilon=epsilon,
+        )
 
     @property
     def expected_output_dim(self) -> Optional[int]:
