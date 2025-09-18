@@ -63,14 +63,15 @@ class GraphActionDistribution(Distribution):
         super().__init__()
         assert (probs is None) ^ (logits is None), "Pass exactly one of logits or probs."
 
+        validate_args = False  # edge_index.numel() == 0 when no nodes are present
         if isinstance(logits, TensorDict):
             self.dists = {
-                key: Categorical(logits=logits[key])
+                key: Categorical(logits=logits[key], validate_args=validate_args)
                 for key in GraphActions.ACTION_INDICES.keys()
             }
         elif isinstance(probs, TensorDict):
             self.dists = {
-                key: Categorical(probs=probs[key])
+                key: Categorical(probs=probs[key], validate_args=validate_args)
                 for key in GraphActions.ACTION_INDICES.keys()
             }
 
