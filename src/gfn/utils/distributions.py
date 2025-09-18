@@ -51,18 +51,28 @@ class GraphActionDistribution(Distribution):
     - If the action_type is STOP, then no other components are sampled.
     """
 
-    def __init__(self, probs: TensorDict):
+    def __init__(
+        self, logits: TensorDict | None = None, probs: TensorDict | None = None
+    ):
         """Initializes the mixture distribution.
 
         Args:
+            logits: A TensorDict of logits (preferred).
             probs: A TensorDict of probs.
         """
         super().__init__()
+        assert (probs is None) ^ (logits is None), "Pass exactly one of logits or probs."
 
-        self.dists = {
-            key: Categorical(probs=probs[key])
-            for key in GraphActions.ACTION_INDICES.keys()
-        }
+        if isinstance(logits, TensorDict):
+            self.dists = {
+                key: Categorical(logits=logits[key])
+                for key in GraphActions.ACTION_INDICES.keys()
+            }
+        elif isinstance(probs, TensorDict):
+            self.dists = {
+                key: Categorical(probs=probs[key])
+                for key in GraphActions.ACTION_INDICES.keys()
+            }
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         """Samples from the distribution.
