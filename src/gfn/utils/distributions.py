@@ -95,6 +95,8 @@ class GraphActionDistribution(Distribution):
             node_classes[add_node_idx] = node_classes_all[add_node_idx]
 
         add_edge_idx = action_types == GraphActionType.ADD_EDGE
+
+        # Only sample edge classes and indices if there are any possible edges.
         if add_edge_idx.any():
             edge_classes_all = self.dists[GraphActions.EDGE_CLASS_KEY].sample(
                 sample_shape
