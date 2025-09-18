@@ -404,43 +404,6 @@ class DiscretePolicyEstimator(LogitBasedEstimator):
             epsilon=epsilon,
         )
 
-        # logits = module_output.clone()  # Clone to avoid modifying the original tensor.
-        # logits[~masks] = -float("inf")
-
-        # if sf_bias != 0.0:
-        #     logits[:, -1] -= sf_bias
-
-        # if temperature != 1.0:
-        #     logits = logits / temperature
-
-        # # Disable autocast (always use fp32) to avoid numerical instability issues.
-        # with torch.autocast(
-        #     device_type="cuda" if logits.is_cuda else "cpu", enabled=False
-        # ):
-        #     if epsilon == 0.0:
-        #         return UnsqueezedCategorical(logits=logits)
-        #     else:
-        #         lsm = torch.log_softmax(logits, dim=-1)
-        #         masks_sum = masks.sum(dim=-1, keepdim=True)
-
-        #         # Unifor log-probs over valid actions; -inf for invalid.
-        #         uniform_log_probs = torch.full_like(logits, fill_value=-float("inf"))
-        #         valid_rows = (masks_sum > 0).squeeze(-1)
-        #         if valid_rows.any():
-        #             uniform_log_probs[valid_rows] = torch.where(
-        #                 masks[valid_rows],
-        #                 -torch.log(masks_sum[valid_rows]),
-        #                 torch.full_like(logits[valid_rows], fill_value=-float("inf")),
-        #             )
-
-        #         # Mix original distribution with uniform distribution.
-        #         log1m_esp = torch.log1p(-torch.as_tensor(epsilon, dtype=logits.dtype, device=logits.device))
-        #         log_eps = torch.log(torch.as_tensor(epsilon, dtype=logits.dtype, device=logits.device))
-        #         dist_logits = torch.logsumexp(
-        #             torch.stack((lsm + log1m_esp, uniform_log_probs + log_eps), dim=0),
-        #             dim=0,
-        #         )
-
         return UnsqueezedCategorical(logits=logits)
 
 
@@ -770,47 +733,6 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
             temperature=temperature,
             epsilon=epsilon,
         )
-
-        # assert temperature > 0.0
-        # assert 0.0 <= epsilon <= 1.0
-
-        # if sf_bias != 0.0:
-        #     logits[..., GraphActionType.EXIT] = (
-        #         logits[..., GraphActionType.EXIT] - sf_bias
-        #     )
-
-        # if temperature != 1.0:
-        #     logits = logits / temperature
-
-        # # Disable autocast (always use fp32) to avoid numerical instability issues.
-        # with torch.autocast(
-        #     device_type="cuda" if logits.is_cuda else "cpu", enabled=False
-        # ):
-        #     if epsilon == 0.0:
-        #         return logits
-
-        #     lsm = torch.log_softmax(logits, dim=-1)
-        #     masks_sum = masks.sum(dim=-1, keepdim=True)
-        #     # Uniform log-probs over valid actions; -inf for invalid.
-        #     uniform_log_probs = torch.full_like(logits, fill_value=-float("inf"))
-        #     valid_rows = (masks_sum > 0).squeeze(-1)
-        #     if valid_rows.any():
-        #         uniform_log_probs[valid_rows] = torch.where(
-        #             masks[valid_rows],
-        #             -torch.log(masks_sum[valid_rows]),
-        #             torch.full_like(logits[valid_rows], fill_value=-float("inf")),
-        #         )
-
-        #     # Mix original distribution with uniform distribution.
-        #     log1m_esp = torch.log1p(-torch.as_tensor(epsilon, dtype=logits.dtype, device=logits.device))
-        #     log_eps = torch.log(torch.as_tensor(epsilon, dtype=logits.dtype, device=logits.device))
-        #     log_probs_mixture = torch.logsumexp(
-        #         torch.stack((lsm + log1m_esp, uniform_log_probs + log_eps), dim=0),
-        #         dim=0,
-        #     )
-
-        #     # Passing normalized log-probs is valid (softmax(log_probs) == probs).
-        #     return log_probs_mixture
 
     @property
     def expected_output_dim(self) -> Optional[int]:
