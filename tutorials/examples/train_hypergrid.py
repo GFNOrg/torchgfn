@@ -194,12 +194,12 @@ def average_gradients(model):
         param.grad.data /= size
 
 
-def average_models(model, group=None):
+def average_models(model, training_group=None):
     """Averages model weights across all ranks."""
     world_size = float(dist.get_world_size())
     for param in model.parameters():
         param_tensor = param.data.clone()  # clone to avoid inplace operations
-        dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=group)
+        dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=training_group)
         param.data = param_tensor / world_size
 
 
@@ -475,7 +475,7 @@ def gather_distributed_data(
     world_size: int | None = None,
     rank: int | None = None,
     verbose: bool = False,
-    group=None,
+    training_group=None,
 ) -> torch.Tensor | None:
     """
     Gather data from all processes in a distributed setting.
@@ -519,8 +519,10 @@ def gather_distributed_data(
         print(
             "+ gather of local_batch_size={} to batch_size_list".format(local_batch_size)
         )
-    dist.gather(local_batch_size, gather_list=batch_size_list, dst=0, group=group)
-    dist.barrier(group=group)  # Add synchronization
+    dist.gather(
+        local_batch_size, gather_list=batch_size_list, dst=0, group=training_group
+    )
+    dist.barrier(group=training_group)  # Add synchronization
 
     # Pad local tensor to maximum size.
     if verbose:
@@ -536,7 +538,7 @@ def gather_distributed_data(
 
     # Broadcast max_size to all processes for padding
     max_batch_size_tensor = torch.tensor(max_batch_size, device=local_tensor.device)
-    dist.broadcast(max_batch_size_tensor, src=0, group=group)
+    dist.broadcast(max_batch_size_tensor, src=0, group=training_group)
 
     # Pad local tensor to maximum size.
     if local_tensor.shape[0] < max_batch_size:
@@ -563,8 +565,8 @@ def gather_distributed_data(
     if verbose:
         print("+ gathering all tensors from world_size={}".format(world_size))
         print("rank={}, tensor_list={}".format(rank, tensor_list))
-    dist.gather(local_tensor, gather_list=tensor_list, dst=0, group=group)
-    dist.barrier(group=group)  # Add synchronization
+    dist.gather(local_tensor, gather_list=tensor_list, dst=0, group=training_group)
+    dist.barrier(group=training_group)  # Add synchronization
 
     # Only rank 0 processes the results
     if rank == 0:
@@ -1189,7 +1191,9 @@ def main(args):  # noqa: C901
         ) as model_averaging_timer:
             if args.distributed and (iteration % args.average_every == 0):
                 print("before averaging model, iteration = ", iteration)
-                average_models(gflownet, group=distributed_context.train_global_group)
+                average_models(
+                    gflownet, training_group=distributed_context.train_global_group
+                )
                 print("after averaging model, iteration = ", iteration)
 
         # Calculate how long this iteration took.
@@ -1229,7 +1233,7 @@ def main(args):  # noqa: C901
                     # Gather all visited terminating states from all nodes.
                     gathered_visited_terminating_states = gather_distributed_data(
                         visited_terminating_states.tensor,
-                        group=distributed_context.train_global_group,
+                        training_group=distributed_context.train_global_group,
                         world_size=distributed_context.num_training_ranks,
                     )
                 except Exception as e:

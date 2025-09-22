@@ -111,9 +111,9 @@ class ReplayBuffer:
         if self.remote_manager_rank is not None:
             self._add_counter += 1
             if self._add_counter % self.remote_buffer_freq == 0:
-                reward = self._send_objs(len(training_objects))
+                score = self._send_objs(len(training_objects))
                 print(
-                    f"[Rank {dist.get_rank()}] Sent to remote {self.remote_manager_rank}, got reward {reward}"
+                    f"[Rank {dist.get_rank()}] Sent to remote {self.remote_manager_rank}, got score {score}"
                 )
 
     def _send_objs(self, training_objects):
@@ -132,10 +132,10 @@ class ReplayBuffer:
         # Now send the actual content
         dist.send(msg_tensor, dst=self.remote_manager_rank)
 
-        # Receive a dummy reward
-        reward = torch.zeros(1, dtype=torch.float32)
-        dist.recv(reward, src=self.remote_manager_rank)
-        return reward.item()
+        # Receive a dummy score back
+        score = torch.zeros(1, dtype=torch.float32)
+        dist.recv(score, src=self.remote_manager_rank)
+        return score.item()
 
     def __repr__(self):
         """Returns a string representation of the ReplayBuffer.
