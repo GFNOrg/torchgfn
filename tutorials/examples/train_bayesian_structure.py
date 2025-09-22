@@ -376,7 +376,7 @@ class DAGEdgeActionGNNv2(nn.Module):
         receivers = self.receivers_mlp(attn_output)
         edge_actions = torch.bmm(senders, receivers.transpose(1, 2)).view(n_graphs, -1)
 
-        temperature = nn.functional.softplus(self.temperature)
+        temperature = F.softplus(self.temperature)
         edge_actions = edge_actions / temperature
 
         # Make TensorDict output
