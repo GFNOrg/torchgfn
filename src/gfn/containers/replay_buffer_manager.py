@@ -19,6 +19,12 @@ class ReplayBufferManager:
         self.exit_counter = 0
         self.num_training_ranks = num_training_ranks
         self.scoring_function = scoring_function or self.default_scoring_function
+        backend = dist.get_backend()
+        if backend != "gloo":
+            raise RuntimeError(
+                f"Replay Buffer Manager is only supported with the 'gloo' backend, "
+                f"but the current backend is '{backend}'."
+            )
 
     def default_scoring_function(self, obj) -> float:
         """Default reward function if none provided"""

@@ -81,6 +81,13 @@ class ReplayBuffer:
         self.remote_manager_rank = remote_manager_rank
         self.remote_buffer_freq = remote_buffer_freq
         self._add_counter = 0
+        if self.remote_manager_rank is not None:
+            backend = dist.get_backend()
+            if backend != "gloo":
+                raise RuntimeError(
+                    f"Replay Buffer Manager is only supported with the 'gloo' backend, "
+                    f"but the current backend is '{backend}'."
+                )
 
     @property
     def device(self) -> torch.device:
