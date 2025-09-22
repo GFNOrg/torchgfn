@@ -53,8 +53,6 @@ class States(ABC):
     Attributes:
         tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of
             states.
-        _log_rewards: (Optional) tensor of shape (*batch_shape,) storing the log rewards
-            of each state.
         state_shape: Class variable, a tuple defining the shape of a single state.
         s0: Class variable, a tensor of shape (*state_shape,) representing the initial
             state.
@@ -86,9 +84,6 @@ class States(ABC):
         assert tensor.shape[-len(self.state_shape) :] == self.state_shape
 
         self.tensor = tensor
-        self._log_rewards = (
-            None  # Useful attribute if we want to store the log-reward of the states
-        )
 
     @property
     def device(self) -> torch.device:
@@ -246,11 +241,7 @@ class States(ABC):
         Returns:
             A new States object with the same data.
         """
-        cloned = self.__class__(self.tensor.clone())
-        if self._log_rewards is not None:
-            cloned._log_rewards = self._log_rewards.clone()
-
-        return cloned
+        return self.__class__(self.tensor.clone())
 
     def flatten(self) -> States:
         """Flattens the batch dimension of the states.
@@ -390,26 +381,6 @@ class States(ABC):
             )
         return self._compare(sink_states)
 
-    @property
-    def log_rewards(self) -> torch.Tensor | None:
-        """Returns the log rewards of the states.
-
-        Returns:
-            The log rewards tensor of shape (*batch_shape,), or None if not set.
-        """
-        return self._log_rewards
-
-    @log_rewards.setter
-    def log_rewards(self, log_rewards: torch.Tensor) -> None:
-        """Sets the log rewards of the states.
-
-        Args:
-            log_rewards: Tensor of shape (*batch_shape,) representing the log rewards of
-            the states.
-        """
-        assert tuple(log_rewards.shape) == self.batch_shape
-        self._log_rewards = log_rewards
-
     def sample(self, n_samples: int) -> States:
         """Randomly samples a subset of states from the batch.
 
@@ -440,13 +411,6 @@ class States(ABC):
             (0, 0), device=state_example.device
         )  # Empty.
         stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
-        if state_example._log_rewards:
-            log_rewards = []
-            for s in states:
-                if s._log_rewards is None:
-                    raise ValueError("Some states have no log rewards.")
-                log_rewards.append(s._log_rewards)
-            stacked_states._log_rewards = torch.stack(log_rewards, dim=0)
 
         return stacked_states
 
@@ -714,7 +678,6 @@ class GraphStates(States):
         s0: Initial state (graph).
         sf: Final state (graph).
         data: A numpy array of `GeometricData` objects representing individual graphs.
-        _log_rewards: Stores the log rewards of each state.
         _device: The device on which the graphs are stored.
     """
 
@@ -745,7 +708,6 @@ class GraphStates(States):
         self.categorical_node_features = categorical_node_features
         self.categorical_edge_features = categorical_edge_features
         self.data = data
-        self._log_rewards: Optional[torch.Tensor] = None
         self._device = device
         if data.size > 0:
             g = data.flat[0]
@@ -1089,9 +1051,6 @@ class GraphStates(States):
             selected_graphs = selected_graphs_array.squeeze()
 
         out = self.__class__(selected_graphs, device=self.device)
-
-        if self._log_rewards is not None:
-            out._log_rewards = self._log_rewards[index]
         return out
 
     def __setitem__(
@@ -1114,11 +1073,6 @@ class GraphStates(States):
             len_dst, len_src
         )
         self.data[index_np] = graph.data
-
-        if self._log_rewards is not None and graph._log_rewards is not None:
-            self._log_rewards[index] = graph._log_rewards
-        else:
-            self._log_rewards = None
 
     def _get_index_np(
         self, index: Union[int, Sequence[int], slice, torch.Tensor, Tuple]
@@ -1152,8 +1106,6 @@ class GraphStates(States):
         """
         for graph in self.data.flat:
             graph.to(str(device))
-        if self._log_rewards is not None:
-            self._log_rewards = self._log_rewards.to(device)
         return self
 
     def clone(self) -> GraphStates:
@@ -1166,10 +1118,7 @@ class GraphStates(States):
         for i, graph in enumerate(self.data.flat):
             cloned_graphs.flat[i] = graph.clone()
 
-        out = self.__class__(cloned_graphs, device=self.device)
-        if self._log_rewards is not None:
-            out._log_rewards = self._log_rewards.clone()
-        return out
+        return self.__class__(cloned_graphs, device=self.device)
 
     def extend(self, other: GraphStates):
         """Concatenates another GraphStates object along the batch dimension.
@@ -1199,18 +1148,10 @@ class GraphStates(States):
 
             self.data = np.concatenate([self.data, other.data], axis=1)
 
-            # We don't have log rewards of sf states
-            self._log_rewards = None
         else:
             raise ValueError(
                 f"Cannot extend GraphStates with batch shape {other.batch_shape}"
             )
-
-        # Combine log rewards if they exist
-        if self._log_rewards is not None and other._log_rewards is not None:
-            self._log_rewards = torch.cat([self._log_rewards, other._log_rewards], dim=0)
-        else:
-            self._log_rewards = None
 
     def _compare(self, other: GeometricData) -> torch.Tensor:
         """Compares the current batch of graphs with another graph.
@@ -1307,17 +1248,4 @@ class GraphStates(States):
         graphs_list = [state.data for state in states]
         stacked_graphs = np.stack(graphs_list)
 
-        out = cls(stacked_graphs, device=states[0].device)
-
-        # Handle log rewards
-        log_rewards = []
-        save_log_rewards = True
-        for state in states:
-            save_log_rewards &= state._log_rewards is not None
-            if save_log_rewards:
-                log_rewards.append(state._log_rewards)
-
-        if save_log_rewards:
-            out._log_rewards = torch.stack(log_rewards)
-
-        return out
+        return cls(stacked_graphs, device=states[0].device)
