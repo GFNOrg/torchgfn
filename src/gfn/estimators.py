@@ -687,110 +687,58 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
             A GraphActionDistribution over the graph actions.
         """
         masks = states.backward_masks if self.is_backward else states.forward_masks
+        Ga = GraphActions  # Shorthand for GraphActions.
+        GaType = GraphActionType  # Shorthand for GraphActionType.
 
         logits = module_output
-        logits[GraphActions.ACTION_TYPE_KEY][~masks[GraphActions.ACTION_TYPE_KEY]] = (
-            -float("inf")
-        )
-        logits[GraphActions.NODE_CLASS_KEY][~masks[GraphActions.NODE_CLASS_KEY]] = (
-            -float("inf")
-        )
-        logits[GraphActions.EDGE_CLASS_KEY][~masks[GraphActions.EDGE_CLASS_KEY]] = (
-            -float("inf")
-        )
-        logits[GraphActions.EDGE_INDEX_KEY][~masks[GraphActions.EDGE_INDEX_KEY]] = (
-            -float("inf")
-        )
+        logits[Ga.ACTION_TYPE_KEY][~masks[Ga.ACTION_TYPE_KEY]] = -float("inf")
+        logits[Ga.NODE_CLASS_KEY][~masks[Ga.NODE_CLASS_KEY]] = -float("inf")
+        logits[Ga.EDGE_CLASS_KEY][~masks[Ga.EDGE_CLASS_KEY]] = -float("inf")
+        logits[Ga.EDGE_INDEX_KEY][~masks[Ga.EDGE_INDEX_KEY]] = -float("inf")
 
-        # Check if no possible edge can be added,
-        # and assert that action type cannot be ADD_EDGE
-        no_possible_edge_index = torch.isneginf(logits[GraphActions.EDGE_INDEX_KEY]).all(
-            -1
-        )
-        assert torch.isneginf(
-            logits[GraphActions.ACTION_TYPE_KEY][
-                no_possible_edge_index, GraphActionType.ADD_EDGE
-            ]
-        ).all()
-        logits[GraphActions.EDGE_INDEX_KEY][no_possible_edge_index] = 0.0
+        # The following operations are to ensure that the logits are valid, i.e.,
+        # contain at least one finite entry.
 
-        # Check if no possible edge class can be added,
-        # and assert that action type cannot be ADD_EDGE
-        no_possible_edge_class = torch.isneginf(logits[GraphActions.EDGE_CLASS_KEY]).all(
-            -1
-        )
+        # Check no edge can be added & assert that action type can't be ADD_EDGE
+        no_possible_edge_index = torch.isneginf(logits[Ga.EDGE_INDEX_KEY]).all(-1)
         assert torch.isneginf(
-            logits[GraphActions.ACTION_TYPE_KEY][
-                no_possible_edge_class, GraphActionType.ADD_EDGE
-            ]
+            logits[Ga.ACTION_TYPE_KEY][no_possible_edge_index, GaType.ADD_EDGE]
         ).all()
-        logits[GraphActions.EDGE_CLASS_KEY][no_possible_edge_class] = 0.0
+        logits[Ga.EDGE_INDEX_KEY][no_possible_edge_index] = 0.0
 
-        # Check if no possible node can be added,
-        # and assert that action type cannot be ADD_NODE
-        no_possible_node = torch.isneginf(logits[GraphActions.NODE_CLASS_KEY]).all(-1)
+        # Check no edge class can be added & assert that action type cannot be ADD_EDGE
+        no_possible_edge_class = torch.isneginf(logits[Ga.EDGE_CLASS_KEY]).all(-1)
         assert torch.isneginf(
-            logits[GraphActions.ACTION_TYPE_KEY][
-                no_possible_node, GraphActionType.ADD_NODE
-            ]
+            logits[Ga.ACTION_TYPE_KEY][no_possible_edge_class, GaType.ADD_EDGE]
         ).all()
-        logits[GraphActions.NODE_CLASS_KEY][no_possible_node] = 0.0
+        logits[Ga.EDGE_CLASS_KEY][no_possible_edge_class] = 0.0
+
+        # Check no node can be added & assert that action type cannot be ADD_NODE
+        no_possible_node = torch.isneginf(logits[Ga.NODE_CLASS_KEY]).all(-1)
+        assert torch.isneginf(
+            logits[Ga.ACTION_TYPE_KEY][no_possible_node, GaType.ADD_NODE]
+        ).all()
+        logits[Ga.NODE_CLASS_KEY][no_possible_node] = 0.0
 
         transformed_logits = {}
         for key in logits.keys():
             assert isinstance(key, str)
-            # This allows for off-policy exploration.
-            assert not torch.isnan(
-                logits[key]
-            ).any(), "Module output {} contains NaNs".format(key)
+            assert not torch.isnan(logits[key]).any(), f"logits[{key}] contains NaNs"
 
-            transformed_logits[key] = self._transform_logits(
-                logits[key],
-                masks[key],
-                sf_bias=sf_bias if key == GraphActions.ACTION_TYPE_KEY else 0.0,
-                temperature=temperature[key],
-                epsilon=epsilon[key],
+            # Logit transformations allow for off-policy exploration.
+            transformed_logits[key] = (
+                LogitBasedEstimator._compute_logits_for_distribution(
+                    logits=logits[key],
+                    masks=masks[key],
+                    # ACTION_TYPE_KEY contains the exit action logit.
+                    sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
+                    sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
+                    temperature=temperature[key],
+                    epsilon=epsilon[key],
+                )
             )
 
         return GraphActionDistribution(logits=TensorDict(transformed_logits))
-
-    @staticmethod
-    def _transform_logits(
-        logits: torch.Tensor,
-        masks: torch.Tensor,
-        sf_bias: float = 0.0,
-        temperature: float = 1.0,
-        epsilon: float = 0.0,
-    ) -> torch.Tensor:
-        """Return logits to feed a categorical distribution with optional bias,
-        temperature tempering, and epsilon exploration.
-
-        If epsilon > 0, we construct the epsilon-greedy distribution by mixing the
-        original distribution with a uniform distribution and pass the resuling
-        normalized log-probs as logits.
-
-        This static method implements the same logic as `DiscretePolicyEstimator`'s
-        logit manipilations, but is separated to handle each action component
-        independently in graph environments.
-
-        Args:
-            logits: The logits tensor.
-            masks: The masks tensor indicating valid actions.
-            sf_bias: Scalar to subtract from the exit action logit.
-            temperature: Scalar to divide the logits by before softmax.
-            epsilon: Probability of choosing a random action.
-
-        Returns:
-            A tensor of logits.
-        """
-        return LogitBasedEstimator._compute_logits_for_distribution(
-            logits=logits,
-            masks=masks,
-            sf_index=GraphActionType.EXIT if sf_bias != 0.0 else None,
-            sf_bias=sf_bias,
-            temperature=temperature,
-            epsilon=epsilon,
-        )
 
     @property
     def expected_output_dim(self) -> Optional[int]:
