@@ -64,7 +64,6 @@ from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
 from tutorials.examples.multinode.spawn_policy import (
     AverageAllPolicy,
-    SelectiveAveragingPolicy,
     AsyncSelectiveAveragingPolicy,
 )
 
@@ -227,6 +226,13 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
                 import torch_mpi  # noqa: F401
             except ImportError as e:
                 raise Exception("import torch_mpi failed, {}".format(e))
+        elif dist_backend == "gloo":
+            print("+ Gloo backend requested...")
+            assert torch.distributed.is_gloo_available()
+            # try:
+            #     import torch_gloo  # noqa: F401
+            # except ImportError as e:
+            #     raise Exception("import torch_gloo failed, {}".format(e))
         else:
             raise Exception(f"Invalid backend requested: {dist_backend}")
 
@@ -374,6 +380,7 @@ def gather_distributed_data(
     world_size: int | None = None,
     rank: int | None = None,
     verbose: bool = False,
+    group: dist.ProcessGroup | None = None,
 ) -> torch.Tensor | None:
     """
     Gather data from all processes in a distributed setting.
@@ -391,9 +398,9 @@ def gather_distributed_data(
         print("syncing distributed data")
 
     if world_size is None:
-        world_size = dist.get_world_size()
+        world_size = dist.get_world_size(group=group)
     if rank is None:
-        rank = dist.get_rank()
+        rank = dist.get_rank(group=group)
 
     # First gather batch_sizes to allocate correct buffer sizes.
     local_batch_size = torch.tensor(
@@ -413,8 +420,9 @@ def gather_distributed_data(
         print(
             "+ gather of local_batch_size={} to batch_size_list".format(local_batch_size)
         )
-    dist.gather(local_batch_size, gather_list=batch_size_list, dst=0)
-    dist.barrier()  # Add synchronization
+    
+    dist.gather(local_batch_size, gather_list=batch_size_list, dst=0, group=group)
+    dist.barrier(group=group)  # Add synchronization
 
     # Pad local tensor to maximum size.
     if verbose:
@@ -430,7 +438,7 @@ def gather_distributed_data(
 
     # Broadcast max_size to all processes for padding
     max_batch_size_tensor = torch.tensor(max_batch_size, device=local_tensor.device)
-    dist.broadcast(max_batch_size_tensor, src=0)
+    dist.broadcast(max_batch_size_tensor, src=0, group=group)
 
     # Pad local tensor to maximum size.
     if local_tensor.shape[0] < max_batch_size:
@@ -457,8 +465,8 @@ def gather_distributed_data(
     if verbose:
         print("+ gathering all tensors from world_size={}".format(world_size))
         print("rank={}, tensor_list={}".format(rank, tensor_list))
-    dist.gather(local_tensor, gather_list=tensor_list, dst=0)
-    dist.barrier()  # Add synchronization
+    dist.gather(local_tensor, gather_list=tensor_list, dst=0, group=group)
+    dist.barrier(group=group)  # Add synchronization
 
     # Only rank 0 processes the results
     if rank == 0:
@@ -842,11 +850,16 @@ def main(args):  # noqa: C901
     # Initialize distributed compute.
     if args.distributed:
         my_rank, my_size, agent_group_size, agent_group_list = (
-            initialize_distributed_compute()
+            initialize_distributed_compute(args.dist_backend)
         )
         my_rank = dist.get_rank()
         world_size = torch.distributed.get_world_size()
         my_agent_group_id = my_rank // agent_group_size
+        # Dedicated training process group to isolate collectives from async policy traffic
+        train_pg = dist.new_group(
+            backend=args.dist_backend,
+            timeout=datetime.timedelta(minutes=5),
+        )
         print(f"Running with DDP on rank {my_rank}/{world_size}.")
         print(
             f"agent_group_size, my_agent_group_id = {agent_group_size, my_agent_group_id}"
@@ -855,6 +868,7 @@ def main(args):  # noqa: C901
         world_size = 1  # Single machine.
         my_rank = 0  # Single machine.
         agent_group_list = my_agent_group_id = None
+        train_pg = None
     
 
     # Initialize WandB.
@@ -982,20 +996,13 @@ def main(args):  # noqa: C901
         timing, "Pre-processing_barrier", enabled=(args.timing and args.distributed)
     ):
         if args.distributed and args.timing:
-            dist.barrier()
+            dist.barrier(group=train_pg)
 
     # Set up averaging policy (called every iteration; internal guard checks cadence/distributed)
     averaging_policy = None
     if args.distributed:
-        if args.async_selective_averaging:
+        if args.use_selective_averaging:
             averaging_policy = AsyncSelectiveAveragingPolicy(
-                average_every=args.average_every,
-                replacement_ratio=args.replacement_ratio,
-                averaging_strategy=args.averaging_strategy,
-                momentum=args.momentum,
-            )
-        elif args.use_selective_averaging:
-            averaging_policy = SelectiveAveragingPolicy(
                 average_every=args.average_every,
                 replacement_ratio=args.replacement_ratio,
                 averaging_strategy=args.averaging_strategy,
@@ -1066,7 +1073,7 @@ def main(args):  # noqa: C901
             timing, "barrier 0", enabled=(args.timing and args.distributed)
         ) as bar0_timer:
             if args.distributed and args.timing:
-                dist.barrier()
+                dist.barrier(group=train_pg)
 
         # Backpropagation.
         with Timer(timing, "loss_backward", enabled=args.timing) as loss_backward_timer:
@@ -1081,13 +1088,13 @@ def main(args):  # noqa: C901
             timing, "barrier 1", enabled=(args.timing and args.distributed)
         ) as bar1_timer:
             if args.distributed and args.timing:
-                dist.barrier()
+                dist.barrier(group=train_pg)
 
         # Model averaging via policy
         with Timer(timing, "averaging_model", enabled=args.timing) as model_averaging_timer:
             if averaging_policy is not None:
                 averaging_policy(iteration=iteration, model=gflownet, local_metric=-loss.item())
-
+    
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
         rest_time = iteration_time - sum(
@@ -1116,7 +1123,6 @@ def main(args):  # noqa: C901
         visited_terminating_states.extend(
             cast(DiscreteStates, trajectories.terminating_states)
         )
-
         with Timer(timing, "gather_visited_states", enabled=args.timing):
             # If distributed, gather all visited terminating states from all nodes.
             if args.distributed and log_this_iter:
@@ -1124,7 +1130,8 @@ def main(args):  # noqa: C901
                     assert visited_terminating_states is not None
                     # Gather all visited terminating states from all nodes.
                     gathered_visited_terminating_states = gather_distributed_data(
-                        visited_terminating_states.tensor
+                        visited_terminating_states.tensor,
+                        group=train_pg,
                     )
                 except Exception as e:
                     print("Process {}: Caught error: {}".format(my_rank, e))
@@ -1199,7 +1206,7 @@ def main(args):  # noqa: C901
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
             if args.distributed and args.timing:
-                dist.barrier()
+                dist.barrier(group=train_pg)
 
     total_time = time.time() - time_start
     if args.timing:
@@ -1208,7 +1215,7 @@ def main(args):  # noqa: C901
     timing["total_time"] = [total_time]
 
     if args.distributed:
-        dist.barrier()
+        dist.barrier(group=train_pg)
 
     # Ensure background comms threads are stopped cleanly (async policy)
     try:
@@ -1229,7 +1236,7 @@ def main(args):  # noqa: C901
         if args.distributed:
             # Gather timing data from all ranks
             all_timings = [None] * world_size
-            dist.all_gather_object(all_timings, timing)
+            dist.all_gather_object(all_timings, timing, group=train_pg)
 
             if my_rank == 0:
                 report_timing(all_timings, world_size)
@@ -1292,6 +1299,13 @@ if __name__ == "__main__":
         action="store_true",
         help="Initializes distributed computation (torch.distributed)",
     )
+    parser.add_argument(
+        "--dist_backend",
+        type=str,
+        choices=["ccl", "mpi", "gloo"],
+        default="ccl",
+        help="Process group backend to use when --distributed is enabled",
+    )
     
     # Selective averaging settings.
     parser.add_argument(
@@ -1299,11 +1313,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Use selective averaging instead of standard averaging",
     )
-    parser.add_argument(
-        "--async_selective_averaging",
-        action="store_true",
-        help="Use asynchronous selective averaging (non-blocking, background comms)",
-    )
+
     parser.add_argument(
         "--replacement_ratio",
         type=float,
