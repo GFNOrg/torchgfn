@@ -96,35 +96,35 @@ class ReplayBuffer:
         Returns:
             The device object of the buffer's contents.
         """
-        assert self.training_objects is not None, "Buffer is empty, it has no device!"
-        return self.training_objects.device
+        assert self.training_container is not None, "Buffer is empty, it has no device!"
+        return self.training_container.device
 
-    def add(self, training_objects: ContainerUnion) -> None:
-        """Adds a training object to the buffer.
+    def add(self, training_container: ContainerUnion) -> None:
+        """Adds a training container to the buffer.
 
-        The type of the training objects is dynamically set based on the type of the
-        first added object.
+        The type of the training container is dynamically set based on the type of the
+        first added container.
 
         Args:
-            training_objects: The Trajectories, Transitions, or StatesContainer object
-                to add.
+            training_container: The Trajectories, Transitions, or StatesContainer 
+                object to add.
         """
-        if not isinstance(training_objects, ValidContainerTypes):
+        if not isinstance(training_container, ValidContainerTypes):
             raise TypeError("Must be a container type")
 
-        self._add_objs(training_objects)
+        self._add_objs(training_container)
 
         # Handle remote buffer communication
         if self.remote_manager_rank is not None:
             self._add_counter += 1
             if self._add_counter % self.remote_buffer_freq == 0:
-                score = self._send_objs(len(training_objects))
+                score = self._send_objs(len(training_container))
                 print(
                     f"[Rank {dist.get_rank()}] Sent to remote {self.remote_manager_rank}, got score {score}"
                 )
 
-    def _send_objs(self, training_objects):
-
+    def _send_objs(self, training_container: ContainerUnion) -> float:
+        """Sends a training container to the remote manager."""
         msg = Message(MessageType.DATA, training_objects)
         msg_tensor = msg.serialize()
 
@@ -142,76 +142,77 @@ class ReplayBuffer:
         # Receive a dummy score back
         score = torch.zeros(1, dtype=torch.float32)
         dist.recv(score, src=self.remote_manager_rank)
+        
         return score.item()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Returns a string representation of the ReplayBuffer.
 
         Returns:
             A string summary of the buffer.
         """
-        if self.training_objects is None:
+        if self.container_objects is None:
             type_str = "empty"
         else:
-            type_str = self.training_objects.__class__.__name__.lower()
+            type_str = self.container_objects.__class__.__name__.lower()
         return (
             f"ReplayBuffer(capacity={self.capacity}, containing {len(self)} {type_str})"
         )
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Returns the number of items in the buffer.
 
         Returns:
             The number of items in the buffer.
         """
-        return 0 if self.training_objects is None else len(self.training_objects)
+        return 0 if self.container_objects is None else len(self.container_objects)
 
-    def initialize(self, training_objects: ContainerUnion) -> None:
+    def initialize(self, container_objects: ContainerUnion) -> None:
         """Initializes the buffer with the type of the first added object.
 
         Args:
-            training_objects: The initial Trajectories, Transitions, or StatesContainer
+            container_objects: The initial Trajectories, Transitions, or StatesContainer
                 object to set the buffer type.
         """
-        if isinstance(training_objects, Trajectories):
-            self.training_objects = cast(ContainerUnion, Trajectories(self.env))
-        elif isinstance(training_objects, Transitions):
-            self.training_objects = cast(ContainerUnion, Transitions(self.env))
-        elif isinstance(training_objects, StatesContainer):
-            self.training_objects = cast(ContainerUnion, StatesContainer(self.env))
+        if isinstance(container_objects, Trajectories):
+            self.container_objects = cast(ContainerUnion, Trajectories(self.env))
+        elif isinstance(container_objects, Transitions):
+            self.container_objects = cast(ContainerUnion, Transitions(self.env))
+        elif isinstance(container_objects, StatesContainer):
+            self.container_objects = cast(ContainerUnion, StatesContainer(self.env))
         else:
-            raise ValueError(f"Unsupported type: {type(training_objects)}")
+            raise ValueError(f"Unsupported type: {type(container_objects)}")
 
-    def _add_objs(self, training_objects: ContainerUnion):
+    def _add_objs(self, container_objects: ContainerUnion):
         """Adds a training object to the buffer, handling the capacity.
 
         Args:
-            training_objects: The Trajectories, Transitions, or StatesContainer object
+            container_objects: The Trajectories, Transitions, or StatesContainer object
                 to add.
         """
-        if self.training_objects is None:
-            self.initialize(training_objects)
-        assert self.training_objects is not None
-        assert isinstance(training_objects, type(self.training_objects))  # type: ignore
+        if self.container_objects is None:
+            self.initialize(container_objects)
+        assert self.container_objects is not None
+        assert isinstance(container_objects, type(self.container_objects))  # type: ignore
 
         # Adds the objects to the buffer.
-        self.training_objects.extend(training_objects)  # type: ignore
+        self.container_objects.extend(container_objects)  # type: ignore
 
         # Sort elements by log reward, capping the size at the defined capacity.
         if self.prioritized_capacity:
             if (
-                self.training_objects.log_rewards is None
-                or training_objects.log_rewards is None
+                self.container_objects.log_rewards is None
+                or container_objects.log_rewards is None
             ):
                 raise ValueError("log_rewards must be defined for prioritized replay.")
 
             # Ascending sort.
-            ix = torch.argsort(self.training_objects.log_rewards)
-            self.training_objects = cast(ContainerUnion, self.training_objects[ix])
+            ix = torch.argsort(self.container_objects.log_rewards)
+            self.container_objects = cast(ContainerUnion, self.container_objects[ix])
 
-        assert self.training_objects is not None
-        self.training_objects = cast(
-            ContainerUnion, self.training_objects[-self.capacity :]
+        assert self.container_objects is not None
+        self.container_objects = cast(
+            ContainerUnion, self.container_objects[-self.capacity :]
         )
 
     def sample(self, n_samples: int) -> ContainerUnion:
@@ -223,7 +224,7 @@ class ReplayBuffer:
         Returns:
             A sampled Trajectories, Transitions, or StatesContainer.
         """
-        if self.training_objects is None:
+        if self.container_objects is None:
             raise ValueError("Buffer is empty")
 
         # If the buffer is flagged as prioritised, draw samples proportionally to the
@@ -244,10 +245,10 @@ class ReplayBuffer:
             replacement = n_samples > len(self)
 
             indices = torch.multinomial(probs, n_samples, replacement=replacement)
-            return self.training_objects[indices]
+            return self.container_objects[indices]
 
         # Uniform sampling (replacement-free) for the non-prioritised case.
-        return cast(ContainerUnion, self.training_objects.sample(n_samples))
+        return cast(ContainerUnion, self.container_objects.sample(n_samples))
 
     def save(self, directory: str):
         """Saves the buffer to disk.
@@ -255,8 +256,8 @@ class ReplayBuffer:
         Args:
             directory: The directory path where the buffer will be saved.
         """
-        if self.training_objects is not None:
-            self.training_objects.save(os.path.join(directory, "training_objects"))
+        if self.container_objects is not None:
+            self.container_objects.save(os.path.join(directory, "training_objects"))
 
     def load(self, directory: str):
         """Loads the buffer from disk.
@@ -264,8 +265,8 @@ class ReplayBuffer:
         Args:
             directory: The directory path from which to load the buffer.
         """
-        if self.training_objects is not None:
-            self.training_objects.load(os.path.join(directory, "training_objects"))
+        if self.container_objects is not None:
+            self.container_objects.load(os.path.join(directory, "container_objects"))
 
 
 class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
