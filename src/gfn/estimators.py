@@ -738,6 +738,7 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
 
         transformed_logits = {}
         for key in logits.keys():
+            assert isinstance(key, str)
             # This allows for off-policy exploration.
             assert not torch.isnan(
                 logits[key]
