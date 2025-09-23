@@ -832,6 +832,12 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
 
 def main(args):  # noqa: C901
     """Trains a GFlowNet on the Hypergrid Environment, potentially distributed."""
+
+    if args.half_precision:
+        torch.set_default_dtype(torch.bfloat16)
+
+    print("+ Using default dtype: ", torch.get_default_dtype())
+
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
@@ -1459,6 +1465,12 @@ if __name__ == "__main__":
         "--timing",
         action="store_true",
         help="Report timing information at the end of training",
+    )
+
+    parser.add_argument(
+        "--half_precision",
+        action="store_true",
+        help="Use half precision for the model",
     )
 
     args = parser.parse_args()

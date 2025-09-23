@@ -145,6 +145,19 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
             recalculate_all_logprobs=recalculate_all_logprobs,
         )
 
+    def assert_finite_gradients(self):
+        """Asserts that the gradients are finite."""
+        for p in self.parameters():
+            if p.grad is not None:
+                if not torch.isfinite(p.grad).all():
+                    raise RuntimeError("GFlowNet has non-finite gradients")
+
+    def assert_finite_parameters(self):
+        """Asserts that the parameters are finite."""
+        for p in self.parameters():
+            if not torch.isfinite(p).all():
+                raise RuntimeError("GFlowNet has non-finite parameters")
+
 
 class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     """A GFlowNet that uses forward (PF) and backward (PB) policy networks.
