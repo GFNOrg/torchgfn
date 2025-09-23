@@ -73,7 +73,7 @@ class Estimator(ABC, nn.Module):
         if preprocessor is None:
             assert hasattr(module, "input_dim") and isinstance(module.input_dim, int), (
                 "Module needs to have an attribute `input_dim` specifying the input "
-                + "dimension, in order to use the default IdentityPreprocessor."
+                "dimension, in order to use the default IdentityPreprocessor."
             )
             preprocessor = IdentityPreprocessor(module.input_dim)
         self.preprocessor = preprocessor
@@ -221,17 +221,36 @@ class LogitBasedEstimator(Estimator):
     def _prepare_logits(
         logits: torch.Tensor,
         masks: torch.Tensor,
-        sf_bias_index: int | None,
+        sf_index: int | None,
         sf_bias: float,
         temperature: float,
     ) -> torch.Tensor:
         """Clone and apply mask, bias and temperature to logits."""
         assert temperature > 0.0
+
         x = logits.clone()
         x[~masks] = -float("inf")
 
-        if sf_bias_index is not None and sf_bias != 0.0:
-            x[..., sf_bias_index] = x[..., sf_bias_index] - sf_bias
+        # Ensure at least one finite per row if requested
+        if sf_index is not None:
+            no_valid = masks.sum(dim=-1) == 0
+            if no_valid.any():
+                x[no_valid] = -float("inf")
+                x[no_valid, sf_index] = 0.0  # degenerate one-hot
+        else:
+            # If entire row is masked (e.g., unused component like EDGE_INDEX), place a
+            # harmless finite fallback to avoid all -inf rows through the pipeline.
+            no_valid = masks.sum(dim=-1) == 0
+            if no_valid.any():
+                x[no_valid] = -float("inf")
+                # set the first column to 0.0 as a dummy finite value
+                x[no_valid, 0] = 0.0
+
+        # Assert that each row has at least one finite entry.
+        assert torch.isfinite(x).any(dim=-1).all(), "All -inf row after masking"
+
+        if sf_index is not None and sf_bias != 0.0:
+            x[..., sf_index] = x[..., sf_index] - sf_bias
 
         if temperature != 1.0:
             x = x / temperature
@@ -263,25 +282,39 @@ class LogitBasedEstimator(Estimator):
         lsm: torch.Tensor, masks: torch.Tensor, epsilon: float
     ) -> torch.Tensor:
         """Compute log((1-eps) p + eps u) in log space."""
-        assert 0.0 <= epsilon <= 1.0
+        assert 0.0 <= epsilon < 1.0
+
         if epsilon == 0.0:
             return lsm
 
         log_uniform = LogitBasedEstimator._uniform_log_probs(masks).to(lsm.dtype)
-        log1m_eps = torch.log1p(
-            -torch.as_tensor(epsilon, dtype=lsm.dtype, device=lsm.device)
-        )
-        log_eps = torch.log(torch.as_tensor(epsilon, dtype=lsm.dtype, device=lsm.device))
+        eps_tensor = torch.as_tensor(epsilon, dtype=lsm.dtype, device=lsm.device)
 
-        return torch.logsumexp(
-            torch.stack((lsm + log1m_eps, log_uniform + log_eps), dim=0), dim=0
-        )
+        # Row-wise safe mixing: compute only on valid entries; for rows with no valid
+        # actions, keep the original lsm row to avoid all -inf.
+        out = torch.full_like(lsm, -float("inf"))
+        has_any_valid = masks.any(dim=-1)
+
+        if masks.any():
+            mixed_valid_outputs = torch.logaddexp(
+                lsm[masks] + torch.log1p(-eps_tensor),
+                log_uniform[masks] + torch.log(eps_tensor),
+            )
+            out[masks] = mixed_valid_outputs
+
+        # For rows with no valid entries (should only happen for unused components,
+        # e.g., EDGE_INDEX when no edges are able to be added), retain the original
+        # normalized log-probs to avoid all -inf rows.
+        if (~has_any_valid).any():
+            out[~has_any_valid] = lsm[~has_any_valid]
+
+        return out
 
     @staticmethod
     def _compute_logits_for_distribution(
         logits: torch.Tensor,
         masks: torch.Tensor,
-        sf_bias_index: int | None,
+        sf_index: int | None,
         sf_bias: float,
         temperature: float,
         epsilon: float,
@@ -290,18 +323,37 @@ class LogitBasedEstimator(Estimator):
         - If epsilon == 0: masked, biased, temperature-scaled logits.
         - Else: normalized log-probs of the epsilon-greedy mixture (valid as logits).
         """
-        with torch.autocast(
-            device_type="cuda" if logits.is_cuda else "cpu", enabled=False
-        ):
-            x = LogitBasedEstimator._prepare_logits(
-                logits, masks, sf_bias_index, sf_bias, temperature
-            )
-            if epsilon == 0.0:
-                return x
-            lsm = torch.log_softmax(x, dim=-1)
-            return LogitBasedEstimator._mix_with_uniform_in_log_space(
-                lsm, masks, epsilon
-            )
+        assert not torch.isnan(logits).any(), "Module output logits contain NaNs"
+
+        # Prepare logits first (masking, bias, temperature) in the existing dtype
+        x = LogitBasedEstimator._prepare_logits(
+            logits, masks, sf_index, sf_bias, temperature
+        )
+
+        assert not torch.isnan(x).any(), "Prepared logits contain NaNs"
+
+        # Perform numerically sensitive ops in float32 when inputs are low-precision
+        orig_dtype = x.dtype
+        compute_dtype = (
+            torch.float32
+            if orig_dtype in (torch.float16, torch.bfloat16)
+            else orig_dtype
+        )
+
+        assert torch.isfinite(x).any(dim=-1).all(), "All -inf row before log-softmax"
+
+        lsm = torch.log_softmax(x.to(compute_dtype), dim=-1)
+        assert (
+            torch.isfinite(lsm).any(dim=-1).all()
+        ), "Invalid log-probs after log_softmax"
+
+        if epsilon == 0.0:
+            return lsm.to(orig_dtype) if lsm.dtype != orig_dtype else lsm
+
+        mixed = LogitBasedEstimator._mix_with_uniform_in_log_space(lsm, masks, epsilon)
+        assert torch.isfinite(mixed).any(dim=-1).all(), "Invalid log-probs after mixing"
+
+        return mixed.to(orig_dtype) if mixed.dtype != orig_dtype else mixed
 
 
 class DiscretePolicyEstimator(LogitBasedEstimator):
@@ -398,7 +450,7 @@ class DiscretePolicyEstimator(LogitBasedEstimator):
         logits = LogitBasedEstimator._compute_logits_for_distribution(
             module_output,
             masks,
-            sf_bias_index=None,
+            sf_index=-1,
             sf_bias=sf_bias,
             temperature=temperature,
             epsilon=epsilon,
@@ -635,6 +687,7 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
             A GraphActionDistribution over the graph actions.
         """
         masks = states.backward_masks if self.is_backward else states.forward_masks
+
         logits = module_output
         logits[GraphActions.ACTION_TYPE_KEY][~masks[GraphActions.ACTION_TYPE_KEY]] = (
             -float("inf")
@@ -686,6 +739,10 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         transformed_logits = {}
         for key in logits.keys():
             # This allows for off-policy exploration.
+            assert not torch.isnan(
+                logits[key]
+            ).any(), "Module output {} contains NaNs".format(key)
+
             transformed_logits[key] = self._transform_logits(
                 logits[key],
                 masks[key],
@@ -728,7 +785,7 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         return LogitBasedEstimator._compute_logits_for_distribution(
             logits=logits,
             masks=masks,
-            sf_bias_index=GraphActionType.EXIT if sf_bias != 0.0 else None,
+            sf_index=GraphActionType.EXIT if sf_bias != 0.0 else None,
             sf_bias=sf_bias,
             temperature=temperature,
             epsilon=epsilon,

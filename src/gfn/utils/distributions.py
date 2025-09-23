@@ -63,6 +63,11 @@ class GraphActionDistribution(Distribution):
         super().__init__()
         assert (probs is None) ^ (logits is None), "Pass exactly one of logits or probs."
 
+        # In practice, we never sample from the undefined distributions. However, if we
+        # don't disable validation, the inputs are checked at initialization, which can
+        # fail when all actions of a particular type are impossible (e.g., unable to
+        # add an edge.) TODO: validation should be disabled only when all actions of a
+        # particular type are impossible.
         validate_args = False  # edge_index.numel() == 0 when no nodes are present
         if isinstance(logits, TensorDict):
             self.dists = {
