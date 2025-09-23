@@ -1204,12 +1204,13 @@ def main(args):  # noqa: C901
 
     # Log the final timing results.
     if args.timing:
-        print("\n" + "=" * 80)
-        print("\n Timing information:")
-        if args.distributed:
-            print("-" * 80)
-            print("The below timing information is averaged across all ranks.")
-        print("=" * 80)
+        if my_rank == 0:
+            print("\n" + "=" * 80)
+            print("\n Timing information:")
+            if args.distributed:
+                print("-" * 80)
+                print("The below timing information is averaged across all ranks.")
+            print("=" * 80)
 
         if args.distributed:
             # Gather timing data from all ranks
