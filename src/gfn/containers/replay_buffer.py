@@ -6,12 +6,12 @@ from typing import Protocol, Union, cast, runtime_checkable
 import torch
 import torch.distributed as dist
 
+from gfn.containers.message import Message, MessageType
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 
-from .message import Message, MessageType
 
 
 @runtime_checkable
