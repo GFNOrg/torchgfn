@@ -13,8 +13,8 @@ class MessageType(Enum):
 
 class Message:
     def __init__(self, message_type: MessageType, message_data: Any = None):
-        self.message_type = type
-        self.message_data = data
+        self.message_type = message_type
+        self.message_data = message_data
 
     def serialize(self) -> torch.ByteTensor:
         """Convert message into a tensor of bytes."""
