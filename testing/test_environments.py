@@ -298,9 +298,10 @@ def test_get_grid():
     NDIM = 2
 
     env = HyperGrid(
-        height=HEIGHT, ndim=NDIM, calculate_all_states=True, calculate_partition=True
+        height=HEIGHT, ndim=NDIM, store_all_states=True, calculate_partition=True
     )
     all_states = env.all_states
+    assert all_states is not None
 
     assert all_states.batch_shape == (HEIGHT**2,)
     assert all_states.state_shape == (NDIM,)
@@ -344,6 +345,9 @@ def test_graph_env():
                     GraphActions.NODE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
+                    GraphActions.NODE_INDEX_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
@@ -357,7 +361,7 @@ def test_graph_env():
         states = env._step(states, actions)
 
     # Add nodes.
-    for _ in range(NUM_NODES):
+    for i in range(NUM_NODES):
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
@@ -367,6 +371,7 @@ def test_graph_env():
                     GraphActions.NODE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
+                    GraphActions.NODE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
@@ -381,28 +386,6 @@ def test_graph_env():
 
     assert states.tensor.x.shape == (BATCH_SIZE * NUM_NODES, 1)
 
-    # We can't add a node with the same features.
-    with pytest.raises(NonValidActionsError):
-        first_node_mask = torch.arange(len(states.tensor.x)) // BATCH_SIZE == 0
-        actions = action_cls.from_tensor_dict(
-            TensorDict(
-                {
-                    GraphActions.ACTION_TYPE_KEY: torch.full(
-                        (BATCH_SIZE,), GraphActionType.ADD_NODE
-                    ),
-                    GraphActions.NODE_CLASS_KEY: states.tensor.x[first_node_mask],
-                    GraphActions.EDGE_CLASS_KEY: torch.randint(
-                        0, 10, (BATCH_SIZE,), dtype=torch.long
-                    ),
-                    GraphActions.EDGE_INDEX_KEY: torch.randint(
-                        0, 10, (BATCH_SIZE,), dtype=torch.long
-                    ),
-                },
-                batch_size=BATCH_SIZE,
-            )
-        )
-        states = env._step(states, actions)
-
     # Add edges.
     for i in range(NUM_NODES**2 - NUM_NODES):
         actions = action_cls.from_tensor_dict(
@@ -413,6 +396,9 @@ def test_graph_env():
                     ),
                     GraphActions.NODE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.NODE_INDEX_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
                     ),
                     GraphActions.EDGE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
@@ -431,6 +417,9 @@ def test_graph_env():
                     (BATCH_SIZE,), GraphActionType.EXIT
                 ),
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.NODE_INDEX_KEY: torch.zeros(
                     (BATCH_SIZE,), dtype=torch.long
                 ),
                 GraphActions.EDGE_CLASS_KEY: torch.zeros(
@@ -460,6 +449,9 @@ def test_graph_env():
                     GraphActions.NODE_CLASS_KEY: torch.zeros(
                         (BATCH_SIZE,), dtype=torch.long
                     ),
+                    GraphActions.NODE_INDEX_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
@@ -481,6 +473,9 @@ def test_graph_env():
                     GraphActions.NODE_CLASS_KEY: torch.zeros(
                         (BATCH_SIZE,), dtype=torch.long
                     ),
+                    GraphActions.NODE_INDEX_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
@@ -494,15 +489,17 @@ def test_graph_env():
         states = env._backward_step(states, actions)
 
     # Remove nodes.
-    for i in reversed(range(1, NUM_NODES + 1)):
-        edge_idx = torch.arange(BATCH_SIZE) * i
+    for i in reversed(range(NUM_NODES)):
         actions = action_cls.from_tensor_dict(
             TensorDict(
                 {
                     GraphActions.ACTION_TYPE_KEY: torch.full(
                         (BATCH_SIZE,), GraphActionType.ADD_NODE
                     ),
-                    GraphActions.NODE_CLASS_KEY: states.tensor.x[edge_idx],
+                    GraphActions.NODE_CLASS_KEY: torch.zeros(
+                        (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.NODE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
                     GraphActions.EDGE_CLASS_KEY: torch.zeros(
                         (BATCH_SIZE,), dtype=torch.long
                     ),
@@ -524,7 +521,10 @@ def test_graph_env():
                 GraphActions.ACTION_TYPE_KEY: torch.full(
                     (BATCH_SIZE,), GraphActionType.ADD_NODE
                 ),
-                GraphActions.NODE_CLASS_KEY: torch.zeros(
+                GraphActions.NODE_CLASS_KEY: torch.randint(
+                    0, 10, (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.NODE_INDEX_KEY: torch.zeros(
                     (BATCH_SIZE,), dtype=torch.long
                 ),
                 GraphActions.EDGE_CLASS_KEY: torch.zeros(
@@ -547,7 +547,10 @@ def test_graph_env():
                     GraphActions.ACTION_TYPE_KEY: torch.full(
                         (BATCH_SIZE,), GraphActionType.ADD_NODE
                     ),
-                    GraphActions.NODE_CLASS_KEY: torch.ones(
+                    GraphActions.NODE_CLASS_KEY: torch.randint(
+                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    ),
+                    GraphActions.NODE_INDEX_KEY: torch.ones(
                         (BATCH_SIZE,), dtype=torch.long
                     ),
                     GraphActions.EDGE_CLASS_KEY: torch.zeros(
@@ -570,6 +573,9 @@ def test_graph_env():
                     (BATCH_SIZE,), GraphActionType.ADD_NODE
                 ),
                 GraphActions.NODE_CLASS_KEY: torch.zeros(
+                    (BATCH_SIZE,), dtype=torch.long
+                ),
+                GraphActions.NODE_INDEX_KEY: torch.zeros(
                     (BATCH_SIZE,), dtype=torch.long
                 ),
                 GraphActions.EDGE_CLASS_KEY: torch.zeros(

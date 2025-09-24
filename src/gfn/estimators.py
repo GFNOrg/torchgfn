@@ -88,7 +88,8 @@ class Estimator(ABC, nn.Module):
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        out = self.module(self.preprocessor(input))
+        preprocessed_input = self.preprocessor(input)
+        out = self.module(preprocessed_input)
         if self.expected_output_dim is not None:
             assert out.shape[-1] == self.expected_output_dim, (
                 f"Module output shape {out.shape} does not match expected output "
@@ -190,6 +191,9 @@ class ScalarEstimator(Estimator):
         """
         return 1
 
+    def _calculate_module_output(self, input: States) -> torch.Tensor:
+        return self.module(self.preprocessor(input))
+
     def forward(self, input: States) -> torch.Tensor:
         """Forward pass of the module.
 
@@ -199,7 +203,7 @@ class ScalarEstimator(Estimator):
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, 1).
         """
-        out = self.module(self.preprocessor(input))
+        out = self._calculate_module_output(input)
 
         # Ensures estimator outputs are always scalar.
         if out.shape[-1] != 1:
@@ -239,12 +243,14 @@ class LogitBasedEstimator(Estimator):
                 x[no_valid, sf_index] = 0.0  # degenerate one-hot
         else:
             # If entire row is masked (e.g., unused component like EDGE_INDEX), place a
-            # harmless finite fallback to avoid all -inf rows through the pipeline.
-            no_valid = masks.sum(dim=-1) == 0
-            if no_valid.any():
-                x[no_valid] = -float("inf")
-                # set the first column to 0.0 as a dummy finite value
-                x[no_valid, 0] = 0.0
+            # harmless finite fallback to avoid all -inf rows through the pipeline, but
+            # only when there is at least one column.
+            if x.shape[-1] > 0:
+                no_valid = masks.sum(dim=-1) == 0
+                if no_valid.any():
+                    x[no_valid] = -float("inf")
+                    # set the first column to 0.0 as a dummy finite value
+                    x[no_valid, 0] = 0.0
 
         # Assert that each row has at least one finite entry.
         assert torch.isfinite(x).any(dim=-1).all(), "All -inf row after masking"
@@ -356,6 +362,21 @@ class LogitBasedEstimator(Estimator):
         return mixed.to(orig_dtype) if mixed.dtype != orig_dtype else mixed
 
 
+class ConditionalLogZEstimator(ScalarEstimator):
+    """Conditional logZ estimator.
+
+    This estimator is used to estimate the logZ of a GFlowNet from a conditioning tensor.
+    Since conditioning is a tensor, it does not have a preprocessor. Reduction is used
+    to aggregate the outputs of the module into a single scalar.
+    """
+
+    def __init__(self, module: nn.Module, reduction: str = "mean"):
+        super().__init__(module, preprocessor=None, reduction=reduction)
+
+    def _calculate_module_output(self, input: torch.Tensor) -> torch.Tensor:
+        return self.module(input)
+
+
 class DiscretePolicyEstimator(LogitBasedEstimator):
     r"""Forward or backward policy estimators for discrete environments.
 
@@ -445,11 +466,9 @@ class DiscretePolicyEstimator(LogitBasedEstimator):
         assert temperature > 0.0
         assert 0.0 <= epsilon <= 1.0
 
-        masks = states.backward_masks if self.is_backward else states.forward_masks
-
         logits = LogitBasedEstimator._compute_logits_for_distribution(
             module_output,
-            masks,
+            states.backward_masks if self.is_backward else states.forward_masks,
             sf_index=-1,
             sf_bias=sf_bias,
             temperature=temperature,
@@ -725,17 +744,27 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
             assert isinstance(key, str)
             assert not torch.isnan(logits[key]).any(), f"logits[{key}] contains NaNs"
 
-            # Logit transformations allow for off-policy exploration.
-            transformed_logits[key] = (
-                LogitBasedEstimator._compute_logits_for_distribution(
-                    logits=logits[key],
-                    masks=masks[key],
-                    # ACTION_TYPE_KEY contains the exit action logit.
-                    sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
-                    sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
-                    temperature=temperature[key],
-                    epsilon=epsilon[key],
+            # Pad zero-length components to length 1 with an invalid mask so downstream
+            # operations have at least one column and distributions can be constructed.
+            local_logits = logits[key]
+            local_masks = masks[key]
+            if local_logits.shape[-1] == 0:
+                local_logits = torch.zeros(
+                    *local_logits.shape[:-1], 1, dtype=local_logits.dtype, device=local_logits.device
                 )
+                local_masks = torch.zeros(
+                    *local_masks.shape[:-1], 1, dtype=torch.bool, device=local_masks.device
+                )
+
+            # Logit transformations allow for off-policy exploration.
+            transformed_logits[key] = LogitBasedEstimator._compute_logits_for_distribution(
+                logits=local_logits,
+                masks=local_masks,
+                # ACTION_TYPE_KEY contains the exit action logit.
+                sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
+                sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
+                temperature=temperature[key],
+                epsilon=epsilon[key],
             )
 
         return GraphActionDistribution(logits=TensorDict(transformed_logits))

@@ -29,7 +29,6 @@ class Container(Protocol):
 
 
 ContainerUnion = Union[Trajectories, Transitions, StatesContainer]
-ValidContainerTypes = (Trajectories, Transitions, StatesContainer)
 
 
 class ReplayBuffer:
@@ -108,7 +107,7 @@ class ReplayBuffer:
             training_container: The Trajectories, Transitions, or StatesContainer
                 object to add.
         """
-        if not isinstance(training_container, ValidContainerTypes):
+        if not isinstance(training_container, ContainerUnion):
             raise TypeError("Must be a container type")
 
         self._add_objs(training_container)
@@ -196,6 +195,13 @@ class ReplayBuffer:
 
         # Adds the objects to the buffer.
         self.training_container.extend(training_container)  # type: ignore
+
+        # Clear fields that must be recomputed for Trajectories and Transitions.
+        # Otherwise, we might accidentally use the old values.
+        if isinstance(self.training_container, (Trajectories, Transitions)):
+            self.training_container.log_probs = None
+        if isinstance(self.training_container, Trajectories):
+            self.training_container.estimator_outputs = None
 
         # Sort elements by log reward, capping the size at the defined capacity.
         if self.prioritized_capacity:
@@ -313,7 +319,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             training_container: The Trajectories, Transitions, or StatesContainer object
                 to add.
         """
-        if not isinstance(training_container, ValidContainerTypes):
+        if not isinstance(training_container, ContainerUnion):
             raise TypeError("Must be a container type")
 
         to_add = len(training_container)
@@ -410,3 +416,38 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             # If any training object remain after filtering, add them.
             if len(training_container):
                 self._add_objs(training_container)
+
+
+class TerminatingStateBuffer(ReplayBuffer):
+    """A replay buffer for storing terminating states.
+
+    Attributes:
+        env: The environment associated with the containers.
+        capacity: The maximum number of items the buffer can hold.
+        training_container: The buffer contents (StatesContainer).
+    """
+
+    def __init__(self, env: Env, capacity: int = 1000, **kwargs):
+        super().__init__(env, capacity, **kwargs)
+        self.training_container = StatesContainer(env)
+
+    def add(self, training_container: ContainerUnion):
+        # Extract the terminating states from the training objects.
+        if not isinstance(training_container, ContainerUnion):
+            raise TypeError("Must be a StatesContainer")
+
+        terminating_states = training_container.terminating_states
+        conditioning = training_container.conditioning
+        log_rewards = training_container.log_rewards
+
+        terminating_states_container = StatesContainer(
+            env=self.env,
+            states=terminating_states,
+            conditioning=conditioning,
+            is_terminating=torch.ones(
+                len(terminating_states), dtype=torch.bool, device=self.env.device
+            ),
+            log_rewards=log_rewards,
+        )
+
+        self._add_objs(terminating_states_container)

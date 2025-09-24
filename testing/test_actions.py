@@ -19,7 +19,7 @@ def continuous_action():
 
 @pytest.fixture
 def graph_action():
-    return GraphActions(torch.zeros((1, 4)))
+    return GraphActions(torch.zeros((1, 5)))
 
 
 @pytest.mark.parametrize("action_fixture", ["continuous_action", "graph_action"])

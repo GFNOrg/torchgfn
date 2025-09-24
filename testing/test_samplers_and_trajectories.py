@@ -20,7 +20,7 @@ from gfn.preprocessors import (
     OneHotPreprocessor,
 )
 from gfn.samplers import LocalSearchSampler, Sampler
-from gfn.utils.modules import MLP, GraphEdgeActionGNN
+from gfn.utils.modules import MLP, GraphActionGNN
 from gfn.utils.prob_calculations import get_trajectory_pfs
 from gfn.utils.training import states_actions_tns_to_traj
 
@@ -102,15 +102,15 @@ def trajectory_sampling_with_return(
             directed=False,
             device=torch.device("cpu"),
         )
-        pf_module = GraphEdgeActionGNN(
-            n_nodes=env.n_nodes,
+        pf_module = GraphActionGNN(
+            num_node_classes=env.n_nodes,
             directed=env.is_directed,
             num_edge_classes=env.num_edge_classes,
             embedding_dim=128,
             is_backward=False,
         )
-        pb_module = GraphEdgeActionGNN(
-            n_nodes=env.n_nodes,
+        pb_module = GraphActionGNN(
+            num_node_classes=env.n_nodes,
             directed=env.is_directed,
             num_edge_classes=env.num_edge_classes,
             num_conv_layers=1,

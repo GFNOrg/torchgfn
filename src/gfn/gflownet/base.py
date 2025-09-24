@@ -1,4 +1,5 @@
 import math
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Tuple, TypeVar
 
@@ -164,19 +165,52 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
 
     Attributes:
         pf: The forward policy estimator.
-        pb: The backward policy estimator.
+        pb: The backward policy estimator, or None if it can be ignored (e.g., the
+            gflownet DAG is a tree, and pb is therefore always 1).
+        constant_pb: Whether to ignore the backward policy estimator.
     """
 
-    def __init__(self, pf: Estimator, pb: Estimator) -> None:
+    def __init__(
+        self, pf: Estimator, pb: Estimator | None, constant_pb: bool = False
+    ) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
         Args:
             pf: The forward policy estimator.
-            pb: The backward policy estimator.
+            pb: The backward policy estimator, or None if the gflownet DAG is a tree,
+                and pb is therefore always 1.
+            constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+                gflownet DAG is a tree, and pb is therefore always 1. Must be set
+                explicitly by user to ensure that pb is an Estimator except under this
+                special case.
         """
         super().__init__()
+        # Technical note: pb may be constant for a variety of edge cases, for example,
+        # if all terminal states can be reached with exactly the same number of
+        # trajectories, and we assume a uniform backward policy, then we can omit the pb
+        # term (see section 6 of Discrete Probabilistic Inference as Control in
+        # Multi-path Environments by Tristan Deleu, Padideh Nouri, Nikolay Malkin,
+        # Doina Precup, Yoshua Bengio for more details). We do not intend to document
+        # all of these cases for now.
+        if pb is None and not constant_pb:
+            raise ValueError(
+                "pb must be an Estimator unless constant_pb is True. "
+                "If you intend to ignore pb, e.g., the gflownet DAG is a tree, "
+                "set constant_pb to True."
+            )
+        if isinstance(pb, Estimator) and constant_pb:
+            warnings.warn(
+                "The user specified that pb should be ignored, and specified a "
+                "backward policy estimator. Under normal circumstances, pb should be "
+                "None if pb is constant, (e.g., the GFlowNet DAG is a tree and "
+                "the backward policy probability is always 1), because learning a "
+                "backward policy estimator is not necessary and will slow down "
+                "training. Please ensure this is the intended experimental setup."
+            )
+
         self.pf = pf
         self.pb = pb
+        self.constant_pb = constant_pb
 
     def sample_trajectories(
         self,
@@ -234,8 +268,27 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
 
     Attributes:
         pf: The forward policy module.
-        pb: The backward policy module.
+        pb: The backward policy module, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
+        constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+            gflownet DAG is a tree, and pb is therefore always 1.
     """
+
+    def __init__(
+        self, pf: Estimator, pb: Estimator | None, constant_pb: bool = False
+    ) -> None:
+        """Initializes a TrajectoryBasedGFlowNet instance.
+
+        Args:
+            pf: The forward policy estimator.
+            pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+                pb is therefore always 1.
+            constant_pb: Whether to ignore the backward policy estimator, e.g., if the
+                gflownet DAG is a tree, and pb is therefore always 1. Must be set
+                explicitly by user to ensure that pb is an Estimator except under this
+                special case.
+        """
+        super().__init__(pf, pb, constant_pb=constant_pb)
 
     def get_pfs_and_pbs(
         self,

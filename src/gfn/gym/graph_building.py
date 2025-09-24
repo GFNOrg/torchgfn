@@ -33,9 +33,11 @@ class GraphBuilding(GraphEnv):
         num_edge_classes: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         is_directed: bool = True,
+        max_nodes: int | None = None,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         s0: GeometricData | None = None,
         sf: GeometricData | None = None,
+        check_action_validity: bool = True,
     ):
         """Initializes the GraphBuilding environment.
 
@@ -44,9 +46,12 @@ class GraphBuilding(GraphEnv):
             num_edge_classes: The number of edge classes.
             state_evaluator: A callable that computes rewards for final states.
             is_directed: Whether the graph is directed.
+            max_nodes: The maximum number of nodes in the graph.
+                If None (default), the number of nodes is unbounded.
             device: The device to run computations on.
             s0: The initial state.
             sf: The sink state.
+            check_action_validity: Whether to check the action validity.
         """
         if s0 is None:
             s0 = GeometricData(
@@ -70,12 +75,14 @@ class GraphBuilding(GraphEnv):
             )
 
         self.state_evaluator = state_evaluator
+        self.max_nodes = max_nodes
         super().__init__(
             s0=s0,
             sf=sf,
             num_node_classes=num_node_classes,
             num_edge_classes=num_edge_classes,
             is_directed=is_directed,
+            check_action_validity=check_action_validity,
         )
 
     def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
@@ -101,7 +108,8 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_NODE action
         if torch.any(add_node_mask):
             batch_indices_flat = torch.arange(len(states))[add_node_mask]
-            node_class_action_flat = actions.node_class.flatten()
+            add_node_action = actions[add_node_mask]
+            node_class_action_flat = add_node_action.node_class.flatten()
 
             # Add nodes to the specified graphs
             for graph_idx, new_node_class in zip(
@@ -119,7 +127,6 @@ class GraphBuilding(GraphEnv):
                         f"Node features must have dimension {graph.x.shape[1]}"
                     )
 
-                # Add new nodes to the graph
                 graph.x = torch.cat([graph.x, new_node_class], dim=0)
 
         # Handle ADD_EDGE action
@@ -182,28 +189,18 @@ class GraphBuilding(GraphEnv):
         # Handle ADD_NODE action
         if torch.any(add_node_mask):
             add_node_index = torch.where(add_node_mask)[0]
-            node_class_action_flat = actions.node_class.flatten()
+            node_idx_action_flat = actions.node_index.flatten()
 
-            # Remove nodes with matching features
+            # Remove node with matching index
             for i in add_node_index:
                 graph = data_array[i]
-
-                # Find nodes with matching features
-                is_equal = torch.all(
-                    graph.x == node_class_action_flat[i].unsqueeze(0), dim=1
-                )
-
-                # Remove the first matching node
-                node_idx = int(torch.where(is_equal)[0][0].item())
-
-                # Remove the node
-                mask = torch.ones(
-                    graph.x.size(0), dtype=torch.bool, device=graph.x.device
-                )
-                mask[node_idx] = False
-
-                # Update node features
+                node_idx = node_idx_action_flat[i]
+                mask = torch.arange(len(graph.x)) != node_idx
                 graph.x = graph.x[mask]
+
+                # Update edge indices
+                assert torch.all(graph.edge_index != node_idx)
+                graph.edge_index[graph.edge_index > node_idx] -= 1
 
         # Handle ADD_EDGE action
         if torch.any(add_edge_mask):
@@ -245,7 +242,7 @@ class GraphBuilding(GraphEnv):
         # Get the data list from the batch
         data_array = states.data.flat
         action_type_action_flat = actions.action_type.flatten()
-        node_class_action_flat = actions.node_class.flatten()
+        node_index_action_flat = actions.node_index.flatten()
         edge_index_action_flat = actions.edge_index.flatten()
 
         for i in range(len(actions)):
@@ -254,20 +251,10 @@ class GraphBuilding(GraphEnv):
                 continue
 
             graph = data_array[i]
-            if action_type == GraphActionType.ADD_NODE:
-                # Check if a node with these features already exists
-                equal_nodes = torch.all(
-                    graph.x == node_class_action_flat[i].unsqueeze(0), dim=1
-                )
-
-                if backward:
-                    # For backward actions, we need at least one matching node
-                    if not torch.any(equal_nodes):
-                        return False
-                else:
-                    # For forward actions, we should not have any matching nodes
-                    if torch.any(equal_nodes):
-                        return False
+            if action_type == GraphActionType.ADD_NODE and backward:
+                node_idx = node_index_action_flat[i]
+                if node_idx >= len(graph.x) or torch.any(graph.edge_index == node_idx):
+                    return False
 
             elif action_type == GraphActionType.ADD_EDGE:
                 edge_idx = edge_index_action_flat[i]
@@ -324,7 +311,8 @@ class GraphBuilding(GraphEnv):
         data_array = np.empty(batch_shape, dtype=object)
         for i in range(num_graphs):
             # Create a random graph with random number of nodes
-            n_nodes = np.random.randint(1, 10)  # TODO: make the max n_nodes a parameter
+            max_nodes = self.max_nodes or 10
+            n_nodes = np.random.randint(1, max_nodes + 1)
             n_possible_edges = (
                 n_nodes**2 - n_nodes if self.is_directed else (n_nodes**2 - n_nodes) // 2
             )
@@ -379,6 +367,7 @@ class GraphBuilding(GraphEnv):
             s0 = env.s0
             sf = env.sf
             make_random_states = env.make_random_states
+            max_nodes = env.max_nodes
 
         return GraphBuildingStates
 
@@ -424,6 +413,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         state_evaluator: callable,
         directed: bool,
         device: Literal["cpu", "cuda"] | torch.device,
+        check_action_validity: bool = True,
     ):
         """Initializes the `GraphBuildingOnEdges` environment.
 
@@ -432,6 +422,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             state_evaluator: A function that evaluates a state and returns a reward.
             directed: Whether the graph should be directed.
             device: The device to use.
+            check_action_validity: Whether to check the action validity.
         """
         self.n_nodes = n_nodes
         if directed:
@@ -460,13 +451,15 @@ class GraphBuildingOnEdges(GraphBuilding):
             edge_index=torch.zeros((2, 0), dtype=torch.long, device=device),
         )
         super().__init__(
-            num_node_classes=1,
+            num_node_classes=n_nodes,
             num_edge_classes=1,
             state_evaluator=state_evaluator,
             is_directed=directed,
+            max_nodes=n_nodes,
             device=device,
             s0=s0,
             sf=sf,
+            check_action_validity=check_action_validity,
         )
 
     def make_states_class(self) -> type[GraphStates]:
@@ -499,6 +492,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             is_directed = env.is_directed
             n_nodes = env.n_nodes
             n_possible_edges = env.n_possible_edges
+            max_nodes = env.max_nodes
             s0 = env.s0
             sf = env.sf
             make_random_states = env.make_random_states
