@@ -1069,7 +1069,7 @@ def main(args):  # noqa: C901
     per_node_batch_size = args.batch_size // distributed_context.world_size
     validation_info = {"l1_dist": float("inf")}
     discovered_modes = set()
-    n_pixels_per_mode = round(env.height / 10) ** env.ndim
+    # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     is_on_policy = args.replay_buffer_size == 0
 
     print("+ n_iterations = ", n_iterations)

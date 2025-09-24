@@ -750,21 +750,29 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
             local_masks = masks[key]
             if local_logits.shape[-1] == 0:
                 local_logits = torch.zeros(
-                    *local_logits.shape[:-1], 1, dtype=local_logits.dtype, device=local_logits.device
+                    *local_logits.shape[:-1],
+                    1,
+                    dtype=local_logits.dtype,
+                    device=local_logits.device,
                 )
                 local_masks = torch.zeros(
-                    *local_masks.shape[:-1], 1, dtype=torch.bool, device=local_masks.device
+                    *local_masks.shape[:-1],
+                    1,
+                    dtype=torch.bool,
+                    device=local_masks.device,
                 )
 
             # Logit transformations allow for off-policy exploration.
-            transformed_logits[key] = LogitBasedEstimator._compute_logits_for_distribution(
-                logits=local_logits,
-                masks=local_masks,
-                # ACTION_TYPE_KEY contains the exit action logit.
-                sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
-                sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
-                temperature=temperature[key],
-                epsilon=epsilon[key],
+            transformed_logits[key] = (
+                LogitBasedEstimator._compute_logits_for_distribution(
+                    logits=local_logits,
+                    masks=local_masks,
+                    # ACTION_TYPE_KEY contains the exit action logit.
+                    sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
+                    sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
+                    temperature=temperature[key],
+                    epsilon=epsilon[key],
+                )
             )
 
         return GraphActionDistribution(logits=TensorDict(transformed_logits))

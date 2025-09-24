@@ -30,9 +30,13 @@ from tutorials.examples.train_graph_ring import main as train_graph_ring_main
 from tutorials.examples.train_graph_triangle import main as train_graph_triangle_main
 from tutorials.examples.train_hypergrid import main as train_hypergrid_main
 from tutorials.examples.train_hypergrid_buffer import main as train_hypergrid_buffer_main
-from tutorials.examples.train_hypergrid_exploration_examples import main as train_hypergrid_exploration_main
+from tutorials.examples.train_hypergrid_exploration_examples import (
+    main as train_hypergrid_exploration_main,
+)
 from tutorials.examples.train_hypergrid_gafn import main as train_hypergrid_gafn_main
-from tutorials.examples.train_hypergrid_local_search import main as train_hypergrid_local_search_main
+from tutorials.examples.train_hypergrid_local_search import (
+    main as train_hypergrid_local_search_main,
+)
 from tutorials.examples.train_hypergrid_simple import main as train_hypergrid_simple_main
 from tutorials.examples.train_ising import main as train_ising_main
 from tutorials.examples.train_line import main as train_line_main
