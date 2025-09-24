@@ -4,7 +4,9 @@ import os
 from typing import Protocol, Union, cast, runtime_checkable
 
 import torch
+import torch.distributed as dist
 
+from gfn.containers.message import Message, MessageType
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
@@ -36,7 +38,7 @@ class ReplayBuffer:
     Attributes:
         env: The environment associated with the containers.
         capacity: The maximum number of items the buffer can hold.
-        training_objects: The buffer contents (Trajectories, Transitions,
+        training_container: The buffer contents (Trajectories, Transitions,
             or StatesContainer). This is dynamically set based on the type of the
             first added object.
         prioritized_capacity: Whether to use prioritized capacity
@@ -51,6 +53,8 @@ class ReplayBuffer:
         capacity: int = 1000,
         prioritized_capacity: bool = False,
         prioritized_sampling: bool = False,
+        remote_manager_rank: int | None = None,
+        remote_buffer_freq: int = 1,
     ):
         """Initializes a ReplayBuffer instance.
 
@@ -60,13 +64,29 @@ class ReplayBuffer:
             prioritized_capacity: If True, keep only the highest-reward items when full.
             prioritized_sampling: If True, sample items with probability proportional
                 to their reward.
+            remote_manager_rank: Rank of the assigned remote replay buffer manager, or
+                None if no remote manager is assigned.
+            remote_buffer_freq: Frequency (in number of add() calls) at which to contact
+                the remote buffer manager.
         """
         self.env = env
         self.capacity = capacity
         self._is_full = False
-        self.training_objects: ContainerUnion | None = None
+        self.training_container: ContainerUnion | None = None
         self.prioritized_capacity = prioritized_capacity
         self.prioritized_sampling = prioritized_sampling
+
+        # Remote buffer fields
+        self.remote_manager_rank = remote_manager_rank
+        self.remote_buffer_freq = remote_buffer_freq
+        self._add_counter = 0
+        if self.remote_manager_rank is not None:
+            backend = dist.get_backend()
+            if backend != "gloo":
+                raise RuntimeError(
+                    f"Replay Buffer Manager is only supported with the 'gloo' backend, "
+                    f"but the current backend is '{backend}'."
+                )
 
     @property
     def device(self) -> torch.device:
@@ -75,92 +95,123 @@ class ReplayBuffer:
         Returns:
             The device object of the buffer's contents.
         """
-        assert self.training_objects is not None, "Buffer is empty, it has no device!"
-        return self.training_objects.device
+        assert self.training_container is not None, "Buffer is empty, it has no device!"
+        return self.training_container.device
 
-    def add(self, training_objects: ContainerUnion) -> None:
-        """Adds a training object to the buffer.
+    def add(self, training_container: ContainerUnion) -> None:
+        """Adds a training container to the buffer.
 
-        The type of the training objects is dynamically set based on the type of the
-        first added object.
+        The type of the training container is dynamically set based on the type of the
+        first added container.
 
         Args:
-            training_objects: The Trajectories, Transitions, or StatesContainer object
-                to add.
+            training_container: The Trajectories, Transitions, or StatesContainer
+                object to add.
         """
-        if not isinstance(training_objects, ValidContainerTypes):
+        if not isinstance(training_container, ValidContainerTypes):
             raise TypeError("Must be a container type")
 
-        self._add_objs(training_objects)
+        self._add_objs(training_container)
 
-    def __repr__(self):
+        # Handle remote buffer communication
+        if self.remote_manager_rank is not None:
+            self._add_counter += 1
+            if self._add_counter % self.remote_buffer_freq == 0:
+                score = self._send_objs(training_container)
+                print(
+                    f"[Rank {dist.get_rank()}] Sent to remote {self.remote_manager_rank}, got score {score}"
+                )
+
+    def _send_objs(self, training_container: ContainerUnion) -> float:
+        """Sends a training container to the remote manager."""
+        msg = Message(MessageType.DATA, training_container)
+        msg_tensor = msg.serialize()
+
+        # First send the length so the receiver knows how many bytes
+        length_tensor = torch.IntTensor([len(msg_tensor)])
+        print(
+            f"Sending object of length {len(msg_tensor)} to rank {self.remote_manager_rank}"
+        )
+        dist.send(length_tensor, dst=self.remote_manager_rank)
+
+        print(f"Sent length tensor to rank {self.remote_manager_rank}, now sending data")
+        # Now send the actual content
+        dist.send(msg_tensor, dst=self.remote_manager_rank)
+
+        # Receive a dummy score back
+        score = torch.zeros(1, dtype=torch.float32)
+        dist.recv(score, src=self.remote_manager_rank)
+
+        return score.item()
+
+    def __repr__(self) -> str:
         """Returns a string representation of the ReplayBuffer.
 
         Returns:
             A string summary of the buffer.
         """
-        if self.training_objects is None:
+        if self.training_container is None:
             type_str = "empty"
         else:
-            type_str = self.training_objects.__class__.__name__.lower()
+            type_str = self.training_container.__class__.__name__.lower()
         return (
             f"ReplayBuffer(capacity={self.capacity}, containing {len(self)} {type_str})"
         )
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Returns the number of items in the buffer.
 
         Returns:
             The number of items in the buffer.
         """
-        return 0 if self.training_objects is None else len(self.training_objects)
+        return 0 if self.training_container is None else len(self.training_container)
 
-    def initialize(self, training_objects: ContainerUnion) -> None:
+    def initialize(self, training_container: ContainerUnion) -> None:
         """Initializes the buffer with the type of the first added object.
 
         Args:
-            training_objects: The initial Trajectories, Transitions, or StatesContainer
+            training_container: The initial Trajectories, Transitions, or StatesContainer
                 object to set the buffer type.
         """
-        if isinstance(training_objects, Trajectories):
-            self.training_objects = cast(ContainerUnion, Trajectories(self.env))
-        elif isinstance(training_objects, Transitions):
-            self.training_objects = cast(ContainerUnion, Transitions(self.env))
-        elif isinstance(training_objects, StatesContainer):
-            self.training_objects = cast(ContainerUnion, StatesContainer(self.env))
+        if isinstance(training_container, Trajectories):
+            self.training_container = cast(ContainerUnion, Trajectories(self.env))
+        elif isinstance(training_container, Transitions):
+            self.training_container = cast(ContainerUnion, Transitions(self.env))
+        elif isinstance(training_container, StatesContainer):
+            self.training_container = cast(ContainerUnion, StatesContainer(self.env))
         else:
-            raise ValueError(f"Unsupported type: {type(training_objects)}")
+            raise ValueError(f"Unsupported type: {type(training_container)}")
 
-    def _add_objs(self, training_objects: ContainerUnion):
+    def _add_objs(self, training_container: ContainerUnion):
         """Adds a training object to the buffer, handling the capacity.
 
         Args:
-            training_objects: The Trajectories, Transitions, or StatesContainer object
+            training_container: The Trajectories, Transitions, or StatesContainer object
                 to add.
         """
-        if self.training_objects is None:
-            self.initialize(training_objects)
-        assert self.training_objects is not None
-        assert isinstance(training_objects, type(self.training_objects))  # type: ignore
+        if self.training_container is None:
+            self.initialize(training_container)
+        assert self.training_container is not None
+        assert isinstance(training_container, type(self.training_container))  # type: ignore
 
         # Adds the objects to the buffer.
-        self.training_objects.extend(training_objects)  # type: ignore
+        self.training_container.extend(training_container)  # type: ignore
 
         # Sort elements by log reward, capping the size at the defined capacity.
         if self.prioritized_capacity:
             if (
-                self.training_objects.log_rewards is None
-                or training_objects.log_rewards is None
+                self.training_container.log_rewards is None
+                or training_container.log_rewards is None
             ):
                 raise ValueError("log_rewards must be defined for prioritized replay.")
 
             # Ascending sort.
-            ix = torch.argsort(self.training_objects.log_rewards)
-            self.training_objects = cast(ContainerUnion, self.training_objects[ix])
+            ix = torch.argsort(self.training_container.log_rewards)
+            self.training_container = cast(ContainerUnion, self.training_container[ix])
 
-        assert self.training_objects is not None
-        self.training_objects = cast(
-            ContainerUnion, self.training_objects[-self.capacity :]
+        assert self.training_container is not None
+        self.training_container = cast(
+            ContainerUnion, self.training_container[-self.capacity :]
         )
 
     def sample(self, n_samples: int) -> ContainerUnion:
@@ -172,13 +223,13 @@ class ReplayBuffer:
         Returns:
             A sampled Trajectories, Transitions, or StatesContainer.
         """
-        if self.training_objects is None:
+        if self.training_container is None:
             raise ValueError("Buffer is empty")
 
         # If the buffer is flagged as prioritised, draw samples proportionally to the
         # (exponentiated) log-rewards; otherwise, fall back to uniform sampling.
         if self.prioritized_sampling:
-            log_rewards = self.training_objects.log_rewards
+            log_rewards = self.training_container.log_rewards
 
             if log_rewards is None:
                 raise ValueError("log_rewards must be defined for prioritized sampling.")
@@ -193,10 +244,10 @@ class ReplayBuffer:
             replacement = n_samples > len(self)
 
             indices = torch.multinomial(probs, n_samples, replacement=replacement)
-            return self.training_objects[indices]
+            return self.training_container[indices]
 
         # Uniform sampling (replacement-free) for the non-prioritised case.
-        return cast(ContainerUnion, self.training_objects.sample(n_samples))
+        return cast(ContainerUnion, self.training_container.sample(n_samples))
 
     def save(self, directory: str):
         """Saves the buffer to disk.
@@ -204,8 +255,8 @@ class ReplayBuffer:
         Args:
             directory: The directory path where the buffer will be saved.
         """
-        if self.training_objects is not None:
-            self.training_objects.save(os.path.join(directory, "training_objects"))
+        if self.training_container is not None:
+            self.training_container.save(os.path.join(directory, "training_container"))
 
     def load(self, directory: str):
         """Loads the buffer from disk.
@@ -213,8 +264,8 @@ class ReplayBuffer:
         Args:
             directory: The directory path from which to load the buffer.
         """
-        if self.training_objects is not None:
-            self.training_objects.load(os.path.join(directory, "training_objects"))
+        if self.training_container is not None:
+            self.training_container.load(os.path.join(directory, "training_container"))
 
 
 class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
@@ -223,7 +274,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
     Attributes:
         env: The environment associated with the containers.
         capacity: The maximum number of items the buffer can hold.
-        training_objects: The buffer contents (Trajectories, Transitions,
+        training_container: The buffer contents (Trajectories, Transitions,
             or StatesContainer). This is dynamically set based on the type of the
             first added object.
         prioritized_capacity: Whether to use prioritized capacity
@@ -255,46 +306,46 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
 
-    def add(self, training_objects: ContainerUnion):
+    def add(self, training_container: ContainerUnion):
         """Adds a training object to the buffer with diversity-based prioritization.
 
         Args:
-            training_objects: The Trajectories, Transitions, or StatesContainer object
+            training_container: The Trajectories, Transitions, or StatesContainer object
                 to add.
         """
-        if not isinstance(training_objects, ValidContainerTypes):
+        if not isinstance(training_container, ValidContainerTypes):
             raise TypeError("Must be a container type")
 
-        to_add = len(training_objects)
+        to_add = len(training_container)
         self._is_full |= len(self) + to_add >= self.capacity
 
         # The buffer isn't full yet.
         if len(self) < self.capacity:
-            self._add_objs(training_objects)
+            self._add_objs(training_container)
 
         # Our buffer is full and we will prioritize diverse, high reward additions.
         else:
-            log_rewards = training_objects.log_rewards
+            log_rewards = training_container.log_rewards
 
             if log_rewards is None:
                 raise ValueError("log_rewards must be defined for prioritized replay.")
 
             # Sort the incoming elements by their logrewards.
             ix = torch.argsort(log_rewards, descending=True)
-            training_objects = cast(ContainerUnion, training_objects[ix])  # type: ignore
+            training_container = cast(ContainerUnion, training_container[ix])  # type: ignore
 
             # Filter all batch logrewards lower than the smallest logreward in buffer.
             assert (
-                self.training_objects is not None
-                and self.training_objects.log_rewards is not None
-                and training_objects.log_rewards is not None
+                self.training_container is not None
+                and self.training_container.log_rewards is not None
+                and training_container.log_rewards is not None
             )
-            min_reward_in_buffer = self.training_objects.log_rewards.min()
-            idx_bigger_rewards = training_objects.log_rewards >= min_reward_in_buffer
-            training_objects = training_objects[idx_bigger_rewards]
+            min_reward_in_buffer = self.training_container.log_rewards.min()
+            idx_bigger_rewards = training_container.log_rewards >= min_reward_in_buffer
+            training_container = training_container[idx_bigger_rewards]
 
             # TODO: Concatenate input with final state for conditional GFN.
-            if training_objects.conditioning:
+            if training_container.conditioning:
                 raise NotImplementedError(
                     "{instance.__class__.__name__} does not yet support conditional GFNs."
                 )
@@ -308,15 +359,15 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             #     )
 
             # If all trajectories were filtered, stop there.
-            if not len(training_objects):
+            if not len(training_container):
                 return
 
             if self.cutoff_distance >= 0:
                 # Filter the batch for diverse final_states with high reward.
-                batch = training_objects.terminating_states.tensor.to(
+                batch = training_container.terminating_states.tensor.to(
                     torch.get_default_dtype()
                 )
-                batch_dim = training_objects.terminating_states.batch_shape[0]
+                batch_dim = training_container.terminating_states.batch_shape[0]
                 batch_batch_dist = torch.cdist(
                     batch.view(batch_dim, -1).unsqueeze(0),
                     batch.view(batch_dim, -1).unsqueeze(0),
@@ -328,17 +379,17 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
                 batch_batch_dist[r, w] = torch.finfo(batch_batch_dist.dtype).max
                 batch_batch_dist = batch_batch_dist.min(-1)[0]
                 idx_batch_batch = batch_batch_dist > self.cutoff_distance
-                training_objects = training_objects[idx_batch_batch]
+                training_container = training_container[idx_batch_batch]
 
                 # Compute all pairwise distances between the remaining batch & buffer.
-                batch = training_objects.terminating_states.tensor.to(
+                batch = training_container.terminating_states.tensor.to(
                     torch.get_default_dtype()
                 )
-                buffer = self.training_objects.terminating_states.tensor.to(
+                buffer = self.training_container.terminating_states.tensor.to(
                     torch.get_default_dtype()
                 )
-                batch_dim = training_objects.terminating_states.batch_shape[0]
-                tmp = self.training_objects.terminating_states
+                batch_dim = training_container.terminating_states.batch_shape[0]
+                tmp = self.training_container.terminating_states
                 buffer_dim = tmp.batch_shape[0]
                 batch_buffer_dist = (
                     torch.cdist(
@@ -352,10 +403,10 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
 
                 # Filter the batch for diverse final_states w.r.t the buffer.
                 idx_batch_buffer = batch_buffer_dist > self.cutoff_distance
-                training_objects = cast(
-                    ContainerUnion, training_objects[idx_batch_buffer]
+                training_container = cast(
+                    ContainerUnion, training_container[idx_batch_buffer]
                 )
 
             # If any training object remain after filtering, add them.
-            if len(training_objects):
-                self._add_objs(training_objects)
+            if len(training_container):
+                self._add_objs(training_container)
