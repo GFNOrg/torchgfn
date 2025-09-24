@@ -37,12 +37,12 @@ class ReplayBufferManager:
             # Receive data
             sender_rank, msg, msg_data_len = self._recv_object()
 
-            if msg.type == MessageType.DATA:
-                reward = self.scoring_function(msg.data)
+            if msg.message_type == MessageType.DATA:
+                reward = self.scoring_function(msg.message_data)
                 reward_tensor = torch.tensor([reward], dtype=torch.float32)
                 dist.send(reward_tensor, dst=sender_rank)
 
-            elif msg.type == MessageType.EXIT:
+            elif msg.message_type == MessageType.EXIT:
                 self.exit_counter = self.exit_counter + 1
                 if self.exit_counter == self.num_training_ranks:
                     self.is_running = False
@@ -51,7 +51,7 @@ class ReplayBufferManager:
                     )
             else:
                 raise ValueError(
-                    f"Rank {self.rank} received unknown message type: {msg.type}"
+                    f"Rank {self.rank} received unknown message type: {msg.message_type}"
                 )
 
     def _recv_object(self):
@@ -73,7 +73,7 @@ class ReplayBufferManager:
     def send_termination_signal(manager_rank: int):
         """Sends a termination signal to the replay buffer manager."""
         rank = dist.get_rank()
-        msg = Message(type=MessageType.EXIT, data=None)
+        msg = Message(message_type=MessageType.EXIT, message_data=None)
         msg_bytes = msg.serialize()
         length_tensor = torch.IntTensor([len(msg_bytes)])
         dist.send(length_tensor, dst=manager_rank)
