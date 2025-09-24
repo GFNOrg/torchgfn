@@ -146,6 +146,19 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
             recalculate_all_logprobs=recalculate_all_logprobs,
         )
 
+    def assert_finite_gradients(self):
+        """Asserts that the gradients are finite."""
+        for p in self.parameters():
+            if p.grad is not None:
+                if not torch.isfinite(p.grad).all():
+                    raise RuntimeError("GFlowNet has non-finite gradients")
+
+    def assert_finite_parameters(self):
+        """Asserts that the parameters are finite."""
+        for p in self.parameters():
+            if not torch.isfinite(p).all():
+                raise RuntimeError("GFlowNet has non-finite parameters")
+
 
 class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     """A GFlowNet that uses forward (PF) and backward (PB) policy networks.
@@ -342,10 +355,10 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         if math.isfinite(self.log_reward_clip_min) and log_rewards is not None:
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
-        if torch.any(torch.isinf(total_log_pf_trajectories)) or torch.any(
-            torch.isinf(total_log_pb_trajectories)
-        ):
-            raise ValueError("Infinite logprobs found")
+        if torch.any(torch.isinf(total_log_pf_trajectories)):
+            raise ValueError("Infinite pf logprobs found")
+        if torch.any(torch.isinf(total_log_pb_trajectories)):
+            raise ValueError("Infinite pb logprobs found")
 
         assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
         assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)

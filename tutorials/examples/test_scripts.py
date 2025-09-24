@@ -4,30 +4,42 @@ distance or JSD between the learned distribution and the target distribution is
 below a certain threshold.
 """
 
+import sys
 from argparse import Namespace
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
-from .train_bayesian_structure import main as train_bayesian_structure_main
-from .train_bit_sequences import main as train_bitsequence_main
-from .train_box import main as train_box_main
-from .train_conditional import main as train_conditional_main
-from .train_discreteebm import main as train_discreteebm_main
-from .train_graph_ring import main as train_graph_ring_main
-from .train_graph_triangle import main as train_graph_triangle_main
-from .train_hypergrid import main as train_hypergrid_main
-from .train_hypergrid_buffer import main as train_hypergrid_buffer_main
-from .train_hypergrid_exploration_examples import (
+# Make repo root importable so `tutorials` can be found without installing the package.
+# flake8: noqa: E402
+_repo_root = Path(__file__).resolve().parents[2]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
+from tutorials.examples.train_bayesian_structure import (
+    main as train_bayesian_structure_main,
+)
+from tutorials.examples.train_bit_sequences import main as train_bitsequence_main
+from tutorials.examples.train_box import main as train_box_main
+from tutorials.examples.train_conditional import main as train_conditional_main
+from tutorials.examples.train_discreteebm import main as train_discreteebm_main
+from tutorials.examples.train_graph_ring import main as train_graph_ring_main
+from tutorials.examples.train_graph_triangle import main as train_graph_triangle_main
+from tutorials.examples.train_hypergrid import main as train_hypergrid_main
+from tutorials.examples.train_hypergrid_buffer import main as train_hypergrid_buffer_main
+from tutorials.examples.train_hypergrid_exploration_examples import (
     main as train_hypergrid_exploration_main,
 )
-from .train_hypergrid_gafn import main as train_hypergrid_gafn_main
-from .train_hypergrid_local_search import main as train_hypergrid_local_search_main
-from .train_hypergrid_simple import main as train_hypergrid_simple_main
-from .train_ising import main as train_ising_main
-from .train_line import main as train_line_main
+from tutorials.examples.train_hypergrid_gafn import main as train_hypergrid_gafn_main
+from tutorials.examples.train_hypergrid_local_search import (
+    main as train_hypergrid_local_search_main,
+)
+from tutorials.examples.train_hypergrid_simple import main as train_hypergrid_simple_main
+from tutorials.examples.train_ising import main as train_ising_main
+from tutorials.examples.train_line import main as train_line_main
 
 
 @dataclass
@@ -82,6 +94,7 @@ class HypergridArgs(CommonArgs):
     R2: float = 2.0
     replay_buffer_size: int = 0
     timing: bool = True
+    half_precision: bool = False
 
 
 @dataclass
@@ -115,6 +128,7 @@ class HypergridGAFNArgs(HypergridArgs):
 class HypergridLocalSearchArgs(HypergridArgs):
     n_local_search_loops: int = 3
     use_metropolis_hastings: bool = True
+    half_precision: bool = False
 
 
 @dataclass

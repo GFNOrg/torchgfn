@@ -841,10 +841,11 @@ class NoisyLinear(nn.Linear):
 
     Presented in "Noisy Networks for Exploration", https://arxiv.org/abs/1706.10295v3
 
-    A Noisy Linear Layer is a linear layer with parametric noise added to the weights. This induced stochasticity can
-    be used in RL networks for the agent's policy to aid efficient exploration. The parameters of the noise are learned
-    with gradient descent along with any other remaining network weights. Factorized Gaussian
-    noise is the type of noise usually employed.
+    A Noisy Linear Layer is a linear layer with parametric noise added to the weights.
+    This induced stochasticity can be used in RL networks for the agent's policy to aid
+    efficient exploration. The parameters of the noise are learned with gradient descent
+    along with any other remaining network weights. Factorized Gaussian noise is the
+    type of noise usually employed.
 
     Taken from torchrl v0.9.2.
 

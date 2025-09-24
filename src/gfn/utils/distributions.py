@@ -51,21 +51,45 @@ class GraphActionDistribution(Distribution):
     - If the action_type is STOP, then no other components are sampled.
     """
 
-    def __init__(self, probs: TensorDict, is_backward: bool):
+    def __init__(
+        self,
+        logits: TensorDict | None = None,
+        probs: TensorDict | None = None,
+        is_backward: bool = False,
+    ):
         """Initializes the mixture distribution.
 
         Args:
+            logits: A TensorDict of logits (preferred).
             probs: A TensorDict of probs.
             is_backward: A boolean indicating whether the distribution is for backward policy.
         """
         super().__init__()
         self.is_backward = is_backward
+        assert (probs is None) ^ (logits is None), "Pass exactly one of logits or probs."
 
+        # In practice, we never sample from the undefined distributions. However, if we
+        # don't disable validation, the inputs are checked at initialization, which can
+        # fail when all actions of a particular type are impossible (e.g., unable to
+        # add an edge.) TODO: validation should be disabled only when all actions of a
+        # particular type are impossible.
         validate_args = False  # edge_index.numel() == 0 when no nodes are present
-        self.dists = {
-            key: Categorical(probs=probs[key], validate_args=validate_args)
-            for key in GraphActions.ACTION_INDICES.keys()
-        }
+        if isinstance(logits, TensorDict):
+            self.dists = {
+                key: Categorical(
+                    logits=logits[key],  # type: ignore
+                    validate_args=validate_args,
+                )
+                for key in GraphActions.ACTION_INDICES.keys()
+            }
+        elif isinstance(probs, TensorDict):
+            self.dists = {
+                key: Categorical(
+                    probs=probs[key],  # type: ignore
+                    validate_args=validate_args,
+                )
+                for key in GraphActions.ACTION_INDICES.keys()
+            }
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         """Samples from the distribution.
@@ -95,6 +119,8 @@ class GraphActionDistribution(Distribution):
                 node_indices[add_node_idx] = node_indices_all[add_node_idx]
 
         add_edge_idx = action_types == GraphActionType.ADD_EDGE
+
+        # Only sample edge classes and indices if there are any possible edges.
         if add_edge_idx.any():
             edge_classes_all = self.dists[GraphActions.EDGE_CLASS_KEY].sample(
                 sample_shape
