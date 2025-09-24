@@ -712,32 +712,38 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         logits = module_output
         logits[Ga.ACTION_TYPE_KEY][~masks[Ga.ACTION_TYPE_KEY]] = -float("inf")
         logits[Ga.NODE_CLASS_KEY][~masks[Ga.NODE_CLASS_KEY]] = -float("inf")
+        logits[Ga.NODE_INDEX_KEY][~masks[Ga.NODE_INDEX_KEY]] = -float("inf")
         logits[Ga.EDGE_CLASS_KEY][~masks[Ga.EDGE_CLASS_KEY]] = -float("inf")
         logits[Ga.EDGE_INDEX_KEY][~masks[Ga.EDGE_INDEX_KEY]] = -float("inf")
 
         # The following operations are to ensure that the logits are valid, i.e.,
         # contain at least one finite entry.
 
-        # Check no edge can be added & assert that action type can't be ADD_EDGE
+        # Check if no possible edge can be added,
+        # and assert that action type cannot be ADD_EDGE
         no_possible_edge_index = torch.isneginf(logits[Ga.EDGE_INDEX_KEY]).all(-1)
         assert torch.isneginf(
             logits[Ga.ACTION_TYPE_KEY][no_possible_edge_index, GaType.ADD_EDGE]
         ).all()
         logits[Ga.EDGE_INDEX_KEY][no_possible_edge_index] = 0.0
 
-        # Check no edge class can be added & assert that action type cannot be ADD_EDGE
+        # Check if no possible edge class can be added,
+        # and assert that action type cannot be ADD_EDGE
         no_possible_edge_class = torch.isneginf(logits[Ga.EDGE_CLASS_KEY]).all(-1)
         assert torch.isneginf(
             logits[Ga.ACTION_TYPE_KEY][no_possible_edge_class, GaType.ADD_EDGE]
         ).all()
         logits[Ga.EDGE_CLASS_KEY][no_possible_edge_class] = 0.0
 
-        # Check no node can be added & assert that action type cannot be ADD_NODE
-        no_possible_node = torch.isneginf(logits[Ga.NODE_CLASS_KEY]).all(-1)
-        assert torch.isneginf(
-            logits[Ga.ACTION_TYPE_KEY][no_possible_node, GaType.ADD_NODE]
-        ).all()
-        logits[Ga.NODE_CLASS_KEY][no_possible_node] = 0.0
+        # Check if no possible node can be added; if either class OR index has no
+        # valid options, disallow ADD_NODE in action type and set harmless finite
+        # fallbacks for the unused components.
+        no_possible_node_class = torch.isneginf(logits[Ga.NODE_CLASS_KEY]).all(-1)
+        no_possible_node_index = torch.isneginf(logits[Ga.NODE_INDEX_KEY]).all(-1)
+        no_possible_add_node = no_possible_node_class | no_possible_node_index
+        logits[Ga.ACTION_TYPE_KEY][no_possible_add_node, GaType.ADD_NODE] = -float("inf")
+        logits[Ga.NODE_CLASS_KEY][no_possible_node_class] = 0.0
+        logits[Ga.NODE_INDEX_KEY][no_possible_node_index] = 0.0
 
         transformed_logits = {}
         for key in logits.keys():

@@ -739,7 +739,3 @@ def test_hypergrid_exploration_smoke():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_hypergrid_exploration_main(namespace_args)  # Runs without errors.
-
-
-if __name__ == "__main__":
-    test_graph_triangle_smoke()

@@ -355,10 +355,10 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         if math.isfinite(self.log_reward_clip_min) and log_rewards is not None:
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
-        if torch.any(torch.isinf(total_log_pf_trajectories)) or torch.any(
-            torch.isinf(total_log_pb_trajectories)
-        ):
-            raise ValueError("Infinite logprobs found")
+        if torch.any(torch.isinf(total_log_pf_trajectories)):
+            raise ValueError("Infinite pf logprobs found")
+        if torch.any(torch.isinf(total_log_pb_trajectories)):
+            raise ValueError("Infinite pb logprobs found")
 
         assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
         assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)

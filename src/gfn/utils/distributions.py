@@ -76,12 +76,18 @@ class GraphActionDistribution(Distribution):
         validate_args = False  # edge_index.numel() == 0 when no nodes are present
         if isinstance(logits, TensorDict):
             self.dists = {
-                key: Categorical(logits=logits[key], validate_args=validate_args)
+                key: Categorical(
+                    logits=logits[key],  # type: ignore
+                    validate_args=validate_args,
+                )
                 for key in GraphActions.ACTION_INDICES.keys()
             }
         elif isinstance(probs, TensorDict):
             self.dists = {
-                key: Categorical(probs=probs[key], validate_args=validate_args)
+                key: Categorical(
+                    probs=probs[key],  # type: ignore
+                    validate_args=validate_args,
+                )
                 for key in GraphActions.ACTION_INDICES.keys()
             }
 
