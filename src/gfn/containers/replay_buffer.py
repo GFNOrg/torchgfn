@@ -118,7 +118,7 @@ class ReplayBuffer:
         if self.remote_manager_rank is not None:
             self._add_counter += 1
             if self._add_counter % self.remote_buffer_freq == 0:
-                score = self._send_objs(len(training_container))
+                score = self._send_objs(training_container)
                 print(
                     f"[Rank {dist.get_rank()}] Sent to remote {self.remote_manager_rank}, got score {score}"
                 )
