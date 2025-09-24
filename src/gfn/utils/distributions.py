@@ -52,7 +52,10 @@ class GraphActionDistribution(Distribution):
     """
 
     def __init__(
-        self, logits: TensorDict | None = None, probs: TensorDict | None = None
+        self,
+        logits: TensorDict | None = None,
+        probs: TensorDict | None = None,
+        is_backward: bool = False,
     ):
         """Initializes the mixture distribution.
 
@@ -62,6 +65,7 @@ class GraphActionDistribution(Distribution):
             is_backward: A boolean indicating whether the distribution is for backward policy.
         """
         super().__init__()
+        self.is_backward = is_backward
         assert (probs is None) ^ (logits is None), "Pass exactly one of logits or probs."
 
         # In practice, we never sample from the undefined distributions. However, if we
