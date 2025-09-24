@@ -81,7 +81,7 @@ def test_init_rb(simple_env):
     buffer = ReplayBuffer(simple_env, capacity=100)
     assert buffer.capacity == 100
     assert buffer.env == simple_env
-    assert buffer.training_objects is None
+    assert buffer.training_container is None
     assert len(buffer) == 0
     assert not buffer.prioritized_capacity
     assert not buffer.prioritized_sampling
@@ -95,8 +95,8 @@ def test_add_trajectories(simple_env, trajectories):
     buffer = ReplayBuffer(simple_env, capacity=10)
     buffer.add(trajectories)
 
-    assert buffer.training_objects is not None
-    assert isinstance(buffer.training_objects, Trajectories)
+    assert buffer.training_container is not None
+    assert isinstance(buffer.training_container, Trajectories)
     assert len(buffer) == 5
     assert "trajectories" in repr(buffer)
 
@@ -105,8 +105,8 @@ def test_add_transitions(simple_env, transitions):
     buffer = ReplayBuffer(simple_env, capacity=10)
     buffer.add(transitions)
 
-    assert buffer.training_objects is not None
-    assert isinstance(buffer.training_objects, Transitions)
+    assert buffer.training_container is not None
+    assert isinstance(buffer.training_container, Transitions)
     assert len(buffer) == 5
     assert "transitions" in repr(buffer)
 
@@ -115,8 +115,8 @@ def test_add_state_pairs(simple_env, state_pairs):
     buffer = ReplayBuffer(simple_env, capacity=10)
     buffer.add(state_pairs)
 
-    assert buffer.training_objects is not None
-    assert isinstance(buffer.training_objects, StatesContainer)
+    assert buffer.training_container is not None
+    assert isinstance(buffer.training_container, StatesContainer)
     assert len(buffer) == 10
     print(repr(buffer))
     assert "statescontainer" in repr(buffer)
@@ -128,10 +128,10 @@ def test_capacity_limit(simple_env, trajectories):
 
     assert len(buffer) == 3
     # Should keep the last 3 trajectories
-    assert isinstance(buffer.training_objects, Trajectories)
-    assert isinstance(buffer.training_objects.log_rewards, torch.Tensor)
-    assert buffer.training_objects.log_rewards is not None
-    assert buffer.training_objects.log_rewards[-3:].tolist() == [2.0, 3.0, 4.0]
+    assert isinstance(buffer.training_container, Trajectories)
+    assert isinstance(buffer.training_container.log_rewards, torch.Tensor)
+    assert buffer.training_container.log_rewards is not None
+    assert buffer.training_container.log_rewards[-3:].tolist() == [2.0, 3.0, 4.0]
 
 
 def test_prioritized_capacity(simple_env, trajectories):
@@ -142,10 +142,10 @@ def test_prioritized_capacity(simple_env, trajectories):
     assert not buffer.prioritized_sampling
     assert len(buffer) == 5
     # Should sort by log_rewards in ascending order
-    assert isinstance(buffer.training_objects, Trajectories)
-    assert isinstance(buffer.training_objects.log_rewards, torch.Tensor)
+    assert isinstance(buffer.training_container, Trajectories)
+    assert isinstance(buffer.training_container.log_rewards, torch.Tensor)
     assert torch.allclose(
-        buffer.training_objects.log_rewards, torch.tensor([0.0, 1.0, 2.0, 3.0, 4.0])
+        buffer.training_container.log_rewards, torch.tensor([0.0, 1.0, 2.0, 3.0, 4.0])
     )
 
 
@@ -180,12 +180,12 @@ def test_save_load(simple_env, trajectories):
 
         # Check if loaded correctly
         assert len(new_buffer) == 5
-        assert isinstance(new_buffer.training_objects, Trajectories)
-        assert isinstance(buffer.training_objects, Trajectories)
-        assert isinstance(new_buffer.training_objects.log_rewards, torch.Tensor)
-        assert isinstance(buffer.training_objects.log_rewards, torch.Tensor)
+        assert isinstance(new_buffer.training_container, Trajectories)
+        assert isinstance(buffer.training_container, Trajectories)
+        assert isinstance(new_buffer.training_container.log_rewards, torch.Tensor)
+        assert isinstance(buffer.training_container.log_rewards, torch.Tensor)
         assert torch.allclose(
-            new_buffer.training_objects.log_rewards, buffer.training_objects.log_rewards
+            new_buffer.training_container.log_rewards, buffer.training_container.log_rewards
         )
 
 
@@ -240,10 +240,10 @@ def test_add_with_diversity(simple_env, trajectories):
 
     # The buffer should still prioritize by reward within the diverse set
     assert len(buffer) == 5
-    assert isinstance(buffer.training_objects, Trajectories)
-    assert isinstance(buffer.training_objects.log_rewards, torch.Tensor)
+    assert isinstance(buffer.training_container, Trajectories)
+    assert isinstance(buffer.training_container.log_rewards, torch.Tensor)
 
-    log_rewards = buffer.training_objects.log_rewards
+    log_rewards = buffer.training_container.log_rewards
     assert log_rewards is not None
     assert torch.all(log_rewards >= 0)
 
@@ -280,9 +280,9 @@ def test_skip_diversity_check(simple_env, trajectories):
 
     # The buffer should contain the highest reward trajectories
     assert len(buffer) == 5
-    assert isinstance(buffer.training_objects, Trajectories)
-    assert isinstance(buffer.training_objects.log_rewards, torch.Tensor)
-    assert torch.min(buffer.training_objects.log_rewards) >= 2.0
+    assert isinstance(buffer.training_container, Trajectories)
+    assert isinstance(buffer.training_container.log_rewards, torch.Tensor)
+    assert torch.min(buffer.training_container.log_rewards) >= 2.0
 
 
 def test_prioritized_sampling(simple_env, trajectories):
