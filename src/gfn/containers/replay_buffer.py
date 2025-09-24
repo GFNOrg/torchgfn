@@ -13,7 +13,6 @@ from gfn.containers.transitions import Transitions
 from gfn.env import Env
 
 
-
 @runtime_checkable
 class Container(Protocol):
     def __getitem__(self, idx): ...  # noqa: E704
@@ -106,7 +105,7 @@ class ReplayBuffer:
         first added container.
 
         Args:
-            training_container: The Trajectories, Transitions, or StatesContainer 
+            training_container: The Trajectories, Transitions, or StatesContainer
                 object to add.
         """
         if not isinstance(training_container, ValidContainerTypes):
@@ -142,7 +141,7 @@ class ReplayBuffer:
         # Receive a dummy score back
         score = torch.zeros(1, dtype=torch.float32)
         dist.recv(score, src=self.remote_manager_rank)
-        
+
         return score.item()
 
     def __repr__(self) -> str:

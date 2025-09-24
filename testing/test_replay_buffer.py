@@ -185,7 +185,8 @@ def test_save_load(simple_env, trajectories):
         assert isinstance(new_buffer.training_container.log_rewards, torch.Tensor)
         assert isinstance(buffer.training_container.log_rewards, torch.Tensor)
         assert torch.allclose(
-            new_buffer.training_container.log_rewards, buffer.training_container.log_rewards
+            new_buffer.training_container.log_rewards,
+            buffer.training_container.log_rewards,
         )
 
 
