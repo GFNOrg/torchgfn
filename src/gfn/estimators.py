@@ -712,6 +712,7 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         logits = module_output
         logits[Ga.ACTION_TYPE_KEY][~masks[Ga.ACTION_TYPE_KEY]] = -float("inf")
         logits[Ga.NODE_CLASS_KEY][~masks[Ga.NODE_CLASS_KEY]] = -float("inf")
+        logits[Ga.NODE_INDEX_KEY][~masks[Ga.NODE_INDEX_KEY]] = -float("inf")
         logits[Ga.EDGE_CLASS_KEY][~masks[Ga.EDGE_CLASS_KEY]] = -float("inf")
         logits[Ga.EDGE_INDEX_KEY][~masks[Ga.EDGE_INDEX_KEY]] = -float("inf")
 
@@ -733,11 +734,14 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         logits[Ga.EDGE_CLASS_KEY][no_possible_edge_class] = 0.0
 
         # Check no node can be added & assert that action type cannot be ADD_NODE
-        no_possible_node = torch.isneginf(logits[Ga.NODE_CLASS_KEY]).all(-1)
+        no_possible_node_class = torch.isneginf(logits[Ga.NODE_CLASS_KEY]).all(-1)
+        no_possible_node_index = torch.isneginf(logits[Ga.NODE_INDEX_KEY]).all(-1)
+        no_possible_node = no_possible_node_class & no_possible_node_index
         assert torch.isneginf(
             logits[Ga.ACTION_TYPE_KEY][no_possible_node, GaType.ADD_NODE]
         ).all()
-        logits[Ga.NODE_CLASS_KEY][no_possible_node] = 0.0
+        logits[Ga.NODE_CLASS_KEY][no_possible_node_class] = 0.0
+        logits[Ga.NODE_INDEX_KEY][no_possible_node_index] = 0.0
 
         transformed_logits = {}
         for key in logits.keys():
