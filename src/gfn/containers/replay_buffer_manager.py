@@ -1,3 +1,4 @@
+import math
 from typing import Callable, Optional
 
 import torch
@@ -27,8 +28,8 @@ class ReplayBufferManager:
             )
 
     def default_scoring_function(self, obj) -> float:
-        """Default reward function if none provided"""
-        return float(len(str(obj)) * 0.1)
+        """Default diversity score function if none provided, placeholder."""
+        return math.inf
 
     def run(self):
         """Runs on remote buffer manager ranks. Waits for training data, computes dummy reward, sends back."""
