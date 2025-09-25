@@ -2,7 +2,7 @@ from typing import Any, List, Optional, Tuple
 
 import torch
 
-from gfn.actions import Actions
+from gfn.actions import Actions, GraphActionType
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator
@@ -100,6 +100,30 @@ class Sampler:
             log_probs = None
 
         actions = env.actions_from_tensor(actions)
+
+        # TODO: Evaluate whether this is the appropriate place to do this.
+        # Centralized annotation for graph actions:
+        # When sampling forward ADD_NODE on graph environments, populate node_index
+        # with the index the new node will take (current number of nodes). This makes
+        # the action self-contained for later backward scoring (pb).
+        if isinstance(states, GraphStates) and not self.estimator.is_backward:
+            try:
+                add_node_mask = actions.action_type == GraphActionType.ADD_NODE
+            except AttributeError:
+                add_node_mask = None
+
+            if add_node_mask is not None and add_node_mask.any():
+                # Compute next index per graph from current states
+                # states is already masked to active rows for this call
+                next_indices = []
+                for graph in states.data.flat:  # type: ignore[attr-defined]
+                    n = 0 if graph.x is None else graph.x.size(0)
+                    next_indices.append(n)
+                next_indices_tensor = torch.as_tensor(
+                    next_indices, device=actions.device, dtype=actions.tensor.dtype
+                )
+                actions.node_index[add_node_mask] = next_indices_tensor[add_node_mask]
+
         if not save_estimator_outputs:
             estimator_output = None
 
