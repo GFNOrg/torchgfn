@@ -48,7 +48,7 @@ class GraphActionDistribution(Distribution):
         categorical distribution.
     - If the action_type is ADD_EDGE, then the edge_class and edge_index are
         sampled from categorical distributions.
-    - If the action_type is STOP, then no other components are sampled.
+    - If the action_type is EXIT, then no other components are sampled.
     """
 
     def __init__(
@@ -74,22 +74,14 @@ class GraphActionDistribution(Distribution):
         # add an edge.) TODO: validation should be disabled only when all actions of a
         # particular type are impossible.
         validate_args = False  # edge_index.numel() == 0 when no nodes are present
-        if isinstance(logits, TensorDict):
-            self.dists = {
-                key: Categorical(
-                    logits=logits[key],  # type: ignore
-                    validate_args=validate_args,
-                )
-                for key in GraphActions.ACTION_INDICES.keys()
-            }
-        elif isinstance(probs, TensorDict):
-            self.dists = {
-                key: Categorical(
-                    probs=probs[key],  # type: ignore
-                    validate_args=validate_args,
-                )
-                for key in GraphActions.ACTION_INDICES.keys()
-            }
+        self.dists = {
+            key: Categorical(
+                logits=logits[key] if logits is not None else None,  # type: ignore
+                probs=probs[key] if probs is not None else None,  # type: ignore
+                validate_args=validate_args,
+            )
+            for key in GraphActions.ACTION_INDICES.keys()
+        }
 
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         """Samples from the distribution.
