@@ -29,10 +29,6 @@ class Transitions(Container):
         is_terminating: Boolean tensor of shape (n_transitions,) indicating whether the
             action is the exit action.
         next_states: States with batch_shape (n_transitions,).
-        is_backward: Whether the transitions are backward transitions. When not
-            is_backward, the `states` are the parents of the transitions and the
-            `next_states` are the children. When is_backward, the `states` are the
-            children of the transitions and the `next_states` are the parents.
         _log_rewards: (Optional) Tensor of shape (n_transitions,) containing the log
             rewards of the transitions.
         log_probs: (Optional) Tensor of shape (n_transitions,) containing the log
@@ -49,7 +45,6 @@ class Transitions(Container):
         actions: Actions | None = None,
         is_terminating: torch.Tensor | None = None,
         next_states: States | None = None,
-        is_backward: bool = False,
         log_rewards: torch.Tensor | None = None,
         log_probs: torch.Tensor | None = None,
         backward_log_probs: torch.Tensor | None = None,
@@ -68,7 +63,6 @@ class Transitions(Container):
                 the action is the exit action.
             next_states: States with batch_shape (n_transitions,). If None, an empty
                 States object is created.
-            is_backward: Whether the transitions are backward transitions.
             log_rewards: Optional tensor of shape (n_transitions,) containing the log
                 rewards for the transitions. If None, computed on the fly when needed.
             log_probs: Optional tensor of shape (n_transitions,) containing the log
@@ -82,7 +76,6 @@ class Transitions(Container):
             an empty container that can be populated later with the `extend` method.
         """
         self.env = env
-        self.is_backward = is_backward
 
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
@@ -205,9 +198,6 @@ class Transitions(Container):
             If not provided at initialization, log rewards are computed on demand for
             terminating transitions.
         """
-        if self.is_backward:
-            return None
-
         if self._log_rewards is None:
             self._log_rewards = torch.full(
                 (self.n_transitions,),
@@ -233,8 +223,6 @@ class Transitions(Container):
             Log rewards tensor of shape (n_transitions, 2) for the transitions.
         """
         # TODO: reuse self._log_rewards if it exists.
-        if self.is_backward:
-            raise NotImplementedError("Not implemented for backward transitions")
         is_sink_state = self.next_states.is_sink_state
         log_rewards = torch.full(
             (self.n_transitions, 2),
@@ -287,7 +275,6 @@ class Transitions(Container):
             actions=actions,
             is_terminating=is_terminating,
             next_states=next_states,
-            is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
             backward_log_probs=backward_log_probs,

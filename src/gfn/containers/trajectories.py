@@ -471,6 +471,9 @@ class Trajectories(Container):
             A Transitions object with the same states, actions, and log_rewards as the
             current Trajectories.
         """
+        if self.is_backward:
+            return self.reverse_backward_trajectories().to_transitions()
+
         if self.conditioning is not None:
             # The conditioning tensor has shape (max_length, n_trajectories, 1)
             # The actions have shape (max_length, n_trajectories)
@@ -522,7 +525,6 @@ class Trajectories(Container):
             actions=actions,
             is_terminating=is_terminating,
             next_states=next_states,
-            is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
             backward_log_probs=backward_log_probs,
