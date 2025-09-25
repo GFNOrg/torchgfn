@@ -137,7 +137,7 @@ def main(args):
             buffer_trajectories = bwd_trajectories.reverse_backward_trajectories()
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, buffer_trajectories, recalculate_all_logprobs=True)
+        loss = gflownet.loss(env, buffer_trajectories, recalculate_all_logprobs=False)
         loss.backward()
         optimizer.step()
 

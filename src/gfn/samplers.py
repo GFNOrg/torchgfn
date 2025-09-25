@@ -38,6 +38,27 @@ class Sampler:
         self.estimator = estimator
         self.is_backward = estimator.is_backward
 
+    def get_estimator_output(
+        self, states: States, conditioning: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Gets the estimator output for the given states and conditioning.
+
+        Args:
+            states: The states to get the estimator output for.
+            conditioning: The conditioning to get the estimator output for.
+
+        Returns:
+            The estimator output for the given states and conditioning.
+        """
+        # TODO: Should estimators instead ignore None for the conditioning vector?
+        if conditioning is not None:
+            with has_conditioning_exception_handler("estimator", self.estimator):
+                estimator_output = self.estimator(states, conditioning)
+        else:
+            with no_conditioning_exception_handler("estimator", self.estimator):
+                estimator_output = self.estimator(states)
+        return estimator_output
+
     def sample_actions(
         self,
         env: Env,
@@ -78,13 +99,7 @@ class Sampler:
             - Optional tensor of log probabilities (if save_logprobs=True)
             - Optional tensor of estimator outputs (if save_estimator_outputs=True)
         """
-        # TODO: Should estimators instead ignore None for the conditioning vector?
-        if conditioning is not None:
-            with has_conditioning_exception_handler("estimator", self.estimator):
-                estimator_output = self.estimator(states, conditioning)
-        else:
-            with no_conditioning_exception_handler("estimator", self.estimator):
-                estimator_output = self.estimator(states)
+        estimator_output = self.get_estimator_output(states, conditioning)
 
         dist = self.estimator.to_probability_distribution(
             states, estimator_output, **policy_kwargs
@@ -274,14 +289,33 @@ class Sampler:
 
         # Stack all states and actions
         stacked_states = env.States.stack(trajectories_states)
-        stacked_actions = env.Actions.stack(trajectories_actions)
-        stacked_logprobs = (
-            torch.stack(trajectories_logprobs, dim=0) if save_logprobs else None
-        )
-        # TODO: use torch.nested.nested_tensor(dtype, device, requires_grad).
-        stacked_estimator_outputs = (
-            torch.stack(all_estimator_outputs, dim=0) if save_estimator_outputs else None
-        )
+
+        if len(trajectories_actions) > 0:
+            stacked_actions = env.Actions.stack(trajectories_actions)
+            stacked_logprobs = (
+                torch.stack(trajectories_logprobs, dim=0) if save_logprobs else None
+            )
+            stacked_estimator_outputs = (
+                torch.stack(all_estimator_outputs, dim=0)
+                if save_estimator_outputs
+                else None
+            )
+        else:  # len(trajectories_actions) == 0
+            # This can happen when we sample forward (backward) and the given
+            # `states` are all sink (initial) states.
+            # In this case, we need to create a dummy tensor with the correct shape.
+            stacked_actions = env.actions_from_batch_shape((0, n_trajectories))
+            stacked_logprobs = torch.zeros((0, n_trajectories), device=device)
+            if save_estimator_outputs:
+                # We need to check the shape of the estimator outputs to create a dummy tensor with the correct shape.
+                dummy_estimator_output = self.get_estimator_output(
+                    env.states_from_batch_shape((n_trajectories,)), conditioning
+                )
+                stacked_estimator_outputs = torch.zeros(
+                    (0, n_trajectories, *dummy_estimator_output.shape[1:]), device=device
+                )
+            else:
+                stacked_estimator_outputs = None
 
         # Broadcast conditioning tensor to match states batch shape if needed
         if conditioning is not None:
