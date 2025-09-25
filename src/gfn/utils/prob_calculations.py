@@ -259,9 +259,6 @@ def get_transition_pfs_and_pbs(
     Raises:
         ValueError: If backward transitions are provided.
     """
-    if transitions.is_backward:
-        raise ValueError("Backward transitions are not supported")
-
     log_pf_transitions = get_transition_pfs(pf, transitions, recalculate_all_logprobs)
     log_pb_transitions = get_transition_pbs(pb, transitions)
 
