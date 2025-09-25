@@ -786,7 +786,9 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
                 )
             )
 
-        return GraphActionDistribution(logits=TensorDict(transformed_logits))
+        return GraphActionDistribution(
+            logits=TensorDict(transformed_logits), is_backward=self.is_backward
+        )
 
     @property
     def expected_output_dim(self) -> Optional[int]:
