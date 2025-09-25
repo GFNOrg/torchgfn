@@ -129,7 +129,7 @@ def main(args):
             bwd_trajectories = backward_sampler.sample_trajectories(
                 env,
                 states=terminating_states,
-                save_logprobs=False,  # TODO: enable this
+                save_logprobs=True,
                 save_estimator_outputs=False,
                 # TODO: log rewards, conditioning, ...
             )

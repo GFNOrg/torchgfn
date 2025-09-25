@@ -37,6 +37,8 @@ class Transitions(Container):
             rewards of the transitions.
         log_probs: (Optional) Tensor of shape (n_transitions,) containing the log
             probabilities of the actions.
+        backward_log_probs: (Optional) Tensor of shape (n_transitions,) containing the
+            backward log probabilities of the actions.
     """
 
     def __init__(
@@ -50,6 +52,7 @@ class Transitions(Container):
         is_backward: bool = False,
         log_rewards: torch.Tensor | None = None,
         log_probs: torch.Tensor | None = None,
+        backward_log_probs: torch.Tensor | None = None,
     ):
         """Initializes a Transitions instance.
 
@@ -70,6 +73,8 @@ class Transitions(Container):
                 rewards for the transitions. If None, computed on the fly when needed.
             log_probs: Optional tensor of shape (n_transitions,) containing the log
                 probabilities of the actions.
+            backward_log_probs: Optional tensor of shape (n_transitions,) containing the
+                backward log probabilities of the actions.
 
 
         Note:
@@ -125,6 +130,12 @@ class Transitions(Container):
         assert self.log_probs is None or (
             self.log_probs.shape == self.actions.batch_shape
             and self.log_probs.is_floating_point()
+        )
+
+        self.backward_log_probs = backward_log_probs
+        assert self.backward_log_probs is None or (
+            self.backward_log_probs.shape == self.actions.batch_shape
+            and self.backward_log_probs.is_floating_point()
         )
 
     @property
@@ -264,7 +275,11 @@ class Transitions(Container):
         next_states = self.next_states[index]
         log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
         log_probs = self.log_probs[index] if self.log_probs is not None else None
-
+        backward_log_probs = (
+            self.backward_log_probs[index]
+            if self.backward_log_probs is not None
+            else None
+        )
         return Transitions(
             env=self.env,
             states=states,
@@ -275,6 +290,7 @@ class Transitions(Container):
             is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
+            backward_log_probs=backward_log_probs,
         )
 
     def extend(self, other: Transitions) -> None:
@@ -305,6 +321,12 @@ class Transitions(Container):
                     fill_value=0.0,
                     device=self.device,
                 )
+            if other.backward_log_probs is not None:
+                self.backward_log_probs = torch.full(
+                    size=(0,),
+                    fill_value=0.0,
+                    device=self.device,
+                )
 
         assert len(self.states.batch_shape) == len(other.states.batch_shape) == 1
 
@@ -326,3 +348,11 @@ class Transitions(Container):
             self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=0)
         else:
             self.log_probs = None
+
+        # Concatenate backward_log_probs of the trajectories.
+        if self.backward_log_probs is not None and other.backward_log_probs is not None:
+            self.backward_log_probs = torch.cat(
+                (self.backward_log_probs, other.backward_log_probs), dim=0
+            )
+        else:
+            self.backward_log_probs = None
