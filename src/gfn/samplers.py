@@ -115,6 +115,7 @@ class Sampler:
         env: Env,
         n: Optional[int] = None,
         states: Optional[States] = None,
+        log_rewards: Optional[torch.Tensor] = None,
         conditioning: Optional[torch.Tensor] = None,
         save_estimator_outputs: bool = False,
         save_logprobs: bool = False,
@@ -135,6 +136,8 @@ class Sampler:
             states: Initial states to start trajectories from. It should have batch_shape
                 of length 1 (no trajectory dim). If `None`, `n` must be provided and we
                 initialize `n` trajectories with the environment's initial state.
+            log_rewards: Optional tensor of log rewards for backward sampling. If None,
+                log rewards are computed on the fly.
             conditioning: Optional tensor of conditioning information for conditional
                 policies. Must match the batch shape of states.
             save_estimator_outputs: If True, saves the estimator outputs for each
@@ -161,6 +164,10 @@ class Sampler:
             ), "When backward sampling, `states` must be provided"
             # assert states in env.terminating_states # This assert would be useful,
             # unfortunately, not every environment implements this.
+
+            # Compute log rewards on the fly if not provided.
+            if log_rewards is None:
+                log_rewards = env.log_reward(states)
         else:
             if states is None:
                 assert n is not None, "Either kwarg `states` or `n` must be specified"
@@ -417,6 +424,7 @@ class LocalSearchSampler(Sampler):
         prev_trajectories = self.backward_sampler.sample_trajectories(
             env,
             states=trajectories.terminating_states,
+            log_rewards=trajectories.log_rewards,
             conditioning=conditioning,
             save_estimator_outputs=save_estimator_outputs,
             save_logprobs=save_logprobs,
