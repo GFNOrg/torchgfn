@@ -5,6 +5,7 @@ from gfn.estimators import DiscretePolicyEstimator, LogitBasedEstimator
 from gfn.gym import HyperGrid
 from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
+from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP
 
 
@@ -473,13 +474,29 @@ def test_uniform_log_probs_method():
 def test_mix_with_uniform_in_log_space():
     """Test the _mix_with_uniform_in_log_space static method."""
     batch_size, n_actions = 3, 4
+    set_seed(123)
 
     # Create log-softmax values
     logits = torch.randn(batch_size, n_actions)
     masks = torch.ones(batch_size, n_actions, dtype=torch.bool)
     masks[0, 1] = False  # Mask one action
 
-    lsm = torch.log_softmax(logits, dim=-1)
+    # Manual masking.
+    masked_logits_manual = logits.clone()
+    masked_logits_manual[~masks] = -float("inf")
+    lsm = torch.log_softmax(masked_logits_manual, dim=-1)
+
+    # Automatic masking.
+    lsm_automatic = torch.log_softmax(
+        LogitBasedEstimator._prepare_logits(
+            logits=logits, masks=masks, sf_index=None, sf_bias=0.0, temperature=1.0
+        ),
+        dim=-1,
+    )
+
+    # Check that the two methods produce the same result.
+    assert torch.allclose(lsm, lsm_automatic)
+
     epsilon = 0.2
 
     mixed = LogitBasedEstimator._mix_with_uniform_in_log_space(lsm, masks, epsilon)
@@ -493,3 +510,7 @@ def test_mix_with_uniform_in_log_space():
     # Test epsilon = 0 case (should return original)
     mixed_zero_eps = LogitBasedEstimator._mix_with_uniform_in_log_space(lsm, masks, 0.0)
     assert torch.allclose(mixed_zero_eps, lsm)
+
+
+if __name__ == "__main__":
+    test_mix_with_uniform_in_log_space()
