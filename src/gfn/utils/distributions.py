@@ -99,16 +99,20 @@ class GraphActionDistribution(Distribution):
 
         add_node_idx = action_types == GraphActionType.ADD_NODE
         if add_node_idx.any():
-            node_classes_all = self.dists[GraphActions.NODE_CLASS_KEY].sample(
-                sample_shape
-            )
-            node_classes[add_node_idx] = node_classes_all[add_node_idx]
-
+            # In backward mode, node_class is irrelevant for ADD_NODE (we remove by index)
+            # so we do not sample it and leave zeros. We only sample node_index.
             if self.is_backward:
                 node_indices_all = self.dists[GraphActions.NODE_INDEX_KEY].sample(
                     sample_shape
                 )
                 node_indices[add_node_idx] = node_indices_all[add_node_idx]
+            # In forwards mode, node_index is irrelevant for ADD_NODE (we add by class)
+            # so we do not sample it and leave zeros. We only sample node_class.
+            else:
+                node_classes_all = self.dists[GraphActions.NODE_CLASS_KEY].sample(
+                    sample_shape
+                )
+                node_classes[add_node_idx] = node_classes_all[add_node_idx]
 
         add_edge_idx = action_types == GraphActionType.ADD_EDGE
 
@@ -161,17 +165,33 @@ class GraphActionDistribution(Distribution):
         # If action_type is ADD_NODE, add log_prob for NODE_CLASS_KEY and NODE_INDEX_KEY
         add_node_idx = action_types == GraphActionType.ADD_NODE
         if add_node_idx.any():
-            log_prob_node_class_all = self.dists[GraphActions.NODE_CLASS_KEY].log_prob(
-                sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_CLASS_KEY]]
-            )
-            log_prob[add_node_idx] += log_prob_node_class_all[add_node_idx]
+            # For backward mode, ignore node_class contribution; only node_index matters.
             if self.is_backward:
                 log_prob_node_index_all = self.dists[
                     GraphActions.NODE_INDEX_KEY
                 ].log_prob(
                     sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_INDEX_KEY]]
                 )
+                assert torch.isfinite(
+                    log_prob_node_index_all[add_node_idx]
+                ).all(), (
+                    "add_node_idx is indexing masked values in log_prob_node_index_all"
+                )
                 log_prob[add_node_idx] += log_prob_node_index_all[add_node_idx]
+
+            # In forwards mode, ignore node_index contribution; only node_class matters.
+            else:
+                log_prob_node_class_all = self.dists[
+                    GraphActions.NODE_CLASS_KEY
+                ].log_prob(
+                    sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_CLASS_KEY]]
+                )
+                assert torch.isfinite(
+                    log_prob_node_class_all[add_node_idx]
+                ).all(), (
+                    "add_node_idx is indexing masked values in log_prob_node_class_all"
+                )
+                log_prob[add_node_idx] += log_prob_node_class_all[add_node_idx]
 
         # If action_type is ADD_EDGE, add log_prob for EDGE_CLASS_KEY and EDGE_INDEX_KEY
         add_edge_idx = action_types == GraphActionType.ADD_EDGE
