@@ -740,7 +740,7 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         # fallbacks for the unused components.
         no_possible_node_class = torch.isneginf(logits[Ga.NODE_CLASS_KEY]).all(-1)
         no_possible_node_index = torch.isneginf(logits[Ga.NODE_INDEX_KEY]).all(-1)
-        no_possible_add_node = no_possible_node_class | no_possible_node_index
+        no_possible_add_node = no_possible_node_index if self.is_backward else no_possible_node_class
         logits[Ga.ACTION_TYPE_KEY][no_possible_add_node, GaType.ADD_NODE] = -float("inf")
         logits[Ga.NODE_CLASS_KEY][no_possible_node_class] = 0.0
         logits[Ga.NODE_INDEX_KEY][no_possible_node_index] = 0.0
@@ -781,7 +781,7 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
                 )
             )
 
-        return GraphActionDistribution(logits=TensorDict(transformed_logits))
+        return GraphActionDistribution(logits=TensorDict(transformed_logits), is_backward=self.is_backward)
 
     @property
     def expected_output_dim(self) -> Optional[int]:
