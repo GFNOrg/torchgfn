@@ -1,16 +1,17 @@
 import pytest
 import torch
+import numpy as np
+from torch.distributions import Categorical
 
-from gfn.estimators import DiscretePolicyEstimator, LogitBasedEstimator
-from gfn.gym import HyperGrid
-from gfn.preprocessors import KHotPreprocessor
+from gfn.estimators import LogitBasedEstimator, DiscretePolicyEstimator
 from gfn.states import DiscreteStates
+from gfn.gym import HyperGrid, DiscreteEBM
+from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor
 from gfn.utils.modules import MLP
 
 
 class SimpleDiscreteStates(DiscreteStates):
     """Simple discrete states for testing purposes."""
-
     n_actions = 5
 
     def __init__(self, tensor, forward_masks=None, backward_masks=None):
@@ -39,7 +40,7 @@ def reference_probability_computation(
     sf_bias: float = 0.0,
     temperature: float = 1.0,
     epsilon: float = 0.0,
-    is_backward: bool = False,
+    is_backward: bool = False
 ) -> torch.Tensor:
     """Reference implementation for probability computation as provided in the user query."""
     assert masks.any(dim=-1).all(), "No possible actions"
@@ -68,31 +69,34 @@ def reference_probability_computation(
 
 
 def test_prepare_logits_basic():
-    """Test _prepare_logits with basic parameters."""
-    # Create test data
-    batch_size, n_actions = 4, 5
-    logits = torch.randn(batch_size, n_actions)
-    masks = torch.ones(batch_size, n_actions, dtype=torch.bool)
+        """Test _prepare_logits with basic parameters."""
+        # Create test data
+        batch_size, n_actions = 4, 5
+        logits = torch.randn(batch_size, n_actions)
+        masks = torch.ones(batch_size, n_actions, dtype=torch.bool)
 
-    # Mask some actions
-    masks[0, 1] = False  # Mask action 1 for first state
-    masks[1, [2, 3]] = False  # Mask actions 2,3 for second state
+        # Mask some actions
+        masks[0, 1] = False  # Mask action 1 for first state
+        masks[1, [2, 3]] = False  # Mask actions 2,3 for second state
 
-    # Test basic functionality
-    prepared = LogitBasedEstimator._prepare_logits(
-        logits=logits, masks=masks, sf_index=None, sf_bias=0.0, temperature=1.0
-    )
+        # Test basic functionality
+        prepared = LogitBasedEstimator._prepare_logits(
+            logits=logits,
+            masks=masks,
+            sf_index=None,
+            sf_bias=0.0,
+            temperature=1.0
+        )
 
-    # Check that masked actions have -inf logits
-    assert torch.isinf(prepared[0, 1]) and prepared[0, 1] < 0
-    assert torch.isinf(prepared[1, 2]) and prepared[1, 2] < 0
-    assert torch.isinf(prepared[1, 3]) and prepared[1, 3] < 0
+        # Check that masked actions have -inf logits
+        assert torch.isinf(prepared[0, 1]) and prepared[0, 1] < 0
+        assert torch.isinf(prepared[1, 2]) and prepared[1, 2] < 0
+        assert torch.isinf(prepared[1, 3]) and prepared[1, 3] < 0
 
-    # Check that unmasked actions remain finite
-    assert torch.isfinite(prepared[0, 0])
-    assert torch.isfinite(prepared[1, 0])
-    assert torch.isfinite(prepared[1, 1])
-
+        # Check that unmasked actions remain finite
+        assert torch.isfinite(prepared[0, 0])
+        assert torch.isfinite(prepared[1, 0])
+        assert torch.isfinite(prepared[1, 1])
 
 def test_prepare_logits_with_sf_bias():
     """Test _prepare_logits with sf_bias."""
@@ -105,13 +109,16 @@ def test_prepare_logits_with_sf_bias():
     original_exit_logits = logits[:, sf_index].clone()
 
     prepared = LogitBasedEstimator._prepare_logits(
-        logits=logits, masks=masks, sf_index=sf_index, sf_bias=sf_bias, temperature=1.0
+        logits=logits,
+        masks=masks,
+        sf_index=sf_index,
+        sf_bias=sf_bias,
+        temperature=1.0
     )
 
     # Check that sf_bias was subtracted from exit action
     expected_exit_logits = original_exit_logits - sf_bias
     assert torch.allclose(prepared[:, sf_index], expected_exit_logits)
-
 
 def test_prepare_logits_with_temperature():
     """Test _prepare_logits with temperature scaling."""
@@ -121,14 +128,17 @@ def test_prepare_logits_with_temperature():
     temperature = 2.0
 
     prepared = LogitBasedEstimator._prepare_logits(
-        logits=logits, masks=masks, sf_index=None, sf_bias=0.0, temperature=temperature
+        logits=logits,
+        masks=masks,
+        sf_index=None,
+        sf_bias=0.0,
+        temperature=temperature
     )
 
     # Check that temperature scaling was applied
     expected = logits / temperature
     expected[~masks] = -float("inf")
     assert torch.allclose(prepared, expected)
-
 
 def test_prepare_logits_all_masked_row_with_sf_index():
     """Test _prepare_logits behavior when entire row is masked but sf_index is provided."""
@@ -141,7 +151,11 @@ def test_prepare_logits_all_masked_row_with_sf_index():
     sf_index = n_actions - 1
 
     prepared = LogitBasedEstimator._prepare_logits(
-        logits=logits, masks=masks, sf_index=sf_index, sf_bias=0.0, temperature=1.0
+        logits=logits,
+        masks=masks,
+        sf_index=sf_index,
+        sf_bias=0.0,
+        temperature=1.0
     )
 
     # Check that the sf_index was set to 0.0 for the all-masked row
@@ -161,7 +175,11 @@ def test_prepare_logits_all_masked_row_without_sf_index():
     masks[1, :] = False
 
     prepared = LogitBasedEstimator._prepare_logits(
-        logits=logits, masks=masks, sf_index=None, sf_bias=0.0, temperature=1.0
+        logits=logits,
+        masks=masks,
+        sf_index=None,
+        sf_bias=0.0,
+        temperature=1.0
     )
 
     # Check that the first column was set to 0.0 for the all-masked row
@@ -187,12 +205,16 @@ def test_compute_logits_for_distribution_no_epsilon():
         sf_index=n_actions - 1,
         sf_bias=0.0,
         temperature=1.0,
-        epsilon=0.0,
+        epsilon=0.0
     )
 
     # Result should be log-softmax of prepared logits
     prepared = LogitBasedEstimator._prepare_logits(
-        logits=logits, masks=masks, sf_index=n_actions - 1, sf_bias=0.0, temperature=1.0
+        logits=logits,
+        masks=masks,
+        sf_index=n_actions - 1,
+        sf_bias=0.0,
+        temperature=1.0
     )
     expected = torch.log_softmax(prepared, dim=-1)
 
@@ -216,7 +238,7 @@ def test_compute_logits_for_distribution_with_epsilon():
         sf_index=n_actions - 1,
         sf_bias=0.0,
         temperature=1.0,
-        epsilon=epsilon,
+        epsilon=epsilon
     )
 
     # Convert to probabilities and check they sum to 1
@@ -227,7 +249,6 @@ def test_compute_logits_for_distribution_with_epsilon():
     assert torch.allclose(probs[0, 1], torch.zeros(1))
     assert torch.allclose(probs[1, 2], torch.zeros(1))
     assert torch.allclose(probs[1, 3], torch.zeros(1))
-
 
 @pytest.mark.parametrize("sf_bias", [0.0, 1.0, 2.5])
 @pytest.mark.parametrize("temperature", [0.5, 1.0, 2.0])
@@ -242,8 +263,8 @@ def test_against_reference_implementation(sf_bias, temperature, epsilon):
     # Create diverse mask patterns
     masks = torch.ones(batch_size, n_actions, dtype=torch.bool)
     masks[0, [1, 3]] = False  # Partially masked
-    masks[1, :3] = False  # First few actions masked
-    masks[2, -2:] = False  # Last few actions masked
+    masks[1, :3] = False      # First few actions masked
+    masks[2, -2:] = False     # Last few actions masked
     masks[3, [0, 2, 4, 6]] = False  # Alternating pattern
     # Keep masks[4] and masks[5] fully unmasked
 
@@ -257,7 +278,7 @@ def test_against_reference_implementation(sf_bias, temperature, epsilon):
         sf_index=n_actions - 1,
         sf_bias=sf_bias,
         temperature=temperature,
-        epsilon=epsilon,
+        epsilon=epsilon
     )
     estimator_probs = torch.exp(logits_for_dist)
 
@@ -267,13 +288,12 @@ def test_against_reference_implementation(sf_bias, temperature, epsilon):
         masks=masks,
         sf_bias=sf_bias,
         temperature=temperature,
-        epsilon=epsilon,
+        epsilon=epsilon
     )
 
     # Compare probabilities (allowing for small numerical differences)
-    assert torch.allclose(
-        estimator_probs, reference_probs, atol=1e-6, rtol=1e-5
-    ), f"Probabilities don't match for sf_bias={sf_bias}, temp={temperature}, eps={epsilon}"
+    assert torch.allclose(estimator_probs, reference_probs, atol=1e-6, rtol=1e-5), \
+        f"Probabilities don't match for sf_bias={sf_bias}, temp={temperature}, eps={epsilon}"
 
     # Additional checks
     # 1. Probabilities should sum to 1
@@ -281,17 +301,12 @@ def test_against_reference_implementation(sf_bias, temperature, epsilon):
     assert torch.allclose(reference_probs.sum(dim=-1), torch.ones(batch_size))
 
     # 2. Masked actions should have zero probability
-    assert torch.allclose(
-        estimator_probs[~masks], torch.zeros_like(estimator_probs[~masks])
-    )
-    assert torch.allclose(
-        reference_probs[~masks], torch.zeros_like(reference_probs[~masks])
-    )
+    assert torch.allclose(estimator_probs[~masks], torch.zeros_like(estimator_probs[~masks]))
+    assert torch.allclose(reference_probs[~masks], torch.zeros_like(reference_probs[~masks]))
 
     # 3. All probabilities should be non-negative
     assert (estimator_probs >= 0).all()
     assert (reference_probs >= 0).all()
-
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
 def test_numerical_stability_different_dtypes(dtype):
@@ -303,15 +318,12 @@ def test_numerical_stability_different_dtypes(dtype):
     batch_size, n_actions = 4, 6
 
     # Create logits with extreme values to test numerical stability
-    logits = torch.tensor(
-        [
-            [100.0, -100.0, 50.0, -50.0, 0.0, 25.0],
-            [-100.0, 100.0, -50.0, 50.0, 0.0, -25.0],
-            [1e-10, 1e10, -1e10, 0.0, 1.0, -1.0],
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        ],
-        dtype=dtype,
-    )
+    logits = torch.tensor([
+        [100.0, -100.0, 50.0, -50.0, 0.0, 25.0],
+        [-100.0, 100.0, -50.0, 50.0, 0.0, -25.0],
+        [1e-10, 1e10, -1e10, 0.0, 1.0, -1.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    ], dtype=dtype)
 
     masks = torch.ones(batch_size, n_actions, dtype=torch.bool)
     masks[0, 1] = False  # Mask the -100.0 logit
@@ -325,7 +337,7 @@ def test_numerical_stability_different_dtypes(dtype):
         sf_index=n_actions - 1,
         sf_bias=1.0,
         temperature=0.5,
-        epsilon=0.1,
+        epsilon=0.1
     )
 
     probs = torch.exp(result)
@@ -335,9 +347,8 @@ def test_numerical_stability_different_dtypes(dtype):
 
     # Check probabilities sum to 1
     prob_sums = probs.sum(dim=-1)
-    assert torch.allclose(
-        prob_sums, torch.ones_like(prob_sums), atol=1e-5
-    ), f"Probabilities don't sum to 1 with dtype {dtype}"
+    assert torch.allclose(prob_sums, torch.ones_like(prob_sums), atol=1e-5), \
+        f"Probabilities don't sum to 1 with dtype {dtype}"
 
     # Check masked actions have zero probability
     assert torch.allclose(probs[~masks], torch.zeros_like(probs[~masks]), atol=1e-6)
@@ -354,7 +365,7 @@ def test_discrete_policy_estimator_integration():
         module=module,
         n_actions=env.n_actions,
         preprocessor=preprocessor,
-        is_backward=False,
+        is_backward=False
     )
 
     # Create test states
@@ -394,9 +405,8 @@ def test_discrete_policy_estimator_integration():
         assert torch.allclose(probs.sum(dim=-1), torch.ones(batch_size))
 
         # Check that masked actions have zero probability
-        assert torch.allclose(
-            probs[~states.forward_masks], torch.zeros_like(probs[~states.forward_masks])
-        )
+        assert torch.allclose(probs[~states.forward_masks],
+                            torch.zeros_like(probs[~states.forward_masks]))
 
 
 def test_edge_case_single_valid_action():
@@ -417,7 +427,7 @@ def test_edge_case_single_valid_action():
         sf_index=n_actions - 1,
         sf_bias=0.0,
         temperature=1.0,
-        epsilon=0.2,  # Test with epsilon > 0
+        epsilon=0.2  # Test with epsilon > 0
     )
 
     probs = torch.exp(result)
@@ -453,17 +463,12 @@ def test_uniform_log_probs_method():
     # Check first row (2 valid actions)
     expected_0 = -torch.log(torch.tensor(2.0))
     assert torch.allclose(log_uniform[0, [0, 2]], expected_0.expand(2))
-    assert (
-        torch.isinf(log_uniform[0, [1, 3]]).all() and (log_uniform[0, [1, 3]] < 0).all()
-    )
+    assert torch.isinf(log_uniform[0, [1, 3]]).all() and (log_uniform[0, [1, 3]] < 0).all()
 
     # Check second row (1 valid action)
     expected_1 = -torch.log(torch.tensor(1.0))  # Should be 0
     assert torch.allclose(log_uniform[1, 3], expected_1)
-    assert (
-        torch.isinf(log_uniform[1, [0, 1, 2]]).all()
-        and (log_uniform[1, [0, 1, 2]] < 0).all()
-    )
+    assert torch.isinf(log_uniform[1, [0, 1, 2]]).all() and (log_uniform[1, [0, 1, 2]] < 0).all()
 
     # Check third row (4 valid actions)
     expected_2 = -torch.log(torch.tensor(4.0))
