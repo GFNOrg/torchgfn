@@ -147,6 +147,14 @@ class GraphActionDistribution(Distribution):
     def log_prob(self, sample: torch.Tensor) -> torch.Tensor:
         """Returns the log probabilities for a batch of action samples.
 
+        Note that as we are using hierarchical sampling, the log_prob is the sum of the
+        log_probs of the individual components. It is one of:
+            - log_prob = p(action_type=add_node) + p(node_class)
+            - log_prob = p(action_type=add_edge) + p(edge_class) + p(edge_index)
+            - log_prob = p(action_type=remove_node) + p(node_index)
+            - log_prob = p(action_type=remove_edge) + p(edge_index)
+            - log_prob = p(action_type=exit)
+
         Args:
             sample: A tensor of shape (*sample_shape, *batch_shape, 4) containing action samples, where the last
                 dimension is the action type, node class, edge class, and edge index.
@@ -162,7 +170,8 @@ class GraphActionDistribution(Distribution):
         ]
         log_prob += self.dists[GraphActions.ACTION_TYPE_KEY].log_prob(action_types)
 
-        # If action_type is ADD_NODE, add log_prob for NODE_CLASS_KEY and NODE_INDEX_KEY
+        # If action_type is ADD_NODE, add log_prob for NODE_CLASS_KEY or NODE_INDEX_KEY,
+        # depending on the mode.
         add_node_idx = action_types == GraphActionType.ADD_NODE
         if add_node_idx.any():
             # For backward mode, ignore node_class contribution; only node_index matters.
