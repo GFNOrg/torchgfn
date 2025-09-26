@@ -879,8 +879,8 @@ class GraphStates(States):
             if self.max_nodes is not None and graph.x.size(0) >= self.max_nodes:
                 can_add_node[i] = False
             node_class_masks[i] = can_add_node[i]
-    
-            # One hot encoding: only allow the next index to be added 
+
+            # One hot encoding: only allow the next index to be added
             node_index_masks[i, graph.x.size(0)] = True
 
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
