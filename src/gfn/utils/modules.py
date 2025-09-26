@@ -515,7 +515,7 @@ class GraphActionGNN(nn.Module):
                 list(node_index_logits), batch_first=True
             )
         else:
-            node_index_logits = torch.zeros(B, max_nodes, device=device)
+            node_index_logits = torch.zeros(B, max_nodes + 1, device=device)
 
         # Edge-index logits via pairwise dot products
         # Pad to max_nodes across batch for gathering candidate edges
@@ -747,7 +747,7 @@ class GraphEdgeActionMLP(nn.Module):
             edge_class_logits = self.edge_class_mlp(embedding)
             node_class_logits = self.node_class_mlp(embedding)
             node_index_logits = torch.zeros(
-                len(states_tensor), self.n_nodes, device=device
+                len(states_tensor), self.n_nodes + 1, device=device
             )
 
         return TensorDict(

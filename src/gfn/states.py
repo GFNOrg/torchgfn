@@ -870,13 +870,18 @@ class GraphStates(States):
         node_class_masks = torch.ones(
             self.data.size, self.num_node_classes, dtype=torch.bool, device=self.device
         )
-
+        node_index_masks = torch.zeros(
+            self.data.size, max_nodes + 1, dtype=torch.bool, device=self.device
+        )
         for i, graph in enumerate(self.data.flat):
             if graph.x is None:
                 continue
             if self.max_nodes is not None and graph.x.size(0) >= self.max_nodes:
                 can_add_node[i] = False
             node_class_masks[i] = can_add_node[i]
+    
+            # One hot encoding: only allow the next index to be added 
+            node_index_masks[i, graph.x.size(0)] = True
 
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
             edge_masks[i, len(ei0) :] = False
@@ -897,6 +902,7 @@ class GraphStates(States):
         node_class_masks = node_class_masks.view(
             *self.batch_shape, self.num_node_classes
         )
+        node_index_masks = node_index_masks.view(*self.batch_shape, max_nodes + 1)
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
         action_type = torch.ones(
@@ -908,12 +914,7 @@ class GraphStates(States):
             {
                 GraphActions.ACTION_TYPE_KEY: action_type,
                 GraphActions.NODE_CLASS_KEY: node_class_masks,
-                GraphActions.NODE_INDEX_KEY: torch.zeros(
-                    *self.batch_shape,
-                    max_nodes,
-                    dtype=torch.bool,
-                    device=self.device,
-                ),
+                GraphActions.NODE_INDEX_KEY: node_index_masks,
                 GraphActions.EDGE_CLASS_KEY: torch.ones(
                     *self.batch_shape,
                     self.num_edge_classes,

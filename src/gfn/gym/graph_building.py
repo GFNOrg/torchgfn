@@ -111,16 +111,6 @@ class GraphBuilding(GraphEnv):
             add_node_action = actions[add_node_mask]
             node_class_action_flat = add_node_action.node_class.flatten()
 
-            # TODO: Proposed change to record node_index during the forwared step.
-            # TODO: To potentially remove.
-            # # Also record the node_index that will be created for pb computation later
-            # # The new node will occupy the next index equal to current number of nodes.
-            # for graph_idx in batch_indices_flat:
-            #     graph = data_array[graph_idx]
-            #     next_index = graph.x.size(0)
-            #     # Write back into the original actions tensor at the matching batch index
-            #     actions.node_index.flatten()[graph_idx] = next_index
-
             # Add nodes to the specified graphs
             for graph_idx, new_node_class in zip(
                 batch_indices_flat, node_class_action_flat

@@ -99,20 +99,13 @@ class GraphActionDistribution(Distribution):
 
         add_node_idx = action_types == GraphActionType.ADD_NODE
         if add_node_idx.any():
-            # In backward mode, node_class is irrelevant for ADD_NODE (we remove by index)
-            # so we do not sample it and leave zeros. We only sample node_index.
-            if self.is_backward:
-                assert torch.isfinite(
-                    self.dists[GraphActions.NODE_INDEX_KEY].logits
-                ).any(-1), "No valid node indices"
-
-                node_indices_all = self.dists[GraphActions.NODE_INDEX_KEY].sample(
-                    sample_shape
-                )
-                node_indices[add_node_idx] = node_indices_all[add_node_idx]
+            node_indices_all = self.dists[GraphActions.NODE_INDEX_KEY].sample(
+                sample_shape
+            )
+            node_indices[add_node_idx] = node_indices_all[add_node_idx]
             # In forwards mode, node_index is irrelevant for ADD_NODE (we add by class)
             # so we do not sample it and leave zeros. We only sample node_class.
-            else:
+            if not self.is_backward:
                 node_classes_all = self.dists[GraphActions.NODE_CLASS_KEY].sample(
                     sample_shape
                 )

@@ -288,7 +288,7 @@ class LogitBasedEstimator(Estimator):
         lsm: torch.Tensor, masks: torch.Tensor, epsilon: float
     ) -> torch.Tensor:
         """Compute log((1-eps) p + eps u) in log space."""
-        assert 0.0 <= epsilon < 1.0
+        assert 0.0 <= epsilon <= 1.0
 
         if epsilon == 0.0:
             return lsm
