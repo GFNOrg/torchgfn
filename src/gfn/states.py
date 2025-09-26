@@ -853,15 +853,15 @@ class GraphStates(States):
             TensorDict: Boolean mask where True indicates valid actions.
         """
         # Get max nodes across all graphs, handling None values
-        max_nodes = 0
+        curr_max_nodes = 0
         for graph in self.data.flat:
             if graph.x is not None:
-                max_nodes = max(max_nodes, graph.x.size(0))
+                curr_max_nodes = max(curr_max_nodes, graph.x.size(0))
 
         if self.is_directed:
-            max_possible_edges = max_nodes * (max_nodes - 1)
+            max_possible_edges = curr_max_nodes * (curr_max_nodes - 1)
         else:
-            max_possible_edges = max_nodes * (max_nodes - 1) // 2
+            max_possible_edges = curr_max_nodes * (curr_max_nodes - 1) // 2
 
         edge_masks = torch.ones(
             self.data.size, max_possible_edges, dtype=torch.bool, device=self.device
@@ -870,8 +870,10 @@ class GraphStates(States):
         node_class_masks = torch.ones(
             self.data.size, self.num_node_classes, dtype=torch.bool, device=self.device
         )
+
+        # Adding a node, so node index mask uses curr_max_nodes + 1.
         node_index_masks = torch.zeros(
-            self.data.size, max_nodes + 1, dtype=torch.bool, device=self.device
+            self.data.size, curr_max_nodes + 1, dtype=torch.bool, device=self.device
         )
         for i, graph in enumerate(self.data.flat):
             if graph.x is None:
@@ -902,7 +904,7 @@ class GraphStates(States):
         node_class_masks = node_class_masks.view(
             *self.batch_shape, self.num_node_classes
         )
-        node_index_masks = node_index_masks.view(*self.batch_shape, max_nodes + 1)
+        node_index_masks = node_index_masks.view(*self.batch_shape, curr_max_nodes + 1)
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
         action_type = torch.ones(
@@ -942,22 +944,24 @@ class GraphStates(States):
             TensorDict: Boolean mask where True indicates valid actions.
         """
         # Get max nodes across all graphs, handling None values
-        max_nodes = 0
+        curr_max_nodes = 0
         for graph in self.data.flat:
             if graph.x is not None:
-                max_nodes = max(max_nodes, graph.x.size(0))
+                curr_max_nodes = max(curr_max_nodes, graph.x.size(0))
 
         if self.is_directed:
-            max_possible_edges = max_nodes * (max_nodes - 1)
+            max_possible_edges = curr_max_nodes * (curr_max_nodes - 1)
         else:
-            max_possible_edges = max_nodes * (max_nodes - 1) // 2
+            max_possible_edges = curr_max_nodes * (curr_max_nodes - 1) // 2
 
         # Disallow all actions
         edge_masks = torch.zeros(
             self.data.size, max_possible_edges, dtype=torch.bool, device=self.device
         )
+
+        # Removing a node, so node index mask uses curr_max_nodes.
         node_index_masks = torch.zeros(
-            self.data.size, max_nodes, dtype=torch.bool, device=self.device
+            self.data.size, curr_max_nodes, dtype=torch.bool, device=self.device
         )
 
         for i, graph in enumerate(self.data.flat):
@@ -979,7 +983,7 @@ class GraphStates(States):
 
                 edge_masks[i, : len(edge_idx)][edge_idx] = True
 
-        node_index_masks = node_index_masks.view(*self.batch_shape, max_nodes)
+        node_index_masks = node_index_masks.view(*self.batch_shape, curr_max_nodes)
         edge_masks = edge_masks.view(*self.batch_shape, max_possible_edges)
 
         # There are 3 action types: ADD_NODE, ADD_EDGE, EXIT
