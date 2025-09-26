@@ -100,6 +100,7 @@ class Sampler:
             log_probs = None
 
         actions = env.actions_from_tensor(actions)
+
         if not save_estimator_outputs:
             estimator_output = None
 

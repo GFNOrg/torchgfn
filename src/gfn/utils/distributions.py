@@ -48,22 +48,38 @@ class GraphActionDistribution(Distribution):
         categorical distribution.
     - If the action_type is ADD_EDGE, then the edge_class and edge_index are
         sampled from categorical distributions.
-    - If the action_type is STOP, then no other components are sampled.
+    - If the action_type is EXIT, then no other components are sampled.
     """
 
-    def __init__(self, probs: TensorDict, is_backward: bool):
+    def __init__(
+        self,
+        logits: TensorDict | None = None,
+        probs: TensorDict | None = None,
+        is_backward: bool = False,
+    ):
         """Initializes the mixture distribution.
 
         Args:
+            logits: A TensorDict of logits (preferred).
             probs: A TensorDict of probs.
             is_backward: A boolean indicating whether the distribution is for backward policy.
         """
         super().__init__()
         self.is_backward = is_backward
+        assert (probs is None) ^ (logits is None), "Pass exactly one of logits or probs."
 
+        # In practice, we never sample from the undefined distributions. However, if we
+        # don't disable validation, the inputs are checked at initialization, which can
+        # fail when all actions of a particular type are impossible (e.g., unable to
+        # add an edge.) TODO: validation should be disabled only when all actions of a
+        # particular type are impossible.
         validate_args = False  # edge_index.numel() == 0 when no nodes are present
         self.dists = {
-            key: Categorical(probs=probs[key], validate_args=validate_args)
+            key: Categorical(
+                logits=logits[key] if logits is not None else None,  # type: ignore
+                probs=probs[key] if probs is not None else None,  # type: ignore
+                validate_args=validate_args,
+            )
             for key in GraphActions.ACTION_INDICES.keys()
         }
 
@@ -83,18 +99,21 @@ class GraphActionDistribution(Distribution):
 
         add_node_idx = action_types == GraphActionType.ADD_NODE
         if add_node_idx.any():
-            node_classes_all = self.dists[GraphActions.NODE_CLASS_KEY].sample(
+            node_indices_all = self.dists[GraphActions.NODE_INDEX_KEY].sample(
                 sample_shape
             )
-            node_classes[add_node_idx] = node_classes_all[add_node_idx]
-
-            if self.is_backward:
-                node_indices_all = self.dists[GraphActions.NODE_INDEX_KEY].sample(
+            node_indices[add_node_idx] = node_indices_all[add_node_idx]
+            # In forwards mode, node_index is irrelevant for ADD_NODE (we add by class)
+            # so we do not sample it and leave zeros. We only sample node_class.
+            if not self.is_backward:
+                node_classes_all = self.dists[GraphActions.NODE_CLASS_KEY].sample(
                     sample_shape
                 )
-                node_indices[add_node_idx] = node_indices_all[add_node_idx]
+                node_classes[add_node_idx] = node_classes_all[add_node_idx]
 
         add_edge_idx = action_types == GraphActionType.ADD_EDGE
+
+        # Only sample edge classes and indices if there are any possible edges.
         if add_edge_idx.any():
             edge_classes_all = self.dists[GraphActions.EDGE_CLASS_KEY].sample(
                 sample_shape
@@ -125,6 +144,14 @@ class GraphActionDistribution(Distribution):
     def log_prob(self, sample: torch.Tensor) -> torch.Tensor:
         """Returns the log probabilities for a batch of action samples.
 
+        Note that as we are using hierarchical sampling, the log_prob is the sum of the
+        log_probs of the individual components. It is one of:
+            - log_prob = p(action_type=add_node) + p(node_class)
+            - log_prob = p(action_type=add_edge) + p(edge_class) + p(edge_index)
+            - log_prob = p(action_type=remove_node) + p(node_index)
+            - log_prob = p(action_type=remove_edge) + p(edge_index)
+            - log_prob = p(action_type=exit)
+
         Args:
             sample: A tensor of shape (*sample_shape, *batch_shape, 4) containing action samples, where the last
                 dimension is the action type, node class, edge class, and edge index.
@@ -140,20 +167,37 @@ class GraphActionDistribution(Distribution):
         ]
         log_prob += self.dists[GraphActions.ACTION_TYPE_KEY].log_prob(action_types)
 
-        # If action_type is ADD_NODE, add log_prob for NODE_CLASS_KEY and NODE_INDEX_KEY
+        # If action_type is ADD_NODE, add log_prob for NODE_CLASS_KEY or NODE_INDEX_KEY,
+        # depending on the mode.
         add_node_idx = action_types == GraphActionType.ADD_NODE
         if add_node_idx.any():
-            log_prob_node_class_all = self.dists[GraphActions.NODE_CLASS_KEY].log_prob(
-                sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_CLASS_KEY]]
-            )
-            log_prob[add_node_idx] += log_prob_node_class_all[add_node_idx]
+            # For backward mode, ignore node_class contribution; only node_index matters.
             if self.is_backward:
                 log_prob_node_index_all = self.dists[
                     GraphActions.NODE_INDEX_KEY
                 ].log_prob(
                     sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_INDEX_KEY]]
                 )
+                assert torch.isfinite(
+                    log_prob_node_index_all[add_node_idx]
+                ).all(), (
+                    "add_node_idx is indexing masked values in log_prob_node_index_all"
+                )
                 log_prob[add_node_idx] += log_prob_node_index_all[add_node_idx]
+
+            # In forwards mode, ignore node_index contribution; only node_class matters.
+            else:
+                log_prob_node_class_all = self.dists[
+                    GraphActions.NODE_CLASS_KEY
+                ].log_prob(
+                    sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_CLASS_KEY]]
+                )
+                assert torch.isfinite(
+                    log_prob_node_class_all[add_node_idx]
+                ).all(), (
+                    "add_node_idx is indexing masked values in log_prob_node_class_all"
+                )
+                log_prob[add_node_idx] += log_prob_node_class_all[add_node_idx]
 
         # If action_type is ADD_EDGE, add log_prob for EDGE_CLASS_KEY and EDGE_INDEX_KEY
         add_edge_idx = action_types == GraphActionType.ADD_EDGE

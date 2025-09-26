@@ -147,7 +147,9 @@ def get_trajectory_pfs(
             valid_actions.tensor
         )  # Using the actions sampled off-policy.
 
-        log_pf_trajectories[action_mask] = valid_log_pf_actions
+        log_pf_trajectories[action_mask] = valid_log_pf_actions.to(
+            log_pf_trajectories.dtype, copy=False
+        )
 
     assert log_pf_trajectories.shape == (
         trajectories.max_length,
@@ -222,7 +224,9 @@ def get_trajectory_pbs(
         # the backward policy probability is always 1 (log probs are 0).
         valid_log_pb_actions = torch.zeros_like(valid_actions.tensor)
 
-    log_pb_trajectories[action_mask] = valid_log_pb_actions
+    log_pb_trajectories[action_mask] = valid_log_pb_actions.to(
+        log_pb_trajectories.dtype, copy=False
+    )
 
     assert log_pb_trajectories.shape == (
         trajectories.max_length,

@@ -29,6 +29,7 @@ python = "^3.10"
 tensordict = ">=0.6.1"
 torch = ">=2.6.0"
 torch_geometric = ">=2.6.1"
+dill = ">=0.3.8"
 
 # dev dependencies.
 black = { version = "24.3", optional = true }

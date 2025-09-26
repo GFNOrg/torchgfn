@@ -73,7 +73,7 @@ class Estimator(ABC, nn.Module):
         if preprocessor is None:
             assert hasattr(module, "input_dim") and isinstance(module.input_dim, int), (
                 "Module needs to have an attribute `input_dim` specifying the input "
-                + "dimension, in order to use the default IdentityPreprocessor."
+                "dimension, in order to use the default IdentityPreprocessor."
             )
             preprocessor = IdentityPreprocessor(module.input_dim)
         self.preprocessor = preprocessor
@@ -214,6 +214,154 @@ class ScalarEstimator(Estimator):
         return out
 
 
+class LogitBasedEstimator(Estimator):
+    r"""Base class for estimators that output logits.
+
+    This class is used to define estimators that output logits, which can be used to
+    construct probability distributions.
+    """
+
+    @staticmethod
+    def _prepare_logits(
+        logits: torch.Tensor,
+        masks: torch.Tensor,
+        sf_index: int | None,
+        sf_bias: float,
+        temperature: float,
+    ) -> torch.Tensor:
+        """Clone and apply mask, bias and temperature to logits."""
+        assert temperature > 0.0
+
+        x = logits.clone()
+        x[~masks] = -float("inf")
+
+        # Ensure at least one finite per row if requested
+        if sf_index is not None:
+            no_valid = masks.sum(dim=-1) == 0
+            if no_valid.any():
+                x[no_valid] = -float("inf")
+                x[no_valid, sf_index] = 0.0  # degenerate one-hot
+        else:
+            # If entire row is masked (e.g., unused component like EDGE_INDEX), place a
+            # harmless finite fallback to avoid all -inf rows through the pipeline, but
+            # only when there is at least one column.
+            if x.shape[-1] > 0:
+                no_valid = masks.sum(dim=-1) == 0
+                if no_valid.any():
+                    x[no_valid] = -float("inf")
+                    # set the first column to 0.0 as a dummy finite value
+                    x[no_valid, 0] = 0.0
+
+        # Assert that each row has at least one finite entry.
+        assert torch.isfinite(x).any(dim=-1).all(), "All -inf row after masking"
+
+        if sf_index is not None and sf_bias != 0.0:
+            x[..., sf_index] = x[..., sf_index] - sf_bias
+
+        if temperature != 1.0:
+            x = x / temperature
+
+        return x
+
+    @staticmethod
+    def _uniform_log_probs(masks: torch.Tensor) -> torch.Tensor:
+        """Uniform log-probs over valid actions; -inf for invalid."""
+        masks_sum = masks.sum(dim=-1, keepdim=True)
+        log_uniform = torch.full_like(
+            masks, fill_value=-float("inf"), dtype=torch.get_default_dtype()
+        )
+        valid_rows = (masks_sum > 0).squeeze(-1)
+        if valid_rows.any():
+            log_uniform[valid_rows] = torch.where(
+                masks[valid_rows],
+                -torch.log(masks_sum[valid_rows].to(torch.get_default_dtype())),
+                torch.full_like(
+                    masks[valid_rows],
+                    fill_value=-float("inf"),
+                    dtype=torch.get_default_dtype(),
+                ),
+            )
+        return log_uniform
+
+    @staticmethod
+    def _mix_with_uniform_in_log_space(
+        lsm: torch.Tensor, masks: torch.Tensor, epsilon: float
+    ) -> torch.Tensor:
+        """Compute log((1-eps) p + eps u) in log space."""
+        assert 0.0 <= epsilon <= 1.0
+
+        if epsilon == 0.0:
+            return lsm
+
+        log_uniform = LogitBasedEstimator._uniform_log_probs(masks).to(lsm.dtype)
+        eps_tensor = torch.as_tensor(epsilon, dtype=lsm.dtype, device=lsm.device)
+
+        # Row-wise safe mixing: compute only on valid entries; for rows with no valid
+        # actions, keep the original lsm row to avoid all -inf.
+        out = torch.full_like(lsm, -float("inf"))
+        has_any_valid = masks.any(dim=-1)
+
+        if masks.any():
+            mixed_valid_outputs = torch.logaddexp(
+                lsm[masks] + torch.log1p(-eps_tensor),
+                log_uniform[masks] + torch.log(eps_tensor),
+            )
+            out[masks] = mixed_valid_outputs
+
+        # For rows with no valid entries (should only happen for unused components,
+        # e.g., EDGE_INDEX when no edges are able to be added), retain the original
+        # normalized log-probs to avoid all -inf rows.
+        if (~has_any_valid).any():
+            out[~has_any_valid] = lsm[~has_any_valid]
+
+        return out
+
+    @staticmethod
+    def _compute_logits_for_distribution(
+        logits: torch.Tensor,
+        masks: torch.Tensor,
+        sf_index: int | None,
+        sf_bias: float,
+        temperature: float,
+        epsilon: float,
+    ) -> torch.Tensor:
+        """Return logits to feed a Categorical:
+        - If epsilon == 0: masked, biased, temperature-scaled logits.
+        - Else: normalized log-probs of the epsilon-greedy mixture (valid as logits).
+        """
+        assert not torch.isnan(logits).any(), "Module output logits contain NaNs"
+
+        # Prepare logits first (masking, bias, temperature) in the existing dtype
+        x = LogitBasedEstimator._prepare_logits(
+            logits, masks, sf_index, sf_bias, temperature
+        )
+
+        assert not torch.isnan(x).any(), "Prepared logits contain NaNs"
+
+        # Perform numerically sensitive ops in float32 when inputs are low-precision
+        orig_dtype = x.dtype
+        compute_dtype = (
+            torch.float32
+            if orig_dtype in (torch.float16, torch.bfloat16)
+            else orig_dtype
+        )
+
+        assert torch.isfinite(x).any(dim=-1).all(), "All -inf row before log-softmax"
+
+        lsm = torch.log_softmax(x.to(compute_dtype), dim=-1)
+        assert (
+            torch.isfinite(lsm).any(dim=-1).all()
+        ), "Invalid log-probs after log_softmax"
+
+        if epsilon == 0.0:
+            return lsm.to(orig_dtype) if lsm.dtype != orig_dtype else lsm
+
+        mixed = LogitBasedEstimator._mix_with_uniform_in_log_space(lsm, masks, epsilon)
+        assert torch.isfinite(mixed).any(dim=-1).all(), "Invalid log-probs after mixing"
+
+        return mixed.to(orig_dtype) if mixed.dtype != orig_dtype else mixed
+
+
 class ConditionalLogZEstimator(ScalarEstimator):
     """Conditional logZ estimator.
 
@@ -229,7 +377,7 @@ class ConditionalLogZEstimator(ScalarEstimator):
         return self.module(input)
 
 
-class DiscretePolicyEstimator(Estimator):
+class DiscretePolicyEstimator(LogitBasedEstimator):
     r"""Forward or backward policy estimators for discrete environments.
 
     Estimates either:
@@ -286,7 +434,12 @@ class DiscretePolicyEstimator(Estimator):
         temperature: float = 1.0,
         epsilon: float = 0.0,
     ) -> Categorical:
-        """Returns a probability distribution given a batch of states and module output.
+        """Returns a Categorical distribution given a batch of states and module output.
+
+        This implementation stays in logit/log-prob space for numerical stability.
+        When epsilon > 0, we construct the epsilon-greedy distribution by mixing the
+        original distribution with a uniform distribution and pass the resuling
+        normalized log-probs as logits.
 
         The kwargs may contain parameters to modify a base distribution, for example to
         encourage exploration.
@@ -313,24 +466,16 @@ class DiscretePolicyEstimator(Estimator):
         assert temperature > 0.0
         assert 0.0 <= epsilon <= 1.0
 
-        masks = states.backward_masks if self.is_backward else states.forward_masks
-        assert masks.any(dim=-1).all(), "No possible actions"
-        logits = module_output
-        logits[~masks] = -float("inf")
+        logits = LogitBasedEstimator._compute_logits_for_distribution(
+            module_output,
+            states.backward_masks if self.is_backward else states.forward_masks,
+            sf_index=-1,
+            sf_bias=sf_bias,
+            temperature=temperature,
+            epsilon=epsilon,
+        )
 
-        if sf_bias != 0.0:
-            logits[:, -1] -= sf_bias
-
-        if temperature != 1.0:
-            logits /= temperature
-
-        probs = torch.softmax(logits, dim=-1)
-
-        if epsilon != 0.0:
-            uniform_dist_probs = masks / masks.sum(dim=-1, keepdim=True)
-            probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
-
-        return UnsqueezedCategorical(probs=probs)
+        return UnsqueezedCategorical(logits=logits)
 
 
 class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
@@ -513,7 +658,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-class DiscreteGraphPolicyEstimator(Estimator):
+class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
     r"""Forward or backward policy estimators for graph-based environments.
 
     Estimates either, where $s$ and $s'$ are graph states:
@@ -561,124 +706,89 @@ class DiscreteGraphPolicyEstimator(Estimator):
             A GraphActionDistribution over the graph actions.
         """
         masks = states.backward_masks if self.is_backward else states.forward_masks
+        Ga = GraphActions  # Shorthand for GraphActions.
+        GaType = GraphActionType  # Shorthand for GraphActionType.
+
         logits = module_output
-        logits[GraphActions.ACTION_TYPE_KEY][~masks[GraphActions.ACTION_TYPE_KEY]] = (
-            -float("inf")
-        )
-        logits[GraphActions.NODE_CLASS_KEY][~masks[GraphActions.NODE_CLASS_KEY]] = (
-            -float("inf")
-        )
-        logits[GraphActions.NODE_INDEX_KEY][~masks[GraphActions.NODE_INDEX_KEY]] = (
-            -float("inf")
-        )
-        logits[GraphActions.EDGE_CLASS_KEY][~masks[GraphActions.EDGE_CLASS_KEY]] = (
-            -float("inf")
-        )
-        logits[GraphActions.EDGE_INDEX_KEY][~masks[GraphActions.EDGE_INDEX_KEY]] = (
-            -float("inf")
-        )
+        logits[Ga.ACTION_TYPE_KEY][~masks[Ga.ACTION_TYPE_KEY]] = -float("inf")
+        logits[Ga.NODE_CLASS_KEY][~masks[Ga.NODE_CLASS_KEY]] = -float("inf")
+        logits[Ga.NODE_INDEX_KEY][~masks[Ga.NODE_INDEX_KEY]] = -float("inf")
+        logits[Ga.EDGE_CLASS_KEY][~masks[Ga.EDGE_CLASS_KEY]] = -float("inf")
+        logits[Ga.EDGE_INDEX_KEY][~masks[Ga.EDGE_INDEX_KEY]] = -float("inf")
+
+        # The following operations are to ensure that the logits are valid, i.e.,
+        # contain at least one finite entry.
 
         # Check if no possible edge can be added,
         # and assert that action type cannot be ADD_EDGE
-        no_possible_edge_index = torch.isneginf(logits[GraphActions.EDGE_INDEX_KEY]).all(
-            -1
-        )
+        no_possible_edge_index = torch.isneginf(logits[Ga.EDGE_INDEX_KEY]).all(-1)
         assert torch.isneginf(
-            logits[GraphActions.ACTION_TYPE_KEY][
-                no_possible_edge_index, GraphActionType.ADD_EDGE
-            ]
+            logits[Ga.ACTION_TYPE_KEY][no_possible_edge_index, GaType.ADD_EDGE]
         ).all()
-        logits[GraphActions.EDGE_INDEX_KEY][no_possible_edge_index] = 0.0
+        logits[Ga.EDGE_INDEX_KEY][no_possible_edge_index] = 0.0
 
         # Check if no possible edge class can be added,
         # and assert that action type cannot be ADD_EDGE
-        no_possible_edge_class = torch.isneginf(logits[GraphActions.EDGE_CLASS_KEY]).all(
-            -1
-        )
+        no_possible_edge_class = torch.isneginf(logits[Ga.EDGE_CLASS_KEY]).all(-1)
         assert torch.isneginf(
-            logits[GraphActions.ACTION_TYPE_KEY][
-                no_possible_edge_class, GraphActionType.ADD_EDGE
-            ]
+            logits[Ga.ACTION_TYPE_KEY][no_possible_edge_class, GaType.ADD_EDGE]
         ).all()
-        logits[GraphActions.EDGE_CLASS_KEY][no_possible_edge_class] = 0.0
+        logits[Ga.EDGE_CLASS_KEY][no_possible_edge_class] = 0.0
 
-        # Check if no possible node can be added,
-        # and assert that action type cannot be ADD_NODE
-        no_possible_node_class = torch.isneginf(logits[GraphActions.NODE_CLASS_KEY]).all(
-            -1
-        )
-        no_possible_node_index = torch.isneginf(logits[GraphActions.NODE_INDEX_KEY]).all(
-            -1
-        )
-        assert torch.isneginf(
-            logits[GraphActions.ACTION_TYPE_KEY][
-                no_possible_node_class & no_possible_node_index, GraphActionType.ADD_NODE
-            ]
-        ).all()
-        logits[GraphActions.NODE_CLASS_KEY][no_possible_node_class] = 0.0
-        logits[GraphActions.NODE_INDEX_KEY][no_possible_node_index] = 0.0
+        # Check if no possible node can be added; if either class OR index has no
+        # valid options, disallow ADD_NODE in action type and set harmless finite
+        # fallbacks for the unused components.
+        no_possible_node_class = torch.isneginf(logits[Ga.NODE_CLASS_KEY]).all(-1)
+        no_possible_node_index = torch.isneginf(logits[Ga.NODE_INDEX_KEY]).all(-1)
 
-        probs = {}
+        # If backward, we only need to check if the node index is possible to remove.
+        # If forward, we only need to check if the node class is possible to add.
+        no_possible_add_node = (
+            no_possible_node_index if self.is_backward else no_possible_node_class
+        )
+        logits[Ga.ACTION_TYPE_KEY][no_possible_add_node, GaType.ADD_NODE] = -float("inf")
+        logits[Ga.NODE_CLASS_KEY][no_possible_node_class] = 0.0
+        logits[Ga.NODE_INDEX_KEY][no_possible_node_index] = 0.0
+
+        transformed_logits = {}
         for key in logits.keys():
             assert isinstance(key, str)
-            probs[key] = self.logits_to_probs(
-                logits[key],
-                masks[key],
-                sf_bias=sf_bias if key == GraphActions.ACTION_TYPE_KEY else 0.0,
-                temperature=temperature[key],
-                epsilon=epsilon[key],
+            assert not torch.isnan(logits[key]).any(), f"logits[{key}] contains NaNs"
+
+            # Pad zero-length components to length 1 with an invalid mask so downstream
+            # operations have at least one column and distributions can be constructed.
+            local_logits = logits[key]
+            local_masks = masks[key]
+            if local_logits.shape[-1] == 0:
+                local_logits = torch.zeros(
+                    *local_logits.shape[:-1],
+                    1,
+                    dtype=local_logits.dtype,
+                    device=local_logits.device,
+                )
+                local_masks = torch.zeros(
+                    *local_masks.shape[:-1],
+                    1,
+                    dtype=torch.bool,
+                    device=local_masks.device,
+                )
+
+            # Logit transformations allow for off-policy exploration.
+            transformed_logits[key] = (
+                LogitBasedEstimator._compute_logits_for_distribution(
+                    logits=local_logits,
+                    masks=local_masks,
+                    # ACTION_TYPE_KEY contains the exit action logit.
+                    sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
+                    sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
+                    temperature=temperature[key],
+                    epsilon=epsilon[key],
+                )
             )
 
         return GraphActionDistribution(
-            probs=TensorDict(probs), is_backward=self.is_backward
+            logits=TensorDict(transformed_logits), is_backward=self.is_backward
         )
-
-    @staticmethod
-    def logits_to_probs(
-        logits: torch.Tensor,
-        masks: torch.Tensor,
-        sf_bias: float = 0.0,
-        temperature: float = 1.0,
-        epsilon: float = 0.0,
-    ) -> torch.Tensor:
-        """Convert logits to probabilities with optional bias, temperature, and epsilon.
-
-        This static method implements the same logic as `DiscretePolicyEstimator`'s
-        probability conversion, but is separated to handle each action component
-        independently in graph environments.
-
-        Args:
-            logits: The logits tensor.
-            masks: The masks tensor indicating valid actions.
-            sf_bias: Scalar to subtract from the exit action logit.
-            temperature: Scalar to divide the logits by before softmax.
-            epsilon: Probability of choosing a random action.
-
-        Returns:
-            A tensor of probabilities.
-        """
-        assert temperature > 0.0
-        assert 0.0 <= epsilon <= 1.0
-
-        if sf_bias != 0.0:
-            logits[..., GraphActionType.EXIT] = (
-                logits[..., GraphActionType.EXIT] - sf_bias
-            )
-
-        if temperature != 1.0:
-            logits = logits / temperature
-
-        probs = torch.softmax(logits, dim=-1)
-
-        if epsilon != 0.0:
-            masks_sum = masks.sum(dim=-1, keepdim=True)
-            probs = torch.where(
-                masks_sum == 0,
-                probs,
-                (1 - epsilon) * probs + epsilon * masks.to(logits.dtype) / masks_sum,
-            )
-
-        return probs
 
     @property
     def expected_output_dim(self) -> Optional[int]:

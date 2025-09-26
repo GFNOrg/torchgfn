@@ -105,7 +105,12 @@ def main(args):
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
         loss.backward()
+
+        gflownet.assert_finite_gradients()
+        torch.nn.utils.clip_grad_norm_(gflownet.parameters(), 1.0)
         optimizer.step()
+        gflownet.assert_finite_parameters()
+
         if (it + 1) % args.validation_interval == 0:
             validation_info, _ = validate(
                 env,
