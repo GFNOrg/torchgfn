@@ -614,3 +614,161 @@ def test_stack_2d(datas):
     assert (stacked[1, 0, 1].tensor.edge_index == datas[5].edge_index).all()
     assert (stacked[1, 1, 0].tensor.edge_index == datas[6].edge_index).all()
     assert (stacked[1, 1, 1].tensor.edge_index == datas[7].edge_index).all()
+
+
+def test_discrete_masks_device_consistency_construct(simple_discrete_state):
+    state = simple_discrete_state
+    assert state.forward_masks.device == state.device
+    assert state.backward_masks.device == state.device
+
+
+def test_discrete_masks_device_consistency_index_clone_flatten_extend(
+    simple_discrete_state,
+):
+    state = simple_discrete_state
+
+    # Indexing
+    sub = state[0]
+    assert sub.forward_masks.device == sub.device
+    assert sub.backward_masks.device == sub.device
+
+    # Clone
+    cloned = state.clone()
+    assert cloned.forward_masks.device == cloned.device
+    assert cloned.backward_masks.device == cloned.device
+
+    # Flatten
+    flat = state.flatten()
+    assert flat.forward_masks.device == flat.device
+    assert flat.backward_masks.device == flat.device
+
+    # Extend (devices must already match by contract)
+    other = state.clone()
+    state.extend(other)
+    assert state.forward_masks.device == state.device
+    assert state.backward_masks.device == state.device
+
+
+def test_discrete_masks_device_consistency_after_pad_and_stack(simple_discrete_state):
+    # Build a 2D batch via stacking
+    s1 = simple_discrete_state
+    s2 = s1.clone()
+    stacked = s1.__class__.stack([s1, s2])
+
+    # Pad first dimension and ensure masks stay on the same device
+    stacked.pad_dim0_with_sf(required_first_dim=3)
+    assert stacked.forward_masks.device == stacked.device
+    assert stacked.backward_masks.device == stacked.device
+
+    # Stacked masks should already be on the correct device
+    assert stacked.forward_masks.device == stacked.device
+    assert stacked.backward_masks.device == stacked.device
+
+
+def test_discrete_masks_device_consistency_after_mask_ops(simple_discrete_state):
+    state = simple_discrete_state
+
+    # set_nonexit_action_masks should not move devices
+    cond = torch.zeros(
+        state.batch_shape + (state.n_actions - 1,), dtype=torch.bool, device=state.device
+    )
+    state.set_nonexit_action_masks(cond=cond, allow_exit=True)
+    assert state.forward_masks.device == state.device
+
+    # set_exit_masks should not move devices
+    batch_idx = torch.ones(state.batch_shape, dtype=torch.bool, device=state.device)
+    state.set_exit_masks(batch_idx)
+    assert state.forward_masks.device == state.device
+
+    # init_forward_masks should keep device
+    state.init_forward_masks(set_ones=True)
+    assert state.forward_masks.device == state.device
+
+
+def _assert_tensordict_on_device(td, device):
+    for v in td.values():
+        if isinstance(v, torch.Tensor):
+            assert v.device == device
+
+
+def test_graph_masks_device_consistency(simple_graph_state):
+    state = simple_graph_state
+    fm = state.forward_masks
+    bm = state.backward_masks
+    _assert_tensordict_on_device(fm, state.device)
+    _assert_tensordict_on_device(bm, state.device)
+
+
+def test_graph_masks_device_after_stack(datas):
+    s1 = MyGraphStates(datas[:1])
+    s2 = MyGraphStates(datas[1:2])
+    stacked = MyGraphStates.stack([s1, s2])
+    fm = stacked.forward_masks
+    bm = stacked.backward_masks
+    _assert_tensordict_on_device(fm, stacked.device)
+    _assert_tensordict_on_device(bm, stacked.device)
+
+
+def test_graph_masks_device_after_to_noop(simple_graph_state):
+    # to() with the same device should be a no-op; masks should still be created on that device
+    state = simple_graph_state
+    state.to(state.device)
+    fm = state.forward_masks
+    bm = state.backward_masks
+    _assert_tensordict_on_device(fm, state.device)
+    _assert_tensordict_on_device(bm, state.device)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_discrete_masks_device_on_cuda():
+    class SimpleDiscreteStates(DiscreteStates):
+        state_shape = (2,)
+        n_actions = 3
+        device = torch.device("cpu")
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    tensor = torch.tensor([[0.5, 0.5]], device=torch.device("cuda"))
+    # Provide masks on CUDA as well
+    forward_masks = torch.tensor([[True, True, True]], device=torch.device("cuda"))
+    backward_masks = torch.tensor([[True, True]], device=torch.device("cuda"))
+
+    state = SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+    assert state.device.type == "cuda"
+    assert state.forward_masks.device.type == "cuda"
+    assert state.backward_masks.device.type == "cuda"
+
+    # Mask ops keep CUDA
+    cond = torch.zeros(
+        state.batch_shape + (state.n_actions - 1,), dtype=torch.bool, device=state.device
+    )
+    state.set_nonexit_action_masks(cond=cond, allow_exit=True)
+    assert state.forward_masks.device.type == "cuda"
+
+    batch_idx = torch.ones(state.batch_shape, dtype=torch.bool, device=state.device)
+    state.set_exit_masks(batch_idx)
+    assert state.forward_masks.device.type == "cuda"
+
+    state.init_forward_masks(set_ones=False)
+    assert state.forward_masks.device.type == "cuda"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_graph_masks_device_on_cuda(datas):
+    # Build two graphs on CUDA
+    s1 = MyGraphStates(datas[:1]).to(torch.device("cuda"))
+    s2 = MyGraphStates(datas[1:2]).to(torch.device("cuda"))
+
+    # Sanity: device is CUDA
+    assert s1.device.type == "cuda"
+    assert s2.device.type == "cuda"
+
+    # Masks on single states are on CUDA
+    _assert_tensordict_on_device(s1.forward_masks, s1.device)
+    _assert_tensordict_on_device(s1.backward_masks, s1.device)
+
+    # Stacked
+    stacked = MyGraphStates.stack([s1, s2])
+    assert stacked.device.type == "cuda"
+    _assert_tensordict_on_device(stacked.forward_masks, stacked.device)
+    _assert_tensordict_on_device(stacked.backward_masks, stacked.device)
