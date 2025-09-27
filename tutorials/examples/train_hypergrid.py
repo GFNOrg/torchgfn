@@ -678,10 +678,12 @@ def validate_hypergrid(
     )
 
     # Modes will have a reward greater than R2+R1+R0.
-    mode_reward_threshold = (
-        env.reward_fn_kwargs["R2"]
-        + env.reward_fn_kwargs["R1"]
-        + env.reward_fn_kwargs["R0"]
+    mode_reward_threshold = sum(
+        [
+            env.reward_fn_kwargs["R2"],
+            env.reward_fn_kwargs["R1"],
+            env.reward_fn_kwargs["R0"],
+        ]
     )
 
     assert isinstance(visited_terminating_states, DiscreteStates)
@@ -718,8 +720,13 @@ def set_up_fm_gflownet(args, env, preprocessor, agent_group_list, my_agent_group
     if args.tabular:
         module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
     else:
+        module_input_dim = (
+            preprocessor.output_dim
+            if preprocessor.output_dim is not None
+            else env.state_shape[-1]
+        )
         module = MLP(
-            input_dim=preprocessor.output_dim,
+            input_dim=module_input_dim,
             output_dim=env.n_actions,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
@@ -745,15 +752,20 @@ def set_up_pb_pf_estimators(
         if not args.uniform_pb:
             pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
     else:
+        pf_input_dim = (
+            preprocessor.output_dim
+            if preprocessor.output_dim is not None
+            else env.state_shape[-1]
+        )
         pf_module = MLP(
-            input_dim=preprocessor.output_dim,
+            input_dim=pf_input_dim,
             output_dim=env.n_actions,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
         )
         if not args.uniform_pb:
             pb_module = MLP(
-                input_dim=preprocessor.output_dim,
+                input_dim=pf_input_dim,
                 output_dim=env.n_actions - 1,
                 hidden_dim=args.hidden_dim,
                 n_hidden_layers=args.n_hidden,
@@ -797,8 +809,13 @@ def set_up_logF_estimator(
     if args.tabular:
         module = Tabular(n_states=env.n_states, output_dim=1)
     else:
+        logF_input_dim = (
+            preprocessor.output_dim
+            if preprocessor.output_dim is not None
+            else env.state_shape[-1]
+        )
         module = MLP(
-            input_dim=preprocessor.output_dim,
+            input_dim=logF_input_dim,
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
@@ -1388,7 +1405,7 @@ def main(args):  # noqa: C901
     if (
         args.distributed
         and distributed_context.is_training_rank()
-        and distributed_context.assigned_buffer is not None
+        and (distributed_context.assigned_buffer is not None)
     ):
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)

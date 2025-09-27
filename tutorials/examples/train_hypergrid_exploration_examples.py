@@ -80,7 +80,10 @@ def print_final_results(all_results: pd.DataFrame, width: int = 80):
         modes_std = summary.loc[exp_name, "modes_discovered_std"]
 
         print(
-            f"{exp_name:<20} {l1_mean:.3f}±{l1_std:.3f}    {logz_mean:.3f}±{logz_std:.3f}    {loss_mean:.3f}±{loss_std:.3f}    {modes_mean:.1f}±{modes_std:.1f}"
+            f"{exp_name:<20} {l1_mean:.3f}±{l1_std:.3f}    "
+            f"{logz_mean:.3f}±{logz_std:.3f}    "
+            f"{loss_mean:.3f}±{loss_std:.3f}    "
+            f"{modes_mean:.1f}±{modes_std:.1f}"
         )
 
     print("=" * width)
@@ -101,10 +104,12 @@ def print_final_results(all_results: pd.DataFrame, width: int = 80):
 
 def count_modes(env: Env, visited_terminating_states: DiscreteStates):
     # Modes will have a reward greater than R2+R1+R0.
-    mode_reward_threshold = (
-        env.reward_fn_kwargs["R2"]
-        + env.reward_fn_kwargs["R1"]
-        + env.reward_fn_kwargs["R0"]
+    mode_reward_threshold = sum(
+        [
+            env.reward_fn_kwargs["R2"],
+            env.reward_fn_kwargs["R1"],
+            env.reward_fn_kwargs["R0"],
+        ]
     )
 
     assert isinstance(visited_terminating_states, DiscreteStates)
@@ -141,8 +146,13 @@ def build_gflownet(
 ):
 
     # Build the GFlowNet.
+    input_dim = (
+        preprocessor.output_dim
+        if preprocessor.output_dim is not None
+        else env.state_shape[-1]
+    )
     module_PF = MLP(
-        input_dim=preprocessor.output_dim,
+        input_dim=input_dim,
         output_dim=env.n_actions,
         n_hidden_layers=n_hidden_layers,
         n_noisy_layers=n_noisy_layers,
@@ -150,7 +160,7 @@ def build_gflownet(
     )
     if not uniform_pb:
         module_PB = MLP(
-            input_dim=preprocessor.output_dim,
+            input_dim=input_dim,
             output_dim=env.n_actions - 1,
             trunk=module_PF.trunk,
             n_noisy_layers=1 if n_noisy_layers > 0 else 0,
@@ -290,7 +300,10 @@ def train(
             logZ_diff = val_info["logZ_diff"]
             n_terminating = len(visited_terminating_states)
             # l1_info = f"L1 dist={val_info['l1_dist']:.8f} " if "l1_dist" in val_info else ""
-            # print(f"Iter {it + 1}: {l1_info}modes discovered={n_unique_modes_discovered} n terminating states {n_terminating}")
+            # print(
+            #     f"Iter {it + 1}: {l1_info}modes discovered={n_unique_modes_discovered} "
+            #     f"n terminating states {n_terminating}"
+            # )
 
             # Store results.
             results["step"].append(it + 1)

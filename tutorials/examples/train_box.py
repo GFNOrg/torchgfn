@@ -156,8 +156,13 @@ def main(args: Namespace) -> float:  # noqa: C901
         logZ = torch.tensor(0.0, device=env.device, requires_grad=True)
         # We need a LogStateFlowEstimator
 
+        input_dim = (
+            preprocessor.output_dim
+            if preprocessor.output_dim is not None
+            else env.state_shape[-1]
+        )
         module = BoxStateFlowModule(
-            input_dim=preprocessor.output_dim,
+            input_dim=input_dim,
             output_dim=1,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,

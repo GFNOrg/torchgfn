@@ -44,13 +44,18 @@ def main(args):
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Build the GFlowNet.
+    input_dim = (
+        preprocessor.output_dim
+        if preprocessor.output_dim is not None
+        else env.state_shape[-1]
+    )
     module_PF = MLP(
-        input_dim=preprocessor.output_dim,
+        input_dim=input_dim,
         output_dim=env.n_actions,
     )
     if not args.uniform_pb:
         module_PB = MLP(
-            input_dim=preprocessor.output_dim,
+            input_dim=input_dim,
             output_dim=env.n_actions - 1,
             trunk=module_PF.trunk,
         )
@@ -149,10 +154,12 @@ def main(args):
                 visited_terminating_states,
             )
             # Modes will have a reward greater than R2+R1+R0.
-            mode_reward_threshold = (
-                env.reward_fn_kwargs["R2"]
-                + env.reward_fn_kwargs["R1"]
-                + env.reward_fn_kwargs["R0"]
+            mode_reward_threshold = sum(
+                [
+                    env.reward_fn_kwargs["R2"],
+                    env.reward_fn_kwargs["R1"],
+                    env.reward_fn_kwargs["R0"],
+                ]
             )
 
             assert isinstance(visited_terminating_states, DiscreteStates)

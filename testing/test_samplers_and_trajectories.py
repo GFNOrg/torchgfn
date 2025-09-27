@@ -57,8 +57,13 @@ def trajectory_sampling_with_return(
             env = DiscreteEBM(ndim=8)
             preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
-        pf_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
-        pb_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
+        input_dim = (
+            preprocessor.output_dim
+            if preprocessor.output_dim is not None
+            else env.state_shape[-1]
+        )
+        pf_module = MLP(input_dim=input_dim, output_dim=env.n_actions)
+        pb_module = MLP(input_dim=input_dim, output_dim=env.n_actions - 1)
         pf_estimator = DiscretePolicyEstimator(
             module=pf_module,
             n_actions=env.n_actions,
@@ -279,6 +284,7 @@ def test_local_search_for_loop_equivalence(
         else:
             raise ValueError("Unknown environment name")
 
+        assert isinstance(preprocessor.output_dim, int)
         # Build pf & pb
         pf_module = MLP(preprocessor.output_dim, env.n_actions)
         pb_module = MLP(preprocessor.output_dim, env.n_actions - 1)

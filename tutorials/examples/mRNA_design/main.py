@@ -34,6 +34,7 @@ def main(args):
         env.seq_length, embedding_dim=args.embedding_dim, device=device
     )
 
+    assert isinstance(preprocessor.output_dim, int)
     # Build the GFlowNet.
     module_PF = MLP(
         input_dim=preprocessor.output_dim,

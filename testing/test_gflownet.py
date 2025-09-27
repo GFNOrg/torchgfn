@@ -41,7 +41,12 @@ def test_trajectory_based_gflownet_generic():
 def test_flow_matching_gflownet_generic():
     env = HyperGrid(ndim=2)
     preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
-    module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
+    input_dim = (
+        preprocessor.output_dim
+        if preprocessor.output_dim is not None
+        else env.state_shape[-1]
+    )
+    module = MLP(input_dim=input_dim, output_dim=env.n_actions)
     estimator = DiscretePolicyEstimator(
         module, n_actions=env.n_actions, preprocessor=preprocessor
     )
