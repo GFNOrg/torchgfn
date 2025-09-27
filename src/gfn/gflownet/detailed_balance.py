@@ -168,9 +168,6 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             A tensor of shape (n_transitions,) representing the scores for each
             transition.
         """
-        if transitions.is_backward:
-            raise ValueError("Backward transitions are not supported")
-
         states = transitions.states
         actions = transitions.actions
 
@@ -328,9 +325,6 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         Returns:
             A tensor of shape (n_transitions,) containing the scores for each transition.
         """
-        if transitions.is_backward:
-            raise ValueError("Backward transitions are not supported")
-
         if len(transitions) == 0:
             return torch.tensor(0.0, device=transitions.device)
 
