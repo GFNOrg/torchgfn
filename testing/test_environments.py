@@ -6,7 +6,7 @@ import torch
 from tensordict import TensorDict
 
 from gfn.actions import GraphActions, GraphActionType
-from gfn.env import NonValidActionsError
+from gfn.env import Env, NonValidActionsError
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.perfect_tree import PerfectBinaryTree
@@ -779,3 +779,107 @@ def test_perfect_binary_tree_bwd_step():
     expected_states = torch.tensor([[0], [0]], dtype=torch.long)
     assert torch.equal(states.tensor, expected_states)
     assert torch.all(states.is_initial_state)
+
+
+# -----------------------------------------------------------------------------
+# Tests for default sf fill value based on dtype
+# -----------------------------------------------------------------------------
+
+
+class _DummyEnv(Env):
+    def step(self, states, actions):  # pragma: no cover - not used in this test
+        return states
+
+    def backward_step(self, states, actions):  # pragma: no cover - not used
+        return states
+
+    def is_action_valid(
+        self, states, actions, backward: bool = False
+    ) -> bool:  # noqa: ARG002
+        return True
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [torch.float16, torch.bfloat16, torch.float32, torch.float64],
+)
+def test_env_default_sf_float_dtypes(dtype: torch.dtype):
+    state_shape = (2, 3)
+    s0 = torch.zeros(state_shape, dtype=dtype)
+    dummy_action = torch.zeros((1,), dtype=torch.long)
+    exit_action = torch.zeros((1,), dtype=torch.long)
+    env = _DummyEnv(
+        s0=s0,
+        state_shape=state_shape,
+        action_shape=(1,),
+        dummy_action=dummy_action,
+        exit_action=exit_action,
+        sf=None,
+    )
+    assert env.sf.dtype == dtype
+    assert isinstance(env.sf, torch.Tensor)
+    assert torch.isinf(env.sf).all()
+    assert (env.sf < 0).all()
+
+
+@pytest.mark.parametrize("dtype", [torch.complex64, torch.complex128])
+def test_env_default_sf_complex_dtypes(dtype: torch.dtype):
+    state_shape = (2, 2)
+    s0 = torch.zeros(state_shape, dtype=dtype)
+    dummy_action = torch.zeros((1,), dtype=torch.long)
+    exit_action = torch.zeros((1,), dtype=torch.long)
+    env = _DummyEnv(
+        s0=s0,
+        state_shape=state_shape,
+        action_shape=(1,),
+        dummy_action=dummy_action,
+        exit_action=exit_action,
+        sf=None,
+    )
+    assert env.sf.dtype == dtype
+    assert isinstance(env.sf, torch.Tensor)
+    # -inf + 0j
+    assert torch.isinf(env.sf).all()
+    assert (env.sf.real < 0).all()
+    assert torch.equal(env.sf.imag, torch.zeros_like(env.sf.imag))
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8],
+)
+def test_env_default_sf_integer_dtypes(dtype: torch.dtype):
+    state_shape = (3, 1)
+    s0 = torch.zeros(state_shape, dtype=dtype)
+    dummy_action = torch.zeros((1,), dtype=torch.long)
+    exit_action = torch.zeros((1,), dtype=torch.long)
+    env = _DummyEnv(
+        s0=s0,
+        state_shape=state_shape,
+        action_shape=(1,),
+        dummy_action=dummy_action,
+        exit_action=exit_action,
+        sf=None,
+    )
+    assert env.sf.dtype == dtype
+    assert isinstance(env.sf, torch.Tensor)
+    expected_min = torch.iinfo(dtype).min
+    assert torch.equal(env.sf, torch.full(state_shape, expected_min, dtype=dtype))
+
+
+def test_env_default_sf_bool_dtype():
+    state_shape = (1, 4)
+    s0 = torch.zeros(state_shape, dtype=torch.bool)
+    dummy_action = torch.zeros((1,), dtype=torch.long)
+    exit_action = torch.zeros((1,), dtype=torch.long)
+    env = _DummyEnv(
+        s0=s0,
+        state_shape=state_shape,
+        action_shape=(1,),
+        dummy_action=dummy_action,
+        exit_action=exit_action,
+        sf=None,
+    )
+    assert env.sf.dtype == torch.bool
+    assert isinstance(env.sf, torch.Tensor)
+    assert torch.equal(env.sf, torch.zeros(state_shape, dtype=torch.bool))
