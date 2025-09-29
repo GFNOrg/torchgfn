@@ -874,9 +874,7 @@ class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
         # TODO: Is this still true? NOTE: Can only be used for on-policy generation,
         # not off-policy evaluation of entire trajectory.
         # states.tensor.shape: (..., max_string_len)
-        current_input_len = states.tensor.shape[
-            -1
-        ].max()  # TODO: Check if this is correct.
+        current_input_len = states.tensor.shape[-1]  # TODO: Check if this is correct.
         states_tensor = states.tensor[..., :current_input_len]  # (..., string_len)
 
         # Compute sequence of logits and update carry.
