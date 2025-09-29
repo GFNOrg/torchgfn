@@ -553,6 +553,7 @@ class DiscreteStates(States, ABC):
         Args:
             other: DiscreteStates object to concatenate with.
         """
+        assert self.__class__.device == other.device, "Devices must match"
         super().extend(other)
         self.forward_masks = torch.cat(
             (self.forward_masks, other.forward_masks), dim=len(self.batch_shape) - 1
@@ -602,8 +603,12 @@ class DiscreteStates(States, ABC):
         """
         out = super().stack(states)
         assert isinstance(out, DiscreteStates)
-        out.forward_masks = torch.stack([s.forward_masks for s in states], dim=0)
-        out.backward_masks = torch.stack([s.backward_masks for s in states], dim=0)
+        out.forward_masks = torch.stack([s.forward_masks for s in states], dim=0).to(
+            out.device
+        )
+        out.backward_masks = torch.stack([s.backward_masks for s in states], dim=0).to(
+            out.device
+        )
         return out
 
     # The helper methods are convenience functions for common mask operations.
@@ -643,8 +648,10 @@ class DiscreteStates(States, ABC):
         """
         self.forward_masks[batch_idx, :] = torch.cat(
             [
-                torch.zeros([int(torch.sum(batch_idx).item()), *self.s0.shape]),
-                torch.ones([int(torch.sum(batch_idx).item()), 1]),
+                torch.zeros([int(torch.sum(batch_idx).item()), *self.s0.shape]).to(
+                    self.device
+                ),
+                torch.ones([int(torch.sum(batch_idx).item()), 1]).to(self.device),
             ],
             dim=-1,
         ).bool()
@@ -660,9 +667,9 @@ class DiscreteStates(States, ABC):
         """
         shape = self.batch_shape + (self.n_actions,)
         if set_ones:
-            self.forward_masks = torch.ones(shape).bool()
+            self.forward_masks = torch.ones(shape).to(self.device).bool()
         else:
-            self.forward_masks = torch.zeros(shape).bool()
+            self.forward_masks = torch.zeros(shape).to(self.device).bool()
 
 
 class GraphStates(States):
@@ -910,6 +917,8 @@ class GraphStates(States):
         action_type = torch.ones(
             *self.batch_shape, 3, dtype=torch.bool, device=self.device
         )
+        # Ensure shape matches batch shape before assignment (handles stacked shapes)
+        can_add_node = can_add_node.view(*self.batch_shape)
         action_type[..., GraphActionType.ADD_NODE] = can_add_node
         action_type[..., GraphActionType.ADD_EDGE] = torch.any(edge_masks, dim=-1)
         return TensorDict(
