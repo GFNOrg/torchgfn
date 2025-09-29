@@ -1,12 +1,15 @@
 """This file contains some examples of modules that can be used with GFN."""
 
 import math
+from abc import ABC, abstractmethod
 from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from linear_attention_transformer import LinearAttentionTransformer
 from tensordict import TensorDict
+from torch import Tensor
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 from gfn.actions import GraphActions, GraphActionType
@@ -962,3 +965,539 @@ class NoisyLinear(nn.Linear):
                 return self.bias_mu
         else:
             return None
+
+
+class AutoregressiveDiscreteSequenceModel(ABC, nn.Module):
+
+    @abstractmethod
+    def init_carry(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        """Initialize the carry for the sequence model.
+
+        Args:
+            batch_size (int): Batch size.
+            device (torch.device): Device to allocate carry tensors on.
+
+        Returns:
+            dict[str, torch.Tensor]: Initialized carry.
+        """
+
+    @abstractmethod
+    def forward(
+        self,
+        x: torch.Tensor,
+        carry: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Compute the logits for the next tokens in the sequence.
+
+        Args:
+            x (torch.Tensor): (B, T) tensor of input token indices where ``T`` is the
+                number of newly supplied timesteps (``T`` may be 1 for incremental
+                decoding).
+            carry (dict[str, torch.Tensor]): Carry from previous steps for recurrent
+                processing (e.g., hidden states).
+
+        Returns:
+            tuple[torch.Tensor, dict[str, torch.Tensor]]: Logits for the next token
+                at each supplied timestep with shape (B, T, vocab) and updated carry.
+        """
+
+    @property
+    @abstractmethod
+    def vocab_size(self) -> int:
+        """Size of the vocabulary (excluding BOS token)."""
+
+
+class RecurrentDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
+    def __init__(
+        self,
+        vocab_size: int,
+        embedding_dim: int,
+        hidden_size: int,
+        num_layers: int = 1,
+        rnn_type: Literal["lstm", "gru"] = "lstm",
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        if num_layers <= 0:
+            raise ValueError("num_layers must be a positive integer.")
+        rnn_kind = rnn_type.lower()
+        if rnn_kind not in {"lstm", "gru"}:
+            raise ValueError("rnn_type must be 'lstm' or 'gru'.")
+
+        if not 0.0 <= dropout <= 1.0:
+            raise ValueError("dropout must be in the range [0, 1].")
+
+        self._vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.rnn_type = rnn_kind
+
+        self.embedding = nn.Embedding(vocab_size + 1, embedding_dim)  # +1 for BOS token
+        rnn_dropout = dropout if num_layers > 1 else 0.0
+        self.lstm: nn.LSTM | None
+        self.gru: nn.GRU | None
+        if rnn_kind == "lstm":
+            self.lstm = nn.LSTM(
+                input_size=embedding_dim,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=rnn_dropout,
+            )
+            self.gru = None
+        else:
+            self.gru = nn.GRU(
+                input_size=embedding_dim,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=rnn_dropout,
+            )
+            self.lstm = None
+        self.output_projection = nn.Linear(hidden_size, vocab_size)
+
+    def init_carry(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        carry: dict[str, torch.Tensor] = {
+            "hidden": torch.zeros(
+                self.num_layers, batch_size, self.hidden_size, device=device
+            ),
+        }
+        if self.rnn_type == "lstm":
+            carry["cell"] = torch.zeros(
+                self.num_layers, batch_size, self.hidden_size, device=device
+            )
+        return carry
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        carry: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if x.dim() != 2:
+            raise ValueError("Expected input tensor with shape (batch, timesteps).")
+
+        batch, timesteps = x.size()
+        device = x.device
+
+        if "hidden" not in carry:
+            raise KeyError("Carry must provide a 'hidden' state tensor.")
+
+        hidden = carry["hidden"]
+        if hidden.size(1) != batch:
+            raise ValueError(
+                "Hidden state batch dimension does not match the provided tokens."
+            )
+        if hidden.device != device:
+            raise ValueError(
+                "Hidden state tensor must live on the same device as input tokens."
+            )
+
+        embedded = self.embedding(x)
+
+        if self.rnn_type == "lstm":
+            lstm = self.lstm
+            if lstm is None:
+                raise RuntimeError("LSTM module was not initialized.")
+            if "cell" not in carry:
+                raise KeyError("LSTM carry must provide a 'cell' state tensor.")
+            cell = carry["cell"]
+            if cell.size(1) != batch:
+                raise ValueError(
+                    "Cell state batch dimension does not match the provided tokens."
+                )
+            if cell.device != device:
+                raise ValueError(
+                    "Cell state tensor must live on the same device as input tokens."
+                )
+            outputs, (hidden_next, cell_next) = lstm(embedded, (hidden, cell))
+            updated_carry: dict[str, torch.Tensor] = {
+                "hidden": hidden_next,
+                "cell": cell_next,
+            }
+        else:
+            gru = self.gru
+            if gru is None:
+                raise RuntimeError("GRU module was not initialized.")
+            outputs, hidden_next = gru(embedded, hidden)
+            updated_carry = {
+                "hidden": hidden_next,
+            }
+
+        logits = self.output_projection(outputs)
+        return logits, updated_carry
+
+    @property
+    def vocab_size(self) -> int:
+        return self._vocab_size
+
+
+class _AutoregressiveTransformerBlock(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        ff_hidden_dim: int,
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        if embed_dim % num_heads != 0:
+            raise ValueError("Embedding dimension must be divisible by number of heads.")
+
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+
+        self.linear1 = nn.Linear(embed_dim, ff_hidden_dim)
+        self.linear2 = nn.Linear(ff_hidden_dim, embed_dim)
+
+        self.attn_dropout = nn.Dropout(dropout)
+        self.residual_dropout = nn.Dropout(dropout)
+        self.ff_dropout = nn.Dropout(dropout)
+
+    def forward(
+        self,
+        hidden: torch.Tensor,
+        key_carry: torch.Tensor,
+        value_carry: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch, timesteps, _ = hidden.size()
+
+        normed_hidden = self.norm1(hidden)
+
+        q = self.q_proj(normed_hidden)
+        k = self.k_proj(normed_hidden)
+        v = self.v_proj(normed_hidden)
+
+        q = q.view(batch, timesteps, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(batch, timesteps, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch, timesteps, self.num_heads, self.head_dim).transpose(1, 2)
+
+        carry_length = key_carry.size(2)
+        updated_key_carry = torch.cat((key_carry, k), dim=2)
+        updated_value_carry = torch.cat((value_carry, v), dim=2)
+
+        attn_scores = torch.matmul(q, updated_key_carry.transpose(-2, -1)) / math.sqrt(
+            float(self.head_dim)
+        )
+
+        if timesteps > 1 or carry_length > 0:
+            total_kv_length = carry_length + timesteps
+            kv_positions = torch.arange(
+                total_kv_length, device=hidden.device, dtype=torch.long
+            )
+            query_positions = torch.arange(
+                timesteps, device=hidden.device, dtype=torch.long
+            ).unsqueeze(1)
+            causal_mask = kv_positions.unsqueeze(0) <= (query_positions + carry_length)
+            attn_scores = attn_scores.masked_fill(
+                ~causal_mask.unsqueeze(0).unsqueeze(0), float("-inf")
+            )
+
+        attn_weights = torch.softmax(attn_scores, dim=-1)
+        attn_weights = self.attn_dropout(attn_weights)
+        attn_output = torch.matmul(attn_weights, updated_value_carry)
+        attn_output = attn_output.transpose(1, 2).reshape(
+            batch, timesteps, self.embed_dim
+        )
+        attn_output = self.out_proj(attn_output)
+
+        residual = hidden
+        hidden = residual + self.residual_dropout(attn_output)
+
+        ff_input = self.norm2(hidden)
+        ff_hidden = self.linear1(ff_input)
+        ff_hidden = self.ff_dropout(F.gelu(ff_hidden))
+        ff_hidden = self.linear2(ff_hidden)
+
+        hidden = hidden + self.residual_dropout(ff_hidden)
+        return hidden, updated_key_carry, updated_value_carry
+
+
+class TransformerDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
+    def __init__(
+        self,
+        vocab_size: int,
+        embedding_dim: int,
+        num_heads: int,
+        ff_hidden_dim: int,
+        num_layers: int,
+        max_position_embeddings: int,
+        dropout: float = 0.0,
+        positional_embedding: Literal["learned", "sinusoidal"] = "learned",
+    ) -> None:
+        super().__init__()
+        if num_layers <= 0:
+            raise ValueError("num_layers must be positive.")
+        if max_position_embeddings <= 0:
+            raise ValueError("max_position_embeddings must be positive.")
+        if not 0.0 <= dropout <= 1.0:
+            raise ValueError("dropout must lie in [0, 1].")
+        if embedding_dim % num_heads != 0:
+            raise ValueError("embedding_dim must be divisible by num_heads.")
+        if positional_embedding not in {"learned", "sinusoidal"}:
+            raise ValueError("positional_embedding must be 'learned' or 'sinusoidal'.")
+
+        self._vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.num_heads = num_heads
+        self.ff_hidden_dim = ff_hidden_dim
+        self.num_layers = num_layers
+        self.max_position_embeddings = max_position_embeddings
+        self.head_dim = embedding_dim // num_heads
+        self._positional_embedding_type = positional_embedding
+
+        self.token_embedding = nn.Embedding(
+            vocab_size + 1, embedding_dim
+        )  # +1 for BOS token
+        if self._positional_embedding_type == "learned":
+            self.position_embedding = nn.Embedding(
+                max_position_embeddings, embedding_dim
+            )
+        else:
+            self.position_embedding = SinusoidalPositionalEmbedding(
+                embedding_dim=embedding_dim,
+                max_length=max_position_embeddings,
+            )
+        self.embedding_dropout = nn.Dropout(dropout)
+
+        blocks: list[_AutoregressiveTransformerBlock] = []
+        for _ in range(num_layers):
+            blocks.append(
+                _AutoregressiveTransformerBlock(
+                    embed_dim=embedding_dim,
+                    num_heads=num_heads,
+                    ff_hidden_dim=ff_hidden_dim,
+                    dropout=dropout,
+                )
+            )
+
+        self.layers = nn.ModuleList(blocks)
+        self.final_norm = nn.LayerNorm(embedding_dim)
+        self.output_projection = nn.Linear(embedding_dim, vocab_size)
+        self.key_names = [f"key_{idx}" for idx in range(num_layers)]
+        self.value_names = [f"value_{idx}" for idx in range(num_layers)]
+
+    def init_carry(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        weight = self.token_embedding.weight
+        carry: dict[str, torch.Tensor] = {
+            "position": torch.zeros(batch_size, dtype=torch.long, device=device),
+        }
+        empty_key = weight.new_empty(batch_size, self.num_heads, 0, self.head_dim).to(
+            device
+        )
+        empty_value = weight.new_empty(batch_size, self.num_heads, 0, self.head_dim).to(
+            device
+        )
+        for key_name, value_name in zip(self.key_names, self.value_names):
+            carry[key_name] = empty_key.clone()
+            carry[value_name] = empty_value.clone()
+
+        return carry
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        carry: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if x.dim() != 2:
+            raise ValueError("Expected input tensor with shape (batch, timesteps).")
+
+        batch, timesteps = x.size()
+        device = x.device
+        if "position" not in carry:
+            raise KeyError("Carry must include a 'position' tensor.")
+
+        positions = carry["position"]
+        if positions.size(0) != batch:
+            raise ValueError(
+                "Position carry batch dimension does not match the provided tokens."
+            )
+        if positions.device != device:
+            raise ValueError(
+                "Position tensor must live on the same device as input tokens."
+            )
+        if torch.any(positions >= self.max_position_embeddings):
+            raise ValueError(
+                "Position index exceeds configured positional embedding range."
+            )
+
+        position_offsets = torch.arange(timesteps, device=device, dtype=positions.dtype)
+        position_indices = positions.unsqueeze(1) + position_offsets
+        if torch.any(position_indices >= self.max_position_embeddings):
+            raise ValueError(
+                "Position index exceeds configured positional embedding range."
+            )
+
+        hidden = self.token_embedding(x) + self.position_embedding(position_indices)
+        hidden = self.embedding_dropout(hidden)
+
+        updated_carry: dict[str, torch.Tensor] = {}
+
+        for idx, layer in enumerate(self.layers):
+            key_name = self.key_names[idx]
+            value_name = self.value_names[idx]
+            if key_name not in carry or value_name not in carry:
+                raise KeyError(
+                    "Transformer carry is missing key/value tensors for layer" f" {idx}."
+                )
+            key_carry = carry[key_name]
+            value_carry = carry[value_name]
+            if key_carry.size(0) != batch or key_carry.size(1) != self.num_heads:
+                raise ValueError(
+                    "Key carry shape is incompatible with the provided tokens."
+                )
+            if value_carry.size(0) != batch or value_carry.size(1) != self.num_heads:
+                raise ValueError(
+                    "Value carry shape is incompatible with the provided tokens."
+                )
+            if (
+                key_carry.size(-1) != self.head_dim
+                or value_carry.size(-1) != self.head_dim
+            ):
+                raise ValueError("Key/value carry head dimension mismatch detected.")
+            if key_carry.device != device or value_carry.device != device:
+                raise ValueError("Key/value carry tensors must share the input device.")
+            hidden, updated_key_carry, updated_value_carry = layer(
+                hidden, key_carry, value_carry
+            )
+            updated_carry[key_name] = updated_key_carry
+            updated_carry[value_name] = updated_value_carry
+
+        hidden = self.final_norm(hidden)
+        logits = self.output_projection(hidden)
+
+        updated_carry["position"] = positions + timesteps
+        return logits, updated_carry
+
+    @property
+    def vocab_size(self) -> int:
+        return self._vocab_size
+
+
+def sinusoidal_position_encoding(
+    length: int,
+    embedding_dim: int,
+    base: float = 10000.0,
+) -> Tensor:
+    """Create 1D sinusoidal positional embeddings.
+
+    Args:
+        length: Number of positions to encode. Must be non-negative.
+        embedding_dim: Dimensionality of each embedding. Must be positive.
+        base: Exponential base used to compute the angular frequencies.
+
+    Returns:
+        A ``(length, embedding_dim)`` tensor of sinusoidal encodings.
+
+    Raises:
+        ValueError: If ``length`` is negative, ``embedding_dim`` is not positive,
+            or ``base`` is not positive.
+    """
+
+    assert length >= 0, "length must be non-negative."
+    assert embedding_dim > 0, "embedding_dim must be positive."
+    assert base > 0, "base must be positive."
+
+    if length == 0:
+        return torch.empty(0, embedding_dim)
+
+    positions = torch.arange(length).unsqueeze(1)
+    div_input = torch.arange(0, embedding_dim, 2)
+    div_term = torch.exp(div_input * (-math.log(base) / embedding_dim))
+    embeddings = torch.zeros(length, embedding_dim)
+    angles = positions * div_term
+    embeddings[:, 0::2] = torch.sin(angles)
+
+    if embedding_dim % 2 == 0:
+        embeddings[:, 1::2] = torch.cos(angles)
+    else:
+        embeddings[:, 1::2] = torch.cos(angles)[:, : embedding_dim // 2]
+
+    return embeddings
+
+
+class SinusoidalPositionalEmbedding(nn.Module):
+    """Sinusoidal positional embeddings for transformer-style models.
+
+    The module caches a precomputed table of embeddings and extends it on demand.
+    Forward accepts either a sequence length or explicit position indices.
+    """
+
+    def __init__(
+        self,
+        embedding_dim: int,
+        max_length: int = 2048,
+        base: float = 10000.0,
+    ) -> None:
+        super().__init__()
+        assert max_length >= 0, "max_length must be non-negative."
+        assert embedding_dim > 0, "embedding_dim must be positive."
+        assert base > 0, "base must be positive."
+
+        self.embedding_dim = int(embedding_dim)
+        self.base = float(base)
+
+        pe = sinusoidal_position_encoding(max_length, self.embedding_dim, base=self.base)
+        self._pe: Tensor
+        self.register_buffer("_pe", pe)
+
+    @property
+    def pe(self) -> Tensor:
+        """Return the cached positional embedding table."""
+        return self._pe
+
+    def forward(
+        self,
+        positions: Optional[Tensor] = None,
+        seq_len: Optional[int] = None,
+    ) -> Tensor:
+        """Look up positional embeddings.
+
+        Args:
+            positions: Optional tensor of position indices. Can have any shape,
+                and the returned embeddings will append ``embedding_dim`` to that
+                shape. Defaults to ``None``.
+            seq_len: Optional sequence length. When provided, returns the first
+                ``seq_len`` embeddings from the table.
+
+        Returns:
+            Tensor of positional embeddings on the same device/dtype as the
+            cached table.
+
+        Raises:
+            ValueError: If both or neither of ``positions`` and ``seq_len`` are
+                provided, or if indices exceed the cached range.
+        """
+
+        if (positions is None) == (seq_len is None):
+            raise ValueError("Provide exactly one of positions or seq_len.")
+
+        if positions is not None:
+            flat_positions = positions.reshape(-1)
+            gathered = self._pe.index_select(0, flat_positions)
+            return gathered.view(
+                positions.shape[0], positions.shape[1], self.embedding_dim
+            )
+        else:
+            return self._pe[:seq_len]
