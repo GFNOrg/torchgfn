@@ -646,17 +646,15 @@ class DiscreteStates(States, ABC):
             batch_idx: A boolean index along the batch dimension, along which to
                 enforce exits.
         """
-        self.forward_masks[batch_idx, :] = (
-            torch.cat(
-                [
-                    torch.zeros([int(torch.sum(batch_idx).item()), *self.s0.shape]),
-                    torch.ones([int(torch.sum(batch_idx).item()), 1]),
-                ],
-                dim=-1,
-            )
-            .bool()
-            .to(self.device)
-        )
+        self.forward_masks[batch_idx, :] = torch.cat(
+            [
+                torch.zeros([int(torch.sum(batch_idx).item()), *self.s0.shape]).to(
+                    self.device
+                ),
+                torch.ones([int(torch.sum(batch_idx).item()), 1]).to(self.device),
+            ],
+            dim=-1,
+        ).bool()
 
     def init_forward_masks(self, set_ones: bool = True) -> None:
         """Initalizes forward masks.
@@ -669,9 +667,9 @@ class DiscreteStates(States, ABC):
         """
         shape = self.batch_shape + (self.n_actions,)
         if set_ones:
-            self.forward_masks = torch.ones(shape).bool().to(self.device)
+            self.forward_masks = torch.ones(shape).to(self.device).bool()
         else:
-            self.forward_masks = torch.zeros(shape).bool().to(self.device)
+            self.forward_masks = torch.zeros(shape).to(self.device).bool()
 
 
 class GraphStates(States):
