@@ -206,11 +206,7 @@ def build_conditional_logF_scalar_estimator(
 
     CONCAT_SIZE = 16
     module_state_logF = MLP(
-        input_dim=(
-            preprocessor.output_dim
-            if preprocessor.output_dim is not None
-            else env.state_shape[-1]
-        ),
+        input_dim=preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
         n_hidden_layers=1,
@@ -283,7 +279,7 @@ def build_db_mod_gflownet(env):
 def build_fm_gflownet(env):
     # Create preprocessor for the environment
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
-    assert isinstance(preprocessor.output_dim, int)
+
     CONCAT_SIZE = 16
     module_logF = MLP(
         input_dim=preprocessor.output_dim,

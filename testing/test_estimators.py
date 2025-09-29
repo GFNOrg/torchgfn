@@ -349,12 +349,7 @@ def test_discrete_policy_estimator_integration():
     # Create a simple environment and estimator
     env = HyperGrid(ndim=2, height=4)
     preprocessor = KHotPreprocessor(env.height, env.ndim)
-    input_dim = (
-        preprocessor.output_dim
-        if preprocessor.output_dim is not None
-        else env.state_shape[-1]
-    )
-    module = MLP(input_dim=input_dim, output_dim=env.n_actions)
+    module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
 
     estimator = DiscretePolicyEstimator(
         module=module,

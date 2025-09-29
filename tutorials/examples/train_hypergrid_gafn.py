@@ -263,19 +263,14 @@ def main(args):
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Build the GFlowNet.
-    input_dim = (
-        preprocessor.output_dim
-        if preprocessor.output_dim is not None
-        else env.state_shape[-1]
-    )
     module_PF = MLP(
-        input_dim=input_dim,
+        input_dim=preprocessor.output_dim,
         output_dim=env.n_actions,
         activation_fn="leaky_relu",  # use leaky relu as in the original GAFN paper
     )
     if not args.uniform_pb:
         module_PB = MLP(
-            input_dim=input_dim,
+            input_dim=preprocessor.output_dim,
             output_dim=env.n_actions - 1,
             trunk=module_PF.trunk,
         )
@@ -289,7 +284,7 @@ def main(args):
     )
 
     rnd = RND(
-        state_dim=input_dim,
+        state_dim=preprocessor.output_dim,
         preprocessor=preprocessor,
         reward_scale=args.rnd_reward_scale,
         loss_scale=args.rnd_loss_scale,
@@ -300,7 +295,7 @@ def main(args):
     if args.use_edge_ri:
         flow_estimator = ScalarEstimator(
             module=MLP(
-                input_dim=input_dim,
+                input_dim=preprocessor.output_dim,
                 output_dim=1,
                 trunk=module_PF.trunk,
             ),
