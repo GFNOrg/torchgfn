@@ -55,18 +55,13 @@ def main(args):
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Build the GFlowNet.
-    input_dim = (
-        preprocessor.output_dim
-        if preprocessor.output_dim is not None
-        else env.state_shape[-1]
-    )
     module_PF = MLP(
-        input_dim=input_dim,
+        input_dim=preprocessor.output_dim,
         output_dim=env.n_actions,
     )
     if not args.uniform_pb:
         module_PB = MLP(
-            input_dim=input_dim,
+            input_dim=preprocessor.output_dim,
             output_dim=env.n_actions - 1,
             trunk=module_PF.trunk,
         )

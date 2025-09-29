@@ -199,6 +199,7 @@ class KHotPreprocessor(Preprocessor):
         super().__init__(output_dim=height * ndim)
         self.height = height
         self.ndim = ndim
+        self.output_dim = height * ndim
 
     def preprocess(self, states: DiscreteStates) -> torch.Tensor:
         """Preprocesses the states by creating k-hot encoded vectors.

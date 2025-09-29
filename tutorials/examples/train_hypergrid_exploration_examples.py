@@ -29,7 +29,7 @@ from gfn.env import DiscreteEnv, Env
 from gfn.estimators import DiscretePolicyEstimator
 from gfn.gflownet import TBGFlowNet
 from gfn.gym import HyperGrid
-from gfn.preprocessors import KHotPreprocessor, Preprocessor
+from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform
@@ -137,7 +137,7 @@ def calculate_mode_stats(env: Env, verbose: bool = False):
 
 
 def build_gflownet(
-    preprocessor: Preprocessor,
+    preprocessor: KHotPreprocessor,
     env: Env,
     uniform_pb: bool = False,
     n_hidden_layers: int = 2,
@@ -145,14 +145,8 @@ def build_gflownet(
     std_init: float = 0.5,
 ):
 
-    # Build the GFlowNet.
-    input_dim = (
-        preprocessor.output_dim
-        if preprocessor.output_dim is not None
-        else env.state_shape[-1]
-    )
     module_PF = MLP(
-        input_dim=input_dim,
+        input_dim=preprocessor.output_dim,
         output_dim=env.n_actions,
         n_hidden_layers=n_hidden_layers,
         n_noisy_layers=n_noisy_layers,
@@ -160,7 +154,7 @@ def build_gflownet(
     )
     if not uniform_pb:
         module_PB = MLP(
-            input_dim=input_dim,
+            input_dim=preprocessor.output_dim,
             output_dim=env.n_actions - 1,
             trunk=module_PF.trunk,
             n_noisy_layers=1 if n_noisy_layers > 0 else 0,
@@ -181,7 +175,7 @@ def build_gflownet(
 
 def train(
     env: Env,
-    preprocessor: Preprocessor,
+    preprocessor: KHotPreprocessor,
     device: torch.device,
     lr: float,
     lr_logz: float,
