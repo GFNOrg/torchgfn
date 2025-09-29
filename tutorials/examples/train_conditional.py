@@ -135,13 +135,18 @@ def build_conditional_pf_pb(
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     CONCAT_SIZE = 16
+    input_dim = (
+        preprocessor.output_dim
+        if preprocessor.output_dim is not None
+        else env.state_shape[-1]
+    )
     module_PF = MLP(
-        input_dim=preprocessor.output_dim,
+        input_dim=input_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
     )
     module_PB = MLP(
-        input_dim=preprocessor.output_dim,
+        input_dim=input_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
         trunk=module_PF.trunk,
@@ -445,7 +450,15 @@ def train(
 
             # Print concise results
             print(
-                f"Iter {it + 1}: L1=[{l1_dists[0]:.6f}, {l1_dists[1]:.6f}, {l1_dists[2]:.6f}, {l1_dists[3]:.6f}, {l1_dists[4]:.6f}] modes={len(discovered_modes) / n_pixels_per_mode}"
+                "Iter {}: L1=[{:.6f}, {:.6f}, {:.6f}, {:.6f}, {:.6f}] modes={}".format(
+                    it + 1,
+                    l1_dists[0],
+                    l1_dists[1],
+                    l1_dists[2],
+                    l1_dists[3],
+                    l1_dists[4],
+                    len(discovered_modes) / n_pixels_per_mode,
+                )
             )
 
     print("\n" + "=" * 60)

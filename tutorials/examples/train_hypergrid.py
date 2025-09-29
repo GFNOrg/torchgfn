@@ -678,10 +678,12 @@ def validate_hypergrid(
     )
 
     # Modes will have a reward greater than R2+R1+R0.
-    mode_reward_threshold = (
-        env.reward_fn_kwargs["R2"]
-        + env.reward_fn_kwargs["R1"]
-        + env.reward_fn_kwargs["R0"]
+    mode_reward_threshold = sum(
+        [
+            env.reward_fn_kwargs["R2"],
+            env.reward_fn_kwargs["R1"],
+            env.reward_fn_kwargs["R0"],
+        ]
     )
 
     assert isinstance(visited_terminating_states, DiscreteStates)
@@ -1388,7 +1390,7 @@ def main(args):  # noqa: C901
     if (
         args.distributed
         and distributed_context.is_training_rank()
-        and distributed_context.assigned_buffer is not None
+        and (distributed_context.assigned_buffer is not None)
     ):
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)

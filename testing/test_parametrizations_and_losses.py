@@ -52,6 +52,7 @@ def test_FM(env_name: str, ndim: int, module_name: str):
             preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
     if module_name == "MLP":
+        assert isinstance(preprocessor.output_dim, int)
         module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     elif module_name == "Tabular":
         module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
@@ -144,8 +145,11 @@ def PFBasedGFlowNet_with_return(
             pytest.skip("Tabular module impossible for Box")
         env = Box(delta=1.0 / ndim)
         preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+
     else:
         raise ValueError("Unknown environment name")
+
+    assert isinstance(preprocessor.output_dim, int)
 
     if module_name == "Tabular":
         # Cannot be the Box environment
@@ -369,6 +373,8 @@ def test_flow_matching_states_container(env_name: str, ndim: int):
     else:
         env = DiscreteEBM(ndim=ndim)
         preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+
+    assert isinstance(preprocessor.output_dim, int)
 
     module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     log_F_edge = DiscretePolicyEstimator(

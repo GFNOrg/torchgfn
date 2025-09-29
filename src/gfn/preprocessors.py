@@ -19,15 +19,17 @@ class Preprocessor(ABC):
 
     Attributes:
         output_dim: The dimensionality of the preprocessed output tensor, which is
-            compatible with the neural network that will be used.
+            compatible with the neural network that will be used. If None, the output
+            dimension will not be checked.
     """
 
-    def __init__(self, output_dim: int) -> None:
+    def __init__(self, output_dim: int | None) -> None:
         """Initializes a Preprocessor with the specified output dimension.
 
         Args:
             output_dim: The dimensionality of the preprocessed output tensor, which is
                 compatible with the neural network that will be used.
+                If None, the output dimension will not be checked.
         """
         self.output_dim = output_dim
 
@@ -53,7 +55,7 @@ class Preprocessor(ABC):
             The preprocessed states as a tensor or GeometricBatch.
         """
         out = self.preprocess(states)
-        if isinstance(out, torch.Tensor):
+        if isinstance(out, torch.Tensor) and self.output_dim is not None:
             assert out.shape[-1] == self.output_dim
 
         return out
@@ -197,6 +199,7 @@ class KHotPreprocessor(Preprocessor):
         super().__init__(output_dim=height * ndim)
         self.height = height
         self.ndim = ndim
+        self.output_dim = height * ndim
 
     def preprocess(self, states: DiscreteStates) -> torch.Tensor:
         """Preprocesses the states by creating k-hot encoded vectors.

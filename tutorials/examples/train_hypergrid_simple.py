@@ -119,10 +119,12 @@ def main(args):
                 visited_terminating_states,
             )
             # Modes will have a reward greater than R2+R1+R0.
-            mode_reward_threshold = (
-                env.reward_fn_kwargs["R2"]
-                + env.reward_fn_kwargs["R1"]
-                + env.reward_fn_kwargs["R0"]
+            mode_reward_threshold = sum(
+                [
+                    env.reward_fn_kwargs["R2"],
+                    env.reward_fn_kwargs["R1"],
+                    env.reward_fn_kwargs["R0"],
+                ]
             )
 
             assert isinstance(visited_terminating_states, DiscreteStates)
