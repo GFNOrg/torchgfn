@@ -91,7 +91,7 @@ module_PB = MLP(
     trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
 )
 module_logF = MLP(
-    input_dim=input_dim,
+    input_dim=preprocessor.output_dim,
     output_dim=1,  # Important for ScalarEstimators!
 )
 
