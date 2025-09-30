@@ -168,6 +168,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             if r not in self._rank0_metric_handles:
                 buf = torch.zeros(2, dtype=torch.float32)
                 work = dist.irecv(buf, src=r, tag=self._TAG_METRIC)
+                assert work is not None
                 self._rank0_metric_handles[r] = work
                 self._rank0_metric_buffers[r] = buf
 
