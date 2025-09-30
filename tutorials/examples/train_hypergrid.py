@@ -11,8 +11,8 @@ And run one of the following to reproduce some of the results in
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 
 SELECTIVE AVERAGING:
-This script also supports selective model averaging for distributed training, where instead of 
-averaging all models, the worst performing models are replaced with averaged weights from the 
+This script also supports selective model averaging for distributed training, where instead of
+averaging all models, the worst performing models are replaced with averaged weights from the
 better performing ones. Use the following flags:
 
 --use_selective_averaging: Enable selective averaging instead of standard averaging
@@ -65,10 +65,9 @@ from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
 from tutorials.examples.multinode.spawn_policy import (
-    AverageAllPolicy,
     AsyncSelectiveAveragingPolicy,
+    AverageAllPolicy,
 )
-
 
 r"""
 Helper class for timing code execution blocks and accumulating elapsed time in a dictionary.
@@ -1005,7 +1004,7 @@ def main(args):  # noqa: C901
         )
         replay_buffer_manager.run()
         return 0.0
-    
+
     # Initialize WandB.
     use_wandb = args.wandb_project != ""
     if use_wandb:
@@ -1237,7 +1236,9 @@ def main(args):  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
             if averaging_policy is not None:
-                averaging_policy(iteration=iteration, model=gflownet, local_metric=-loss.item())
+                averaging_policy(
+                    iteration=iteration, model=gflownet, local_metric=-loss.item()
+                )
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
@@ -1367,6 +1368,7 @@ def main(args):  # noqa: C901
 
     if args.distributed:
         dist.barrier(group=distributed_context.train_global_group)
+        assert averaging_policy is not None
         try:
             averaging_policy.shutdown()
         except Exception:
@@ -1470,7 +1472,7 @@ if __name__ == "__main__":
         default="gloo",
         help="Distributed backend to use: gloo, ccl or mpi",
     )
-    
+
     # Selective averaging settings.
     parser.add_argument(
         "--use_selective_averaging",

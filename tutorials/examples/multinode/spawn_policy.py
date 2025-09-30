@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Optional, List, Tuple, Set, Dict
 import threading
 import time
+from abc import ABC, abstractmethod
+from typing import Dict, List, Optional, Set, Tuple
+
 import torch
 import torch.distributed as dist
 
@@ -13,7 +14,12 @@ class SpawnPolicy(ABC):
         self.average_every = max(int(average_every), 1)
 
     @abstractmethod
-    def __call__(self, iteration: int, model: torch.nn.Module, local_metric: Optional[float] = None) -> None:  # noqa: D401
+    def __call__(
+        self,
+        iteration: int,
+        model: torch.nn.Module,
+        local_metric: Optional[float] = None,
+    ) -> None:  # noqa: D401
         """Possibly perform a spawn/averaging step on this iteration."""
         raise NotImplementedError
 
@@ -25,7 +31,12 @@ class AverageAllPolicy(SpawnPolicy):
         super().__init__(average_every)
 
     @torch.no_grad()
-    def __call__(self, iteration: int, model: torch.nn.Module, local_metric: Optional[float] = None) -> None:
+    def __call__(
+        self,
+        iteration: int,
+        model: torch.nn.Module,
+        local_metric: Optional[float] = None,
+    ) -> None:
         if not dist.is_available() or not dist.is_initialized():
             return
         if iteration % self.average_every != 0:
@@ -93,7 +104,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         if not dist.is_available() or not dist.is_initialized():
             self._initialized = True
             return
-        self._validate_params(self.replacement_ratio, self.averaging_strategy, self.momentum)
+        self._validate_params(
+            self.replacement_ratio, self.averaging_strategy, self.momentum
+        )
         self._model = model
         self._initialized = True
         self._bg_thread = threading.Thread(target=self._background_loop, daemon=True)
@@ -105,7 +118,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             self._bg_thread.join(timeout=1.0)
 
     @torch.no_grad()
-    def __call__(self, iteration: int, model: torch.nn.Module, local_metric: Optional[float] = None) -> None:
+    def __call__(
+        self,
+        iteration: int,
+        model: torch.nn.Module,
+        local_metric: Optional[float] = None,
+    ) -> None:
         self._ensure_initialized(model)
         if not dist.is_available() or not dist.is_initialized():
             return
@@ -115,14 +133,18 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             rank = dist.get_rank()
             if iteration != self._last_iter_sent:
                 self._last_iter_sent = iteration
-                payload = torch.tensor([float(iteration), float(local_metric)], dtype=torch.float32)
+                payload = torch.tensor(
+                    [float(iteration), float(local_metric)], dtype=torch.float32
+                )
                 try:
                     if rank != 0:
                         dist.isend(payload, dst=0, tag=self._TAG_METRIC)
                     else:
                         # Rank 0 includes its own metric directly
                         world_size = dist.get_world_size()
-                        self._rank0_record_metric(iteration, rank, float(local_metric), world_size)
+                        self._rank0_record_metric(
+                            iteration, rank, float(local_metric), world_size
+                        )
                 except Exception:
                     pass
 
@@ -135,7 +157,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 for name, param in model.named_parameters():
                     if name in update:
                         averaged = update[name]
-                        param.data.copy_(self.momentum * param.data + (1.0 - self.momentum) * averaged)
+                        param.data.copy_(
+                            self.momentum * param.data + (1.0 - self.momentum) * averaged
+                        )
 
     # ---------------- Rank 0 metric aggregation and dispatch ----------------
     def _rank0_post_metric_recvs(self) -> None:
@@ -161,7 +185,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             del self._rank0_metric_handles[r]
             del self._rank0_metric_buffers[r]
 
-    def _rank0_record_metric(self, iteration: int, rank: int, metric: float, world_size: int) -> None:
+    def _rank0_record_metric(
+        self, iteration: int, rank: int, metric: float, world_size: int
+    ) -> None:
         bucket = self._rank0_buckets.get(iteration)
         if bucket is None:
             bucket = {}
@@ -177,7 +203,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             weights = self._compute_averaging_weights(
                 all_metrics, ranks_to_average, self.averaging_strategy
             )
-            self._rank0_dispatch_controls(iteration, ranks_to_replace, ranks_to_average, weights)
+            self._rank0_dispatch_controls(
+                iteration, ranks_to_replace, ranks_to_average, weights
+            )
             del self._rank0_buckets[iteration]
 
     def _rank0_dispatch_controls(
@@ -191,8 +219,14 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         replacers = sorted(list(ranks_to_replace))
 
         # Common header: [iteration, strategy_code]
-        strategy_code = 0 if self.averaging_strategy == "mean" else (1 if self.averaging_strategy == "weighted_mean" else 2)
-        header_common = torch.tensor([int(iteration), int(strategy_code)], dtype=torch.int64)
+        strategy_code = (
+            0
+            if self.averaging_strategy == "mean"
+            else (1 if self.averaging_strategy == "weighted_mean" else 2)
+        )
+        header_common = torch.tensor(
+            [int(iteration), int(strategy_code)], dtype=torch.int64
+        )
 
         donors_tensor = torch.tensor(donors, dtype=torch.int64)
         replacers_tensor = torch.tensor(replacers, dtype=torch.int64)
@@ -238,7 +272,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 except Exception:
                     pass
 
-    def _handle_replacer(self, iteration: int, donors: List[int], weights: Optional[torch.Tensor]) -> None:
+    def _handle_replacer(
+        self, iteration: int, donors: List[int], weights: Optional[torch.Tensor]
+    ) -> None:
         assert self._model is not None
         avg_state: Dict[str, torch.Tensor] = {}
         named_params = list(self._model.named_parameters())
@@ -264,7 +300,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                     acc = buf
                     break
                 else:
-                    raise ValueError(f"Unknown averaging strategy: {self.averaging_strategy}")
+                    raise ValueError(
+                        f"Unknown averaging strategy: {self.averaging_strategy}"
+                    )
             if self.averaging_strategy == "mean" and len(donors) > 0:
                 acc = acc / len(donors)
             avg_state[name] = acc
@@ -294,11 +332,17 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 if self._control_work is None:
                     # Post a single persistent irecv for control role
                     self._control_role_buf = torch.zeros(1, dtype=torch.int64)
-                    self._control_work = dist.irecv(self._control_role_buf, src=0, tag=self._TAG_CONTROL) # TODO: this can be recv and merged with below?
+                    self._control_work = dist.irecv(
+                        self._control_role_buf, src=0, tag=self._TAG_CONTROL
+                    )  # TODO: this can be recv and merged with below?
                 else:
                     # Poll completion
                     if self._control_work.is_completed():
-                        role = int(self._control_role_buf.item()) if self._control_role_buf is not None else self._OP_NONE
+                        role = (
+                            int(self._control_role_buf.item())
+                            if self._control_role_buf is not None
+                            else self._OP_NONE
+                        )
                         # Reset for next cycle
                         self._control_work = None
                         self._control_role_buf = None
@@ -336,9 +380,13 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
     # ---------------- Local helpers (copied from selective policy to avoid lints) ----------------
     @staticmethod
-    def _validate_params(replacement_ratio: float, averaging_strategy: str, momentum: float) -> None:
+    def _validate_params(
+        replacement_ratio: float, averaging_strategy: str, momentum: float
+    ) -> None:
         if not 0.0 <= replacement_ratio <= 1.0:
-            raise ValueError(f"replacement_ratio must be between 0 and 1, got {replacement_ratio}")
+            raise ValueError(
+                f"replacement_ratio must be between 0 and 1, got {replacement_ratio}"
+            )
         if averaging_strategy not in ["mean", "weighted_mean", "best_only"]:
             raise ValueError(f"Unknown averaging_strategy: {averaging_strategy}")
         if not 0.0 <= momentum <= 1.0:
@@ -346,7 +394,10 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
     @staticmethod
     def _determine_ranks_for_averaging(
-        all_metrics: torch.Tensor, world_size: int, replacement_ratio: float, averaging_strategy: str
+        all_metrics: torch.Tensor,
+        world_size: int,
+        replacement_ratio: float,
+        averaging_strategy: str,
     ) -> Tuple[Set[int], Set[int]]:
         n_replace = max(1, int(world_size * replacement_ratio))
         sorted_ranks = torch.argsort(all_metrics)
@@ -363,6 +414,8 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
     ) -> Optional[torch.Tensor]:
         if averaging_strategy != "weighted_mean":
             return None
-        contributing_metrics = torch.tensor([all_metrics[r] for r in sorted(ranks_to_average)], dtype=torch.float32)
+        contributing_metrics = torch.tensor(
+            [all_metrics[r] for r in sorted(ranks_to_average)], dtype=torch.float32
+        )
         weights = 1.0 / (contributing_metrics + 1e-8)
         return weights / weights.sum()
