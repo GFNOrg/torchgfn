@@ -4,17 +4,16 @@ A version of GFlowNet training that implements local search sampling strategies 
 HyperGrid environment. This demonstrates how to use more sophisticated sampling
 approaches like local search and Metropolis-Hastings.
 
-For usage see train_hypergrid_local_search.py -h
-
 Example usage:
-python train_hypergrid_local_search.py --ndim 2 --height 8 --n_local_search_loops 2 --back_ratio 0.5 --use_metropolis_hastings
+python train_hypergrid_local_search.py --ndim 2 --height 8 --n_local_search_loops 2 \
+    --back_ratio 0.5 --use_metropolis_hastings
 
 Key features:
 - Implements local search sampling
 - Configurable number of local search loops
 - Adjustable backward step ratio
 - Optional Metropolis-Hastings acceptance criterion
-- Based on TB loss like the simple version
+- Based on TB loss like the train_hypergrid_simple.py example
 """
 
 import argparse
@@ -30,7 +29,7 @@ from gfn.preprocessors import KHotPreprocessor
 from gfn.samplers import LocalSearchSampler
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
-from gfn.utils.modules import MLP
+from gfn.utils.modules import MLP, DiscreteUniform
 from gfn.utils.training import validate
 
 
@@ -41,26 +40,40 @@ def main(args):
     )
 
     # Setup the Environment.
-    env = HyperGrid(ndim=args.ndim, height=args.height, device=device)
+    env = HyperGrid(
+        ndim=args.ndim,
+        height=args.height,
+        device=device,
+        calculate_partition=True,
+        store_all_states=True,
+    )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Build the GFlowNet.
+    input_dim = (
+        preprocessor.output_dim
+        if preprocessor.output_dim is not None
+        else env.state_shape[-1]
+    )
     module_PF = MLP(
-        input_dim=preprocessor.output_dim,
+        input_dim=input_dim,
         output_dim=env.n_actions,
     )
-    module_PB = MLP(
-        input_dim=preprocessor.output_dim,
-        output_dim=env.n_actions - 1,
-        trunk=module_PF.trunk,
-    )
+    if not args.uniform_pb:
+        module_PB = MLP(
+            input_dim=input_dim,
+            output_dim=env.n_actions - 1,
+            trunk=module_PF.trunk,
+        )
+    else:
+        module_PB = DiscreteUniform(output_dim=env.n_actions - 1)
     pf_estimator = DiscretePolicyEstimator(
         module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
     )
     pb_estimator = DiscretePolicyEstimator(
         module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
     )
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
+    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
     # Feed pf to the sampler.
     sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)
@@ -126,6 +139,9 @@ if __name__ == "__main__":
         type=float,
         default=1e-1,
         help="Learning rate for the logZ parameter",
+    )
+    parser.add_argument(
+        "--uniform_pb", action="store_true", help="Use a uniform backward policy"
     )
     parser.add_argument(
         "--n_iterations", type=int, default=1000, help="Number of iterations"

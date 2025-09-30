@@ -20,7 +20,7 @@ from gfn.preprocessors import (
     OneHotPreprocessor,
 )
 from gfn.samplers import LocalSearchSampler, Sampler
-from gfn.utils.modules import MLP, GraphEdgeActionGNN
+from gfn.utils.modules import MLP, GraphActionGNN
 from gfn.utils.prob_calculations import get_trajectory_pfs
 from gfn.utils.training import states_actions_tns_to_traj
 
@@ -56,6 +56,8 @@ def trajectory_sampling_with_return(
         elif env_name == "DiscreteEBM":
             env = DiscreteEBM(ndim=8)
             preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+
+        assert isinstance(preprocessor.output_dim, int)
 
         pf_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
         pb_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
@@ -102,15 +104,15 @@ def trajectory_sampling_with_return(
             directed=False,
             device=torch.device("cpu"),
         )
-        pf_module = GraphEdgeActionGNN(
-            n_nodes=env.n_nodes,
+        pf_module = GraphActionGNN(
+            num_node_classes=env.n_nodes,
             directed=env.is_directed,
             num_edge_classes=env.num_edge_classes,
             embedding_dim=128,
             is_backward=False,
         )
-        pb_module = GraphEdgeActionGNN(
-            n_nodes=env.n_nodes,
+        pb_module = GraphActionGNN(
+            num_node_classes=env.n_nodes,
             directed=env.is_directed,
             num_edge_classes=env.num_edge_classes,
             num_conv_layers=1,
@@ -279,6 +281,7 @@ def test_local_search_for_loop_equivalence(
         else:
             raise ValueError("Unknown environment name")
 
+        assert isinstance(preprocessor.output_dim, int)
         # Build pf & pb
         pf_module = MLP(preprocessor.output_dim, env.n_actions)
         pb_module = MLP(preprocessor.output_dim, env.n_actions - 1)

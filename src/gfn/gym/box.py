@@ -12,11 +12,11 @@ class Box(Env):
     """Box environment, corresponding to the one in Section 4.1 of https://arxiv.org/abs/2301.12594
 
     Attributes:
-        delta (float): The step size.
-        R0 (float): The base reward.
-        R1 (float): The reward for being outside the first box.
-        R2 (float): The reward for being inside the second box.
-        epsilon (float): A small value to avoid numerical issues.
+        delta: The step size.
+        R0: The base reward.
+        R1: The reward for being outside the first box.
+        R2: The reward for being inside the second box.
+        epsilon: A small value to avoid numerical issues.
         device (Literal["cpu", "cuda"] | torch.device): The device to use.
     """
 
@@ -28,6 +28,7 @@ class Box(Env):
         R2: float = 2.0,
         epsilon: float = 1e-4,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        check_action_validity: bool = True,
     ):
         """Initializes the Box environment.
 
@@ -38,6 +39,7 @@ class Box(Env):
             R2: The reward for being inside the second box.
             epsilon: A small value to avoid numerical issues.
             device: The device to use.
+            check_action_validity: Whether to check the action validity.
         """
         assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
@@ -57,6 +59,7 @@ class Box(Env):
             action_shape=(2,),
             dummy_action=dummy_action,
             exit_action=exit_action,
+            check_action_validity=check_action_validity,
         )
 
     def make_random_states(

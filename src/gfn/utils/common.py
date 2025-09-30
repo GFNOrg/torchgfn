@@ -13,6 +13,11 @@ import torch.distributed as dist
 # -----------------------------------------------------------------------------
 
 
+def is_int_dtype(tensor: torch.Tensor) -> bool:
+    """Check if a tensor is an integer dtype."""
+    return not torch.is_floating_point(tensor) and not torch.is_complex(tensor)
+
+
 def get_available_cpus() -> int:
     """Return the number of *usable* CPUs for the current process.
 
@@ -179,17 +184,17 @@ def ensure_same_device(device1: torch.device, device2: torch.device) -> None:
     Raises:
         ValueError: If the devices are not the same.
     """
-    if device1 == device2:
+    try:
+        assert device1 == device2
         return
+    except AssertionError:
+        pass
 
     if device1.type != device2.type:
         raise ValueError(f"The devices have different types: {device1}, {device2}")
 
+    # Device indices must differ since the device types are the same.
     index1, index2 = device1.index, device2.index
-
-    # Same type and same index.
-    if index1 == index2:
-        return
 
     # Both have not-None index but they are different.
     if index1 is not None and index2 is not None:

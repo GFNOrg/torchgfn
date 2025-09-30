@@ -46,7 +46,7 @@ def check_cond_forward(
 
 def get_trajectory_pfs_and_pbs(
     pf: Estimator,
-    pb: Estimator,
+    pb: Estimator | None,
     trajectories: Trajectories,
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
@@ -55,7 +55,8 @@ def get_trajectory_pfs_and_pbs(
 
     Args:
         pf: The forward policy estimator.
-        pb: The backward policy estimator.
+        pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
@@ -120,7 +121,7 @@ def get_trajectory_pfs(
         log_pf_trajectories = torch.full_like(
             trajectories.actions.tensor[..., 0],
             fill_value=fill_value,
-            dtype=torch.float,
+            dtype=torch.get_default_dtype(),  # Floating point dtype.
         )
 
         if len(valid_states) == 0:
@@ -146,7 +147,9 @@ def get_trajectory_pfs(
             valid_actions.tensor
         )  # Using the actions sampled off-policy.
 
-        log_pf_trajectories[action_mask] = valid_log_pf_actions
+        log_pf_trajectories[action_mask] = valid_log_pf_actions.to(
+            log_pf_trajectories.dtype, copy=False
+        )
 
     assert log_pf_trajectories.shape == (
         trajectories.max_length,
@@ -157,7 +160,9 @@ def get_trajectory_pfs(
 
 
 def get_trajectory_pbs(
-    pb: Estimator, trajectories: Trajectories, fill_value: float = 0.0
+    pb: Estimator | None,
+    trajectories: Trajectories,
+    fill_value: float = 0.0,
 ) -> torch.Tensor:
     """Calculates the log probabilities of backward trajectories.
 
@@ -165,6 +170,7 @@ def get_trajectory_pbs(
         pb: The backward policy estimator.
         trajectories: The trajectories to calculate probabilities for.
         fill_value: The value to fill for invalid states (e.g., sink states).
+        dtype: The dtype of the log probabilities.
 
     Returns:
         A tensor containing the log probabilities of the backward trajectories.
@@ -178,7 +184,7 @@ def get_trajectory_pbs(
     log_pb_trajectories = torch.full_like(
         trajectories.actions.tensor[..., 0],
         fill_value=fill_value,
-        dtype=torch.float,
+        dtype=torch.get_default_dtype(),  # Floating point dtype.
     )
 
     # Note the different mask for valid states and actions compared to the pf case.
@@ -203,19 +209,24 @@ def get_trajectory_pbs(
     masked_cond = None
     if trajectories.conditioning is not None:
         # We need to index the conditioning vector to broadcast over the states.
-        cond_dim = (-1,) * len(trajectories.conditioning.shape)
-        traj_len = trajectories.states.tensor.shape[0]
-        masked_cond = trajectories.conditioning.unsqueeze(0).expand(
-            (traj_len,) + cond_dim
-        )[state_mask]
+        # The conditioning tensor has shape (max_length, n_trajectories, 1)
+        # We need to index it with the state_mask to get the valid states
+        masked_cond = trajectories.conditioning[state_mask]
 
-    estimator_outputs = check_cond_forward(pb, "pb", valid_states, masked_cond)
+    if pb is not None:
+        estimator_outputs = check_cond_forward(pb, "pb", valid_states, masked_cond)
+        valid_log_pb_actions = pb.to_probability_distribution(
+            valid_states, estimator_outputs
+        ).log_prob(valid_actions.tensor)
 
-    valid_log_pb_actions = pb.to_probability_distribution(
-        valid_states, estimator_outputs
-    ).log_prob(valid_actions.tensor)
+    else:
+        # If pb is None, we assume that the gflownet DAG is a tree, and therefore
+        # the backward policy probability is always 1 (log probs are 0).
+        valid_log_pb_actions = torch.zeros_like(valid_actions.tensor)
 
-    log_pb_trajectories[action_mask] = valid_log_pb_actions
+    log_pb_trajectories[action_mask] = valid_log_pb_actions.to(
+        log_pb_trajectories.dtype, copy=False
+    )
 
     assert log_pb_trajectories.shape == (
         trajectories.max_length,
@@ -232,7 +243,7 @@ def get_trajectory_pbs(
 
 def get_transition_pfs_and_pbs(
     pf: Estimator,
-    pb: Estimator,
+    pb: Estimator | None,
     transitions: Transitions,
     recalculate_all_logprobs: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -240,7 +251,8 @@ def get_transition_pfs_and_pbs(
 
     Args:
         pf: The forward policy estimator.
-        pb: The backward policy estimator.
+        pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
         transitions: The transitions to calculate probabilities for.
         recalculate_all_logprobs: Whether to recalculate log probabilities even if they
             already exist in the transitions object.
@@ -300,7 +312,14 @@ def get_transition_pfs(
     return log_pf_actions
 
 
-def get_transition_pbs(pb: Estimator, transitions: Transitions) -> torch.Tensor:
+def get_transition_pbs(pb: Estimator | None, transitions: Transitions) -> torch.Tensor:
+    """Calculates the log probabilities of backward transitions.
+
+    Args:
+        pb: The backward policy Estimator, or None if the gflownet DAG is a tree, and
+            pb is therefore always 1.
+        transitions: The transitions to calculate probabilities for.
+    """
     # automatically removes invalid transitions (i.e. s_f -> s_f)
     valid_next_states = transitions.next_states[~transitions.is_terminating]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]
@@ -311,20 +330,24 @@ def get_transition_pbs(pb: Estimator, transitions: Transitions) -> torch.Tensor:
         if transitions.conditioning is not None
         else None
     )
-    estimator_outputs = check_cond_forward(pb, "pb", valid_next_states, masked_cond)
 
-    # Evaluate the log PB of the actions.
+    # TODO: We support a fill_value for trajectories, but not for transitions.
+    # Should we add it here, or remove it for trajectories?
     log_pb_actions = torch.zeros(
-        (transitions.n_transitions,),
-        dtype=torch.float,
-        device=transitions.states.device,
+        (transitions.n_transitions,), device=transitions.states.device
     )
 
-    if len(valid_next_states) != 0:
+    # If pb is None, we assume that the gflownet DAG is a tree, and therefore
+    # the backward policy probability is always 1 (log probs are 0).
+    if pb is not None:
+        estimator_outputs = check_cond_forward(pb, "pb", valid_next_states, masked_cond)
+
+        # Evaluate the log PB of the actions.
         valid_log_pb_actions = pb.to_probability_distribution(
             valid_next_states, estimator_outputs
         ).log_prob(non_exit_actions.tensor)
 
-        log_pb_actions[~transitions.is_terminating] = valid_log_pb_actions
+        if len(valid_next_states) != 0:
+            log_pb_actions[~transitions.is_terminating] = valid_log_pb_actions
 
     return log_pb_actions

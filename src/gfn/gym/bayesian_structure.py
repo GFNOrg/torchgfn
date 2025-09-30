@@ -31,6 +31,7 @@ class BayesianStructure(GraphBuilding):
         n_nodes: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        check_action_validity: bool = True,
     ):
         if isinstance(device, str):
             device = torch.device(device)
@@ -39,26 +40,35 @@ class BayesianStructure(GraphBuilding):
         self.n_actions = n_nodes**2 + 1
 
         s0 = GeometricData(
-            x=torch.arange(n_nodes, dtype=torch.float)[:, None].to(device),
-            edge_attr=torch.ones((0, 1), dtype=torch.float).to(device),
+            x=torch.arange(n_nodes, dtype=torch.long)[:, None].to(
+                device
+            ),  # TODO: should dtype be allowed to be float?
+            edge_attr=torch.ones((0, 1), dtype=torch.long).to(
+                device
+            ),  # TODO: should dtype be allowed to be float?
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )
         sf = GeometricData(
-            x=-torch.ones(n_nodes, dtype=torch.float)[:, None].to(device),
-            edge_attr=torch.zeros((0, 1), dtype=torch.float).to(device),
+            x=-torch.ones(n_nodes, dtype=torch.long)[:, None].to(
+                device
+            ),  # TODO: should dtype be allowed to be float?
+            edge_attr=torch.zeros((0, 1), dtype=torch.long).to(
+                device
+            ),  # TODO: should dtype be allowed to be float?
             edge_index=torch.zeros((2, 0), dtype=torch.long).to(device),
             device=device,
         )
 
         super().__init__(
-            num_node_classes=1,
+            num_node_classes=n_nodes,
             num_edge_classes=1,
             state_evaluator=state_evaluator,
             is_directed=True,
             device=device,
             s0=s0,
             sf=sf,
+            check_action_validity=check_action_validity,
         )
 
     def make_states_class(self) -> type[GraphStates]:
@@ -138,9 +148,15 @@ class BayesianStructure(GraphBuilding):
                 return TensorDict(
                     {
                         GraphActions.ACTION_TYPE_KEY: action_type,
-                        GraphActions.NODE_CLASS_KEY: torch.ones(
+                        GraphActions.NODE_CLASS_KEY: torch.zeros(
                             *self.batch_shape,
                             self.num_node_classes,
+                            dtype=torch.bool,
+                            device=self.device,
+                        ),
+                        GraphActions.NODE_INDEX_KEY: torch.zeros(
+                            *self.batch_shape,
+                            self.n_nodes,
                             dtype=torch.bool,
                             device=self.device,
                         ),
@@ -192,9 +208,15 @@ class BayesianStructure(GraphBuilding):
                 return TensorDict(
                     {
                         GraphActions.ACTION_TYPE_KEY: action_type,
-                        GraphActions.NODE_CLASS_KEY: torch.ones(
+                        GraphActions.NODE_CLASS_KEY: torch.zeros(
                             *self.batch_shape,
                             self.num_node_classes,
+                            dtype=torch.bool,
+                            device=self.device,
+                        ),
+                        GraphActions.NODE_INDEX_KEY: torch.zeros(
+                            *self.batch_shape,
+                            self.n_nodes,
                             dtype=torch.bool,
                             device=self.device,
                         ),

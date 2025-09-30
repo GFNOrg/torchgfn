@@ -231,6 +231,7 @@ def main(args: Namespace):
         idx = np.arange(n_modes_total)
         np.random.shuffle(idx)
         ring_expert_data = ring_modes[idx[:n_expert_data]]  # type: ignore
+        assert gflownet.pb is not None
         backward_sampler = Sampler(gflownet.pb)
 
         trajectories = backward_sampler.sample_trajectories(
@@ -276,7 +277,7 @@ def main(args: Namespace):
         terminating_states = training_samples.terminating_states
         assert isinstance(terminating_states, GraphStates)
         rewards = env.reward(terminating_states)
-        pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
+        pct_rings = torch.mean(rewards > 0.1, dtype=torch.get_default_dtype()) * 100
 
         # Add the training samples to the replay buffer. If the user requested the use
         # of expert data, gflownet samples are only added after the first

@@ -12,13 +12,14 @@ from gfn.samplers import Trajectories
 from gfn.states import DiscreteStates
 
 
-def get_terminating_state_dist_pmf(
-    env: DiscreteEnv, states: DiscreteStates
+def get_terminating_state_dist(
+    env: DiscreteEnv,
+    states: DiscreteStates,
 ) -> torch.Tensor:
     """Computes the empirical distribution of the terminating states.
 
     Args:
-        env: The environment.
+        env: The DiscreteEnv instance.
         states: The states to compute the distribution of.
 
     Returns:
@@ -32,7 +33,9 @@ def get_terminating_state_dist_pmf(
         for state_idx in range(env.n_terminating_states)
     ]
 
-    return torch.tensor(counter_list, dtype=torch.float) / len(states_indices)
+    return torch.tensor(counter_list, dtype=torch.get_default_dtype()) / len(
+        states_indices
+    )
 
 
 def validate(
@@ -64,11 +67,11 @@ def validate(
     """
 
     true_logZ = env.log_partition
-    true_dist_pmf = env.true_dist_pmf
-    if isinstance(true_dist_pmf, torch.Tensor):
-        true_dist_pmf = true_dist_pmf.cpu()
+    true_dist = env.true_dist
+    if isinstance(true_dist, torch.Tensor):
+        true_dist = true_dist.cpu()
     else:
-        # The environment does not implement a true_dist_pmf property, nor a log_partition property
+        # The environment does not implement a true_dist property, nor a log_partition property
         # We cannot validate the gflownet
         return {}, visited_terminating_states
 
@@ -85,10 +88,8 @@ def validate(
         # Only keep the most recent n_validation_samples states.
         sampled_terminating_states = visited_terminating_states[-n_validation_samples:]
 
-    final_states_dist_pmf = get_terminating_state_dist_pmf(
-        env, sampled_terminating_states
-    )
-    l1_dist = (final_states_dist_pmf - true_dist_pmf).abs().mean().item()
+    final_states_dist = get_terminating_state_dist(env, sampled_terminating_states)
+    l1_dist = (final_states_dist - true_dist).abs().mean().item()
     validation_info = {"l1_dist": l1_dist}
     if logZ is not None:
         validation_info["logZ_diff"] = abs(logZ - true_logZ)

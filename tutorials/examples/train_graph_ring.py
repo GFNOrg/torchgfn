@@ -31,7 +31,7 @@ from gfn.gflownet.trajectory_balance import TBGFlowNet
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.states import GraphStates
 from gfn.utils.common import set_seed
-from gfn.utils.modules import GraphEdgeActionGNN, GraphEdgeActionMLP
+from gfn.utils.modules import GraphActionGNN, GraphEdgeActionMLP
 
 
 class RingReward(object):
@@ -272,30 +272,36 @@ def init_gflownet(
 ) -> TBGFlowNet:
     # Choose model type based on USE_GNN flag
     if use_gnn:
-        module_pf = GraphEdgeActionGNN(
-            num_nodes,
-            directed,
+        module_pf = GraphActionGNN(
+            num_node_classes=num_nodes,
+            directed=directed,
             num_conv_layers=num_conv_layers,
             num_edge_classes=num_edge_classes,
+            embedding_dim=embedding_dim,
         )
-        module_pb = GraphEdgeActionGNN(
-            num_nodes,
-            directed,
+        module_pb = GraphActionGNN(
+            num_node_classes=num_nodes,
+            directed=directed,
             is_backward=True,
             num_conv_layers=num_conv_layers,
             num_edge_classes=num_edge_classes,
+            embedding_dim=embedding_dim,
         )
     else:
         module_pf = GraphEdgeActionMLP(
             num_nodes,
             directed,
+            num_node_classes=num_nodes,
             num_edge_classes=num_edge_classes,
+            embedding_dim=embedding_dim,
         )
         module_pb = GraphEdgeActionMLP(
             num_nodes,
             directed,
             is_backward=True,
+            num_node_classes=num_nodes,
             num_edge_classes=num_edge_classes,
+            embedding_dim=embedding_dim,
         )
 
     pf = DiscreteGraphPolicyEstimator(
@@ -407,7 +413,7 @@ def main(args: Namespace):
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)
-        pct_rings = torch.mean(rewards > 0.1, dtype=torch.float) * 100
+        pct_rings = torch.mean(rewards > 0.1, dtype=torch.get_default_dtype()) * 100
         print(
             "Iteration {} - Loss: {:.02f}, rings: {:.0f}%".format(
                 iteration, loss.item(), pct_rings

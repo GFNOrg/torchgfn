@@ -10,7 +10,7 @@ from gfn.containers.states_container import StatesContainer
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 from gfn.states import DiscreteStates, GraphStates, States
-from gfn.utils.common import ensure_same_device
+from gfn.utils.common import ensure_same_device, is_int_dtype
 
 
 # TODO: remove env from this class?
@@ -76,7 +76,6 @@ class Trajectories(Container):
                 the log probabilities of the trajectories' actions.
             estimator_outputs: Optional tensor of shape (max_length, n_trajectories, ...)
                 containing outputs of a function approximator for each step.
-
         Note:
             When states and actions are not None, the Trajectories is initialized as
             an empty container that can be populated later with the `extend` method.
@@ -125,30 +124,29 @@ class Trajectories(Container):
         self.terminating_idx = (
             terminating_idx
             if terminating_idx is not None
-            else torch.full(size=(0,), fill_value=-1, dtype=torch.long, device=device)
+            else torch.full(size=(0,), fill_value=-1, device=device)
         )
-        assert (
-            self.terminating_idx.shape == (self.n_trajectories,)
-            and self.terminating_idx.dtype == torch.long
+        assert self.terminating_idx.shape == (self.n_trajectories,) and is_int_dtype(
+            self.terminating_idx
         )
 
         self._log_rewards = log_rewards
         assert self._log_rewards is None or (
             self._log_rewards.shape == (self.n_trajectories,)
-            and self._log_rewards.dtype == torch.float
+            and self._log_rewards.is_floating_point()
         )
 
         self.log_probs = log_probs
         assert self.log_probs is None or (
             self.log_probs.shape == self.actions.batch_shape
-            and self.log_probs.dtype == torch.float
+            and self.log_probs.is_floating_point()
         )
 
         self.estimator_outputs = estimator_outputs
         assert self.estimator_outputs is None or (
             self.estimator_outputs.shape[: len(self.states.batch_shape)]
             == self.actions.batch_shape
-            and self.estimator_outputs.dtype == torch.float
+            and self.estimator_outputs.is_floating_point()
         )
 
     def __repr__(self) -> str:
@@ -329,16 +327,16 @@ class Trajectories(Container):
         if len(self) == 0:
             if other._log_rewards is not None:
                 self._log_rewards = torch.full(
-                    (0,), fill_value=-float("inf"), dtype=torch.float, device=self.device
+                    (0,), fill_value=-float("inf"), device=self.device
                 )
             if other.log_probs is not None:
                 self.log_probs = torch.full(
-                    size=(0, 0), fill_value=0, dtype=torch.float, device=self.device
+                    size=(0, 0), fill_value=0.0, device=self.device
                 )
             if other.estimator_outputs is not None:
                 self.estimator_outputs = torch.full(
                     size=(0, 0, *other.estimator_outputs.shape[2:]),
-                    fill_value=0,
+                    fill_value=0.0,
                     dtype=other.estimator_outputs.dtype,
                     device=self.device,
                 )
@@ -392,10 +390,11 @@ class Trajectories(Container):
             current Trajectories.
         """
         if self.conditioning is not None:
-            expand_dims = (self.max_length,) + tuple(self.conditioning.shape)
-            conditioning = self.conditioning.unsqueeze(0).expand(expand_dims)[
-                ~self.actions.is_dummy
-            ]
+            # The conditioning tensor has shape (max_length, n_trajectories, 1)
+            # The actions have shape (max_length, n_trajectories)
+            # We need to index the conditioning tensor to match the actions
+            # The actions exclude the last step, so we need to exclude the last step from conditioning
+            conditioning = self.conditioning[:-1][~self.actions.is_dummy]
         else:
             conditioning = None
 
@@ -413,7 +412,6 @@ class Trajectories(Container):
             log_rewards = torch.full(
                 actions.batch_shape,
                 fill_value=-float("inf"),
-                dtype=torch.float,
                 device=actions.device,
             )
             # TODO: Can we vectorize this?
@@ -469,9 +467,12 @@ class Trajectories(Container):
 
         conditioning = None
         if self.conditioning is not None:
-            conditioning = self.conditioning.repeat(
-                self.max_length + 1, *((1,) * (len(self.conditioning.shape) - 1))
-            )[is_valid]
+            # The conditioning tensor has shape (max_length, n_trajectories, 1)
+            # We need to flatten it to match the flattened states
+            # First, we need to repeat it to match the flattened shape
+            # The flattened states have shape (max_length * n_trajectories,)
+            # So we need to repeat the conditioning tensor accordingly
+            conditioning = self.conditioning.flatten(0, 1)[is_valid]
 
         if self.log_rewards is None:
             log_rewards = None
@@ -479,7 +480,6 @@ class Trajectories(Container):
             log_rewards = torch.full(
                 (len(states),),
                 fill_value=-float("inf"),
-                dtype=torch.float,
                 device=states.device,
             )
             # Get the original indices (before flattening and filtering).

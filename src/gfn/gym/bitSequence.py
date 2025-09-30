@@ -8,6 +8,7 @@ from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import DiscreteEnv
 from gfn.states import DiscreteStates
+from gfn.utils.common import is_int_dtype
 
 # This environment is the torchgfn implmentation of the bit sequences task presented in :Malkin, Nikolay & Jain, Moksh & Bengio, Emmanuel & Sun, Chen & Bengio, Yoshua. (2022).
 # Trajectory Balance: Improved Credit Assignment in GFlowNets. https://arxiv.org/pdf/2201.13259
@@ -20,9 +21,14 @@ class BitSequenceStates(DiscreteStates):
         word_size (ClassVar[int]): The size of each word in the bit sequence.
         tensor (torch.Tensor): The tensor representing the states.
         length (torch.Tensor): The tensor representing the length of each bit sequence.
+        forward_masks (torch.Tensor): The tensor representing the forward masks.
+        backward_masks (torch.Tensor): The tensor representing the backward masks.
     """
 
     word_size: ClassVar[int]
+    length: torch.Tensor
+    forward_masks: torch.Tensor
+    backward_masks: torch.Tensor
 
     def __init__(
         self,
@@ -46,9 +52,11 @@ class BitSequenceStates(DiscreteStates):
             length = torch.zeros(
                 self.batch_shape, dtype=torch.long, device=self.__class__.device
             )
-        assert length is not None
-        assert length.dtype == torch.long
+        assert is_int_dtype(length)
         self.length = length
+        assert self.length is not None
+        assert self.forward_masks is not None
+        assert self.backward_masks is not None
 
     def clone(self) -> BitSequenceStates:
         """Returns a clone of the current BitSequencesStates object.
@@ -78,7 +86,6 @@ class BitSequenceStates(DiscreteStates):
             A subset of the BitSequencesStates object.
         """
         self._check_both_forward_backward_masks_exist()
-
         return self.__class__(
             self.tensor[index],
             self.length[index],
@@ -209,6 +216,7 @@ class BitSequence(DiscreteEnv):
         H: Optional[torch.Tensor] = None,
         device_str: str = "cpu",
         seed: int = 0,
+        check_action_validity: bool = True,
     ):
         """Initializes the BitSequence environment.
 
@@ -220,6 +228,7 @@ class BitSequence(DiscreteEnv):
             H: A tensor used to create the modes.
             device_str: The device to run the computations on ("cpu" or "cuda").
             seed: The seed for the random number generator.
+            check_action_validity: Whether to check the action validity.
         """
         assert seq_size % word_size == 0, "word_size must divide seq_size."
         self.words_per_seq: int = seq_size // word_size
@@ -245,6 +254,7 @@ class BitSequence(DiscreteEnv):
             dummy_action,
             exit_action,
             sf,
+            check_action_validity=check_action_validity,
         )
         self.H = H
         self.modes = self.make_modes_set(seed)  # set of modes written as binary
@@ -284,7 +294,7 @@ class BitSequence(DiscreteEnv):
         """
         if length is None:
             mask = tensor != -1
-            length = mask.int().sum(dim=-1)
+            length = mask.long().sum(dim=-1)
         states_instance = self.make_states_class()(tensor, length=length)
         self.update_masks(states_instance)
         return states_instance
@@ -475,18 +485,14 @@ class BitSequence(DiscreteEnv):
         """Convert a tensor of integers to their binary representation using k bits.
 
         Args:
-            tensor: A tensor containing integers. The tensor must have a dtype
-                of torch.int32 or torch.int64.
+            tensor: A tensor containing integers.
             k: The number of bits to use for the binary representation of each
                 integer.
 
         Returns:
             A tensor containing the binary representation of the input integers.
         """
-        assert tensor.dtype in [
-            torch.int32,
-            torch.int64,
-        ], "Tensor must contain integers"
+        assert is_int_dtype(tensor), "Tensor must contain integers"
 
         batch_shape = tensor.shape[:-1]
         length = tensor.shape[-1]
@@ -520,7 +526,10 @@ class BitSequence(DiscreteEnv):
         Returns:
             A tensor of integers obtained from the binary tensor.
         """
-        assert binary_tensor.dtype == torch.int64, "Binary tensor must be of type int64"
+        assert binary_tensor.dtype in [
+            torch.int64,
+            torch.long,
+        ], "Binary tensor must be of type int64"
         batch_shape = binary_tensor.shape[:-1]
         length = binary_tensor.shape[-1] // k
 
@@ -698,7 +707,7 @@ class BitSequence(DiscreteEnv):
         return 2 ** (self.seq_size + 1) - 1
 
     @property
-    def true_dist_pmf(self) -> torch.Tensor:
+    def true_dist(self) -> torch.Tensor:
         """Returns the true probability mass function of the reward distribution."""
         states = self.terminating_states
         rewards = self.reward(states)
@@ -817,7 +826,7 @@ class BitSequencePlus(BitSequence):
         old_tensor[is_exit] = torch.full_like(
             old_tensor[is_exit],
             self.n_actions - 1,
-            dtype=torch.long,
+            dtype=old_tensor.dtype,
             device=old_tensor.device,
         )
         return self.States(old_tensor)

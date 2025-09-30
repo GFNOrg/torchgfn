@@ -14,7 +14,9 @@ import torch
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
+from gfn.gym.helpers.hypergrid.rewards import get_reward_fn
 from gfn.states import DiscreteStates
+from gfn.utils.common import ensure_same_device
 
 if platform.system() == "Windows":
     multiprocessing.set_start_method("spawn", force=True)
@@ -53,75 +55,67 @@ class HyperGrid(DiscreteEnv):
     `{0, 1, ..., height - 1}`.
 
     Attributes:
-        ndim (int): The dimension of the grid.
-        height (int): The height of the grid.
-        R0 (float): The reward parameter R0.
-        R1 (float): The reward parameter R1.
-        R2 (float): The reward parameter R2.
-        reward_cos (bool): Whether to use the cosine reward.
-        calculate_partition (bool): Whether to calculate the log partition function.
-        calculate_all_states (bool): Whether to store all states.
-        scale_factor (int): The scale factor for the reward.
+        ndim: The dimension of the grid.
+        height: The height of the grid.
+        reward_fn: The reward function.
+        calculate_partition: Whether to calculate the log partition function.
+        store_all_states: Whether to store all states.
     """
 
     def __init__(
         self,
         ndim: int = 2,
         height: int = 4,
-        R0: float = 0.1,
-        R1: float = 0.5,
-        R2: float = 2.0,
-        reward_cos: bool = False,
+        reward_fn_str: str = "original",
+        reward_fn_kwargs: dict | None = None,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         calculate_partition: bool = False,
-        calculate_all_states: bool = False,
+        store_all_states: bool = False,
+        check_action_validity: bool = True,
     ):
         """Initializes the HyperGrid environment.
 
         Args:
             ndim: The dimension of the grid.
             height: The height of the grid.
-            R0: The reward parameter R0.
-            R1: The reward parameter R1.
-            R2: The reward parameter R2.
-            reward_cos: Whether to use the cosine reward.
+            reward_fn_str: The reward function string to use.
+            reward_fn_kwargs: The keyword arguments for the reward function.
             device: The device to use.
             calculate_partition: Whether to calculate the log partition function.
-            calculate_all_states: Whether to store all states.
+            store_all_states: Whether to store all states. If True, the true distribution
+                can be accessed via the `true_dist` property.
+            check_action_validity: Whether to check the action validity.
         """
         if height <= 4:
             warnings.warn("+ Warning: height <= 4 can lead to unsolvable environments.")
 
         self.ndim = ndim
         self.height = height
-        self.R0 = R0
-        self.R1 = R1
-        self.R2 = R2
-        self.reward_cos = reward_cos
-        self._all_states = None  # Populated optionally in init.
+        if reward_fn_kwargs is None:
+            reward_fn_kwargs = {"R0": 0.1, "R1": 0.5, "R2": 2.0}
+        self.reward_fn_kwargs = reward_fn_kwargs
+        self.reward_fn = get_reward_fn(reward_fn_str, height, ndim, reward_fn_kwargs)
+        self._all_states_tensor = None  # Populated optionally in init.
         self._log_partition = None  # Populated optionally in init.
-        self._true_dist_pmf = None  # Populated at first request.
+        self._true_dist = None  # Populated at first request.
         self.calculate_partition = calculate_partition
-        self.calculate_all_states = calculate_all_states
+        self.store_all_states = store_all_states
 
         # Pre-computes these values when printing.
-        if self.calculate_all_states:
-            self._calculate_all_states_tensor()
-            assert self._all_states is not None
-            print(f"+ Environment has {len(self._all_states)} states")
+        if self.store_all_states:
+            self._store_all_states_tensor()
+            assert self._all_states_tensor is not None
+            print(f"+ Environment has {len(self._all_states_tensor)} states")
+
         if self.calculate_partition:
             self._calculate_log_partition()
             print(f"+ Environment log partition is {self._log_partition}")
-
-        # This scale is used to stabilize some calculations.
-        # self.scale_factor = smallest_multiplier_to_integers([R0, R1, R2])
-        self.scale_factor = 1
 
         if isinstance(device, str):
             device = torch.device(device)
 
         s0 = torch.zeros(ndim, dtype=torch.long, device=device)
-        sf = torch.full((ndim,), fill_value=-1, dtype=torch.long, device=device)
+        sf = torch.full((ndim,), fill_value=-1, device=device)
         n_actions = ndim + 1
 
         state_shape = (self.ndim,)
@@ -131,8 +125,9 @@ class HyperGrid(DiscreteEnv):
             s0=s0,
             state_shape=state_shape,
             sf=sf,
+            check_action_validity=check_action_validity,
         )
-        self.States: type[DiscreteStates] = self.States
+        self.States: type[DiscreteStates] = self.States  # for type checking
 
     def update_masks(self, states: DiscreteStates) -> None:
         """Updates the masks of the states.
@@ -195,7 +190,7 @@ class HyperGrid(DiscreteEnv):
         assert new_states_tensor.shape == states.tensor.shape
         return self.States(new_states_tensor)
 
-    def reward(self, final_states: DiscreteStates | torch.Tensor) -> torch.Tensor:
+    def reward(self, states: DiscreteStates) -> torch.Tensor:
         r"""Computes the reward for a batch of final states.
 
         In the normal setting, the reward is:
@@ -209,35 +204,10 @@ class HyperGrid(DiscreteEnv):
         Returns:
             The reward of the final states.
         """
-        assert isinstance(
-            final_states, DiscreteStates | torch.Tensor
-        ), f"final_states is {type(final_states)}"
-        if isinstance(final_states, DiscreteStates):
-            final_states_raw = final_states.tensor
-        else:
-            final_states_raw = final_states
-
-        R0, R1, R2 = (self.R0, self.R1, self.R2)
-        ax = abs(final_states_raw / (self.height - 1) - 0.5)
-
-        if not self.reward_cos:
-            reward = (
-                R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
-            )
-        else:
-            pdf_input = ax * 5
-            pdf = 1.0 / (2 * torch.pi) ** 0.5 * torch.exp(-(pdf_input**2) / 2)
-            reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
-
-        if isinstance(final_states, DiscreteStates):
-            assert (
-                reward.shape == final_states.batch_shape
-            ), f"reward.shape is {reward.shape} and final_states.batch_shape is {final_states.batch_shape}"
-        else:
-            n_dims = len(reward.shape)
-            assert (
-                reward.shape == final_states.shape[:n_dims]
-            ), f"reward.shape is {reward.shape} and final_states.shape is {final_states.shape}"
+        reward = self.reward_fn(states.tensor)
+        assert (
+            reward.shape == states.batch_shape
+        ), f"reward.shape is {reward.shape} and states.batch_shape is {states.batch_shape}"
         return reward
 
     def get_states_indices(self, states: DiscreteStates | torch.Tensor) -> torch.Tensor:
@@ -299,6 +269,12 @@ class HyperGrid(DiscreteEnv):
         """
 
         if self._log_partition is None and self.calculate_partition:
+            if self._all_states_tensor is not None:
+                self._log_partition = (
+                    self.reward_fn(self._all_states_tensor).sum().log().item()
+                )
+                return
+
             # The # of possible combinations (with repetition) of
             # numbers, where each
             # number can be any integer from 0 to
@@ -317,7 +293,7 @@ class HyperGrid(DiscreteEnv):
                 batch_size,
             ):
                 batch = torch.LongTensor(list(batch))
-                rewards = self.reward(
+                rewards = self.reward_fn(
                     batch
                 )  # Operates on raw tensors due to multiprocessing.
                 total_reward += rewards.sum().item()  # Accumulate.
@@ -336,24 +312,24 @@ class HyperGrid(DiscreteEnv):
 
             self._log_partition = total_log_reward
 
-    def _calculate_all_states_tensor(self, batch_size: int = 20_000):
-        """Enumerates all states of the complete hypergrid.
+    def _store_all_states_tensor(self, batch_size: int = 20_000):
+        """Enumerates all states_tensor of the complete hypergrid.
 
         Args:
             batch_size: The batch size to use for the calculation.
         """
-        if self._all_states is None and self.calculate_all_states:
+        if self._all_states_tensor is None:
             start_time = time()
-            all_states = []
+            all_states_tensor = []
 
             for batch in self._generate_combinations_in_batches(
                 self.ndim,
                 self.height - 1,  # Handles 0 indexing.
                 batch_size,
             ):
-                all_states.append(torch.LongTensor(list(batch)))
+                all_states_tensor.append(torch.LongTensor(list(batch)))
 
-            all_states = torch.cat(all_states, dim=0)
+            all_states_tensor = torch.cat(all_states_tensor, dim=0)
             end_time = time()
 
             print(
@@ -362,20 +338,20 @@ class HyperGrid(DiscreteEnv):
                 )
             )
 
-            self._all_states = all_states
+            self._all_states_tensor = all_states_tensor
 
     @property
-    def true_dist_pmf(self) -> torch.Tensor | None:
+    def true_dist(self) -> torch.Tensor | None:
         """Returns the pmf over all states in the hypergrid."""
-        if self._true_dist_pmf is None and self.calculate_all_states:
+        if self._true_dist is None and self.all_states is not None:
             assert torch.all(
                 self.get_states_indices(self.all_states)
                 == torch.arange(self.n_states, device=self.device)
             )
-            self._true_dist_pmf = self.reward(self.all_states)
-            self._true_dist_pmf /= self._true_dist_pmf.sum()
+            self._true_dist = self.reward(self.all_states)
+            self._true_dist /= self._true_dist.sum()
 
-        return self._true_dist_pmf
+        return self._true_dist
 
     def all_indices(self) -> List[Tuple[int, ...]]:
         """Generate all possible indices for the grid.
@@ -399,22 +375,28 @@ class HyperGrid(DiscreteEnv):
         return self._log_partition
 
     @property
-    def all_states(self) -> DiscreteStates:
+    def all_states(self) -> DiscreteStates | None:
         """Returns a tensor of all hypergrid states as a `DiscreteStates` instance."""
-        if self.calculate_all_states and not isinstance(self._all_states, torch.Tensor):
-            self._calculate_all_states_tensor()
+        if self._all_states_tensor is None:
+            if not self.store_all_states:
+                return None
+            self._store_all_states_tensor()
 
-        assert self._all_states is not None
-        all_states = self.States(self._all_states)
-        assert isinstance(all_states, DiscreteStates)
+        assert self._all_states_tensor is not None
+        try:
+            ensure_same_device(self._all_states_tensor.device, self.device)
+        except ValueError:
+            self._all_states_tensor = self._all_states_tensor.to(self.device)
+
+        all_states = self.States(self._all_states_tensor)
         return all_states
 
     @property
-    def terminating_states(self) -> DiscreteStates:
+    def terminating_states(self) -> DiscreteStates | None:
         """Returns all terminating states of the environment."""
         return self.all_states
 
-    # Helper methods for enumerating all possible statxes.
+    # Helper methods for enumerating all possible states.
     def _generate_combinations_chunk(self, numbers, n, start, end):
         """Generate combinations with replacement for the specified range."""
         # islice accesses a subset of the full iterator - each job does unique work.

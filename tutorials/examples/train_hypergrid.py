@@ -34,8 +34,9 @@ import sys
 import threading
 import time
 from argparse import ArgumentParser
+from dataclasses import dataclass
 from math import ceil
-from typing import Callable, Optional, cast
+from typing import Callable, List, Optional, cast
 
 import matplotlib.pyplot as plt
 import torch
@@ -46,6 +47,7 @@ from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
+from gfn.containers.replay_buffer_manager import ReplayBufferManager
 from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
@@ -66,6 +68,7 @@ from tutorials.examples.multinode.spawn_policy import (
     AverageAllPolicy,
     AsyncSelectiveAveragingPolicy,
 )
+
 
 r"""
 Helper class for timing code execution blocks and accumulating elapsed time in a dictionary.
@@ -200,7 +203,49 @@ def report_timing(all_timing_dict, world_size):
     # print("Load Imbalance (LI) is as follows:")
     report_load_imbalance(all_timing_dict, world_size)
 
-def initialize_distributed_compute(dist_backend: str = "ccl"):
+
+def average_gradients(model):
+    """All-Reduce gradients across all models."""
+    size = float(dist.get_world_size())
+    for param in model.parameters():
+        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
+        param.grad.data /= size
+
+
+def average_models(model, training_group=None):
+    """Averages model weights across all ranks."""
+    world_size = float(dist.get_world_size())
+    for param in model.parameters():
+        param_tensor = param.data.clone()  # clone to avoid inplace operations
+        dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=training_group)
+        param.data = param_tensor / world_size
+
+
+@dataclass
+class DistributedContext:
+    """Holds all distributed training/replay buffer groups and ranks."""
+
+    my_rank: int
+    world_size: int
+    num_training_ranks: int
+    agent_group_size: int
+    agent_groups: Optional[List[dist.ProcessGroup]] = None
+    agent_group_id: Optional[int] = None
+    train_global_group: Optional[dist.ProcessGroup] = None
+    assigned_buffer: Optional[int] = None
+    buffer_group: Optional[dist.ProcessGroup] = None
+    assigned_training_ranks: Optional[List[int]] = None
+
+    def is_buffer_rank(self) -> bool:
+        """Check if the current rank is part of the buffer group."""
+        return self.my_rank >= self.num_training_ranks
+
+    def is_training_rank(self) -> bool:
+        """Check if the current rank is part of the training group."""
+        return self.my_rank < self.num_training_ranks
+
+
+def initialize_distributed_compute() -> DistributedContext:
     """Initalizes distributed compute using either ccl or mpi backends."""
     # global my_rank  # TODO: remove globals?
     # global my_size  # TODO: remove globals?
@@ -208,78 +253,146 @@ def initialize_distributed_compute(dist_backend: str = "ccl"):
     pmi_size = int(os.environ.get("PMI_SIZE", "0"))  # 0 or 1 default value?
     print("+ Initalizing distributed compute, PMI_SIZE={}".format(pmi_size))
 
-    if pmi_size > 1:
-        if dist_backend == "ccl":
-            print("+ CCL backend requested...")
-            try:
-                # Note - intel must be imported before oneccl!
-                import oneccl_bindings_for_pytorch  # noqa: F401
-            except ImportError as e:
-                raise Exception(
-                    "import oneccl_bindings_for_pytorch failed, {}".format(e)
-                )
-
-        elif dist_backend == "mpi":
-            print("+ MPI backend requested...")
-            assert torch.distributed.is_mpi_available()
-            try:
-                import torch_mpi  # noqa: F401
-            except ImportError as e:
-                raise Exception("import torch_mpi failed, {}".format(e))
-        elif dist_backend == "gloo":
-            print("+ Gloo backend requested...")
-            assert torch.distributed.is_gloo_available()
-            # try:
-            #     import torch_gloo  # noqa: F401
-            # except ImportError as e:
-            #     raise Exception("import torch_gloo failed, {}".format(e))
-        else:
-            raise Exception(f"Invalid backend requested: {dist_backend}")
-
-        os.environ["RANK"] = os.environ.get("PMI_RANK", "0")
-        os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
-
-        print("+ OMP_NUM_THREADS = ", os.getenv("OMP_NUM_THREADS"))
-
-        world_size = os.environ.get("WORLD_SIZE")
-        if world_size is None:
-            raise ValueError("WORLD_SIZE is not set")
-        rank = os.environ.get("RANK")
-        if rank is None:
-            raise ValueError("RANK is not set")
-
-        dist.init_process_group(
-            backend=dist_backend,
-            init_method="env://",
-            world_size=int(world_size),
-            rank=int(rank),
-            timeout=datetime.timedelta(minutes=5),
+    if pmi_size <= 1:
+        print("+ PMI_SIZE <= 1, running in single process mode.")
+        return DistributedContext(
+            my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
         )
 
-        my_rank = dist.get_rank()  # Global!
-        my_size = dist.get_world_size()  # Global!
+    if args.dist_backend == "ccl":
+        print("+ CCL backend requested...")
+        try:
+            # Note - intel must be imported before oneccl!
+            import oneccl_bindings_for_pytorch  # noqa: F401
+        except ImportError as e:
+            raise Exception("import oneccl_bindings_for_pytorch failed, {}".format(e))
 
-        # for now, let us enforce that each agent gets equal number of ranks.
-        # TODO: later, we can relax this condition.
-        assert my_size % args.num_agent_groups == 0
-        agent_group_size = my_size // args.num_agent_groups
-        agent_group_rank_list = [
-            list(range(i * agent_group_size, (i + 1) * agent_group_size))
-            for i in range(args.num_agent_groups)
-        ]
-        print(agent_group_rank_list)
-        agent_group_list = [
+    elif args.dist_backend == "mpi":
+        print("+ MPI backend requested...")
+        assert torch.distributed.is_mpi_available()
+        try:
+            import torch_mpi  # noqa: F401
+        except ImportError as e:
+            raise Exception("import torch_mpi failed, {}".format(e))
+
+    elif args.dist_backend == "gloo":
+        print("+ Gloo backend requested...")
+        assert torch.distributed.is_gloo_available()
+
+    else:
+        raise Exception(f"Invalid backend requested: {args.dist_backend}")
+
+    os.environ["RANK"] = os.environ.get("PMI_RANK", "0")
+    os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
+
+    print("+ OMP_NUM_THREADS = ", os.getenv("OMP_NUM_THREADS"))
+
+    world_size = os.environ.get("WORLD_SIZE")
+    if world_size is None:
+        raise ValueError("WORLD_SIZE is not set")
+    rank = os.environ.get("RANK")
+    if rank is None:
+        raise ValueError("RANK is not set")
+
+    dist.init_process_group(
+        backend=args.dist_backend,
+        init_method="env://",
+        world_size=int(world_size),
+        rank=int(rank),
+        timeout=datetime.timedelta(minutes=5),
+    )
+
+    dist.barrier()
+    print("+ Distributed compute initialized, backend = {}".format(args.dist_backend))
+
+    my_rank = dist.get_rank()  # Global!
+    world_size = dist.get_world_size()  # Global!
+
+    num_training_ranks = world_size - args.num_remote_buffers
+
+    assert (
+        num_training_ranks >= args.num_remote_buffers
+    )  # make sure that we have atmost 1 remote buffer per training rank.
+    print("num_train = ", num_training_ranks)
+    print("args.num_remote_buffers = ", args.num_remote_buffers)
+
+    # for now, let us enforce that each agent gets equal number of ranks.
+    # TODO: later, we can relax this condition.
+    assert num_training_ranks % args.num_agent_groups == 0
+    agent_group_size = num_training_ranks // args.num_agent_groups
+    agent_group_rank_list = [
+        list(range(i * agent_group_size, (i + 1) * agent_group_size))
+        for i in range(args.num_agent_groups)
+    ]
+    print(f"Agent group ranks: {agent_group_rank_list}")
+    agent_group_list = [
+        cast(
+            dist.ProcessGroup,
             dist.new_group(
                 agent_group_rank_list[i],
-                backend=dist_backend,
+                backend=args.dist_backend,
                 timeout=datetime.timedelta(minutes=5),
-            )
-            for i in range(args.num_agent_groups)
-        ]
+            ),
+        )
+        for i in range(args.num_agent_groups)
+    ]
 
-        print(f"+ My rank: {my_rank} size: {my_size}")
+    # all training ranks in one global group
+    training_ranks = [
+        r for r in range(num_training_ranks)
+    ]  # e.g., 0..num_training_ranks-1
+    train_global_group = dist.new_group(
+        ranks=training_ranks,
+        backend=args.dist_backend,
+        timeout=datetime.timedelta(minutes=5),
+    )
 
-        return (my_rank, my_size, agent_group_size, agent_group_list)
+    buffer_group = None
+    assigned_buffer = None
+    assigned_training_ranks = {}
+    if args.num_remote_buffers > 0:
+        buffer_ranks = list(
+            range(num_training_ranks, num_training_ranks + args.num_remote_buffers)
+        )
+        buffer_group = dist.new_group(
+            buffer_ranks,
+            backend=args.dist_backend,
+            timeout=datetime.timedelta(minutes=5),
+        )
+        print(f"Buffer group ranks: {buffer_ranks}")
+
+        # Each training rank gets assigned to a buffer rank
+
+        if my_rank < (num_training_ranks):
+            assigned_buffer = num_training_ranks + (my_rank % args.num_remote_buffers)
+        else:
+            assigned_training_ranks[my_rank] = [
+                ranks
+                for ranks in range(num_training_ranks)
+                if (ranks % args.num_remote_buffers) == (my_rank - num_training_ranks)
+            ]
+
+        print(f"+ My rank: {my_rank} size: {world_size}")
+        if my_rank < (num_training_ranks):
+            print(f"  -> Training group, assigned buffer rank = {assigned_buffer}")
+        else:
+            print("  -> Buffer group")
+
+    dist.barrier()
+    print("+ Distributed compute initialized, rank = ", my_rank)
+
+    return DistributedContext(
+        my_rank=my_rank,
+        world_size=world_size,
+        num_training_ranks=num_training_ranks,
+        agent_group_size=agent_group_size,
+        agent_groups=agent_group_list,
+        agent_group_id=my_rank // agent_group_size,
+        train_global_group=train_global_group,
+        assigned_buffer=assigned_buffer,
+        buffer_group=buffer_group,
+        assigned_training_ranks=assigned_training_ranks.get(my_rank, None),
+    )
 
 
 class DistributedErrorHandler:
@@ -380,7 +493,7 @@ def gather_distributed_data(
     world_size: int | None = None,
     rank: int | None = None,
     verbose: bool = False,
-    group: dist.ProcessGroup | None = None,
+    training_group: dist.ProcessGroup | None = None,
 ) -> torch.Tensor | None:
     """
     Gather data from all processes in a distributed setting.
@@ -398,9 +511,17 @@ def gather_distributed_data(
         print("syncing distributed data")
 
     if world_size is None:
-        world_size = dist.get_world_size(group=group)
+        world_size = dist.get_world_size()
     if rank is None:
-        rank = dist.get_rank(group=group)
+        rank = dist.get_rank()
+
+    # Add type assertions to help the type checker
+    assert isinstance(world_size, int), "world_size must be an integer"
+    assert isinstance(rank, int), "rank must be an integer"
+
+    # Add type assertions to help the type checker
+    assert isinstance(world_size, int), "world_size must be an integer"
+    assert isinstance(rank, int), "rank must be an integer"
 
     # First gather batch_sizes to allocate correct buffer sizes.
     local_batch_size = torch.tensor(
@@ -420,9 +541,10 @@ def gather_distributed_data(
         print(
             "+ gather of local_batch_size={} to batch_size_list".format(local_batch_size)
         )
-    
-    dist.gather(local_batch_size, gather_list=batch_size_list, dst=0, group=group)
-    dist.barrier(group=group)  # Add synchronization
+    dist.gather(
+        local_batch_size, gather_list=batch_size_list, dst=0, group=training_group
+    )
+    dist.barrier(group=training_group)  # Add synchronization
 
     # Pad local tensor to maximum size.
     if verbose:
@@ -438,7 +560,7 @@ def gather_distributed_data(
 
     # Broadcast max_size to all processes for padding
     max_batch_size_tensor = torch.tensor(max_batch_size, device=local_tensor.device)
-    dist.broadcast(max_batch_size_tensor, src=0, group=group)
+    dist.broadcast(max_batch_size_tensor, src=0, group=training_group)
 
     # Pad local tensor to maximum size.
     if local_tensor.shape[0] < max_batch_size:
@@ -465,8 +587,8 @@ def gather_distributed_data(
     if verbose:
         print("+ gathering all tensors from world_size={}".format(world_size))
         print("rank={}, tensor_list={}".format(rank, tensor_list))
-    dist.gather(local_tensor, gather_list=tensor_list, dst=0, group=group)
-    dist.barrier(group=group)  # Add synchronization
+    dist.gather(local_tensor, gather_list=tensor_list, dst=0, group=training_group)
+    dist.barrier(group=training_group)  # Add synchronization
 
     # Only rank 0 processes the results
     if rank == 0:
@@ -514,6 +636,7 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
         raise ValueError("plotting is only supported for 2D environments")
 
     grid = env.all_states
+    assert grid is not None, "all_states is not implemented in the environment"
 
     # Get the forward policy distribution for all states
     with torch.no_grad():
@@ -576,9 +699,14 @@ def validate_hypergrid(
         visited_terminating_states,
     )
 
-    # validation_info = {}
-    # Modes will have a reward greater than 1.
-    mode_reward_threshold = 1.0  # Assumes height >= 5. TODO - verify.
+    # Modes will have a reward greater than R2+R1+R0.
+    mode_reward_threshold = sum(
+        [
+            env.reward_fn_kwargs["R2"],
+            env.reward_fn_kwargs["R1"],
+            env.reward_fn_kwargs["R0"],
+        ]
+    )
 
     assert isinstance(visited_terminating_states, DiscreteStates)
     modes = visited_terminating_states[
@@ -742,7 +870,7 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
             return ModifiedDBGFlowNet(pf_estimator, pb_estimator)
 
         elif args.loss == "TB":
-            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, logZ=0.0)
+            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
         elif args.loss == "ZVar":
             return LogPartitionVarianceGFlowNet(pf=pf_estimator, pb=pb_estimator)
@@ -785,7 +913,7 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     ax3 = fig.add_subplot(gs[3])
 
     # Get distributions and find global min/max for consistent color scaling
-    true_dist = env.true_dist_pmf.reshape(args.height, args.height).cpu().numpy()
+    true_dist = env.true_dist.reshape(args.height, args.height).cpu().numpy()
     learned_dist = get_exact_P_T(env, gflownet).reshape(args.height, args.height).numpy()
 
     # Ensure consistent orientation by transposing
@@ -836,6 +964,12 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
 
 def main(args):  # noqa: C901
     """Trains a GFlowNet on the Hypergrid Environment, potentially distributed."""
+
+    if args.half_precision:
+        torch.set_default_dtype(torch.bfloat16)
+
+    print("+ Using default dtype: ", torch.get_default_dtype())
+
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
@@ -849,53 +983,58 @@ def main(args):  # noqa: C901
 
     # Initialize distributed compute.
     if args.distributed:
-        my_rank, my_size, agent_group_size, agent_group_list = (
-            initialize_distributed_compute(args.dist_backend)
-        )
-        my_rank = dist.get_rank()
-        world_size = torch.distributed.get_world_size()
-        my_agent_group_id = my_rank // agent_group_size
-        # Dedicated training process group to isolate collectives from async policy traffic
-        train_pg = dist.new_group(
-            backend=args.dist_backend,
-            timeout=datetime.timedelta(minutes=5),
-        )
-        print(f"Running with DDP on rank {my_rank}/{world_size}.")
-        print(
-            f"agent_group_size, my_agent_group_id = {agent_group_size, my_agent_group_id}"
-        )
-    else:
-        world_size = 1  # Single machine.
-        my_rank = 0  # Single machine.
-        agent_group_list = my_agent_group_id = None
-        train_pg = None
-    
+        distributed_context = initialize_distributed_compute()
 
+        print(f"Running with DDP with following settings: {distributed_context}")
+    else:
+        distributed_context = DistributedContext(
+            my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
+        )
+
+    set_seed(args.seed + distributed_context.my_rank)
+
+    if args.distributed and distributed_context.is_buffer_rank():
+        if distributed_context.assigned_training_ranks is None:
+            num_training_ranks = 0
+        else:
+            num_training_ranks = len(distributed_context.assigned_training_ranks)
+
+        def scoring_function(training_obj):
+            return 0.0
+
+        replay_buffer_manager = ReplayBufferManager(
+            rank=distributed_context.my_rank,
+            num_training_ranks=num_training_ranks,
+            scoring_function=scoring_function,
+        )
+        replay_buffer_manager.run()
+        return 0.0
+    
     # Initialize WandB.
     use_wandb = args.wandb_project != ""
     if use_wandb:
-
         if args.wandb_local:
             os.environ["WANDB_MODE"] = "offline"
 
         import wandb
 
-        if my_rank == 0:
+        if distributed_context.my_rank == 0:
             wandb.init(project=args.wandb_project)
             wandb.config.update(args)
-
-    set_seed(args.seed + my_rank)
 
     # Initialize the environment.
     env = HyperGrid(
         args.ndim,
         args.height,
-        args.R0,
-        args.R1,
-        args.R2,
         device=device,
+        reward_fn_str="original",
+        reward_fn_kwargs={
+            "R0": args.R0,
+            "R1": args.R1,
+            "R2": args.R2,
+        },
         calculate_partition=args.calculate_partition,
-        calculate_all_states=args.calculate_all_states,
+        store_all_states=args.store_all_states,
     )
 
     # Initialize the preprocessor.
@@ -903,7 +1042,11 @@ def main(args):  # noqa: C901
 
     # 2. Create the gflownets: need pairs of modules and estimators.
     gflownet = set_up_gflownet(
-        args, env, preprocessor, agent_group_list, my_agent_group_id
+        args,
+        env,
+        preprocessor,
+        distributed_context.agent_groups,
+        distributed_context.agent_group_id,
     )
     assert gflownet is not None, f"gflownet is None, Args: {args}"
 
@@ -923,6 +1066,8 @@ def main(args):  # noqa: C901
                 env,
                 capacity=args.replay_buffer_size,
                 prioritized_capacity=False,
+                remote_manager_rank=distributed_context.assigned_buffer,
+                remote_buffer_freq=1,
             )
 
     gflownet = gflownet.to(device)
@@ -945,9 +1090,10 @@ def main(args):  # noqa: C901
 
     states_visited = 0
     n_iterations = ceil(args.n_trajectories / args.batch_size)
-    per_node_batch_size = args.batch_size // world_size
+    per_node_batch_size = args.batch_size // distributed_context.world_size
     validation_info = {"l1_dist": float("inf")}
     discovered_modes = set()
+    # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     is_on_policy = args.replay_buffer_size == 0
 
     print("+ n_iterations = ", n_iterations)
@@ -972,7 +1118,7 @@ def main(args):  # noqa: C901
             print(f"Process {rank}: Cleaning up...")
 
         rank = torch.distributed.get_rank()
-        world_size = torch.distributed.get_world_size()
+        torch.distributed.get_world_size()
 
         # TODO: remove this or fix it - it's buggy.
         # handler = DistributedErrorHandler(
@@ -996,7 +1142,7 @@ def main(args):  # noqa: C901
         timing, "Pre-processing_barrier", enabled=(args.timing and args.distributed)
     ):
         if args.distributed and args.timing:
-            dist.barrier(group=train_pg)
+            dist.barrier(group=distributed_context.train_global_group)
 
     # Set up averaging policy (called every iteration; internal guard checks cadence/distributed)
     averaging_policy = None
@@ -1073,7 +1219,7 @@ def main(args):  # noqa: C901
             timing, "barrier 0", enabled=(args.timing and args.distributed)
         ) as bar0_timer:
             if args.distributed and args.timing:
-                dist.barrier(group=train_pg)
+                dist.barrier(group=distributed_context.train_global_group)
 
         # Backpropagation.
         with Timer(timing, "loss_backward", enabled=args.timing) as loss_backward_timer:
@@ -1088,13 +1234,15 @@ def main(args):  # noqa: C901
             timing, "barrier 1", enabled=(args.timing and args.distributed)
         ) as bar1_timer:
             if args.distributed and args.timing:
-                dist.barrier(group=train_pg)
+                dist.barrier(group=distributed_context.train_global_group)
 
-        # Model averaging via policy
-        with Timer(timing, "averaging_model", enabled=args.timing) as model_averaging_timer:
+        # Model averaging.
+        with Timer(
+            timing, "averaging_model", enabled=args.timing
+        ) as model_averaging_timer:
             if averaging_policy is not None:
                 averaging_policy(iteration=iteration, model=gflownet, local_metric=-loss.item())
-    
+
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
         rest_time = iteration_time - sum(
@@ -1123,6 +1271,7 @@ def main(args):  # noqa: C901
         visited_terminating_states.extend(
             cast(DiscreteStates, trajectories.terminating_states)
         )
+
         with Timer(timing, "gather_visited_states", enabled=args.timing):
             # If distributed, gather all visited terminating states from all nodes.
             if args.distributed and log_this_iter:
@@ -1131,10 +1280,15 @@ def main(args):  # noqa: C901
                     # Gather all visited terminating states from all nodes.
                     gathered_visited_terminating_states = gather_distributed_data(
                         visited_terminating_states.tensor,
-                        group=train_pg,
+                        training_group=distributed_context.train_global_group,
+                        world_size=distributed_context.num_training_ranks,
                     )
                 except Exception as e:
-                    print("Process {}: Caught error: {}".format(my_rank, e))
+                    print(
+                        "Process {}: Caught error: {}".format(
+                            distributed_context.my_rank, e
+                        )
+                    )
                     # handler.signal_error()
                     sys.exit(1)
             else:
@@ -1144,7 +1298,7 @@ def main(args):  # noqa: C901
 
         # If we are on the master node, calculate the validation metrics.
         with Timer(timing, "validation", enabled=args.timing):
-            if my_rank == 0:
+            if distributed_context.my_rank == 0:
 
                 # Extend `all_visited_terminating_states` with the gathered data.
                 assert gathered_visited_terminating_states is not None
@@ -1206,8 +1360,9 @@ def main(args):  # noqa: C901
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
             if args.distributed and args.timing:
-                dist.barrier(group=train_pg)
+                dist.barrier(group=distributed_context.train_global_group)
 
+    print("+ Finished all iterations")
     total_time = time.time() - time_start
     if args.timing:
         timing["total_rest_time"] = [total_time - sum(sum(v) for k, v in timing.items())]
@@ -1215,31 +1370,31 @@ def main(args):  # noqa: C901
     timing["total_time"] = [total_time]
 
     if args.distributed:
-        dist.barrier(group=train_pg)
-
-    # Ensure background comms threads are stopped cleanly (async policy)
-    try:
-        if 'averaging_policy' in locals() and hasattr(averaging_policy, 'shutdown'):
+        dist.barrier(group=distributed_context.train_global_group)
+        try:
             averaging_policy.shutdown()
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     # Log the final timing results.
     if args.timing:
-        print("\n" + "=" * 80)
-        print("\n Timing information:")
-        if args.distributed:
-            print("-" * 80)
-            print("The below timing information is averaged across all ranks.")
-        print("=" * 80)
+        if distributed_context.my_rank == 0:
+            print("\n" + "=" * 80)
+            print("\n Timing information:")
+            if args.distributed:
+                print("-" * 80)
+                print("The below timing information is averaged across all ranks.")
+            print("=" * 80)
 
         if args.distributed:
             # Gather timing data from all ranks
-            all_timings = [None] * world_size
-            dist.all_gather_object(all_timings, timing, group=train_pg)
+            all_timings = [None] * distributed_context.num_training_ranks
+            dist.all_gather_object(
+                all_timings, timing, group=distributed_context.train_global_group
+            )
 
-            if my_rank == 0:
-                report_timing(all_timings, world_size)
+            if distributed_context.my_rank == 0:
+                report_timing(all_timings, distributed_context.num_training_ranks)
         else:
             # Single machine case
             # Header
@@ -1264,8 +1419,16 @@ def main(args):  # noqa: C901
     except KeyError:
         result = validation_info["n_modes_found"]
 
-    if my_rank == 0:
+    if distributed_context.my_rank == 0:
         print("+ Training complete - final_score={:.6f}".format(result))
+
+    if (
+        args.distributed
+        and distributed_context.is_training_rank()
+        and (distributed_context.assigned_buffer is not None)
+    ):
+        # Send a termination signal to the replay buffer manager.
+        ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
 
     return result
 
@@ -1300,11 +1463,16 @@ if __name__ == "__main__":
         help="Initializes distributed computation (torch.distributed)",
     )
     parser.add_argument(
+        "--num_remote_buffers",
+        type=int,
+        default=1,
+        help="Number of remote replay buffer managers (only if using distributed computation)",
+    )
+    parser.add_argument(
         "--dist_backend",
         type=str,
-        choices=["ccl", "mpi", "gloo"],
-        default="ccl",
-        help="Process group backend to use when --distributed is enabled",
+        default="gloo",
+        help="Distributed backend to use: gloo, ccl or mpi",
     )
     
     # Selective averaging settings.
@@ -1484,16 +1652,16 @@ if __name__ == "__main__":
 
     # Settings relevant to the problem size -- toggle off for larger problems.
     parser.add_argument(
-        "--calculate_all_states",
+        "--store_all_states",
         action="store_true",
         default=False,
-        help="Disable enumeration of all states.",
+        help="Whether to store all states.",
     )
     parser.add_argument(
         "--calculate_partition",
         action="store_true",
         default=False,
-        help="Disable calculation of the true partition function.",
+        help="Whether to calculate the true partition function.",
     )
     parser.add_argument(
         "--profile",
@@ -1520,6 +1688,12 @@ if __name__ == "__main__":
         "--timing",
         action="store_true",
         help="Report timing information at the end of training",
+    )
+
+    parser.add_argument(
+        "--half_precision",
+        action="store_true",
+        help="Use half precision for the model",
     )
 
     args = parser.parse_args()

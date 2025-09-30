@@ -6,6 +6,7 @@ from einops import rearrange
 from torch.nn.functional import one_hot
 
 from gfn.states import DiscreteStates, GraphStates, States
+from gfn.utils.common import is_int_dtype
 from gfn.utils.graphs import GeometricBatch
 
 
@@ -18,15 +19,17 @@ class Preprocessor(ABC):
 
     Attributes:
         output_dim: The dimensionality of the preprocessed output tensor, which is
-            compatible with the neural network that will be used.
+            compatible with the neural network that will be used. If None, the output
+            dimension will not be checked.
     """
 
-    def __init__(self, output_dim: int) -> None:
+    def __init__(self, output_dim: int | None) -> None:
         """Initializes a Preprocessor with the specified output dimension.
 
         Args:
             output_dim: The dimensionality of the preprocessed output tensor, which is
                 compatible with the neural network that will be used.
+                If None, the output dimension will not be checked.
         """
         self.output_dim = output_dim
 
@@ -52,7 +55,7 @@ class Preprocessor(ABC):
             The preprocessed states as a tensor or GeometricBatch.
         """
         out = self.preprocess(states)
-        if isinstance(out, torch.Tensor):
+        if isinstance(out, torch.Tensor) and self.output_dim is not None:
             assert out.shape[-1] == self.output_dim
 
         return out
@@ -166,7 +169,7 @@ class OneHotPreprocessor(Preprocessor):
         """
         state_indices = self.get_states_indices(states)
 
-        return one_hot(state_indices, self.output_dim).float()
+        return one_hot(state_indices, self.output_dim).to(torch.get_default_dtype())
 
 
 class KHotPreprocessor(Preprocessor):
@@ -196,6 +199,7 @@ class KHotPreprocessor(Preprocessor):
         super().__init__(output_dim=height * ndim)
         self.height = height
         self.ndim = ndim
+        self.output_dim = height * ndim
 
     def preprocess(self, states: DiscreteStates) -> torch.Tensor:
         """Preprocesses the states by creating k-hot encoded vectors.
@@ -213,11 +217,11 @@ class KHotPreprocessor(Preprocessor):
             This preprocessor only works for integer state tensors.
         """
         states_tensor = states.tensor
-        assert (
-            states_tensor.dtype == torch.long
+        assert is_int_dtype(
+            states_tensor
         ), "K Hot preprocessing only works for integer states"
         states_tensor = states_tensor.long()
-        hot = one_hot(states_tensor, self.height).float()
+        hot = one_hot(states_tensor, self.height)
         hot = rearrange(hot, "... a b -> ... (a b)")
 
         return hot
