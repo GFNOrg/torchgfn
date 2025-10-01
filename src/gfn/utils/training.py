@@ -1,4 +1,4 @@
-from collections import Counter
+import warnings
 from typing import Dict, Iterable, Optional, Tuple
 
 import torch
@@ -6,7 +6,7 @@ from tqdm import trange
 
 from gfn.containers import ReplayBuffer
 from gfn.env import DiscreteEnv, Env
-from gfn.gflownet import GFlowNet, TBGFlowNet
+from gfn.gflownet import GFlowNet
 from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
 from gfn.states import DiscreteStates
@@ -16,26 +16,14 @@ def get_terminating_state_dist(
     env: DiscreteEnv,
     states: DiscreteStates,
 ) -> torch.Tensor:
-    """Computes the empirical distribution of the terminating states.
-
-    Args:
-        env: The DiscreteEnv instance.
-        states: The states to compute the distribution of.
-
-    Returns:
-        The empirical distribution of the terminating states as a tensor of shape
-        (n_terminating_states,).
-    """
-    states_indices = env.get_terminating_states_indices(states).cpu().numpy().tolist()
-    counter = Counter(str(idx) for idx in states_indices)
-    counter_list = [
-        counter[str(state_idx)] if str(state_idx) in counter else 0
-        for state_idx in range(env.n_terminating_states)
-    ]
-
-    return torch.tensor(counter_list, dtype=torch.get_default_dtype()) / len(
-        states_indices
+    """[DEPRECATED] Use `env.get_terminating_state_dist(states)` instead."""
+    warnings.warn(
+        "gfn.utils.training.get_terminating_state_dist is deprecated; "
+        "use DiscreteEnv.get_terminating_state_dist(states) instead.",
+        DeprecationWarning,
+        stacklevel=2,
     )
+    return env.get_terminating_state_dist(states)
 
 
 def validate(
@@ -44,57 +32,17 @@ def validate(
     n_validation_samples: int = 1000,
     visited_terminating_states: Optional[DiscreteStates] = None,
 ) -> Tuple[Dict[str, float], DiscreteStates | None]:
-    """Evaluates the current GFlowNet on the given environment.
-
-    This function is designed for environments with known target reward distributions.
-    Validation is performed by computing the L1 distance between the learned empirical
-    distribution of terminating states and the true target distribution.
-
-    Args:
-        env: The environment to evaluate the GFlowNet on.
-        gflownet: The GFlowNet instance to evaluate.
-        n_validation_samples: The number of samples to use for evaluating the PMF.
-        visited_terminating_states: Optional. If provided, the PMF is obtained from
-            the last `n_validation_samples` states from this collection. Otherwise,
-            `n_validation_samples` are resampled directly from the GFlowNet for evaluation.
-
-    Returns:
-        A tuple containing:
-        - dict: A dictionary containing validation metrics. If the GFlowNet is a
-            `TBGFlowNet` (i.e., it contains `LogZ`), the absolute difference between
-            the learned and target `LogZ` is also included.
-        - DiscreteStates or None: The sampled terminating states, or None if not applicable.
-    """
-
-    true_logZ = env.log_partition
-    true_dist = env.true_dist
-    if isinstance(true_dist, torch.Tensor):
-        true_dist = true_dist.cpu()
-    else:
-        # The environment does not implement a true_dist property, nor a log_partition property
-        # We cannot validate the gflownet
-        return {}, visited_terminating_states
-
-    logZ = None
-    if isinstance(gflownet, TBGFlowNet):
-        assert isinstance(gflownet.logZ, torch.Tensor)
-        logZ = gflownet.logZ.item()
-    if visited_terminating_states is None:
-        sampled_terminating_states = gflownet.sample_terminating_states(
-            env, n_validation_samples
-        )
-        assert isinstance(sampled_terminating_states, DiscreteStates)
-    else:
-        # Only keep the most recent n_validation_samples states.
-        sampled_terminating_states = visited_terminating_states[-n_validation_samples:]
-
-    final_states_dist = get_terminating_state_dist(env, sampled_terminating_states)
-    l1_dist = (final_states_dist - true_dist).abs().mean().item()
-    validation_info = {"l1_dist": l1_dist}
-    if logZ is not None:
-        validation_info["logZ_diff"] = abs(logZ - true_logZ)
-
-    return (validation_info, sampled_terminating_states)
+    """[DEPRECATED] Use `env.validate(gflownet, ...)` instead."""
+    warnings.warn(
+        "gfn.utils.training.validate is deprecated; use DiscreteEnv.validate(...) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return env.validate(
+        gflownet=gflownet,
+        n_validation_samples=n_validation_samples,
+        visited_terminating_states=visited_terminating_states,
+    )
 
 
 def states_actions_tns_to_traj(
