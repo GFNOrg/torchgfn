@@ -10,6 +10,19 @@ And run one of the following to reproduce some of the results in
 [Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
 python train_hypergrid.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
 
+SELECTIVE AVERAGING:
+This script also supports selective model averaging for distributed training, where instead of
+averaging all models, the worst performing models are replaced with averaged weights from the
+better performing ones. Use the following flags:
+
+--use_selective_averaging: Enable selective averaging instead of standard averaging
+--replacement_ratio 0.2: Replace the worst 20% of models (adjustable 0.0-1.0)
+--averaging_strategy mean: How to combine good models ("mean", "weighted_mean", "best_only")
+--momentum 0.0: Momentum factor for combining with previous weights (0.0-1.0, default 0.0)
+
+Example with selective averaging:
+python train_hypergrid.py --distributed --use_selective_averaging --replacement_ratio 0.3 --averaging_strategy mean --momentum 0.1
+
 This script also provides a function `get_exact_P_T` that computes the exact terminating state
 distribution for the HyperGrid environment, which is useful for evaluation and visualization.
 """
@@ -47,12 +60,15 @@ from gfn.states import DiscreteStates
 from gfn.utils.common import Timer, set_seed
 from gfn.utils.distributed import (
     DistributedContext,
-    average_models,
     gather_distributed_data,
     initialize_distributed_compute,
     report_load_imbalance,
 )
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
+from tutorials.examples.multinode.spawn_policy import (
+    AsyncSelectiveAveragingPolicy,
+    AverageAllPolicy,
+)
 
 
 def report_timing(all_timing_dict, world_size):
@@ -658,18 +674,6 @@ def main(args):  # noqa: C901
         if args.ndim != 2:
             raise ValueError("plotting is only supported for 2D environments")
 
-    # Initialize WandB.
-    use_wandb = args.wandb_project != ""
-    if use_wandb:
-
-        if args.wandb_local:
-            os.environ["WANDB_MODE"] = "offline"
-
-        import wandb
-
-        wandb.init(project=args.wandb_project)
-        wandb.config.update(args)
-
     # Initialize distributed compute.
     if args.distributed:
         distributed_context = initialize_distributed_compute(
@@ -702,6 +706,18 @@ def main(args):  # noqa: C901
         )
         replay_buffer_manager.run()
         return 0.0
+
+    # Initialize WandB.
+    use_wandb = args.wandb_project != ""
+    if use_wandb:
+        if args.wandb_local:
+            os.environ["WANDB_MODE"] = "offline"
+
+        import wandb
+
+        if distributed_context.my_rank == 0:
+            wandb.init(project=args.wandb_project)
+            wandb.config.update(args)
 
     # Initialize the environment.
     env = HyperGrid(
@@ -835,6 +851,19 @@ def main(args):  # noqa: C901
         if args.distributed and args.timing:
             dist.barrier(group=distributed_context.train_global_group)
 
+    # Set up averaging policy (called every iteration; internal guard checks cadence/distributed)
+    averaging_policy = None
+    if args.distributed:
+        if args.use_selective_averaging:
+            averaging_policy = AsyncSelectiveAveragingPolicy(
+                average_every=args.average_every,
+                replacement_ratio=args.replacement_ratio,
+                averaging_strategy=args.averaging_strategy,
+                momentum=args.momentum,
+            )
+        else:
+            averaging_policy = AverageAllPolicy(average_every=args.average_every)
+
     # Training loop.
     pbar = trange(n_iterations)
     for iteration in pbar:
@@ -966,12 +995,10 @@ def main(args):  # noqa: C901
         with Timer(
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
-            if args.distributed and (iteration % args.average_every == 0):
-                print("before averaging model, iteration = ", iteration)
-                average_models(
-                    gflownet, training_group=distributed_context.train_global_group
+            if averaging_policy is not None:
+                averaging_policy(
+                    iteration=iteration, model=gflownet, local_metric=-loss.item()
                 )
-                print("after averaging model, iteration = ", iteration)
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
@@ -1102,6 +1129,11 @@ def main(args):  # noqa: C901
 
     if args.distributed:
         dist.barrier(group=distributed_context.train_global_group)
+        assert averaging_policy is not None
+        try:
+            averaging_policy.shutdown()
+        except Exception:
+            pass
 
     # Log the final timing results.
     if args.timing:
@@ -1175,7 +1207,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--average_every",
         type=int,
-        default=20,
+        default=100,
         help="Number of epochs after which we average model across all agents",
     )
     parser.add_argument(
@@ -1196,10 +1228,37 @@ if __name__ == "__main__":
         help="Number of remote replay buffer managers (only if using distributed computation)",
     )
     parser.add_argument(
-        "--dist-backend",
+        "--dist_backend",
         type=str,
         default="gloo",
         help="Distributed backend to use: gloo, ccl or mpi",
+    )
+
+    # Selective averaging settings.
+    parser.add_argument(
+        "--use_selective_averaging",
+        action="store_true",
+        help="Use selective averaging instead of standard averaging",
+    )
+
+    parser.add_argument(
+        "--replacement_ratio",
+        type=float,
+        default=0.2,
+        help="Fraction of worst performing models to replace (0.0 to 1.0)",
+    )
+    parser.add_argument(
+        "--averaging_strategy",
+        type=str,
+        choices=["mean", "weighted_mean", "best_only"],
+        default="mean",
+        help="Strategy for combining good models",
+    )
+    parser.add_argument(
+        "--momentum",
+        type=float,
+        default=0.01,
+        help="Momentum factor for combining with previous weights (0.0 = no momentum, 1.0 = keep old weights)",
     )
 
     # Environment settings.
@@ -1353,7 +1412,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="",
+        default="torchgfn",
         help="Name of the wandb project. If empty, don't use wandb",
     )
     parser.add_argument(
