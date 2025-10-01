@@ -250,26 +250,6 @@ class HyperGrid(DiscreteEnv):
             # Modes are the thin ring where both outer ring and band conditions hold.
             return r0 + r1 + r2
 
-        # # Modes will have a reward greater than R2+R1+R0.
-        # mode_reward_threshold = sum(
-        #     [
-        #         env.reward_fn_kwargs["R2"],
-        #         env.reward_fn_kwargs["R1"],
-        #         env.reward_fn_kwargs["R0"],
-        #     ]
-        # )
-
-        # assert isinstance(visited_terminating_states, DiscreteStates)
-        # modes = visited_terminating_states[
-        #     env.reward(visited_terminating_states) >= mode_reward_threshold
-        # ].tensor
-
-        # # Finds all the unique modes in visited_terminating_states.
-        # modes_found = set([tuple(s.tolist()) for s in modes])
-        # discovered_modes.update(modes_found)
-        # # torch.tensor(list(modes_found)).shape ==[batch_size, 2]
-        # validation_info["n_modes_found"] = len(discovered_modes)
-
         # Deceptive reward: ring band adds R2 while the outer region cancels R1.
         if isinstance(self.reward_fn, DeceptiveReward):
             for key in ("R0", "R2"):
