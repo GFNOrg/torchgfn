@@ -46,7 +46,7 @@ class HypergridDiversityScore:
 
         # Stack states into a single tensor for vectorized operations
         state_tensor = states.tensor  # (batch, ndim)
-        score = self._values_set[state_tensor].mean()
+        score = 1 - self._values_set[state_tensor].mean()
 
         self._values_set[state_tensor] = True
         return score.item()
