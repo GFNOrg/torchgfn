@@ -7,10 +7,11 @@ ReplayBufferManager in torchgfn.
 """
 
 import torch
+
+from gfn.containers.replay_buffer import ContainerUnion
+from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
-from gfn.containers.states_container import StatesContainer
-from gfn.containers.replay_buffer import ContainerUnion
 
 
 class HypergridDiversityScore:
@@ -50,8 +51,3 @@ class HypergridDiversityScore:
 
         self._values_set[state_tensor] = True
         return score.item()
-
-
-
-
-      

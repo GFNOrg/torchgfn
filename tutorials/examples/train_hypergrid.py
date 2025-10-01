@@ -64,7 +64,9 @@ from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from gfn.utils.training import validate
-from tutorials.examples.multinode.hypergrid_diversity_score import HypergridDiversityScore
+from tutorials.examples.multinode.hypergrid_diversity_score import (
+    HypergridDiversityScore,
+)
 from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
     AverageAllPolicy,
@@ -995,7 +997,6 @@ def main(args):  # noqa: C901
         else:
             num_training_ranks = len(distributed_context.assigned_training_ranks)
 
-        
         scoring_function = HypergridDiversityScore(args.ndim, args.height)
 
         replay_buffer_manager = ReplayBufferManager(
