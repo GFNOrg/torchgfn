@@ -1,6 +1,7 @@
 import os
 import random
 import threading
+import time
 import warnings
 from typing import Callable, Tuple
 
@@ -240,3 +241,47 @@ def make_dataloader_seed_fns(
     gen.manual_seed(base_seed)
 
     return _worker_init_fn, gen
+
+
+class Timer:
+    r"""
+    Helper class for timing code execution blocks and accumulating elapsed time in a dictionary.
+
+    This class is designed to be used as a context manager to measure the execution time of code blocks.
+    Upon entering the context, it records the start time, and upon exiting, it adds the elapsed time to a
+    specified key in a provided timing dictionary. This is useful for profiling and tracking the time spent
+    in different parts of a program, such as during training loops or data processing steps.
+
+        timing_dict (dict): A dictionary where timing results will be accumulated.
+        key (str): The key in the timing_dict under which to accumulate elapsed time.
+
+    Example:
+        for name in ["step1", "step2"]:
+            timing[name] = 0
+
+        with Timer(timing, "step1"):
+            # Code block to time
+            do_something()
+
+        print(f"Elapsed time for step1: {timing['step1']} seconds")
+    """
+
+    def __init__(self, timing_dict, key, enabled=True):
+        self.timing_dict = timing_dict
+        self.key = key
+        self.enabled = enabled
+        self.elapsed = None
+
+    def __enter__(self):
+        if self.enabled:
+            self.start = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.enabled:
+            self.elapsed = time.perf_counter() - self.start
+            if self.key not in self.timing_dict:
+                self.timing_dict[self.key] = []
+            self.timing_dict[self.key].append(self.elapsed)
+        else:
+            self.elapsed = 0.0
