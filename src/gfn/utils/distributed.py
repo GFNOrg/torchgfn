@@ -1,7 +1,6 @@
 import datetime
 import os
 from dataclasses import dataclass
-from math import sum
 from typing import Dict, List, Optional, cast
 
 import torch
@@ -80,8 +79,9 @@ def report_time_info(
             if type(times) is not list:
                 times = [times]  # Ensure times is a list
 
-            avg_time = sum(times) / len(times)
-            sum_time = sum(times)
+            times_tensor = torch.tensor(times)
+            avg_time = torch.sum(times_tensor).item() / len(times)
+            sum_time = torch.sum(times_tensor).item()
             print(f"  {step}: {avg_time:.4f} seconds (total: {sum_time:.4f} seconds)")
 
             if overall_timing.get(step) is None:
