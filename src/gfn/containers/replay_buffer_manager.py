@@ -4,6 +4,8 @@ from typing import Callable, Optional
 import torch
 import torch.distributed as dist
 
+from gfn.containers.replay_buffer import ContainerUnion
+
 from .message import Message, MessageType
 
 
@@ -13,7 +15,7 @@ class ReplayBufferManager:
         self,
         rank: int,
         num_training_ranks: int,
-        scoring_function: Optional[Callable[[object], float]] = None,
+        scoring_function: Optional[Callable[[ContainerUnion], float]] = None,
     ):
         self.rank = rank
         self.is_running = True
