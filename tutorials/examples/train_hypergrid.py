@@ -971,23 +971,6 @@ def main(args):  # noqa: C901
 
     set_seed(args.seed + distributed_context.my_rank)
 
-    if args.distributed and distributed_context.is_buffer_rank():
-        if distributed_context.assigned_training_ranks is None:
-            num_training_ranks = 0
-        else:
-            num_training_ranks = len(distributed_context.assigned_training_ranks)
-
-        def scoring_function(training_obj):
-            return 0.0
-
-        replay_buffer_manager = ReplayBufferManager(
-            rank=distributed_context.my_rank,
-            num_training_ranks=num_training_ranks,
-            scoring_function=scoring_function,
-        )
-        replay_buffer_manager.run()
-        return 0.0
-
     # Initialize the environment.
     env = HyperGrid(
         args.ndim,
@@ -999,6 +982,26 @@ def main(args):  # noqa: C901
         calculate_partition=args.calculate_partition,
         calculate_all_states=args.calculate_all_states,
     )
+
+    if args.distributed and distributed_context.is_buffer_rank():
+        if distributed_context.assigned_training_ranks is None:
+            num_training_ranks = 0
+        else:
+            num_training_ranks = len(distributed_context.assigned_training_ranks)
+
+        def scoring_function(training_obj):
+            return 0.0
+
+        replay_buffer_manager = ReplayBufferManager(
+            env=env,
+            rank=distributed_context.my_rank,
+            num_training_ranks=num_training_ranks,
+            scoring_function=scoring_function,
+            diverse_replay_buffer=args.diverse_replay_buffer,
+            capacity=args.global_replay_buffer_size,
+        )
+        replay_buffer_manager.run()
+        return 0.0
 
     # Initialize the preprocessor.
     preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
@@ -1416,6 +1419,12 @@ if __name__ == "__main__":
         type=int,
         default=1,
         help="Number of remote replay buffer managers (only if using distributed computation)",
+    )
+    parser.add_argument(
+        "--global_replay_buffer_size",
+        type=int,
+        default=10000,
+        help="Global replay buffer size (only if using distributed computation)",
     )
     parser.add_argument(
         "--dist-backend",
