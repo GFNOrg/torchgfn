@@ -1,7 +1,8 @@
-from typing import Literal, Tuple
+from typing import Literal, Tuple, cast
 
 import pytest
 import torch
+from torch.distributions import Categorical
 
 from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
@@ -19,8 +20,20 @@ from gfn.preprocessors import (
     KHotPreprocessor,
     OneHotPreprocessor,
 )
-from gfn.samplers import LocalSearchSampler, Sampler
-from gfn.utils.modules import MLP, GraphActionGNN
+from gfn.samplers import (
+    AdapterContext,
+    DefaultEstimatorAdapter,
+    LocalSearchSampler,
+    RecurrentEstimatorAdapter,
+    Sampler,
+)
+from gfn.states import States
+from gfn.utils.modules import (
+    MLP,
+    GraphActionGNN,
+    RecurrentDiscreteSequenceModel,
+    TransformerDiscreteSequenceModel,
+)
 from gfn.utils.prob_calculations import get_trajectory_pfs
 from gfn.utils.training import states_actions_tns_to_traj
 
@@ -450,3 +463,243 @@ def test_states_actions_tns_to_traj():
     # Test that we can add the trajectories to a replay buffer
     replay_buffer = ReplayBuffer(env, capacity=10)
     replay_buffer.add(trajs)
+
+
+# ---------------------- Adapters: unit-level smoke tests ----------------------
+
+
+class _FakeStates:
+    def __init__(self, n: int, device: torch.device):
+        self.tensor = torch.zeros((n, 1), device=device)
+
+    @property
+    def batch_shape(self):
+        return (self.tensor.shape[0],)
+
+
+class _DummyEstimator:
+    is_backward = False
+
+    def __call__(self, states: _FakeStates, conditioning: torch.Tensor | None = None):
+        n = states.batch_shape[0]
+        return torch.zeros((n, 3), device=states.tensor.device)
+
+    def to_probability_distribution(
+        self, states: _FakeStates, est_out: torch.Tensor, **_: dict
+    ):
+        logits = torch.zeros((states.batch_shape[0], 3), device=states.tensor.device)
+        return Categorical(logits=logits)
+
+    # no expected_output_dim required for adapter tests
+
+
+class _DummyRecurrentEstimator:
+    is_backward = False
+
+    def init_carry(self, batch_size: int, device: torch.device):
+        return {"hidden": torch.zeros((batch_size, 2), device=device)}
+
+    def __call__(self, states: _FakeStates, carry: dict[str, torch.Tensor]):
+        n = states.batch_shape[0]
+        logits = torch.zeros((n, 3), device=states.tensor.device)
+        new_carry = {"hidden": carry["hidden"] + 1}
+        return logits, new_carry
+
+    def to_probability_distribution(
+        self, states: _FakeStates, est_out: torch.Tensor, **_: dict
+    ):
+        logits = torch.zeros((states.batch_shape[0], 3), device=states.tensor.device)
+        return Categorical(logits=logits)
+
+    # no expected_output_dim required for adapter tests
+
+
+def test_adapter_context_basic():
+    ctx = AdapterContext(batch_size=4, device=torch.device("cpu"), conditioning=None)
+    assert ctx.batch_size == 4
+    assert ctx.device.type == "cpu"
+    # extras supports arbitrary entries
+    ctx.extras["foo"] = 123
+    assert ctx.extras["foo"] == 123
+
+
+def test_default_adapter_compute_record_finalize():
+    adapter = DefaultEstimatorAdapter(cast(Estimator, _DummyEstimator()))
+    device = torch.device("cpu")
+    n = 5
+    states = _FakeStates(n, device)
+    ctx = adapter.init_context(n, device, conditioning=None)
+
+    step_mask = torch.ones(n, dtype=torch.bool, device=device)
+    dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+    actions = dist.sample()
+    adapter.record_step(
+        ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
+    )
+    out = adapter.finalize(ctx)
+    assert out["log_probs"] is not None and out["log_probs"].shape == (1, n)
+    assert out["estimator_outputs"] is not None and out["estimator_outputs"].shape[
+        :2
+    ] == (1, n)
+
+
+def test_recurrent_adapter_requires_init_carry():
+    class _BadEstimator:
+        is_backward = False
+
+    adapter = RecurrentEstimatorAdapter(cast(Estimator, _BadEstimator()))
+    with pytest.raises(TypeError):
+        _ = adapter.init_context(2, torch.device("cpu"), None)
+
+
+def test_recurrent_adapter_flow():
+    adapter = RecurrentEstimatorAdapter(cast(Estimator, _DummyRecurrentEstimator()))
+    device = torch.device("cpu")
+    n = 3
+    states = _FakeStates(n, device)
+    ctx = adapter.init_context(n, device, conditioning=None)
+
+    step_mask = torch.ones(n, dtype=torch.bool, device=device)
+    dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+    actions = dist.sample()
+    # carry should update when we record multiple steps
+    h0 = ctx.carry["hidden"].clone()
+    adapter.record_step(
+        ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
+    )
+    # second step
+    dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+    actions = dist.sample()
+    adapter.record_step(
+        ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
+    )
+    h1 = ctx.carry["hidden"].clone()
+    assert torch.all(h1 == h0 + 1)
+    out = adapter.finalize(ctx)
+    assert out["log_probs"] is not None and out["log_probs"].shape == (2, n)
+    assert out["estimator_outputs"] is not None and out["estimator_outputs"].shape[
+        :2
+    ] == (2, n)
+
+
+# ---------------------- Integration with real recurrent modules ----------------------
+
+
+class _SeqStates:
+    def __init__(self, tokens: torch.Tensor, n_actions: int):
+        self.tensor = tokens  # (batch, seq_len)
+        b = tokens.shape[0]
+        device = tokens.device
+        self.forward_masks = torch.ones((b, n_actions), dtype=torch.bool, device=device)
+        self.backward_masks = torch.ones(
+            (b, max(n_actions - 1, 1)), dtype=torch.bool, device=device
+        )
+
+    @property
+    def batch_shape(self):
+        return (self.tensor.shape[0],)
+
+    @property
+    def device(self):
+        return self.tensor.device
+
+
+@pytest.mark.parametrize("rnn_type", ["lstm", "gru"])
+def test_integration_recurrent_sequence_model_with_adapter(
+    rnn_type: Literal["lstm", "gru"]
+) -> None:
+    device = torch.device("cpu")
+    batch_size = 3
+    vocab_size = 11
+    seq_len = 4
+
+    model = RecurrentDiscreteSequenceModel(
+        vocab_size=vocab_size,
+        embedding_dim=8,
+        hidden_size=16,
+        num_layers=1,
+        rnn_type=rnn_type,
+        dropout=0.0,
+    ).to(device)
+
+    from gfn.estimators import RecurrentDiscretePolicyEstimator
+
+    estimator = RecurrentDiscretePolicyEstimator(
+        module=model,
+        n_actions=vocab_size,
+        is_backward=False,
+    )
+
+    adapter = RecurrentEstimatorAdapter(estimator)
+    ctx = adapter.init_context(batch_size, device, conditioning=None)
+
+    tokens = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
+    states = _SeqStates(tokens, vocab_size)
+
+    # Run two steps and verify carry and artifact shapes
+    step_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
+    for _ in range(2):
+        dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+        actions = dist.sample()
+        adapter.record_step(
+            ctx,
+            step_mask,
+            actions,
+            dist,
+            save_logprobs=True,
+            save_estimator_outputs=True,
+        )
+
+    out = adapter.finalize(ctx)
+    assert out["log_probs"] is not None and out["log_probs"].shape[0] == 2
+    assert (
+        out["estimator_outputs"] is not None and out["estimator_outputs"].shape[0] == 2
+    )
+
+
+@pytest.mark.parametrize("positional_embedding", ["learned", "sinusoidal"])
+def test_integration_transformer_sequence_model_with_adapter(
+    positional_embedding: Literal["learned", "sinusoidal"]
+) -> None:
+    device = torch.device("cpu")
+    batch_size = 2
+    vocab_size = 9
+    seq_len = 5
+
+    model = TransformerDiscreteSequenceModel(
+        vocab_size=vocab_size,
+        embedding_dim=12,
+        num_heads=3,
+        ff_hidden_dim=24,
+        num_layers=1,
+        max_position_embeddings=32,
+        dropout=0.0,
+        positional_embedding=positional_embedding,
+    ).to(device)
+
+    from gfn.estimators import RecurrentDiscretePolicyEstimator
+
+    estimator = RecurrentDiscretePolicyEstimator(
+        module=model,
+        n_actions=vocab_size,
+        is_backward=False,
+    )
+
+    adapter = RecurrentEstimatorAdapter(estimator)
+    ctx = adapter.init_context(batch_size, device, conditioning=None)
+
+    tokens = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
+    states = _SeqStates(tokens, vocab_size)
+
+    step_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
+    dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+    actions = dist.sample()
+    adapter.record_step(
+        ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
+    )
+
+    out = adapter.finalize(ctx)
+    assert out["log_probs"] is not None and out["log_probs"].shape[0] == 1
+    assert (
+        out["estimator_outputs"] is not None and out["estimator_outputs"].shape[0] == 1
+    )

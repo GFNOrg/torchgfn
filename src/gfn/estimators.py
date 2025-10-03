@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Optional
+from typing import Any, Callable, Optional, cast
 
 import torch
 import torch.nn as nn
@@ -798,3 +798,109 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
             None, as the output_dim of a TensorDict is not well-defined.
         """
         return None
+
+
+class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
+    """Discrete policy estimator for recurrent architectures with explicit carry.
+
+    Many sequence models (e.g., RNN/LSTM/GRU/Transformer in autoregressive mode)
+    maintain a recurrent hidden state ("carry") that must be threaded through
+    successive calls during sampling. This class formalizes that pattern for
+    GFlowNet policies by:
+
+    - Exposing a forward signature ``forward(states, carry) -> (logits, carry)``
+      so the policy can update and return the next carry at each step.
+    - Requiring an ``init_carry(batch_size, device)`` method to allocate the
+      initial hidden state for a rollout.
+    - Ensuring the per-step output (``logits`` over actions) is derived from the
+      latest token/time step while the internal model may process sequences.
+
+    Interaction with the sampler/adapters
+    -------------------------------------
+    The sampler uses a ``RecurrentEstimatorAdapter`` which calls this estimator
+    with the current carry, updates the carry on every step, and records
+    per-step artifacts. Non-recurrent estimators should use the default adapter
+    and the standard ``DiscretePolicyEstimator`` base class instead.
+
+    Notes
+    -----
+    - Forward is intended for on-policy generation; off-policy evaluation over
+      entire trajectories typically requires different batching and masking.
+    - ``init_carry`` is a hard requirement for compatibility with the recurrent
+      adapter.
+    """
+
+    def __init__(
+        self,
+        module: nn.Module,
+        n_actions: int,
+        preprocessor: Preprocessor | None = IdentityPreprocessor(
+            output_dim=None
+        ),  # Addressed in https://github.com/GFNOrg/torchgfn/pull/399.
+        is_backward: bool = False,
+    ):
+        """Initializes a RecurrentDiscretePolicyEstimator.
+
+        Args:
+            module: The neural network module to use.
+            n_actions: Total number of actions in the discrete environment.
+            preprocessor: Preprocessor object that transforms states to tensors.
+        """
+        if preprocessor is None:
+            preprocessor = IdentityPreprocessor(
+                output_dim=None
+            )  # Addressed in https://github.com/GFNOrg/torchgfn/pull/399.
+        super().__init__(
+            module=module,
+            n_actions=n_actions,
+            preprocessor=preprocessor,
+            is_backward=is_backward,
+        )
+
+    def forward(
+        self,
+        states: States,
+        carry: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Forward pass of the module.
+
+        Args:
+            states: The input states.
+            carry: The carry from the previous step.
+
+        Returns:
+            The output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        # TODO: Is this still true? NOTE: Can only be used for on-policy generation,
+        # not off-policy evaluation of entire trajectory.
+        # states.tensor.shape: (..., max_string_len)
+        current_input_len = states.tensor.shape[-1]  # TODO: Check if this is correct.
+        states_tensor = states.tensor[..., :current_input_len]  # (..., string_len)
+
+        # Compute sequence of logits and update carry.
+        logits, carry = self.module(states_tensor, carry)
+
+        # Get the logits for the last token in the sequence.
+        logits = logits[:, -1, :]  # (b, n_actions)
+
+        if self.expected_output_dim is not None:
+            assert logits.shape[-1] == self.expected_output_dim, (
+                f"Module output shape {logits.shape} does not match expected output "
+                f"dimension {self.expected_output_dim}"
+            )
+
+        return logits, carry
+
+    def init_carry(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        init_carry = getattr(self.module, "init_carry", None)
+        if not callable(init_carry):
+            raise NotImplementedError(
+                "Module does not implement init_carry(batch_size, device)."
+            )
+        init_carry_fn = cast(Callable[[int, torch.device], Any], init_carry)
+
+        return init_carry_fn(batch_size, device)
