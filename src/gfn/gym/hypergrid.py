@@ -24,6 +24,17 @@ else:
     multiprocessing.set_start_method("fork", force=True)
 
 
+# Numerical tolerances used by quick mode-existence checks in this module.
+#
+# - EPS_REWARD_CMP: tolerance for comparing scalar rewards to thresholds. It
+#   guards against small floating-point rounding errors when checking
+#   inequalities like r >= thr.
+# - EPS_INDEX_CMP: tolerance for floating-point-to-index boundary calculations,
+#   used when turning fractional bands into integer indices.
+EPS_REWARD_CMP = 1e-12
+EPS_INDEX_CMP = 1e-9
+
+
 def lcm(a, b):
     """Returns the lowest common multiple between a and b."""
     return a * b // gcd(a, b)
@@ -530,10 +541,16 @@ class HyperGrid(DiscreteEnv):
     # Mode existence validation
     # -------------------------
     def _modes_exist_quick_check(self) -> bool:
-        """Lightweight check that at least one state achieves the mode threshold.
+        """Lightweight check that a mode-level state exists.
 
-        Avoids full enumeration. Uses reward-specific constructive or analytic
-        conditions that guarantee the existence of a mode-level state.
+        In simple terms, this answers: "Is there at least one state whose reward
+        reaches the mode threshold?" without enumerating all states. It proceeds
+        in three stages:
+        1) If the grid is small (or pre-enumerated), it computes rewards exactly
+           and checks against the threshold.
+        2) Otherwise, it dispatches to reward-specific constructive tests that
+           are sufficient to guarantee at least one state reaches the threshold.
+        3) As a last resort, it samples a small batch of random states.
         """
         thr = self._mode_reward_threshold()
 
@@ -542,7 +559,8 @@ class HyperGrid(DiscreteEnv):
         try:
             if self.store_all_states and self.all_states is not None:
                 rewards = self.reward(self.all_states)
-                return bool((rewards >= thr - 1e-12).any().item())
+                # Compare with a small tolerance to avoid missing near-boundary cases.
+                return bool((rewards >= thr - EPS_REWARD_CMP).any().item())
             # Cheap exact threshold (up to ~200k states)
             if self.n_states <= 200_000:
                 axes = [
@@ -550,7 +568,7 @@ class HyperGrid(DiscreteEnv):
                 ]
                 grid = torch.cartesian_prod(*axes)
                 rewards = self.reward_fn(grid)
-                return bool((rewards >= thr - 1e-12).any().item())
+                return bool((rewards >= thr - EPS_REWARD_CMP).any().item())
         except Exception:
             # Fall back to heuristic paths below
             pass
@@ -569,10 +587,14 @@ class HyperGrid(DiscreteEnv):
         return self._exists_fallback_random(thr)
 
     def _modes_exist_quick_check_info(self) -> tuple[bool, str]:
-        """Same as _modes_exist_quick_check but returns (ok, message).
+        """User-friendly wrapper for ``_modes_exist_quick_check``.
 
-        Message includes guidance for TemplateMinkowski when r_bands exceed
-        the reachable L1 cap given (D,H): cap_sum = (H-1)*|dims_subset|.
+        Returns ``(ok, message)`` where:
+        - ``ok`` is True if a mode-level state is found by the quick check.
+        - ``message`` is "OK" on success or a short explanation of why the
+          quick check failed and, for TemplateMinkowski, guidance to adjust
+          parameters when r_bands are unreachable given the L1 budget
+          cap_sum = (H-1)*|dims_subset|.
         """
         try:
             ok = self._modes_exist_quick_check()
@@ -609,15 +631,28 @@ class HyperGrid(DiscreteEnv):
         )
 
     def _exists_original_or_deceptive(self, thr: float) -> bool:
+        """Constructive check for ``OriginalReward`` and ``DeceptiveReward``.
+
+        Intuition:
+        - These rewards form rings/bands around the center when each coordinate
+          is normalized to [0,1]. The mode lies on a thin band at specific
+          normalized distances from the center.
+        - We translate those fractional band boundaries into integer indices via
+          small inside/outside nudges (using ``EPS_INDEX_CMP``) and test one
+          candidate index from any non-empty feasible interval.
+        - If the reward at that candidate exceeds the threshold (with
+          ``EPS_REWARD_CMP`` tolerance), we return True.
+        """
         Hm1 = self.height - 1
         if Hm1 <= 0:
             return False
         lows = []
         highs = []
-        lows.append(int((0.1 + 1e-9) * Hm1) + 1)
-        highs.append(int((0.2 - 1e-9) * Hm1))
-        lows.append(int((0.8 + 1e-9) * Hm1) + 1)
-        highs.append(int((0.9 - 1e-9) * Hm1))
+        # Convert fractional bounds to integer index ranges with a small tolerance.
+        lows.append(int((0.1 + EPS_INDEX_CMP) * Hm1) + 1)
+        highs.append(int((0.2 - EPS_INDEX_CMP) * Hm1))
+        lows.append(int((0.8 + EPS_INDEX_CMP) * Hm1) + 1)
+        highs.append(int((0.9 - EPS_INDEX_CMP) * Hm1))
         candidate_idxs: list[int] = []
         for lo, hi in zip(lows, highs):
             if lo <= hi:
@@ -627,9 +662,20 @@ class HyperGrid(DiscreteEnv):
         i = candidate_idxs[0]
         x = torch.full((self.ndim,), i, dtype=torch.long)
         r = float(self.reward_fn(x.unsqueeze(0))[0])
-        return r >= thr - 1e-12
+        return r >= thr - EPS_REWARD_CMP
 
     def _exists_cosine(self, thr: float) -> bool:
+        """Analytic upper-bound check for ``CosineReward``.
+
+        Idea:
+        - The per-dimension factor is ``(cos(50·ax) + 1) · N(0,1)(5·ax)`` with
+          ax in [0,0.5]. We estimate its maximum over the discrete grid by
+          evaluating all candidate ax and taking the maximum value ``m``.
+        - The full reward upper bound is ``R0 + m^D * R1``. If this is at least
+          the mode target and the given threshold, a mode-level state must exist.
+        - We also compute a theoretical per-dimension peak (at ax≈0) to form a
+          slightly conservative target scaled by ``mode_gamma``.
+        """
         R0 = float(self.reward_fn.kwargs.get("R0", 0.1))
         R1 = float(self.reward_fn.kwargs.get("R1", 0.5))
         gamma = float(self.reward_fn.kwargs.get("mode_gamma", 0.8))
@@ -643,17 +689,31 @@ class HyperGrid(DiscreteEnv):
         per_dim_peak = 2.0 / sqrt(2 * pi)
         target = R0 + (gamma * per_dim_peak) ** self.ndim * R1
         rmax = R0 + (m**self.ndim) * R1
-        return rmax >= target - 1e-12 and rmax >= thr - 1e-12
+        return rmax >= target - EPS_REWARD_CMP and rmax >= thr - EPS_REWARD_CMP
 
     def _exists_sparse(self, thr: float) -> bool:
-        # SparseReward guarantees targets as long as H>=2 and D>=1.
-        # Compare threshold only to confirm it does not exceed target reward.
+        """Constructive check for ``SparseReward``.
+
+        This reward assigns positive mass only to a finite set of target
+        configurations. When ``H>=2`` and ``D>=1``, a known target is the zero
+        vector except for certain coordinates fixed at 1 or ``H-2``. We probe a
+        canonical target and confirm the threshold is not above its reward.
+        """
         probe = torch.zeros(self.ndim, dtype=torch.long)
         r = float(self.reward_fn(probe.unsqueeze(0))[0])
         return (self.height >= 2 and self.ndim >= 1) and (r <= thr or r + 1.0 >= thr)
 
     def _exists_bitwise_xor(self, thr: float) -> bool:
-        # Check GF(2) constraints per tier; zero vector satisfies even parity.
+        """Feasibility and constructive check for ``BitwiseXORReward``.
+
+        Steps:
+        - For each tier, verify the GF(2) parity system has at least one
+          solution using Gaussian elimination modulo 2. If any tier is
+          infeasible, no mode exists.
+        - The all-zero configuration satisfies even-parity constraints, so if
+          tiers are feasible we evaluate that point against the threshold with
+          tolerance.
+        """
         if self.reward_fn.parity_checks is not None:
             for t in range(len(self.reward_fn.tier_weights)):
                 cfg = self.reward_fn.parity_checks[t]
@@ -668,9 +728,20 @@ class HyperGrid(DiscreteEnv):
 
         x = torch.zeros(self.ndim, dtype=torch.long)
         r = float(self.reward_fn(x.unsqueeze(0))[0])
-        return r >= thr - 1e-12
+        return r >= thr - EPS_REWARD_CMP
 
     def _exists_multiplicative_coprime(self, thr: float) -> bool:
+        """Number-theoretic constructive check for ``MultiplicativeCoprimeReward``.
+
+        Outline:
+        - If a target LCM is specified for the last tier, factor it over the
+          allowed primes and ensure exponents do not exceed caps and are
+          representable as grid coordinates (< H).
+        - Place prime powers on designated active dimensions and ensure required
+          coprime relations hold between specified pairs.
+        - If the constructed state fits within the grid, evaluate it and compare
+          to the threshold with tolerance.
+        """
         primes: list[int] = [int(p) for p in self.reward_fn.primes]
         caps: list[int] = [int(c) for c in self.reward_fn.exponent_caps]
         active = list(self.reward_fn.active_dims)
@@ -702,9 +773,19 @@ class HyperGrid(DiscreteEnv):
         if int(x.max()) >= self.height:
             return False
         r = float(self.reward_fn(x.unsqueeze(0))[0])
-        return r >= thr - 1e-12
+        return r >= thr - EPS_REWARD_CMP
 
     def _exists_template_minkowski(self, thr: float) -> bool:
+        """Band-feasibility and constructive check for ``TemplateMinkowskiReward``.
+
+        Intuition:
+        - Each tier defines an L1 band on a subset of dimensions (with optional
+          modular constraints). We choose the highest feasible tier whose target
+          sum ``r`` fits within the per-dimension L1 budget cap_sum = (H-1)*|S|.
+        - We then greedily allocate steps along the subset dimensions to reach
+          that L1 sum and evaluate the constructed state against the threshold
+          with tolerance.
+        """
         bands: list[tuple[int, int]] = list(self.reward_fn.r_bands)
         sum_mods = self.reward_fn.sum_mods
         dims_subset = list(self.reward_fn.dims_subset)
@@ -736,15 +817,21 @@ class HyperGrid(DiscreteEnv):
             if remaining <= 0:
                 break
         r_val = float(self.reward_fn(x.unsqueeze(0))[0])
-        return r_val >= thr - 1e-12
+        return r_val >= thr - EPS_REWARD_CMP
 
     def _exists_fallback_random(self, thr: float) -> bool:
+        """Random sampling fallback.
+
+        Draw a modest batch of random states on CPU and accept if any exceed the
+        threshold with a small tolerance. This is a last resort to avoid
+        expensive enumeration for large grids.
+        """
         with torch.no_grad():
             device = torch.device("cpu")
             B = min(2048, max(128, 8 * self.ndim))
             xs = torch.randint(0, self.height, (B, self.ndim), device=device)
             rr = self.reward_fn(xs)
-            return bool((rr >= thr - 1e-12).any().item())
+            return bool((rr >= thr - EPS_REWARD_CMP).any().item())
 
     @staticmethod
     def _solve_gf2_has_solution(A: torch.Tensor, c: torch.Tensor) -> bool:
@@ -1098,11 +1185,10 @@ class DeceptiveReward(GridReward):
 class BitwiseXORReward(GridReward):
     """Tiered, compositional reward based on bitwise XOR/parity constraints.
 
-    This class implements the "Bitwise/XOR fractal" environment family discussed in
-    our design: tiers progressively constrain bit-planes across a subset of
-    dimensions via linear parity checks over GF(2). It supports easy sharding by
-    high-bit prefixes, and difficulty control by adjusting which bit-planes and
-    how many dimensions are constrained per tier.
+    This class implements the "Bitwise/XOR fractal" environment family: where tiers
+    progressively constrain bit-planes across a subset of dimensions via linear parity
+    checks over GF(2). It supports easy sharding by high-bit prefixes, and difficulty
+    control by adjusting which bit-planes and how many dimensions are constrained per tier.
 
     GF(2) is the finite field with two elements {0, 1}, where addition and
     multiplication are performed modulo 2. In this context, vector addition is
