@@ -73,7 +73,8 @@ class HyperGrid(DiscreteEnv):
     def __init__(
         self,
         ndim: int = 2,
-        height: int = 4,
+        # Smallest height that satisfies `validate_modes=True` for the original reward.
+        height: int = 8,
         reward_fn_str: str = "original",
         reward_fn_kwargs: dict | None = None,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
@@ -88,7 +89,8 @@ class HyperGrid(DiscreteEnv):
 
         Args:
             ndim: The dimension of the grid.
-            height: The height of the grid.
+            height: The height of the grid. The default value is the smallest height
+                that satisfies `validate_modes=True` for the original reward.
             reward_fn_str: The reward function string to use.
             reward_fn_kwargs: The keyword arguments for the reward function.
             device: The device to use.
@@ -108,6 +110,7 @@ class HyperGrid(DiscreteEnv):
         """
         if height <= 4:
             logger.warning("+ Warning: height <= 4 can lead to unsolvable environments.")
+
 
         reward_functions = {
             "original": OriginalReward,
