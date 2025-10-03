@@ -39,7 +39,7 @@ def trajectory_sampling_with_return(
 
     if env_name in ["HyperGrid", "DiscreteEBM"]:
         if env_name == "HyperGrid":
-            env = HyperGrid(ndim=2, height=8)
+            env = HyperGrid(ndim=2, height=8, validate_modes=False)
             if preprocessor_name == "KHot":
                 preprocessor = KHotPreprocessor(env.height, env.ndim)
             elif preprocessor_name == "OneHot":
