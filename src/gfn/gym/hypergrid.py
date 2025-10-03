@@ -71,7 +71,8 @@ class HyperGrid(DiscreteEnv):
     def __init__(
         self,
         ndim: int = 2,
-        height: int = 4,
+        # Smallest height that satisfies `validate_modes=True` for the original reward.
+        height: int = 8,
         reward_fn_str: str = "original",
         reward_fn_kwargs: dict | None = None,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
@@ -86,13 +87,15 @@ class HyperGrid(DiscreteEnv):
 
         Args:
             ndim: The dimension of the grid.
-            height: The height of the grid.
+            height: The height of the grid. The default value is the smallest height
+                that satisfies `validate_modes=True` for the original reward.
             reward_fn_str: The reward function string to use.
             reward_fn_kwargs: The keyword arguments for the reward function.
             device: The device to use.
             calculate_partition: Whether to calculate the log partition function.
-            store_all_states: Whether to store all states. If True, the true distribution
-                can be accessed via the `true_dist` property.
+                store_all_states: Whether to store all states. If True, the true
+                distribution can be accessed via the `true_dist` property. Note that
+                this is not always possible for some reward functions.
             check_action_validity: Whether to check the action validity.
             validate_modes: If True, verifies at initialization that at least one
                 state achieves the reward-defined mode threshold; raises
@@ -104,9 +107,6 @@ class HyperGrid(DiscreteEnv):
             mode_stats_samples: Number of random samples used when
                 `mode_stats="approx"`.
         """
-        if height <= 4:
-            warnings.warn("+ Warning: height <= 4 can lead to unsolvable environments.")
-
         reward_functions = {
             "original": OriginalReward,
             "cosine": CosineReward,

@@ -273,7 +273,7 @@ def test_local_search_for_loop_equivalence(
     is_discrete = env_name in ["HyperGrid", "DiscreteEBM"]
     if is_discrete:
         if env_name == "HyperGrid":
-            env = HyperGrid(ndim=2, height=5)
+            env = HyperGrid(ndim=2, height=5, validate_modes=False)
             preprocessor = KHotPreprocessor(env.height, env.ndim)
         elif env_name == "DiscreteEBM":
             env = DiscreteEBM(ndim=5)
@@ -389,7 +389,7 @@ def test_replay_buffer(
 ):
     """Test that the replay buffer works correctly with different types of objects."""
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=2, height=4)
+        env = HyperGrid(ndim=2, height=4, validate_modes=False)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=8)
     elif env_name == "Box":
@@ -442,7 +442,7 @@ def test_replay_buffer(
 
 
 def test_states_actions_tns_to_traj():
-    env = HyperGrid(2, 4)
+    env = HyperGrid(2, 4, validate_modes=False)
     states = torch.tensor([[0, 0], [0, 1], [0, 2], [-1, -1]])
     actions = torch.tensor([1, 1, 2])
     trajs = states_actions_tns_to_traj(states, actions, env)

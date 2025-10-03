@@ -347,7 +347,7 @@ def test_numerical_stability_different_dtypes(dtype):
 def test_discrete_policy_estimator_integration():
     """Test integration with DiscretePolicyEstimator."""
     # Create a simple environment and estimator
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     preprocessor = KHotPreprocessor(env.height, env.ndim)
     module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
 
