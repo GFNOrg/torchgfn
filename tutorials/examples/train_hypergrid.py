@@ -32,7 +32,7 @@ import sys
 import time
 from argparse import ArgumentParser
 from math import ceil
-from typing import cast
+from typing import cast, Callable, Tuple
 
 import matplotlib.pyplot as plt
 import torch
@@ -177,31 +177,6 @@ def validate_hypergrid(
     return validation_info, visited_terminating_states, discovered_modes
 
 
-# NOTE: This function is a *placeholder* for the true criteria which will be based
-# on buffer inclusion. For now, it simply serves as a random number generator for
-# each loop.
-def _group_random_coin(
-    prob: float, agent_group_id: int, iteration: int, base_seed: int
-) -> bool:
-    """Deterministic per-agent-group Bernoulli coin flip.
-
-    This creates a CPU generator with a seed based on the global seed, the
-    agent group id and the iteration, without requiring any communication.
-
-    Args:
-        prob: Probability of success in [0, 1].
-        agent_group_id: The id of the agent group for this rank.
-        iteration: Current training iteration.
-        base_seed: Base random seed from CLI.
-
-    Returns:
-        True if the coin flip succeeds, False otherwise.
-    """
-    g = torch.Generator(device="cpu")
-    # Use large coprime multipliers to decorrelate.
-    g.manual_seed(int(base_seed) + int(agent_group_id) * 1000003 + int(iteration) * 9176)
-    return bool(torch.rand((), generator=g).item() < prob)
-
 
 def _sample_new_strategy(
     args,
@@ -256,108 +231,6 @@ def _sample_new_strategy(
     return strat
 
 
-def _reset_module_parameters_inplace(root: torch.nn.Module) -> None:
-    """Reset parameters for all submodules that expose ``reset_parameters``.
-
-    This traverses the module hierarchy and calls ``reset_parameters`` when
-    available. Works with DDP-wrapped modules as well (by traversing children).
-    """
-    for m in root.modules():
-        if hasattr(m, "reset_parameters"):
-            try:
-                m.reset_parameters()  # type: ignore
-            except Exception:
-                pass
-
-
-def _canonical_linear_params(module: torch.nn.Module) -> list[torch.Tensor]:
-    """Collect canonical tensors for averaging across heterogeneous modules.
-
-    Canonical tensors are those representing the mean weights/biases of layers
-    that exist across architectures:
-      - For ``nn.Linear``: ``weight`` and (if present) ``bias``.
-      - For ``NoisyLinear``: ``weight_mu`` and (if present) ``bias_mu``.
-
-    The sigma parameters of NoisyLinear (``weight_sigma``, ``bias_sigma``) and
-    noise buffers are intentionally excluded to retain their default init.
-    """
-    params: list[torch.Tensor] = []
-    for m in module.modules():
-        base = getattr(m, "module", m)  # unwrap DDP if present
-
-        if isinstance(base, torch.nn.Linear):
-            params.append(base.weight)
-            if base.bias is not None:
-                params.append(base.bias)
-
-        elif base.__class__.__name__ == "NoisyLinear":
-            w_mu = getattr(base, "weight_mu", None)
-            b_mu = getattr(base, "bias_mu", None)
-
-            if isinstance(w_mu, torch.nn.Parameter):
-                params.append(w_mu)
-
-            if isinstance(b_mu, torch.nn.Parameter):
-                params.append(b_mu)
-
-    return params
-
-
-def _canonical_param_tensors_for_gflownet(
-    gflownet: torch.nn.Module,
-) -> list[torch.Tensor]:
-    """Return canonical parameter tensors for PF/PB (and logZ if present)."""
-    tensors: list[torch.Tensor] = []
-
-    pf = getattr(gflownet, "pf", None)
-    if pf is not None and hasattr(pf, "module"):
-        tensors += _canonical_linear_params(pf.module)
-
-    pb = getattr(gflownet, "pb", None)
-    if pb is not None and hasattr(pb, "module"):
-        tensors += _canonical_linear_params(pb.module)
-
-    named = dict(gflownet.named_parameters())
-    if "logZ" in named:
-        tensors.append(named["logZ"])
-
-    return tensors
-
-
-def _assign_mean_of_other_agents_canonical(gflownet, distributed_context) -> bool:
-    """Average canonical tensors with other training ranks, excluding local group.
-
-    We compute: mean_others = (sum_all - G * self) / (N - G), where N is the
-    number of training ranks and G is the agent group size. Only canonical
-    tensors are averaged to handle architectural differences (e.g., different
-    numbers of noisy layers). Non-canonical tensors keep their default init.
-
-    Returns:
-        True if averaging was performed, False otherwise.
-    """
-    if (not torch.distributed.is_initialized()) or (
-        distributed_context.num_training_ranks <= 1
-    ):
-        return False
-
-    N = int(distributed_context.num_training_ranks)
-    G = int(distributed_context.agent_group_size)
-
-    if (N - G) <= 0:
-        return False
-
-    group = distributed_context.train_global_group
-    with torch.no_grad():
-        for t in _canonical_param_tensors_for_gflownet(gflownet):
-            buf = t.data.clone()
-            dist.all_reduce(buf, op=dist.ReduceOp.SUM, group=group)
-            buf -= t.data * G
-            buf /= N - G
-            t.data.copy_(buf)
-
-    return True
-
-
 def _make_optimizer_for(gflownet, args) -> torch.optim.Optimizer:
     """Build a fresh Adam optimizer for a (re)built GFlowNet with logZ group."""
     named = dict(gflownet.named_parameters())
@@ -367,60 +240,6 @@ def _make_optimizer_for(gflownet, args) -> torch.optim.Optimizer:
     return torch.optim.Adam(
         [{"params": non_logz, "lr": args.lr}, {"params": logz, "lr": args.lr_Z}]
     )
-
-
-def _rebuild_agent_with_strategy(
-    args,
-    env,
-    preprocessor,
-    distributed_context,
-    device,
-    strategy: dict,
-    init_mode: str | None = None,
-):
-    """Rebuild an agent to reflect a new strategy and reinitialize weights.
-
-    This updates per-agent exploration knobs on ``args`` (epsilon, temperature,
-    n_noisy_layers, noisy_std_init), rebuilds the GFlowNet (so architectural
-    changes like noisy layer count are applied), optionally averages canonical
-    parameters from other ranks (keeping noisy sigmas/defaults intact), and
-    returns the new model and optimizer.
-    """
-    args.agent_epsilon = float(strategy.get("epsilon", 0.0))
-    args.agent_temperature = float(strategy.get("temperature", 1.0))
-    args.agent_n_noisy_layers = int(
-        strategy.get("n_noisy_layers", getattr(args, "agent_n_noisy_layers", 0))
-    )
-    args.agent_noisy_std_init = float(
-        strategy.get("noisy_std_init", getattr(args, "agent_noisy_std_init", 0.5))
-    )
-
-    gflownet = set_up_gflownet(
-        args,
-        env,
-        preprocessor,
-        distributed_context.agent_groups,
-        distributed_context.agent_group_id,
-    )
-    assert gflownet is not None, f"gflownet is None, Args: {args}"
-    gflownet = gflownet.to(device)
-
-    # Choose initialization behavior: default to args.restart_init_mode, allow override.
-    mode = (
-        init_mode
-        if init_mode is not None
-        else getattr(args, "restart_init_mode", "random")
-    )
-    if mode == "mean_others":
-        ok = _assign_mean_of_other_agents_canonical(gflownet, distributed_context)
-        if not ok:
-            # Fallback to default initialization of an agent.
-            print("+ Falling back to default initialization of an agent!")
-            _reset_module_parameters_inplace(gflownet)
-
-    optimizer = _make_optimizer_for(gflownet, args)
-
-    return gflownet, optimizer
 
 
 def set_up_fm_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id):
@@ -739,9 +558,6 @@ def main(args):  # noqa: C901
     # Initialize the preprocessor.
     preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
 
-    # 2. Build the initial gflownet via the same pathway as restarts (unified behavior).
-    # We explicitly pick random parameter init for the initial build (no averaging).
-
     # Initialize per-agent exploration strategy.
     # Default (tests stable): on-policy, no noisy layers.
     # When --use_random_strategies is provided, sample a random initial strategy.
@@ -766,23 +582,22 @@ def main(args):  # noqa: C901
         args.agent_n_noisy_layers = 0
         args.agent_noisy_std_init = 0.5
 
-    # The initial strategy is randomly sampled above.
-    initial_strategy = {
-        "epsilon": float(getattr(args, "agent_epsilon", 0.0)),
-        "temperature": float(getattr(args, "agent_temperature", 1.0)),
-        "n_noisy_layers": int(getattr(args, "agent_n_noisy_layers", 0)),
-        "noisy_std_init": float(getattr(args, "agent_noisy_std_init", 0.5)),
-    }
-    gflownet, optimizer = _rebuild_agent_with_strategy(
-        args,
-        env,
-        preprocessor,
-        distributed_context,
-        device,
-        strategy=initial_strategy,
-        init_mode="random",
-    )
-    assert gflownet is not None, f"gflownet is None, Args: {args}"
+    # Builder closure to create a fresh model + optimizer (used by spawn policy as well)
+    def _model_builder() -> Tuple[GFlowNet, torch.optim.Optimizer]:
+        model = set_up_gflownet(
+            args,
+            env,
+            preprocessor,
+            distributed_context.agent_groups,
+            distributed_context.agent_group_id,
+        )
+        assert model is not None
+        model = model.to(device)
+        optim = _make_optimizer_for(model, args)
+        return model, optim
+
+    # Build the initial model and optimizer
+    gflownet, optimizer = _model_builder()
 
     # Create replay buffer if needed
     replay_buffer = None
@@ -857,7 +672,8 @@ def main(args):  # noqa: C901
     averaging_policy = None
     if args.distributed:
         if args.use_selective_averaging:
-            averaging_policy = AsyncSelectiveAveragingPolicy(
+            averaging_policy = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
+                model_builder=_model_builder,
                 average_every=args.average_every,
                 replacement_ratio=args.replacement_ratio,
                 averaging_strategy=args.averaging_strategy,
@@ -883,37 +699,7 @@ def main(args):  # noqa: C901
                 if iteration >= 1 + 1 + keep_active:
                     break
 
-        # Optional agent restart: after 1000 iterations, 1/1000 chance each step.
-        if getattr(args, "use_restarts", False) and iteration >= 1000:
-            agent_gid = distributed_context.agent_group_id or 0
-            if _group_random_coin(1.0 / 1000.0, agent_gid, iteration, args.seed):
-                prev_eps = float(getattr(args, "agent_epsilon", 0.0))
-                prev_temp = float(getattr(args, "agent_temperature", 1.0))
-                prev_noisy = int(getattr(args, "agent_n_noisy_layers", 0))
-                if getattr(args, "use_random_strategies", False):
-                    new_strat = _sample_new_strategy(
-                        args, agent_gid, iteration, prev_eps, prev_temp, prev_noisy
-                    )
-                else:
-                    # Keep the same exploration strategy; only weights are reinitialized.
-                    new_strat = {
-                        "epsilon": prev_eps,
-                        "temperature": prev_temp,
-                        "n_noisy_layers": prev_noisy,
-                        "noisy_std_init": float(
-                            getattr(args, "agent_noisy_std_init", 0.5)
-                        ),
-                    }
-
-                # Rebuild agent with new strategy; optionally average canonical weights from others.
-                gflownet, optimizer = _rebuild_agent_with_strategy(
-                    args, env, preprocessor, distributed_context, device, new_strat
-                )
-
-                if (iteration % args.validation_interval == 0) or (iteration == 0):
-                    print(
-                        f"[agent {agent_gid}] restarted at iter {iteration} with strategy {new_strat}"
-                    )
+        # Restarts are handled by selective averaging policy via spawn; no-op here.
 
         # Sample trajectories.
         with Timer(timing, "generate_samples", enabled=args.timing) as sample_timer:
@@ -1001,6 +787,13 @@ def main(args):  # noqa: C901
                 averaging_policy(
                     iteration=iteration, model=gflownet, local_metric=-loss.item()
                 )
+                # If the policy spawned a fresh model+optimizer, swap them in safely
+                if isinstance(averaging_policy, AsyncSelectiveAveragingPolicy):
+                    spawned = averaging_policy.consume_spawned()
+                    if spawned is not None:
+                        new_model, new_optimizer = spawned
+                        gflownet = new_model  # already moved to device inside builder
+                        optimizer = new_optimizer
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start

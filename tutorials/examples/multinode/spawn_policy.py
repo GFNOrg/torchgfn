@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import torch
 import torch.distributed as dist
@@ -74,20 +74,27 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         averaging_strategy: str = "mean",
         momentum: float = 0.0,
         poll_interval_s: float = 0.01,
+        model_builder: Callable[[], Tuple[torch.nn.Module, torch.optim.Optimizer]] = None,
     ) -> None:
         super().__init__(average_every)
         self.replacement_ratio = float(replacement_ratio)
         self.averaging_strategy = str(averaging_strategy)
         self.momentum = float(momentum)
         self.poll_interval_s = float(poll_interval_s)
+        self._model_builder = model_builder
 
         self._initialized = False
         self._model: Optional[torch.nn.Module] = None
         self._shutdown = threading.Event()
         self._bg_thread: Optional[threading.Thread] = None
-        self._pending_update: Optional[Dict[str, torch.Tensor]] = None
         self._pending_lock = threading.Lock()
         self._last_iter_sent: int = -1
+
+        # When rebuilding a fresh model + optimizer is desired, we store the
+        # averaged parameters and construct the new model at the next safe call.
+        self._pending_spawn_avg_state: Optional[Dict[str, torch.Tensor]] = None
+        self._spawned_model: Optional[torch.nn.Module] = None
+        self._spawned_optimizer: Optional[torch.optim.Optimizer] = None
 
         # Rank-0 state for metric aggregation
         self._rank0_metric_handles: Dict[int, dist.Work] = {}
@@ -148,18 +155,47 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 except Exception:
                     pass
 
-        # Apply any pending averaged weights atomically
-        if self._pending_update is not None:
+        # If a spawn (full rebuild) has been requested, build a fresh model + optimizer
+        # and seed it with the averaged weights received in the background thread.
+        if self._pending_spawn_avg_state is not None and self._model_builder is not None:
+            avg_state: Optional[Dict[str, torch.Tensor]] = None
             with self._pending_lock:
-                update = self._pending_update
-                self._pending_update = None
-            if update is not None:
-                for name, param in model.named_parameters():
-                    if name in update:
-                        averaged = update[name]
-                        param.data.copy_(
-                            self.momentum * param.data + (1.0 - self.momentum) * averaged
-                        )
+                avg_state = self._pending_spawn_avg_state
+                self._pending_spawn_avg_state = None
+            if avg_state is not None:
+                try:
+                    new_model, new_optimizer = self._model_builder()
+                    # Copy averaged params by name into the new model
+                    for name, param in new_model.named_parameters():
+                        if name in avg_state:
+                            param.data.copy_(avg_state[name])
+                    # Expose to the caller for a safe swap in the training loop
+                    self._spawned_model = new_model
+                    self._spawned_optimizer = new_optimizer
+                    # Update internal reference so donor sends use the latest
+                    self._model = new_model
+                except Exception:
+                    # If spawning fails, fall back to in-place update of current model
+                    for name, param in model.named_parameters():
+                        if name in avg_state:
+                            param.data.copy_(
+                                self.momentum * param.data
+                                + (1.0 - self.momentum) * avg_state[name]
+                            )
+
+
+    def consume_spawned(self) -> Optional[Tuple[torch.nn.Module, torch.optim.Optimizer]]:
+        """Return a newly spawned (model, optimizer) if available, else None.
+
+        This should be called in the training loop immediately after invoking this policy.
+        """
+        if self._spawned_model is None or self._spawned_optimizer is None:
+            return None
+        model = self._spawned_model
+        optim = self._spawned_optimizer
+        self._spawned_model = None
+        self._spawned_optimizer = None
+        return model, optim
 
     # ---------------- Rank 0 metric aggregation and dispatch ----------------
     def _rank0_post_metric_recvs(self) -> None:
@@ -309,7 +345,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             avg_state[name] = acc
 
         with self._pending_lock:
-            self._pending_update = avg_state
+            self._pending_spawn_avg_state = avg_state
 
     # ---------------- Background thread loop ----------------
     def _background_loop(self) -> None:
