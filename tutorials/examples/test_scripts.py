@@ -245,7 +245,7 @@ class BayesianStructureArgs(CommonArgs):
 class ConditionalArgs(CommonArgs):
     gflownet: str = "tb"
     ndim: int = 5
-    height: int = 2
+    height: int = 8
     n_iterations: int = 10
     batch_size: int = 1000
     seed: int = 4444
