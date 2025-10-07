@@ -65,6 +65,9 @@ from gfn.utils.distributed import (
     report_load_imbalance,
 )
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
+from tutorials.examples.multinode.hypergrid_diversity_score import (
+    HypergridDiversityScore,
+)
 from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
     AverageAllPolicy,
@@ -696,8 +699,7 @@ def main(args):  # noqa: C901
         else:
             num_training_ranks = len(distributed_context.assigned_training_ranks)
 
-        def scoring_function(training_obj):
-            return 0.0
+        scoring_function = HypergridDiversityScore(args.ndim, args.height)
 
         replay_buffer_manager = ReplayBufferManager(
             rank=distributed_context.my_rank,
