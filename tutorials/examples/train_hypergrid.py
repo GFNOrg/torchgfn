@@ -32,13 +32,12 @@ import sys
 import time
 from argparse import ArgumentParser
 from math import ceil
-from typing import cast, Callable, Tuple
+from typing import cast, Tuple
 
 import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
 from matplotlib.gridspec import GridSpec
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 
@@ -255,9 +254,6 @@ def set_up_fm_gflownet(args, env, preprocessor, agent_group_list, my_agent_group
             n_hidden_layers=args.n_hidden,
         )
 
-    if args.distributed:
-        module = DDP(module, process_group=agent_group_list[my_agent_group_id])
-
     estimator = DiscretePolicyEstimator(
         module=module,
         n_actions=env.n_actions,
@@ -308,10 +304,6 @@ def set_up_pb_pf_estimators(
     for v in ["pf_module", "pb_module"]:
         assert locals()[v] is not None, f"{v} is None, Args: {args}"
 
-    if args.distributed:
-        pf_module = DDP(pf_module, process_group=agent_group_list[my_agent_group_id])
-        pb_module = DDP(pb_module, process_group=agent_group_list[my_agent_group_id])
-
     assert pf_module is not None
     assert pb_module is not None
     pf_estimator = DiscretePolicyEstimator(
@@ -347,9 +339,6 @@ def set_up_logF_estimator(
                 else None
             ),
         )
-
-    if args.distributed:
-        module = DDP(module, process_group=agent_group_list[my_agent_group_id])
 
     return ScalarEstimator(module=module, preprocessor=preprocessor)
 
@@ -504,7 +493,7 @@ def main(args):  # noqa: C901
             num_agent_groups=args.num_agent_groups,
         )
 
-        print(f"Running with DDP with following settings: {distributed_context}")
+        print(f"Running distributed with following settings: {distributed_context}")
     else:
         distributed_context = DistributedContext(
             my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
