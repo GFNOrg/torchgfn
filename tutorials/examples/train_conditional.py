@@ -61,9 +61,8 @@ class ConditionalHyperGrid(HyperGrid):
     """
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self.conditioning = None
-        self._original_reward_fn = self.reward_fn
+        super().__init__(*args, **kwargs)
 
     def set_conditioning(self, conditioning: torch.Tensor):
         """Set the conditioning for the environment."""
@@ -78,7 +77,7 @@ class ConditionalHyperGrid(HyperGrid):
         - In between: Linear interpolation between uniform and original
         """
         # Get original rewards
-        original_rewards = self._original_reward_fn(states.tensor)
+        original_rewards = super().reward(states)
 
         if self.conditioning is None:
             return original_rewards

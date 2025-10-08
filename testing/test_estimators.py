@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 import torch
 
@@ -391,7 +393,7 @@ def test_discrete_policy_estimator_integration():
         assert (actions < env.n_actions).all()
 
         # Check that probabilities sum to 1
-        probs = dist.probs
+        probs = cast(torch.Tensor, dist.probs)
         assert torch.allclose(probs.sum(dim=-1), torch.ones(batch_size))
 
         # Check that masked actions have zero probability
