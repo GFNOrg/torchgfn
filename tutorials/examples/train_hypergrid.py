@@ -61,7 +61,6 @@ from gfn.utils.distributed import (
     DistributedContext,
     gather_distributed_data,
     initialize_distributed_compute,
-    report_load_imbalance,
 )
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from tutorials.examples.multinode.hypergrid_diversity_score import (
@@ -71,12 +70,6 @@ from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
     AverageAllPolicy,
 )
-
-
-def report_timing(all_timing_dict, world_size):
-    """Prints the timing information from the timing dictionary."""
-    # report_time_info(all_timing_dict, world_size)
-    report_load_imbalance(all_timing_dict, world_size)
 
 
 def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
@@ -926,21 +919,11 @@ def main(args):  # noqa: C901
             print("\n Timing information:")
             if args.distributed:
                 print("-" * 80)
-                print("The below timing information is averaged across all ranks.")
+                print("Distributed run: showing local timings for rank 0 only.")
             print("=" * 80)
 
-        if args.distributed:
-            # Gather timing data from all ranks
-            all_timings = [None] * distributed_context.num_training_ranks
-            dist.all_gather_object(
-                all_timings, timing, group=distributed_context.train_global_group
-            )
-
-            if distributed_context.my_rank == 0:
-                report_timing(all_timings, distributed_context.num_training_ranks)
-        else:
-            # Single machine case
-            # Header
+        # Print local timings only (avoid collective communication)
+        if (not args.distributed) or (distributed_context.my_rank == 0):
             print(f"{'Step Name':<25} {'Time (s)':>12}")
             print("-" * 80)
             for k, v in timing.items():
