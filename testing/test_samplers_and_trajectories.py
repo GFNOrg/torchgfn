@@ -21,10 +21,10 @@ from gfn.preprocessors import (
     OneHotPreprocessor,
 )
 from gfn.samplers import (
-    AdapterContext,
     DefaultEstimatorAdapter,
     LocalSearchSampler,
     RecurrentEstimatorAdapter,
+    RolloutContext,
     Sampler,
 )
 from gfn.states import States
@@ -514,8 +514,8 @@ class _DummyRecurrentEstimator:
     # no expected_output_dim required for adapter tests
 
 
-def test_adapter_context_basic():
-    ctx = AdapterContext(batch_size=4, device=torch.device("cpu"), conditioning=None)
+def test_rollout_context_basic():
+    ctx = RolloutContext(batch_size=4, device=torch.device("cpu"), conditioning=None)
     assert ctx.batch_size == 4
     assert ctx.device.type == "cpu"
     # extras supports arbitrary entries
@@ -533,10 +533,10 @@ def test_default_adapter_compute_record_finalize():
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
     dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
     actions = dist.sample()
-    adapter.record_step(
+    adapter.record(
         ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
     )
-    out = adapter.finalize(ctx)
+    out = ctx.finalize()
     assert out["log_probs"] is not None and out["log_probs"].shape == (1, n)
     assert out["estimator_outputs"] is not None and out["estimator_outputs"].shape[
         :2
@@ -564,18 +564,18 @@ def test_recurrent_adapter_flow():
     actions = dist.sample()
     # carry should update when we record multiple steps
     h0 = ctx.carry["hidden"].clone()
-    adapter.record_step(
+    adapter.record(
         ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
     )
     # second step
     dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
     actions = dist.sample()
-    adapter.record_step(
+    adapter.record(
         ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
     )
     h1 = ctx.carry["hidden"].clone()
     assert torch.all(h1 == h0 + 1)
-    out = adapter.finalize(ctx)
+    out = ctx.finalize()
     assert out["log_probs"] is not None and out["log_probs"].shape == (2, n)
     assert out["estimator_outputs"] is not None and out["estimator_outputs"].shape[
         :2
@@ -641,7 +641,7 @@ def test_integration_recurrent_sequence_model_with_adapter(
     for _ in range(2):
         dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
         actions = dist.sample()
-        adapter.record_step(
+        adapter.record(
             ctx,
             step_mask,
             actions,
@@ -650,11 +650,13 @@ def test_integration_recurrent_sequence_model_with_adapter(
             save_estimator_outputs=True,
         )
 
-    out = adapter.finalize(ctx)
-    assert out["log_probs"] is not None and out["log_probs"].shape[0] == 2
-    assert (
-        out["estimator_outputs"] is not None and out["estimator_outputs"].shape[0] == 2
-    )
+    out = ctx.finalize()
+    log_probs = out["log_probs"]
+    estimator_outputs = out["estimator_outputs"]
+    assert log_probs is not None
+    assert log_probs.shape[0] == 2
+    assert estimator_outputs is not None
+    assert estimator_outputs.shape[0] == 2
 
 
 @pytest.mark.parametrize("positional_embedding", ["learned", "sinusoidal"])
@@ -694,12 +696,16 @@ def test_integration_transformer_sequence_model_with_adapter(
     step_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
     dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
     actions = dist.sample()
-    adapter.record_step(
+    adapter.record(
         ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
     )
 
-    out = adapter.finalize(ctx)
+    out = ctx.finalize()
     assert out["log_probs"] is not None and out["log_probs"].shape[0] == 1
     assert (
         out["estimator_outputs"] is not None and out["estimator_outputs"].shape[0] == 1
     )
+
+
+if __name__ == "__main__":
+    test_to_transition("DiscreteEBM")
