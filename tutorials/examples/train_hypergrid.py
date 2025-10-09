@@ -32,7 +32,7 @@ import sys
 import time
 from argparse import ArgumentParser
 from math import ceil
-from typing import cast, Tuple
+from typing import Tuple, cast
 
 import matplotlib.pyplot as plt
 import torch
@@ -167,7 +167,6 @@ def validate_hypergrid(
     validation_info["n_modes_found"] = len(discovered_modes)
 
     return validation_info, visited_terminating_states, discovered_modes
-
 
 
 def _sample_new_strategy(

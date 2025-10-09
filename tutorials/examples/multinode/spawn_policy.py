@@ -69,12 +69,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
     def __init__(
         self,
+        model_builder: Callable[[], Tuple[torch.nn.Module, torch.optim.Optimizer]],
         average_every: int,
         replacement_ratio: float = 0.2,
         averaging_strategy: str = "mean",
         momentum: float = 0.0,
         poll_interval_s: float = 0.01,
-        model_builder: Callable[[], Tuple[torch.nn.Module, torch.optim.Optimizer]] = None,
     ) -> None:
         super().__init__(average_every)
         self.replacement_ratio = float(replacement_ratio)
@@ -182,7 +182,6 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                                 self.momentum * param.data
                                 + (1.0 - self.momentum) * avg_state[name]
                             )
-
 
     def consume_spawned(self) -> Optional[Tuple[torch.nn.Module, torch.optim.Optimizer]]:
         """Return a newly spawned (model, optimizer) if available, else None.
