@@ -871,16 +871,38 @@ class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        # TODO: Is this still true? NOTE: Can only be used for on-policy generation,
-        # not off-policy evaluation of entire trajectory.
-        # states.tensor.shape: (..., max_string_len)
-        current_input_len = states.tensor.shape[-1]  # TODO: Check if this is correct.
-        states_tensor = states.tensor[..., :current_input_len]  # (..., string_len)
+        # Prepare integer token sequences without -1 padding and use a BOS index.
+        # We infer the active sequence length per row from (token != -1).
+        tokens = states.tensor
+        if not torch.is_floating_point(tokens):
+            tokens = tokens.long()
+        else:
+            tokens = tokens.to(dtype=torch.long)
 
-        # Compute sequence of logits and update carry.
-        logits, carry = self.module(states_tensor, carry)
+        # Replace padding (-1) with BOS index expected by the sequence model.
+        # RecurrentDiscreteSequenceModel reserves index == vocab_size for BOS.
+        bos_index = getattr(self.module, "vocab_size", self.n_actions - 1)
+        tokens = torch.where(
+            tokens < 0, torch.as_tensor(bos_index, device=tokens.device), tokens
+        )
 
-        # Get the logits for the last token in the sequence.
+        # Determine a common prefix length across the (active) batch.
+        # Active rows in a rollout step share the same length; use max for safety.
+        # We still derive length from original states.tensor where -1 marks padding.
+        original = states.tensor
+        valid_mask = original >= 0
+        if valid_mask.ndim == 1:
+            max_len = int(valid_mask.sum().item())
+        else:
+            max_len = int(valid_mask.sum(dim=-1).max().item())
+        if max_len <= 0:
+            max_len = 1  # Ensure at least BOS is processed
+
+        # Trim to the common active prefix length and run the sequence model.
+        seq_input = tokens[..., :max_len]
+        logits, carry = self.module(seq_input, carry)
+
+        # Use the logits corresponding to the last processed token.
         logits = logits[:, -1, :]  # (b, n_actions)
 
         if self.expected_output_dim is not None:

@@ -32,6 +32,14 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         logF: A DiscretePolicyEstimator or ConditionalDiscretePolicyEstimator for
             estimating the log flow of the edges (states -> next_states).
         alpha: A scalar weight for the reward matching loss.
+
+    Adapter note
+    ------------
+    Flow Matching does not rely on PF/PB probability recomputation. Any trajectory
+    sampling provided by this class is for diagnostics/visualization and uses the
+    default (non-recurrent) adapter internally. Sampler adapters (e.g.,
+    `RecurrentEstimatorAdapter`) are not exposed as configuration options for this
+    class.
     """
 
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
@@ -72,6 +80,10 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         Returns:
             A Trajectories object containing the sampled trajectories.
+
+        Notes:
+            This helper uses the default sampler adapter; custom sampler adapters are
+            not supported for Flow Matching.
         """
         if not env.is_discrete:
             raise NotImplementedError(

@@ -1,5 +1,5 @@
 import math
-from typing import Tuple
+from typing import Any, Tuple
 
 import torch
 
@@ -76,6 +76,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         log_reward_clip_min: float = -float("inf"),
         safe_log_prob_min: bool = True,
         constant_pb: bool = False,
+        *,
+        pf_adapter: Any | None = None,
+        pb_adapter: Any | None = None,
     ) -> None:
         """Initializes a DBGFlowNet instance.
 
@@ -93,8 +96,18 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+            pf_adapter: Optional estimator adapter controlling PF probability
+                computation/sampling.
+            pb_adapter: Optional estimator adapter controlling PB probability
+                computation.
         """
-        super().__init__(pf, pb, constant_pb=constant_pb)
+        super().__init__(
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            pf_adapter=pf_adapter,
+            pb_adapter=pb_adapter,
+        )
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
@@ -148,7 +161,12 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             log_pb for each transition.
         """
         return get_transition_pfs_and_pbs(
-            self.pf, self.pb, transitions, recalculate_all_logprobs
+            self.pf,
+            self.pb,
+            transitions,
+            recalculate_all_logprobs,
+            pf_adapter=self.pf_adapter,
+            pb_adapter=self.pb_adapter,
         )
 
     def get_scores(
@@ -301,10 +319,30 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     """
 
     def __init__(
-        self, pf: Estimator, pb: Estimator | None, constant_pb: bool = False
+        self,
+        pf: Estimator,
+        pb: Estimator | None,
+        constant_pb: bool = False,
+        *,
+        pf_adapter: Any | None = None,
+        pb_adapter: Any | None = None,
     ) -> None:
-        """Initializes a ModifiedDBGFlowNet instance."""
-        super().__init__(pf, pb, constant_pb=constant_pb)
+        """Initializes a ModifiedDBGFlowNet instance.
+
+        Args:
+            pf: Forward policy estimator.
+            pb: Backward policy estimator or None.
+            constant_pb: See base class.
+            pf_adapter: Optional adapter for PF.
+            pb_adapter: Optional adapter for PB.
+        """
+        super().__init__(
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            pf_adapter=pf_adapter,
+            pb_adapter=pb_adapter,
+        )
 
     def get_scores(
         self, transitions: Transitions, recalculate_all_logprobs: bool = True
