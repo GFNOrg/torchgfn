@@ -23,15 +23,21 @@ class Preprocessor(ABC):
             dimension will not be checked.
     """
 
-    def __init__(self, output_dim: int | None) -> None:
+    def __init__(
+        self, output_dim: int | None, target_dtype: torch.dtype | None = None
+    ) -> None:
         """Initializes a Preprocessor with the specified output dimension.
 
         Args:
             output_dim: The dimensionality of the preprocessed output tensor, which is
                 compatible with the neural network that will be used.
                 If None, the output dimension will not be checked.
+            target_dtype: Optional dtype to cast tensor outputs to. When set, any
+                tensor returned by `preprocess` will be cast to this dtype in
+                `__call__` before returning.
         """
         self.output_dim = output_dim
+        self.target_dtype = target_dtype
 
     @abstractmethod
     def preprocess(self, states: States) -> torch.Tensor:
@@ -55,8 +61,11 @@ class Preprocessor(ABC):
             The preprocessed states as a tensor or GeometricBatch.
         """
         out = self.preprocess(states)
-        if isinstance(out, torch.Tensor) and self.output_dim is not None:
-            assert out.shape[-1] == self.output_dim
+        if isinstance(out, torch.Tensor):
+            if self.output_dim is not None:
+                assert out.shape[-1] == self.output_dim
+            if self.target_dtype is not None and out.dtype != self.target_dtype:
+                out = out.to(self.target_dtype)
 
         return out
 
