@@ -22,13 +22,14 @@ env = HyperGrid(ndim=4, height=8)  # Grid of size 8x8x8x8
 preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
 
 # 2 - We define the needed modules (neural networks).
+input_dim = preprocessor.output_dim if preprocessor.output_dim is not None else env.state_shape[-1]
 module_PF = MLP(
-    input_dim=preprocessor.output_dim,
+    input_dim=input_dim,
     output_dim=env.n_actions
 )  # Neural network for the forward policy, with as many outputs as there are actions
 
 module_PB = MLP(
-    input_dim=preprocessor.output_dim,
+    input_dim=input_dim,
     output_dim=env.n_actions - 1,
     trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
 )
@@ -80,13 +81,14 @@ preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
 
 # 2 - We define the needed modules (neural networks).
 # The environment has a preprocessor attribute, which is used to preprocess the state before feeding it to the policy estimator
+input_dim = preprocessor.output_dim if preprocessor.output_dim is not None else env.state_shape[-1]
 module_PF = MLP(
-    input_dim=preprocessor.output_dim,
+    input_dim=input_dim,
     output_dim=env.n_actions
 )  # Neural network for the forward policy, with as many outputs as there are actions
 
 module_PB = MLP(
-    input_dim=preprocessor.output_dim,
+    input_dim=input_dim,
     output_dim=env.n_actions - 1,
     trunk=module_PF.trunk  # We share all the parameters of P_F and P_B, except for the last layer
 )
