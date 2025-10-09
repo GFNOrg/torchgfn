@@ -55,7 +55,9 @@ class Trajectories(Container):
         is_backward: bool = False,
         log_rewards: torch.Tensor | None = None,
         log_probs: torch.Tensor | None = None,
+        backward_log_probs: torch.Tensor | None = None,
         estimator_outputs: torch.Tensor | None = None,
+        backward_estimator_outputs: torch.Tensor | None = None,
     ) -> None:
         """Initializes a Trajectories instance.
 
@@ -74,8 +76,12 @@ class Trajectories(Container):
                 log rewards of the trajectories. If None, computed on the fly when needed.
             log_probs: Optional tensor of shape (max_length, n_trajectories) indicating
                 the log probabilities of the trajectories' actions.
+            backward_log_probs: Optional tensor of shape (max_length, n_trajectories) indicating
+                the backward log probabilities of the trajectories' actions.
             estimator_outputs: Optional tensor of shape (max_length, n_trajectories, ...)
                 containing outputs of a function approximator for each step.
+            backward_estimator_outputs: Optional tensor of shape (max_length, n_trajectories, ...)
+                containing outputs of a function approximator for each backward step.
         Note:
             When states and actions are not None, the Trajectories is initialized as
             an empty container that can be populated later with the `extend` method.
@@ -97,7 +103,9 @@ class Trajectories(Container):
             terminating_idx,
             log_rewards,
             log_probs,
+            backward_log_probs,
             estimator_outputs,
+            backward_estimator_outputs,
         ]:
             if tensor is not None:
                 ensure_same_device(tensor.device, device)
@@ -142,11 +150,24 @@ class Trajectories(Container):
             and self.log_probs.is_floating_point()
         )
 
+        self.backward_log_probs = backward_log_probs
+        assert self.backward_log_probs is None or (
+            self.backward_log_probs.shape == self.actions.batch_shape
+            and self.backward_log_probs.is_floating_point()
+        )
+
         self.estimator_outputs = estimator_outputs
         assert self.estimator_outputs is None or (
             self.estimator_outputs.shape[: len(self.states.batch_shape)]
             == self.actions.batch_shape
             and self.estimator_outputs.is_floating_point()
+        )
+
+        self.backward_estimator_outputs = backward_estimator_outputs
+        assert self.backward_estimator_outputs is None or (
+            self.backward_estimator_outputs.shape[: len(self.states.batch_shape)]
+            == self.actions.batch_shape
+            and self.backward_estimator_outputs.is_floating_point()
         )
 
     def __repr__(self) -> str:
@@ -223,11 +244,14 @@ class Trajectories(Container):
 
     @property
     def terminating_states(self) -> States:
-        """The terminating states of the trajectories.
+        """The terminating states of the trajectories. If backward, the terminating states
+        are in 0-th position.
 
         Returns:
             The terminating states.
         """
+        if self.is_backward:
+            return self.states[0, torch.arange(self.n_trajectories)]
         return self.states[self.terminating_idx - 1, torch.arange(self.n_trajectories)]
 
     @property
@@ -265,34 +289,43 @@ class Trajectories(Container):
             index = [index]
         terminating_idx = self.terminating_idx[index]
         new_max_length = terminating_idx.max().item() if len(terminating_idx) > 0 else 0
-        states = self.states[:, index]
+        states = self.states[: 1 + new_max_length, index]
         conditioning = (
-            self.conditioning[:, index] if self.conditioning is not None else None
+            self.conditioning[: 1 + new_max_length, index]
+            if self.conditioning is not None
+            else None
         )
-        actions = self.actions[:, index]
-        states = states[: 1 + new_max_length]
-        actions = actions[:new_max_length]
-        if self.log_probs is not None:
-            log_probs = self.log_probs[:, index]
-            log_probs = log_probs[:new_max_length]
-        else:
-            log_probs = None
+        actions = self.actions[:new_max_length, index]
         log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
-        if self.estimator_outputs is not None:
-            # TODO: Is there a safer way to index self.estimator_outputs for
-            #       for n-dimensional estimator outputs?
-            #
-            # First we index along the first dimension of the estimator outputs.
-            # This can be thought of as the instance dimension, and is
-            # compatible with all supported indexing approaches (dim=1).
-            # All dims > 1 are not explicitly indexed unless the dimensionality
-            # of `index` matches all dimensions of `estimator_outputs` aside
-            # from the first (trajectory) dimension.
-            estimator_outputs = self.estimator_outputs[:, index]
-            # Next we index along the trajectory length (dim=0)
-            estimator_outputs = estimator_outputs[:new_max_length]
-        else:
-            estimator_outputs = None
+        log_probs = (
+            self.log_probs[:new_max_length, index]
+            if self.log_probs is not None
+            else None
+        )
+        backward_log_probs = (
+            self.backward_log_probs[:new_max_length, index]
+            if self.backward_log_probs is not None
+            else None
+        )
+        # TODO: Is there a safer way to index self.estimator_outputs for
+        #       for n-dimensional estimator outputs?
+        #
+        # First we index along the first dimension of the estimator outputs.
+        # This can be thought of as the instance dimension, and is
+        # compatible with all supported indexing approaches (dim=1).
+        # All dims > 1 are not explicitly indexed unless the dimensionality
+        # of `index` matches all dimensions of `estimator_outputs` aside
+        # from the first (trajectory) dimension.
+        estimator_outputs = (
+            self.estimator_outputs[:new_max_length, index]
+            if self.estimator_outputs is not None
+            else None
+        )
+        backward_estimator_outputs = (
+            self.backward_estimator_outputs[:new_max_length, index]
+            if self.backward_estimator_outputs is not None
+            else None
+        )
 
         return Trajectories(
             env=self.env,
@@ -303,7 +336,9 @@ class Trajectories(Container):
             is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
+            backward_log_probs=backward_log_probs,
             estimator_outputs=estimator_outputs,
+            backward_estimator_outputs=backward_estimator_outputs,
         )
 
     def extend(self, other: Trajectories) -> None:
@@ -315,6 +350,11 @@ class Trajectories(Container):
         Args:
             Another Trajectories to append.
         """
+
+        assert (
+            self.is_backward == other.is_backward
+        ), "Trajectories must be of the same direction."
+
         if self.conditioning is not None:
             # TODO: Support the case
             raise NotImplementedError(
@@ -333,11 +373,22 @@ class Trajectories(Container):
                 self.log_probs = torch.full(
                     size=(0, 0), fill_value=0.0, device=self.device
                 )
+            if other.backward_log_probs is not None:
+                self.backward_log_probs = torch.full(
+                    size=(0, 0), fill_value=0.0, device=self.device
+                )
             if other.estimator_outputs is not None:
                 self.estimator_outputs = torch.full(
                     size=(0, 0, *other.estimator_outputs.shape[2:]),
                     fill_value=0.0,
                     dtype=other.estimator_outputs.dtype,
+                    device=self.device,
+                )
+            if other.backward_estimator_outputs is not None:
+                self.backward_estimator_outputs = torch.full(
+                    size=(0, 0, *other.backward_estimator_outputs.shape[2:]),
+                    fill_value=0.0,
+                    dtype=other.backward_estimator_outputs.dtype,
                     device=self.device,
                 )
 
@@ -367,6 +418,17 @@ class Trajectories(Container):
         else:
             self.log_probs = None
 
+        if self.backward_log_probs is not None and other.backward_log_probs is not None:
+            self.backward_log_probs, other.backward_log_probs = pad_dim0_if_needed(
+                self.backward_log_probs, other.backward_log_probs, 0.0
+            )
+            self.backward_log_probs = torch.cat(
+                (self.backward_log_probs, other.backward_log_probs), dim=1
+            )
+            assert self.backward_log_probs.shape == self.actions.batch_shape
+        else:
+            self.backward_log_probs = None
+
         # Do the same for estimator_outputs, but padding with -float("inf") instead of 0.0
         if self.estimator_outputs is not None and other.estimator_outputs is not None:
             self.estimator_outputs, other.estimator_outputs = pad_dim0_if_needed(
@@ -382,6 +444,26 @@ class Trajectories(Container):
         else:
             self.estimator_outputs = None
 
+        if (
+            self.backward_estimator_outputs is not None
+            and other.backward_estimator_outputs is not None
+        ):
+            self.backward_estimator_outputs, other.backward_estimator_outputs = (
+                pad_dim0_if_needed(
+                    self.backward_estimator_outputs, other.backward_estimator_outputs
+                )
+            )
+            self.backward_estimator_outputs = torch.cat(
+                (self.backward_estimator_outputs, other.backward_estimator_outputs),
+                dim=1,
+            )
+            assert (
+                self.backward_estimator_outputs.shape[: len(self.actions.batch_shape)]
+                == self.actions.batch_shape
+            )
+        else:
+            self.backward_estimator_outputs = None
+
     def to_transitions(self) -> Transitions:
         """Returns a Transitions object from the current Trajectories.
 
@@ -389,6 +471,9 @@ class Trajectories(Container):
             A Transitions object with the same states, actions, and log_rewards as the
             current Trajectories.
         """
+        if self.is_backward:
+            return self.reverse_backward_trajectories().to_transitions()
+
         if self.conditioning is not None:
             # The conditioning tensor has shape (max_length, n_trajectories, 1)
             # The actions have shape (max_length, n_trajectories)
@@ -427,6 +512,11 @@ class Trajectories(Container):
             if self.log_probs is not None
             else None
         )
+        backward_log_probs = (
+            self.backward_log_probs[~self.actions.is_dummy]
+            if self.backward_log_probs is not None
+            else None
+        )
 
         return Transitions(
             env=self.env,
@@ -435,9 +525,9 @@ class Trajectories(Container):
             actions=actions,
             is_terminating=is_terminating,
             next_states=next_states,
-            is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
+            backward_log_probs=backward_log_probs,
             # FIXME: Add estimator_outputs.
         )
 
@@ -527,19 +617,18 @@ class Trajectories(Container):
         seq_lengths = self.terminating_idx  # shape (n_trajectories,)
         max_len = int(seq_lengths.max().item())
 
-        # Get actions and states
-        actions = self.actions  # shape (max_len, n_trajectories *action_dim)
+        # Get tensors
         states = self.states  # shape (max_len + 1, n_trajectories, *state_dim)
-
-        # Initialize new actions and states
-        new_actions = self.env.Actions.make_dummy_actions(
-            (max_len + 1, len(self)), device=actions.device
-        )
-        # shape (max_len + 1, n_trajectories, *action_dim)
-        new_states = self.env.States.make_sink_states(
-            (max_len + 2, len(self)), device=states.device
-        )
-        # shape (max_len + 2, n_trajectories, *state_dim)
+        actions = self.actions  # shape (max_len, n_trajectories *action_dim)
+        log_probs = self.log_probs  # shape (max_len, n_trajectories)
+        backward_log_probs = self.backward_log_probs  # shape (max_len, n_trajectories)
+        estimator_outputs = (
+            self.estimator_outputs
+        )  # shape (max_len, n_trajectories, ...)
+        backward_estimator_outputs = (
+            self.backward_estimator_outputs
+        )  # shape (max_len, n_trajectories, ...)
+        device = states.device  # device should be the same for all tensors
 
         # Create helper indices and masks
         idx = (
@@ -556,24 +645,21 @@ class Trajectories(Container):
         # version that operates directly in (time, trajectory, *) space.
         # -------------------------------------------------------------
 
-        # 1. Reverse actions ---------------------------------------------------
         # Gather linear indices where the mask is valid
         time_idx, traj_idx = torch.nonzero(mask, as_tuple=True)  # 1-D tensors
         src_time_idx = rev_idx[mask]  # Corresponding source time indices
-        # Assign reversed actions
-        new_actions[time_idx, traj_idx] = actions[src_time_idx, traj_idx]
-        # Insert EXIT action right after the last real action of every trajectory
-        new_actions[seq_lengths, torch.arange(len(self), device=seq_lengths.device)] = (
-            self.env.Actions.make_exit_actions((1,), device=actions.device)
-        )
 
-        # 2. Reverse states ----------------------------------------------------
+        # 1. Reverse states ----------------------------------------------------
+        # Initialize new states
+        new_states = self.env.States.make_sink_states(
+            (max_len + 2, len(self)), device=device
+        )  # shape (max_len + 2, n_trajectories, *state_dim)
         # The last state of the backward trajectories must be s0.
         assert torch.all(states[-1].is_initial_state), "Last state must be s0"
 
         # First state of the forward trajectories is s0 for every trajectory
         new_states[0] = self.env.States.make_initial_states(
-            (len(self),), device=states.device
+            (len(self),), device=device
         )  # Broadcast over the trajectory dimension
 
         # We do not want to copy the last state (s0) from the backward trajectory.
@@ -581,11 +667,63 @@ class Trajectories(Container):
         new_states_data = new_states[1:-1]  # shape (max_len, n_trajectories, *state_dim)
         new_states_data[time_idx, traj_idx] = states_excl_last[src_time_idx, traj_idx]
 
+        # 2. Reverse actions ---------------------------------------------------
+        # Initialize new actions
+        new_actions = self.env.Actions.make_dummy_actions(
+            (max_len + 1, len(self)), device=device
+        )  # shape (max_len + 1, n_trajectories, *action_dim)
+        # Assign reversed actions
+        new_actions[time_idx, traj_idx] = actions[src_time_idx, traj_idx]
+        # Insert EXIT action right after the last real action of every trajectory
+        new_actions[seq_lengths, torch.arange(len(self), device=device)] = (
+            self.env.Actions.make_exit_actions((1,), device=device)
+        )
+
         # ---------------------------------------------------------------------
-        # new_actions / new_states already have the correct shapes
-        #   new_actions: (max_len + 1, n_trajectories, *action_dim)
+        # new_states / new_actions already have the correct shapes
         #   new_states:  (max_len + 2, n_trajectories, *state_dim)
+        #   new_actions: (max_len + 1, n_trajectories, *action_dim)
         # ---------------------------------------------------------------------
+
+        # 3. Reverse the others ------------------------------------------------
+        # Reversing the other tensors are basically the same as reversing the actions.
+        new_log_probs = None
+        if log_probs is not None:
+            new_log_probs = torch.full(
+                (max_len + 1, len(self)), fill_value=0.0, device=device
+            )  # shape (max_len + 1, n_trajectories, *action_dim)
+            new_log_probs[time_idx, traj_idx] = log_probs[src_time_idx, traj_idx]
+
+        new_estimator_outputs = None
+        if estimator_outputs is not None:
+            new_estimator_outputs = torch.full(
+                (max_len + 1, len(self), *estimator_outputs.shape[2:]),
+                fill_value=0.0,
+                device=device,
+            )  # shape (max_len + 1, n_trajectories, *action_dim)
+            new_estimator_outputs[time_idx, traj_idx] = estimator_outputs[
+                src_time_idx, traj_idx
+            ]
+
+        new_backward_log_probs = None
+        if backward_log_probs is not None:
+            new_backward_log_probs = torch.full(
+                (max_len + 1, len(self)), fill_value=0.0, device=device
+            )  # shape (max_len + 1, n_trajectories, *action_dim)
+            new_backward_log_probs[time_idx, traj_idx] = backward_log_probs[
+                src_time_idx, traj_idx
+            ]
+
+        new_backward_estimator_outputs = None
+        if backward_estimator_outputs is not None:
+            new_backward_estimator_outputs = torch.full(
+                (max_len + 1, len(self), *backward_estimator_outputs.shape[2:]),
+                fill_value=0.0,
+                device=device,
+            )  # shape (max_len + 1, n_trajectories, *action_dim)
+            new_backward_estimator_outputs[time_idx, traj_idx] = (
+                backward_estimator_outputs[src_time_idx, traj_idx]
+            )
 
         reversed_trajectories = Trajectories(
             env=self.env,
@@ -595,11 +733,10 @@ class Trajectories(Container):
             terminating_idx=self.terminating_idx + 1,
             is_backward=False,
             log_rewards=self.log_rewards,
-            log_probs=None,  # We can't simply pass the trajectories.log_probs
-            # Since `log_probs` is assumed to be the forward log probabilities.
-            # FIXME: To resolve this, we can save log_pfs and log_pbs in the
-            # trajectories object.
-            estimator_outputs=None,  # Same as `log_probs`.
+            log_probs=new_log_probs,
+            backward_log_probs=new_backward_log_probs,
+            estimator_outputs=new_estimator_outputs,
+            backward_estimator_outputs=new_backward_estimator_outputs,
         )
 
         return reversed_trajectories
