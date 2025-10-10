@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Optional
+from typing import Any, Callable, Optional, cast
 
 import torch
 import torch.nn as nn
@@ -798,3 +798,131 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
             None, as the output_dim of a TensorDict is not well-defined.
         """
         return None
+
+
+class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
+    """Discrete policy estimator for recurrent architectures with explicit carry.
+
+    Many sequence models (e.g., RNN/LSTM/GRU/Transformer in autoregressive mode)
+    maintain a recurrent hidden state ("carry") that must be threaded through
+    successive calls during sampling. This class formalizes that pattern for
+    GFlowNet policies by:
+
+    - Exposing a forward signature ``forward(states, carry) -> (logits, carry)``
+      so the policy can update and return the next carry at each step.
+    - Requiring an ``init_carry(batch_size, device)`` method to allocate the
+      initial hidden state for a rollout.
+    - Ensuring the per-step output (``logits`` over actions) is derived from the
+      latest token/time step while the internal model may process sequences.
+
+    Interaction with the sampler/adapters
+    -------------------------------------
+    The sampler uses a ``RecurrentEstimatorAdapter`` which calls this estimator
+    with the current carry, updates the carry on every step, and records
+    per-step artifacts. Non-recurrent estimators should use the default adapter
+    and the standard ``DiscretePolicyEstimator`` base class instead.
+
+    Notes
+    -----
+    - Forward is intended for on-policy generation; off-policy evaluation over
+      entire trajectories typically requires different batching and masking.
+    - ``init_carry`` is a hard requirement for compatibility with the recurrent
+      adapter.
+    """
+
+    def __init__(
+        self,
+        module: nn.Module,
+        n_actions: int,
+        preprocessor: Preprocessor | None = IdentityPreprocessor(
+            output_dim=None
+        ),  # Addressed in https://github.com/GFNOrg/torchgfn/pull/399.
+        is_backward: bool = False,
+    ):
+        """Initializes a RecurrentDiscretePolicyEstimator.
+
+        Args:
+            module: The neural network module to use.
+            n_actions: Total number of actions in the discrete environment.
+            preprocessor: Preprocessor object that transforms states to tensors.
+        """
+        if preprocessor is None:
+            preprocessor = IdentityPreprocessor(
+                output_dim=None
+            )  # Addressed in https://github.com/GFNOrg/torchgfn/pull/399.
+        super().__init__(
+            module=module,
+            n_actions=n_actions,
+            preprocessor=preprocessor,
+            is_backward=is_backward,
+        )
+
+    def forward(
+        self,
+        states: States,
+        carry: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Forward pass of the module.
+
+        Args:
+            states: The input states.
+            carry: The carry from the previous step.
+
+        Returns:
+            The output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        # Prepare integer token sequences without -1 padding and use a BOS index.
+        # We infer the active sequence length per row from (token != -1).
+        tokens = states.tensor
+        if not torch.is_floating_point(tokens):
+            tokens = tokens.long()
+        else:
+            tokens = tokens.to(dtype=torch.long)
+
+        # Replace padding (-1) with BOS index expected by the sequence model.
+        # RecurrentDiscreteSequenceModel reserves index == vocab_size for BOS.
+        bos_index = getattr(self.module, "vocab_size", self.n_actions - 1)
+        tokens = torch.where(
+            tokens < 0, torch.as_tensor(bos_index, device=tokens.device), tokens
+        )
+
+        # Determine a common prefix length across the (active) batch.
+        # Active rows in a rollout step share the same length; use max for safety.
+        # We still derive length from original states.tensor where -1 marks padding.
+        original = states.tensor
+        valid_mask = original >= 0
+        if valid_mask.ndim == 1:
+            max_len = int(valid_mask.sum().item())
+        else:
+            max_len = int(valid_mask.sum(dim=-1).max().item())
+        if max_len <= 0:
+            max_len = 1  # Ensure at least BOS is processed
+
+        # Trim to the common active prefix length and run the sequence model.
+        seq_input = tokens[..., :max_len]
+        logits, carry = self.module(seq_input, carry)
+
+        # Use the logits corresponding to the last processed token.
+        logits = logits[:, -1, :]  # (b, n_actions)
+
+        if self.expected_output_dim is not None:
+            assert logits.shape[-1] == self.expected_output_dim, (
+                f"Module output shape {logits.shape} does not match expected output "
+                f"dimension {self.expected_output_dim}"
+            )
+
+        return logits, carry
+
+    def init_carry(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        init_carry = getattr(self.module, "init_carry", None)
+        if not callable(init_carry):
+            raise NotImplementedError(
+                "Module does not implement init_carry(batch_size, device)."
+            )
+        init_carry_fn = cast(Callable[[int, torch.device], Any], init_carry)
+
+        return init_carry_fn(batch_size, device)
