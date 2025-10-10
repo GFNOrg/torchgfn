@@ -300,14 +300,29 @@ def get_trajectory_pbs(
     # Recurrent adapters are only valid for trajectories and never require pb
     from gfn.samplers import RecurrentEstimatorAdapter  # type: ignore
 
-    is_recurrent = (
-        isinstance(adapter, RecurrentEstimatorAdapter) if adapter is not None else False
-    )
+    if adapter is not None:
+        is_recurrent = isinstance(adapter, RecurrentEstimatorAdapter)
+    else:
+        is_recurrent = False
 
-    if is_recurrent:
-        # With recurrent adapter, pb must be None (tree DAG); return zeros
+    if is_recurrent or pb is None:
+        # With recurrent adapter, pb *must* be None (tree DAG); return zeros.
         assert pb is None, "When using a RecurrentEstimatorAdapter, pb must be None."
+        # If pb is None, we assume that the gflownet DAG is a tree, and therefore
+        # the backward policy probability is always 1 (log probs are 0).
         valid_log_pb_actions = torch.zeros_like(valid_actions.tensor)
+        valid_log_pb_actions = valid_log_pb_actions.squeeze(-1)  # no padding.
+
+        # TODO: Add logging in follow up PR.
+        # if os.getenv("GFN_DEBUG_REC_PB") == "1":
+        #     print(
+        #         "[DBG] pb=None path: valid_actions.shape=",
+        #         tuple(valid_actions.tensor.shape),
+        #         "valid_log_pb_actions.shape=",
+        #         tuple(valid_log_pb_actions.shape),
+        #         "target_len=",
+        #         int(action_mask.sum().item()),
+        #     )
 
     elif pb is not None:
         # Choose vectorized (legacy) vs non-vectorized (adapter per-step)
@@ -363,10 +378,6 @@ def get_trajectory_pbs(
             log_pb_trajectories[action_mask] = valid_log_pb_actions.to(
                 log_pb_trajectories.dtype, copy=False
             )
-    else:
-        # If pb is None, we assume that the gflownet DAG is a tree, and therefore
-        # the backward policy probability is always 1 (log probs are 0).
-        valid_log_pb_actions = torch.zeros_like(valid_actions.tensor)
 
     log_pb_trajectories[action_mask] = valid_log_pb_actions.to(
         log_pb_trajectories.dtype, copy=False

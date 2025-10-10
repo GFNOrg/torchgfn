@@ -449,6 +449,14 @@ class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
     """
 
     def __init__(self, estimator: Estimator) -> None:
+        # Validate that the estimator presents a recurrent interface
+        # We check for the presence of `init_carry` and a callable that accepts (states, carry).
+        init_carry = getattr(estimator, "init_carry", None)
+        if not callable(init_carry):
+            raise TypeError(
+                "RecurrentEstimatorAdapter requires an estimator implementing "
+                "init_carry(batch_size: int, device: torch.device)."
+            )
         super().__init__(estimator)
 
     @property

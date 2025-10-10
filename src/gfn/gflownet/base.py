@@ -227,6 +227,26 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         self.pf_adapter = pf_adapter
         self.pb_adapter = pb_adapter
 
+        # Advisory: recurrent PF with non-recurrent PB is unusual
+        # (tree DAGs typically prefer pb=None with constant_pb=True).
+        # Import locally to avoid circular imports during module import time.
+        from gfn.estimators import RecurrentDiscretePolicyEstimator  # type: ignore
+
+        if isinstance(self.pf, RecurrentDiscretePolicyEstimator) and isinstance(
+            self.pb, Estimator
+        ):
+            warnings.warn(
+                "Using a recurrent PF, which is only valid for tree DAGs, with a "
+                "non-recurrent PB is unusual. "
+                "Consider using pb=None with constant_pb=True for tree DAGs.",
+            )
+        # Disallow recurrent PB estimators universally.
+        if isinstance(self.pb, RecurrentDiscretePolicyEstimator):
+            raise TypeError(
+                "Recurrent PB estimators are not supported. Use a non-recurrent PB "
+                "or set pb=None with constant_pb=True for tree DAGs."
+            )
+
     def sample_trajectories(
         self,
         env: Env,

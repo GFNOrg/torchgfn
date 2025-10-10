@@ -547,9 +547,8 @@ def test_recurrent_adapter_requires_init_carry():
     class _BadEstimator:
         is_backward = False
 
-    adapter = RecurrentEstimatorAdapter(cast(Estimator, _BadEstimator()))
-    with pytest.raises(TypeError):
-        _ = adapter.init_context(2, torch.device("cpu"), None)
+    with pytest.raises(TypeError, match="requires an estimator implementing init_carry"):
+        _ = RecurrentEstimatorAdapter(cast(Estimator, _BadEstimator()))
 
 
 def test_recurrent_adapter_flow():

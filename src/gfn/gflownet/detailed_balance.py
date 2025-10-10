@@ -108,6 +108,19 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             pf_adapter=pf_adapter,
             pb_adapter=pb_adapter,
         )
+        # Disallow recurrent PF or recurrent adapter for transition-based DB
+        from gfn.estimators import RecurrentDiscretePolicyEstimator  # type: ignore
+        from gfn.samplers import RecurrentEstimatorAdapter  # type: ignore
+
+        if isinstance(self.pf, RecurrentDiscretePolicyEstimator):
+            raise TypeError(
+                "DBGFlowNet does not support recurrent PF estimators (transitions path cannot propagate carry)."
+            )
+        if isinstance(self.pf_adapter, RecurrentEstimatorAdapter):
+            raise TypeError(
+                "DBGFlowNet does not support RecurrentEstimatorAdapter (transitions path cannot propagate carry)."
+            )
+
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
