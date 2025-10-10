@@ -19,7 +19,7 @@ from tqdm import tqdm
 from gfn.estimators import RecurrentDiscretePolicyEstimator
 from gfn.gflownet import PFBasedGFlowNet, TBGFlowNet
 from gfn.gym.bitSequence import BitSequence
-from gfn.samplers import RecurrentEstimatorAdapter, Sampler
+from gfn.samplers import RecurrentEstimatorAdapter
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import RecurrentDiscreteSequenceModel
@@ -30,10 +30,16 @@ def estimated_dist(gflownet: PFBasedGFlowNet, env: BitSequence):
     states = env.terminating_states
     trajectories = env.trajectory_from_terminating_states(states.tensor)
     log_pf_trajectories = get_trajectory_pfs(
-        pf=gflownet.pf, trajectories=trajectories, recalculate_all_logprobs=True
+        pf=gflownet.pf,
+        trajectories=trajectories,
+        recalculate_all_logprobs=True,
+        adapter=gflownet.pf_adapter,
     )
     pf = torch.exp(log_pf_trajectories.sum(dim=0))
-    return pf
+
+    l1_dist = torch.abs(pf - env.true_dist).mean().item()
+
+    return l1_dist
 
 
 def main(args):
@@ -74,28 +80,33 @@ def main(args):
         is_backward=False,
     ).to(device)
 
-    # GFlowNet (Trajectory Balance), tree DAG -> pb=None, constant_pb=True
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=None, init_logZ=0.0, constant_pb=True)
-    gflownet = gflownet.to(device)
-
-    # Sampler with recurrent adapter; save log-probs for on-policy TB
-    sampler = Sampler(
-        estimator=pf_estimator, adapter=RecurrentEstimatorAdapter(pf_estimator)
+    # GFlowNet (Trajectory Balance), tree DAG -> pb=None, constant_pb=True,
+    # Use a recurrent adapter for the PF.
+    gflownet = TBGFlowNet(
+        pf=pf_estimator,
+        pb=None,
+        init_logZ=0.0,
+        constant_pb=True,
+        pf_adapter=RecurrentEstimatorAdapter(pf_estimator),
     )
+    gflownet = gflownet.to(device)
 
     # Optimizer: policy params + logZ
     optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=args.lr)
     optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": args.lr_logz})
 
     visited_terminating_states = env.states_from_batch_shape((0,))
+    l1_distances = []
+    eval_freq = args.n_iterations // 10  # 10% of the iterations.
+    l1_dist = float("inf")
 
     for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
-        trajectories = sampler.sample_trajectories(
+        trajectories = gflownet.sample_trajectories(
             env,
             n=args.batch_size,
             save_logprobs=True,  # crucial: avoid recalculation, use adapter path
             save_estimator_outputs=False,
-            epsilon=args.epsilon,
+            epsilon=args.epsilon,  # Off-policy sampling.
         )
 
         visited_terminating_states.extend(
@@ -112,12 +123,17 @@ def main(args):
         optimizer.step()
         gflownet.assert_finite_parameters()
 
-        pbar.set_postfix({"loss": loss.item()})
+        if (it + 1) % eval_freq == 0 or it == 0:
+            l1_dist = estimated_dist(gflownet, env)
+            l1_distances.append(l1_dist)
+
+        pbar.set_postfix({"loss": loss.item(), "l1_dist": l1_dist})
 
     # Final validation.
-    gflownet = cast(PFBasedGFlowNet, gflownet)
-    l1_dist = torch.abs(estimated_dist(gflownet, env) - env.true_dist).mean().item()
-    print(f"Final L1 distance: {l1_dist}")
+    l1_dist = estimated_dist(gflownet, env)
+    l1_distances.append(l1_dist)
+    print(f"L1_dist training curve: {[f'{l1:.5f}' for l1 in l1_distances]}")
+    print(f"Final L1_dist: {l1_dist:.5f}")
 
     return l1_dist
 
@@ -127,15 +143,15 @@ if __name__ == "__main__":
     parser.add_argument("--no_cuda", action="store_true", help="Disable CUDA use")
 
     # BitSequence config (keep small by default)
-    parser.add_argument("--word_size", type=int, default=1, help="Word size")
-    parser.add_argument("--seq_size", type=int, default=4, help="Sequence size")
-    parser.add_argument("--n_modes", type=int, default=2, help="Number of modes")
+    parser.add_argument("--word_size", type=int, default=3, help="Word size")
+    parser.add_argument("--seq_size", type=int, default=9, help="Sequence size")
+    parser.add_argument("--n_modes", type=int, default=5, help="Number of modes")
     parser.add_argument("--temperature", type=float, default=1.0)
 
     # Model config
     parser.add_argument("--embedding_dim", type=int, default=64)
     parser.add_argument("--hidden_size", type=int, default=128)
-    parser.add_argument("--num_layers", type=int, default=1)
+    parser.add_argument("--num_layers", type=int, default=3)
     parser.add_argument("--rnn_type", type=str, choices=["lstm", "gru"], default="lstm")
     parser.add_argument("--dropout", type=float, default=0.0)
 
@@ -143,7 +159,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr_logz", type=float, default=1e-1)
-    parser.add_argument("--n_iterations", type=int, default=1000)
+    parser.add_argument("--n_iterations", type=int, default=500)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epsilon", type=float, default=0.05)
 
