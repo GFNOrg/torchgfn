@@ -1,6 +1,6 @@
 import math
 import warnings
-from typing import List, Literal, Tuple, TypeAlias
+from typing import Any, List, Literal, Tuple, TypeAlias
 
 import torch
 
@@ -83,6 +83,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
         constant_pb: bool = False,
+        *,
+        pf_adapter: Any | None = None,
+        pb_adapter: Any | None = None,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -100,8 +103,18 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+            pf_adapter: Optional estimator adapter controlling PF probability
+                computation/sampling.
+            pb_adapter: Optional estimator adapter controlling PB probability
+                computation.
         """
-        super().__init__(pf, pb, constant_pb=constant_pb)
+        super().__init__(
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            pf_adapter=pf_adapter,
+            pb_adapter=pb_adapter,
+        )
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
@@ -157,14 +170,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def calculate_preds(
         self,
-        log_pf_trajectories_cum: CumulativeLogProbsTensor,
+        log_pf_traj_cum: CumulativeLogProbsTensor,
         log_state_flows: LogStateFlowsTensor,
         i: int,
     ) -> PredictionsTensor:
         """Calculates the predictions tensor for the current sub-trajectory length.
 
         Args:
-            log_pf_trajectories_cum: Tensor of shape (max_length + 1, n_trajectories)
+            log_pf_traj_cum: Tensor of shape (max_length + 1, n_trajectories)
                 containing the cumulative sum of logprobs of the forward actions for
                 each trajectory.
             log_state_flows: Tensor of shape (max_length, n_trajectories) containing
@@ -178,11 +191,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             log_state_flows if i == 1 else log_state_flows[: -(i - 1)]
         )
 
-        preds = (
-            log_pf_trajectories_cum[i:]
-            - log_pf_trajectories_cum[:-i]
-            + current_log_state_flows
-        )
+        preds = log_pf_traj_cum[i:] - log_pf_traj_cum[:-i] + current_log_state_flows
 
         return preds
 
@@ -190,7 +199,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         trajectories: Trajectories,
         preds: PredictionsTensor,
-        log_pb_trajectories_cum: CumulativeLogProbsTensor,
+        log_pb_traj_cum: CumulativeLogProbsTensor,
         log_state_flows: LogStateFlowsTensor,
         is_terminal_mask: MaskTensor,
         sink_states_mask: MaskTensor,
@@ -202,7 +211,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories.
             preds: Tensor of shape (max_length + 1 - i, n_trajectories) containing
                 the predictions for the current sub-trajectory length.
-            log_pb_trajectories_cum: Tensor of shape (max_length + 1, n_trajectories)
+            log_pb_traj_cum: Tensor of shape (max_length + 1, n_trajectories)
                 containing the cumulative sum of logprobs of the backward actions for
                 each trajectory.
             log_state_flows: Tensor of shape (max_length, n_trajectories) containing
@@ -229,15 +238,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         # We need to add to that the log-probabilities of the backward actions up-to
         # the sub-trajectory's terminating state
         if i > 1:
-            targets[is_terminal_mask[i - 1 :]] += (
-                log_pb_trajectories_cum[i - 1 :] - log_pb_trajectories_cum[: -i + 1]
-            )[:-1][is_terminal_mask[i - 1 :]]
+            delta_pb = (log_pb_traj_cum[i - 1 :] - log_pb_traj_cum[: -i + 1])[:-1]
+            targets[is_terminal_mask[i - 1 :]] += delta_pb[is_terminal_mask[i - 1 :]]
 
         # The following creates the targets for the non-finishing sub-trajectories
         full_mask = sink_states_mask | is_terminal_mask
+        delta_pb2 = (log_pb_traj_cum[i:] - log_pb_traj_cum[:-i])[:-1]
+        rhs_mask = ~full_mask[i - 1 : -1]
         targets[~full_mask[i - 1 :]] = (
-            log_pb_trajectories_cum[i:] - log_pb_trajectories_cum[:-i]
-        )[:-1][~full_mask[i - 1 : -1]] + log_state_flows[i:][~sink_states_mask[i:]]
+            delta_pb2[rhs_mask] + log_state_flows[i:][~sink_states_mask[i:]]
+        )
 
         return targets
 
@@ -445,11 +455,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         contributions = torch.zeros(n_rows, len(trajectories))
 
         # Each trajectory contributes one element to the loss, equally weighted
-        terminating_idx = trajectories.terminating_idx
-        indices = (
-            max_len * (terminating_idx - 1)
-            - (terminating_idx - 1) * (terminating_idx - 2) / 2
-        ).long()
+        t_idx = trajectories.terminating_idx
+        indices = (max_len * (t_idx - 1) - (t_idx - 1) * (t_idx - 2) / 2).long()
         contributions.scatter_(0, indices.unsqueeze(0), 1)
         contributions = contributions / len(trajectories)
 
@@ -498,16 +505,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         """
         L = self.lamda
         max_len = trajectories.max_length
-        terminating_idx = trajectories.terminating_idx
+        t_idx = trajectories.terminating_idx
 
         # The following tensor represents the weights given to each possible
         # sub-trajectory length.
-        contributions = (
-            L ** torch.arange(max_len, device=terminating_idx.device).double()
-        ).to(torch.get_default_dtype())
+        contributions = (L ** torch.arange(max_len, device=t_idx.device).double()).to(
+            torch.get_default_dtype()
+        )
         contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
         contributions = contributions.repeat_interleave(
-            torch.arange(max_len, 0, -1, device=terminating_idx.device),
+            torch.arange(max_len, 0, -1, device=t_idx.device),
             dim=0,
             output_size=int(max_len * (max_len + 1) / 2),
         )
@@ -519,10 +526,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         per_trajectory_denom = (
             1.0
             / (1 - L) ** 2
-            * (
-                L * (L ** terminating_idx.double() - 1)
-                + (1 - L) * terminating_idx.double()
-            )
+            * (L * (L ** t_idx.double() - 1) + (1 - L) * t_idx.double())
         ).to(torch.get_default_dtype())
         contributions = contributions / per_trajectory_denom / len(trajectories)
 
