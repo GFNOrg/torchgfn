@@ -1011,7 +1011,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--averaging_strategy",
         type=str,
-        choices=["mean", "weighted_mean", "best_only"],
+        choices=["mean", "weighted_mean", "best_only", "reset_weights"],
         default="mean",
         help="Strategy for combining good models",
     )

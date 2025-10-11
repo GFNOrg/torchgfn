@@ -231,11 +231,16 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         replacers = sorted(list(ranks_to_replace))
 
         # Common header: [iteration, strategy_code]
-        strategy_code = (
-            0
-            if self.averaging_strategy == "mean"
-            else (1 if self.averaging_strategy == "weighted_mean" else 2)
-        )
+        if self.averaging_strategy == "mean":
+            strategy_code = 0
+        elif self.averaging_strategy == "weighted_mean":
+            strategy_code = 1
+        elif self.averaging_strategy == "best_only":
+            strategy_code = 2
+        elif self.averaging_strategy == "reset_weights":
+            strategy_code = 3
+        else:
+            strategy_code = 0
         header_common = torch.tensor(
             [int(iteration), int(strategy_code)], dtype=torch.int64
         )
@@ -379,11 +384,16 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                             self._handle_donor(iteration, replacers)
                         elif role == self._OP_ROLE_REPLACER:
                             donors = [d for d in ids if d != dist.get_rank()]
-                            wbuf = None
-                            if strategy_code == 1 and len(donors) > 0:  # weighted_mean
-                                wbuf = torch.zeros(len(donors), dtype=torch.float32)
-                                dist.recv(wbuf, src=0, tag=self._TAG_CONTROL)
-                            self._handle_replacer(iteration, donors, wbuf)
+                            if strategy_code == 3:  # reset_weights
+                                with self._pending_lock:
+                                    # Signal a local rebuild with fresh random weights
+                                    self._new_weights = {}
+                            else:
+                                wbuf = None
+                                if strategy_code == 1 and len(donors) > 0:  # weighted_mean
+                                    wbuf = torch.zeros(len(donors), dtype=torch.float32)
+                                    dist.recv(wbuf, src=0, tag=self._TAG_CONTROL)
+                                self._handle_replacer(iteration, donors, wbuf)
                         else:
                             pass
                 time.sleep(self.poll_interval_s)
@@ -399,7 +409,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             raise ValueError(
                 f"replacement_ratio must be between 0 and 1, got {replacement_ratio}"
             )
-        if averaging_strategy not in ["mean", "weighted_mean", "best_only"]:
+        if averaging_strategy not in ["mean", "weighted_mean", "best_only", "reset_weights"]:
             raise ValueError(f"Unknown averaging_strategy: {averaging_strategy}")
         if not 0.0 <= momentum <= 1.0:
             raise ValueError(f"momentum must be between 0 and 1, got {momentum}")
@@ -418,6 +428,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         if averaging_strategy == "best_only":
             best_rank = int(sorted_ranks[-1].item())
             ranks_to_average = {best_rank}
+        elif averaging_strategy == "reset_weights":
+            # No donors when resetting weights locally
+            ranks_to_average = set()
         return ranks_to_replace, ranks_to_average
 
     @staticmethod
