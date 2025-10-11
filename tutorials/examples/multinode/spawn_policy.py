@@ -35,8 +35,9 @@ class AverageAllPolicy(SpawnPolicy):
         self,
         iteration: int,
         model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
-    ) -> None:
+    ) -> Tuple[torch.nn.Module, torch.optim.Optimizer]:
         if not dist.is_available() or not dist.is_initialized():
             return
         if iteration % self.average_every != 0:
@@ -48,6 +49,7 @@ class AverageAllPolicy(SpawnPolicy):
             dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
             param.data.copy_(param_tensor / world_size)
 
+        return model, optimizer
 
 class AsyncSelectiveAveragingPolicy(SpawnPolicy):
     """Asynchronous selective averaging with background, non-blocking comms.
@@ -92,9 +94,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
         # When rebuilding a fresh model + optimizer is desired, we store the
         # averaged parameters and construct the new model at the next safe call.
-        self._pending_spawn_avg_state: Optional[Dict[str, torch.Tensor]] = None
-        self._spawned_model: Optional[torch.nn.Module] = None
-        self._spawned_optimizer: Optional[torch.optim.Optimizer] = None
+        self._new_weights: Optional[Dict[str, torch.Tensor]] = None
 
         # Rank-0 state for metric aggregation
         self._rank0_metric_handles: Dict[int, dist.Work] = {}
@@ -129,11 +129,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self,
         iteration: int,
         model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
     ) -> None:
         self._ensure_initialized(model)
         if not dist.is_available() or not dist.is_initialized():
-            return
+            return model, optimizer
 
         # Non-blocking metric send on cadence
         if local_metric is not None and iteration % self.average_every == 0:
@@ -157,44 +158,19 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
         # If a spawn (full rebuild) has been requested, build a fresh model + optimizer
         # and seed it with the averaged weights received in the background thread.
-        if self._pending_spawn_avg_state is not None and self._model_builder is not None:
-            avg_state: Optional[Dict[str, torch.Tensor]] = None
+        if self._new_weights is not None and self._model_builder is not None:
+            new_weights: Optional[Dict[str, torch.Tensor]] = None
             with self._pending_lock:
-                avg_state = self._pending_spawn_avg_state
-                self._pending_spawn_avg_state = None
-            if avg_state is not None:
-                try:
-                    new_model, new_optimizer = self._model_builder()
+                new_weights = self._new_weights
+                self._new_weights = None
+            if new_weights is not None:
+                    model, optimizer = self._model_builder()
                     # Copy averaged params by name into the new model
-                    for name, param in new_model.named_parameters():
-                        if name in avg_state:
-                            param.data.copy_(avg_state[name])
-                    # Expose to the caller for a safe swap in the training loop
-                    self._spawned_model = new_model
-                    self._spawned_optimizer = new_optimizer
-                    # Update internal reference so donor sends use the latest
-                    self._model = new_model
-                except Exception:
-                    # If spawning fails, fall back to in-place update of current model
                     for name, param in model.named_parameters():
-                        if name in avg_state:
-                            param.data.copy_(
-                                self.momentum * param.data
-                                + (1.0 - self.momentum) * avg_state[name]
-                            )
-
-    def consume_spawned(self) -> Optional[Tuple[torch.nn.Module, torch.optim.Optimizer]]:
-        """Return a newly spawned (model, optimizer) if available, else None.
-
-        This should be called in the training loop immediately after invoking this policy.
-        """
-        if self._spawned_model is None or self._spawned_optimizer is None:
-            return None
-        model = self._spawned_model
-        optim = self._spawned_optimizer
-        self._spawned_model = None
-        self._spawned_optimizer = None
-        return model, optim
+                        if name in new_weights:
+                            param.data.copy_(new_weights[name])
+        
+        return model, optimizer
 
     # ---------------- Rank 0 metric aggregation and dispatch ----------------
     def _rank0_post_metric_recvs(self) -> None:

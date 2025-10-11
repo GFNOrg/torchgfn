@@ -337,6 +337,29 @@ def set_up_logF_estimator(
 
 def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id):
     """Returns a GFlowNet complete with the required estimators."""
+        # Initialize per-agent exploration strategy.
+    # Default (tests stable): on-policy, no noisy layers.
+    # When --use_random_strategies is provided, sample a random initial strategy.
+    if getattr(args, "use_random_strategies", False):
+        init_cfg = _sample_new_strategy(
+            args,
+            agent_group_id=my_agent_group_id,
+            iteration=0,
+            prev_eps=9999.0,
+            prev_temp=9999.0,
+            prev_noisy=9999,
+        )
+        args.agent_epsilon = float(init_cfg.get("epsilon", 0.0))
+        args.agent_temperature = float(init_cfg.get("temperature", 1.0))
+        args.agent_n_noisy_layers = int(init_cfg.get("n_noisy_layers", 0))
+        args.agent_noisy_std_init = float(init_cfg.get("noisy_std_init", 0.5))
+    else:
+        # Disable off-policy training.
+        args.agent_epsilon = 0.0
+        args.agent_temperature = 1.0
+        args.agent_n_noisy_layers = 0
+        args.agent_noisy_std_init = 0.5
+
     #    Depending on the loss, we may need several estimators:
     #       one (forward only) for FM loss,
     #       two (forward and backward) or other losses
@@ -538,30 +561,6 @@ def main(args):  # noqa: C901
 
     # Initialize the preprocessor.
     preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
-
-    # Initialize per-agent exploration strategy.
-    # Default (tests stable): on-policy, no noisy layers.
-    # When --use_random_strategies is provided, sample a random initial strategy.
-    agent_group_id = distributed_context.agent_group_id or 0
-    if getattr(args, "use_random_strategies", False):
-        init_cfg = _sample_new_strategy(
-            args,
-            agent_group_id=agent_group_id,
-            iteration=0,
-            prev_eps=9999.0,
-            prev_temp=9999.0,
-            prev_noisy=9999,
-        )
-        args.agent_epsilon = float(init_cfg.get("epsilon", 0.0))
-        args.agent_temperature = float(init_cfg.get("temperature", 1.0))
-        args.agent_n_noisy_layers = int(init_cfg.get("n_noisy_layers", 0))
-        args.agent_noisy_std_init = float(init_cfg.get("noisy_std_init", 0.5))
-    else:
-        # Disable off-policy training.
-        args.agent_epsilon = 0.0
-        args.agent_temperature = 1.0
-        args.agent_n_noisy_layers = 0
-        args.agent_noisy_std_init = 0.5
 
     # Builder closure to create a fresh model + optimizer (used by spawn policy as well)
     def _model_builder() -> Tuple[GFlowNet, torch.optim.Optimizer]:
@@ -765,16 +764,12 @@ def main(args):  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
             if averaging_policy is not None:
-                averaging_policy(
-                    iteration=iteration, model=gflownet, local_metric=-loss.item()
+                gflownet, optimizer = averaging_policy(
+                    iteration=iteration,
+                    model=gflownet,
+                    optimizer=optimizer,
+                    local_metric=-loss.item(),
                 )
-                # If the policy spawned a fresh model+optimizer, swap them in safely
-                if isinstance(averaging_policy, AsyncSelectiveAveragingPolicy):
-                    spawned = averaging_policy.consume_spawned()
-                    if spawned is not None:
-                        new_model, new_optimizer = spawned
-                        gflownet = new_model  # already moved to device inside builder
-                        optimizer = new_optimizer
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
