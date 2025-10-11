@@ -89,7 +89,7 @@ def main(args):
     validation_info = {"l1_dist": float("inf")}
     visited_terminating_states = env.states_from_batch_shape((0,))
     discovered_modes = set()
-    n_pixels_per_mode = round(env.height / 10) ** env.ndim
+    # Deprecated metric; replaced by exact mode counting via env.modes_found
     for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
         trajectories = sampler.sample_trajectories(
             env,
@@ -118,29 +118,15 @@ def main(args):
                 args.validation_samples,
                 visited_terminating_states,
             )
-            # Modes will have a reward greater than R2+R1+R0.
-            mode_reward_threshold = sum(
-                [
-                    env.reward_fn_kwargs["R2"],
-                    env.reward_fn_kwargs["R1"],
-                    env.reward_fn_kwargs["R0"],
-                ]
-            )
 
             assert isinstance(visited_terminating_states, DiscreteStates)
-            modes = visited_terminating_states[
-                env.reward(visited_terminating_states) >= mode_reward_threshold
-            ].tensor
-            # Finds all the unique modes in visited_terminating_states.
-            modes_found = set([tuple(s.tolist()) for s in modes])
+            modes_found = env.modes_found(visited_terminating_states)
             discovered_modes.update(modes_found)
-            # torch.tensor(list(modes_found)).shape ==[batch_size, 2]
+
             str_info = f"Iter {it + 1}: "
             if "l1_dist" in validation_info:
                 str_info += f"L1 distance={validation_info['l1_dist']:.8f} "
-            str_info += (
-                f"modes discovered={len(discovered_modes) / n_pixels_per_mode:.3f} "
-            )
+            str_info += f"modes discovered={len(discovered_modes)} / {env.n_modes} "
             str_info += f"n terminating states {len(visited_terminating_states)}"
             print(str_info)
 

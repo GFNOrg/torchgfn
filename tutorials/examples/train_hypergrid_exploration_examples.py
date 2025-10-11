@@ -102,38 +102,12 @@ def print_final_results(all_results: pd.DataFrame, width: int = 80):
     print("=" * width)
 
 
-def count_modes(env: Env, visited_terminating_states: DiscreteStates):
-    # Modes will have a reward greater than R2+R1+R0.
-    mode_reward_threshold = sum(
-        [
-            env.reward_fn_kwargs["R2"],
-            env.reward_fn_kwargs["R1"],
-            env.reward_fn_kwargs["R0"],
-        ]
-    )
-
-    assert isinstance(visited_terminating_states, DiscreteStates)
-
-    modes = visited_terminating_states[
-        env.reward(visited_terminating_states) >= mode_reward_threshold
-    ].tensor
-
-    return set([tuple(s.tolist()) for s in modes])
+# Deprecated local mode counting; use env.modes_found instead
 
 
-def calculate_mode_stats(env: Env, verbose: bool = False):
-    """Calculate the number of pixels per mode to normalize results."""
-    n_pixels_in_all_modes = len(count_modes(env, env.all_states))
-    n_modes = 2**env.ndim
-    n_pixels_per_mode = n_pixels_in_all_modes / n_modes
-
-    if verbose:
-        print("\nMode Stats:")
-        print(f"+ Number of pixels per mode: {n_pixels_per_mode}")
-        print(f"+ Number of modes: {n_modes}")
-        print(f"+ Number of pixels in all modes: {n_pixels_in_all_modes}\n")
-
-    return n_pixels_per_mode, n_modes, n_pixels_in_all_modes
+def _print_mode_stats(env: Env):
+    print("\nMode Stats:")
+    print(f"+ Number of modes: {2**env.ndim}")
 
 
 def build_gflownet(
@@ -226,7 +200,7 @@ def train(
     visited_terminating_states = env.states_from_batch_shape((0,))
     discovered_modes = set()
 
-    n_pixels_per_mode, _, _ = calculate_mode_stats(env, verbose=False)
+    _print_mode_stats(env)
 
     # Training loop.
     results = {
@@ -285,9 +259,9 @@ def train(
                 validation_samples,
                 visited_terminating_states,
             )
-            modes_found = count_modes(env, visited_terminating_states)
+            modes_found = env.modes_found(visited_terminating_states)
             discovered_modes.update(modes_found)
-            n_unique_modes_discovered = len(discovered_modes) / n_pixels_per_mode
+            n_unique_modes_discovered = len(discovered_modes)
 
             # Format training progress information.
             l1_dist = val_info["l1_dist"]
@@ -340,7 +314,7 @@ def main(args):
         check_action_validity=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
-    _, _, _ = calculate_mode_stats(env, verbose=True)
+    _print_mode_stats(env)
 
     common_kwargs = {
         "env": env,

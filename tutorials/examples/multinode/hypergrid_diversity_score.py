@@ -37,7 +37,7 @@ class HypergridDiversityScore:
             raise ValueError("Container is empty. Cannot compute L1 distance.")
 
         if isinstance(container, Trajectories):
-            states = container.final_states
+            states = container.terminating_states
         elif isinstance(container, Transitions):
             states = container.next_states
         elif isinstance(container, StatesContainer):
@@ -47,7 +47,7 @@ class HypergridDiversityScore:
 
         # Stack states into a single tensor for vectorized operations
         state_tensor = states.tensor  # (batch, ndim)
-        score = 1 - self._values_set[state_tensor].mean()
+        score = 1 - self._values_set[state_tensor].float().mean()
 
         self._values_set[state_tensor] = True
         return score.item()
