@@ -8,6 +8,8 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 import torch
 import torch.distributed as dist
 
+from gfn.gflownet.base import GFlowNet
+
 
 class SpawnPolicy(ABC):
     def __init__(self, average_every: int) -> None:
@@ -17,9 +19,9 @@ class SpawnPolicy(ABC):
     def __call__(
         self,
         iteration: int,
-        model: torch.nn.Module,
+        model: GFlowNet,
         local_metric: Optional[float] = None,
-    ) -> None:  # noqa: D401
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
         """Possibly perform a spawn/averaging step on this iteration."""
         raise NotImplementedError
 
@@ -34,14 +36,14 @@ class AverageAllPolicy(SpawnPolicy):
     def __call__(
         self,
         iteration: int,
-        model: torch.nn.Module,
+        model: GFlowNet,
         optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
-    ) -> Tuple[torch.nn.Module, torch.optim.Optimizer]:
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
         if not dist.is_available() or not dist.is_initialized():
-            return
+            return model, optimizer
         if iteration % self.average_every != 0:
-            return
+            return model, optimizer
 
         world_size = float(dist.get_world_size())
         for param in model.parameters():
@@ -50,6 +52,7 @@ class AverageAllPolicy(SpawnPolicy):
             param.data.copy_(param_tensor / world_size)
 
         return model, optimizer
+
 
 class AsyncSelectiveAveragingPolicy(SpawnPolicy):
     """Asynchronous selective averaging with background, non-blocking comms.
@@ -71,7 +74,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
     def __init__(
         self,
-        model_builder: Callable[[], Tuple[torch.nn.Module, torch.optim.Optimizer]],
+        model_builder: Callable[[], Tuple[GFlowNet, torch.optim.Optimizer]],
         average_every: int,
         replacement_ratio: float = 0.2,
         averaging_strategy: str = "mean",
@@ -86,7 +89,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self._model_builder = model_builder
 
         self._initialized = False
-        self._model: Optional[torch.nn.Module] = None
+        self._model: Optional[GFlowNet] = None
         self._shutdown = threading.Event()
         self._bg_thread: Optional[threading.Thread] = None
         self._pending_lock = threading.Lock()
@@ -105,7 +108,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self._control_work: Optional[dist.Work] = None
         self._control_role_buf: Optional[torch.Tensor] = None
 
-    def _ensure_initialized(self, model: torch.nn.Module) -> None:
+    def _ensure_initialized(self, model: GFlowNet) -> None:
         if self._initialized:
             return
         if not dist.is_available() or not dist.is_initialized():
@@ -128,10 +131,10 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
     def __call__(
         self,
         iteration: int,
-        model: torch.nn.Module,
+        model: GFlowNet,
         optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
-    ) -> None:
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
         self._ensure_initialized(model)
         if not dist.is_available() or not dist.is_initialized():
             return model, optimizer
@@ -164,12 +167,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 new_weights = self._new_weights
                 self._new_weights = None
             if new_weights is not None:
-                    model, optimizer = self._model_builder()
-                    # Copy averaged params by name into the new model
-                    for name, param in model.named_parameters():
-                        if name in new_weights:
-                            param.data.copy_(new_weights[name])
-        
+                model, optimizer = self._model_builder()
+                # Copy averaged params by name into the new model
+                for name, param in model.named_parameters():
+                    if name in new_weights:
+                        param.data.copy_(new_weights[name])
+
         return model, optimizer
 
     # ---------------- Rank 0 metric aggregation and dispatch ----------------
@@ -390,7 +393,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                                     self._new_weights = {}
                             else:
                                 wbuf = None
-                                if strategy_code == 1 and len(donors) > 0:  # weighted_mean
+                                if (
+                                    strategy_code == 1 and len(donors) > 0
+                                ):  # weighted_mean
                                     wbuf = torch.zeros(len(donors), dtype=torch.float32)
                                     dist.recv(wbuf, src=0, tag=self._TAG_CONTROL)
                                 self._handle_replacer(iteration, donors, wbuf)
@@ -409,7 +414,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             raise ValueError(
                 f"replacement_ratio must be between 0 and 1, got {replacement_ratio}"
             )
-        if averaging_strategy not in ["mean", "weighted_mean", "best_only", "reset_weights"]:
+        if averaging_strategy not in [
+            "mean",
+            "weighted_mean",
+            "best_only",
+            "reset_weights",
+        ]:
             raise ValueError(f"Unknown averaging_strategy: {averaging_strategy}")
         if not 0.0 <= momentum <= 1.0:
             raise ValueError(f"momentum must be between 0 and 1, got {momentum}")

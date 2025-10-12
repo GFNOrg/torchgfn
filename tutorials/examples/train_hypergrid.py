@@ -337,7 +337,7 @@ def set_up_logF_estimator(
 
 def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id):
     """Returns a GFlowNet complete with the required estimators."""
-        # Initialize per-agent exploration strategy.
+    # Initialize per-agent exploration strategy.
     # Default (tests stable): on-policy, no noisy layers.
     # When --use_random_strategies is provided, sample a random initial strategy.
     if getattr(args, "use_random_strategies", False):
@@ -718,7 +718,6 @@ def main(args):  # noqa: C901
         with Timer(timing, "calculate_loss", enabled=args.timing) as loss_timer:
 
             optimizer.zero_grad()
-            gflownet = cast(GFlowNet, gflownet)
             # Recompute whether we are off-policy for loss logprob recalculation.
             is_on_policy_iter = (
                 (args.replay_buffer_size == 0)
