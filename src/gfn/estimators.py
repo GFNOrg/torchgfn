@@ -834,9 +834,7 @@ class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
         self,
         module: nn.Module,
         n_actions: int,
-        preprocessor: Preprocessor | None = IdentityPreprocessor(
-            output_dim=None
-        ),  # Addressed in https://github.com/GFNOrg/torchgfn/pull/399.
+        preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
     ):
         """Initializes a RecurrentDiscretePolicyEstimator.
@@ -847,9 +845,8 @@ class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
             preprocessor: Preprocessor object that transforms states to tensors.
         """
         if preprocessor is None:
-            preprocessor = IdentityPreprocessor(
-                output_dim=None
-            )  # Addressed in https://github.com/GFNOrg/torchgfn/pull/399.
+            preprocessor = IdentityPreprocessor(output_dim=None) 
+
         super().__init__(
             module=module,
             n_actions=n_actions,
