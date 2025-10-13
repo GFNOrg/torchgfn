@@ -19,7 +19,7 @@ The Sampler remains estimator-agnostic. Adapters own any estimator-specific stat
 
 ## Adapters
 
-Adapters conform to an abstract class structure (see `gfn/samplers.py`):
+Adapters conform to an abstract class structure:
 
 - Properties
   - `is_backward: bool` — whether the wrapped estimator is a backward policy.
@@ -29,21 +29,25 @@ Adapters conform to an abstract class structure (see `gfn/samplers.py`):
   - `init_context(batch_size: int, device: torch.device, conditioning: Tensor|None) -> Any`
     - Allocates a rollout context once per batch (Sampler). Stores invariants (batch size, device, optional conditioning) and initializes any adapter state (e.g., recurrent carry) along with per-step artifact buffers.
 
-  - `compute(states_active: States, ctx: Any, step_mask: Tensor, **policy_kwargs) -> (Distribution, Any)`
-    - Runs the estimator forward on the active rows and returns a torch Distribution over actions.
-    - Must handle conditioning slicing with `step_mask` when applicable.
+  - `compute_dist(states_active: States, ctx: Any, step_mask: Tensor|None, **policy_kwargs) -> (Distribution, Any)`
+    - Runs the estimator forward on the provided rows and returns a torch Distribution over actions.
+    - Slices `conditioning` with `step_mask` when provided (non‑vectorized); uses full conditioning when `step_mask=None` (vectorized).
+    - Sets `ctx.current_estimator_output` to the raw estimator output. Vectorized callers may prefill `ctx.current_estimator_output` to reuse cached outputs.
 
-  - `record(ctx: Any, step_mask: Tensor, sampled_actions: Tensor, dist: Distribution, save_logprobs: bool, save_estimator_outputs: bool) -> None`
-    - Optionally record per-step artifacts into buffers owned by the context (e.g., log-probs, estimator outputs). Padding back to batch size happens here, using zeros for log-probs and `-inf` for estimator outputs to match existing conventions.
+  - `log_probs(actions_active: Tensor, dist: Distribution, ctx: Any, step_mask: Tensor|None, vectorized: bool = False) -> (Tensor, Any)`
+    - Computes log-probs from `dist` for the given actions.
+    - When `vectorized=False`, returns a padded `(N,)` tensor (zeros where `~step_mask`), with a strict inf-check (raises on `±inf`).
+    - When `vectorized=True`, returns the raw `dist.log_prob(...)` without padding or inf-check (vectorized paths can legitimately include `-inf` for illegal actions).
 
-  - `log_prob_of_actions(states_active: States, actions_active: Tensor, ctx: Any, step_mask: Tensor, **policy_kwargs) -> (Tensor, Any)`
-    - Computes log-probs for a batch of (state, action) pairs corresponding to `True` entries of `step_mask` and returns a padded `(N,)` vector.
+  - `record(ctx: Any, step_mask: Tensor, sampled_actions: Tensor, dist: Distribution, log_probs: Optional[Tensor], save_estimator_outputs: bool) -> None`
+    - Records per-step artifacts owned by the context. It never recomputes log-probs; pass `log_probs=None` to skip recording them.
+    - Pads estimator outputs to `(N, ...)` using `-inf` before appending when `save_estimator_outputs=True`.
 
-  - `finalize(ctx) -> -> dict[str, Optional[torch.Tensor]]`
-    - Realizes the buffers of the context object into tensors which can be used by the rest of the library (e.g., Trajectories objects).
+  - `finalize(ctx) -> dict[str, Optional[Tensor]]`
+    - Stacks per-step buffers into trajectory-level tensors, e.g. `(T, N, ...)`, returning `{"log_probs": Tensor|None, "estimator_outputs": Tensor|None}`.
 
   - `get_current_estimator_output(ctx: Any) -> Tensor|None`
-    - Convenience to expose the last estimator output after `compute`.
+    - Returns the last estimator output saved during `compute_dist`.
 
 - Context
   - The rollout context (created by `init_context`) owns:
@@ -65,61 +69,62 @@ Adapters conform to an abstract class structure (see `gfn/samplers.py`):
 
 ## Vectorized vs Non-Vectorized Probability Paths
 
-Probability calculators (PF/PB for trajectories and transitions) branch on `adapter.is_vectorized`:
+Probability calculators (PF/PB for trajectories and transitions) branch on `adapter.is_vectorized` but use the same two adapter calls in both paths:
+
+- `compute_dist(states_active, ctx, step_mask=None or mask)`
+- `log_probs(actions_active, dist, ctx, step_mask=None or mask, vectorized=...)`
+
+Key differences:
 
 - Vectorized (fast path)
-  - Used when `adapter is None` or `adapter.is_vectorized is True`.
-  - Implements the legacy vectorized logic exactly (see the reference implementation below).
-  - No adapter calls are needed; the estimator is called on vectorized masks, and distributions compute `log_prob` over the masked actions. This path is the most efficient and is used during training when possible.
+  - `step_mask=None` and `vectorized=True`.
+  - May reuse cached estimator outputs by pre-setting `ctx.current_estimator_output` (e.g., PF with stored `trajectories.estimator_outputs`).
+  - `log_probs` returns raw `dist.log_prob(...)` and does not raise on `-inf` (illegal actions can produce `-inf`).
 
-- Non-Vectorized (per-step path)
-  - Used when `adapter.is_vectorized is False` (e.g., recurrent adapters).
-  - The calculators iterate per-step with legacy-accurate masks and alignment:
-    - PF (trajectories): `step_mask = ~states.is_sink_state[t] & ~actions.is_dummy[t]`
-    - PB (trajectories): align actions at time `t` with states at time `t+1`, and use `step_mask = ~states.is_sink_state[t+1] & ~states.is_initial_state[t+1] & ~actions.is_dummy[t] & ~actions.is_exit[t]` and skip `t==0`.
-    - Transitions: use the same masks as the legacy vectorized functions and make a single adapter call per batch.
-  - No mask indexing with action ids is used; masking is solely via the legacy boolean masks and the Distribution handles illegal actions internally.
-
-In both branches, behavior matches the legacy reference exactly, so tests compare outputs between vectorized and non-vectorized paths for parity.
+- Non‑Vectorized (per-step path)
+  - Uses legacy-accurate boolean masks:
+    - PF (trajectories): `~states.is_sink_state[t] & ~actions.is_dummy[t]`
+    - PB (trajectories): align actions at `t` with states at `t+1`, using `~states.is_sink_state[t+1] & ~states.is_initial_state[t+1] & ~actions.is_dummy[t] & ~actions.is_exit[t]`, skipping `t==0`.
+    - Transitions: one per-batch call with legacy masks.
+  - `log_probs` pads back to `(N,)` at inactive rows and raises if any `±inf` remains after masking.
 
 ## Integration with the Sampler
 
 The Sampler uses the adapter lifecycle:
 - `ctx = adapter.init_context(batch_size, device, conditioning)`
 - While some trajectories are active:
-  - `(dist, ctx) = adapter.compute(states[step_mask], ctx, step_mask, **policy_kwargs)`
+  - `(dist, ctx) = adapter.compute_dist(states[step_mask], ctx, step_mask, **policy_kwargs)`
   - Sample actions from `dist`; build actions for the full batch
-  - `adapter.record(ctx, step_mask, sampled_actions, dist, save_logprobs, save_estimator_outputs)`
+  - `log_probs = adapter.log_probs(valid_actions_tensor, dist, ctx, step_mask, vectorized=False)` (or `None` if skipping)
+  - `adapter.record(ctx, step_mask, sampled_actions=valid_actions_tensor, dist=dist, log_probs=log_probs, save_estimator_outputs=...)`
   - Step the environment forward/backward based on `adapter.is_backward`
 - After rollout: `artifacts = adapter.finalize(ctx)` and populate `Trajectories`.
 
 ## How to Implement a New Adapter
 
-A new Adapter will only likely need changes to `compute`, `record`, and `log_prob_of_actions`. You can rely otherwise on the defaults. However we detail all of the steps below for completeness:
+1) Decide on vectorization:
+   - If your estimator maintains a recurrent carry, set `is_vectorized = False` and implement carry management in `init_context` and `compute_dist`.
+   - Otherwise set `is_vectorized = True` and follow the default adapter pattern.
 
-1) Decide if your estimator needs a recurrent carry - some persistent state or cache that is utilized throughout the trajectory.
-   - If yes, set `is_vectorized = False` and implement `init_context` to initialize `carry`. Implement `compute` to update `carry` each step.
-   - If no, set `is_vectorized = True` and follow the default adapter pattern.
+2) Implement `init_context(batch_size, device, conditioning)`
+   - Save invariants and allocate any adapter-specific state. Initialize empty per-step buffers.
 
-2) Implement `compute`
-   - Handle conditioning slicing with `step_mask` when conditioning is provided.
-   - Call your estimator and construct a torch Distribution via `to_probability_distribution(states_active, est_out, **policy_kwargs)`.
+3) Implement `compute_dist(states_active, ctx, step_mask, **policy_kwargs)`
+   - Slice `conditioning` by `step_mask` for non‑vectorized calls; use full conditioning when `step_mask=None`.
+   - Call your estimator, set `ctx.current_estimator_output`, and return a Distribution via `to_probability_distribution`.
 
-3) Implement `record`
-   - If you want to capture per-step log-probs and/or estimator outputs, compute them for active rows and pad back to `(N,)` (log-probs) or `(N, ...)` (estimator outputs) before appending to the context buffers.
+4) Implement `log_probs(actions_active, dist, ctx, step_mask, vectorized=False)`
+   - Non‑vectorized: strict inf-check, return a padded `(N,)` tensor.
+   - Vectorized: return raw `dist.log_prob(...)` (may include `-inf` for illegal actions).
 
-4) Implement `log_prob_of_actions`
-   - Given `(states_active, actions_active)` for the active rows, compute the Distribution (reusing the same forward logic) and return a padded `(N,)` vector of `log_prob`.
-   - Do not modify masks here; calculators pass in `step_mask` already built from existing masks.
+5) Implement `record(ctx, step_mask, sampled_actions, dist, log_probs, save_estimator_outputs)`
+   - Never recompute log-probs here; only store what was provided.
+   - When saving estimator outputs, pad to `(N, ...)` using `-inf`.
 
-5) Implement `finalize`
-   - Given the contents of your context, return the trajectory-level objects required by the Sampler.
+6) Implement `finalize(ctx)`
+   - Stack per-step buffers into `(T, N, ...)` tensors and return a dict of artifacts.
 
-5) Mark `is_backward` if your estimator is a backward policy; the sampler will step the environment backward accordingly.
-
-6) Performance Guidance
-   - For vectorized adapters, prefer the vectorized probability path (legacy implementation). It’s much faster and avoids per-step overhead.
-   - For non-vectorized adapters, keep per-step code minimal and avoid Python-side loops that can be vectorized.
+7) Set `is_backward` appropriately so the Sampler chooses forward/backward environment steps.
 
 ## Reference: Legacy Implementations
 
