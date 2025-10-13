@@ -14,15 +14,17 @@ from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 
 
 class Sampler:
-    """Wrapper for a PolicyEstimator that enables sampling from GFlowNet environments.
+    """Adapter‑driven sampler for GFlowNet environments.
 
-    A Sampler encapsulates a PolicyEstimator and provides methods to sample individual
-    actions or complete trajectories from GFlowNet environments. It can be used for
-    both forward and backward sampling, depending on the estimator's configuration.
+    Delegates policy logic to an adapter: the adapter builds action
+    distributions, computes step log‑probs, and records artifacts into a
+    rollout context. Direction (forward/backward) is determined by
+    ``adapter.is_backward``.
 
     Attributes:
-        estimator: The PolicyEstimator used for sampling actions and computing
-            probability distributions.
+        estimator: The underlying policy estimator (adapter wraps it).
+        adapter: The adapter used to build action distributions, compute step log‑probs,
+            and record artifacts into a rollout context.
     """
 
     def __init__(
@@ -54,36 +56,29 @@ class Sampler:
         ctx: Any | None = None,
         **policy_kwargs: Any,
     ) -> Tuple[Actions, torch.Tensor | None, torch.Tensor | None]:
-        """Samples actions from the given states using the policy estimator.
+        """Sample one step from ``states`` via the adapter.
 
-        This method samples actions from the probability distribution defined by the
-        policy estimator.
-
-        When sampling off-policy, ensure to set `save_logprobs=False`. Log probabilities
-        for off-policy actions should be calculated separately during GFlowNet training.
+        Initializes or reuses a rollout context with ``adapter.init_context``,
+        builds a Distribution with ``adapter.compute_dist``, optionally computes
+        log‑probs with ``adapter.log_probs``, and lets ``adapter.record``
+        persist per‑step artifacts.
 
         Args:
-            env: The environment where the states and actions are defined.
-            states: A batch of states to sample actions from.
-            conditioning: Optional tensor of conditioning information for conditional
-                policies. If provided, the estimator must support conditional sampling.
-            save_estimator_outputs: If True, returns the raw outputs from the estimator
-                before conversion to probability distributions. This is useful for
-                off-policy training with tempered policies.
-            save_logprobs: If True, calculates and returns the log probabilities of
-                the sampled actions under the policy distribution. This is useful for
-                on-policy training.
-            **policy_kwargs: Keyword arguments passed to the estimator's
-                `to_probability_distribution` method. Common parameters include:
-                - `temperature`: Scalar to divide logits by before softmax
-                - `epsilon`: Probability of choosing random actions (exploration)
-                - `sf_bias`: Bias to apply to exit action logits
+            env: Environment providing action/state conversion utilities.
+            states: Batch of states to act on.
+            conditioning: Optional conditioning for conditional policies.
+            save_estimator_outputs: If True, return the raw estimator outputs
+                cached by the adapter for this step. Useful for off-policy training
+                with tempered policies.
+            save_logprobs: If True, return per‑step log‑probs padded to batch.
+                Useful for on-policy training.
+            **policy_kwargs: Extra kwargs forwarded to
+                ``to_probability_distribution``.
 
         Returns:
-            A tuple containing:
-            - An Actions object with the sampled actions
-            - Optional tensor of log probabilities (if save_logprobs=True)
-            - Optional tensor of estimator outputs (if save_estimator_outputs=True)
+            ``(Actions, log_probs | None, estimator_outputs | None)``. The
+            estimator outputs come from
+            ``adapter.get_current_estimator_output(ctx)`` when requested.
         """
         if ctx is None:
             ctx = self.adapter.init_context(
@@ -143,34 +138,27 @@ class Sampler:
         save_logprobs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:
-        """Samples complete trajectories from the environment.
+        """Roll out complete trajectories using the adapter.
 
-        This method samples trajectories by sequentially sampling actions from the
-        policy estimator. It supports both forward and backward sampling, depending on
-        the estimator's `is_backward` flag. If forward sampling, it samples until all
-        trajectories reach the sink state. If backward sampling, it samples until all
-        trajectories reach the initial state.
+        Reuses a single rollout context across steps, calling
+        ``compute_dist``/``log_probs``/``record`` each iteration and
+        ``finalize`` at the end to stack trajectory‑level artifacts. Uses
+        ``adapter.is_backward`` to choose the environment step function.
 
         Args:
-            env: The environment to sample trajectories from.
-            n: Number of trajectories to sample, all starting from s0. Must be
-                provided if `states` is None.
-            states: Initial states to start trajectories from. It should have batch_shape
-                of length 1 (no trajectory dim). If `None`, `n` must be provided and we
-                initialize `n` trajectories with the environment's initial state.
-            conditioning: Optional tensor of conditioning information for conditional
-                policies. Must match the batch shape of states.
-            save_estimator_outputs: If True, saves the estimator outputs for each
-                step. Useful for off-policy training with tempered policies.
-            save_logprobs: If True, calculates and saves the log probabilities of
-                sampled actions. Useful for on-policy training.
-            **policy_kwargs: Keyword arguments passed to the policy estimator.
-                See `sample_actions` for details.
+            env: Environment to sample in.
+            n: Number of trajectories if ``states`` is None.
+            states: Starting states (batch shape length 1) or ``None``.
+            conditioning: Optional conditioning aligned with the batch.
+            save_estimator_outputs: If True, store per‑step estimator outputs. Useful
+                for off-policy training with tempered policies.
+            save_logprobs: If True, store per‑step log‑probs.  Useful for on-policy
+                training.
+            **policy_kwargs: Extra kwargs forwarded to the policy.
 
         Returns:
-            A Trajectories object containing the sampled trajectories with batch_shape
-            (max_length+1, n_trajectories) for states and (max_length, n_trajectories)
-            for actions.
+            A ``Trajectories`` with stacked states/actions and any artifacts
+            produced by ``adapter.finalize``.
 
         Note:
             For backward trajectories, the reward is computed at the initial state

@@ -22,32 +22,29 @@ def get_trajectory_pfs_and_pbs(
     pb_adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Calculate PF and PB log-probabilities for trajectories.
+    """Calculate PF and PB log‑probabilities for trajectories via adapters.
 
-    This function delegates to :func:`get_trajectory_pfs` and
-    :func:`get_trajectory_pbs`, forwarding optional adapter(s) and policy kwargs.
+    Delegates to ``get_trajectory_pfs`` and ``get_trajectory_pbs`` while
+    forwarding optional adapters and policy kwargs.
 
-    Vectorized vs non-vectorized
-    - If the adapter is None or ``adapter.is_vectorized is True``, the legacy
-      vectorized path is used (fast path, strict parity with legacy code).
-    - If ``adapter.is_vectorized is False`` (e.g., recurrent), a non‑vectorized
-      per‑step path is used with legacy-accurate masks and alignment.
+    Vectorized vs non‑vectorized:
+    - ``adapter is None`` or ``adapter.is_vectorized=True`` → vectorized path
+      (fast, parity with legacy).
+    - ``adapter.is_vectorized=False`` (e.g., recurrent) → per‑step path with
+      legacy masks/alignment.
 
     Args:
         pf: Forward policy estimator.
-        pb: Backward policy estimator, or ``None`` if the DAG is a tree (PB=1).
-        trajectories: Trajectories container to evaluate.
-        fill_value: Fill used for invalid states (e.g., sink state positions).
-        recalculate_all_logprobs: If ``True``, recompute PF even if cached.
-        pf_adapter: Adapter for PF (vectorized vs non‑vectorized decision).
-        pb_adapter: Adapter for PB (vectorized vs non‑vectorized decision).
-        **policy_kwargs: Extra kwargs passed to estimator's
-            ``to_probability_distribution`` (e.g., temperature, epsilon, sf_bias).
+        pb: Backward policy estimator, or ``None`` for trees (PB=1).
+        trajectories: Trajectories to evaluate.
+        fill_value: Value used to pad invalid positions.
+        recalculate_all_logprobs: If True, recompute PF even if cached.
+        pf_adapter: Optional adapter for PF.
+        pb_adapter: Optional adapter for PB.
+        **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
-        Tuple[Tensor, Tensor]:
-            - PF log-probs with shape ``(T, N)``
-            - PB log-probs with shape ``(T, N)``
+        ``(log_pf[T,N], log_pb[T,N])``
     """
     # fill value is the value used for invalid states (sink state usually)
 
@@ -90,26 +87,24 @@ def get_trajectory_pfs(
     adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
-    """Calculate PF log-probabilities for trajectories.
+    """Calculate PF log‑probabilities for trajectories.
 
-    Vectorized vs non-vectorized
-    - Vectorized when ``adapter is None`` or ``adapter.is_vectorized is True``:
-      uses the legacy vectorized implementation (strict parity with reference).
-    - Non‑vectorized when ``adapter.is_vectorized is False``: evaluates per‑step
-      using legacy masks (PF: ``~states.is_sink_state[t] & ~actions.is_dummy[t]``),
-      passing the active subset to the adapter without any action‑id mask indexing.
+    - Vectorized: ``adapter is None`` or ``adapter.is_vectorized=True`` → legacy
+      vectorized implementation.
+    - Non‑vectorized: ``adapter.is_vectorized=False`` → per‑step evaluation with
+      legacy masks ``~is_sink_state[t] & ~is_dummy[t]``; no action‑id indexing.
 
     Args:
         pf: Forward policy estimator.
-        trajectories: Trajectories container to evaluate.
-        fill_value: Fill used for invalid states (e.g., sink state positions).
-        recalculate_all_logprobs: If ``True``, recompute PF even if cached.
-        adapter: Optional adapter controlling vectorized vs non‑vectorized path.
-        **policy_kwargs: Extra kwargs passed to
-            ``to_probability_distribution`` (e.g., temperature, epsilon).
+        trajectories: Trajectories to evaluate.
+        fill_value: Value used to pad invalid positions.
+        recalculate_all_logprobs: If True, recompute PF even if cached. Useful for
+            off-policy training.
+        adapter: Optional adapter deciding the evaluation path.
+        **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
-        Tensor of shape ``(T, N)`` containing PF log-probabilities.
+        ``log_pf`` of shape ``(T, N)``.
 
     Raises:
         ValueError: If backward trajectories are provided.
@@ -269,27 +264,23 @@ def get_trajectory_pbs(
     adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
-    """Calculate PB log-probabilities for trajectories.
+    """Calculate PB log‑probabilities for trajectories.
 
-    Vectorized vs non-vectorized
-    - Vectorized when ``adapter is None`` or ``adapter.is_vectorized is True``:
-      uses the legacy vectorized implementation (strict parity with reference).
-    - Non‑vectorized when ``adapter.is_vectorized is False``: evaluates per‑step
-      using legacy masks/alignment:
-      PB aligns actions at time ``t`` with states at time ``t+1`` and uses
-      ``~states.is_sink_state[t+1] & ~states.is_initial_state[t+1]
-        & ~actions.is_dummy[t] & ~actions.is_exit[t]``, skipping ``t==0``.
+    - Vectorized: ``adapter is None`` or ``adapter.is_vectorized=True``.
+    - Non‑vectorized: ``adapter.is_vectorized=False`` with legacy alignment
+      (action at ``t`` with state at ``t+1``) and mask
+      ``~is_sink_state[t+1] & ~is_initial_state[t+1] & ~is_dummy[t] & ~is_exit[t]``;
+      skip ``t==0``.
 
     Args:
-        pb: Backward policy estimator, or ``None`` for tree DAGs (PB=1).
-        trajectories: Trajectories container to evaluate.
-        fill_value: Fill used for invalid states (e.g., sink state positions).
-        adapter: Optional adapter controlling vectorized vs non‑vectorized path.
-        **policy_kwargs: Extra kwargs passed to
-            ``to_probability_distribution``.
+        pb: Backward policy estimator, or ``None`` for trees (PB=1).
+        trajectories: Trajectories to evaluate.
+        fill_value: Value used to pad invalid positions.
+        adapter: Optional adapter deciding the evaluation path.
+        **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
-        Tensor of shape ``(T, N)`` containing PB log-probabilities.
+        ``log_pb`` of shape ``(T, N)``.
 
     Raises:
         ValueError: If backward trajectories are provided.
@@ -440,25 +431,25 @@ def get_transition_pfs_and_pbs(
     pb_adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Calculate PF and PB log-probabilities for transitions.
+    """Calculate PF and PB log‑probabilities for transitions.
 
-    Vectorized vs non-vectorized mirrors trajectories:
-    - Vectorized (adapter is None or ``is_vectorized=True``): legacy vectorized path.
-    - Non‑vectorized (``is_vectorized=False``): per‑batch adapter call with legacy
-      masks; no action‑id mask indexing.
+    Mirrors the trajectories logic:
+    - Vectorized when ``adapter is None`` or ``is_vectorized=True``.
+    - Non‑vectorized when ``is_vectorized=False``: per‑batch adapter call with
+      legacy masks; no action‑id indexing.
 
     Args:
         pf: Forward policy estimator.
-        pb: Backward policy estimator, or ``None`` for tree DAGs (PB=1).
-        transitions: Transitions container to evaluate.
-        recalculate_all_logprobs: If ``True``, recompute PF even if cached.
+        pb: Backward policy estimator, or ``None`` for trees (PB=1).
+        transitions: Transitions to evaluate.
+        recalculate_all_logprobs: If True, recompute PF even if cached. Useful for
+            off-policy training.
         pf_adapter: Optional adapter for PF.
         pb_adapter: Optional adapter for PB.
-        **policy_kwargs: Extra kwargs passed to
-            ``to_probability_distribution``.
+        **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
-        Tuple[Tensor, Tensor]: PF and PB log-probabilities of shape ``(M,)``.
+        ``(log_pf[M], log_pb[M])``.
 
     Raises:
         ValueError: If backward transitions are provided.
@@ -495,24 +486,22 @@ def get_transition_pfs(
     adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
-    """Calculate PF log-probabilities for transitions.
+    """Calculate PF log‑probabilities for transitions.
 
-    Vectorized vs non-vectorized
-    - Vectorized when ``adapter is None`` or ``adapter.is_vectorized is True``:
-      legacy vectorized path.
-    - Non‑vectorized when ``adapter.is_vectorized is False``: single adapter call
-      with legacy masks and no action‑id indexing.
+    - Vectorized: ``adapter is None`` or ``is_vectorized=True``.
+    - Non‑vectorized: ``is_vectorized=False``; single adapter call with legacy
+      masks; no action‑id indexing.
 
     Args:
         pf: Forward policy estimator.
-        transitions: Transitions container to evaluate.
-        recalculate_all_logprobs: If ``True``, recompute PF even if cached.
-        adapter: Optional adapter controlling vectorized vs non‑vectorized path.
-        **policy_kwargs: Extra kwargs passed to
-            ``to_probability_distribution``.
+        transitions: Transitions to evaluate.
+        recalculate_all_logprobs: If True, recompute PF even if cached. Useful for
+            off-policy training.
+        adapter: Optional adapter deciding the evaluation path.
+        **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
-        Tensor of shape ``(M,)`` containing PF log-probabilities.
+        ``log_pf`` of shape ``(M,)``.
     """
     adapter = maybe_instantiate_adapter(pf, adapter)
     assert adapter is not None
@@ -557,23 +546,21 @@ def get_transition_pbs(
     adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
-    """Calculate PB log-probabilities for transitions.
+    """Calculate PB log‑probabilities for transitions.
 
-    Vectorized vs non-vectorized
-    - Vectorized when ``adapter is None`` or ``adapter.is_vectorized is True``:
-      legacy vectorized path.
-    - Non‑vectorized when ``adapter.is_vectorized is False``: single adapter call
-      with legacy masks and no action‑id indexing.
+    - Vectorized: ``adapter is None`` or ``is_vectorized=True``.
+    - Non‑vectorized: ``is_vectorized=False``; single adapter call with legacy
+      masks; no action‑id indexing. Recurrent adapters are not supported for
+      transitions.
 
     Args:
-        pb: Backward policy estimator, or ``None`` for tree DAGs (PB=1).
-        transitions: Transitions container to evaluate.
-        adapter: Optional adapter controlling vectorized vs non‑vectorized path.
-        **policy_kwargs: Extra kwargs passed to
-            ``to_probability_distribution``.
+        pb: Backward policy estimator, or ``None`` for trees (PB=1).
+        transitions: Transitions to evaluate.
+        adapter: Optional adapter deciding the evaluation path.
+        **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
-        Tensor of shape ``(M,)`` containing PB log-probabilities.
+        ``log_pb`` of shape ``(M,)``.
     """
 
     # TODO: We support a fill_value for trajectories, but not for transitions.

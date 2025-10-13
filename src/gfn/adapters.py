@@ -15,26 +15,25 @@ if TYPE_CHECKING:
 class EstimatorAdapter(ABC):
     """Adapter interface for estimator-specific policy behavior.
 
-    This abstract base class defines the minimal interface the Sampler relies on,
-    allowing us to keep one generic sampling loop while plugging in different estimator
-    behaviors (e.g., non‑recurrent, recurrent with carry, tempered variants)
-    without modifying the Sampler.
+    Keeps the sampling loop generic; estimator-specific logic lives here.
 
-    The adapter owns an opaque RolloutContext object. The Sampler never inspects
-    it and simply passes it back to the adapter at each step. The adapter is
-    responsible for:
-      - initializing the context in `init_context`.
-      - compute the action distribution, while updating any internal state (e.g.,
-        recurrent `carry`)
-      - compute the log probabilities of the actions in `log_probs`.
-      - recording per‑step artifacts in `record` (e.g., log_probs,
-        estimator outputs), typically with mask-aware padding.
-      - output trajectory-length artifacts via `finalize(ctx)`
+    Responsibilities:
+    - init_context(batch_size, device, conditioning): allocate rollout context.
+    - compute_dist(states_active, ctx, step_mask, **kw): run estimator on active
+      rows, return a torch Distribution, and update `ctx` if needed (e.g., carry,
+      cached outputs).
+    - log_probs(actions_active, dist, ctx, step_mask, vectorized): compute
+      log-probabilities for active rows; when ``vectorized=False`` return a
+      batch-sized tensor padded via ``step_mask``.
+    - record(ctx, step_mask, sampled_actions, dist, log_probs, save_estimator_outputs):
+      optionally materialize per‑step artifacts in `ctx`.
+    - finalize(ctx): stack recorded artifacts along time and return a dict.
 
-    The context should be allocated once per rollout. Masking should be applied inside
-    the adapter (via `step_mask`) when slicing conditioning or padding per‑step
-    tensors back to full batch size. The Sampler can therefore be oblivious to
-    estimator details (conditioning, carry, etc.).
+    Notes:
+    - The sampler never inspects `ctx`; masking and padding happen inside the
+      adapter.
+    - ``is_backward`` selects forward vs backward environment steps.
+    - ``is_vectorized`` selects fast vectorized vs per‑step probability paths.
     """
 
     @property
@@ -93,11 +92,10 @@ class EstimatorAdapter(ABC):
 
 
 class RolloutContext:
-    """Structured, mutable context owned by adapters.
+    """Structured per‑rollout state owned by adapters.
 
-    Uses fixed attributes for core fields and an `extras` dict for adapter-
-    specific extensions without changing the class shape. This keeps most
-    accesses fast and typed while preserving flexibility similar to dicts.
+    Holds rollout invariants and optional per‑step buffers; use ``extras`` for
+    adapter‑specific fields without changing the class shape.
     """
 
     __slots__ = (
@@ -128,7 +126,7 @@ class RolloutContext:
 
 
 class DefaultEstimatorAdapter(EstimatorAdapter):
-    """Adapter for non-recurrent estimators (current default behavior).
+    """Adapter for non‑recurrent estimators (default).
 
     Overview
     --------
@@ -136,68 +134,29 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
     It exposes the minimal interface required by the `EstimatorAdapter` abstract base
     class while keeping the sampler loop estimator-agnostic.
 
-    - If conditioning is provided, the estimator accepts `(states, conditioning)`;
-      otherwise it accepts `(states)`.
-    - The estimator provides `to_probability_distribution(states, est_out, **kw)`
-      returning a torch Distribution over actions for the masked states.
+    Workflow with RolloutContext:
+    - ``init_context(batch_size, device, conditioning)``: store invariants and
+      allocate per‑step buffers.
+    - ``compute_dist(states_active, ctx, step_mask, **kw)``: slice conditioning
+      by ``step_mask`` when provided, run the estimator on active rows, cache
+      ``est_out`` in ``ctx.current_estimator_output``, and return a Distribution.
+    - ``log_probs(actions_active, dist, ctx, step_mask, vectorized)``: compute
+      log‑probs for active rows; when ``vectorized=False``, return a batch‑padded
+      tensor using ``step_mask``.
+    - ``record(...)``: append per‑step artifacts; pad log‑probs with ``0.0`` and
+      estimator outputs with ``-inf``.
+    - ``finalize(ctx)``: stack recorded lists along time to tensors of shape
+      ``(T, N, ...)``.
 
-    The adapter owns an opaque rollout context `ctx` which the Sampler never reads. The
-    context (a TensorDict) is created once per rollout and mutated in place:
+    Masking and path selection
+    - ``states_active == states[~dones]``; ``step_mask`` has shape ``(N,)``.
+    - ``is_backward`` is forwarded from the estimator.
+    - ``is_vectorized == True`` enables vectorized probability calculators when
+      available.
 
-    - init_context: stores rollout invariants and optional conditioning. Also prepares
-         per‑step buffers for artifacts trajectory-level artifacts (log_probs,
-        estimator_outputs).
-
-    - compute:
-      1) Selects the appropriate estimator call signature depending on whether
-         conditioning is present. If conditioning is present, the adapter slices
-         it with `step_mask` so shapes match `states_active`.
-      2) Calls the estimator forward pass to obtain the raw `est_out`.
-      3) Converts `est_out` into a torch Distribution with
-         `to_probability_distribution`.
-      4) Saves `est_out` into `ctx.current_estimator_output`.
-
-    - record:
-      Materializes optional per‑step artifacts into context‑managed buffers with
-      mask‑aware padding back to the full rollout batch size:
-      * Log‑probs: computes `dist.log_prob(sampled_actions)` for active rows only,
-        then writes into a 1D tensor of length batch_size filled with zeros and masked
-        assignment for active positions. Appends this to a list (one tensor per time step).
-      * Estimator outputs: if requested, pads the last estimator output
-        (`ctx.current_estimator_output`) to shape `(batch_size, ...)` using `-inf` for
-        inactive rows and appends to a list (one tensor per time step).
-
-    - finalize: Stacks recorded per‑step lists along the time dimension into tensors of
-        shape `(trajectory_legnth, batch_size, ...)` suitable for `Trajectories`.
-        Returns `None` for any artifact that was never recorded.
-
-    Masking & Shapes
-    ----------------
-    - `states_active` always corresponds to `states[~dones]` inside the sampler.
-    - The adapter receives `step_mask` (shape `(N,)`) to slice any step‑dependent
-      inputs (e.g., conditioning) and to pad per‑step outputs to the full batch.
-    - Padded tensors use `0.0` for log‑probs and `-inf` for estimator outputs to
-      maintain compatibility with downstream code.
-
-    Backward/Forward Direction
-    --------------------------
-    - `is_backward` is forwarded from the underlying estimator so the sampler can
-      choose the appropriate environment transition (forward vs backward).
-
-    Vectorized Probability Path
-    --------------------------
-    - `is_vectorized` is used by the Sampler to choose the appropriate probability path.
-    - Vectorized adapters always use faster paths in probability calculators.
-      Non-vectorized adapters (e.g., recurrent) use per-step paths with masking and
-      alignment identical to the legacy reference.
-
-    Performance Notes
-    -----------------
-    - `ctx` is allocated once per rollout and mutated in place to avoid per‑step
-      overhead.
-    - If you know trajectory length bounds, you can extend this adapter to
-      pre‑allocate fixed‑size storage in `init_context` rather than appending to
-      Python lists.
+    Performance
+    - One context per rollout; mutate in place. If trajectory length bounds are
+      known, pre‑allocation of those buffers is possible.
     """
 
     def __init__(self, estimator: "Estimator") -> None:
@@ -352,24 +311,13 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
 
 
 class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
-    """Adapter for recurrent estimators that maintain a rollout carry (hidden state).
+    """Adapter for recurrent estimators with rollout carry (hidden state).
 
-    Differences from `DefaultEstimatorAdapter`:
-    - is_vectorized = False: runs sequential, per‑step probability calculators for
-      PF/PB. PB aligns action at t with state at t+1, t==0 skipped).
-    - Rollout context manages `ctx.carry` which contains the hidden state of the
-      recurrent estimator. It is initialized once via `estimator.init_carry(batch_size,
-      device)` and updated every step.
-    - `compute(states, ctx, ...)` calls `estimator(states, ctx.carry) ->
-      (estimator_outputs, new_carry)`, updates `ctx.carry`, then builds the
-      Distribution from `estimator_outputs`.
-    - recording mirrors the default but pads per‑step tensors to batch size and
-      stacks into `(T, N, ...)`.
-    - No action‑id mask indexing; illegal actions are handled by the Distribution.
-
-    Requires the estimator to implement:
-    - `init_carry(batch_size: int, device: torch.device)`
-    - a recurrent forward returning `(estimator_outputs, new_carry)`.
+    - Requires ``estimator.init_carry(batch_size, device)`` and a forward that
+      returns ``(estimator_outputs, new_carry)``.
+    - Maintains ``ctx.carry`` across steps and updates it each call.
+    - ``is_vectorized=False``; probability calculators use the per‑step path
+      with legacy masks/alignment.
     """
 
     def __init__(self, estimator: "Estimator") -> None:
