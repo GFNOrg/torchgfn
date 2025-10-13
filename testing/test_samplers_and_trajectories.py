@@ -522,7 +522,7 @@ def test_rollout_context_basic():
     assert ctx.extras["foo"] == 123
 
 
-def test_default_adapter_compute_record_finalize():
+def test_default_adapter_compute_record():
     adapter = DefaultEstimatorAdapter(cast(Estimator, _DummyEstimator()))
     device = torch.device("cpu")
     n = 5
@@ -536,11 +536,20 @@ def test_default_adapter_compute_record_finalize():
     adapter.record(
         ctx, step_mask, actions, dist, log_probs=log_probs, save_estimator_outputs=True
     )
-    out = adapter.finalize(ctx)
-    assert out["log_probs"] is not None and out["log_probs"].shape == (1, n)
-    assert out["estimator_outputs"] is not None and out["estimator_outputs"].shape[
-        :2
-    ] == (1, n)
+    stacked_logprobs = (
+        torch.stack(ctx.trajectory_log_probs, dim=0)
+        if ctx.trajectory_log_probs
+        else None
+    )
+    stacked_estimator_outputs = (
+        torch.stack(ctx.trajectory_estimator_outputs, dim=0)
+        if ctx.trajectory_estimator_outputs
+        else None
+    )
+    assert stacked_logprobs is not None
+    assert stacked_logprobs.shape == (1, n)
+    assert stacked_estimator_outputs is not None
+    assert stacked_estimator_outputs.shape[:2] == (1, n)
 
 
 def test_recurrent_adapter_requires_init_carry():
@@ -576,11 +585,20 @@ def test_recurrent_adapter_flow():
     )
     h1 = ctx.carry["hidden"].clone()
     assert torch.all(h1 == h0 + 1)
-    out = adapter.finalize(ctx)
-    assert out["log_probs"] is not None and out["log_probs"].shape == (2, n)
-    assert out["estimator_outputs"] is not None and out["estimator_outputs"].shape[
-        :2
-    ] == (2, n)
+    stacked_logprobs = (
+        torch.stack(ctx.trajectory_log_probs, dim=0)
+        if ctx.trajectory_log_probs
+        else None
+    )
+    stacked_estimator_outputs = (
+        torch.stack(ctx.trajectory_estimator_outputs, dim=0)
+        if ctx.trajectory_estimator_outputs
+        else None
+    )
+    assert stacked_logprobs is not None
+    assert stacked_logprobs.shape == (2, n)
+    assert stacked_estimator_outputs is not None
+    assert stacked_estimator_outputs.shape[:2] == (2, n)
 
 
 # ---------------------- Integration with real recurrent modules ----------------------
@@ -652,13 +670,21 @@ def test_integration_recurrent_sequence_model_with_adapter(
             save_estimator_outputs=True,
         )
 
-    out = adapter.finalize(ctx)
-    log_probs = out["log_probs"]
-    estimator_outputs = out["estimator_outputs"]
-    assert log_probs is not None
-    assert log_probs.shape[0] == 2
-    assert estimator_outputs is not None
-    assert estimator_outputs.shape[0] == 2
+    stacked_logprobs = (
+        torch.stack(ctx.trajectory_log_probs, dim=0)
+        if ctx.trajectory_log_probs
+        else None
+    )
+    stacked_estimator_outputs = (
+        torch.stack(ctx.trajectory_estimator_outputs, dim=0)
+        if ctx.trajectory_estimator_outputs
+        else None
+    )
+
+    assert stacked_logprobs is not None
+    assert stacked_logprobs.shape[0] == 2
+    assert stacked_estimator_outputs is not None
+    assert stacked_estimator_outputs.shape[0] == 2
 
 
 @pytest.mark.parametrize("positional_embedding", ["learned", "sinusoidal"])
@@ -704,8 +730,17 @@ def test_integration_transformer_sequence_model_with_adapter(
         ctx, step_mask, actions, dist, log_probs=lp, save_estimator_outputs=True
     )
 
-    out = adapter.finalize(ctx)
-    assert out["log_probs"] is not None and out["log_probs"].shape[0] == 1
-    assert (
-        out["estimator_outputs"] is not None and out["estimator_outputs"].shape[0] == 1
+    stacked_logprobs = (
+        torch.stack(ctx.trajectory_log_probs, dim=0)
+        if ctx.trajectory_log_probs
+        else None
     )
+    stacked_estimator_outputs = (
+        torch.stack(ctx.trajectory_estimator_outputs, dim=0)
+        if ctx.trajectory_estimator_outputs
+        else None
+    )
+    assert stacked_logprobs is not None
+    assert stacked_logprobs.shape[0] == 1
+    assert stacked_estimator_outputs is not None
+    assert stacked_estimator_outputs.shape[0] == 1

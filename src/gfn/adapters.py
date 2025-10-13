@@ -27,7 +27,6 @@ class EstimatorAdapter(ABC):
       batch-sized tensor padded via ``step_mask``.
     - record(ctx, step_mask, sampled_actions, dist, log_probs, save_estimator_outputs):
       optionally materialize per‑step artifacts in `ctx`.
-    - finalize(ctx): stack recorded artifacts along time and return a dict.
 
     Notes:
     - The sampler never inspects `ctx`; masking and padding happen inside the
@@ -145,8 +144,6 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
       tensor using ``step_mask``.
     - ``record(...)``: append per‑step artifacts; pad log‑probs with ``0.0`` and
       estimator outputs with ``-inf``.
-    - ``finalize(ctx)``: stack recorded lists along time to tensors of shape
-      ``(T, N, ...)``.
 
     Masking and path selection
     - ``states_active == states[~dones]``; ``step_mask`` has shape ``(N,)``.
@@ -290,22 +287,6 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
             )
             padded[step_mask] = estimator_outputs
             ctx.trajectory_estimator_outputs.append(padded)
-
-    # To move to sampler.
-    def finalize(self, ctx: Any) -> dict[str, Optional[torch.Tensor]]:
-        """Stack recorded per-step artifacts along time into trajectory-level tensors."""
-        log_probs = (
-            torch.stack(ctx.trajectory_log_probs, dim=0)
-            if ctx.trajectory_log_probs
-            else None
-        )
-        estimator_outputs = (
-            torch.stack(ctx.trajectory_estimator_outputs, dim=0)
-            if ctx.trajectory_estimator_outputs
-            else None
-        )
-
-        return {"log_probs": log_probs, "estimator_outputs": estimator_outputs}
 
     def get_current_estimator_output(self, ctx: Any) -> Optional[torch.Tensor]:
         """Expose the most recent per-step estimator output saved during `compute`."""

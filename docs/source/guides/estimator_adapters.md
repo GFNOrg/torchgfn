@@ -43,9 +43,6 @@ Adapters conform to an abstract class structure:
     - Records per-step artifacts owned by the context. It never recomputes log-probs; pass `log_probs=None` to skip recording them.
     - Pads estimator outputs to `(N, ...)` using `-inf` before appending when `save_estimator_outputs=True`.
 
-  - `finalize(ctx) -> dict[str, Optional[Tensor]]`
-    - Stacks per-step buffers into trajectory-level tensors, e.g. `(T, N, ...)`, returning `{"log_probs": Tensor|None, "estimator_outputs": Tensor|None}`.
-
   - `get_current_estimator_output(ctx: Any) -> Tensor|None`
     - Returns the last estimator output saved during `compute_dist`.
 
@@ -96,15 +93,12 @@ The Sampler uses the adapter lifecycle:
   - `(dist, ctx) = adapter.compute_dist(states[step_mask], ctx, step_mask, **policy_kwargs)`
   - Sample actions from `dist`; build actions for the full batch
   - `log_probs = adapter.log_probs(valid_actions_tensor, dist, ctx, step_mask, vectorized=False)` (or `None` if skipping)
-  - `adapter.record(ctx, step_mask, sampled_actions=valid_actions_tensor, dist=dist, log_probs=log_probs, save_estimator_outputs=...)`
   - Step the environment forward/backward based on `adapter.is_backward`
-- After rollout: `artifacts = adapter.finalize(ctx)` and populate `Trajectories`.
 
 ## How to Implement a New Adapter
-
 1) Decide on vectorization:
-   - If your estimator maintains a recurrent carry, set `is_vectorized = False` and implement carry management in `init_context` and `compute_dist`.
-   - Otherwise set `is_vectorized = True` and follow the default adapter pattern.
+   - If your estimator requires non-vectorized roll out (e.g., a recurrent carry), set `is_vectorized = False` and implement carry management in `init_context` and `compute_dist`.
+   - Otherwise set `is_vectorized = True` and follow the default adapter pattern. This will be true in most cases.
 
 2) Implement `init_context(batch_size, device, conditioning)`
    - Save invariants and allocate any adapter-specific state. Initialize empty per-step buffers.
@@ -120,9 +114,6 @@ The Sampler uses the adapter lifecycle:
 5) Implement `record(ctx, step_mask, sampled_actions, dist, log_probs, save_estimator_outputs)`
    - Never recompute log-probs here; only store what was provided.
    - When saving estimator outputs, pad to `(N, ...)` using `-inf`.
-
-6) Implement `finalize(ctx)`
-   - Stack per-step buffers into `(T, N, ...)` tensors and return a dict of artifacts.
 
 7) Set `is_backward` appropriately so the Sampler chooses forward/backward environment steps.
 

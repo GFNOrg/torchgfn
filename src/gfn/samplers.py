@@ -141,8 +141,7 @@ class Sampler:
         """Roll out complete trajectories using the adapter.
 
         Reuses a single rollout context across steps, calling
-        ``compute_dist``/``log_probs``/``record`` each iteration and
-        ``finalize`` at the end to stack trajectory‑level artifacts. Uses
+        ``compute_dist`` & ``log_probs`` each iteration. Uses
         ``adapter.is_backward`` to choose the environment step function.
 
         Args:
@@ -157,8 +156,7 @@ class Sampler:
             **policy_kwargs: Extra kwargs forwarded to the policy.
 
         Returns:
-            A ``Trajectories`` with stacked states/actions and any artifacts
-            produced by ``adapter.finalize``.
+            A ``Trajectories`` with stacked states/actions and any artifacts.
 
         Note:
             For backward trajectories, the reward is computed at the initial state
@@ -277,20 +275,33 @@ class Sampler:
             dones = dones | new_dones
             trajectories_states.append(states)
 
-        # Stack all states and actions
+        # Stack all states and actions.
         stacked_states = env.States.stack(trajectories_states)
-        stacked_actions = env.Actions.stack(trajectories_actions)[
-            1:
-        ]  # Drop dummy action
-        # Finalize stacked trajectory artifacts from the context (already shaped (T, N, ...))
-        trajectory_artifacts = self.adapter.finalize(ctx)  # type: ignore[attr-defined]
-        stacked_logprobs = trajectory_artifacts.get("log_probs", None)
-        stacked_estimator_outputs = trajectory_artifacts.get("estimator_outputs", None)
 
-        if stacked_logprobs is not None and len(stacked_logprobs) == 0:
-            stacked_logprobs = None
-        if stacked_estimator_outputs is not None and len(stacked_estimator_outputs) == 0:
-            stacked_estimator_outputs = None
+        # Stack actions, drop dummy action.
+        stacked_actions = env.Actions.stack(trajectories_actions)[1:]
+
+        # Get trajectory artifacts from the context (already shaped (T, N, ...))
+        stacked_logprobs = (
+            torch.stack(ctx.trajectory_log_probs, dim=0)
+            if ctx.trajectory_log_probs
+            else None
+        )
+        stacked_estimator_outputs = (
+            torch.stack(ctx.trajectory_estimator_outputs, dim=0)
+            if ctx.trajectory_estimator_outputs
+            else None
+        )
+
+        # Stacked logprobs and estimator outputs are only None if there are no
+        # valid trajectories.
+        if stacked_logprobs is not None:
+            if len(stacked_logprobs) == 0:
+                stacked_logprobs = None
+
+        if stacked_estimator_outputs is not None:
+            if len(stacked_estimator_outputs) == 0:
+                stacked_estimator_outputs = None
 
         # Broadcast conditioning tensor to match states batch shape if needed
         if conditioning is not None:
