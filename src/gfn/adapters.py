@@ -22,14 +22,12 @@ class EstimatorAdapter(ABC):
 
     Responsibilities:
     - init_context(batch_size, device, conditioning): allocate rollout context.
-    - compute_dist(states_active, ctx, step_mask, **kw): run estimator on active
-      rows, return a torch Distribution, and update `ctx` if needed (e.g., carry,
-      cached outputs).
-    - log_probs(actions_active, dist, ctx, step_mask, vectorized): compute
-      log-probabilities for active rows; when ``vectorized=False`` return a
+    - compute_dist(states_active, ctx, step_mask, save_estimator_outputs, **kw):
+      run estimator on active rows, return a torch Distribution, and update `ctx`
+      if needed (e.g., carry, cached outputs).
+    - log_probs(actions_active, dist, ctx, step_mask, vectorized, save_logprobs):
+      compute log-probabilities for active rows; when ``vectorized=False`` return a
       batch-sized tensor padded via ``step_mask``.
-    - record(ctx, step_mask, sampled_actions, dist, log_probs, save_estimator_outputs):
-      optionally materialize per‑step artifacts in `ctx`.
 
     Notes:
     - The sampler never inspects `ctx`; masking and padding happen inside the
@@ -61,6 +59,7 @@ class EstimatorAdapter(ABC):
         states_active: States,
         ctx: Any,
         step_mask: Optional[torch.Tensor] = None,
+        save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
     ) -> tuple[Distribution, Any]:
         ...  # fmt: skip
@@ -73,19 +72,8 @@ class EstimatorAdapter(ABC):
         ctx: Any,
         step_mask: Optional[torch.Tensor] = None,
         vectorized: bool = False,
+        save_logprobs: bool = False,
     ) -> tuple[torch.Tensor, Any]:
-        ...  # fmt: skip
-
-    @abstractmethod
-    def record(
-        self,
-        ctx: Any,
-        step_mask: torch.Tensor,
-        sampled_actions: torch.Tensor,
-        dist: Distribution,
-        log_probs: Optional[torch.Tensor],
-        save_estimator_outputs: bool,
-    ) -> None:
         ...  # fmt: skip
 
     # Optional helper for `sample_actions` BC
@@ -144,9 +132,7 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
       ``est_out`` in ``ctx.current_estimator_output``, and return a Distribution.
     - ``log_probs(actions_active, dist, ctx, step_mask, vectorized)``: compute
       log‑probs for active rows; when ``vectorized=False``, return a batch‑padded
-      tensor using ``step_mask``.
-    - ``record(...)``: append per‑step artifacts; pad log‑probs with ``0.0`` and
-      estimator outputs with ``-inf``.
+      tensor using ``step_mask``. Per‑step artifacts are recorded when flags are set.
 
     Masking and path selection
     - ``states_active == states[~dones]``; ``step_mask`` has shape ``(N,)``.
@@ -197,6 +183,7 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
         states_active: States,
         ctx: Any,
         step_mask: Optional[torch.Tensor] = None,
+        save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
     ) -> tuple[Distribution, Any]:
         """Run the estimator for active rows and build an action Distribution.
@@ -242,8 +229,22 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
             states_active, estimator_outputs, **policy_kwargs
         )
 
-        # TODO: Make optional.
-        ctx.current_estimator_output = estimator_outputs
+        # Save current estimator output only when requested.
+        if save_estimator_outputs:
+            ctx.current_estimator_output = estimator_outputs
+
+            # If we are in a non-vectorized path (masked), append a padded copy to trajectory.
+            if step_mask is not None:
+                padded = torch.full(
+                    (ctx.batch_size,) + estimator_outputs.shape[1:],
+                    -float("inf"),
+                    device=ctx.device,
+                )
+                padded[step_mask] = estimator_outputs
+                ctx.trajectory_estimator_outputs.append(padded)
+
+        else:
+            ctx.current_estimator_output = None
 
         return dist, ctx
 
@@ -254,11 +255,14 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
         ctx: Any,
         step_mask: Optional[torch.Tensor] = None,
         vectorized: bool = False,
+        save_logprobs: bool = False,
     ) -> tuple[torch.Tensor, Any]:
         """Compute log-probs, optionally padding back to full batch when non-vectorized."""
         lp = dist.log_prob(actions_active)
 
         if vectorized:
+            if save_logprobs:
+                ctx.trajectory_log_probs.append(lp)
             return lp, ctx
 
         # Non-vectorized path strict check. None of these should be -inf after masking.
@@ -269,31 +273,10 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
         step_lp = torch.full((ctx.batch_size,), 0.0, device=ctx.device, dtype=lp.dtype)
         step_lp[step_mask] = lp
 
+        if save_logprobs:
+            ctx.trajectory_log_probs.append(step_lp)
+
         return step_lp, ctx
-
-    # To merge with log probs / calc dist.
-    def record(
-        self,
-        ctx: Any,
-        step_mask: torch.Tensor,
-        sampled_actions: torch.Tensor,
-        dist: Distribution,
-        log_probs: Optional[torch.Tensor],
-        save_estimator_outputs: bool,
-    ) -> None:
-        """Record per-step artifacts into the context's trajectory-level lists."""
-        if log_probs is not None:
-            ctx.trajectory_log_probs.append(log_probs)
-
-        if save_estimator_outputs and ctx.current_estimator_output is not None:
-            estimator_outputs = ctx.current_estimator_output
-            padded = torch.full(
-                (ctx.batch_size,) + estimator_outputs.shape[1:],
-                -float("inf"),
-                device=ctx.device,
-            )
-            padded[step_mask] = estimator_outputs
-            ctx.trajectory_estimator_outputs.append(padded)
 
     def get_current_estimator_output(self, ctx: Any) -> Optional[torch.Tensor]:
         """Expose the most recent per-step estimator output saved during `compute`."""
@@ -357,6 +340,7 @@ class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
         states_active: States,
         ctx: Any,
         step_mask: Optional[torch.Tensor] = None,
+        save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
     ) -> tuple[Distribution, Any]:
         """Run estimator with carry and update it.
@@ -374,8 +358,20 @@ class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
             **policy_kwargs,
         )
 
-        # TODO: Make optional.
-        ctx.current_estimator_output = estimator_outputs
+        # Save current estimator output only when requested.
+        if save_estimator_outputs:
+            ctx.current_estimator_output = estimator_outputs
+
+            if step_mask is not None:
+                padded = torch.full(
+                    (ctx.batch_size,) + estimator_outputs.shape[1:],
+                    -float("inf"),
+                    device=ctx.device,
+                )
+                padded[step_mask] = estimator_outputs
+                ctx.trajectory_estimator_outputs.append(padded)
+        else:
+            ctx.current_estimator_output = None
 
         return dist, ctx
 

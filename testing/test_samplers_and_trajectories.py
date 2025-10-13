@@ -530,11 +530,12 @@ def test_default_adapter_compute_record():
     ctx = adapter.init_context(n, device, conditioning=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
-    dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
+    dist, ctx = adapter.compute_dist(
+        cast(States, states), ctx, step_mask, save_estimator_outputs=True
+    )
     actions = dist.sample()
-    log_probs, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
-    adapter.record(
-        ctx, step_mask, actions, dist, log_probs=log_probs, save_estimator_outputs=True
+    _, ctx = adapter.log_probs(
+        actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
     )
     stacked_logprobs = (
         torch.stack(ctx.trajectory_log_probs, dim=0)
@@ -568,20 +569,22 @@ def test_recurrent_adapter_flow():
     ctx = adapter.init_context(n, device, conditioning=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
-    dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
+    dist, ctx = adapter.compute_dist(
+        cast(States, states), ctx, step_mask, save_estimator_outputs=True
+    )
     actions = dist.sample()
     # carry should update when we record multiple steps
     h0 = ctx.carry["hidden"].clone()
-    lp, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
-    adapter.record(
-        ctx, step_mask, actions, dist, log_probs=lp, save_estimator_outputs=True
+    _, ctx = adapter.log_probs(
+        actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
     )
     # second step
-    dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
+    dist, ctx = adapter.compute_dist(
+        cast(States, states), ctx, step_mask, save_estimator_outputs=True
+    )
     actions = dist.sample()
-    lp, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
-    adapter.record(
-        ctx, step_mask, actions, dist, log_probs=lp, save_estimator_outputs=True
+    _, ctx = adapter.log_probs(
+        actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
     )
     h1 = ctx.carry["hidden"].clone()
     assert torch.all(h1 == h0 + 1)
@@ -658,16 +661,12 @@ def test_integration_recurrent_sequence_model_with_adapter(
     # Run two steps and verify carry and artifact shapes
     step_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
     for _ in range(2):
-        dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
+        dist, ctx = adapter.compute_dist(
+            cast(States, states), ctx, step_mask, save_estimator_outputs=True
+        )
         actions = dist.sample()
-        lp, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
-        adapter.record(
-            ctx,
-            step_mask,
-            actions,
-            dist,
-            log_probs=lp,
-            save_estimator_outputs=True,
+        _, ctx = adapter.log_probs(
+            actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
         )
 
     stacked_logprobs = (
@@ -723,11 +722,12 @@ def test_integration_transformer_sequence_model_with_adapter(
 
     step_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
 
-    dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
+    dist, ctx = adapter.compute_dist(
+        cast(States, states), ctx, step_mask, save_estimator_outputs=True
+    )
     actions = dist.sample()
-    lp, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
-    adapter.record(
-        ctx, step_mask, actions, dist, log_probs=lp, save_estimator_outputs=True
+    _, ctx = adapter.log_probs(
+        actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
     )
 
     stacked_logprobs = (

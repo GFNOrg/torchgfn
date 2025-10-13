@@ -29,19 +29,16 @@ Adapters conform to an abstract class structure:
   - `init_context(batch_size: int, device: torch.device, conditioning: Tensor|None) -> Any`
     - Allocates a rollout context once per batch (Sampler). Stores invariants (batch size, device, optional conditioning) and initializes any adapter state (e.g., recurrent carry) along with per-step artifact buffers.
 
-  - `compute_dist(states_active: States, ctx: Any, step_mask: Tensor|None, **policy_kwargs) -> (Distribution, Any)`
+  - `compute_dist(states_active: States, ctx: Any, step_mask: Tensor|None, save_estimator_outputs: bool = False, **policy_kwargs) -> (Distribution, Any)`
     - Runs the estimator forward on the provided rows and returns a torch Distribution over actions.
     - Slices `conditioning` with `step_mask` when provided (non‑vectorized); uses full conditioning when `step_mask=None` (vectorized).
-    - Sets `ctx.current_estimator_output` to the raw estimator output. Vectorized callers may prefill `ctx.current_estimator_output` to reuse cached outputs.
+    - When `save_estimator_outputs=True`, sets `ctx.current_estimator_output` and appends a padded copy (pad with `-inf` on inactive rows) to `ctx.trajectory_estimator_outputs` for non‑vectorized calls.
 
-  - `log_probs(actions_active: Tensor, dist: Distribution, ctx: Any, step_mask: Tensor|None, vectorized: bool = False) -> (Tensor, Any)`
+  - `log_probs(actions_active: Tensor, dist: Distribution, ctx: Any, step_mask: Tensor|None, vectorized: bool = False, save_logprobs: bool = False) -> (Tensor, Any)`
     - Computes log-probs from `dist` for the given actions.
     - When `vectorized=False`, returns a padded `(N,)` tensor (zeros where `~step_mask`), with a strict inf-check (raises on `±inf`).
     - When `vectorized=True`, returns the raw `dist.log_prob(...)` without padding or inf-check (vectorized paths can legitimately include `-inf` for illegal actions).
-
-  - `record(ctx: Any, step_mask: Tensor, sampled_actions: Tensor, dist: Distribution, log_probs: Optional[Tensor], save_estimator_outputs: bool) -> None`
-    - Records per-step artifacts owned by the context. It never recomputes log-probs; pass `log_probs=None` to skip recording them.
-    - Pads estimator outputs to `(N, ...)` using `-inf` before appending when `save_estimator_outputs=True`.
+    - When `save_logprobs=True`, appends the returned log-probs (padded or vectorized) to `ctx.trajectory_log_probs`.
 
   - `get_current_estimator_output(ctx: Any) -> Tensor|None`
     - Returns the last estimator output saved during `compute_dist`.
@@ -57,12 +54,12 @@ Adapters conform to an abstract class structure:
 - `DefaultEstimatorAdapter`
   - `is_vectorized = True`
   - No carry. Works with both the Sampler and vectorized probability calculators.
-  - In the Sampler, it slices conditioning by `step_mask`, runs the estimator, builds the Distribution, and optionally records artifacts.
+  - In the Sampler, it slices conditioning by `step_mask`, runs the estimator, builds the Distribution, and records artifacts when flags are set.
 
 - `RecurrentEstimatorAdapter`
   - `is_vectorized = False`
   - Maintains a `carry` in the context (initialized via `estimator.init_carry(batch_size, device)`).
-  - In the Sampler, it calls the estimator as `(states_active, ctx.carry) -> (est_out, new_carry)`, stores `new_carry`, builds the Distribution, and optionally records artifacts.
+  - In the Sampler, it calls the estimator as `(states_active, ctx.carry) -> (est_out, new_carry)`, stores `new_carry`, builds the Distribution, and records artifacts when flags are set.
 
 ## Vectorized vs Non-Vectorized Probability Paths
 
@@ -90,9 +87,9 @@ Key differences:
 The Sampler uses the adapter lifecycle:
 - `ctx = adapter.init_context(batch_size, device, conditioning)`
 - While some trajectories are active:
-  - `(dist, ctx) = adapter.compute_dist(states[step_mask], ctx, step_mask, **policy_kwargs)`
+  - `(dist, ctx) = adapter.compute_dist(states[step_mask], ctx, step_mask, save_estimator_outputs=..., **policy_kwargs)`
   - Sample actions from `dist`; build actions for the full batch
-  - `log_probs = adapter.log_probs(valid_actions_tensor, dist, ctx, step_mask, vectorized=False)` (or `None` if skipping)
+  - `log_probs = adapter.log_probs(valid_actions_tensor, dist, ctx, step_mask, vectorized=False, save_logprobs=...)` (or skip)
   - Step the environment forward/backward based on `adapter.is_backward`
 
 ## How to Implement a New Adapter
@@ -103,19 +100,17 @@ The Sampler uses the adapter lifecycle:
 2) Implement `init_context(batch_size, device, conditioning)`
    - Save invariants and allocate any adapter-specific state. Initialize empty per-step buffers.
 
-3) Implement `compute_dist(states_active, ctx, step_mask, **policy_kwargs)`
+3) Implement `compute_dist(states_active, ctx, step_mask, save_estimator_outputs=False, **policy_kwargs)`
    - Slice `conditioning` by `step_mask` for non‑vectorized calls; use full conditioning when `step_mask=None`.
-   - Call your estimator, set `ctx.current_estimator_output`, and return a Distribution via `to_probability_distribution`.
+   - Call your estimator, build and return a Distribution via `to_probability_distribution`.
+   - When `save_estimator_outputs=True`, set `ctx.current_estimator_output` and append a padded copy to `ctx.trajectory_estimator_outputs` for non‑vectorized calls.
 
-4) Implement `log_probs(actions_active, dist, ctx, step_mask, vectorized=False)`
+4) Implement `log_probs(actions_active, dist, ctx, step_mask, vectorized=False, save_logprobs=False)`
    - Non‑vectorized: strict inf-check, return a padded `(N,)` tensor.
    - Vectorized: return raw `dist.log_prob(...)` (may include `-inf` for illegal actions).
+   - When `save_logprobs=True`, append the returned tensor to `ctx.trajectory_log_probs`.
 
-5) Implement `record(ctx, step_mask, sampled_actions, dist, log_probs, save_estimator_outputs)`
-   - Never recompute log-probs here; only store what was provided.
-   - When saving estimator outputs, pad to `(N, ...)` using `-inf`.
-
-7) Set `is_backward` appropriately so the Sampler chooses forward/backward environment steps.
+6) Set `is_backward` appropriately so the Sampler chooses forward/backward environment steps.
 
 ## Reference: Legacy Implementations
 

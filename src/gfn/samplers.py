@@ -18,13 +18,12 @@ class Sampler:
 
     Delegates policy logic to an adapter: the adapter builds action
     distributions, computes step log‑probs, and records artifacts into a
-    rollout context. Direction (forward/backward) is determined by
+    rollout context via method flags. Direction (forward/backward) is determined by
     ``adapter.is_backward``.
 
     Attributes:
         estimator: The underlying policy estimator (adapter wraps it).
-        adapter: The adapter used to build action distributions, compute step log‑probs,
-            and record artifacts into a rollout context.
+        adapter: The adapter used to build action distributions and compute step log‑probs.
     """
 
     def __init__(
@@ -59,9 +58,9 @@ class Sampler:
         """Sample one step from ``states`` via the adapter.
 
         Initializes or reuses a rollout context with ``adapter.init_context``,
-        builds a Distribution with ``adapter.compute_dist``, optionally computes
-        log‑probs with ``adapter.log_probs``, and lets ``adapter.record``
-        persist per‑step artifacts.
+        builds a Distribution with ``adapter.compute_dist``, and optionally computes
+        log‑probs with ``adapter.log_probs``. Per‑step artifacts are recorded by
+        the adapter when the corresponding flags are set.
 
         Args:
             env: Environment providing action/state conversion utilities.
@@ -90,7 +89,13 @@ class Sampler:
         step_mask = torch.ones(
             states.batch_shape[0], dtype=torch.bool, device=states.device
         )
-        dist, ctx = self.adapter.compute_dist(states, ctx, step_mask, **policy_kwargs)
+        dist, ctx = self.adapter.compute_dist(
+            states,
+            ctx,
+            step_mask,
+            save_estimator_outputs=save_estimator_outputs,
+            **policy_kwargs,
+        )
 
         with torch.no_grad():
             actions_tensor = dist.sample()
@@ -98,20 +103,15 @@ class Sampler:
         if save_logprobs:
             # Use adapter to compute step log-probs and pad to batch.
             log_probs, ctx = self.adapter.log_probs(
-                actions_tensor, dist, ctx, step_mask, vectorized=False
+                actions_tensor,
+                dist,
+                ctx,
+                step_mask,
+                vectorized=False,
+                save_logprobs=True,
             )
         else:
             log_probs = None
-
-        # Allow adapter to record per-step artifacts for callers that reuse ctx.
-        self.adapter.record(
-            ctx=ctx,
-            step_mask=step_mask,
-            sampled_actions=actions_tensor,
-            dist=dist,
-            log_probs=log_probs,
-            save_estimator_outputs=save_estimator_outputs,
-        )
 
         actions = env.actions_from_tensor(actions_tensor)
 
@@ -210,7 +210,11 @@ class Sampler:
 
             # Compute distribution on active rows
             dist, ctx = self.adapter.compute_dist(
-                states[step_mask], ctx, step_mask, **policy_kwargs
+                states[step_mask],
+                ctx,
+                step_mask,
+                save_estimator_outputs=save_estimator_outputs,
+                **policy_kwargs,
             )
 
             # Sample actions for active rows
@@ -219,25 +223,17 @@ class Sampler:
             valid_actions = env.actions_from_tensor(valid_actions_tensor)
 
             if save_logprobs:
-                # Use adapter to compute step log-probs and pad to batch.
-                log_probs, ctx = self.adapter.log_probs(
-                    valid_actions_tensor, dist, ctx, step_mask, vectorized=False
+                # Use adapter to compute step log-probs and pad to batch (recorded in ctx).
+                _, ctx = self.adapter.log_probs(
+                    valid_actions_tensor,
+                    dist,
+                    ctx,
+                    step_mask,
+                    vectorized=False,
+                    save_logprobs=True,
                 )
-            else:
-                log_probs = None
-
-            # Let adapter record artifacts.
-            self.adapter.record(
-                ctx=ctx,
-                step_mask=step_mask,
-                sampled_actions=valid_actions_tensor,
-                dist=dist,
-                log_probs=log_probs,
-                save_estimator_outputs=save_estimator_outputs,
-            )
 
             actions[step_mask] = valid_actions
-
             trajectories_actions.append(actions)
 
             if self.adapter.is_backward:
