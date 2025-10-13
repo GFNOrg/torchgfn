@@ -845,7 +845,7 @@ class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
             preprocessor: Preprocessor object that transforms states to tensors.
         """
         if preprocessor is None:
-            preprocessor = IdentityPreprocessor(output_dim=None) 
+            preprocessor = IdentityPreprocessor(output_dim=None)
 
         super().__init__(
             module=module,
