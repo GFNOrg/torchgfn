@@ -1,33 +1,8 @@
 import warnings
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Optional
-
-import torch
+from typing import Any
 
 from gfn.containers import Container
-from gfn.states import States
-
-if TYPE_CHECKING:
-    from gfn.estimators import Estimator  # type: ignore
-
-
-def check_cond_forward(
-    module: "Estimator",
-    module_name: str,
-    states: States,
-    condition: Optional[torch.Tensor] = None,
-) -> torch.Tensor:
-    """Call estimator forward with or without conditioning using error handlers.
-
-    Uses the same exception handling policy as the legacy utility to keep
-    behavior consistent across adapters and probability code paths.
-    """
-    if condition is not None:
-        with has_conditioning_exception_handler(module_name, module):
-            return module(states, condition)
-    else:
-        with no_conditioning_exception_handler(module_name, module):
-            return module(states)
 
 
 @contextmanager

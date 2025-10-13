@@ -6,7 +6,10 @@ import torch
 from torch.distributions import Distribution
 
 from gfn.states import States
-from gfn.utils.handlers import check_cond_forward
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
 
 if TYPE_CHECKING:
     from gfn.estimators import Estimator
@@ -226,9 +229,13 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
                 else:
                     cond_active = ctx.conditioning[step_mask]
 
-            estimator_outputs = check_cond_forward(
-                self._estimator, "estimator", states_active, cond_active
-            )
+            # Call estimator with or without conditioning.
+            if cond_active is not None:
+                with has_conditioning_exception_handler("estimator", self._estimator):
+                    estimator_outputs = self._estimator(states_active, cond_active)
+            else:
+                with no_conditioning_exception_handler("estimator", self._estimator):
+                    estimator_outputs = self._estimator(states_active)
 
         # Build the distribution.
         dist = self._estimator.to_probability_distribution(

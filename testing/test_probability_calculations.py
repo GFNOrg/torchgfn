@@ -6,7 +6,10 @@ from gfn.estimators import DiscretePolicyEstimator
 from gfn.gym import HyperGrid
 from gfn.preprocessors import IdentityPreprocessor
 from gfn.samplers import Sampler
-from gfn.utils.handlers import check_cond_forward
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
 from gfn.utils.prob_calculations import (
     get_trajectory_pbs,
     get_trajectory_pfs,
@@ -60,7 +63,13 @@ def _legacy_get_trajectory_pfs(
                 (traj_len,) + cond_dim
             )[state_mask]
 
-        estimator_outputs = check_cond_forward(pf, "pf", valid_states, masked_cond)
+        # Call estimator with or without conditioning.
+        if masked_cond is not None:
+            with has_conditioning_exception_handler("pf", pf):
+                estimator_outputs = pf(valid_states, masked_cond)
+        else:
+            with no_conditioning_exception_handler("pf", pf):
+                estimator_outputs = pf(valid_states)
 
     valid_log_pf_actions = pf.to_probability_distribution(
         valid_states, estimator_outputs
@@ -167,7 +176,15 @@ def _legacy_get_trajectory_pbs(
         masked_cond = trajectories.conditioning[state_mask]
 
     if pb is not None:
-        estimator_outputs = check_cond_forward(pb, "pb", valid_states, masked_cond)
+
+        # Call estimator with or without conditioning.
+        if masked_cond is not None:
+            with has_conditioning_exception_handler("pb", pb):
+                estimator_outputs = pb(valid_states, masked_cond)
+        else:
+            with no_conditioning_exception_handler("pb", pb):
+                estimator_outputs = pb(valid_states)
+
         valid_log_pb_actions = pb.to_probability_distribution(
             valid_states, estimator_outputs
         ).log_prob(valid_actions.tensor)
@@ -332,9 +349,11 @@ def test_adapter_log_probs_precomputed_matches_forward():
     env, pf_estimator, _ = _build_env_and_pf()
     states = env.reset(batch_shape=(5,))
 
-    # Compute estimator outputs once (precomputed path)
-    est_out = check_cond_forward(pf_estimator, "pf", states, None)
-    dist = pf_estimator.to_probability_distribution(states, est_out)
+    # Compute estimator outputs once (precomputed path) - no conditioning.
+    with no_conditioning_exception_handler("pf", pf_estimator):
+        estimator_outputs = pf_estimator(states)
+
+    dist = pf_estimator.to_probability_distribution(states, estimator_outputs)
     with torch.no_grad():
         actions_tensor = dist.sample()
 
@@ -348,7 +367,7 @@ def test_adapter_log_probs_precomputed_matches_forward():
     lp1, _ = adapter.log_probs(actions_tensor, dist1, ctx1, step_mask, vectorized=False)
 
     # Precomputed: adapter reuses provided estimator outputs (fast path)
-    ctx2.current_estimator_output = est_out
+    ctx2.current_estimator_output = estimator_outputs
     dist2, ctx2 = adapter.compute_dist(states, ctx2, step_mask)
     lp2, _ = adapter.log_probs(actions_tensor, dist2, ctx2, step_mask, vectorized=False)
 
@@ -369,7 +388,14 @@ def _legacy_get_transition_pfs(
         assert log_pf_actions is not None
         return log_pf_actions
 
-    estimator_outputs = check_cond_forward(pf, "pf", states, transitions.conditioning)
+    # Call estimator with or without conditioning.
+    if transitions.conditioning is not None:
+        with has_conditioning_exception_handler("pf", pf):
+            estimator_outputs = pf(states, transitions.conditioning)
+    else:
+        with no_conditioning_exception_handler("pf", pf):
+            estimator_outputs = pf(states)
+
     log_pf_actions = pf.to_probability_distribution(states, estimator_outputs).log_prob(
         actions.tensor
     )
@@ -390,7 +416,14 @@ def _legacy_get_transition_pbs(pb: DiscretePolicyEstimator | None, transitions):
     )
 
     if pb is not None:
-        estimator_outputs = check_cond_forward(pb, "pb", valid_next_states, masked_cond)
+        # Call estimator with or without conditioning.
+        if masked_cond is not None:
+            with has_conditioning_exception_handler("pb", pb):
+                estimator_outputs = pb(valid_next_states, masked_cond)
+        else:
+            with no_conditioning_exception_handler("pb", pb):
+                estimator_outputs = pb(valid_next_states)
+
         valid_log_pb_actions = pb.to_probability_distribution(
             valid_next_states, estimator_outputs
         ).log_prob(non_exit_actions.tensor)
