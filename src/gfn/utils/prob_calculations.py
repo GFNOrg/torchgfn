@@ -154,28 +154,31 @@ def get_trajectory_pfs(
                 state_ok = ~trajectories.states.is_sink_state[t]
                 action_ok = ~trajectories.actions.is_dummy[t]
                 step_mask = state_ok & action_ok
+
                 if not torch.any(step_mask):
                     continue
+
                 step_states = trajectories.states[t][step_mask]
                 step_actions = trajectories.actions.tensor[t][step_mask]
+
                 # Optimization: forward cached estimator outputs when available
                 if (
                     trajectories.estimator_outputs is not None
                     and not recalculate_all_logprobs
                 ):
-                    precomputed = trajectories.estimator_outputs[t][step_mask]
-                    step_lp, ctx = adapter.log_prob_of_actions(  # type: ignore[union-attr]
-                        step_states,
-                        step_actions,
-                        ctx,
-                        step_mask,
-                        precomputed_estimator_output=precomputed,
-                        **policy_kwargs,
-                    )
+                    ctx.current_estimator_output = trajectories.estimator_outputs[t][
+                        step_mask
+                    ]
                 else:
-                    step_lp, ctx = adapter.log_prob_of_actions(  # type: ignore[union-attr]
-                        step_states, step_actions, ctx, step_mask, **policy_kwargs
-                    )
+                    # Ensure we do not accidentally reuse estimator outputs from a
+                    # previous time step. Precomputed outputs must be provided
+                    # explicitly for the current step.
+                    ctx.current_estimator_output = None
+
+                # Calculate the log-probabilities of the actions.
+                step_lp, ctx = adapter.log_prob_of_actions(  # type: ignore[union-attr]
+                    step_states, step_actions, ctx, step_mask, **policy_kwargs
+                )
                 if fill_value != 0.0:
                     padded = torch.full(
                         (N,), fill_value, device=device, dtype=step_lp.dtype
@@ -184,7 +187,7 @@ def get_trajectory_pfs(
                     step_lp = padded
                 log_pf_trajectories[t] = step_lp
         else:
-            # Legacy vectorized path (strict reference behavior)
+            # Vectorized path.
             log_pf_trajectories = torch.full_like(
                 trajectories.actions.tensor[..., 0],
                 fill_value=fill_value,
@@ -338,6 +341,7 @@ def get_trajectory_pbs(
             N = trajectories.n_trajectories
             device = trajectories.states.device
             cond = trajectories.conditioning
+
             if cond is not None and len(cond.shape) >= 2:
                 cond = cond[0]
             ctx = adapter.init_context(int(N), device, cond)  # type: ignore[arg-type]
@@ -349,8 +353,9 @@ def get_trajectory_pbs(
                     ~trajectories.states.is_initial_state[t + 1]
                 )
                 if t == 0:
-                    # Legacy explicitly disables PB at t=0
+                    # log PB is always zero for the transition s1 -> s0.
                     state_ok = torch.zeros_like(state_ok, dtype=torch.bool)
+
                 action_ok = (~trajectories.actions.is_dummy[t]) & (
                     ~trajectories.actions.is_exit[t]
                 )
@@ -358,11 +363,17 @@ def get_trajectory_pbs(
 
                 if not torch.any(step_mask):
                     continue
+
                 step_states = trajectories.states[t + 1][step_mask]
                 step_actions = trajectories.actions.tensor[t][step_mask]
+
+                # Prevent reusing last step's estimator output (batch size may differ,
+                # and estimator output caching isn't needed for PB).
+                ctx.current_estimator_output = None
                 step_lp, ctx = adapter.log_prob_of_actions(
                     step_states, step_actions, ctx, step_mask, **policy_kwargs
                 )
+
                 padded = torch.full((N,), fill_value, device=device, dtype=step_lp.dtype)
                 padded[step_mask] = step_lp[step_mask]
                 log_pb_trajectories[t] = padded

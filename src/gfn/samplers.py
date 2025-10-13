@@ -1,4 +1,5 @@
-from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, cast
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import torch
 from torch.distributions import Distribution
@@ -14,34 +15,27 @@ from gfn.utils.handlers import check_cond_forward
 from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 
 
-class EstimatorAdapter(Protocol):
+class EstimatorAdapter(ABC):
     """Adapter interface for estimator-specific policy behavior.
 
-    Purpose
-    -------
-    This Protocol defines the minimal interface the Sampler relies on, allowing
-    us to keep one generic sampling loop while plugging in different estimator
+    This abstract base class defines the minimal interface the Sampler relies on,
+    allowing us to keep one generic sampling loop while plugging in different estimator
     behaviors (e.g., non‑recurrent, recurrent with carry, tempered variants)
-    without modifying the Sampler. We use a Protocol (structural typing) so any
-    class that implements these members is accepted; no inheritance is required.
+    without modifying the Sampler.
 
-    Opaque context (ctx)
-    --------------------
-    The adapter owns an opaque context object (``ctx``). The Sampler never
-    inspects it and simply passes it back to the adapter at each step. The
-    adapter is responsible for:
-      - initializing ``ctx`` once per rollout in ``init_context``
-      - updating any internal state (e.g., recurrent ``carry``) during ``compute``
-      - recording per‑step artifacts in ``record`` (e.g., log_probs,
-        estimator outputs), typically with mask-aware padding
-    Finalization is handled by the rollout context itself.
+    The adapter owns an opaque RolloutContext object. The Sampler never inspects
+    it and simply passes it back to the adapter at each step. The adapter is
+    responsible for:
+      - initializing the context in `init_context`.
+      - updating any internal state (e.g., recurrent `carry`) during `compute`
+      - recording per‑step artifacts in `record` (e.g., log_probs,
+        estimator outputs), typically with mask-aware padding.
+      - output trajectory-length artifacts via `finalize(ctx)`
 
-    Guidance
-    --------
-    - Allocate ``ctx`` once per rollout; mutate it in place for performance.
-    - Apply masking inside the adapter (``step_mask``) when slicing conditioning
-      or padding per‑step tensors back to full batch size.
-    - Keep Sampler oblivious to estimator details (conditioning, carry, etc.).
+    The context should be allocated once per rollout. Masking should be applied inside
+    the adapter (via `step_mask`) when slicing conditioning or padding per‑step
+    tensors back to full batch size. The Sampler can therefore be oblivious to
+    estimator details (conditioning, carry, etc.).
     """
 
     @property
@@ -52,6 +46,7 @@ class EstimatorAdapter(Protocol):
     def is_vectorized(self) -> bool:
         ...  # fmt: skip
 
+    @abstractmethod
     def init_context(
         self,
         batch_size: int,
@@ -60,6 +55,7 @@ class EstimatorAdapter(Protocol):
     ) -> Any:
         ...  # fmt: skip
 
+    @abstractmethod
     def compute(
         self,
         states_active: States,
@@ -69,6 +65,7 @@ class EstimatorAdapter(Protocol):
     ) -> tuple[Distribution, Any]:
         ...  # fmt: skip
 
+    @abstractmethod
     def record(
         self,
         ctx: Any,
@@ -80,6 +77,7 @@ class EstimatorAdapter(Protocol):
     ) -> None:
         ...  # fmt: skip
 
+    @abstractmethod
     def log_prob_of_actions(
         self,
         states_active: States,
@@ -129,101 +127,50 @@ class RolloutContext:
         self.current_estimator_output: Optional[torch.Tensor] = None
         self.extras: Dict[str, Any] = {}
 
-    def append_step(
-        self,
-        step_mask: torch.Tensor,
-        sampled_actions: torch.Tensor,
-        dist: Distribution,
-        save_logprobs: bool,
-        save_estimator_outputs: bool,
-    ) -> None:
-        """Record per-step artifacts into trajectory-level buffers owned by the context."""
-        N = self.batch_size
-        device = self.device
 
-        if save_logprobs:
-            lp_masked = dist.log_prob(sampled_actions)
-            if torch.any(torch.isinf(lp_masked)):
-                raise RuntimeError("Log probabilities are inf. This should not happen.")
-            step_lp = torch.full((N,), 0.0, device=device)
-            step_lp[step_mask] = lp_masked
-            self.trajectory_log_probs.append(step_lp)
-
-        if save_estimator_outputs and self.current_estimator_output is not None:
-            est_out = self.current_estimator_output
-            padded = torch.full((N,) + est_out.shape[1:], -float("inf"), device=device)
-            padded[step_mask] = est_out
-            self.trajectory_estimator_outputs.append(padded)
-
-    def finalize(self) -> dict[str, Optional[torch.Tensor]]:
-        """Stack recorded per-step artifacts along time into trajectory-level tensors."""
-        log_probs = (
-            torch.stack(self.trajectory_log_probs, dim=0)
-            if self.trajectory_log_probs
-            else None
-        )
-        estimator_outputs = (
-            torch.stack(self.trajectory_estimator_outputs, dim=0)
-            if self.trajectory_estimator_outputs
-            else None
-        )
-
-        return {"log_probs": log_probs, "estimator_outputs": estimator_outputs}
-
-
-class DefaultEstimatorAdapter:
+class DefaultEstimatorAdapter(EstimatorAdapter):
     """Adapter for non-recurrent estimators (current default behavior).
 
     Overview
     --------
-    This adapter bridges the generic sampling loop and the "classic" non‑recurrent
-    estimators already used throughout the codebase. It exposes the minimal
-    interface required by the `EstimatorAdapter` Protocol while keeping the
-    sampler loop estimator-agnostic.
+    This adapter bridges the generic sampling loop and is used throughout the codebase.
+    It exposes the minimal interface required by the `EstimatorAdapter` abstract base
+    class while keeping the sampler loop estimator-agnostic.
 
-    Assumptions
-    -----------
-    - The wrapped estimator is non‑recurrent (no carry between steps).
     - If conditioning is provided, the estimator accepts `(states, conditioning)`;
       otherwise it accepts `(states)`.
     - The estimator provides `to_probability_distribution(states, est_out, **kw)`
       returning a torch Distribution over actions for the masked states.
 
-    Context Lifecycle (opaque to the Sampler)
-    ----------------------------------------
-    The adapter owns an opaque rollout context `ctx` (see `RolloutContext`) which
-    the Sampler never reads. The context is created once per rollout and mutated
-    in place:
+    The adapter owns an opaque rollout context `ctx` which the Sampler never reads. The
+    context (a TensorDict) is created once per rollout and mutated in place:
 
-    - init_context(batch_size, device, conditioning) -> ctx
-      Stores rollout invariants and optional conditioning. Also prepares per‑step
-      buffers for artifacts that may be recorded (log_probs, estimator_outputs).
+    - init_context: stores rollout invariants and optional conditioning. Also prepares
+         per‑step buffers for artifacts trajectory-level artifacts (log_probs,
+        estimator_outputs).
 
-    - compute(states_active, ctx, step_mask, **policy_kwargs) -> (dist, ctx)
+    - compute:
       1) Selects the appropriate estimator call signature depending on whether
          conditioning is present. If conditioning is present, the adapter slices
          it with `step_mask` so shapes match `states_active`.
       2) Calls the estimator forward pass to obtain the raw `est_out`.
       3) Converts `est_out` into a torch Distribution with
          `to_probability_distribution`.
-      4) Saves `est_out` into `ctx.current_estimator_output` so it can optionally be
-         recorded by `record` or exposed to callers that need it.
+      4) Saves `est_out` into `ctx.current_estimator_output`.
 
-    - record(ctx, step_mask, sampled_actions, dist, save_logprobs, save_estimator_outputs)
+    - record:
       Materializes optional per‑step artifacts into context‑managed buffers with
-      mask‑aware padding back to the full rollout batch size `N`:
+      mask‑aware padding back to the full rollout batch size:
       * Log‑probs: computes `dist.log_prob(sampled_actions)` for active rows only,
-        then writes into a 1D tensor of shape `(N,)` filled with zeros and masked
+        then writes into a 1D tensor of length batch_size filled with zeros and masked
         assignment for active positions. Appends this to a list (one tensor per time step).
       * Estimator outputs: if requested, pads the last estimator output
-        (`ctx.current_estimator_output`) to shape `(N, ...)` using `-inf` for inactive rows
-        and appends to a list (one tensor per time step).
+        (`ctx.current_estimator_output`) to shape `(batch_size, ...)` using `-inf` for
+        inactive rows and appends to a list (one tensor per time step).
 
-    Finalization is performed by the context itself:
-    - ctx.finalize() -> {"log_probs": Tensor | None, "estimator_outputs": Tensor | None}
-      Stacks recorded per‑step lists along the time dimension into tensors of shape
-      `(T, N, ...)` suitable for `Trajectories`. Returns `None` for any artifact
-      that was never recorded.
+    - finalize: Stacks recorded per‑step lists along the time dimension into tensors of
+        shape `(trajectory_legnth, batch_size, ...)` suitable for `Trajectories`.
+        Returns `None` for any artifact that was never recorded.
 
     Masking & Shapes
     ----------------
@@ -269,6 +216,7 @@ class DefaultEstimatorAdapter:
 
     @property
     def is_vectorized(self) -> bool:
+        """Used for vectorized probability calculations."""
         return True
 
     def init_context(
@@ -299,8 +247,10 @@ class DefaultEstimatorAdapter:
         - Saves the raw estimator output in `ctx.current_estimator_output` for
           optional recording in `record_step`.
         """
-        conditioning = ctx.conditioning  # type: ignore[attr-defined]
-        cond_active = conditioning[step_mask] if conditioning is not None else None
+        cond_active = None
+        if ctx.conditioning is not None:
+            cond_active = ctx.conditioning[step_mask]
+
         est_out = check_cond_forward(
             self._estimator, "estimator", states_active, cond_active
         )
@@ -308,7 +258,7 @@ class DefaultEstimatorAdapter:
         dist = self._estimator.to_probability_distribution(
             states_active, est_out, **policy_kwargs
         )
-        ctx.current_estimator_output = est_out  # type: ignore[attr-defined]
+        ctx.current_estimator_output = est_out
 
         return dist, ctx
 
@@ -322,14 +272,21 @@ class DefaultEstimatorAdapter:
         save_estimator_outputs: bool,
     ) -> None:
         """Record per-step artifacts into the context's trajectory-level lists."""
-        # Delegate recording to the rollout context
-        ctx.append_step(  # type: ignore[attr-defined]
-            step_mask=step_mask,
-            sampled_actions=sampled_actions,
-            dist=dist,
-            save_logprobs=save_logprobs,
-            save_estimator_outputs=save_estimator_outputs,
-        )
+        if save_logprobs:
+            lp_masked = dist.log_prob(sampled_actions)
+            if torch.any(torch.isinf(lp_masked)):
+                raise RuntimeError("Log probabilities are inf. This should not happen.")
+            step_lp = torch.full((ctx.batch_size,), 0.0, device=ctx.device)
+            step_lp[step_mask] = lp_masked
+            ctx.trajectory_log_probs.append(step_lp)
+
+        if save_estimator_outputs and ctx.current_estimator_output is not None:
+            est_out = ctx.current_estimator_output
+            padded = torch.full(
+                (ctx.batch_size,) + est_out.shape[1:], -float("inf"), device=ctx.device
+            )
+            padded[step_mask] = est_out
+            ctx.trajectory_estimator_outputs.append(padded)
 
     def log_prob_of_actions(
         self,
@@ -339,48 +296,51 @@ class DefaultEstimatorAdapter:
         step_mask: torch.Tensor,
         **policy_kwargs: Any,
     ) -> tuple[torch.Tensor, Any]:
-        # Optional fast path: use caller-provided estimator outputs
-        precomputed = policy_kwargs.pop("precomputed_estimator_output", None)
+        # Optional fast path: use caller-provided estimator outputs only when
+        # shapes match.
+        precomputed = self.get_current_estimator_output(ctx)
         if precomputed is not None:
-            est_out = precomputed
-        else:
-            conditioning = ctx.conditioning  # type: ignore[attr-defined]
-            cond_active = conditioning[step_mask] if conditioning is not None else None
-            est_out = check_cond_forward(
-                self._estimator, "estimator", states_active, cond_active
+            expected_bs = states_active.batch_shape[0]
+            assert precomputed.shape[0] == expected_bs, (
+                "current_estimator_output batch size does not match active states batch size. "
+                f"Got precomputed={precomputed.shape[0]}, expected={expected_bs}. "
+                "Likely stale reuse. Ensure PB clears ctx.current_estimator_output each step "
+                "and PF indexes trajectories.estimator_outputs[t][step_mask]."
             )
-        dist = self._estimator.to_probability_distribution(
-            states_active, est_out, **policy_kwargs
-        )
-        ctx.current_estimator_output = est_out  # type: ignore[attr-defined]
+            est_out = precomputed
+            dist = self._estimator.to_probability_distribution(
+                states_active, est_out, **policy_kwargs
+            )
+        else:
+            # Compute fresh estimator output when no valid precomputed output is
+            # provided.
+            # TODO: Should I toggle "save_estimator_outputs" here?
+            dist, ctx = self.compute(states_active, ctx, step_mask, **policy_kwargs)
 
-        N = ctx.batch_size  # type: ignore[attr-defined]
-        device = ctx.device  # type: ignore[attr-defined]
-        lp_masked = dist.log_prob(actions_active)
-        if torch.any(torch.isinf(lp_masked)):
+        masked_log_probs = dist.log_prob(actions_active)
+
+        if torch.any(torch.isinf(masked_log_probs)):
             raise RuntimeError("Log probabilities are inf. This should not happen.")
-        step_lp = torch.full((N,), 0.0, device=device)
-        step_lp[step_mask] = lp_masked
-        return step_lp, ctx
 
-    # Vectorized helper to mirror legacy probability calculations without per-step context
-    def log_prob_vectorized(
-        self,
-        states: States,
-        actions_tensor: torch.Tensor,
-        conditioning: Optional[torch.Tensor] = None,
-        **policy_kwargs: Any,
-    ) -> torch.Tensor:
-        """Compute log_prob for a batch of (state, action) pairs in a vectorized way.
+        step_log_probs = torch.full((ctx.batch_size,), 0.0, device=ctx.device)
+        step_log_probs[step_mask] = masked_log_probs
 
-        This mirrors the legacy vectorized path used in probability utils and uses
-        the adapter's estimator and distribution construction, including policy kwargs.
-        """
-        est_out = check_cond_forward(self._estimator, "estimator", states, conditioning)
-        dist = self._estimator.to_probability_distribution(
-            states, est_out, **policy_kwargs
+        return step_log_probs, ctx
+
+    def finalize(self, ctx: Any) -> dict[str, Optional[torch.Tensor]]:
+        """Stack recorded per-step artifacts along time into trajectory-level tensors."""
+        log_probs = (
+            torch.stack(ctx.trajectory_log_probs, dim=0)
+            if ctx.trajectory_log_probs
+            else None
         )
-        return dist.log_prob(actions_tensor)
+        estimator_outputs = (
+            torch.stack(ctx.trajectory_estimator_outputs, dim=0)
+            if ctx.trajectory_estimator_outputs
+            else None
+        )
+
+        return {"log_probs": log_probs, "estimator_outputs": estimator_outputs}
 
     def get_current_estimator_output(self, ctx: Any) -> Optional[torch.Tensor]:
         """Expose the most recent per-step estimator output saved during `compute`."""
@@ -388,64 +348,24 @@ class DefaultEstimatorAdapter:
 
 
 class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
-    """Adapter for recurrent estimators that require and update a carry.
+    """Adapter for recurrent estimators that maintain a rollout carry (hidden state).
 
-    Overview
-    --------
-    This adapter extends the default (non‑recurrent) behavior to handle models that
-    maintain a recurrent state ("carry"). It exposes the same surface as
-    `DefaultEstimatorAdapter`, with the following differences:
+    Differences from `DefaultEstimatorAdapter`:
+    - is_vectorized = False: runs sequential, per‑step probability calculators (legacy PF/PB
+      masks and alignment; PB aligns action at t with state at t+1, t==0 skipped).
+    - Rollout context manages `ctx.carry` which contains the hidden state of the
+      recurrent estimator. It is initialized once via `estimator.init_carry(batch_size,
+      device)` and updated every step.
+    - `compute(states, ctx, ...)` calls `estimator(states, ctx.carry) ->
+      (est_out, new_carry)`, updates `ctx.carry`, then builds the Distribution from
+      `est_out`.
+    - recording mirrors the default but pads per‑step tensors to batch size and
+      stacks into `(T, N, ...)`.
+    - No action‑id mask indexing; illegal actions are handled by the Distribution.
 
-    - `is_vectorized = False`: Probability calculators will use a non‑vectorized
-      (per‑step) path that mirrors the legacy reference exactly (including masks and
-      state/action alignment), since a recurrent carry must be updated sequentially.
-    - The rollout `ctx` stores a `carry` that is initialized once via
-      `estimator.init_carry(batch_size, device)` and updated at every call to
-      `compute`/`log_prob_of_actions`.
-
-    Context Lifecycle (opaque to the Sampler)
-    ----------------------------------------
-    The adapter owns an opaque rollout context `ctx` (see `RolloutContext`) which the
-    Sampler never reads. The context is created once per rollout and mutated in place:
-
-    - init_context(batch_size, device, conditioning) -> ctx
-      Stores rollout invariants and optional conditioning. Initializes recurrent
-      `carry` via `estimator.init_carry`. Also prepares per‑step buffers for optional
-      artifacts (log_probs, estimator_outputs).
-
-    - compute(states_active, ctx, step_mask, **policy_kwargs) -> (dist, ctx)
-      1) Calls the recurrent estimator as `(states_active, ctx.carry) -> (est_out, new_carry)`
-         and stores `new_carry` back into `ctx.carry`.
-      2) Converts `est_out` into a torch Distribution with
-         `to_probability_distribution(states_active, est_out, **policy_kwargs)`.
-      3) Saves `est_out` into `ctx.current_estimator_output` for optional recording.
-
-    - record(ctx, step_mask, sampled_actions, dist, save_logprobs, save_estimator_outputs)
-      Materializes optional per‑step artifacts into context‑managed buffers with
-      mask‑aware padding back to the full rollout batch size `N`:
-      * Log‑probs: computes `dist.log_prob(sampled_actions)` for active rows only,
-        then writes into a 1D tensor of shape `(N,)` filled with zeros and masked
-        assignment for active positions. Appends this to a list (one tensor per time step).
-      * Estimator outputs: if requested, pads `ctx.current_estimator_output` to shape
-        `(N, ...)` using `-inf` for inactive rows and appends to a list.
-
-    Finalization is performed by the context itself:
-    - ctx.finalize() -> {"log_probs": Tensor | None, "estimator_outputs": Tensor | None}
-      Stacks recorded per‑step lists along the time dimension into tensors of shape
-      `(T, N, ...)` suitable for `Trajectories`. Returns `None` for any artifact
-      that was never recorded.
-
-    Probability Calculators
-    -----------------------
-    Since `is_vectorized = False`, the PF/PB probability calculators use the
-    non‑vectorized, per‑step path that matches the legacy reference:
-    - Trajectory PF: `step_mask = ~states.is_sink_state[t] & ~actions.is_dummy[t]`.
-    - Trajectory PB: actions at time `t` are aligned with states at time `t+1`, and
-      `step_mask = ~states.is_sink_state[t+1] & ~states.is_initial_state[t+1]
-                  & ~actions.is_dummy[t] & ~actions.is_exit[t]` with `t==0` skipped.
-    - Transitions: the same legacy masks are used, and a single adapter call is made
-      per batch.
-    No mask indexing with action ids is used; distributions handle illegal actions.
+    Requires the estimator to implement:
+    - `init_carry(batch_size: int, device: torch.device)`
+    - a recurrent forward returning `(est_out, new_carry)`.
     """
 
     def __init__(self, estimator: Estimator) -> None:
@@ -459,6 +379,7 @@ class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
             )
         super().__init__(estimator)
 
+    # TODO: Need to support vectorized probability calculations with Transformers.
     @property
     def is_vectorized(self) -> bool:
         return False
@@ -484,7 +405,6 @@ class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
                 "expose `init_carry`."
             )
         ctx = super().init_context(batch_size, device, conditioning)
-        # Expect estimator to implement init_carry(batch_size, device)
         init_carry_fn = cast(Callable[[int, torch.device], Any], init_carry)
         ctx.carry = init_carry_fn(batch_size, device)
 
@@ -505,12 +425,12 @@ class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
         Distribution.
         """
         # Recurrent estimators are expected to accept (states, carry) -> (out, new_carry)
-        est_out, new_carry = self._estimator(states_active, ctx.carry)  # type: ignore[attr-defined]
-        ctx.carry = new_carry  # type: ignore[attr-defined]
+        est_out, new_carry = self._estimator(states_active, ctx.carry)
+        ctx.carry = new_carry
         dist = self._estimator.to_probability_distribution(
             states_active, est_out, **policy_kwargs
         )
-        ctx.current_estimator_output = est_out  # type: ignore[attr-defined]
+        ctx.current_estimator_output = est_out
 
         return dist, ctx
 
@@ -522,22 +442,16 @@ class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
         step_mask: torch.Tensor,
         **policy_kwargs: Any,
     ) -> tuple[torch.Tensor, Any]:
-        # Recurrent estimators are expected to accept (states, carry) -> (out, new_carry)
-        est_out, new_carry = self._estimator(states_active, ctx.carry)  # type: ignore[attr-defined]
-        ctx.carry = new_carry  # type: ignore[attr-defined]
-        dist = self._estimator.to_probability_distribution(
-            states_active, est_out, **policy_kwargs
-        )
-        ctx.current_estimator_output = est_out  # type: ignore[attr-defined]
+        # TODO: Should I toggle "save_estimator_outputs" here?
+        # TODO: Need to look at how we handle logprobs for on-policy training.
+        dist, ctx = self.compute(states_active, ctx, step_mask, **policy_kwargs)
 
-        N = ctx.batch_size  # type: ignore[attr-defined]
-        device = ctx.device  # type: ignore[attr-defined]
-        lp_masked = dist.log_prob(actions_active)
-        if torch.any(torch.isinf(lp_masked)):
+        masked_log_probs = dist.log_prob(actions_active)
+        if torch.any(torch.isinf(masked_log_probs)):
             raise RuntimeError("Log probabilities are inf. This should not happen.")
-        step_lp = torch.full((N,), 0.0, device=device)
-        step_lp[step_mask] = lp_masked
-        return step_lp, ctx
+        step_log_probs = torch.full((ctx.batch_size,), 0.0, device=ctx.device)
+        step_log_probs[step_mask] = masked_log_probs
+        return step_log_probs, ctx
 
 
 class Sampler:
@@ -642,10 +556,13 @@ class Sampler:
         actions = env.actions_from_tensor(actions_tensor)
 
         estimator_output = None
-        if save_estimator_outputs and hasattr(
-            self.adapter, "get_current_estimator_output"
-        ):
+        if save_estimator_outputs:
+            if not hasattr(self.adapter, "get_current_estimator_output"):
+                raise TypeError(
+                    "Adapter does not support get_current_estimator_output and save_estimator_outputs is True!"
+                )
             estimator_output = self.adapter.get_current_estimator_output(ctx)
+            assert estimator_output is not None
 
         assert log_probs is None or log_probs.shape == actions.batch_shape
 
@@ -805,7 +722,7 @@ class Sampler:
             1:
         ]  # Drop dummy action
         # Finalize stacked trajectory artifacts from the context (already shaped (T, N, ...))
-        trajectory_artifacts = ctx.finalize()  # type: ignore[attr-defined]
+        trajectory_artifacts = self.adapter.finalize(ctx)  # type: ignore[attr-defined]
         stacked_logprobs = trajectory_artifacts.get("log_probs", None)
         stacked_estimator_outputs = trajectory_artifacts.get("estimator_outputs", None)
 

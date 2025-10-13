@@ -3,7 +3,7 @@
 Adapters decouple the generic sampling and probability computation logic from estimator-specific details (conditioning shape, recurrent state/carry, distribution construction, artifact recording). They enable a single sampler and probability utilities to work across different estimator families.
 
 This guide explains:
-- The Adapter protocol and lifecycle
+- The Adapter and RolloutContext
 - Vectorized vs non-vectorized probability paths
 - How adapters integrate with the Sampler and probability calculators
 - How to implement a new Adapter
@@ -17,9 +17,9 @@ An Adapter mediates between three places where estimator logic is needed:
 
 The Sampler remains estimator-agnostic. Adapters own any estimator-specific state (e.g., recurrent carry) and control how to run the estimator and build the policy distribution.
 
-## Adapter Protocol (call signature)
+## Adapters
 
-Adapters conform to a structural Protocol with the following surface (see `gfn/samplers.py`):
+Adapters conform to an abstract class structure (see `gfn/samplers.py`):
 
 - Properties
   - `is_backward: bool` — whether the wrapped estimator is a backward policy.
@@ -39,6 +39,9 @@ Adapters conform to a structural Protocol with the following surface (see `gfn/s
   - `log_prob_of_actions(states_active: States, actions_active: Tensor, ctx: Any, step_mask: Tensor, **policy_kwargs) -> (Tensor, Any)`
     - Computes log-probs for a batch of (state, action) pairs corresponding to `True` entries of `step_mask` and returns a padded `(N,)` vector.
 
+  - `finalize(ctx) -> -> dict[str, Optional[torch.Tensor]]`
+    - Realizes the buffers of the context object into tensors which can be used by the rest of the library (e.g., Trajectories objects).
+
   - `get_current_estimator_output(ctx: Any) -> Tensor|None`
     - Convenience to expose the last estimator output after `compute`.
 
@@ -47,7 +50,6 @@ Adapters conform to a structural Protocol with the following surface (see `gfn/s
     - `batch_size`, `device`, optional `conditioning`
     - Optional `carry` (recurrent hidden state)
     - Per-step buffers: `trajectory_log_probs`, `trajectory_estimator_outputs`
-    - A `finalize()` method that stacks per-step artifacts into `(T, N, ...)` tensors for `Trajectories`.
 
 ## Built-in Adapters
 
@@ -89,9 +91,11 @@ The Sampler uses the adapter lifecycle:
   - Sample actions from `dist`; build actions for the full batch
   - `adapter.record(ctx, step_mask, sampled_actions, dist, save_logprobs, save_estimator_outputs)`
   - Step the environment forward/backward based on `adapter.is_backward`
-- After rollout: `artifacts = ctx.finalize()` and populate `Trajectories`.
+- After rollout: `artifacts = adapter.finalize(ctx)` and populate `Trajectories`.
 
 ## How to Implement a New Adapter
+
+A new Adapter will only likely need changes to `compute`, `record`, and `log_prob_of_actions`. You can rely otherwise on the defaults. However we detail all of the steps below for completeness:
 
 1) Decide if your estimator needs a recurrent carry - some persistent state or cache that is utilized throughout the trajectory.
    - If yes, set `is_vectorized = False` and implement `init_context` to initialize `carry`. Implement `compute` to update `carry` each step.
@@ -108,6 +112,9 @@ The Sampler uses the adapter lifecycle:
    - Given `(states_active, actions_active)` for the active rows, compute the Distribution (reusing the same forward logic) and return a padded `(N,)` vector of `log_prob`.
    - Do not modify masks here; calculators pass in `step_mask` already built from existing masks.
 
+5) Implement `finalize`
+   - Given the contents of your context, return the trajectory-level objects required by the Sampler.
+
 5) Mark `is_backward` if your estimator is a backward policy; the sampler will step the environment backward accordingly.
 
 6) Performance Guidance
@@ -116,6 +123,6 @@ The Sampler uses the adapter lifecycle:
 
 ## Reference: Legacy Implementations
 
-The legacy, vectorized implementations are the gold standard. Adapters are designed to use those paths whenever possible (vectorized) and to exactly match their behavior when per-step evaluation is required (non-vectorized). See the reference for details:
+The move to adaptors, while allowing for portentially much more complex forms of estimators, introduces significant complexity into the Sampler and probability calculation logic. The legacy, vectorized implementations of these operations exactly re-implemented in the DefaultEstimatorAdapters and the library is designed to use those paths whenever possible (i.e., using vectorized operations), and we have ensured to exactly match the behaviour of this path when using per-step evaluation (the non-vectorized path). These paths are also tested against the legacy code in `test_probability_calculations.py` to ensure correctness. See the reference for details:
 
 - `utils/prob_calculations.py` (master): [link](https://raw.githubusercontent.com/GFNOrg/torchgfn/refs/heads/master/src/gfn/utils/prob_calculations.py)

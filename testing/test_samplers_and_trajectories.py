@@ -536,7 +536,7 @@ def test_default_adapter_compute_record_finalize():
     adapter.record(
         ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
     )
-    out = ctx.finalize()
+    out = adapter.finalize(ctx)
     assert out["log_probs"] is not None and out["log_probs"].shape == (1, n)
     assert out["estimator_outputs"] is not None and out["estimator_outputs"].shape[
         :2
@@ -574,7 +574,7 @@ def test_recurrent_adapter_flow():
     )
     h1 = ctx.carry["hidden"].clone()
     assert torch.all(h1 == h0 + 1)
-    out = ctx.finalize()
+    out = adapter.finalize(ctx)
     assert out["log_probs"] is not None and out["log_probs"].shape == (2, n)
     assert out["estimator_outputs"] is not None and out["estimator_outputs"].shape[
         :2
@@ -649,7 +649,7 @@ def test_integration_recurrent_sequence_model_with_adapter(
             save_estimator_outputs=True,
         )
 
-    out = ctx.finalize()
+    out = adapter.finalize(ctx)
     log_probs = out["log_probs"]
     estimator_outputs = out["estimator_outputs"]
     assert log_probs is not None
@@ -699,7 +699,7 @@ def test_integration_transformer_sequence_model_with_adapter(
         ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
     )
 
-    out = ctx.finalize()
+    out = adapter.finalize(ctx)
     assert out["log_probs"] is not None and out["log_probs"].shape[0] == 1
     assert (
         out["estimator_outputs"] is not None and out["estimator_outputs"].shape[0] == 1

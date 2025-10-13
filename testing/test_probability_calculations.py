@@ -345,10 +345,9 @@ def test_adapter_log_prob_of_actions_precomputed_matches_forward():
     # Baseline: adapter recomputes estimator outputs internally
     lp1, _ = adapter.log_prob_of_actions(states, actions_tensor, ctx1, step_mask)
 
-    # Precomputed: adapter uses provided estimator outputs (fast path)
-    lp2, _ = adapter.log_prob_of_actions(
-        states, actions_tensor, ctx2, step_mask, precomputed_estimator_output=est_out
-    )
+    # Precomputed: adapter uses provided estimator outputs (fast path).
+    ctx2.current_estimator_output = est_out
+    lp2, _ = adapter.log_prob_of_actions(states, actions_tensor, ctx2, step_mask)
 
     torch.testing.assert_close(lp1, lp2)
 
@@ -438,4 +437,4 @@ def test_get_transition_pbs_matches_legacy_with_default_adapter():
 
 
 if __name__ == "__main__":
-    test_get_trajectory_pbs_matches_legacy_with_default_adapter()
+    test_trajectory_pb_vectorized_vs_nonvectorized_parity()
