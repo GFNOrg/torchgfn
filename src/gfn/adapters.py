@@ -267,6 +267,7 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
 
         return step_lp, ctx
 
+    # To merge with log probs / calc dist.
     def record(
         self,
         ctx: Any,
@@ -290,6 +291,7 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
             padded[step_mask] = estimator_outputs
             ctx.trajectory_estimator_outputs.append(padded)
 
+    # To move to sampler.
     def finalize(self, ctx: Any) -> dict[str, Optional[torch.Tensor]]:
         """Stack recorded per-step artifacts along time into trajectory-level tensors."""
         log_probs = (

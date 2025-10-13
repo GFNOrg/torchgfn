@@ -294,9 +294,10 @@ class Sampler:
 
         # Broadcast conditioning tensor to match states batch shape if needed
         if conditioning is not None:
-            # The states have batch shape (max_length, n_trajectories)
-            # The conditioning tensor should have shape (n_trajectories,) or (n_trajectories, 1)
-            # We need to broadcast it to (max_length, n_trajectories, 1) for the estimator
+            # The states have batch shape (max_length, n_trajectories). The
+            # conditioning tensor should have shape (n_trajectories,) or
+            # (n_trajectories, 1). We need to broadcast it to (max_length,
+            # n_trajectories, 1) for the estimator
             if len(conditioning.shape) == 1:
                 # conditioning has shape (n_trajectories,)
                 conditioning = (
