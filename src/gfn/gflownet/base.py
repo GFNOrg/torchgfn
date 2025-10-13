@@ -1,11 +1,12 @@
 import math
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Tuple, TypeVar
+from typing import Any, Callable, Generic, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
 
+from gfn.adapters import EstimatorAdapter
 from gfn.containers import Container, Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator
@@ -176,8 +177,12 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         pb: Estimator | None,
         constant_pb: bool = False,
         *,
-        pf_adapter: Any | None = None,
-        pb_adapter: Any | None = None,
+        pf_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
+        pb_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
     ) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
@@ -222,6 +227,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         self.pf = pf
         self.pb = pb
         self.constant_pb = constant_pb
+
         # Optional adapters controlling estimator interactions via
         # vectorized / non-vectorized probability paths.
         self.pf_adapter = pf_adapter
@@ -315,8 +321,12 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         pb: Estimator | None,
         constant_pb: bool = False,
         *,
-        pf_adapter: Any | None = None,
-        pb_adapter: Any | None = None,
+        pf_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
+        pb_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
     ) -> None:
         """Initializes a TrajectoryBasedGFlowNet instance.
 
@@ -328,6 +338,10 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+            pf_adapter: Optional adapter for PF probability calculation/sampling. When
+            provided, used both in the sampler and in probability recomputation paths.
+            pb_adapter: Optional adapter for PB probability calculation. Used in
+                probability recomputation paths when `pb` is provided.
         """
         super().__init__(
             pf,

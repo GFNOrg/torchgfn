@@ -1,16 +1,18 @@
 import warnings
 from contextlib import contextmanager
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
 from gfn.containers import Container
-from gfn.estimators import Estimator
 from gfn.states import States
+
+if TYPE_CHECKING:
+    from gfn.estimators import Estimator  # type: ignore
 
 
 def check_cond_forward(
-    module: Estimator,
+    module: "Estimator",
     module_name: str,
     states: States,
     condition: Optional[torch.Tensor] = None,

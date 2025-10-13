@@ -1,10 +1,11 @@
 import pytest
 import torch
 
+from gfn.adapters import DefaultEstimatorAdapter
 from gfn.estimators import DiscretePolicyEstimator
 from gfn.gym import HyperGrid
 from gfn.preprocessors import IdentityPreprocessor
-from gfn.samplers import DefaultEstimatorAdapter, Sampler
+from gfn.samplers import Sampler
 from gfn.utils.handlers import check_cond_forward
 from gfn.utils.prob_calculations import (
     get_trajectory_pbs,
@@ -327,7 +328,7 @@ def test_transition_pb_vectorized_vs_nonvectorized_parity():
     torch.testing.assert_close(vec, nvec)
 
 
-def test_adapter_log_prob_of_actions_precomputed_matches_forward():
+def test_adapter_log_probs_precomputed_matches_forward():
     env, pf_estimator, _ = _build_env_and_pf()
     states = env.reset(batch_shape=(5,))
 
@@ -343,11 +344,13 @@ def test_adapter_log_prob_of_actions_precomputed_matches_forward():
     step_mask = torch.ones(5, dtype=torch.bool, device=states.device)
 
     # Baseline: adapter recomputes estimator outputs internally
-    lp1, _ = adapter.log_prob_of_actions(states, actions_tensor, ctx1, step_mask)
+    dist1, ctx1 = adapter.compute_dist(states, ctx1, step_mask)
+    lp1, _ = adapter.log_probs(actions_tensor, dist1, ctx1, step_mask, vectorized=False)
 
-    # Precomputed: adapter uses provided estimator outputs (fast path).
+    # Precomputed: adapter reuses provided estimator outputs (fast path)
     ctx2.current_estimator_output = est_out
-    lp2, _ = adapter.log_prob_of_actions(states, actions_tensor, ctx2, step_mask)
+    dist2, ctx2 = adapter.compute_dist(states, ctx2, step_mask)
+    lp2, _ = adapter.log_probs(actions_tensor, dist2, ctx2, step_mask, vectorized=False)
 
     torch.testing.assert_close(lp1, lp2)
 
@@ -434,7 +437,3 @@ def test_get_transition_pbs_matches_legacy_with_default_adapter():
         adapter=DefaultEstimatorAdapter(pb_estimator),
     )
     torch.testing.assert_close(modern, legacy)
-
-
-if __name__ == "__main__":
-    test_trajectory_pb_vectorized_vs_nonvectorized_parity()

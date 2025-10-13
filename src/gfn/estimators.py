@@ -8,6 +8,11 @@ from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.adapters import (
+    DefaultEstimatorAdapter,
+    EstimatorAdapter,
+    RecurrentEstimatorAdapter,
+)
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
@@ -51,7 +56,10 @@ class Estimator(ABC, nn.Module):
             `IdentityPreprocessor`.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
+        _default_adapter_class: The default adapter class for this estimator.
     """
+
+    _default_adapter_class = DefaultEstimatorAdapter
 
     def __init__(
         self,
@@ -115,6 +123,11 @@ class Estimator(ABC, nn.Module):
             is not well-defined (e.g., when the output is a TensorDict for GraphActions).
         """
 
+    @property
+    def default_adapter_class(self) -> type[EstimatorAdapter] | None:
+        """The default adapter class for this estimator."""
+        return self._default_adapter_class
+
     def to_probability_distribution(
         self,
         states: States,
@@ -160,7 +173,10 @@ class ScalarEstimator(Estimator):
             that can be used as input to the module.
         is_backward: Always False for ScalarEstimator (since it's direction-agnostic).
         reduction_function: Function used to reduce multi-dimensional outputs to scalars.
+        _default_adapter_class: There is no default adapter class for this estimator.
     """
+
+    _default_adapter_class = None
 
     def __init__(
         self,
@@ -172,8 +188,8 @@ class ScalarEstimator(Estimator):
 
         Args:
             module: The neural network module to use.
-            preprocessor: Preprocessor object that transforms states to tensors. If None,
-                uses `IdentityPreprocessor` with the module's input_dim.
+            preprocessor: Preprocessor object that transforms states to tensors. If
+            None, uses `IdentityPreprocessor` with the module's input_dim.
             reduction: String name of one of the REDUCTION_FUNCTIONS keys.
         """
         super().__init__(module, preprocessor, False)
@@ -219,6 +235,13 @@ class LogitBasedEstimator(Estimator):
 
     This class is used to define estimators that output logits, which can be used to
     construct probability distributions.
+
+    Attributes:
+        module: The neural network module to use.
+        preprocessor: Preprocessor object that transforms raw States objects to tensors.
+        is_backward: Flag indicating whether this estimator is for backward policy,
+            i.e., is used for predicting probability distributions over parents.
+        _default_adapter_class: The default adapter class for this estimator.
     """
 
     @staticmethod
@@ -365,10 +388,16 @@ class LogitBasedEstimator(Estimator):
 class ConditionalLogZEstimator(ScalarEstimator):
     """Conditional logZ estimator.
 
-    This estimator is used to estimate the logZ of a GFlowNet from a conditioning tensor.
-    Since conditioning is a tensor, it does not have a preprocessor. Reduction is used
-    to aggregate the outputs of the module into a single scalar.
+    This estimator is used to estimate the logZ of a GFlowNet from a conditioning
+    tensor. Since conditioning is a tensor, it does not have a preprocessor. Reduction is used to aggregate the outputs of the module into a single scalar.
+
+    Attributes:
+        module: The neural network module to use.
+        reduction: String name of one of the REDUCTION_FUNCTIONS keys.
+        _default_adapter_class: There is no default adapter class for this estimator.
     """
+
+    _default_adapter_class = None
 
     def __init__(self, module: nn.Module, reduction: str = "mean"):
         super().__init__(module, preprocessor=None, reduction=reduction)
@@ -393,6 +422,7 @@ class DiscretePolicyEstimator(LogitBasedEstimator):
         preprocessor: Preprocessor object that transforms raw States objects to tensors.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
+        _default_adapter_class: The default adapter class for this estimator.
     """
 
     def __init__(
@@ -497,6 +527,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         preprocessor: Preprocessor object that transforms raw States objects to tensors.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
+        _default_adapter_class: The default adapter class for this estimator.
     """
 
     def __init__(
@@ -577,7 +608,10 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         is_backward: Always False for ConditionalScalarEstimator (since it's
             direction-agnostic).
         reduction_function: Function used to reduce multi-dimensional outputs to scalars.
+        _default_adapter_class: There is no default adapter class for this estimator.
     """
+
+    _default_adapter_class = None
 
     def __init__(
         self,
@@ -674,6 +708,7 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         preprocessor: Preprocessor object that transforms GraphStates objects to tensors.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
+        _default_adapter_class: The default adapter class for this estimator.
     """
 
     def to_probability_distribution(
@@ -828,7 +863,17 @@ class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
       entire trajectories typically requires different batching and masking.
     - ``init_carry`` is a hard requirement for compatibility with the recurrent
       adapter.
+
+    Attributes:
+        module: The neural network module to use.
+        n_actions: Total number of actions in the discrete environment.
+        preprocessor: Preprocessor object that transforms states to tensors.
+        is_backward: Flag indicating whether this estimator is for backward policy,
+            i.e., is used for predicting probability distributions over parents.
+        _default_adapter_class: The default adapter class for this estimator.
     """
+
+    _default_adapter_class = RecurrentEstimatorAdapter
 
     def __init__(
         self,

@@ -3,6 +3,7 @@ import warnings
 import pytest
 import torch
 
+from gfn.adapters import DefaultEstimatorAdapter, RecurrentEstimatorAdapter
 from gfn.estimators import (
     DiscretePolicyEstimator,
     RecurrentDiscretePolicyEstimator,
@@ -10,7 +11,6 @@ from gfn.estimators import (
 )
 from gfn.gflownet import DBGFlowNet, TBGFlowNet
 from gfn.gym.bitSequence import BitSequence
-from gfn.samplers import DefaultEstimatorAdapter, RecurrentEstimatorAdapter
 from gfn.utils.modules import MLP, RecurrentDiscreteSequenceModel
 
 

@@ -16,10 +16,10 @@ from typing import cast
 import torch
 from tqdm import tqdm
 
+from gfn.adapters import RecurrentEstimatorAdapter
 from gfn.estimators import RecurrentDiscretePolicyEstimator
 from gfn.gflownet import PFBasedGFlowNet, TBGFlowNet
 from gfn.gym.bitSequence import BitSequence
-from gfn.samplers import RecurrentEstimatorAdapter
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import RecurrentDiscreteSequenceModel

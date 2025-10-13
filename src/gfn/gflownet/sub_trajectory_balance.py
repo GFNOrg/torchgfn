@@ -1,9 +1,10 @@
 import math
 import warnings
-from typing import Any, List, Literal, Tuple, TypeAlias
+from typing import Callable, List, Literal, Tuple, TypeAlias
 
 import torch
 
+from gfn.adapters import EstimatorAdapter
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
@@ -84,8 +85,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         forward_looking: bool = False,
         constant_pb: bool = False,
         *,
-        pf_adapter: Any | None = None,
-        pb_adapter: Any | None = None,
+        pf_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
+        pb_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
     ):
         """Initializes a SubTBGFlowNet instance.
 

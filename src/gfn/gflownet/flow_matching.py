@@ -36,8 +36,8 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
     Adapter note
     ------------
     Flow Matching does not rely on PF/PB probability recomputation. Any trajectory
-    sampling provided by this class is for diagnostics/visualization and uses the
-    default (non-recurrent) adapter internally. Sampler adapters (e.g.,
+    sampling provided by this class is for diagnostics/visualization and can only use
+    the default (non-recurrent) adapter. Sampler adapters (e.g.
     `RecurrentEstimatorAdapter`) are not exposed as configuration options for this
     class.
     """

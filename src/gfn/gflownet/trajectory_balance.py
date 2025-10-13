@@ -3,11 +3,12 @@ Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.1325
 and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
-from typing import Any, cast
+from typing import Callable, cast
 
 import torch
 import torch.nn as nn
 
+from gfn.adapters import EstimatorAdapter
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator, ScalarEstimator
@@ -48,8 +49,12 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         log_reward_clip_min: float = -float("inf"),
         constant_pb: bool = False,
         *,
-        pf_adapter: Any | None = None,
-        pb_adapter: Any | None = None,
+        pf_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
+        pb_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
     ):
         """Initializes a TBGFlowNet instance.
 
@@ -72,7 +77,11 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
                 recomputation paths that require PB.
         """
         super().__init__(
-            pf, pb, constant_pb=constant_pb, pf_adapter=pf_adapter, pb_adapter=pb_adapter
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            pf_adapter=pf_adapter,
+            pb_adapter=pb_adapter,
         )
 
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))

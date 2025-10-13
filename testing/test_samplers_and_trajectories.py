@@ -4,6 +4,11 @@ import pytest
 import torch
 from torch.distributions import Categorical
 
+from gfn.adapters import (
+    DefaultEstimatorAdapter,
+    RecurrentEstimatorAdapter,
+    RolloutContext,
+)
 from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.estimators import (
@@ -21,10 +26,7 @@ from gfn.preprocessors import (
     OneHotPreprocessor,
 )
 from gfn.samplers import (
-    DefaultEstimatorAdapter,
     LocalSearchSampler,
-    RecurrentEstimatorAdapter,
-    RolloutContext,
     Sampler,
 )
 from gfn.states import States
@@ -376,20 +378,17 @@ def test_to_transition(
         n_components_s0=1,
     )
 
-    try:
-        _ = trajectories.to_transitions()
+    _ = trajectories.to_transitions()
 
-        bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
-        # evaluate with pf_estimator
-        backward_traj_pfs = get_trajectory_pfs(
-            pf=pf_estimator,
-            trajectories=bwd_trajectories,
-            recalculate_all_logprobs=False,
-        )
-        bwd_trajectories.log_probs = backward_traj_pfs
-        _ = bwd_trajectories.to_transitions()
-    except Exception as e:
-        raise ValueError(f"Error while testing {env_name}") from e
+    bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
+    # evaluate with pf_estimator
+    backward_traj_pfs = get_trajectory_pfs(
+        pf=pf_estimator,
+        trajectories=bwd_trajectories,
+        recalculate_all_logprobs=False,
+    )
+    bwd_trajectories.log_probs = backward_traj_pfs
+    _ = bwd_trajectories.to_transitions()
 
 
 @pytest.mark.parametrize(
@@ -531,10 +530,11 @@ def test_default_adapter_compute_record_finalize():
     ctx = adapter.init_context(n, device, conditioning=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
-    dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+    dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
     actions = dist.sample()
+    log_probs, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
     adapter.record(
-        ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
+        ctx, step_mask, actions, dist, log_probs=log_probs, save_estimator_outputs=True
     )
     out = adapter.finalize(ctx)
     assert out["log_probs"] is not None and out["log_probs"].shape == (1, n)
@@ -559,18 +559,20 @@ def test_recurrent_adapter_flow():
     ctx = adapter.init_context(n, device, conditioning=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
-    dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+    dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
     actions = dist.sample()
     # carry should update when we record multiple steps
     h0 = ctx.carry["hidden"].clone()
+    lp, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
     adapter.record(
-        ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
+        ctx, step_mask, actions, dist, log_probs=lp, save_estimator_outputs=True
     )
     # second step
-    dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+    dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
     actions = dist.sample()
+    lp, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
     adapter.record(
-        ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
+        ctx, step_mask, actions, dist, log_probs=lp, save_estimator_outputs=True
     )
     h1 = ctx.carry["hidden"].clone()
     assert torch.all(h1 == h0 + 1)
@@ -638,14 +640,15 @@ def test_integration_recurrent_sequence_model_with_adapter(
     # Run two steps and verify carry and artifact shapes
     step_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
     for _ in range(2):
-        dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+        dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
         actions = dist.sample()
+        lp, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
         adapter.record(
             ctx,
             step_mask,
             actions,
             dist,
-            save_logprobs=True,
+            log_probs=lp,
             save_estimator_outputs=True,
         )
 
@@ -693,10 +696,12 @@ def test_integration_transformer_sequence_model_with_adapter(
     states = _SeqStates(tokens, vocab_size)
 
     step_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
-    dist, ctx = adapter.compute(cast(States, states), ctx, step_mask)
+
+    dist, ctx = adapter.compute_dist(cast(States, states), ctx, step_mask)
     actions = dist.sample()
+    lp, ctx = adapter.log_probs(actions, dist, ctx, step_mask, vectorized=False)
     adapter.record(
-        ctx, step_mask, actions, dist, save_logprobs=True, save_estimator_outputs=True
+        ctx, step_mask, actions, dist, log_probs=lp, save_estimator_outputs=True
     )
 
     out = adapter.finalize(ctx)
@@ -704,7 +709,3 @@ def test_integration_transformer_sequence_model_with_adapter(
     assert (
         out["estimator_outputs"] is not None and out["estimator_outputs"].shape[0] == 1
     )
-
-
-if __name__ == "__main__":
-    test_to_transition("DiscreteEBM")

@@ -1,13 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, cast
 from inspect import signature
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, cast
 
 import torch
 from torch.distributions import Distribution
 
-from gfn.estimators import Estimator
 from gfn.states import States
 from gfn.utils.handlers import check_cond_forward
+
+if TYPE_CHECKING:
+    from gfn.estimators import Estimator
 
 
 class EstimatorAdapter(ABC):
@@ -198,7 +200,7 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
       Python lists.
     """
 
-    def __init__(self, estimator: Estimator) -> None:
+    def __init__(self, estimator: "Estimator") -> None:
         """Initialize the adapter with a non-recurrent estimator.
 
         The estimator must expose `to_probability_distribution(states, est_out, **kw)`
@@ -240,21 +242,39 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
     ) -> tuple[Distribution, Any]:
         """Run the estimator for active rows and build an action Distribution.
 
-        - Uses `step_mask` to slice conditioning to the active subset.
+        - Uses `step_mask` to slice conditioning to the active subset. When `step_mask`
+          is None, the estimator running in a vectorized context.
         - Saves the raw estimator output in `ctx.current_estimator_output` for
           optional recording in `record_step`.
         """
-        cond_active = None
-        if ctx.conditioning is not None:
-            if step_mask is None:
-                cond_active = ctx.conditioning
-            else:
-                cond_active = ctx.conditioning[step_mask]
+        precopmputed_estimator_outputs = getattr(ctx, "current_estimator_output", None)
 
-        estimator_outputs = check_cond_forward(
-            self._estimator, "estimator", states_active, cond_active
-        )
+        # Reuse precomputed outputs only in vectorized contexts (no step_mask).
+        if step_mask is None and precopmputed_estimator_outputs is not None:
+            expected_bs = states_active.batch_shape[0]
+            if precopmputed_estimator_outputs.shape[0] != expected_bs:
+                raise RuntimeError(
+                    "current_estimator_output batch size does not match active states. "
+                    f"Got {precopmputed_estimator_outputs.shape[0]}, expected {expected_bs}. "
+                    "This indicates stale cache reuse; ensure per-step masking when setting "
+                    "ctx.current_estimator_output and clear it when not valid."
+                )
+            estimator_outputs = precopmputed_estimator_outputs
 
+        # Otherwise, compute the estimator outputs.
+        else:
+            cond_active = None
+            if ctx.conditioning is not None:
+                if step_mask is None:
+                    cond_active = ctx.conditioning
+                else:
+                    cond_active = ctx.conditioning[step_mask]
+
+            estimator_outputs = check_cond_forward(
+                self._estimator, "estimator", states_active, cond_active
+            )
+
+        # Build the distribution.
         dist = self._estimator.to_probability_distribution(
             states_active, estimator_outputs, **policy_kwargs
         )
@@ -274,11 +294,13 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
     ) -> tuple[torch.Tensor, Any]:
         """Compute log-probs, optionally padding back to full batch when non-vectorized."""
         lp = dist.log_prob(actions_active)
-        if torch.any(torch.isinf(lp)):
-            raise RuntimeError("Log probabilities are inf. This should not happen.")
 
         if vectorized:
             return lp, ctx
+
+        # Non-vectorized path strict check. None of these should be -inf after masking.
+        if torch.any(torch.isinf(lp)):
+            raise RuntimeError("Log probabilities are inf. This should not happen.")
 
         assert step_mask is not None, "step_mask is required when vectorized=False"
         step_lp = torch.full((ctx.batch_size,), 0.0, device=ctx.device, dtype=lp.dtype)
@@ -302,7 +324,9 @@ class DefaultEstimatorAdapter(EstimatorAdapter):
         if save_estimator_outputs and ctx.current_estimator_output is not None:
             estimator_outputs = ctx.current_estimator_output
             padded = torch.full(
-                (ctx.batch_size,) + estimator_outputs.shape[1:], -float("inf"), device=ctx.device
+                (ctx.batch_size,) + estimator_outputs.shape[1:],
+                -float("inf"),
+                device=ctx.device,
             )
             padded[step_mask] = estimator_outputs
             ctx.trajectory_estimator_outputs.append(padded)
@@ -348,7 +372,7 @@ class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
     - a recurrent forward returning `(estimator_outputs, new_carry)`.
     """
 
-    def __init__(self, estimator: Estimator) -> None:
+    def __init__(self, estimator: "Estimator") -> None:
         # Validate that the estimator presents a recurrent interface
         # We check for the presence of `init_carry` and a callable that accepts (states, carry).
         init_carry = getattr(estimator, "init_carry", None)
@@ -419,8 +443,8 @@ class RecurrentEstimatorAdapter(DefaultEstimatorAdapter):
 
 
 def maybe_instantiate_adapter(
-    estimator: Estimator,
-    adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None,
+    estimator: "Estimator",
+    adapter: Callable[["Estimator"], EstimatorAdapter] | EstimatorAdapter | None,
 ) -> EstimatorAdapter:
     """Maybe instantiate an adapter for a given estimator.
 
@@ -440,7 +464,7 @@ def maybe_instantiate_adapter(
         assert (
             adapter_cls is not None
         ), "Estimator has no default adapter class and no adapter was provided"
-        adapter_cls = cast(Callable[[Estimator], EstimatorAdapter], adapter_cls)
+        adapter_cls = cast(Callable[["Estimator"], EstimatorAdapter], adapter_cls)
         return adapter_cls(estimator)
 
     # If an adapter class is provided, instantiate it with the estimator.
@@ -460,7 +484,7 @@ def maybe_instantiate_adapter(
                 f"You can provide an adapter instance to the GFlowNet instead."
             )
 
-        adapter_factory = cast(Callable[[Estimator], EstimatorAdapter], adapter)
+        adapter_factory = cast(Callable[["Estimator"], EstimatorAdapter], adapter)
         return adapter_factory(estimator)
 
     # If an adapter instance is provided, use it.

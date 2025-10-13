@@ -1,9 +1,10 @@
 import math
-from typing import Any, Tuple
+from typing import Callable, Tuple
 
 import torch
 
 from gfn.actions import Actions
+from gfn.adapters import EstimatorAdapter
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
@@ -77,8 +78,12 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         safe_log_prob_min: bool = True,
         constant_pb: bool = False,
         *,
-        pf_adapter: Any | None = None,
-        pb_adapter: Any | None = None,
+        pf_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
+        pb_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
     ) -> None:
         """Initializes a DBGFlowNet instance.
 
@@ -109,14 +114,21 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             pb_adapter=pb_adapter,
         )
         # Disallow recurrent PF or recurrent adapter for transition-based DB
+        from gfn.adapters import RecurrentEstimatorAdapter  # type: ignore
         from gfn.estimators import RecurrentDiscretePolicyEstimator  # type: ignore
-        from gfn.samplers import RecurrentEstimatorAdapter  # type: ignore
 
         if isinstance(self.pf, RecurrentDiscretePolicyEstimator):
             raise TypeError(
                 "DBGFlowNet does not support recurrent PF estimators (transitions path cannot propagate carry)."
             )
-        if isinstance(self.pf_adapter, RecurrentEstimatorAdapter):
+
+        # Get the class whether pf_adapter is a class or instance
+        adapter_class = (
+            self.pf_adapter
+            if isinstance(self.pf_adapter, type)
+            else type(self.pf_adapter)
+        )
+        if issubclass(adapter_class, RecurrentEstimatorAdapter):
             raise TypeError(
                 "DBGFlowNet does not support RecurrentEstimatorAdapter (transitions path cannot propagate carry)."
             )
@@ -125,6 +137,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
         ), "logF must be a ScalarEstimator or derived"
+
         self.logF = logF
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
@@ -337,8 +350,12 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         pb: Estimator | None,
         constant_pb: bool = False,
         *,
-        pf_adapter: Any | None = None,
-        pb_adapter: Any | None = None,
+        pf_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
+        pb_adapter: (
+            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
+        ) = None,
     ) -> None:
         """Initializes a ModifiedDBGFlowNet instance.
 
