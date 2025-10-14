@@ -148,18 +148,18 @@ class PolicyMixin:
         - Saves the raw estimator output in `ctx.current_estimator_output` for
           optional recording in `record_step`.
         """
-        precopmputed_estimator_outputs = getattr(ctx, "current_estimator_output", None)
+        precomputed_estimator_outputs = getattr(ctx, "current_estimator_output", None)
 
-        if step_mask is None and precopmputed_estimator_outputs is not None:
+        if step_mask is None and precomputed_estimator_outputs is not None:
             expected_bs = states_active.batch_shape[0]
-            if precopmputed_estimator_outputs.shape[0] != expected_bs:
+            if precomputed_estimator_outputs.shape[0] != expected_bs:
                 raise RuntimeError(
                     "current_estimator_output batch size does not match active states. "
-                    f"Got {precopmputed_estimator_outputs.shape[0]}, expected {expected_bs}. "
+                    f"Got {precomputed_estimator_outputs.shape[0]}, expected {expected_bs}. "
                     "This indicates stale cache reuse; ensure per-step masking when setting "
                     "ctx.current_estimator_output and clear it when not valid."
                 )
-            estimator_outputs = precopmputed_estimator_outputs
+            estimator_outputs = precomputed_estimator_outputs
 
         # Otherwise, compute the estimator outputs.
         else:
