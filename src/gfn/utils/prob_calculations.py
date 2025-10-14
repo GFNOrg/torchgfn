@@ -1,11 +1,44 @@
-import warnings
-from typing import Any, Callable, Tuple
+from typing import Any, Protocol, Tuple, cast, runtime_checkable
 
 import torch
+from torch.distributions import Distribution
 
-from gfn.adapters import EstimatorAdapter, maybe_instantiate_adapter
 from gfn.containers import Trajectories, Transitions
-from gfn.estimators import Estimator
+from gfn.estimators import Estimator, RecurrentPolicyMixin
+
+
+# NOTE: We use a Protocol to make the policy-capable estimator interface explicit for the type checker.
+# This avoids Pyright errors like "Object of type 'Tensor' is not callable" when calling
+# estimator.compute_dist/log_probs that live on the PolicyMixin, not on the base Estimator.
+@runtime_checkable
+class PolicyEstimatorProtocol(Protocol):
+    is_vectorized: bool
+
+    def init_context(  # noqa: E704
+        self,
+        batch_size: int,
+        device: torch.device,
+        conditioning: torch.Tensor | None = None,
+    ) -> Any: ...
+
+    def compute_dist(  # noqa: E704
+        self,
+        states_active: Any,
+        ctx: Any,
+        step_mask: torch.Tensor | None = None,
+        **policy_kwargs: Any,
+    ) -> tuple[Distribution, Any]: ...
+
+    def log_probs(  # noqa: E704
+        self,
+        actions_active: torch.Tensor,
+        dist: Distribution,
+        ctx: Any,
+        step_mask: torch.Tensor | None = None,
+        vectorized: bool = False,
+        **kwargs: Any,
+    ) -> tuple[torch.Tensor, Any]: ...
+
 
 # ------------
 # Trajectories
@@ -18,20 +51,12 @@ def get_trajectory_pfs_and_pbs(
     trajectories: Trajectories,
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
-    pf_adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
-    pb_adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Calculate PF and PB log‑probabilities for trajectories via adapters.
+    """Calculate PF and PB log‑probabilities for trajectories.
 
     Delegates to ``get_trajectory_pfs`` and ``get_trajectory_pbs`` while
-    forwarding optional adapters and policy kwargs.
-
-    Vectorized vs non‑vectorized:
-    - ``adapter is None`` or ``adapter.is_vectorized=True`` → vectorized path
-      (fast, parity with legacy).
-    - ``adapter.is_vectorized=False`` (e.g., recurrent) → per‑step path with
-      legacy masks/alignment.
+    forwarding policy kwargs.
 
     Args:
         pf: Forward policy estimator.
@@ -39,40 +64,26 @@ def get_trajectory_pfs_and_pbs(
         trajectories: Trajectories to evaluate.
         fill_value: Value used to pad invalid positions.
         recalculate_all_logprobs: If True, recompute PF even if cached.
-        pf_adapter: Optional adapter for PF.
-        pb_adapter: Optional adapter for PB.
         **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
         ``(log_pf[T,N], log_pb[T,N])``
     """
+    # TODO: Remove this assertion and move to a test.
     # fill value is the value used for invalid states (sink state usually)
-
-    # uncomment next line for debugging
-    # assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions.is_dummy)
-
-    if pb_adapter is not None and not isinstance(pb_adapter, type(pf_adapter)):  # type: ignore
-        warnings.warn(
-            (
-                "type(pb_adapter)={} and type(pf_adapter)={}, this is probably not what you want "
-                "unless you explicitly want to use different sampling logic for the two policies "
-                "(with different estimator architectures). This is very uncommon."
-            ).format(type(pb_adapter), type(pf_adapter))
-        )
+    assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions.is_dummy)
 
     log_pf_trajectories = get_trajectory_pfs(
         pf,
         trajectories,
         fill_value=fill_value,
         recalculate_all_logprobs=recalculate_all_logprobs,
-        adapter=pf_adapter,
         **policy_kwargs,
     )
     log_pb_trajectories = get_trajectory_pbs(
         pb,
         trajectories,
         fill_value=fill_value,
-        adapter=pb_adapter,
         **policy_kwargs,
     )
 
@@ -84,15 +95,13 @@ def get_trajectory_pfs(
     trajectories: Trajectories,
     fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
-    adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
     """Calculate PF log‑probabilities for trajectories.
 
-    - Vectorized: ``adapter is None`` or ``adapter.is_vectorized=True`` → legacy
-      vectorized implementation.
-    - Non‑vectorized: ``adapter.is_vectorized=False`` → per‑step evaluation with
-      legacy masks ``~is_sink_state[t] & ~is_dummy[t]``; no action‑id indexing.
+    Non‑vectorized (per‑step) evaluation with masks
+    ``~is_sink_state[t] & ~is_dummy[t]`` & no action‑id indexing is supported when
+    specifically needed (estimator.is_vectorized=False).
 
     Args:
         pf: Forward policy estimator.
@@ -100,7 +109,6 @@ def get_trajectory_pfs(
         fill_value: Value used to pad invalid positions.
         recalculate_all_logprobs: If True, recompute PF even if cached. Useful for
             off-policy training.
-        adapter: Optional adapter deciding the evaluation path.
         **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
@@ -109,8 +117,9 @@ def get_trajectory_pfs(
     Raises:
         ValueError: If backward trajectories are provided.
     """
-    adapter = maybe_instantiate_adapter(pf, adapter)
-    assert adapter is not None
+    # TODO: Ensure that the estimator is policy-capable here.
+    if not hasattr(pf, "init_context"):
+        raise TypeError("Estimator is not policy-capable (missing PolicyMixin)")
 
     if trajectories.is_backward:
         raise ValueError("Backward trajectories are not supported")
@@ -129,17 +138,29 @@ def get_trajectory_pfs(
         assert log_pf_trajectories is not None
     else:
 
-        # Decide vectorized (legacy) vs non-vectorized (adapter per-step)
-        if not adapter.is_vectorized:
+        # Decide vectorized vs non-vectorized based on estimator capability
+        # Tell the type-checker we expect the Policy mixin surface here.
+        policy_pf = cast(PolicyEstimatorProtocol, pf)
+        # Runtime guard: ensure the estimator actually implements the required protocol
+        # method and raises an error when a non‑policy estimator is supplied.
+        for required in ("init_context", "compute_dist", "log_probs"):
+            if not hasattr(policy_pf, required):
+                raise TypeError(
+                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
+                )
+        is_vectorized = bool(getattr(policy_pf, "is_vectorized", True))
 
-            # Adapter-driven path
+        if not is_vectorized:
+            # Per-step path.
             N = trajectories.n_trajectories
             device = trajectories.states.device
             cond = trajectories.conditioning
+
+            # TODO: Why do we need this?
             if cond is not None and len(cond.shape) >= 2:
                 cond = cond[0]
 
-            ctx = adapter.init_context(int(N), device, cond)  # type: ignore[arg-type]
+            ctx = policy_pf.init_context(int(N), device, cond)  # type: ignore[arg-type]
 
             T = trajectories.max_length
             log_pf_trajectories = torch.full(
@@ -174,12 +195,11 @@ def get_trajectory_pfs(
                     # explicitly for the current step.
                     ctx.current_estimator_output = None
 
-                # Build distribution for active rows and compute step log-probs via
-                # adapter.
-                dist, ctx = adapter.compute_dist(
+                # Build distribution for active rows and compute step log-probs
+                dist, ctx = policy_pf.compute_dist(
                     step_states, ctx, step_mask, **policy_kwargs
                 )
-                step_log_probs, ctx = adapter.log_probs(
+                step_log_probs, ctx = policy_pf.log_probs(
                     step_actions, dist, ctx, step_mask, vectorized=False
                 )
 
@@ -218,8 +238,7 @@ def get_trajectory_pfs(
                     # Broadcast (N, ...) to (T, N, ...), then index.
                     masked_cond = cond.unsqueeze(0).expand((T,) + cond.shape)[state_mask]
 
-            # Create a temporary context sized to valid rows.
-            ctx_v = adapter.init_context(
+            ctx_v = policy_pf.init_context(
                 int(len(valid_states)),
                 trajectories.states.device,
                 conditioning=masked_cond,
@@ -233,14 +252,14 @@ def get_trajectory_pfs(
                 estimator_outputs = trajectories.estimator_outputs[action_mask]
                 ctx_v.current_estimator_output = estimator_outputs
 
-            # Delegate to adapter for dist and vectorized log-prob calculation.
-            dist, ctx_v = adapter.compute_dist(
+            # Build distribution and compute vectorized log-probs
+            dist, ctx_v = policy_pf.compute_dist(
                 valid_states,
                 ctx_v,
                 step_mask=None,
                 **policy_kwargs,
             )
-            valid_log_pf_actions, _ = adapter.log_probs(
+            valid_log_pf_actions, _ = policy_pf.log_probs(
                 valid_actions.tensor, dist, ctx_v, step_mask=None, vectorized=True
             )
 
@@ -261,22 +280,20 @@ def get_trajectory_pbs(
     pb: Estimator | None,
     trajectories: Trajectories,
     fill_value: float = 0.0,
-    adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
     """Calculate PB log‑probabilities for trajectories.
 
-    - Vectorized: ``adapter is None`` or ``adapter.is_vectorized=True``.
-    - Non‑vectorized: ``adapter.is_vectorized=False`` with legacy alignment
-      (action at ``t`` with state at ``t+1``) and mask
-      ``~is_sink_state[t+1] & ~is_initial_state[t+1] & ~is_dummy[t] & ~is_exit[t]``;
-      skip ``t==0``.
+    Non‑vectorized (per‑step) evaluation with with alignment
+        (action at ``t`` with state at ``t+1``) and mask
+        ``~is_sink_state[t+1] & ~is_initial_state[t+1] & ~is_dummy[t] & ~is_exit[t]``;
+        skip ``t==0``. is supported when specifically needed
+        (estimator.is_vectorized=False).
 
     Args:
         pb: Backward policy estimator, or ``None`` for trees (PB=1).
         trajectories: Trajectories to evaluate.
         fill_value: Value used to pad invalid positions.
-        adapter: Optional adapter deciding the evaluation path.
         **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
@@ -332,82 +349,86 @@ def get_trajectory_pbs(
             log_pb_trajectories.dtype, copy=False
         )
 
+        assert log_pb_trajectories.shape == (
+            trajectories.max_length,
+            trajectories.n_trajectories,
+        )
+
+        return log_pb_trajectories
+
     # There is a backward policy.
+    policy_pb = cast(PolicyEstimatorProtocol, pb)
+    # Runtime guard: ensure the estimator actually implements the required protocol
+    # method and raises an error when a non‑policy estimator is supplied.
+    for required in ("init_context", "compute_dist", "log_probs"):
+        if not hasattr(policy_pb, required):
+            raise TypeError(
+                f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
+            )
+    is_vectorized = bool(getattr(policy_pb, "is_vectorized", True))
+
+    if not is_vectorized:
+        # Per-step pb evaluation (state at t+1, action at t)
+        N = trajectories.n_trajectories
+        device = trajectories.states.device
+        cond = trajectories.conditioning
+        if cond is not None and len(cond.shape) >= 2:
+            cond_step0 = cond[0]  # TODO: Why do we need this?
+        ctx = policy_pb.init_context(int(N), device, cond_step0)  # type: ignore[arg-type]
+
+        # Iterate per-step with masking (state at t+1, action at t)
+        for t in range(trajectories.max_length):
+            # TODO: these checks are curious - I think one of them is never needed
+            # because for now we do not support reversed trajectories.
+            next_state_isnt_sink = ~trajectories.states.is_sink_state[t + 1]
+            next_state_isnt_initial = ~trajectories.states.is_initial_state[t + 1]
+            state_ok = next_state_isnt_sink & next_state_isnt_initial
+            if t == 0:
+                # log PB is always zero for the transition s1 -> s0.
+                state_ok = torch.zeros_like(state_ok, dtype=torch.bool)
+
+            action_ok = (~trajectories.actions.is_dummy[t]) & (
+                ~trajectories.actions.is_exit[t]
+            )
+            step_mask = state_ok & action_ok
+
+            if not torch.any(step_mask):
+                continue
+
+            step_states = trajectories.states[t + 1][step_mask]
+            step_actions = trajectories.actions.tensor[t][step_mask]
+
+            # Prevent reusing last step's estimator output (batch size may differ,
+            # and estimator output caching isn't needed for PB).
+            ctx.current_estimator_output = None
+            dist, ctx = policy_pb.compute_dist(
+                step_states, ctx, step_mask, **policy_kwargs
+            )
+            step_lp, ctx = policy_pb.log_probs(
+                step_actions, dist, ctx, step_mask, vectorized=False
+            )
+
+            padded = torch.full((N,), fill_value, device=device, dtype=step_lp.dtype)
+            padded[step_mask] = step_lp[step_mask]
+            log_pb_trajectories[t] = padded
+
+    # The backward policy supports vectorized evaluation.
     else:
-        adapter = maybe_instantiate_adapter(pb, adapter)
-
-        # The backward policy requires step-wise evaluation.
-        if not adapter.is_vectorized:
-            # Adapter-driven pb evaluation (non-recurrent)
-            N = trajectories.n_trajectories
-            device = trajectories.states.device
-            cond = trajectories.conditioning
-
-            if cond is not None and len(cond.shape) >= 2:
-                cond = cond[0]
-            ctx = adapter.init_context(int(N), device, cond)  # type: ignore[arg-type]
-
-            # Iterate per-step with legacy-complete masking (state at t+1, action at t)
-            for t in range(trajectories.max_length):
-                # TODO: these checks are curious - I think one of them is never needed
-                # because for now we do not support reversed trajectories.
-                next_state_isnt_sink = ~trajectories.states.is_sink_state[t + 1]
-                next_state_isnt_initial = ~trajectories.states.is_initial_state[t + 1]
-                state_ok = next_state_isnt_sink & next_state_isnt_initial
-                if t == 0:
-                    # log PB is always zero for the transition s1 -> s0.
-                    state_ok = torch.zeros_like(state_ok, dtype=torch.bool)
-
-                action_ok = (~trajectories.actions.is_dummy[t]) & (
-                    ~trajectories.actions.is_exit[t]
-                )
-                step_mask = state_ok & action_ok
-
-                if not torch.any(step_mask):
-                    continue
-
-                step_states = trajectories.states[t + 1][step_mask]
-                step_actions = trajectories.actions.tensor[t][step_mask]
-
-                # Prevent reusing last step's estimator output (batch size may differ,
-                # and estimator output caching isn't needed for PB).
-                ctx.current_estimator_output = None
-                dist, ctx = adapter.compute_dist(
-                    step_states,
-                    ctx,
-                    step_mask,
-                    **policy_kwargs,
-                )
-                step_lp, ctx = adapter.log_probs(
-                    step_actions, dist, ctx, step_mask, vectorized=False
-                )
-
-                padded = torch.full(
-                    (N,),
-                    fill_value,
-                    device=device,
-                    dtype=step_lp.dtype,
-                )
-                padded[step_mask] = step_lp[step_mask]
-                log_pb_trajectories[t] = padded
-
-        # The backward policy supports vectorized evaluation.
-        else:
-            ctx_v = adapter.init_context(
-                int(len(valid_states)), trajectories.states.device, conditioning=masked_cond  # type: ignore[arg-type]
-            )
-            dist, ctx_v = adapter.compute_dist(
-                valid_states,
-                ctx_v,
-                step_mask=None,
-                **policy_kwargs,
-            )
-            valid_log_pb_actions, _ = adapter.log_probs(
-                valid_actions.tensor, dist, ctx_v, step_mask=None, vectorized=True
-            )
-            log_pb_trajectories[action_mask] = valid_log_pb_actions.to(
-                log_pb_trajectories.dtype, copy=False
-            )
+        ctx_v = policy_pb.init_context(
+            int(len(valid_states)), trajectories.states.device, conditioning=masked_cond  # type: ignore[arg-type]
+        )
+        dist, ctx_v = policy_pb.compute_dist(
+            valid_states,
+            ctx_v,
+            step_mask=None,
+            **policy_kwargs,
+        )
+        valid_log_pb_actions, _ = policy_pb.log_probs(
+            valid_actions.tensor, dist, ctx_v, step_mask=None, vectorized=True
+        )
+        log_pb_trajectories[action_mask] = valid_log_pb_actions.to(
+            log_pb_trajectories.dtype, copy=False
+        )
 
     assert log_pb_trajectories.shape == (
         trajectories.max_length,
@@ -427,16 +448,9 @@ def get_transition_pfs_and_pbs(
     pb: Estimator | None,
     transitions: Transitions,
     recalculate_all_logprobs: bool = True,
-    pf_adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
-    pb_adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Calculate PF and PB log‑probabilities for transitions.
-
-    Mirrors the trajectories logic:
-    - Vectorized when ``adapter is None`` or ``is_vectorized=True``.
-    - Non‑vectorized when ``is_vectorized=False``: per‑batch adapter call with
-      legacy masks; no action‑id indexing.
 
     Args:
         pf: Forward policy estimator.
@@ -444,8 +458,6 @@ def get_transition_pfs_and_pbs(
         transitions: Transitions to evaluate.
         recalculate_all_logprobs: If True, recompute PF even if cached. Useful for
             off-policy training.
-        pf_adapter: Optional adapter for PF.
-        pb_adapter: Optional adapter for PB.
         **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
@@ -457,21 +469,10 @@ def get_transition_pfs_and_pbs(
     if transitions.is_backward:
         raise ValueError("Backward transitions are not supported")
 
-    if pb_adapter is not None and not isinstance(pb_adapter, type(pf_adapter)):  # type: ignore
-        warnings.warn(
-            (
-                "type(pb_adapter)={} and type(pf_adapter)={}, this is probably not what you want "
-                "unless you explicitly want to use different sampling logic for the two policies "
-                "(with different estimator architectures). This is very uncommon."
-            ).format(type(pb_adapter), type(pf_adapter))
-        )
-
     log_pf_transitions = get_transition_pfs(
-        pf, transitions, recalculate_all_logprobs, adapter=pf_adapter, **policy_kwargs
+        pf, transitions, recalculate_all_logprobs, **policy_kwargs
     )
-    log_pb_transitions = get_transition_pbs(
-        pb, transitions, adapter=pb_adapter, **policy_kwargs
-    )
+    log_pb_transitions = get_transition_pbs(pb, transitions, **policy_kwargs)
 
     assert log_pf_transitions.shape == (transitions.n_transitions,)
     assert log_pb_transitions.shape == (transitions.n_transitions,)
@@ -483,29 +484,22 @@ def get_transition_pfs(
     pf: Estimator,
     transitions: Transitions,
     recalculate_all_logprobs: bool = True,
-    adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
     """Calculate PF log‑probabilities for transitions.
 
-    - Vectorized: ``adapter is None`` or ``is_vectorized=True``.
-    - Non‑vectorized: ``is_vectorized=False``; single adapter call with legacy
-      masks; no action‑id indexing.
+    Non‑vectorized: `single estimator call with legacy masks; no action‑id indexing.
 
     Args:
         pf: Forward policy estimator.
         transitions: Transitions to evaluate.
         recalculate_all_logprobs: If True, recompute PF even if cached. Useful for
             off-policy training.
-        adapter: Optional adapter deciding the evaluation path.
         **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
         ``log_pf`` of shape ``(M,)``.
     """
-    adapter = maybe_instantiate_adapter(pf, adapter)
-    assert adapter is not None
-
     states = transitions.states
     actions = transitions.actions
 
@@ -514,26 +508,32 @@ def get_transition_pfs(
         assert log_pf_actions is not None
     else:
 
-        from gfn.adapters import RecurrentEstimatorAdapter  # type: ignore
-
-        if isinstance(adapter, RecurrentEstimatorAdapter):
-            raise TypeError(
-                "RecurrentEstimatorAdapter is only supported for Trajectories"
-            )
+        if isinstance(pf, RecurrentPolicyMixin):
+            raise TypeError("RecurrentPolicyMixin is only supported for Trajectories")
 
         N = transitions.n_transitions
         device = transitions.states.device
         cond = transitions.conditioning
-        ctx = adapter.init_context(int(N), device, cond)
+
+        # For static typing, cast to the policy protocol before calling mixin methods.
+        policy_pf = cast(PolicyEstimatorProtocol, pf)
+        # Runtime guard: ensure the estimator actually implements the required protocol
+        # method and raises an error when a non‑policy estimator is supplied.
+        for required in ("init_context", "compute_dist", "log_probs"):
+            if not hasattr(policy_pf, required):
+                raise TypeError(
+                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
+                )
+        ctx = policy_pf.init_context(int(N), device, cond)
         mask = torch.ones(N, dtype=torch.bool, device=device)
 
-        # Evaluate the log PF of the actions, with optional conditioning.
+        # Evaluate the log PF of the actions
         # TODO: Inefficient duplication in case of tempered policy
         # The Transitions container should then have some
         # estimator_outputs attribute as well, to avoid duplication here ?
         # See (#156).
-        dist, ctx = adapter.compute_dist(states[mask], ctx, mask, **policy_kwargs)
-        log_pf_actions, _ = adapter.log_probs(
+        dist, ctx = policy_pf.compute_dist(states[mask], ctx, mask, **policy_kwargs)
+        log_pf_actions, _ = policy_pf.log_probs(
             actions.tensor[mask], dist, ctx, mask, vectorized=False
         )
 
@@ -543,20 +543,16 @@ def get_transition_pfs(
 def get_transition_pbs(
     pb: Estimator | None,
     transitions: Transitions,
-    adapter: Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None = None,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
     """Calculate PB log‑probabilities for transitions.
 
-    - Vectorized: ``adapter is None`` or ``is_vectorized=True``.
-    - Non‑vectorized: ``is_vectorized=False``; single adapter call with legacy
-      masks; no action‑id indexing. Recurrent adapters are not supported for
-      transitions.
+    - Non‑vectorized ``is_vectorized=False`` single estimator call with legacy
+      masks; no action‑id indexing.
 
     Args:
         pb: Backward policy estimator, or ``None`` for trees (PB=1).
         transitions: Transitions to evaluate.
-        adapter: Optional adapter deciding the evaluation path.
         **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
@@ -574,15 +570,22 @@ def get_transition_pbs(
     if pb is None:
         return log_pb_actions
 
-    adapter = maybe_instantiate_adapter(pb, adapter)
-    assert adapter is not None
+    if not hasattr(pb, "init_context"):
+        raise TypeError("Estimator is not policy-capable (missing PolicyMixin)")
 
-    from gfn.adapters import RecurrentEstimatorAdapter  # type: ignore
+    if isinstance(pb, RecurrentPolicyMixin):
+        raise TypeError("RecurrentPolicyMixin is only supported for Trajectories")
 
-    if isinstance(adapter, RecurrentEstimatorAdapter):
-        raise TypeError("RecurrentEstimatorAdapter is only supported for Trajectories")
-
-    ctx = adapter.init_context(
+    # For static typing, cast to the policy protocol before calling mixin methods.
+    policy_pb = cast(PolicyEstimatorProtocol, pb)
+    # Runtime guard: ensure the estimator actually implements the required protocol
+    # method and raises an error when a non‑policy estimator is supplied.
+    for required in ("init_context", "compute_dist", "log_probs"):
+        if not hasattr(policy_pb, required):
+            raise TypeError(
+                f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
+            )
+    ctx = policy_pb.init_context(
         int(transitions.n_transitions),
         transitions.states.device,
         transitions.conditioning,
@@ -596,10 +599,10 @@ def get_transition_pbs(
     if not torch.any(mask):
         return log_pb_actions
 
-    dist, ctx = adapter.compute_dist(
+    dist, ctx = policy_pb.compute_dist(
         transitions.next_states[mask], ctx, mask, **policy_kwargs
     )
-    step_lp, _ = adapter.log_probs(
+    step_lp, _ = policy_pb.log_probs(
         transitions.actions.tensor[mask], dist, ctx, mask, vectorized=False
     )
     log_pb_actions[mask] = step_lp[mask]

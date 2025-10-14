@@ -1,10 +1,9 @@
 import math
 import warnings
-from typing import Callable, List, Literal, Tuple, TypeAlias
+from typing import List, Literal, Tuple, TypeAlias
 
 import torch
 
-from gfn.adapters import EstimatorAdapter
 from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
@@ -84,13 +83,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
         constant_pb: bool = False,
-        *,
-        pf_adapter: (
-            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
-        ) = None,
-        pb_adapter: (
-            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
-        ) = None,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -108,18 +100,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
-            pf_adapter: Optional estimator adapter controlling PF probability
-                computation/sampling.
-            pb_adapter: Optional estimator adapter controlling PB probability
-                computation.
+
         """
-        super().__init__(
-            pf,
-            pb,
-            constant_pb=constant_pb,
-            pf_adapter=pf_adapter,
-            pb_adapter=pb_adapter,
-        )
+        super().__init__(pf, pb, constant_pb=constant_pb)
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
