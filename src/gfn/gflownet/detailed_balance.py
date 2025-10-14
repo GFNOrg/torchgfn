@@ -1,10 +1,9 @@
 import math
-from typing import Callable, Tuple
+from typing import Tuple
 
 import torch
 
 from gfn.actions import Actions
-from gfn.adapters import EstimatorAdapter
 from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
@@ -77,13 +76,6 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         log_reward_clip_min: float = -float("inf"),
         safe_log_prob_min: bool = True,
         constant_pb: bool = False,
-        *,
-        pf_adapter: (
-            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
-        ) = None,
-        pb_adapter: (
-            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
-        ) = None,
     ) -> None:
         """Initializes a DBGFlowNet instance.
 
@@ -101,36 +93,16 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
-            pf_adapter: Optional estimator adapter controlling PF probability
-                computation/sampling.
-            pb_adapter: Optional estimator adapter controlling PB probability
-                computation.
+
         """
-        super().__init__(
-            pf,
-            pb,
-            constant_pb=constant_pb,
-            pf_adapter=pf_adapter,
-            pb_adapter=pb_adapter,
-        )
-        # Disallow recurrent PF or recurrent adapter for transition-based DB
-        from gfn.adapters import RecurrentEstimatorAdapter  # type: ignore
+        super().__init__(pf, pb, constant_pb=constant_pb)
+
+        # Disallow recurrent PF for transition-based DB
         from gfn.estimators import RecurrentDiscretePolicyEstimator  # type: ignore
 
         if isinstance(self.pf, RecurrentDiscretePolicyEstimator):
             raise TypeError(
                 "DBGFlowNet does not support recurrent PF estimators (transitions path cannot propagate carry)."
-            )
-
-        # Get the class whether pf_adapter is a class or instance
-        adapter_class = (
-            self.pf_adapter
-            if isinstance(self.pf_adapter, type)
-            else type(self.pf_adapter)
-        )
-        if issubclass(adapter_class, RecurrentEstimatorAdapter):
-            raise TypeError(
-                "DBGFlowNet does not support RecurrentEstimatorAdapter (transitions path cannot propagate carry)."
             )
 
         assert any(
@@ -191,8 +163,6 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             self.pb,
             transitions,
             recalculate_all_logprobs,
-            pf_adapter=self.pf_adapter,
-            pb_adapter=self.pb_adapter,
         )
 
     def get_scores(
@@ -349,13 +319,6 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         pf: Estimator,
         pb: Estimator | None,
         constant_pb: bool = False,
-        *,
-        pf_adapter: (
-            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
-        ) = None,
-        pb_adapter: (
-            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
-        ) = None,
     ) -> None:
         """Initializes a ModifiedDBGFlowNet instance.
 
@@ -363,16 +326,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             pf: Forward policy estimator.
             pb: Backward policy estimator or None.
             constant_pb: See base class.
-            pf_adapter: Optional adapter for PF.
-            pb_adapter: Optional adapter for PB.
+
         """
-        super().__init__(
-            pf,
-            pb,
-            constant_pb=constant_pb,
-            pf_adapter=pf_adapter,
-            pb_adapter=pb_adapter,
-        )
+        super().__init__(pf, pb, constant_pb=constant_pb)
 
     def get_scores(
         self, transitions: Transitions, recalculate_all_logprobs: bool = True

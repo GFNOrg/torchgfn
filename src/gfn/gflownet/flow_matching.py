@@ -5,7 +5,10 @@ import torch
 
 from gfn.containers import StatesContainer, Trajectories
 from gfn.env import DiscreteEnv
-from gfn.estimators import ConditionalDiscretePolicyEstimator, DiscretePolicyEstimator
+from gfn.estimators import (
+    DiscretePolicyEstimator,
+    PolicyMixin,
+)
 from gfn.gflownet.base import GFlowNet, loss_reduce
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
@@ -33,13 +36,9 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             estimating the log flow of the edges (states -> next_states).
         alpha: A scalar weight for the reward matching loss.
 
-    Adapter note
-    ------------
     Flow Matching does not rely on PF/PB probability recomputation. Any trajectory
     sampling provided by this class is for diagnostics/visualization and can only use
-    the default (non-recurrent) adapter. Sampler adapters (e.g.
-    `RecurrentEstimatorAdapter`) are not exposed as configuration options for this
-    class.
+    the default (non-recurrent) PolicyMixin interface.
     """
 
     def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
@@ -51,11 +50,10 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             alpha: A scalar weight for the reward matching loss.
         """
         super().__init__()
-
         assert isinstance(
-            logF,
-            DiscretePolicyEstimator | ConditionalDiscretePolicyEstimator,
-        ), "logF must be a DiscretePolicyEstimator or ConditionalDiscretePolicyEstimator"
+            logF, PolicyMixin
+        ), "logF must use the default PolicyMixin interface"
+
         self.logF = logF
         self.alpha = alpha
 
@@ -80,10 +78,6 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         Returns:
             A Trajectories object containing the sampled trajectories.
-
-        Notes:
-            This helper uses the default sampler adapter; custom sampler adapters are
-            not supported for Flow Matching.
         """
         if not env.is_discrete:
             raise NotImplementedError(
