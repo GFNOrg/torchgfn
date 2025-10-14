@@ -19,6 +19,34 @@ def is_int_dtype(tensor: torch.Tensor) -> bool:
     return not torch.is_floating_point(tensor) and not torch.is_complex(tensor)
 
 
+def default_fill_value_for_dtype(dtype: torch.dtype) -> int | float:
+    """Return default fill value for dtype.
+
+    - Float and complex dtypes → ``-inf``
+    - Integer dtypes → ``torch.iinfo(dtype).min``
+    - Bool dtype → ``0``
+    """
+
+    # Floats
+    if dtype in (torch.float16, torch.float32, torch.float64, torch.bfloat16):
+        return -float("inf")
+
+    # Complex
+    if dtype in (torch.complex64, torch.complex128):
+        return -float("inf")
+
+    # Bool
+    if dtype == torch.bool:
+        return 0
+
+    # Integers (incl. uint8)
+    try:
+        return torch.iinfo(dtype).min
+    except (TypeError, ValueError):
+        # Fallback for any unusual/unsupported dtype
+        return -float("inf")
+
+
 def get_available_cpus() -> int:
     """Return the number of *usable* CPUs for the current process.
 

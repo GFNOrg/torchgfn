@@ -116,10 +116,7 @@ class ReplayBuffer:
         if self.remote_manager_rank is not None:
             self._add_counter += 1
             if self._add_counter % self.remote_buffer_freq == 0:
-                score = self._send_objs(training_container)
-                print(
-                    f"[Rank {dist.get_rank()}] Sent to remote {self.remote_manager_rank}, got score {score}"
-                )
+                self._send_objs(training_container)
 
     def _send_objs(self, training_container: ContainerUnion) -> float:
         """Sends a training container to the remote manager."""
@@ -128,12 +125,8 @@ class ReplayBuffer:
 
         # First send the length so the receiver knows how many bytes
         length_tensor = torch.IntTensor([len(msg_tensor)])
-        print(
-            f"Sending object of length {len(msg_tensor)} to rank {self.remote_manager_rank}"
-        )
         dist.send(length_tensor, dst=self.remote_manager_rank)
 
-        print(f"Sent length tensor to rank {self.remote_manager_rank}, now sending data")
         # Now send the actual content
         dist.send(msg_tensor, dst=self.remote_manager_rank)
 
