@@ -4,16 +4,26 @@ from typing import Callable, Optional
 import torch
 import torch.distributed as dist
 
-from .message import Message, MessageType
+from gfn.containers.message import Message, MessageType
+from gfn.containers.replay_buffer import (
+    ContainerUnion,
+    NormBasedDiversePrioritizedReplayBuffer,
+    ReplayBuffer,
+)
+from gfn.env import Env
 
 
 class ReplayBufferManager:
 
     def __init__(
         self,
+        env: Env,
         rank: int,
         num_training_ranks: int,
-        scoring_function: Optional[Callable[[object], float]] = None,
+        scoring_function: Optional[Callable[[ContainerUnion], float]] = None,
+        diverse_replay_buffer: bool = False,
+        capacity: int = 10000,
+        remote_manager_rank: int | None = None,
     ):
         self.rank = rank
         self.is_running = True
@@ -27,8 +37,24 @@ class ReplayBufferManager:
                 f"but the current backend is '{backend}'."
             )
 
+        self.diverse_replay_buffer = diverse_replay_buffer
+        self.capacity = capacity
+        self.remote_manager_rank = remote_manager_rank
+        if self.diverse_replay_buffer:
+            self.replay_buffer = NormBasedDiversePrioritizedReplayBuffer(
+                env, capacity=self.capacity
+            )
+        else:
+            self.replay_buffer = ReplayBuffer(
+                env,
+                capacity=self.capacity,
+                prioritized_capacity=False,
+                remote_manager_rank=self.remote_manager_rank,
+                remote_buffer_freq=1,
+            )
+
     def default_scoring_function(self, obj) -> float:
-        """Default diversity score function if none provided, placeholder."""
+        """Default score function if none provided, placeholder."""
         return math.inf
 
     def run(self):
@@ -39,9 +65,10 @@ class ReplayBufferManager:
             sender_rank, msg, msg_data_len = self._recv_object()
 
             if msg.message_type == MessageType.DATA:
-                reward = self.scoring_function(msg.message_data)
-                reward_tensor = torch.tensor([reward], dtype=torch.float32)
-                dist.send(reward_tensor, dst=sender_rank)
+                score = self.scoring_function(msg.message_data)
+                score_tensor = torch.tensor([score], dtype=torch.float32)
+                dist.send(score_tensor, dst=sender_rank)
+                self.replay_buffer.add(msg.message_data)
 
             elif msg.message_type == MessageType.EXIT:
                 self.exit_counter = self.exit_counter + 1

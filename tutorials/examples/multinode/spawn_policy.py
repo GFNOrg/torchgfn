@@ -3,10 +3,12 @@ from __future__ import annotations
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import torch
 import torch.distributed as dist
+
+from gfn.gflownet.base import GFlowNet
 
 
 class SpawnPolicy(ABC):
@@ -17,9 +19,9 @@ class SpawnPolicy(ABC):
     def __call__(
         self,
         iteration: int,
-        model: torch.nn.Module,
+        model: GFlowNet,
         local_metric: Optional[float] = None,
-    ) -> None:  # noqa: D401
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
         """Possibly perform a spawn/averaging step on this iteration."""
         raise NotImplementedError
 
@@ -34,19 +36,22 @@ class AverageAllPolicy(SpawnPolicy):
     def __call__(
         self,
         iteration: int,
-        model: torch.nn.Module,
+        model: GFlowNet,
+        optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
-    ) -> None:
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
         if not dist.is_available() or not dist.is_initialized():
-            return
+            return model, optimizer
         if iteration % self.average_every != 0:
-            return
+            return model, optimizer
 
         world_size = float(dist.get_world_size())
         for param in model.parameters():
             param_tensor = param.data.clone()
             dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
             param.data.copy_(param_tensor / world_size)
+
+        return model, optimizer
 
 
 class AsyncSelectiveAveragingPolicy(SpawnPolicy):
@@ -69,6 +74,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
     def __init__(
         self,
+        model_builder: Callable[[], Tuple[GFlowNet, torch.optim.Optimizer]],
         average_every: int,
         replacement_ratio: float = 0.2,
         averaging_strategy: str = "mean",
@@ -80,14 +86,18 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self.averaging_strategy = str(averaging_strategy)
         self.momentum = float(momentum)
         self.poll_interval_s = float(poll_interval_s)
+        self._model_builder = model_builder
 
         self._initialized = False
-        self._model: Optional[torch.nn.Module] = None
+        self._model: Optional[GFlowNet] = None
         self._shutdown = threading.Event()
         self._bg_thread: Optional[threading.Thread] = None
-        self._pending_update: Optional[Dict[str, torch.Tensor]] = None
         self._pending_lock = threading.Lock()
         self._last_iter_sent: int = -1
+
+        # When rebuilding a fresh model + optimizer is desired, we store the
+        # averaged parameters and construct the new model at the next safe call.
+        self._new_weights: Optional[Dict[str, torch.Tensor]] = None
 
         # Rank-0 state for metric aggregation
         self._rank0_metric_handles: Dict[int, dist.Work] = {}
@@ -98,7 +108,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self._control_work: Optional[dist.Work] = None
         self._control_role_buf: Optional[torch.Tensor] = None
 
-    def _ensure_initialized(self, model: torch.nn.Module) -> None:
+    def _ensure_initialized(self, model: GFlowNet) -> None:
         if self._initialized:
             return
         if not dist.is_available() or not dist.is_initialized():
@@ -121,12 +131,13 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
     def __call__(
         self,
         iteration: int,
-        model: torch.nn.Module,
+        model: GFlowNet,
+        optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
-    ) -> None:
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
         self._ensure_initialized(model)
         if not dist.is_available() or not dist.is_initialized():
-            return
+            return model, optimizer
 
         # Non-blocking metric send on cadence
         if local_metric is not None and iteration % self.average_every == 0:
@@ -148,18 +159,21 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 except Exception:
                     pass
 
-        # Apply any pending averaged weights atomically
-        if self._pending_update is not None:
+        # If a spawn (full rebuild) has been requested, build a fresh model + optimizer
+        # and seed it with the averaged weights received in the background thread.
+        if self._new_weights is not None and self._model_builder is not None:
+            new_weights: Optional[Dict[str, torch.Tensor]] = None
             with self._pending_lock:
-                update = self._pending_update
-                self._pending_update = None
-            if update is not None:
+                new_weights = self._new_weights
+                self._new_weights = None
+            if new_weights is not None:
+                model, optimizer = self._model_builder()
+                # Copy averaged params by name into the new model
                 for name, param in model.named_parameters():
-                    if name in update:
-                        averaged = update[name]
-                        param.data.copy_(
-                            self.momentum * param.data + (1.0 - self.momentum) * averaged
-                        )
+                    if name in new_weights:
+                        param.data.copy_(new_weights[name])
+
+        return model, optimizer
 
     # ---------------- Rank 0 metric aggregation and dispatch ----------------
     def _rank0_post_metric_recvs(self) -> None:
@@ -220,11 +234,16 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         replacers = sorted(list(ranks_to_replace))
 
         # Common header: [iteration, strategy_code]
-        strategy_code = (
-            0
-            if self.averaging_strategy == "mean"
-            else (1 if self.averaging_strategy == "weighted_mean" else 2)
-        )
+        if self.averaging_strategy == "mean":
+            strategy_code = 0
+        elif self.averaging_strategy == "weighted_mean":
+            strategy_code = 1
+        elif self.averaging_strategy == "best_only":
+            strategy_code = 2
+        elif self.averaging_strategy == "reset_weights":
+            strategy_code = 3
+        else:
+            strategy_code = 0
         header_common = torch.tensor(
             [int(iteration), int(strategy_code)], dtype=torch.int64
         )
@@ -309,7 +328,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             avg_state[name] = acc
 
         with self._pending_lock:
-            self._pending_update = avg_state
+            self._pending_spawn_avg_state = avg_state
 
     # ---------------- Background thread loop ----------------
     def _background_loop(self) -> None:
@@ -368,11 +387,18 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                             self._handle_donor(iteration, replacers)
                         elif role == self._OP_ROLE_REPLACER:
                             donors = [d for d in ids if d != dist.get_rank()]
-                            wbuf = None
-                            if strategy_code == 1 and len(donors) > 0:  # weighted_mean
-                                wbuf = torch.zeros(len(donors), dtype=torch.float32)
-                                dist.recv(wbuf, src=0, tag=self._TAG_CONTROL)
-                            self._handle_replacer(iteration, donors, wbuf)
+                            if strategy_code == 3:  # reset_weights
+                                with self._pending_lock:
+                                    # Signal a local rebuild with fresh random weights
+                                    self._new_weights = {}
+                            else:
+                                wbuf = None
+                                if (
+                                    strategy_code == 1 and len(donors) > 0
+                                ):  # weighted_mean
+                                    wbuf = torch.zeros(len(donors), dtype=torch.float32)
+                                    dist.recv(wbuf, src=0, tag=self._TAG_CONTROL)
+                                self._handle_replacer(iteration, donors, wbuf)
                         else:
                             pass
                 time.sleep(self.poll_interval_s)
@@ -388,7 +414,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             raise ValueError(
                 f"replacement_ratio must be between 0 and 1, got {replacement_ratio}"
             )
-        if averaging_strategy not in ["mean", "weighted_mean", "best_only"]:
+        if averaging_strategy not in [
+            "mean",
+            "weighted_mean",
+            "best_only",
+            "reset_weights",
+        ]:
             raise ValueError(f"Unknown averaging_strategy: {averaging_strategy}")
         if not 0.0 <= momentum <= 1.0:
             raise ValueError(f"momentum must be between 0 and 1, got {momentum}")
@@ -407,6 +438,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         if averaging_strategy == "best_only":
             best_rank = int(sorted_ranks[-1].item())
             ranks_to_average = {best_rank}
+        elif averaging_strategy == "reset_weights":
+            # No donors when resetting weights locally
+            ranks_to_average = set()
         return ranks_to_replace, ranks_to_average
 
     @staticmethod

@@ -11,7 +11,7 @@ from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import Actions, GraphActions
 from gfn.states import DiscreteStates, GraphStates, States
-from gfn.utils.common import ensure_same_device, set_seed
+from gfn.utils.common import default_fill_value_for_dtype, ensure_same_device, set_seed
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
@@ -67,7 +67,10 @@ class Env(ABC):
         self.s0 = s0
 
         if sf is None:
-            sf = torch.full(s0.shape, -float("inf"))
+            assert isinstance(s0, torch.Tensor), "When sf is None, s0 must be a Tensor"
+            sf = torch.full(
+                s0.shape, default_fill_value_for_dtype(s0.dtype), dtype=s0.dtype
+            )
         self.sf = sf.to(s0.device)  # pyright: ignore - torch_geometric type hint fix
 
         assert self.s0.shape == self.sf.shape == state_shape

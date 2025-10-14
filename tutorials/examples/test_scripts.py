@@ -742,4 +742,4 @@ def test_hypergrid_exploration_smoke():
 
 
 if __name__ == "__main__":
-    test_graph_triangle_smoke()
+    test_conditional_basic("tb")
