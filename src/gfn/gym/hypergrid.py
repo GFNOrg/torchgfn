@@ -4,9 +4,10 @@ import itertools
 import multiprocessing
 import platform
 import warnings
+from abc import ABC, abstractmethod
 from decimal import Decimal
 from functools import reduce
-from math import gcd, log
+from math import gcd, log, pi, sqrt
 from time import time
 from typing import List, Literal, Tuple
 
@@ -14,7 +15,6 @@ import torch
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
-from gfn.gym.helpers.hypergrid.rewards import get_reward_fn
 from gfn.states import DiscreteStates
 from gfn.utils.common import ensure_same_device
 
@@ -89,12 +89,27 @@ class HyperGrid(DiscreteEnv):
         if height <= 4:
             warnings.warn("+ Warning: height <= 4 can lead to unsolvable environments.")
 
+        reward_functions = {
+            "original": OriginalReward,
+            "cosine": CosineReward,
+            "sparse": SparseReward,
+            "deceptive": DeceptiveReward,
+        }
+
         self.ndim = ndim
         self.height = height
+
+        # Default reward function kwargs.
         if reward_fn_kwargs is None:
             reward_fn_kwargs = {"R0": 0.1, "R1": 0.5, "R2": 2.0}
         self.reward_fn_kwargs = reward_fn_kwargs
-        self.reward_fn = get_reward_fn(reward_fn_str, height, ndim, reward_fn_kwargs)
+        assert (
+            reward_fn_str in reward_functions
+        ), f"Invalid reward function string: {reward_fn_str} not in {reward_functions.keys()}"
+        self.reward_fn = reward_functions[reward_fn_str](
+            height, ndim, **reward_fn_kwargs
+        )
+
         self._all_states_tensor = None  # Populated optionally in init.
         self._log_partition = None  # Populated optionally in init.
         self._true_dist = None  # Populated at first request.
@@ -209,6 +224,106 @@ class HyperGrid(DiscreteEnv):
             reward.shape == states.batch_shape
         ), f"reward.shape is {reward.shape} and states.batch_shape is {states.batch_shape}"
         return reward
+
+    # -------------------------
+    # Mode utilities
+    # -------------------------
+    def _mode_reward_threshold(self) -> float:
+        """Returns the reward threshold used to define a mode.
+
+        By default, a state is considered in a mode if its reward is at least
+        the schema-defined threshold derived from the configured reward.
+        """
+        # We branch on the concrete reward to derive a principled threshold.
+
+        # Original reward: ring band adds R2 on top of base R0 and outer ring R1.
+        if isinstance(self.reward_fn, OriginalReward):
+            for key in ("R0", "R1", "R2"):
+                if key not in self.reward_fn_kwargs:
+                    raise ValueError(
+                        f"Missing '{key}' in reward_fn_kwargs for Original reward; "
+                        "please provide R0, R1, and R2."
+                    )
+            r0 = float(self.reward_fn_kwargs["R0"])  # type: ignore[index]
+            r1 = float(self.reward_fn_kwargs["R1"])  # type: ignore[index]
+            r2 = float(self.reward_fn_kwargs["R2"])  # type: ignore[index]
+            # Modes are the thin ring where both outer ring and band conditions hold.
+            return r0 + r1 + r2
+
+        # Deceptive reward: ring band adds R2 while the outer region cancels R1.
+        if isinstance(self.reward_fn, DeceptiveReward):
+            for key in ("R0", "R2"):
+                if key not in self.reward_fn_kwargs:
+                    raise ValueError(
+                        f"Missing '{key}' in reward_fn_kwargs for Deceptive reward; "
+                        "please provide R0 and R2."
+                    )
+            r0 = float(self.reward_fn_kwargs["R0"])  # type: ignore[index]
+            r2 = float(self.reward_fn_kwargs["R2"])  # type: ignore[index]
+            # Modes are the band where R1 is cancelled and R2 dominates.
+            return r0 + r2
+
+        # Cosine reward: peak at center with oscillatory local maxima along each axis.
+        # Treat "modes" as states whose per-dimension factor is near its theoretical
+        # maximum f_max = 2 / sqrt(2*pi). We allow a tunable closeness factor `mode_gamma`
+        # (default 0.8). The product structure implies a threshold of (gamma*f_max)^ndim.
+        if isinstance(self.reward_fn, CosineReward):
+            r0 = float(self.reward_fn_kwargs.get("R0", 0.1))
+            r1 = float(self.reward_fn_kwargs.get("R1", 0.5))
+            gamma = float(self.reward_fn_kwargs.get("mode_gamma", 0.8))
+            per_dim_peak = 2.0 / sqrt(2 * pi)  # ~0.79788456
+            return r0 + (gamma * per_dim_peak) ** self.ndim * r1
+
+        # Sparse reward: modes are exactly the target points (reward ~ 1+eps vs eps).
+        # Any value strictly above 0.5 cleanly separates modes from non-modes.
+        if isinstance(self.reward_fn, SparseReward):
+            return 0.5
+
+        # Other reward schemas are not supported for mode counting via threshold.
+        raise NotImplementedError(
+            "Mode threshold is only defined for 'original' and 'deceptive' rewards."
+        )
+
+    def mode_mask(self, states: DiscreteStates) -> torch.Tensor:
+        """Boolean mask indicating which states are in a mode.
+
+        A state is flagged as mode if its reward is greater-or-equal to
+        the threshold based on `reward_fn_kwargs` (R0+R1+R2 by default).
+        """
+        rewards = self.reward(states)
+        threshold = self._mode_reward_threshold()
+        return rewards >= threshold
+
+    def mode_ids(self, states: DiscreteStates) -> torch.Tensor:
+        """Returns an integer id (0..2^ndim-1) for states detected as modes.
+
+        Id is based on which side of the center (> 0.5) each coordinate lies on.
+        Non-mode states receive id -1.
+        """
+        mask = self.mode_mask(states)
+        # Determine side relative to the center along each dimension
+        pos = (
+            states.tensor.to(dtype=torch.get_default_dtype()) / (self.height - 1) > 0.5
+        ).long()
+        weights = (
+            2 ** torch.arange(self.ndim - 1, -1, -1, device=states.tensor.device)
+        ).long()
+        ids = (pos * weights).sum(dim=-1)
+        # Assign -1 to non-mode states
+        ids = torch.where(mask, ids, torch.full_like(ids, -1))
+
+        return ids
+
+    def modes_found(self, states: DiscreteStates) -> set[int]:
+        """Returns the set of unique mode ids discovered among given states."""
+        ids = self.mode_ids(states)
+        ids = ids[ids >= 0]
+        return set(ids.tolist())
+
+    @property
+    def n_modes(self) -> int:
+        """Returns the total number of distinct modes for this environment."""
+        return 2**self.ndim
 
     def get_states_indices(self, states: DiscreteStates | torch.Tensor) -> torch.Tensor:
         """Get the indices of the states in the canonical ordering.
@@ -424,3 +539,141 @@ class HyperGrid(DiscreteEnv):
         with multiprocessing.Pool() as pool:
             for result in pool.imap(self._worker, tasks):
                 yield result
+
+
+class GridReward(ABC):
+    """Base class for reward functions that can be pickled."""
+
+    def __init__(self, height: int, ndim: int, **kwargs):
+        self.height = height
+        self.ndim = ndim
+        self.kwargs = kwargs
+        self._EPS = 1e-12
+
+    @abstractmethod
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
+
+class OriginalReward(GridReward):
+    """The reward function from the original GFlowNet paper (Bengio et al., 2021;
+    https://arxiv.org/abs/2106.04399)."""
+
+    # Original reward: center ring adds R2 on top of base R0 and outer ring R1.
+    # Modes are the thin ring where both outer ring and band conditions hold.
+    # Modes will have a reward greater than R2+R1+R0.
+    # Impl: https://github.com/bengioy/gfn/blob/master/gfn/gym/hypergrid.py#L28
+    # For example, using the default kwargs, R0=0.1, R1=0.5, R2=2.0:
+    # A 2D grid with height 16. ax = |i/(15) − 0.5|. The band 0.3 < ax < 0.4 holds only
+    # at indices i ∈ {2, 13}. The outer ring (0.25 < ax ≤ 0.5) holds at indices
+    # i ∈ {0,1,2,3,12,13,14,15}. Legend: X=band (R2), O=outer-ring (R1), .=base (R0).
+    # Modes are at the 2×2 Cartesian product of band indices: (2,2), (2,13), (13,2), (13,13).
+    # y=15: O O O O . . . . . . . . O O O O
+    # y=14: O O O O . . . . . . . . O O O O
+    # y=13: O O X O . . . . . . . . O X O O
+    # y=12: O O O O . . . . . . . . O O O O
+    # y=11: . . . . . . . . . . . . . . . .
+    # y=10: . . . . . . . . . . . . . . . .
+    # y=09: . . . . . . . . . . . . . . . .
+    # y=08: . . . . . . . . . . . . . . . .
+    # y=07: . . . . . . . . . . . . . . . .
+    # y=06: . . . . . . . . . . . . . . . .
+    # y=05: . . . . . . . . . . . . . . . .
+    # y=04: . . . . . . . . . . . . . . . .
+    # y=03: O O O O . . . . . . . . O O O O
+    # y=02: O O X O . . . . . . . . O X O O
+    # y=01: O O O O . . . . . . . . O O O O
+    # y=00: O O O O . . . . . . . . O O O O
+    #       0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 (x-axis)
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        R0 = self.kwargs.get("R0", 0.1)
+        R1 = self.kwargs.get("R1", 0.5)
+        R2 = self.kwargs.get("R2", 2.0)
+
+        ax = abs(states_tensor / (self.height - 1) - 0.5)
+        return (
+            R0
+            + (0.25 + self._EPS < ax).prod(-1) * R1
+            + ((0.3 + self._EPS < ax) * (ax < 0.4 - self._EPS)).prod(-1) * R2
+        )
+
+
+class CosineReward(GridReward):
+    """Cosine reward function."""
+
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        R0 = self.kwargs.get("R0", 0.1)
+        R1 = self.kwargs.get("R1", 0.5)
+
+        ax = abs(states_tensor / (self.height - 1) - 0.5)
+        pdf_input = ax * 5
+        pdf = 1.0 / (2 * torch.pi) ** 0.5 * torch.exp(-(pdf_input**2) / 2)
+        reward = R0 + ((torch.cos(ax * 50) + 1) * pdf).prod(-1) * R1
+        return reward
+
+
+class SparseReward(GridReward):
+    """Sparse reward function from the GAFN paper (Pan et al., 2022;
+    https://arxiv.org/abs/2210.03308)."""
+
+    def __init__(self, height: int, ndim: int, **kwargs):
+        super().__init__(height, ndim, **kwargs)
+        targets = []
+        for number_of_1s in range(ndim):
+            targets.extend(
+                itertools.permutations(
+                    [1] * number_of_1s + [self.height - 2] * (self.ndim - number_of_1s)
+                )
+            )
+        self.targets = torch.tensor(list(set(targets)), dtype=torch.long)
+
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        self.targets = self.targets.to(states_tensor.device)
+        reward = (
+            (states_tensor.unsqueeze(1) == self.targets.unsqueeze(0)).prod(-1).sum(-1)
+        ) + self._EPS  # Avoid log(0)
+        return reward
+
+
+class DeceptiveReward(GridReward):
+    """Deceptive reward function from Adaptive Teachers (Kim et al., 2025).
+
+    Note that the reward definition in the paper (eq. (9)) is incorrect, and we follow
+    the official implementation (https://github.com/alstn12088/adaptive-teacher/blob/8cfcb2298fce3f46eb36ead03791eeee75b7d066/grid/env.py#L27)
+    while modifying it to use EPS = 1e-12 to handle inequalities with floating points.
+    """
+
+    # Deceptive reward: R0 + (1 - 1[outer-ring])·R1 + 1[band]·R2.
+    # Outer-ring cancels R1, center keeps R1, band adds R2. Compared to Original,
+    # corners are de-emphasized (no +R1), while the center square is emphasized (+R1).
+    # Legend: X=band (R2), +=center (+R1), .=base (R0).
+    # For example, with height 16: band indices {2,13}; center indices {6,7,8,9}.
+    # Modes remain at (2,2), (2,13), (13,2), (13,13).
+    # y=15: . . . . . . . . . . . . . . . .
+    # y=14: . . . . . . . . . . . . . . . .
+    # y=13: . . X . . . . . . . . . . X . .
+    # y=12: . . . . . . . . . . . . . . . .
+    # y=11: . . . . . . . . . . . . . . . .
+    # y=10: . . . . . . . . . . . . . . . .
+    # y=09: . . . . . . + + + + . . . . . .
+    # y=08: . . . . . . + + + + . . . . . .
+    # y=07: . . . . . . + + + + . . . . . .
+    # y=06: . . . . . . + + + + . . . . . .
+    # y=05: . . . . . . . . . . . . . . . .
+    # y=04: . . . . . . . . . . . . . . . .
+    # y=03: . . . . . . . . . . . . . . . .
+    # y=02: . . X . . . . . . . . . . X . .
+    # y=01: . . . . . . . . . . . . . . . .
+    # y=00: . . . . . . . . . . . . . . . .
+    #       0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 (x-axis)
+
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        R0 = self.kwargs.get("R0", 1e-5)
+        R1 = self.kwargs.get("R1", 0.1)
+        R2 = self.kwargs.get("R2", 2.0)
+
+        ax = abs(states_tensor / (self.height - 1) - 0.5)
+        term1 = R0 + R1
+        cancel_outer = (0.1 + self._EPS < ax).prod(-1) * R1
+        ring_band = ((0.3 + self._EPS < ax) * (ax < 0.4 - self._EPS)).prod(-1) * R2
+        return term1 - cancel_outer + ring_band
