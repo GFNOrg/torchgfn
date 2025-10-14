@@ -171,7 +171,10 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
     """
 
     def __init__(
-        self, pf: Estimator, pb: Estimator | None, constant_pb: bool = False
+        self,
+        pf: Estimator,
+        pb: Estimator | None,
+        constant_pb: bool = False,
     ) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
@@ -183,6 +186,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+
         """
         super().__init__()
         # Technical note: pb may be constant for a variety of edge cases, for example,
@@ -211,6 +215,27 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         self.pf = pf
         self.pb = pb
         self.constant_pb = constant_pb
+
+        # Advisory: recurrent PF with non-recurrent PB is unusual
+        # (tree DAGs typically prefer pb=None with constant_pb=True).
+        # Import locally to avoid circular imports during module import time.
+        from gfn.estimators import RecurrentDiscretePolicyEstimator  # type: ignore
+
+        if isinstance(self.pf, RecurrentDiscretePolicyEstimator) and isinstance(
+            self.pb, Estimator
+        ):
+            warnings.warn(
+                "Using a recurrent PF, which is only valid for tree DAGs, with a "
+                "non-recurrent PB is unusual. "
+                "Consider using pb=None with constant_pb=True for tree DAGs.",
+            )
+        # Disallow recurrent PB estimators universally.
+        # I'm not actually sure we should disallow this.
+        if isinstance(self.pb, RecurrentDiscretePolicyEstimator):
+            raise TypeError(
+                "Recurrent PB estimators are not supported. Use a non-recurrent PB "
+                "or set pb=None with constant_pb=True for tree DAGs."
+            )
 
     def sample_trajectories(
         self,
@@ -275,20 +300,28 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
     """
 
     def __init__(
-        self, pf: Estimator, pb: Estimator | None, constant_pb: bool = False
+        self,
+        pf: Estimator,
+        pb: Estimator | None,
+        constant_pb: bool = False,
     ) -> None:
         """Initializes a TrajectoryBasedGFlowNet instance.
 
         Args:
             pf: The forward policy estimator.
-            pb: The backward policy estimator, or None if the gflownet DAG is a tree, and
-                pb is therefore always 1.
+            pb: The backward policy estimator, or None if the gflownet DAG is a tree,
+                and pb is therefore always 1.
             constant_pb: Whether to ignore the backward policy estimator, e.g., if the
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+
         """
-        super().__init__(pf, pb, constant_pb=constant_pb)
+        super().__init__(
+            pf,
+            pb,
+            constant_pb=constant_pb,
+        )
 
     def get_pfs_and_pbs(
         self,
@@ -301,8 +334,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         More specifically, it evaluates $\log P_F(s' \mid s)$ and $\log P_B(s \mid s')$
         for each transition in each trajectory in the batch.
 
-        If recalculate_all_logprobs=True, we re-evaluate the logprobs of the trajectories
-        using the current self.pf. Otherwise, the following applies:
+        If recalculate_all_logprobs=True, we re-evaluate the logprobs of the
+        trajectories using the current self.pf. Otherwise, the following applies:
             - If trajectories have logprobs attribute, use them - this is usually for
                 on-policy learning.
             - Elif trajectories have estimator_outputs attribute, transform them into
@@ -322,7 +355,11 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
             the log_pf and log_pb for each action in each trajectory.
         """
         return get_trajectory_pfs_and_pbs(
-            self.pf, self.pb, trajectories, fill_value, recalculate_all_logprobs
+            self.pf,
+            self.pb,
+            trajectories,
+            fill_value,
+            recalculate_all_logprobs,
         )
 
     def get_scores(

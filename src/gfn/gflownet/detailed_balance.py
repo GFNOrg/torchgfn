@@ -93,12 +93,23 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+
         """
         super().__init__(pf, pb, constant_pb=constant_pb)
+
+        # Disallow recurrent PF for transition-based DB
+        from gfn.estimators import RecurrentDiscretePolicyEstimator  # type: ignore
+
+        if isinstance(self.pf, RecurrentDiscretePolicyEstimator):
+            raise TypeError(
+                "DBGFlowNet does not support recurrent PF estimators (transitions path cannot propagate carry)."
+            )
+
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
         ), "logF must be a ScalarEstimator or derived"
+
         self.logF = logF
         self.forward_looking = forward_looking
         self.log_reward_clip_min = log_reward_clip_min
@@ -148,7 +159,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             log_pb for each transition.
         """
         return get_transition_pfs_and_pbs(
-            self.pf, self.pb, transitions, recalculate_all_logprobs
+            self.pf,
+            self.pb,
+            transitions,
+            recalculate_all_logprobs,
         )
 
     def get_scores(
@@ -301,9 +315,19 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
     """
 
     def __init__(
-        self, pf: Estimator, pb: Estimator | None, constant_pb: bool = False
+        self,
+        pf: Estimator,
+        pb: Estimator | None,
+        constant_pb: bool = False,
     ) -> None:
-        """Initializes a ModifiedDBGFlowNet instance."""
+        """Initializes a ModifiedDBGFlowNet instance.
+
+        Args:
+            pf: Forward policy estimator.
+            pb: Backward policy estimator or None.
+            constant_pb: See base class.
+
+        """
         super().__init__(pf, pb, constant_pb=constant_pb)
 
     def get_scores(

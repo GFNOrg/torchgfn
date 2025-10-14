@@ -7,7 +7,7 @@ from torch.distributions import Distribution, Normal  # TODO: extend to Beta
 from torch.distributions.independent import Independent
 from tqdm import trange
 
-from gfn.estimators import Estimator
+from gfn.estimators import Estimator, PolicyMixin
 from gfn.gflownet import TBGFlowNet  # TODO: Extend to SubTBGFlowNet
 from gfn.gym.line import Line
 from gfn.states import States
@@ -168,7 +168,7 @@ class GaussianStepMLP(MLP):
         return out
 
 
-class StepEstimator(Estimator):
+class StepEstimator(Estimator, PolicyMixin):
     """Estimator for PF and PB of the Line environment."""
 
     def __init__(self, env: Line, module: torch.nn.Module, backward: bool):

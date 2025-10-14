@@ -10,6 +10,7 @@
    guides/example
    guides/states_actions_containers
    guides/modules_estimators_samplers
+   guides/estimator_policy_mixin
    guides/losses
    guides/creating_environments
    guides/advanced
