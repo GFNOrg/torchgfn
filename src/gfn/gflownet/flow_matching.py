@@ -6,8 +6,8 @@ import torch
 from gfn.containers import StatesContainer, Trajectories
 from gfn.env import DiscreteEnv
 from gfn.estimators import (
-    DefaultPolicyMixin,
     DiscretePolicyEstimator,
+    PolicyMixin,
 )
 from gfn.gflownet.base import GFlowNet, loss_reduce
 from gfn.samplers import Sampler
@@ -51,8 +51,8 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         """
         super().__init__()
         assert isinstance(
-            logF, DefaultPolicyMixin
-        ), "logF must use the DefaultPolicyMixin interface"
+            logF, PolicyMixin
+        ), "logF must use the default PolicyMixin interface"
 
         self.logF = logF
         self.alpha = alpha

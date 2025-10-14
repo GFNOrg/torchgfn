@@ -4,13 +4,13 @@ import pytest
 import torch
 from torch.distributions import Categorical
 
-from gfn.adapters import (
-    DefaultEstimatorAdapter,
-    RecurrentEstimatorAdapter,
-    RolloutContext,
-)
 from gfn.containers import Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
+from gfn.estimators import PolicyMixin  # Use policy mixin directly instead of adapters
+from gfn.estimators import (
+    RecurrentPolicyMixin,  # Use recurrent policy mixin instead of adapters
+)
+from gfn.estimators import RolloutContext  # New rollout context used by PolicyMixin
 from gfn.estimators import (
     DiscreteGraphPolicyEstimator,
     DiscretePolicyEstimator,
@@ -476,29 +476,40 @@ class _FakeStates:
         return (self.tensor.shape[0],)
 
 
-class _DummyEstimator:
+class _DummyPolicy(PolicyMixin):
     is_backward = False
 
-    def __call__(self, states: _FakeStates, conditioning: torch.Tensor | None = None):
-        n = states.batch_shape[0]
-        return torch.zeros((n, 3), device=states.tensor.device)
+    # Minimal callable module that matches the `PolicyMixin` expectation of `self.module`
+    class _Module:
+        def __call__(
+            self, states: _FakeStates, conditioning: torch.Tensor | None = None
+        ):
+            n = states.batch_shape[0]
+            return torch.zeros((n, 3), device=states.tensor.device)
+
+    def __init__(self):
+        # The mixin calls `self.module(...)`; we provide a tiny callable to produce logits
+        self.module = self._Module()
 
     def to_probability_distribution(
         self, states: _FakeStates, est_out: torch.Tensor, **_: dict
     ):
-        logits = torch.zeros((states.batch_shape[0], 3), device=states.tensor.device)
-        return Categorical(logits=logits)
+        # Build a simple categorical policy directly from the provided logits
+        return Categorical(logits=est_out)
 
-    # no expected_output_dim required for adapter tests
+    def __call__(self, states: _FakeStates, conditioning: torch.Tensor | None = None):
+        return self.module(states, conditioning)
 
 
-class _DummyRecurrentEstimator:
+class _DummyRecurrentPolicy(RecurrentPolicyMixin):
     is_backward = False
 
     def init_carry(self, batch_size: int, device: torch.device):
+        # Provide a simple hidden state that increments each step
         return {"hidden": torch.zeros((batch_size, 2), device=device)}
 
     def __call__(self, states: _FakeStates, carry: dict[str, torch.Tensor]):
+        # Produce trivial logits and update the carry
         n = states.batch_shape[0]
         logits = torch.zeros((n, 3), device=states.tensor.device)
         new_carry = {"hidden": carry["hidden"] + 1}
@@ -507,10 +518,7 @@ class _DummyRecurrentEstimator:
     def to_probability_distribution(
         self, states: _FakeStates, est_out: torch.Tensor, **_: dict
     ):
-        logits = torch.zeros((states.batch_shape[0], 3), device=states.tensor.device)
-        return Categorical(logits=logits)
-
-    # no expected_output_dim required for adapter tests
+        return Categorical(logits=est_out)
 
 
 def test_rollout_context_basic():
@@ -523,18 +531,19 @@ def test_rollout_context_basic():
 
 
 def test_default_adapter_compute_record():
-    adapter = DefaultEstimatorAdapter(cast(Estimator, _DummyEstimator()))
+    # Adapted to directly use a policy implementing `PolicyMixin`
+    policy = _DummyPolicy()
     device = torch.device("cpu")
     n = 5
     states = _FakeStates(n, device)
-    ctx = adapter.init_context(n, device, conditioning=None)
+    ctx = policy.init_context(n, device, conditioning=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
-    dist, ctx = adapter.compute_dist(
+    dist, ctx = policy.compute_dist(
         cast(States, states), ctx, step_mask, save_estimator_outputs=True
     )
     actions = dist.sample()
-    _, ctx = adapter.log_probs(
+    _, ctx = policy.log_probs(
         actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
     )
     stacked_logprobs = (
@@ -554,36 +563,38 @@ def test_default_adapter_compute_record():
 
 
 def test_recurrent_adapter_requires_init_carry():
-    class _BadEstimator:
+    # Recurrent policies must implement `init_carry`; verify error when missing
+    class _BadRecurrentPolicy(RecurrentPolicyMixin):
         is_backward = False
 
-    with pytest.raises(TypeError, match="requires an estimator implementing init_carry"):
-        _ = RecurrentEstimatorAdapter(cast(Estimator, _BadEstimator()))
+    with pytest.raises(TypeError, match="requires.*init_carry"):
+        _ = _BadRecurrentPolicy().init_context(2, torch.device("cpu"), conditioning=None)
 
 
 def test_recurrent_adapter_flow():
-    adapter = RecurrentEstimatorAdapter(cast(Estimator, _DummyRecurrentEstimator()))
+    # Adapted to directly use a policy implementing `RecurrentPolicyMixin`
+    policy = _DummyRecurrentPolicy()
     device = torch.device("cpu")
     n = 3
     states = _FakeStates(n, device)
-    ctx = adapter.init_context(n, device, conditioning=None)
+    ctx = policy.init_context(n, device, conditioning=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
-    dist, ctx = adapter.compute_dist(
+    dist, ctx = policy.compute_dist(
         cast(States, states), ctx, step_mask, save_estimator_outputs=True
     )
     actions = dist.sample()
     # carry should update when we record multiple steps
     h0 = ctx.carry["hidden"].clone()
-    _, ctx = adapter.log_probs(
+    _, ctx = policy.log_probs(
         actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
     )
     # second step
-    dist, ctx = adapter.compute_dist(
+    dist, ctx = policy.compute_dist(
         cast(States, states), ctx, step_mask, save_estimator_outputs=True
     )
     actions = dist.sample()
-    _, ctx = adapter.log_probs(
+    _, ctx = policy.log_probs(
         actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
     )
     h1 = ctx.carry["hidden"].clone()
@@ -652,8 +663,8 @@ def test_integration_recurrent_sequence_model_with_adapter(
         is_backward=False,
     )
 
-    adapter = RecurrentEstimatorAdapter(estimator)
-    ctx = adapter.init_context(batch_size, device, conditioning=None)
+    # Use the estimator directly via `RecurrentPolicyMixin`
+    ctx = estimator.init_context(batch_size, device, conditioning=None)
 
     tokens = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
     states = _SeqStates(tokens, vocab_size)
@@ -661,11 +672,11 @@ def test_integration_recurrent_sequence_model_with_adapter(
     # Run two steps and verify carry and artifact shapes
     step_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
     for _ in range(2):
-        dist, ctx = adapter.compute_dist(
+        dist, ctx = estimator.compute_dist(
             cast(States, states), ctx, step_mask, save_estimator_outputs=True
         )
         actions = dist.sample()
-        _, ctx = adapter.log_probs(
+        _, ctx = estimator.log_probs(
             actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
         )
 
@@ -714,19 +725,19 @@ def test_integration_transformer_sequence_model_with_adapter(
         is_backward=False,
     )
 
-    adapter = RecurrentEstimatorAdapter(estimator)
-    ctx = adapter.init_context(batch_size, device, conditioning=None)
+    # Use the estimator directly via `RecurrentPolicyMixin`
+    ctx = estimator.init_context(batch_size, device, conditioning=None)
 
     tokens = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
     states = _SeqStates(tokens, vocab_size)
 
     step_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
 
-    dist, ctx = adapter.compute_dist(
+    dist, ctx = estimator.compute_dist(
         cast(States, states), ctx, step_mask, save_estimator_outputs=True
     )
     actions = dist.sample()
-    _, ctx = adapter.log_probs(
+    _, ctx = estimator.log_probs(
         actions, dist, ctx, step_mask, vectorized=False, save_logprobs=True
     )
 

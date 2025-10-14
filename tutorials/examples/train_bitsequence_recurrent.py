@@ -16,7 +16,6 @@ from typing import cast
 import torch
 from tqdm import tqdm
 
-from gfn.adapters import RecurrentEstimatorAdapter
 from gfn.estimators import RecurrentDiscretePolicyEstimator
 from gfn.gflownet import PFBasedGFlowNet, TBGFlowNet
 from gfn.gym.bitSequence import BitSequence
@@ -87,7 +86,6 @@ def main(args):
         pb=None,
         init_logZ=0.0,
         constant_pb=True,
-        pf_adapter=RecurrentEstimatorAdapter(pf_estimator),
     )
     gflownet = gflownet.to(device)
 

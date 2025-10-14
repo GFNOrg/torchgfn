@@ -488,8 +488,6 @@ def get_transition_pfs(
 ) -> torch.Tensor:
     """Calculate PF log‑probabilities for transitions.
 
-    Non‑vectorized: `single estimator call with legacy masks; no action‑id indexing.
-
     Args:
         pf: Forward policy estimator.
         transitions: Transitions to evaluate.
@@ -546,9 +544,6 @@ def get_transition_pbs(
     **policy_kwargs: Any,
 ) -> torch.Tensor:
     """Calculate PB log‑probabilities for transitions.
-
-    - Non‑vectorized ``is_vectorized=False`` single estimator call with legacy
-      masks; no action‑id indexing.
 
     Args:
         pb: Backward policy estimator, or ``None`` for trees (PB=1).

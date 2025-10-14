@@ -69,22 +69,22 @@ class PolicyEstimatorProtocol(Protocol):
 
     is_vectorized: bool
 
-    def init_context(
+    def init_context(  # noqa: E704
         self,
         batch_size: int,
         device: torch.device,
         conditioning: Optional[torch.Tensor] = None,
-    ) -> Any: ... # noqa: E704
+    ) -> Any: ...
 
-    def compute_dist(
+    def compute_dist(  # noqa: E704
         self,
         states_active: States,
         ctx: Any,
         step_mask: Optional[torch.Tensor] = None,
         **policy_kwargs: Any,
-    ) -> tuple[Distribution, Any]: ... # noqa: E704
+    ) -> tuple[Distribution, Any]: ...
 
-    def log_probs(
+    def log_probs(  # noqa: E704
         self,
         actions_active: torch.Tensor,
         dist: Distribution,
@@ -170,13 +170,13 @@ class PolicyMixin:
                 else:
                     cond_active = ctx.conditioning[step_mask]
 
-            # Call estimator with or without conditioning.
+            # Call estimator with or without conditioning (ensures preprocessor is applied).
             if cond_active is not None:
-                with has_conditioning_exception_handler("estimator", self._estimator):
-                    estimator_outputs = self.module(states_active, cond_active)
+                with has_conditioning_exception_handler("estimator", self):
+                    estimator_outputs = self(states_active, cond_active)  # type: ignore[misc,call-arg]
             else:
-                with no_conditioning_exception_handler("estimator", self._estimator):
-                    estimator_outputs = self.module(states_active)
+                with no_conditioning_exception_handler("estimator", self):
+                    estimator_outputs = self(states_active)  # type: ignore[misc]
 
         # Build the distribution.
         dist = self.to_probability_distribution(
