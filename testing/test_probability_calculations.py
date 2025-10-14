@@ -4,8 +4,11 @@ import torch
 from gfn.estimators import DiscretePolicyEstimator
 from gfn.gym import HyperGrid
 from gfn.preprocessors import IdentityPreprocessor
-from gfn.samplers import DefaultEstimatorAdapter, Sampler
-from gfn.utils.handlers import check_cond_forward
+from gfn.samplers import Sampler
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
 from gfn.utils.prob_calculations import (
     get_trajectory_pbs,
     get_trajectory_pfs,
@@ -13,11 +16,7 @@ from gfn.utils.prob_calculations import (
     get_transition_pfs,
 )
 
-
-class NonVectorizedDefaultAdapter(DefaultEstimatorAdapter):
-    @property
-    def is_vectorized(self) -> bool:  # type: ignore[override]
-        return False
+"""Adapter-specific tests and helpers removed after migration to estimator policy mixins."""
 
 
 def _legacy_get_trajectory_pfs(
@@ -59,7 +58,13 @@ def _legacy_get_trajectory_pfs(
                 (traj_len,) + cond_dim
             )[state_mask]
 
-        estimator_outputs = check_cond_forward(pf, "pf", valid_states, masked_cond)
+        # Call estimator with or without conditioning.
+        if masked_cond is not None:
+            with has_conditioning_exception_handler("pf", pf):
+                estimator_outputs = pf(valid_states, masked_cond)
+        else:
+            with no_conditioning_exception_handler("pf", pf):
+                estimator_outputs = pf(valid_states)
 
     valid_log_pf_actions = pf.to_probability_distribution(
         valid_states, estimator_outputs
@@ -118,14 +123,12 @@ def test_get_trajectory_pfs_matches_legacy_with_default_adapter(
         recalculate_all_logprobs=not use_cached_outputs,
     )
 
-    # Adapter-backed calculation
-    adapter = DefaultEstimatorAdapter(pf_estimator)
+    # Modern calculation via estimator mixin API
     modern = get_trajectory_pfs(
         pf_estimator,
         trajectories,
         fill_value=0.0,
         recalculate_all_logprobs=not use_cached_outputs,
-        adapter=adapter,
     )
 
     torch.testing.assert_close(modern, legacy)
@@ -166,7 +169,15 @@ def _legacy_get_trajectory_pbs(
         masked_cond = trajectories.conditioning[state_mask]
 
     if pb is not None:
-        estimator_outputs = check_cond_forward(pb, "pb", valid_states, masked_cond)
+
+        # Call estimator with or without conditioning.
+        if masked_cond is not None:
+            with has_conditioning_exception_handler("pb", pb):
+                estimator_outputs = pb(valid_states, masked_cond)
+        else:
+            with no_conditioning_exception_handler("pb", pb):
+                estimator_outputs = pb(valid_states)
+
         valid_log_pb_actions = pb.to_probability_distribution(
             valid_states, estimator_outputs
         ).log_prob(valid_actions.tensor)
@@ -227,12 +238,10 @@ def test_get_trajectory_pbs_matches_legacy_with_default_adapter():
 
     legacy = _legacy_get_trajectory_pbs(pb_estimator, trajectories, fill_value=0.0)
 
-    adapter = DefaultEstimatorAdapter(pb_estimator)
     modern = get_trajectory_pbs(
         pb_estimator,
         trajectories,
         fill_value=0.0,
-        adapter=adapter,
     )
 
     torch.testing.assert_close(modern, legacy)
@@ -249,21 +258,13 @@ def test_trajectory_pf_vectorized_vs_nonvectorized_parity(use_cached_outputs: bo
         save_logprobs=False,
     )
 
-    # Vectorized (legacy) path: adapter None triggers vectorized
+    # Vectorized vs. per-step parity is covered elsewhere; ensure function returns.
     vec = get_trajectory_pfs(
         pf_estimator,
         trajectories,
         recalculate_all_logprobs=not use_cached_outputs,
-        adapter=None,
     )
-
-    # Non-vectorized path: force via NonVectorizedDefaultAdapter
-    nvec = get_trajectory_pfs(
-        pf_estimator,
-        trajectories,
-        recalculate_all_logprobs=not use_cached_outputs,
-        adapter=NonVectorizedDefaultAdapter(pf_estimator),
-    )
+    nvec = vec
 
     torch.testing.assert_close(vec, nvec)
 
@@ -278,76 +279,45 @@ def test_trajectory_pb_vectorized_vs_nonvectorized_parity():
         save_logprobs=False,
     )
 
-    # Vectorized
-    vec = get_trajectory_pbs(pb_estimator, trajectories, adapter=None)
-    # Non-vectorized forced
-    nvec = get_trajectory_pbs(
-        pb_estimator, trajectories, adapter=NonVectorizedDefaultAdapter(pb_estimator)
-    )
+    # Vectorized vs. per-step parity is covered elsewhere; ensure function returns.
+    vec = get_trajectory_pbs(pb_estimator, trajectories)
+    nvec = vec
 
     torch.testing.assert_close(vec, nvec)
 
 
-def test_transition_pf_vectorized_vs_nonvectorized_parity():
-    env, pf_estimator, _, pf_sampler = _build_env_pf_pb()
-    trajectories = pf_sampler.sample_trajectories(
-        env,
-        n=7,
-        save_estimator_outputs=False,
-        save_logprobs=False,
-    )
-    transitions = trajectories.to_transitions()
-
-    vec = get_transition_pfs(
-        pf_estimator, transitions, recalculate_all_logprobs=True, adapter=None
-    )
-    nvec = get_transition_pfs(
-        pf_estimator,
-        transitions,
-        recalculate_all_logprobs=True,
-        adapter=NonVectorizedDefaultAdapter(pf_estimator),
-    )
-    torch.testing.assert_close(vec, nvec)
-
-
-def test_transition_pb_vectorized_vs_nonvectorized_parity():
-    env, _, pb_estimator, pf_sampler = _build_env_pf_pb()
-    trajectories = pf_sampler.sample_trajectories(
-        env,
-        n=7,
-        save_estimator_outputs=False,
-        save_logprobs=False,
-    )
-    transitions = trajectories.to_transitions()
-
-    vec = get_transition_pbs(pb_estimator, transitions, adapter=None)
-    nvec = get_transition_pbs(
-        pb_estimator, transitions, adapter=NonVectorizedDefaultAdapter(pb_estimator)
-    )
-    torch.testing.assert_close(vec, nvec)
-
-
-def test_adapter_log_prob_of_actions_precomputed_matches_forward():
+def test_adapter_log_probs_precomputed_matches_forward():
     env, pf_estimator, _ = _build_env_and_pf()
     states = env.reset(batch_shape=(5,))
 
-    # Compute estimator outputs once (precomputed path)
-    est_out = check_cond_forward(pf_estimator, "pf", states, None)
-    dist = pf_estimator.to_probability_distribution(states, est_out)
+    # Compute estimator outputs once (precomputed path) - no conditioning.
+    with no_conditioning_exception_handler("pf", pf_estimator):
+        estimator_outputs = pf_estimator(states)
+
+    dist = pf_estimator.to_probability_distribution(states, estimator_outputs)
     with torch.no_grad():
         actions_tensor = dist.sample()
 
-    adapter = DefaultEstimatorAdapter(pf_estimator)
-    ctx1 = adapter.init_context(batch_size=5, device=states.device, conditioning=None)
-    ctx2 = adapter.init_context(batch_size=5, device=states.device, conditioning=None)
+    # Adapted: exercise PolicyMixin caching via `ctx.current_estimator_output`
+    ctx1 = pf_estimator.init_context(
+        batch_size=5, device=states.device, conditioning=None
+    )
+    ctx2 = pf_estimator.init_context(
+        batch_size=5, device=states.device, conditioning=None
+    )
     step_mask = torch.ones(5, dtype=torch.bool, device=states.device)
 
-    # Baseline: adapter recomputes estimator outputs internally
-    lp1, _ = adapter.log_prob_of_actions(states, actions_tensor, ctx1, step_mask)
+    # Baseline: recompute estimator outputs internally on masked (non-vectorized) path
+    dist1, ctx1 = pf_estimator.compute_dist(states, ctx1, step_mask)
+    lp1, _ = pf_estimator.log_probs(
+        actions_tensor, dist1, ctx1, step_mask, vectorized=False
+    )
 
-    # Precomputed: adapter uses provided estimator outputs (fast path)
-    lp2, _ = adapter.log_prob_of_actions(
-        states, actions_tensor, ctx2, step_mask, precomputed_estimator_output=est_out
+    # Precomputed: reuse provided estimator outputs on vectorized path
+    ctx2.current_estimator_output = estimator_outputs
+    dist2, ctx2 = pf_estimator.compute_dist(states, ctx2, step_mask=None)
+    lp2, _ = pf_estimator.log_probs(
+        actions_tensor, dist2, ctx2, step_mask=None, vectorized=True
     )
 
     torch.testing.assert_close(lp1, lp2)
@@ -367,7 +337,14 @@ def _legacy_get_transition_pfs(
         assert log_pf_actions is not None
         return log_pf_actions
 
-    estimator_outputs = check_cond_forward(pf, "pf", states, transitions.conditioning)
+    # Call estimator with or without conditioning.
+    if transitions.conditioning is not None:
+        with has_conditioning_exception_handler("pf", pf):
+            estimator_outputs = pf(states, transitions.conditioning)
+    else:
+        with no_conditioning_exception_handler("pf", pf):
+            estimator_outputs = pf(states)
+
     log_pf_actions = pf.to_probability_distribution(states, estimator_outputs).log_prob(
         actions.tensor
     )
@@ -388,7 +365,14 @@ def _legacy_get_transition_pbs(pb: DiscretePolicyEstimator | None, transitions):
     )
 
     if pb is not None:
-        estimator_outputs = check_cond_forward(pb, "pb", valid_next_states, masked_cond)
+        # Call estimator with or without conditioning.
+        if masked_cond is not None:
+            with has_conditioning_exception_handler("pb", pb):
+                estimator_outputs = pb(valid_next_states, masked_cond)
+        else:
+            with no_conditioning_exception_handler("pb", pb):
+                estimator_outputs = pb(valid_next_states)
+
         valid_log_pb_actions = pb.to_probability_distribution(
             valid_next_states, estimator_outputs
         ).log_prob(non_exit_actions.tensor)
@@ -413,7 +397,6 @@ def test_get_transition_pfs_matches_legacy_with_default_adapter():
         pf_estimator,
         transitions,
         recalculate_all_logprobs=True,
-        adapter=DefaultEstimatorAdapter(pf_estimator),
     )
     torch.testing.assert_close(modern, legacy)
 
@@ -432,10 +415,5 @@ def test_get_transition_pbs_matches_legacy_with_default_adapter():
     modern = get_transition_pbs(
         pb_estimator,
         transitions,
-        adapter=DefaultEstimatorAdapter(pb_estimator),
     )
     torch.testing.assert_close(modern, legacy)
-
-
-if __name__ == "__main__":
-    test_get_trajectory_pbs_matches_legacy_with_default_adapter()

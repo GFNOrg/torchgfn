@@ -3,7 +3,7 @@ Implementations of the [Trajectory Balance loss](https://arxiv.org/abs/2201.1325
 and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
-from typing import Any, cast
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -47,9 +47,6 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         init_logZ: float = 0.0,
         log_reward_clip_min: float = -float("inf"),
         constant_pb: bool = False,
-        *,
-        pf_adapter: Any | None = None,
-        pb_adapter: Any | None = None,
     ):
         """Initializes a TBGFlowNet instance.
 
@@ -64,16 +61,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             constant_pb: Whether to ignore pb e.g., the GFlowNet DAG is a tree, and pb
                 is therefore always 1. Must be set explicitly by user to ensure that pb
                 is an Estimator except under this special case.
-            pf_adapter: Optional estimator adapter controlling how PF probabilities are
-                computed and sampled (e.g., `RecurrentEstimatorAdapter`). When provided,
-                it is used both by the Sampler and by probability recomputation paths.
-            pb_adapter: Optional estimator adapter for PB probability computation. If
-                provided and `pb` is an Estimator, it will be used in probability
-                recomputation paths that require PB.
         """
-        super().__init__(
-            pf, pb, constant_pb=constant_pb, pf_adapter=pf_adapter, pb_adapter=pb_adapter
-        )
+        super().__init__(pf, pb, constant_pb=constant_pb)
 
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
         self.log_reward_clip_min = log_reward_clip_min

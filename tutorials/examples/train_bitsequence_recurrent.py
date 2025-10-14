@@ -19,7 +19,6 @@ from tqdm import tqdm
 from gfn.estimators import RecurrentDiscretePolicyEstimator
 from gfn.gflownet import PFBasedGFlowNet, TBGFlowNet
 from gfn.gym.bitSequence import BitSequence
-from gfn.samplers import RecurrentEstimatorAdapter
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
 from gfn.utils.modules import RecurrentDiscreteSequenceModel
@@ -87,7 +86,6 @@ def main(args):
         pb=None,
         init_logZ=0.0,
         constant_pb=True,
-        pf_adapter=RecurrentEstimatorAdapter(pf_estimator),
     )
     gflownet = gflownet.to(device)
 

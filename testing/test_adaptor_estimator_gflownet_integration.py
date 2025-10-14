@@ -10,7 +10,7 @@ from gfn.estimators import (
 )
 from gfn.gflownet import DBGFlowNet, TBGFlowNet
 from gfn.gym.bitSequence import BitSequence
-from gfn.samplers import DefaultEstimatorAdapter, RecurrentEstimatorAdapter
+from gfn.preprocessors import IdentityPreprocessor
 from gfn.utils.modules import MLP, RecurrentDiscreteSequenceModel
 
 
@@ -49,9 +49,10 @@ def _make_recurrent_pf(
 
 
 def _make_nonrecurrent_pf_pb(env: BitSequence, device: torch.device):
-    input_dim = (
-        env.words_per_seq
-    )  # BitSequence states are integer words of length words_per_seq
+    # BitSequence states are integer words of length words_per_seq
+    input_dim = env.words_per_seq
+    preprocessor = IdentityPreprocessor(output_dim=input_dim)
+
     pf_module = MLP(
         input_dim=input_dim, output_dim=env.n_actions, hidden_dim=32, n_hidden_layers=1
     ).to(device)
@@ -62,10 +63,16 @@ def _make_nonrecurrent_pf_pb(env: BitSequence, device: torch.device):
         n_hidden_layers=1,
     ).to(device)
     pf = DiscretePolicyEstimator(
-        module=pf_module, n_actions=env.n_actions, is_backward=False
+        module=pf_module,
+        n_actions=env.n_actions,
+        is_backward=False,
+        preprocessor=preprocessor,
     ).to(device)
     pb = DiscretePolicyEstimator(
-        module=pb_module, n_actions=env.n_actions, is_backward=True
+        module=pb_module,
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=preprocessor,
     ).to(device)
     return pf, pb
 
@@ -74,8 +81,7 @@ def test_recurrent_tb_passes_with_pb_none():
     device = torch.device("cpu")
     env = _make_bitsequence_env(device=device)
     pf = _make_recurrent_pf(env, device)
-    adapter = RecurrentEstimatorAdapter(pf)
-    gfn = TBGFlowNet(pf=pf, pb=None, init_logZ=0.0, constant_pb=True, pf_adapter=adapter)
+    gfn = TBGFlowNet(pf=pf, pb=None, init_logZ=0.0, constant_pb=True)
 
     # sample and compute a loss to ensure end-to-end path works
     trajectories = gfn.sample_trajectories(
@@ -91,13 +97,9 @@ def test_warn_on_recurrent_pf_with_nonrecurrent_pb():
     pf = _make_recurrent_pf(env, device)
     pb_pf, pb = _make_nonrecurrent_pf_pb(env, device)
     del pb_pf  # unused
-
-    adapter = RecurrentEstimatorAdapter(pf)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        _ = TBGFlowNet(
-            pf=pf, pb=pb, init_logZ=0.0, constant_pb=False, pf_adapter=adapter
-        )
+        _ = TBGFlowNet(pf=pf, pb=pb, init_logZ=0.0, constant_pb=False)
         assert any("unusual" in str(x.message).lower() for x in w)
 
 
@@ -145,46 +147,27 @@ def test_db_gflownet_rejects_recurrent_pf_and_adapter():
             constant_pb=True,
         )  # type: ignore[arg-type]
 
-    # non-recurrent PF with recurrent adapter should also be rejected
+    # Non-recurrent PF should be accepted (adapters are now part of estimators)
     pf_nonrec, _ = _make_nonrecurrent_pf_pb(env, device)
-    adapter = RecurrentEstimatorAdapter(
-        _make_recurrent_pf(env, device)
-    )  # construct valid adapter
-    with pytest.raises(TypeError, match="does not support RecurrentEstimatorAdapter"):
-        _ = DBGFlowNet(
-            pf=pf_nonrec,
-            pb=None,
-            logF=logF_est,
-            constant_pb=True,
-            pf_adapter=adapter,
-        )  # type: ignore[arg-type]
+    _ = DBGFlowNet(
+        pf=pf_nonrec,
+        pb=None,
+        logF=logF_est,
+        constant_pb=True,
+    )  # type: ignore[arg-type]
 
 
 def test_nonrecurrent_tb_passes_with_pb_defined():
     device = torch.device("cpu")
     env = _make_bitsequence_env(device=device)
     pf, pb = _make_nonrecurrent_pf_pb(env, device)
-    gfn = TBGFlowNet(
-        pf=pf,
-        pb=pb,
-        init_logZ=0.0,
-        constant_pb=False,
-        pf_adapter=DefaultEstimatorAdapter(pf),
-    )
+    gfn = TBGFlowNet(pf=pf, pb=pb, init_logZ=0.0, constant_pb=False)
 
     trajectories = gfn.sample_trajectories(
         env, n=3, save_logprobs=True, save_estimator_outputs=False
     )
     loss = gfn.loss(env, trajectories, recalculate_all_logprobs=False)
     assert torch.isfinite(loss)
-
-
-def test_adapter_rejects_nonrecurrent_estimator():
-    device = torch.device("cpu")
-    env = _make_bitsequence_env(device=device)
-    pf, _ = _make_nonrecurrent_pf_pb(env, device)
-    with pytest.raises(TypeError, match="requires an estimator implementing init_carry"):
-        _ = RecurrentEstimatorAdapter(pf)
 
 
 def test_pb_mlp_trunk_sharing_parity_on_transitions():
@@ -230,11 +213,7 @@ def test_pb_mlp_trunk_sharing_parity_on_transitions():
     # Compute PB log-probs using vectorized default adapters for each PB
     from gfn.utils.prob_calculations import get_transition_pbs
 
-    lp_shared = get_transition_pbs(
-        pb_shared, transitions, adapter=DefaultEstimatorAdapter(pb_shared)
-    )
-    lp_indep = get_transition_pbs(
-        pb_indep, transitions, adapter=DefaultEstimatorAdapter(pb_indep)
-    )
+    lp_shared = get_transition_pbs(pb_shared, transitions)
+    lp_indep = get_transition_pbs(pb_indep, transitions)
 
     torch.testing.assert_close(lp_shared, lp_indep)
