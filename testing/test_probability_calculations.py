@@ -81,8 +81,8 @@ def _legacy_get_trajectory_pfs(
     return log_pf_trajectories
 
 
-def _build_env_and_pf(n: int = 4):
-    env = HyperGrid(ndim=2, height=4)
+def _build_env_and_pf():
+    env = HyperGrid(ndim=4, height=12)
     preprocessor = IdentityPreprocessor(
         output_dim=env.state_shape[-1], target_dtype=torch.get_default_dtype()
     )
@@ -196,7 +196,7 @@ def _legacy_get_trajectory_pbs(
 
 
 def _build_env_pf_pb():
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=4, height=12)
     preprocessor = IdentityPreprocessor(
         output_dim=env.state_shape[-1], target_dtype=torch.get_default_dtype()
     )
