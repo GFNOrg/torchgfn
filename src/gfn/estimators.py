@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, Protocol, cast, runtime_checkable
 
 import torch
 import torch.nn as nn
@@ -8,20 +8,298 @@ from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
 
 from gfn.actions import GraphActions, GraphActionType
-from gfn.adapters import (
-    DefaultEstimatorAdapter,
-    EstimatorAdapter,
-    RecurrentEstimatorAdapter,
-)
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
+from gfn.utils.handlers import (
+    has_conditioning_exception_handler,
+    no_conditioning_exception_handler,
+)
 
 REDUCTION_FUNCTIONS = {
     "mean": torch.mean,
     "sum": torch.sum,
     "prod": torch.prod,
 }
+
+
+class RolloutContext:
+    """Structured per‑rollout state owned by estimators.
+
+    Holds rollout invariants and optional per‑step buffers; use ``extras`` for
+    estimator‑specific fields without changing the class shape.
+    """
+
+    __slots__ = (
+        "batch_size",
+        "device",
+        "conditioning",
+        "carry",
+        "trajectory_log_probs",
+        "trajectory_estimator_outputs",
+        "current_estimator_output",
+        "extras",
+    )
+
+    def __init__(
+        self,
+        batch_size: int,
+        device: torch.device,
+        conditioning: Optional[torch.Tensor] = None,
+    ) -> None:
+        self.batch_size = batch_size
+        self.device = device
+        self.conditioning = conditioning
+        self.carry = None
+        self.trajectory_log_probs: List[torch.Tensor] = []
+        self.trajectory_estimator_outputs: List[torch.Tensor] = []
+        self.current_estimator_output: Optional[torch.Tensor] = None
+        self.extras: Dict[str, Any] = {}
+
+
+@runtime_checkable
+class PolicyEstimatorProtocol(Protocol):
+    """Static-typing surface for estimators that are policy-capable.
+
+    This protocol captures the methods provided by the PolicyMixin so that external
+    code (e.g., samplers/probability calculators) can use a precise type rather than
+    relying on dynamic attributes. This helps static analyzers avoid false positives
+    like "Tensor is not callable" when calling mixin methods.
+    """
+
+    is_vectorized: bool
+
+    def init_context(  # noqa: E704
+        self,
+        batch_size: int,
+        device: torch.device,
+        conditioning: Optional[torch.Tensor] = None,
+    ) -> Any: ...
+
+    def compute_dist(  # noqa: E704
+        self,
+        states_active: States,
+        ctx: Any,
+        step_mask: Optional[torch.Tensor] = None,
+        **policy_kwargs: Any,
+    ) -> tuple[Distribution, Any]: ...
+
+    def log_probs(  # noqa: E704
+        self,
+        actions_active: torch.Tensor,
+        dist: Distribution,
+        ctx: Any,
+        step_mask: Optional[torch.Tensor] = None,
+        vectorized: bool = False,
+        **kwargs: Any,
+    ) -> tuple[torch.Tensor, Any]: ...
+
+
+class PolicyMixin:
+    """Mixin enabling an `Estimator` to act as a policy (distribution over actions).
+
+    Provides the generic rollout API (`init_context`, `compute_dist`, `log_probs`)
+    directly on the estimator. Standard policies should inherit from this mixin.
+    """
+
+    @property
+    def is_vectorized(self) -> bool:
+        """Used for vectorized probability calculations."""
+        return True
+
+    def init_context(
+        self,
+        batch_size: int,
+        device: torch.device,
+        conditioning: Optional[torch.Tensor] = None,
+    ) -> RolloutContext:
+        """Create a new per-rollout context.
+
+        Stores rollout invariants (batch size, device, optional conditioning) and
+        initializes empty buffers for per-step artifacts.
+
+        """
+        return RolloutContext(
+            batch_size=batch_size, device=device, conditioning=conditioning
+        )
+
+    def compute_dist(
+        self,
+        states_active: States,
+        ctx: Any,
+        step_mask: Optional[torch.Tensor] = None,
+        save_estimator_outputs: bool = False,
+        **policy_kwargs: Any,
+    ) -> tuple[Distribution, Any]:
+        """Run the estimator for active rows and build an action Distribution.
+
+        Args:
+            states_active: The states to run the estimator on.
+            ctx: The context to run the estimator on.
+            step_mask: The mask to slice the conditioning to the active subset.
+            save_estimator_outputs: Whether to save the estimator outputs.
+            **policy_kwargs: Additional keyword arguments to pass to the estimator.
+
+        Returns:
+            A tuple containing the distribution and the context.
+
+        - Uses `step_mask` to slice conditioning to the active subset. When `step_mask`
+          is None, the estimator running in a vectorized context.
+        - Saves the raw estimator output in `ctx.current_estimator_output` for
+          optional recording in `record_step`.
+        """
+        precopmputed_estimator_outputs = getattr(ctx, "current_estimator_output", None)
+
+        if step_mask is None and precopmputed_estimator_outputs is not None:
+            expected_bs = states_active.batch_shape[0]
+            if precopmputed_estimator_outputs.shape[0] != expected_bs:
+                raise RuntimeError(
+                    "current_estimator_output batch size does not match active states. "
+                    f"Got {precopmputed_estimator_outputs.shape[0]}, expected {expected_bs}. "
+                    "This indicates stale cache reuse; ensure per-step masking when setting "
+                    "ctx.current_estimator_output and clear it when not valid."
+                )
+            estimator_outputs = precopmputed_estimator_outputs
+
+        # Otherwise, compute the estimator outputs.
+        else:
+            cond_active = None
+            if ctx.conditioning is not None:
+                if step_mask is None:
+                    cond_active = ctx.conditioning
+                else:
+                    cond_active = ctx.conditioning[step_mask]
+
+            # Call estimator with or without conditioning (ensures preprocessor is applied).
+            if cond_active is not None:
+                with has_conditioning_exception_handler("estimator", self):
+                    estimator_outputs = self(states_active, cond_active)  # type: ignore[misc,call-arg]
+            else:
+                with no_conditioning_exception_handler("estimator", self):
+                    estimator_outputs = self(states_active)  # type: ignore[misc]
+
+        # Build the distribution.
+        dist = self.to_probability_distribution(
+            states_active, estimator_outputs, **policy_kwargs
+        )
+
+        # Save current estimator output only when requested.
+        if save_estimator_outputs:
+            ctx.current_estimator_output = estimator_outputs
+
+            # If we are in a non-vectorized path (masked), append a padded copy to trajectory.
+            if step_mask is not None:
+                padded = torch.full(
+                    (ctx.batch_size,) + estimator_outputs.shape[1:],
+                    -float("inf"),
+                    device=ctx.device,
+                )
+                padded[step_mask] = estimator_outputs
+                ctx.trajectory_estimator_outputs.append(padded)
+
+        else:
+            ctx.current_estimator_output = None
+
+        return dist, ctx
+
+    def log_probs(
+        self,
+        actions_active: torch.Tensor,
+        dist: Distribution,
+        ctx: Any,
+        step_mask: Optional[torch.Tensor] = None,
+        vectorized: bool = False,
+        save_logprobs: bool = False,
+    ) -> tuple[torch.Tensor, Any]:
+        """Compute log-probs, optionally padding back to full batch when non-vectorized."""
+        lp = dist.log_prob(actions_active)
+
+        if vectorized:
+            if save_logprobs:
+                ctx.trajectory_log_probs.append(lp)
+            return lp, ctx
+
+        # Non-vectorized path strict check. None of these should be -inf after masking.
+        if torch.any(torch.isinf(lp)):
+            raise RuntimeError("Log probabilities are inf. This should not happen.")
+
+        assert step_mask is not None, "step_mask is required when vectorized=False"
+        step_lp = torch.full((ctx.batch_size,), 0.0, device=ctx.device, dtype=lp.dtype)
+        step_lp[step_mask] = lp
+
+        if save_logprobs:
+            ctx.trajectory_log_probs.append(step_lp)
+
+        return step_lp, ctx
+
+    def get_current_estimator_output(self, ctx: Any) -> Optional[torch.Tensor]:
+        """Expose the most recent per-step estimator output saved during `compute`."""
+        return getattr(ctx, "current_estimator_output", None)
+
+
+class RecurrentPolicyMixin(PolicyMixin):
+    """Mixin for recurrent policies that maintain and update a rollout carry."""
+
+    @property
+    def is_vectorized(self) -> bool:
+        return False
+
+    def init_context(
+        self,
+        batch_size: int,
+        device: torch.device,
+        conditioning: Optional[torch.Tensor] = None,
+    ) -> RolloutContext:
+        ctx = super().init_context(batch_size, device, conditioning)
+        init_carry = getattr(self, "init_carry", None)
+        if not callable(init_carry):
+            raise TypeError(
+                "Recurrent policy requires init_carry(batch_size: int, device: torch.device)."
+            )
+        init_carry_fn = cast(Callable[[int, torch.device], Any], init_carry)
+        ctx.carry = init_carry_fn(batch_size, device)
+
+        return ctx
+
+    def compute_dist(
+        self,
+        states_active: States,
+        ctx: Any,
+        step_mask: Optional[torch.Tensor] = None,
+        save_estimator_outputs: bool = False,
+        **policy_kwargs: Any,
+    ) -> tuple[Distribution, Any]:
+        """Run estimator with carry and update it.
+
+        Differs from the default PolicyMixin by calling
+        `estimator(states_active, ctx.carry) -> (est_out, new_carry)`, storing the
+        updated carry and saving `current_estimator_output` before building the
+        Distribution.
+        """
+        estimator_outputs, new_carry = self(states_active, ctx.carry)  # type: ignore
+        ctx.carry = new_carry
+        dist = self.to_probability_distribution(
+            states_active,
+            estimator_outputs,
+            **policy_kwargs,
+        )
+
+        # Save current estimator output only when requested.
+        if save_estimator_outputs:
+            ctx.current_estimator_output = estimator_outputs
+
+            if step_mask is not None:
+                padded = torch.full(
+                    (ctx.batch_size,) + estimator_outputs.shape[1:],
+                    -float("inf"),
+                    device=ctx.device,
+                )
+                padded[step_mask] = estimator_outputs
+                ctx.trajectory_estimator_outputs.append(padded)
+        else:
+            ctx.current_estimator_output = None
+
+        return dist, ctx
 
 
 class Estimator(ABC, nn.Module):
@@ -56,10 +334,7 @@ class Estimator(ABC, nn.Module):
             `IdentityPreprocessor`.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
-        _default_adapter_class: The default adapter class for this estimator.
     """
-
-    _default_adapter_class = DefaultEstimatorAdapter
 
     def __init__(
         self,
@@ -123,11 +398,6 @@ class Estimator(ABC, nn.Module):
             is not well-defined (e.g., when the output is a TensorDict for GraphActions).
         """
 
-    @property
-    def default_adapter_class(self) -> type[EstimatorAdapter] | None:
-        """The default adapter class for this estimator."""
-        return self._default_adapter_class
-
     def to_probability_distribution(
         self,
         states: States,
@@ -173,10 +443,7 @@ class ScalarEstimator(Estimator):
             that can be used as input to the module.
         is_backward: Always False for ScalarEstimator (since it's direction-agnostic).
         reduction_function: Function used to reduce multi-dimensional outputs to scalars.
-        _default_adapter_class: There is no default adapter class for this estimator.
     """
-
-    _default_adapter_class = None
 
     def __init__(
         self,
@@ -241,7 +508,6 @@ class LogitBasedEstimator(Estimator):
         preprocessor: Preprocessor object that transforms raw States objects to tensors.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
-        _default_adapter_class: The default adapter class for this estimator.
     """
 
     @staticmethod
@@ -389,15 +655,13 @@ class ConditionalLogZEstimator(ScalarEstimator):
     """Conditional logZ estimator.
 
     This estimator is used to estimate the logZ of a GFlowNet from a conditioning
-    tensor. Since conditioning is a tensor, it does not have a preprocessor. Reduction is used to aggregate the outputs of the module into a single scalar.
+    tensor. Since conditioning is a tensor, it does not have a preprocessor.
+    Reduction is used to aggregate the outputs of the module into a single scalar.
 
     Attributes:
         module: The neural network module to use.
         reduction: String name of one of the REDUCTION_FUNCTIONS keys.
-        _default_adapter_class: There is no default adapter class for this estimator.
     """
-
-    _default_adapter_class = None
 
     def __init__(self, module: nn.Module, reduction: str = "mean"):
         super().__init__(module, preprocessor=None, reduction=reduction)
@@ -406,7 +670,7 @@ class ConditionalLogZEstimator(ScalarEstimator):
         return self.module(input)
 
 
-class DiscretePolicyEstimator(LogitBasedEstimator):
+class DiscretePolicyEstimator(PolicyMixin, LogitBasedEstimator):
     r"""Forward or backward policy estimators for discrete environments.
 
     Estimates either:
@@ -422,7 +686,6 @@ class DiscretePolicyEstimator(LogitBasedEstimator):
         preprocessor: Preprocessor object that transforms raw States objects to tensors.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
-        _default_adapter_class: The default adapter class for this estimator.
     """
 
     def __init__(
@@ -527,7 +790,6 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         preprocessor: Preprocessor object that transforms raw States objects to tensors.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
-        _default_adapter_class: The default adapter class for this estimator.
     """
 
     def __init__(
@@ -608,10 +870,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         is_backward: Always False for ConditionalScalarEstimator (since it's
             direction-agnostic).
         reduction_function: Function used to reduce multi-dimensional outputs to scalars.
-        _default_adapter_class: There is no default adapter class for this estimator.
     """
-
-    _default_adapter_class = None
 
     def __init__(
         self,
@@ -692,7 +951,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         raise NotImplementedError
 
 
-class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
+class DiscreteGraphPolicyEstimator(PolicyMixin, LogitBasedEstimator):
     r"""Forward or backward policy estimators for graph-based environments.
 
     Estimates either, where $s$ and $s'$ are graph states:
@@ -708,7 +967,6 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         preprocessor: Preprocessor object that transforms GraphStates objects to tensors.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
-        _default_adapter_class: The default adapter class for this estimator.
     """
 
     def to_probability_distribution(
@@ -835,7 +1093,7 @@ class DiscreteGraphPolicyEstimator(LogitBasedEstimator):
         return None
 
 
-class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
+class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstimator):
     """Discrete policy estimator for recurrent architectures with explicit carry.
 
     Many sequence models (e.g., RNN/LSTM/GRU/Transformer in autoregressive mode)
@@ -850,11 +1108,9 @@ class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
     - Ensuring the per-step output (``logits`` over actions) is derived from the
       latest token/time step while the internal model may process sequences.
 
-    Interaction with the sampler/adapters
-    -------------------------------------
-    The sampler uses a ``RecurrentEstimatorAdapter`` which calls this estimator
+    The sampler uses a ``RecurrentPolicyMixin`` which calls this estimator
     with the current carry, updates the carry on every step, and records
-    per-step artifacts. Non-recurrent estimators should use the default adapter
+    per-step artifacts. Non-recurrent estimators should use the default PolicyMixin
     and the standard ``DiscretePolicyEstimator`` base class instead.
 
     Notes
@@ -862,7 +1118,7 @@ class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
     - Forward is intended for on-policy generation; off-policy evaluation over
       entire trajectories typically requires different batching and masking.
     - ``init_carry`` is a hard requirement for compatibility with the recurrent
-      adapter.
+      PolicyMixin.
 
     Attributes:
         module: The neural network module to use.
@@ -870,10 +1126,7 @@ class RecurrentDiscretePolicyEstimator(DiscretePolicyEstimator):
         preprocessor: Preprocessor object that transforms states to tensors.
         is_backward: Flag indicating whether this estimator is for backward policy,
             i.e., is used for predicting probability distributions over parents.
-        _default_adapter_class: The default adapter class for this estimator.
     """
-
-    _default_adapter_class = RecurrentEstimatorAdapter
 
     def __init__(
         self,

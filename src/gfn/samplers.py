@@ -1,12 +1,11 @@
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, cast
 
 import torch
 
 from gfn.actions import Actions
-from gfn.adapters import EstimatorAdapter, maybe_instantiate_adapter
 from gfn.containers import Trajectories
 from gfn.env import Env
-from gfn.estimators import Estimator
+from gfn.estimators import Estimator, PolicyEstimatorProtocol
 from gfn.states import GraphStates, States
 from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import graph_states_share_storage
@@ -14,37 +13,21 @@ from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 
 
 class Sampler:
-    """Adapter‑driven sampler for GFlowNet environments.
+    """Estimator‑driven sampler for GFlowNet environments.
 
-    Delegates policy logic to an adapter: the adapter builds action
-    distributions, computes step log‑probs, and records artifacts into a
-    rollout context. Direction (forward/backward) is determined by
-    ``adapter.is_backward``.
+    The estimator builds action distributions, computes step log‑probs, and records
+    artifacts into a rollout context via method flags. Direction (forward/backward)
+    is determined by ``estimator.is_backward``.
 
     Attributes:
-        estimator: The underlying policy estimator (adapter wraps it).
-        adapter: The adapter used to build action distributions, compute step log‑probs,
-            and record artifacts into a rollout context.
+        estimator: The underlying policy estimator. Must expose the methods contained
+            in the `PolicyMixin` mixin.
     """
 
-    def __init__(
-        self,
-        estimator: Estimator,
-        adapter: (
-            Callable[[Estimator], EstimatorAdapter] | EstimatorAdapter | None
-        ) = None,
-    ) -> None:
-        """Initializes a Sampler with a PolicyEstimator.
-
-        Args:
-            estimator: The PolicyEstimator to use for sampling actions and computing
-                probability distributions.
-            adapter: An adapter class instance or callable to use for sampling actions
-                and computing probability distributions. If None, the default adapter
-                class for the estimator will be used.
-        """
+    def __init__(self, estimator: Estimator) -> None:
+        """Initializes a Sampler with a PolicyEstimator."""
         self.estimator = estimator
-        self.adapter = maybe_instantiate_adapter(estimator, adapter)
+        # TODO: Assert that the estimator exposes the methods contained in the `PolicyMixin` mixin.
 
     def sample_actions(
         self,
@@ -56,19 +39,19 @@ class Sampler:
         ctx: Any | None = None,
         **policy_kwargs: Any,
     ) -> Tuple[Actions, torch.Tensor | None, torch.Tensor | None]:
-        """Sample one step from ``states`` via the adapter.
+        """Sample one step from ``states`` via the estimator.
 
-        Initializes or reuses a rollout context with ``adapter.init_context``,
-        builds a Distribution with ``adapter.compute_dist``, optionally computes
-        log‑probs with ``adapter.log_probs``, and lets ``adapter.record``
-        persist per‑step artifacts.
+        Initializes or reuses a rollout context with ``estimator.init_context``,
+        builds a Distribution with ``estimator.compute_dist``, and optionally computes
+        log‑probs with ``estimator.log_probs``. Per‑step artifacts are recorded by
+        the estimator when the corresponding flags are set.
 
         Args:
             env: Environment providing action/state conversion utilities.
             states: Batch of states to act on.
             conditioning: Optional conditioning for conditional policies.
             save_estimator_outputs: If True, return the raw estimator outputs
-                cached by the adapter for this step. Useful for off-policy training
+                cached by the PolicyMixin for this step. Useful for off-policy training
                 with tempered policies.
             save_logprobs: If True, return per‑step log‑probs padded to batch.
                 Useful for on-policy training.
@@ -78,10 +61,21 @@ class Sampler:
         Returns:
             ``(Actions, log_probs | None, estimator_outputs | None)``. The
             estimator outputs come from
-            ``adapter.get_current_estimator_output(ctx)`` when requested.
+            ``PolicyMixin.get_current_estimator_output(ctx)`` when requested.
         """
+        # NOTE: Explicitly cast to the policy protocol so static analyzers know
+        # the estimator exposes the mixin methods (init_context/compute_dist/log_probs).
+        policy_estimator = cast(PolicyEstimatorProtocol, self.estimator)
+        # Runtime guard: ensure the estimator actually implements the required protocol methods.
+        # This keeps helpful error messages when a non‑policy estimator is supplied.
+        for required in ("init_context", "compute_dist", "log_probs"):
+            if not hasattr(policy_estimator, required):
+                raise TypeError(
+                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
+                )
+
         if ctx is None:
-            ctx = self.adapter.init_context(
+            ctx = policy_estimator.init_context(
                 batch_size=states.batch_shape[0],
                 device=states.device,
                 conditioning=conditioning,
@@ -90,45 +84,47 @@ class Sampler:
         step_mask = torch.ones(
             states.batch_shape[0], dtype=torch.bool, device=states.device
         )
-        dist, ctx = self.adapter.compute_dist(states, ctx, step_mask, **policy_kwargs)
+        dist, ctx = policy_estimator.compute_dist(
+            states,
+            ctx,
+            step_mask,
+            save_estimator_outputs=save_estimator_outputs,
+            **policy_kwargs,
+        )
 
         with torch.no_grad():
             actions_tensor = dist.sample()
 
         if save_logprobs:
-            # Use adapter to compute step log-probs and pad to batch.
-            log_probs, ctx = self.adapter.log_probs(
-                actions_tensor, dist, ctx, step_mask, vectorized=False
+            # Use estimator to compute step log-probs and pad to batch.
+            log_probs, ctx = policy_estimator.log_probs(
+                actions_tensor,
+                dist,
+                ctx,
+                step_mask,
+                vectorized=False,
+                save_logprobs=True,
             )
         else:
             log_probs = None
-
-        # Allow adapter to record per-step artifacts for callers that reuse ctx.
-        self.adapter.record(
-            ctx=ctx,
-            step_mask=step_mask,
-            sampled_actions=actions_tensor,
-            dist=dist,
-            log_probs=log_probs,
-            save_estimator_outputs=save_estimator_outputs,
-        )
 
         actions = env.actions_from_tensor(actions_tensor)
 
         estimator_output = None
         if save_estimator_outputs:
-            if not hasattr(self.adapter, "get_current_estimator_output"):
+            if not hasattr(policy_estimator, "get_current_estimator_output"):
                 raise TypeError(
-                    "Adapter does not support get_current_estimator_output and save_estimator_outputs is True!"
+                    "Estimator does not support get_current_estimator_output and save_estimator_outputs is True!"
                 )
-            estimator_output = self.adapter.get_current_estimator_output(ctx)
+            estimator_output = policy_estimator.get_current_estimator_output(ctx)
             assert estimator_output is not None
 
         assert log_probs is None or log_probs.shape == actions.batch_shape
 
         return actions, log_probs, estimator_output
 
-    def sample_trajectories(
+    # TODO: How to avoid "Sampler.sample_trajectories' is too complex" error?
+    def sample_trajectories(  # noqa: C901
         self,
         env: Env,
         n: Optional[int] = None,
@@ -138,12 +134,11 @@ class Sampler:
         save_logprobs: bool = False,
         **policy_kwargs: Any,
     ) -> Trajectories:
-        """Roll out complete trajectories using the adapter.
+        """Roll out complete trajectories using the estimator.
 
         Reuses a single rollout context across steps, calling
-        ``compute_dist``/``log_probs``/``record`` each iteration and
-        ``finalize`` at the end to stack trajectory‑level artifacts. Uses
-        ``adapter.is_backward`` to choose the environment step function.
+        ``compute_dist`` & ``log_probs`` each iteration. Uses
+        ``estimator.is_backward`` to choose the environment step function.
 
         Args:
             env: Environment to sample in.
@@ -157,14 +152,23 @@ class Sampler:
             **policy_kwargs: Extra kwargs forwarded to the policy.
 
         Returns:
-            A ``Trajectories`` with stacked states/actions and any artifacts
-            produced by ``adapter.finalize``.
+            A ``Trajectories`` with stacked states/actions and any artifacts.
 
         Note:
             For backward trajectories, the reward is computed at the initial state
             (s0) rather than the terminal state (sf).
         """
-        if self.adapter.is_backward:
+        # NOTE: Cast to the policy protocol for static typing across mixin methods/properties.
+        policy_estimator = cast(PolicyEstimatorProtocol, self.estimator)
+        # Runtime guard: ensure the estimator actually implements the required protocol
+        # method and raises an error when a non‑policy estimator is supplied.
+        for required in ("init_context", "compute_dist", "log_probs"):
+            if not hasattr(policy_estimator, required):
+                raise TypeError(
+                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
+                )
+
+        if policy_estimator.is_backward:
             # [ASSUMPTION] When backward sampling, all provided states are the
             # terminating states (can be passed to log_reward fn)
             assert (
@@ -188,9 +192,10 @@ class Sampler:
             assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
             ensure_same_device(states.device, conditioning.device)
 
-        dones = (
-            states.is_initial_state if self.adapter.is_backward else states.is_sink_state
-        )
+        if policy_estimator.is_backward:
+            dones = states.is_initial_state
+        else:
+            dones = states.is_sink_state
 
         # Define dummy actions to avoid errors when stacking empty lists.
         trajectories_states: List[States] = [states]
@@ -198,21 +203,27 @@ class Sampler:
             env.actions_from_batch_shape((n_trajectories,))
         ]
         # Placeholder kept for backward-compatibility of shapes; logprobs are
-        # recorded and stacked by the adapter.
+        # recorded and stacked by the estimator via the context.
         trajectories_terminating_idx = torch.zeros(
             n_trajectories, dtype=torch.long, device=device
         )
 
         step = 0
-        ctx = self.adapter.init_context(n_trajectories, device, conditioning)
+        if not hasattr(policy_estimator, "init_context"):
+            raise TypeError("Estimator is not policy-capable (missing PolicyMixin)")
+        ctx = policy_estimator.init_context(n_trajectories, device, conditioning)
 
         while not all(dones):
             actions = env.actions_from_batch_shape((n_trajectories,))
             step_mask = ~dones
 
             # Compute distribution on active rows
-            dist, ctx = self.adapter.compute_dist(
-                states[step_mask], ctx, step_mask, **policy_kwargs
+            dist, ctx = policy_estimator.compute_dist(
+                states[step_mask],
+                ctx,
+                step_mask,
+                save_estimator_outputs=save_estimator_outputs,
+                **policy_kwargs,
             )
 
             # Sample actions for active rows
@@ -221,28 +232,20 @@ class Sampler:
             valid_actions = env.actions_from_tensor(valid_actions_tensor)
 
             if save_logprobs:
-                # Use adapter to compute step log-probs and pad to batch.
-                log_probs, ctx = self.adapter.log_probs(
-                    valid_actions_tensor, dist, ctx, step_mask, vectorized=False
+                # Use estimator to compute step log-probs and pad to batch (recorded in ctx).
+                _, ctx = policy_estimator.log_probs(
+                    valid_actions_tensor,
+                    dist,
+                    ctx,
+                    step_mask,
+                    vectorized=False,
+                    save_logprobs=True,
                 )
-            else:
-                log_probs = None
-
-            # Let adapter record artifacts.
-            self.adapter.record(
-                ctx=ctx,
-                step_mask=step_mask,
-                sampled_actions=valid_actions_tensor,
-                dist=dist,
-                log_probs=log_probs,
-                save_estimator_outputs=save_estimator_outputs,
-            )
 
             actions[step_mask] = valid_actions
-
             trajectories_actions.append(actions)
 
-            if self.adapter.is_backward:
+            if policy_estimator.is_backward:
                 new_states = env._backward_step(states, actions)  # type: ignore[attr-defined]
             else:
                 new_states = env._step(states, actions)  # type: ignore[attr-defined]
@@ -268,7 +271,7 @@ class Sampler:
             # to filter out the already done ones.
             new_dones = (
                 new_states.is_initial_state
-                if self.adapter.is_backward
+                if policy_estimator.is_backward
                 else new_states.is_sink_state
             ) & ~dones
             trajectories_terminating_idx[new_dones] = step
@@ -277,26 +280,40 @@ class Sampler:
             dones = dones | new_dones
             trajectories_states.append(states)
 
-        # Stack all states and actions
+        # Stack all states and actions.
         stacked_states = env.States.stack(trajectories_states)
-        stacked_actions = env.Actions.stack(trajectories_actions)[
-            1:
-        ]  # Drop dummy action
-        # Finalize stacked trajectory artifacts from the context (already shaped (T, N, ...))
-        trajectory_artifacts = self.adapter.finalize(ctx)  # type: ignore[attr-defined]
-        stacked_logprobs = trajectory_artifacts.get("log_probs", None)
-        stacked_estimator_outputs = trajectory_artifacts.get("estimator_outputs", None)
 
-        if stacked_logprobs is not None and len(stacked_logprobs) == 0:
-            stacked_logprobs = None
-        if stacked_estimator_outputs is not None and len(stacked_estimator_outputs) == 0:
-            stacked_estimator_outputs = None
+        # Stack actions, drop dummy action.
+        stacked_actions = env.Actions.stack(trajectories_actions)[1:]
+
+        # Get trajectory artifacts from the context (already shaped (T, N, ...))
+        stacked_logprobs = (
+            torch.stack(ctx.trajectory_log_probs, dim=0)
+            if ctx.trajectory_log_probs
+            else None
+        )
+        stacked_estimator_outputs = (
+            torch.stack(ctx.trajectory_estimator_outputs, dim=0)
+            if ctx.trajectory_estimator_outputs
+            else None
+        )
+
+        # Stacked logprobs and estimator outputs are only None if there are no
+        # valid trajectories.
+        if stacked_logprobs is not None:
+            if len(stacked_logprobs) == 0:
+                stacked_logprobs = None
+
+        if stacked_estimator_outputs is not None:
+            if len(stacked_estimator_outputs) == 0:
+                stacked_estimator_outputs = None
 
         # Broadcast conditioning tensor to match states batch shape if needed
         if conditioning is not None:
-            # The states have batch shape (max_length, n_trajectories)
-            # The conditioning tensor should have shape (n_trajectories,) or (n_trajectories, 1)
-            # We need to broadcast it to (max_length, n_trajectories, 1) for the estimator
+            # The states have batch shape (max_length, n_trajectories). The
+            # conditioning tensor should have shape (n_trajectories,) or
+            # (n_trajectories, 1). We need to broadcast it to (max_length,
+            # n_trajectories, 1) for the estimator
             if len(conditioning.shape) == 1:
                 # conditioning has shape (n_trajectories,)
                 conditioning = (
@@ -316,7 +333,7 @@ class Sampler:
             conditioning=conditioning,
             actions=stacked_actions,
             terminating_idx=trajectories_terminating_idx,
-            is_backward=self.adapter.is_backward,
+            is_backward=policy_estimator.is_backward,
             log_rewards=None,  # will be calculated later
             log_probs=stacked_logprobs,
             estimator_outputs=stacked_estimator_outputs,
@@ -347,7 +364,7 @@ class LocalSearchSampler(Sampler):
         self,
         pf_estimator: Estimator,
         pb_estimator: Estimator,
-    ):
+    ) -> None:
         """Initializes a LocalSearchSampler with forward and backward estimators.
 
         Args:
