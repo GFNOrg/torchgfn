@@ -37,7 +37,7 @@ N = 10  # Number of trajectories from sample_trajectories (changes tests globall
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 def test_FM(env_name: str, ndim: int, module_name: str):
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim)
+        env = HyperGrid(ndim=ndim, validate_modes=False)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=ndim)
     else:
@@ -135,7 +135,7 @@ def PFBasedGFlowNet_with_return(
     zero_logF: bool,
 ):
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim, height=4)
+        env = HyperGrid(ndim=ndim, height=4, validate_modes=False)
         preprocessor = KHotPreprocessor(env.height, env.ndim)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=ndim)
@@ -368,7 +368,7 @@ def test_subTB_vs_TB(
 def test_flow_matching_states_container(env_name: str, ndim: int):
     """Test that flow matching correctly processes state pairs from trajectories."""
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim)
+        env = HyperGrid(ndim=ndim, validate_modes=False)
         preprocessor = KHotPreprocessor(env.height, env.ndim)
     else:
         env = DiscreteEBM(ndim=ndim)

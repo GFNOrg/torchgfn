@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 import torch
 
@@ -347,7 +349,7 @@ def test_numerical_stability_different_dtypes(dtype):
 def test_discrete_policy_estimator_integration():
     """Test integration with DiscretePolicyEstimator."""
     # Create a simple environment and estimator
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     preprocessor = KHotPreprocessor(env.height, env.ndim)
     module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
 
@@ -391,7 +393,7 @@ def test_discrete_policy_estimator_integration():
         assert (actions < env.n_actions).all()
 
         # Check that probabilities sum to 1
-        probs = dist.probs
+        probs = cast(torch.Tensor, dist.probs)
         assert torch.allclose(probs.sum(dim=-1), torch.ones(batch_size))
 
         # Check that masked actions have zero probability

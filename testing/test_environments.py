@@ -43,7 +43,7 @@ def test_HyperGrid_preprocessors(
     ND_BATCH_SHAPE = (4, 2)
     SEED = 1234
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, validate_modes=False)
 
     if preprocessor_name == "Identity":
         preprocessor = IdentityPreprocessor(output_dim=NDIM)
@@ -72,7 +72,7 @@ def test_HyperGrid_fwd_step():
     NDIM = 2
     ENV_HEIGHT = BATCH_SIZE = 3
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, validate_modes=False)
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, NDIM)
 
@@ -104,7 +104,7 @@ def test_HyperGrid_bwd_step():
     SEED = 1234
 
     # Testing the backward method from a batch of random (seeded) state.
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, validate_modes=False)
     states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED)
 
     passing_actions_lists = [
@@ -261,7 +261,7 @@ def test_states_getitem(ndim: int, env_name: str):
     ND_BATCH_SHAPE = (2, 3)
 
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim, height=8)
+        env = HyperGrid(ndim=ndim, height=8, validate_modes=False)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=ndim)
     elif env_name == "Box":
@@ -298,7 +298,11 @@ def test_get_grid():
     NDIM = 2
 
     env = HyperGrid(
-        height=HEIGHT, ndim=NDIM, store_all_states=True, calculate_partition=True
+        height=HEIGHT,
+        ndim=NDIM,
+        store_all_states=True,
+        calculate_partition=True,
+        validate_modes=False,
     )
     all_states = env.all_states
     assert all_states is not None

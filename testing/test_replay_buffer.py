@@ -15,7 +15,7 @@ from gfn.gym.hypergrid import HyperGrid
 
 @pytest.fixture
 def simple_env():
-    return HyperGrid()
+    return HyperGrid(validate_modes=True)
 
 
 @pytest.fixture
