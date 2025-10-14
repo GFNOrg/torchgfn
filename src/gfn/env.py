@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, cast
+from contextlib import contextmanager
+from typing import Any, Callable, Hashable, Optional, Sequence, Tuple, cast
 
 import torch
 from torch_geometric.data import Data as GeometricData
 
 from gfn.actions import Actions, GraphActions
-from gfn.states import DiscreteStates, GraphStates, States
+from gfn.chunking.chunkers import Chunker
+from gfn.states import ChunkedStates, DiscreteStates, GraphStates, States
 from gfn.utils.common import default_fill_value_for_dtype, ensure_same_device, set_seed
 
 # Errors
@@ -328,6 +330,9 @@ class Env(ABC):
         # For the indices where the new states are not sink states (i.e., where the
         # state is not already a sink and the action is not exit), update those
         # positions with the result of the environment's step function.
+        # TODO: Ensure that the step function returns a States instance with the same
+        # type as the States class. Right now, we initialize with -inf, which assumes
+        # a float type. For now, I will handle casting outside of this method.
         new_states = self.States.make_sink_states(
             states.batch_shape, device=states.device
         )
@@ -659,6 +664,21 @@ class DiscreteEnv(Env, ABC):
         """
         new_states = super()._step(states, actions)
         new_states = cast(DiscreteStates, new_states)
+
+        # Ensure dtypes of all tensor fields match the input states.
+        # TODO: We should probably fix this at the base Env class level, but
+        # I want to do it in a follow up PR.
+        if new_states.tensor.dtype != states.tensor.dtype:
+            new_states.tensor = new_states.tensor.to(dtype=states.tensor.dtype)
+        if new_states.forward_masks.dtype != states.forward_masks.dtype:
+            new_states.forward_masks = new_states.forward_masks.to(
+                dtype=states.forward_masks.dtype
+            )
+        if new_states.backward_masks.dtype != states.backward_masks.dtype:
+            new_states.backward_masks = new_states.backward_masks.to(
+                dtype=states.backward_masks.dtype
+            )
+
         self.update_masks(new_states)
         return new_states
 
@@ -676,6 +696,21 @@ class DiscreteEnv(Env, ABC):
         """
         new_states = super()._backward_step(states, actions)
         new_states = cast(DiscreteStates, new_states)
+
+        # Ensure dtypes of all tensor fields match the input states.
+        # TODO: We should probably fix this at the base Env class level, but
+        # I want to do it in a follow up PR.
+        if new_states.tensor.dtype != states.tensor.dtype:
+            new_states.tensor = new_states.tensor.to(dtype=states.tensor.dtype)
+        if new_states.forward_masks.dtype != states.forward_masks.dtype:
+            new_states.forward_masks = new_states.forward_masks.to(
+                dtype=states.forward_masks.dtype
+            )
+        if new_states.backward_masks.dtype != states.backward_masks.dtype:
+            new_states.backward_masks = new_states.backward_masks.to(
+                dtype=states.backward_masks.dtype
+            )
+
         self.update_masks(new_states)
         return new_states
 
@@ -758,6 +793,417 @@ class DiscreteEnv(Env, ABC):
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
+
+
+class ChunkedDiscreteEnvironment(DiscreteEnv):
+    """Discrete environment with chunking-aware action vocab management.
+
+    Intended behavior:
+    - Exit invariance: the exit action is represented by a fixed, non-executable
+      sentinel key at its index and never moves when the vocab grows.
+    - Vocab growth: new primitive/macro tokens are appended (no reindexing of
+      existing actions). Token-to-id and id-to-token mappings are maintained by
+      the environment.
+    - Self-healing states: the custom ``States`` class returned by
+      :meth:`make_states_class` automatically resizes forward/backward masks to
+      ``env.n_actions`` and overlays environment-wide constraints (soft-disabled
+      actions and strict macro feasibility) whenever masks are created or the
+      batch shape changes.
+    - Chunker integration: arbitrary chunkers can propose new tokens; helpers
+      are provided to build string corpora from trajectories for text-based
+      chunkers (e.g., BPE/WordPiece).
+    """
+
+    def __init__(
+        self,
+        n_actions: int,
+        s0: torch.Tensor,
+        state_shape: Tuple | int,
+        *,
+        action_shape: Tuple | int = (1,),
+        dummy_action: Optional[torch.Tensor] = None,
+        exit_action: Optional[torch.Tensor] = None,
+        sf: Optional[torch.Tensor] = None,
+        check_action_validity: bool = True,
+        tokenizer: Optional[Callable[[Sequence[int]], str]] = None,
+        detokenizer: Optional[Callable[[str], Sequence[int]]] = None,
+    ) -> None:
+        # Delegate exit action handling to DiscreteEnv (base behavior).
+        super().__init__(
+            n_actions=n_actions,
+            s0=s0,
+            state_shape=state_shape,
+            action_shape=action_shape,
+            dummy_action=dummy_action,
+            exit_action=exit_action,
+            sf=sf,
+            check_action_validity=check_action_validity,
+        )
+
+        # Fixed exit action id derived from parent init.
+        self.exit_token_id: int = int(self.exit_action.item())
+
+        # Re-entrancy guard for macro overlay recursion
+        self._macro_overlay_depth: int = 0
+
+        # Hashable-keyed vocab: start with primitive ids, then exit sentinel at its index.
+        self._exit_key: str = "<EXIT>"
+        self.id_to_token_key: list[Hashable] = list(range(self.n_actions - 1)) + [
+            self._exit_key
+        ]
+        self.token_key_to_id: dict[Hashable, int] = {
+            k: i for i, k in enumerate(self.id_to_token_key)
+        }
+
+        # Initially, all non-exit tokens are considered atomic.
+        self._atomic_token_ids: set[int] = {
+            i for i in range(self.n_actions) if i != self.exit_token_id
+        }
+        self._disabled_token_ids: set[int] = set()
+
+        self._tokenizer: Callable[[Sequence[int]], str]
+        self._tokenizer = tokenizer if tokenizer is not None else self._default_tokenizer
+
+        # Optional detokenizer to convert string keys to primitive action sequences.
+        # TODO: the tokenizer should have methods for this (instead of a unique detokenizer).
+        self._detokenizer: Optional[Callable[[str], Sequence[int]]] = detokenizer
+
+    @staticmethod
+    def _default_tokenizer(ids: Sequence[int]) -> str:
+        # Example: [1, 30, 7] -> "1,30,7,"
+        return ",".join(str(i) for i in ids) + ","
+
+    @property
+    def vocab(self) -> list[Hashable]:
+        return list(self.id_to_token_key)
+
+    def add_tokens(self, new_keys: Sequence[Hashable]) -> list[int]:
+        """Append new token keys to the vocab, assigning fresh ids.
+
+        Args:
+            new_keys: Iterable of integer token keys to add.
+
+        Returns:
+            The list of ids assigned to the newly added keys (in insertion order).
+        """
+        new_ids: list[int] = []
+        for key in new_keys:
+            if key in self.token_key_to_id:
+                continue
+
+            new_id = len(self.id_to_token_key)
+            self.id_to_token_key.append(key)
+            self.token_key_to_id[key] = new_id
+            new_ids.append(new_id)
+
+        if new_ids:
+            self.n_actions = len(self.id_to_token_key)
+
+        return new_ids
+
+    def disable_tokens(self, tokens_or_ids: Sequence[int]) -> None:
+        for tid in tokens_or_ids:
+            tid_i = int(tid)
+            if tid_i != self.exit_token_id:
+                self._disabled_token_ids.add(tid_i)
+
+    def enable_tokens(self, tokens_or_ids: Sequence[int]) -> None:
+        for tid in tokens_or_ids:
+            tid_i = int(tid)
+            self._disabled_token_ids.discard(tid_i)
+
+    def chunk_and_update_vocab(
+        self,
+        trajectories: Any,
+        chunker: Chunker,
+        n_tokens_to_add: int,
+        remove_old: bool = False,
+    ) -> list[int]:
+        """Calls a user-provided chunker and updates the vocab with proposed keys.
+
+        The chunker returns token keys (typically integers) to be appended. If
+        remove_old is True, previously learned non-atomic tokens that were not
+        just added will be soft-disabled via masks.
+        """
+        # Expect a Chunker-like instance exposing propose_tokens(env, trajectories, n, remove_old)
+        proposed_keys = list(
+            chunker.propose_tokens(self, trajectories, n_tokens_to_add, remove_old)
+        )
+        new_ids = self.add_tokens(proposed_keys)
+        if remove_old:
+            keep = set(self._atomic_token_ids) | {self.exit_token_id} | set(new_ids)
+            to_disable = [i for i in range(self.n_actions) if i not in keep]
+            self.disable_tokens(to_disable)
+        return new_ids
+
+    def trajectories_to_action_sequences(self, trajs: Any) -> list[list[int]]:
+        # actions: (T, B) after squeeze, terminating_idx: (B,)
+        actions = trajs.actions.tensor.squeeze(-1)
+        term = trajs.terminating_idx
+        out: list[list[int]] = []
+        T, B = actions.shape
+        for i in range(B):
+            L = int(term[i].item())
+            idxs = [
+                int(a) for a in actions[:L, i].tolist() if int(a) != self.exit_token_id
+            ]
+            out.append(idxs)
+        return out
+
+    def trajectories_to_token_strings(self, trajs: Any) -> list[str]:
+        seqs = self.trajectories_to_action_sequences(trajs)
+        return [self._tokenizer(seq) for seq in seqs]
+
+    def apply_soft_disabled_to_forward_masks(self, states: DiscreteStates) -> None:
+        if self._disabled_token_ids:
+            ids = torch.tensor(sorted(self._disabled_token_ids), device=states.device)
+            states.forward_masks[..., ids] = False
+
+    @contextmanager
+    def macro_mask_guard(self):
+        """Temporarily disable macro overlay application to avoid recursion.
+
+        Increments an environment-local depth counter; while non-zero, calls to
+        apply_macro_forward_mask will no-op. Always decremented in a finally block.
+        """
+        self._macro_overlay_depth += 1
+        try:
+            yield
+        finally:
+            self._macro_overlay_depth -= 1
+            assert self._macro_overlay_depth >= 0
+
+    def make_states_class(self) -> type[DiscreteStates]:
+        """Returns the DiscreteStates class for this environment.
+
+        Returns:
+            A type of a subclass of DiscreteStates with environment-specific
+            functionalities.
+        """
+        env = self
+
+        class ChunkedEnvStates(ChunkedStates):
+            """States for chunked env that auto-resize and overlay masks.
+
+            Responsibilities:
+            - Keep ``n_actions`` synchronized with the parent environment.
+            - Lazily resize masks to match ``env.n_actions`` after construction,
+              extension, or padding.
+            - Apply environment overlays (soft-disables and strict macro feasibility)
+              after any (re)allocation of masks.
+            """
+
+            state_shape = env.state_shape
+            s0 = env.s0
+            sf = env.sf
+            make_random_states = env.make_random_states
+            n_actions = env.n_actions
+            device = env.device
+
+            # wire hooks into the shared ChunkedStates base
+            @staticmethod
+            def get_n_actions() -> int:
+                return env.n_actions
+
+            @staticmethod
+            def overlay_masks(s: "ChunkedStates") -> None:
+                env.apply_soft_disabled_to_forward_masks(s)
+                env.apply_macro_forward_mask(s)
+
+        return ChunkedEnvStates
+
+    @abstractmethod
+    def update_masks(self, states: DiscreteStates) -> None:
+        """Subclasses must compute env-specific masks and then call overlay helper.
+
+        Example pattern:
+            states.set_nonexit_action_masks(cond=..., allow_exit=True)
+            self.apply_soft_disabled_to_forward_masks(states)
+        """
+        ...
+
+    def decode_key_to_actions(self, key: Hashable) -> Sequence[int]:
+        """Decodes a vocab key (potential macro) into a sequence of primitive actions.
+
+        - int -> [int]
+        - tuple[int,...] -> list(tuple)
+        - str -> detokenizer(str) if provided; otherwise empty sequence (non-executable)
+        """
+        if isinstance(key, int):
+            return [int(key)]
+        if isinstance(key, tuple):
+            # assume a tuple of ints
+            return [int(x) for x in key]
+        if isinstance(key, str):
+            if key == self._exit_key:
+                return []
+            if self._detokenizer is not None:
+                return list(self._detokenizer(key))
+
+        raise ValueError(f"Invalid key: {key}")
+
+    def _decode_action_id_to_sequence(self, action_id: int) -> Sequence[int]:
+        key = self.id_to_token_key[action_id]
+        return self.decode_key_to_actions(key)
+
+    def is_macro_id(self, action_id: int) -> bool:
+        seq = self._decode_action_id_to_sequence(action_id)
+        return len(seq) > 1
+
+    def _compute_macro_mask_flat(self, states: DiscreteStates) -> torch.Tensor:
+        """Compute macro feasibility for a 1D batch of ChunkedStates.
+
+        Returns: (B, n_actions) boolean mask for macros only (primitives/exit left True).
+        """
+        if not isinstance(states, ChunkedStates):
+            raise TypeError("compute macro mask requires ChunkedStates")
+
+        assert len(states.batch_shape) == 1
+        B = states.batch_shape[0]
+        macro_mask = torch.ones(
+            B, self.n_actions, dtype=torch.bool, device=states.device
+        )
+
+        # Collect macro sequences
+        macro_sequences: dict[int, Sequence[int]] = {}
+        for action_id in range(self.n_actions):
+            seq = self._decode_action_id_to_sequence(action_id)
+            if len(seq) > 1:
+                macro_sequences[action_id] = seq
+
+        if not macro_sequences:
+            return macro_mask  # no macros to validate.
+
+        for aid, seq in macro_sequences.items():
+            # Local working copy of states; do not mutate caller's states
+            s_curr = states.clone()
+            valid_vec = torch.ones(B, dtype=torch.bool, device=states.device)
+
+            for primitive_id in seq:
+                # Per-state validity for this primitive at the current step.
+                step_valid = s_curr.forward_masks[:, primitive_id]
+                to_step = valid_vec & step_valid
+                valid_vec &= step_valid  # Update cumulative validity
+
+                if bool(to_step.any().item()):
+                    idx = torch.where(to_step)[0]
+                    n = idx.numel()
+                    a_tensor = torch.full(
+                        (n, *self.action_shape),
+                        primitive_id,
+                        device=states.device,
+                        dtype=torch.long,
+                    )
+                    a = self.actions_from_tensor(a_tensor)
+                    next_sub = super()._step(s_curr[idx], a)
+                    s_curr[idx] = next_sub
+
+                    # Refresh masks after stepping (guard prevents recursion)
+                    self.update_masks(s_curr)
+
+            macro_mask[:, aid] = valid_vec
+
+        return macro_mask
+
+    def compute_strict_macro_forward_mask(self, states: DiscreteStates) -> torch.Tensor:
+        """Returns a mask of shape (batch_shape*, n_actions) validating macros.
+
+        Supports (B) and (T,B). Requires ChunkedStates.
+        """
+        # Enforce ChunkedStates
+        if not isinstance(states, ChunkedStates):
+            raise TypeError("compute_strict_macro_forward_mask requires ChunkedStates")
+
+        with self.macro_mask_guard():
+            if len(states.batch_shape) == 1:
+                return self._compute_macro_mask_flat(states)
+            elif len(states.batch_shape) == 2:
+                T, B = states.batch_shape
+                # Horizon pre-check: macros longer than remaining steps are invalid
+                macro_lengths = torch.tensor(
+                    [
+                        len(self._decode_action_id_to_sequence(i))
+                        for i in range(self.n_actions)
+                    ],
+                    device=states.device,
+                    dtype=torch.long,
+                )
+                t_idx = torch.arange(T, device=states.device)
+                remaining = (T - t_idx).view(T, 1)
+                horizon_ok = (
+                    macro_lengths.view(1, self.n_actions) <= remaining.view(T, 1)
+                ).to(torch.bool)
+
+                # Compute feasibility ignoring horizon, then AND with horizon_ok
+                flat = states.flatten()
+                flat_mask = self._compute_macro_mask_flat(flat)  # (T*B, n_actions)
+                tb_mask = flat_mask.view(T, B, self.n_actions)
+                # Broadcast horizon_ok over B
+                tb_mask = tb_mask & horizon_ok.view(T, 1, self.n_actions)
+                return tb_mask
+            else:
+                raise ValueError(
+                    f"Expected batch_shape (B) or (T,B), got {states.batch_shape}"
+                )
+
+    def apply_macro_forward_mask(self, states: DiscreteStates) -> None:
+        # Skip macro overlay while inside macro feasibility computation
+        if getattr(self, "_macro_overlay_depth", 0) > 0:
+            return
+        macro_mask = self.compute_strict_macro_forward_mask(states)
+        states.forward_masks = states.forward_masks & macro_mask
+
+    def _step(self, states: ChunkedStates, actions: Actions) -> ChunkedStates:
+        """Overrides base to unroll macro actions sequentially.
+
+        Non-macro actions are delegated to the base implementation.
+        """
+        assert states.batch_shape == actions.batch_shape
+        B = states.batch_shape[0]
+
+        # Identify macro vs non-macro per batch element
+        action_ids = actions.tensor.view(B)
+        macro_flags = torch.zeros(B, dtype=torch.bool, device=states.device)
+        for i in range(B):
+            macro_flags[i] = self.is_macro_id(int(action_ids[i].item()))
+
+        # Fast path: no macros found.
+        if not bool(macro_flags.any().item()):
+            return cast(ChunkedStates, super()._step(states, actions))
+
+        # Split states/actions
+        out_states = self.States.make_sink_states(
+            states.batch_shape, device=states.device
+        )
+
+        # Handle non-macro subset via base
+        non_macro_idx = ~macro_flags
+        if bool(non_macro_idx.any().item()):
+            nm_states = states[non_macro_idx]
+            nm_actions = actions[non_macro_idx]
+            nm_next = super()._step(nm_states, nm_actions)
+            out_states[non_macro_idx] = nm_next
+
+        # Handle macros by sequential unroll
+        if bool(macro_flags.any().item()):
+            m_states = states[macro_flags]
+            m_action_ids = action_ids[macro_flags]
+            # iterate each macro in the smaller batch
+            curr = m_states
+            for j in range(curr.batch_shape[0]):
+                aid = int(m_action_ids[j].item())
+                seq = self._decode_action_id_to_sequence(aid)
+                s = curr[j : j + 1]
+                for primitive_id in seq:
+                    a_tensor = self.actions_from_tensor(
+                        torch.tensor([[primitive_id]], device=states.device)
+                    )
+                    s = super()._step(s, a_tensor)
+                out_states[macro_flags][j : j + 1] = s
+
+        # Update masks for the resulting batch
+        self.update_masks(cast(DiscreteStates, out_states))
+        return cast(ChunkedStates, out_states)
 
 
 class GraphEnv(Env):

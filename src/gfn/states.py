@@ -233,7 +233,14 @@ class States(ABC):
             index: Indices to set.
             states: States object containing the new states.
         """
-        self.tensor[index] = states.tensor
+        # Align dtype/device of the source to the destination slice to avoid
+        # runtime errors from mismatched tensor properties during indexed writes.
+        # Note: we intentionally do not mutate `states.tensor` in-place.
+        dest = self.tensor
+        src = states.tensor
+        if src.dtype != dest.dtype or src.device != dest.device:
+            src = src.to(device=dest.device, dtype=dest.dtype)
+        self.tensor[index] = src
 
     def clone(self) -> States:
         """Returns a clone of the current instance.
@@ -522,7 +529,9 @@ class DiscreteStates(States, ABC):
         return out
 
     def __setitem__(
-        self, index: int | Sequence[int] | Sequence[bool], states: DiscreteStates
+        self,
+        index: int | Sequence[int] | Sequence[bool] | torch.Tensor,
+        states: DiscreteStates,
     ) -> None:
         """Sets particular discrete states and their masks.
 
@@ -670,6 +679,58 @@ class DiscreteStates(States, ABC):
             self.forward_masks = torch.ones(shape).to(self.device).bool()
         else:
             self.forward_masks = torch.zeros(shape).to(self.device).bool()
+
+
+class ChunkedStates(DiscreteStates):
+    """Reusable ChunkedStates base used by chunking-aware environments.
+
+    Env factories should return a subclass that binds env-specific class variables
+    (state_shape, s0, sf, n_actions, device) and two hooks:
+      - get_n_actions: Callable[[], int] returning current env.n_actions
+      - overlay_masks: Callable[[ChunkedStates], None] applying env overlays
+    """
+
+    # Hooks to be provided by the environment-specific subclass
+    get_n_actions: ClassVar[Callable[[], int]] = lambda: cast(
+        int, ChunkedStates.n_actions
+    )
+    overlay_masks: ClassVar[Optional[Callable[["ChunkedStates"], None]]] = None
+
+    def __init__(self, tensor, forward_masks=None, backward_masks=None):
+        super().__init__(tensor, forward_masks, backward_masks)
+        self._ensure_current()
+
+    def _ensure_current(self) -> None:
+        # Keep class-level n_actions in sync with env via hook if available
+        try:
+            self.__class__.n_actions = int(self.__class__.get_n_actions())
+        except Exception:
+            pass
+
+        if (self.forward_masks.shape[-1] != self.__class__.n_actions) or (
+            self.backward_masks.shape[-1] != self.__class__.n_actions - 1
+        ):
+            self.forward_masks = torch.ones(
+                (*self.batch_shape, self.__class__.n_actions),
+                dtype=torch.bool,
+                device=self.device,
+            )
+            self.backward_masks = torch.ones(
+                (*self.batch_shape, self.__class__.n_actions - 1),
+                dtype=torch.bool,
+                device=self.device,
+            )
+
+        if self.__class__.overlay_masks is not None:
+            self.__class__.overlay_masks(self)
+
+    def pad_dim0_with_sf(self, required_first_dim: int) -> None:
+        super().pad_dim0_with_sf(required_first_dim)
+        self._ensure_current()
+
+    def extend(self, other: "ChunkedStates") -> None:
+        super().extend(other)
+        self._ensure_current()
 
 
 class GraphStates(States):
