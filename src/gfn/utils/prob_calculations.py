@@ -1,44 +1,9 @@
-from typing import Any, Protocol, Tuple, cast, runtime_checkable
+from typing import Any, Tuple, cast
 
 import torch
-from torch.distributions import Distribution
 
 from gfn.containers import Trajectories, Transitions
-from gfn.estimators import Estimator, RecurrentPolicyMixin
-
-
-# NOTE: We use a Protocol to make the policy-capable estimator interface explicit for the type checker.
-# This avoids Pyright errors like "Object of type 'Tensor' is not callable" when calling
-# estimator.compute_dist/log_probs that live on the PolicyMixin, not on the base Estimator.
-@runtime_checkable
-class PolicyEstimatorProtocol(Protocol):
-    is_vectorized: bool
-
-    def init_context(  # noqa: E704
-        self,
-        batch_size: int,
-        device: torch.device,
-        conditioning: torch.Tensor | None = None,
-    ) -> Any: ...
-
-    def compute_dist(  # noqa: E704
-        self,
-        states_active: Any,
-        ctx: Any,
-        step_mask: torch.Tensor | None = None,
-        **policy_kwargs: Any,
-    ) -> tuple[Distribution, Any]: ...
-
-    def log_probs(  # noqa: E704
-        self,
-        actions_active: torch.Tensor,
-        dist: Distribution,
-        ctx: Any,
-        step_mask: torch.Tensor | None = None,
-        vectorized: bool = False,
-        **kwargs: Any,
-    ) -> tuple[torch.Tensor, Any]: ...
-
+from gfn.estimators import Estimator, PolicyEstimatorProtocol, RecurrentPolicyMixin
 
 # ------------
 # Trajectories
