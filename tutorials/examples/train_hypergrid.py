@@ -579,6 +579,7 @@ def main(args):  # noqa: C901
     n_iterations = ceil(args.n_trajectories / args.batch_size)
     per_node_batch_size = args.batch_size // distributed_context.world_size
     validation_info = {"l1_dist": float("inf")}
+    modes_found = set()
     # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
 
@@ -800,9 +801,14 @@ def main(args):  # noqa: C901
 
                     to_log.update(validation_info)
 
-                    manager_rank = distributed_context.assigned_buffer
-                    assert manager_rank is not None
-                    n_modes_found = ReplayBufferManager.get_n_modes_found(manager_rank)
+                    if args.distributed:
+                        manager_rank = distributed_context.assigned_buffer
+                        assert manager_rank is not None
+                        n_modes_found = ReplayBufferManager.get_n_modes_found(manager_rank)
+                    else:
+                        modes_found.update(env.modes_found(visited_terminating_states))
+                        n_modes_found = len(modes_found)
+
                     to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
@@ -810,7 +816,7 @@ def main(args):  # noqa: C901
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
                     )
-    
+
                 if use_wandb:
                     wandb.log(to_log, step=iteration)
 
