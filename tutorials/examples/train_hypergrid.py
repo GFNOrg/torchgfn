@@ -28,7 +28,6 @@ distribution for the HyperGrid environment, which is useful for evaluation and v
 """
 
 import os
-import sys
 import time
 from argparse import ArgumentParser
 from math import ceil
@@ -580,7 +579,6 @@ def main(args):  # noqa: C901
     n_iterations = ceil(args.n_trajectories / args.batch_size)
     per_node_batch_size = args.batch_size // distributed_context.world_size
     validation_info = {"l1_dist": float("inf")}
-    discovered_modes = set()
     # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
 
@@ -797,6 +795,7 @@ def main(args):  # noqa: C901
                         visited_terminating_states,
                     )
 
+                    assert visited_terminating_states is not None
                     print(
                         "+ rank 0, visited_terminating_states = ",
                         len(visited_terminating_states),
@@ -807,7 +806,9 @@ def main(args):  # noqa: C901
 
                     to_log.update(validation_info)
 
-                    n_modes_found = ReplayBufferManager.get_n_modes_found(distributed_context.assigned_buffer)
+                    manager_rank = distributed_context.assigned_buffer
+                    assert manager_rank is not None
+                    n_modes_found = ReplayBufferManager.get_n_modes_found(manager_rank)
 
                     pbar.set_postfix(
                         loss=to_log["loss"],

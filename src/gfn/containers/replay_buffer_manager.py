@@ -72,12 +72,17 @@ class ReplayBufferManager:
                 dist.send(score_tensor, dst=sender_rank)
 
                 if self.discovered_modes is not None:
-                    modes_found = self.env.modes_found(msg.message_data.terminating_states)
+                    modes_found = self.env.modes_found(
+                        msg.message_data.terminating_states
+                    )
                     self.discovered_modes.update(modes_found)
                 self.replay_buffer.add(msg.message_data)
-            
+
             elif msg.message_type == MessageType.MODES_FOUND:
-                n_modes_found = torch.tensor([len(self.discovered_modes)], dtype=torch.int32)
+                assert self.discovered_modes is not None
+                n_modes_found = torch.tensor(
+                    [len(self.discovered_modes)], dtype=torch.int32
+                )
                 dist.send(n_modes_found, dst=sender_rank)
 
             elif msg.message_type == MessageType.EXIT:
@@ -119,7 +124,7 @@ class ReplayBufferManager:
         print(
             f"Rank {rank} sent termination signal to replay buffer manager {manager_rank}."
         )
-    
+
     @staticmethod
     def get_n_modes_found(manager_rank: int) -> int:
         """Sends a modes found signal to the replay buffer manager."""
@@ -130,4 +135,4 @@ class ReplayBufferManager:
         dist.send(msg_bytes, dst=manager_rank)
         n_modes = torch.IntTensor([0])
         dist.recv(n_modes, src=manager_rank)
-        return n_modes.item()
+        return int(n_modes.item())
