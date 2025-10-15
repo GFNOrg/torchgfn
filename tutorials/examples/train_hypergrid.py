@@ -785,9 +785,6 @@ def main(args):  # noqa: C901
                     "l1_dist": None,  # only logged if calculate_partition.
                 }
 
-                if use_wandb:
-                    wandb.log(to_log, step=iteration)
-
                 if log_this_iter:
                     validation_info, visited_terminating_states = env.validate(
                         gflownet,
@@ -801,20 +798,21 @@ def main(args):  # noqa: C901
                         len(visited_terminating_states),
                     )
 
-                    if use_wandb:
-                        wandb.log(validation_info, step=iteration)
-
                     to_log.update(validation_info)
 
                     manager_rank = distributed_context.assigned_buffer
                     assert manager_rank is not None
                     n_modes_found = ReplayBufferManager.get_n_modes_found(manager_rank)
+                    to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
                         loss=to_log["loss"],
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
-                        n_modes_found=n_modes_found,
+                        n_modes_found=to_log["n_modes_found"],
                     )
+    
+                if use_wandb:
+                    wandb.log(to_log, step=iteration)
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
             if args.distributed and args.timing:
