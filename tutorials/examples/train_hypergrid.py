@@ -142,29 +142,6 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
     return (u * probabilities[..., -1]).detach().cpu()
 
 
-def validate_hypergrid(
-    env,
-    gflownet,
-    n_validation_samples,
-    visited_terminating_states: DiscreteStates | None,
-    discovered_modes,
-):
-    # Standard validation shared across envs.
-    validation_info, visited_terminating_states = env.validate(
-        gflownet,
-        n_validation_samples,
-        visited_terminating_states,
-    )
-
-    assert isinstance(visited_terminating_states, DiscreteStates)
-    # Count exact unique modes via HyperGrid API.
-    modes_found = env.modes_found(visited_terminating_states)
-    discovered_modes.update(modes_found)
-    validation_info["n_modes_found"] = len(discovered_modes)
-
-    return validation_info, visited_terminating_states, discovered_modes
-
-
 def _sample_new_strategy(
     args,
     agent_group_id: int,
@@ -814,20 +791,14 @@ def main(args):  # noqa: C901
                     wandb.log(to_log, step=iteration)
 
                 if log_this_iter:
-                    (
-                        validation_info,
-                        visited_terminating_states,
-                        discovered_modes,
-                    ) = validate_hypergrid(
-                        env,
+                    validation_info, visited_terminating_states = env.validate(
                         gflownet,
                         args.validation_samples,
                         visited_terminating_states,
-                        discovered_modes,
                     )
 
                     print(
-                        "+ visited_terminating_states = ",
+                        "+ rank 0, visited_terminating_states = ",
                         len(visited_terminating_states),
                     )
 
@@ -836,10 +807,14 @@ def main(args):  # noqa: C901
 
                     to_log.update(validation_info)
 
+                    # getn n modes found
+                    n_modes_found = ReplayBufferManager.get_n_modes_found(distributed_context.assigned_buffer)
+
+
                     pbar.set_postfix(
                         loss=to_log["loss"],
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
-                        n_modes_found=to_log["n_modes_found"],
+                        n_modes_found=n_modes_found,
                     )
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
