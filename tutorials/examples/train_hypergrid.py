@@ -57,11 +57,7 @@ from gfn.gym import HyperGrid
 from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.common import Timer, set_seed
-from gfn.utils.distributed import (
-    DistributedContext,
-    gather_distributed_data,
-    initialize_distributed_compute,
-)
+from gfn.utils.distributed import DistributedContext, initialize_distributed_compute
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from tutorials.examples.multinode.hypergrid_diversity_score import (
     HypergridDiversityScore,
@@ -604,7 +600,6 @@ def main(args):  # noqa: C901
 
     gflownet = gflownet.to(device)
 
-    states_visited = 0
     n_iterations = ceil(args.n_trajectories / args.batch_size)
     per_node_batch_size = args.batch_size // distributed_context.world_size
     validation_info = {"l1_dist": float("inf")}
@@ -640,9 +635,6 @@ def main(args):  # noqa: C901
     timing = {}
     time_start = time.time()
     l1_distances, validation_steps = [], []
-
-    # Used for calculating the L1 distance across all nodes.
-    all_visited_terminating_states = env.states_from_batch_shape((0,))
 
     # Barrier for pre-processing. Wait for all processes to reach this point before starting training.
     with Timer(
@@ -802,47 +794,12 @@ def main(args):  # noqa: C901
             cast(DiscreteStates, trajectories.terminating_states)
         )
 
-        with Timer(timing, "gather_visited_states", enabled=args.timing):
-            # If distributed, gather all visited terminating states from all nodes.
-            if args.distributed and log_this_iter:
-                try:
-                    assert visited_terminating_states is not None
-                    # Gather all visited terminating states from all nodes.
-                    gathered_visited_terminating_states = gather_distributed_data(
-                        visited_terminating_states.tensor,
-                        training_group=distributed_context.train_global_group,
-                        world_size=distributed_context.num_training_ranks,
-                    )
-                except Exception as e:
-                    print(
-                        "Process {}: Caught error: {}".format(
-                            distributed_context.my_rank, e
-                        )
-                    )
-                    # handler.signal_error()
-                    sys.exit(1)
-            else:
-                # Just use the visited terminating states from this node.
-                assert visited_terminating_states is not None
-                gathered_visited_terminating_states = visited_terminating_states.tensor
-
         # If we are on the master node, calculate the validation metrics.
         with Timer(timing, "validation", enabled=args.timing):
             if distributed_context.my_rank == 0:
 
-                # Extend `all_visited_terminating_states` with the gathered data.
-                assert gathered_visited_terminating_states is not None
-                gathered_visited_terminating_states = cast(
-                    DiscreteStates, env.States(gathered_visited_terminating_states)
-                )
-                states_visited += len(gathered_visited_terminating_states)
-                all_visited_terminating_states.extend(
-                    gathered_visited_terminating_states
-                )
-
                 to_log = {
                     "loss": loss.item(),
-                    "states_visited": states_visited,
                     "sample_time": sample_timer.elapsed,
                     "to_train_samples_time": to_train_samples_timer.elapsed,
                     "loss_time": loss_timer.elapsed,
@@ -859,20 +816,16 @@ def main(args):  # noqa: C901
                 if log_this_iter:
                     (
                         validation_info,
-                        all_visited_terminating_states,
+                        visited_terminating_states,
                         discovered_modes,
                     ) = validate_hypergrid(
                         env,
                         gflownet,
                         args.validation_samples,
-                        all_visited_terminating_states,
+                        visited_terminating_states,
                         discovered_modes,
                     )
 
-                    print(
-                        "+ all_visited_terminating_states = ",
-                        len(all_visited_terminating_states),
-                    )
                     print(
                         "+ visited_terminating_states = ",
                         len(visited_terminating_states),
