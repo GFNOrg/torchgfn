@@ -21,6 +21,7 @@ class SpawnPolicy(ABC):
         iteration: int,
         model: GFlowNet,
         local_metric: Optional[float] = None,
+        group=dist.group.WORLD,
     ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
         """Possibly perform a spawn/averaging step on this iteration."""
         raise NotImplementedError
@@ -39,6 +40,7 @@ class AverageAllPolicy(SpawnPolicy):
         model: GFlowNet,
         optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
+        group=dist.group.WORLD,
     ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
         if not dist.is_available() or not dist.is_initialized():
             return model, optimizer
@@ -48,7 +50,7 @@ class AverageAllPolicy(SpawnPolicy):
         world_size = float(dist.get_world_size())
         for param in model.parameters():
             param_tensor = param.data.clone()
-            dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
+            dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=group)
             param.data.copy_(param_tensor / world_size)
 
         return model, optimizer
@@ -134,6 +136,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         model: GFlowNet,
         optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
+        group=dist.group.WORLD,
     ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
         self._ensure_initialized(model)
         if not dist.is_available() or not dist.is_initialized():
