@@ -807,9 +807,7 @@ def main(args):  # noqa: C901
 
                     to_log.update(validation_info)
 
-                    # getn n modes found
                     n_modes_found = ReplayBufferManager.get_n_modes_found(distributed_context.assigned_buffer)
-
 
                     pbar.set_postfix(
                         loss=to_log["loss"],
