@@ -29,8 +29,6 @@ class ReplayBufferManager:
         self.is_running = True
         self.exit_counter = 0
         self.num_training_ranks = num_training_ranks
-        self.env = env
-        self.discovered_modes = set() if hasattr(env, "modes_found") else None
         self.scoring_function = scoring_function or self.default_scoring_function
         backend = dist.get_backend()
         if backend != "gloo":
@@ -59,6 +57,9 @@ class ReplayBufferManager:
         """Default score function if none provided, placeholder."""
         return math.inf
 
+    def get_metadata(self) -> int:
+        raise NotImplementedError("get_metadata is not implemented for default replay buffer manager")
+
     def run(self):
         """Runs on remote buffer manager ranks. Waits for training data, computes dummy reward, sends back."""
 
@@ -70,20 +71,12 @@ class ReplayBufferManager:
                 score = self.scoring_function(msg.message_data)
                 score_tensor = torch.tensor([score], dtype=torch.float32)
                 dist.send(score_tensor, dst=sender_rank)
-
-                if self.discovered_modes is not None:
-                    modes_found = self.env.modes_found(
-                        msg.message_data.terminating_states
-                    )
-                    self.discovered_modes.update(modes_found)
                 self.replay_buffer.add(msg.message_data)
 
-            elif msg.message_type == MessageType.MODES_FOUND:
-                assert self.discovered_modes is not None
-                n_modes_found = torch.tensor(
-                    [len(self.discovered_modes)], dtype=torch.int32
-                )
-                dist.send(n_modes_found, dst=sender_rank)
+            elif msg.message_type == MessageType.GET_METADATA:
+                metadata = self.get_metadata()
+                metadata_tensor = torch.tensor([metadata], dtype=torch.int32)
+                dist.send(metadata_tensor, dst=sender_rank)
 
             elif msg.message_type == MessageType.EXIT:
                 self.exit_counter = self.exit_counter + 1
@@ -126,13 +119,13 @@ class ReplayBufferManager:
         )
 
     @staticmethod
-    def get_n_modes_found(manager_rank: int) -> int:
-        """Sends a modes found signal to the replay buffer manager."""
-        msg = Message(message_type=MessageType.MODES_FOUND, message_data=None)
+    def get_metadata(manager_rank: int) -> int:
+        """Sends a get metadata signal to the replay buffer manager."""
+        msg = Message(message_type=MessageType.GET_METADATA, message_data=None)
         msg_bytes = msg.serialize()
         length_tensor = torch.IntTensor([len(msg_bytes)])
         dist.send(length_tensor, dst=manager_rank)
         dist.send(msg_bytes, dst=manager_rank)
-        n_modes = torch.IntTensor([0])
-        dist.recv(n_modes, src=manager_rank)
-        return int(n_modes.item())
+        metadata_tensor = torch.IntTensor([0])
+        dist.recv(metadata_tensor, src=manager_rank)
+        return int(metadata_tensor.item())

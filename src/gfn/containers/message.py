@@ -9,7 +9,7 @@ import torch
 
 class MessageType(Enum):
     DATA = auto()
-    MODES_FOUND = auto()
+    GET_METADATA = auto()
     EXIT = auto()
 
 

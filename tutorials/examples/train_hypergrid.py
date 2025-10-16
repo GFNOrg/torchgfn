@@ -58,14 +58,34 @@ from gfn.states import DiscreteStates
 from gfn.utils.common import Timer, set_seed
 from gfn.utils.distributed import DistributedContext, initialize_distributed_compute
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
-from tutorials.examples.multinode.hypergrid_diversity_score import (
-    HypergridDiversityScore,
-)
 from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
     AverageAllPolicy,
 )
 
+
+class ModesReplayBufferManager(ReplayBufferManager):
+    def __init__(
+        self,
+        env: HyperGrid,
+        rank: int,
+        num_training_ranks: int,
+        diverse_replay_buffer: bool = False,
+        capacity: int = 10000,
+        remote_manager_rank: int | None = None,
+    ):
+        super().__init__(env, rank, num_training_ranks, scoring_function=self.scoring_function, diverse_replay_buffer=diverse_replay_buffer, capacity=capacity, remote_manager_rank=remote_manager_rank)
+        self.discovered_modes = set()
+        self.env = env
+    
+    def scoring_function(self, obj) -> float:
+        modes_found = self.env.modes_found(obj.terminating_states)
+        score = len(modes_found - self.discovered_modes)
+        self.discovered_modes.update(modes_found)
+        return float(score)
+    
+    def get_metadata(self) -> int:
+        return len(self.discovered_modes)
 
 def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
     r"""Evaluates the exact terminating state distribution P_T for HyperGrid.
@@ -509,13 +529,11 @@ def main(args):  # noqa: C901
         else:
             num_training_ranks = len(distributed_context.assigned_training_ranks)
 
-        scoring_function = HypergridDiversityScore(args.ndim, args.height)
 
-        replay_buffer_manager = ReplayBufferManager(
+        replay_buffer_manager = ModesReplayBufferManager(
             env=env,
             rank=distributed_context.my_rank,
             num_training_ranks=num_training_ranks,
-            scoring_function=scoring_function,
             diverse_replay_buffer=args.diverse_replay_buffer,
             capacity=args.global_replay_buffer_size,
         )
@@ -676,9 +694,10 @@ def main(args):  # noqa: C901
         ) as to_train_samples_timer:
             training_samples = gflownet.to_training_samples(trajectories)
 
+            score = None
             if replay_buffer is not None:
                 with torch.no_grad():
-                    replay_buffer.add(training_samples)
+                    score = replay_buffer.add(training_samples)
                     training_objects = replay_buffer.sample(
                         n_samples=per_node_batch_size
                     )
@@ -738,7 +757,7 @@ def main(args):  # noqa: C901
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
-                    local_metric=-loss.item(),
+                    local_metric=score if score is not None else -loss.item(),
                 )
 
         # Calculate how long this iteration took.
@@ -804,7 +823,7 @@ def main(args):  # noqa: C901
                     if args.distributed:
                         manager_rank = distributed_context.assigned_buffer
                         assert manager_rank is not None
-                        n_modes_found = ReplayBufferManager.get_n_modes_found(manager_rank)
+                        n_modes_found = ReplayBufferManager.get_metadata(manager_rank)
                     else:
                         modes_found.update(env.modes_found(visited_terminating_states))
                         n_modes_found = len(modes_found)
