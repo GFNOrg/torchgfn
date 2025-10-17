@@ -57,8 +57,10 @@ class ReplayBufferManager:
         """Default score function if none provided, placeholder."""
         return math.inf
 
-    def get_metadata(self) -> int:
-        raise NotImplementedError("get_metadata is not implemented for default replay buffer manager")
+    def _compute_metadata(self) -> int:
+        raise NotImplementedError(
+            "_local_metadata is not implemented for default replay buffer manager"
+        )
 
     def run(self):
         """Runs on remote buffer manager ranks. Waits for training data, computes dummy reward, sends back."""
@@ -74,7 +76,7 @@ class ReplayBufferManager:
                 self.replay_buffer.add(msg.message_data)
 
             elif msg.message_type == MessageType.GET_METADATA:
-                metadata = self.get_metadata()
+                metadata = self._compute_metadata()
                 metadata_tensor = torch.tensor([metadata], dtype=torch.int32)
                 dist.send(metadata_tensor, dst=sender_rank)
 

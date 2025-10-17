@@ -74,18 +74,27 @@ class ModesReplayBufferManager(ReplayBufferManager):
         capacity: int = 10000,
         remote_manager_rank: int | None = None,
     ):
-        super().__init__(env, rank, num_training_ranks, scoring_function=self.scoring_function, diverse_replay_buffer=diverse_replay_buffer, capacity=capacity, remote_manager_rank=remote_manager_rank)
+        super().__init__(
+            env,
+            rank,
+            num_training_ranks,
+            scoring_function=self.scoring_function,
+            diverse_replay_buffer=diverse_replay_buffer,
+            capacity=capacity,
+            remote_manager_rank=remote_manager_rank,
+        )
         self.discovered_modes = set()
         self.env = env
-    
+
     def scoring_function(self, obj) -> float:
         modes_found = self.env.modes_found(obj.terminating_states)
         score = len(modes_found - self.discovered_modes)
         self.discovered_modes.update(modes_found)
         return float(score)
-    
-    def get_metadata(self) -> int:
+
+    def _local_metadata(self) -> int:
         return len(self.discovered_modes)
+
 
 def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
     r"""Evaluates the exact terminating state distribution P_T for HyperGrid.
@@ -528,7 +537,6 @@ def main(args):  # noqa: C901
             num_training_ranks = 0
         else:
             num_training_ranks = len(distributed_context.assigned_training_ranks)
-
 
         replay_buffer_manager = ModesReplayBufferManager(
             env=env,
