@@ -116,6 +116,17 @@ class DiffusionSampling(Env):
         else:
             return True
 
+    def log_reward(self, states: States) -> torch.Tensor:
+        """Log reward function for the DiffusionSampling environment.
+
+        Args:
+            states: The current states.
+
+        Returns:
+            The log rewards for the input states.
+        """
+        return self.target.log_reward(states.tensor[..., :-1])
+
 
 class BaseTarget(ABC):
     """Base class for all target distributions for diffusion sampling.

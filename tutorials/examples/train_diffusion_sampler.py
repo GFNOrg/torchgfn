@@ -209,7 +209,8 @@ class IsotropicGaussianWithTime(Distribution):
         Args:
             loc: The mean of the Gaussian distribution (shape: (*batch_shape, s_dim))
             scale: The scale of the Gaussian distribution (shape: (*batch_shape, 1))
-            time: The corresponding time step (shape: (*batch_shape, 1))
+            time: The corresponding next (if forward) or previous (if backward) time step
+                (shape: (*batch_shape, 1))
             sample_detach: Whether to detach the sample from the graph.
         """
         super().__init__()
@@ -280,7 +281,7 @@ class PinnedBrownianMotionForward(PolicyMixin, Estimator):
         t_curr = input.tensor[:, [-1]]
 
         out = torch.where(
-            (t_curr - 1.0).abs() < 1e-8,
+            (t_curr - 1.0).abs() < 1e-8,  # Exit case
             torch.full_like(s_curr, -float("inf")),
             self.module(self.preprocessor(input)),
         )
@@ -313,7 +314,7 @@ class PinnedBrownianMotionForward(PolicyMixin, Estimator):
 
         # Return a distribution whose sample has shape (batch, s_dim+1)
         next_time = torch.where(
-            (t_curr - 1.0).abs() < 1e-8,
+            (t_curr - 1.0).abs() < 1e-8,  # Exit case
             torch.full_like(t_curr, -float("inf")),
             t_curr + self.dt,
         )
@@ -361,7 +362,7 @@ class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
         t_curr = input.tensor[:, [-1]]  # shape: (*batch_shape,)
 
         out = torch.where(
-            (t_curr - self.dt).abs() < 1e-8,
+            (t_curr - self.dt).abs() < 1e-8,  # Exit case for backward steps
             torch.zeros_like(s_curr),
             self.module(self.preprocessor(input)),
         )
@@ -392,7 +393,7 @@ class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
         bwd_std = self.sigma * (self.dt * (t_curr - self.dt) / t_curr).sqrt()
 
         prev_time = torch.where(
-            (t_curr - self.dt).abs() < 1e-8,
+            (t_curr - self.dt).abs() < 1e-8,  # Exit case for backward steps
             torch.zeros_like(t_curr),
             t_curr - self.dt,
         )
@@ -468,11 +469,6 @@ def main(args):
             save_logprobs=True,
             save_estimator_outputs=False,
         )
-
-        # Compute log rewards from target on terminating states (strip time dim)
-        with torch.no_grad():
-            term_s = trajectories.terminating_states.tensor[:, :-1]
-            trajectories._log_rewards = env.target.log_reward(term_s)  # type: ignore[attr-defined]
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
