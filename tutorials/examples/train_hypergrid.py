@@ -638,6 +638,9 @@ def main(args):  # noqa: C901
     time_start = time.time()
     l1_distances, validation_steps = [], []
 
+    # Used for calculating the L1 distance across all nodes.
+    all_visited_terminating_states = env.states_from_batch_shape((0,))
+
     # Barrier for pre-processing. Wait for all processes to reach this point before starting training.
     with Timer(
         timing, "Pre-processing_barrier", enabled=(args.timing and args.distributed)
@@ -799,6 +802,10 @@ def main(args):  # noqa: C901
 
         # If we are on the master node, calculate the validation metrics.
         with Timer(timing, "validation", enabled=args.timing):
+            assert visited_terminating_states is not None
+            all_visited_terminating_states.extend(
+                visited_terminating_states
+            )
             if distributed_context.my_rank == 0:
 
                 to_log = {
@@ -814,10 +821,10 @@ def main(args):  # noqa: C901
                 }
 
                 if log_this_iter:
-                    validation_info, visited_terminating_states = env.validate(
+                    validation_info, all_visited_terminating_states = env.validate(
                         gflownet,
                         args.validation_samples,
-                        visited_terminating_states,
+                        all_visited_terminating_states,
                     )
 
                     assert visited_terminating_states is not None
