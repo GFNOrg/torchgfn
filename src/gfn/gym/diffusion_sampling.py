@@ -257,14 +257,21 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         mixture_weight_range: tuple[float, float] = (0.3, 0.7),
         degree_of_freedom_adjustment: int = 2,
         seed: int = 3,
+        locs: np.Array | None = None,
         device: torch.device = torch.device("cpu"),
     ) -> None:
         degree_of_freedom_wishart = dim + degree_of_freedom_adjustment
 
         rng = np.random.default_rng(seed)
-        locs = rng.uniform(
-            mean_val_range[0], mean_val_range[1], size=(num_components, dim)
-        )
+        if not isinstance(locs, np.Array):
+            locs = rng.uniform(
+                mean_val_range[0], mean_val_range[1], size=(num_components, dim)
+            )
+        elif isinstance(locs, np.Array):
+            assert locs.shape == (num_components, dim)  # type: ignore
+        else:
+            raise ValueError(f"Invalid type for locs: {type(locs)}")
+
         covariances = []
         for _ in range(num_components):
             cov_matrix = wishart.rvs(
@@ -291,7 +298,7 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         self.distribution = torch.distributions.MixtureSameFamily(
             torch.distributions.Categorical(probs=mixture_weights),
             torch.distributions.MultivariateNormal(
-                loc=locs,
+                loc=locs,  # type: ignore
                 covariance_matrix=covariances,
             ),
         )
