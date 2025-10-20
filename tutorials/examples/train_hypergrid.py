@@ -803,9 +803,7 @@ def main(args):  # noqa: C901
         # If we are on the master node, calculate the validation metrics.
         with Timer(timing, "validation", enabled=args.timing):
             assert visited_terminating_states is not None
-            all_visited_terminating_states.extend(
-                visited_terminating_states
-            )
+            all_visited_terminating_states.extend(visited_terminating_states)
             if distributed_context.my_rank == 0:
 
                 to_log = {
@@ -826,8 +824,8 @@ def main(args):  # noqa: C901
                         args.validation_samples,
                         all_visited_terminating_states,
                     )
+                    assert all_visited_terminating_states is not None
 
-                    assert visited_terminating_states is not None
                     print(
                         "+ rank 0, visited_terminating_states = ",
                         len(visited_terminating_states),
