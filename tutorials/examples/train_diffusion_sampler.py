@@ -14,6 +14,7 @@ import argparse
 import math
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Distribution
@@ -80,7 +81,7 @@ class PISJointPolicy(nn.Module):
         super().__init__()
 
         self.model = nn.Sequential(
-            nn.GELU(),
+            nn.GELU(),  # Because this model accepts embeddings (linear projections).
             nn.Linear(s_emb_dim, hidden_dim),
             nn.GELU(),
             *[
@@ -177,6 +178,9 @@ class PISGradNetForward(nn.Module):  # TODO: support Learnable Backward policy
         out = self.joint_model(s_emb, t_emb)
 
         # TODO: learn variance, lp, clipping, ...
+        if torch.isnan(out).any():
+            print("+ out has {} nans".format(torch.isnan(out).sum()))
+
         mean = torch.nan_to_num(out)
         return mean
 
@@ -418,6 +422,7 @@ def main(args):
         "dim": args.dim,
         "num_components": args.num_components,
         "seed": args.target_seed,
+        "locs": np.array([[-5.0, -5.0], [5, 5]]),  # TODO: make configurable.
         # Other kwargs use defaults inside the target class
     }
     env = DiffusionSampling(
@@ -509,7 +514,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sigma",
         type=float,
-        default=5.0,
+        default=2.0,
         help="diffusion coefficient for the pinned Brownian motion",
     )
 
