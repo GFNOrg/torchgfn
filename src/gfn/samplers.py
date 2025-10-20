@@ -375,6 +375,31 @@ class LocalSearchSampler(Sampler):
         super().__init__(pf_estimator)
         self.backward_sampler = Sampler(pb_estimator)
 
+    @staticmethod
+    def _compute_back_steps(
+        terminating_idx: torch.Tensor,
+        back_steps: torch.Tensor | None,
+        back_ratio: float | None,
+    ) -> torch.Tensor:
+        """Compute per-trajectory backtrack length K with validation and clamping.
+
+        This centralizes the logic for deriving K used in local search.
+        The behavior mirrors the inline implementation:
+        - When ``back_steps`` is None, require ``0 < back_ratio <= 1`` and set
+          ``K = ceil(back_ratio * (terminating_idx - 1))``.
+        - Otherwise, clamp provided ``back_steps`` to ``terminating_idx``.
+        """
+        if back_steps is None:
+            assert (
+                back_ratio is not None and 0 < back_ratio <= 1
+            ), "Either kwarg `back_steps` or `back_ratio` must be specified"
+            return torch.ceil(back_ratio * (terminating_idx - 1)).long()
+        return torch.where(
+            back_steps > terminating_idx,
+            terminating_idx,
+            back_steps,
+        )
+
     def local_search(
         self,
         env: Env,
@@ -443,17 +468,9 @@ class LocalSearchSampler(Sampler):
         # Compute per-trajectory backtrack length K. When specified via `back_ratio`,
         # K is proportional to the previous trajectory length; otherwise clamp the
         # provided `back_steps` to valid bounds.
-        if back_steps is None:
-            assert (
-                back_ratio is not None and 0 < back_ratio <= 1
-            ), "Either kwarg `back_steps` or `back_ratio` must be specified"
-            K = torch.ceil(back_ratio * (trajectories.terminating_idx - 1)).long()
-        else:
-            K = torch.where(
-                back_steps > trajectories.terminating_idx,
-                trajectories.terminating_idx,
-                back_steps,
-            )
+        K = self._compute_back_steps(
+            trajectories.terminating_idx, back_steps, back_ratio
+        )
 
         # 1) Backward sampling from terminal states (PolicyMixin-driven Sampler).
         prev_trajectories = self.backward_sampler.sample_trajectories(
