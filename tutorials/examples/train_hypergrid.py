@@ -28,7 +28,6 @@ distribution for the HyperGrid environment, which is useful for evaluation and v
 """
 
 import os
-import sys
 import time
 from argparse import ArgumentParser
 from math import ceil
@@ -57,19 +56,44 @@ from gfn.gym import HyperGrid
 from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.common import Timer, set_seed
-from gfn.utils.distributed import (
-    DistributedContext,
-    gather_distributed_data,
-    initialize_distributed_compute,
-)
+from gfn.utils.distributed import DistributedContext, initialize_distributed_compute
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
-from tutorials.examples.multinode.hypergrid_diversity_score import (
-    HypergridDiversityScore,
-)
 from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
     AverageAllPolicy,
 )
+
+
+class ModesReplayBufferManager(ReplayBufferManager):
+    def __init__(
+        self,
+        env: HyperGrid,
+        rank: int,
+        num_training_ranks: int,
+        diverse_replay_buffer: bool = False,
+        capacity: int = 10000,
+        remote_manager_rank: int | None = None,
+    ):
+        super().__init__(
+            env,
+            rank,
+            num_training_ranks,
+            scoring_function=self.scoring_function,
+            diverse_replay_buffer=diverse_replay_buffer,
+            capacity=capacity,
+            remote_manager_rank=remote_manager_rank,
+        )
+        self.discovered_modes = set()
+        self.env = env
+
+    def scoring_function(self, obj) -> float:
+        modes_found = self.env.modes_found(obj.terminating_states)
+        score = len(modes_found - self.discovered_modes)
+        self.discovered_modes.update(modes_found)
+        return float(score)
+
+    def _local_metadata(self) -> int:
+        return len(self.discovered_modes)
 
 
 def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
@@ -144,29 +168,6 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
         u[indices.index(index)] = torch.sum(parent_u_values * parent_probs)
 
     return (u * probabilities[..., -1]).detach().cpu()
-
-
-def validate_hypergrid(
-    env,
-    gflownet,
-    n_validation_samples,
-    visited_terminating_states: DiscreteStates | None,
-    discovered_modes,
-):
-    # Standard validation shared across envs.
-    validation_info, visited_terminating_states = env.validate(
-        gflownet,
-        n_validation_samples,
-        visited_terminating_states,
-    )
-
-    assert isinstance(visited_terminating_states, DiscreteStates)
-    # Count exact unique modes via HyperGrid API.
-    modes_found = env.modes_found(visited_terminating_states)
-    discovered_modes.update(modes_found)
-    validation_info["n_modes_found"] = len(discovered_modes)
-
-    return validation_info, visited_terminating_states, discovered_modes
 
 
 def _sample_new_strategy(
@@ -537,13 +538,10 @@ def main(args):  # noqa: C901
         else:
             num_training_ranks = len(distributed_context.assigned_training_ranks)
 
-        scoring_function = HypergridDiversityScore(args.ndim, args.height)
-
-        replay_buffer_manager = ReplayBufferManager(
+        replay_buffer_manager = ModesReplayBufferManager(
             env=env,
             rank=distributed_context.my_rank,
             num_training_ranks=num_training_ranks,
-            scoring_function=scoring_function,
             diverse_replay_buffer=args.diverse_replay_buffer,
             capacity=args.global_replay_buffer_size,
         )
@@ -604,11 +602,10 @@ def main(args):  # noqa: C901
 
     gflownet = gflownet.to(device)
 
-    states_visited = 0
     n_iterations = ceil(args.n_trajectories / args.batch_size)
     per_node_batch_size = args.batch_size // distributed_context.world_size
     validation_info = {"l1_dist": float("inf")}
-    discovered_modes = set()
+    modes_found = set()
     # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
 
@@ -708,9 +705,10 @@ def main(args):  # noqa: C901
         ) as to_train_samples_timer:
             training_samples = gflownet.to_training_samples(trajectories)
 
+            score = None
             if replay_buffer is not None:
                 with torch.no_grad():
-                    replay_buffer.add(training_samples)
+                    score = replay_buffer.add(training_samples)
                     training_objects = replay_buffer.sample(
                         n_samples=per_node_batch_size
                     )
@@ -770,7 +768,7 @@ def main(args):  # noqa: C901
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
-                    local_metric=-loss.item(),
+                    local_metric=score if score is not None else -loss.item(),
                 )
 
         # Calculate how long this iteration took.
@@ -802,47 +800,14 @@ def main(args):  # noqa: C901
             cast(DiscreteStates, trajectories.terminating_states)
         )
 
-        with Timer(timing, "gather_visited_states", enabled=args.timing):
-            # If distributed, gather all visited terminating states from all nodes.
-            if args.distributed and log_this_iter:
-                try:
-                    assert visited_terminating_states is not None
-                    # Gather all visited terminating states from all nodes.
-                    gathered_visited_terminating_states = gather_distributed_data(
-                        visited_terminating_states.tensor,
-                        training_group=distributed_context.train_global_group,
-                        world_size=distributed_context.num_training_ranks,
-                    )
-                except Exception as e:
-                    print(
-                        "Process {}: Caught error: {}".format(
-                            distributed_context.my_rank, e
-                        )
-                    )
-                    # handler.signal_error()
-                    sys.exit(1)
-            else:
-                # Just use the visited terminating states from this node.
-                assert visited_terminating_states is not None
-                gathered_visited_terminating_states = visited_terminating_states.tensor
-
         # If we are on the master node, calculate the validation metrics.
         with Timer(timing, "validation", enabled=args.timing):
+            assert visited_terminating_states is not None
+            all_visited_terminating_states.extend(visited_terminating_states)
             if distributed_context.my_rank == 0:
-
-                # Extend `all_visited_terminating_states` with the gathered data.
-                assert gathered_visited_terminating_states is not None
-                gathered_visited_terminating_states = cast(
-                    DiscreteStates, env.States(gathered_visited_terminating_states)
-                )
-                states_visited += len(gathered_visited_terminating_states)
-                all_visited_terminating_states.extend(
-                    gathered_visited_terminating_states
-                )
 
                 to_log = {
                     "loss": loss.item(),
-                    "states_visited": states_visited,
                     "sample_time": sample_timer.elapsed,
                     "to_train_samples_time": to_train_samples_timer.elapsed,
                     "loss_time": loss_timer.elapsed,
@@ -853,41 +818,39 @@ def main(args):  # noqa: C901
                     "l1_dist": None,  # only logged if calculate_partition.
                 }
 
-                if use_wandb:
-                    wandb.log(to_log, step=iteration)
-
                 if log_this_iter:
-                    (
-                        validation_info,
-                        all_visited_terminating_states,
-                        discovered_modes,
-                    ) = validate_hypergrid(
-                        env,
+                    validation_info, all_visited_terminating_states = env.validate(
                         gflownet,
                         args.validation_samples,
                         all_visited_terminating_states,
-                        discovered_modes,
                     )
+                    assert all_visited_terminating_states is not None
 
                     print(
-                        "+ all_visited_terminating_states = ",
-                        len(all_visited_terminating_states),
-                    )
-                    print(
-                        "+ visited_terminating_states = ",
+                        "+ rank 0, visited_terminating_states = ",
                         len(visited_terminating_states),
                     )
 
-                    if use_wandb:
-                        wandb.log(validation_info, step=iteration)
-
                     to_log.update(validation_info)
+
+                    if args.distributed:
+                        manager_rank = distributed_context.assigned_buffer
+                        assert manager_rank is not None
+                        n_modes_found = ReplayBufferManager.get_metadata(manager_rank)
+                    else:
+                        modes_found.update(env.modes_found(visited_terminating_states))
+                        n_modes_found = len(modes_found)
+
+                    to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
                         loss=to_log["loss"],
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
                     )
+
+                if use_wandb:
+                    wandb.log(to_log, step=iteration)
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
             if args.distributed and args.timing:
