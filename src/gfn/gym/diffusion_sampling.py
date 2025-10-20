@@ -277,6 +277,12 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         mixture_weights = mixture_weights / mixture_weights.sum()
 
         # Convert to torch tensors
+        print("+ Gaussian Mixture Target initialization:")
+        print("+ num_components : ", num_components)
+        print("+ locs : ", locs)
+        print("+ covariances : ", covariances)
+        print("+ mixture_weights : ", mixture_weights)
+
         locs = torch.tensor(locs, device=device)
         covariances = torch.tensor(covariances, device=device)
         mixture_weights = torch.tensor(mixture_weights, device=device)
@@ -382,8 +388,48 @@ class SimpleGaussianMixtureTarget(BaseTarget):
                 alpha=0.5,
                 marker="x",
             )
-        plt.xticks([])
-        plt.yticks([])
+
+        # Add dashed lines at 0
+        ax.axhline(
+            y=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="y=0"
+        )
+        ax.axvline(
+            x=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="x=0"
+        )
+
+        # Add dashed lines at each mode
+        modes = self.distribution.component_distribution.loc
+        for i, mode in enumerate(modes):
+            mode_x = mode[0].item()
+            mode_y = mode[1].item()
+            ax.axhline(
+                y=mode_y,
+                color="yellow",
+                linestyle="--",
+                linewidth=1,
+                alpha=0.7,
+                label=f"mode {i+1}: y={mode_y:.2f}",
+            )
+            ax.axvline(
+                x=mode_x,
+                color="yellow",
+                linestyle="--",
+                linewidth=1,
+                alpha=0.7,
+                label=f"mode {i+1}: x={mode_x:.2f}",
+            )
+
+        # Set x-ticks and y-ticks to show extremes and special values
+        x_tick_positions = [self.plot_border[0], self.plot_border[1]]
+        y_tick_positions = [self.plot_border[0], self.plot_border[1]]
+        x_tick_labels = [f"{self.plot_border[0]:.1f}", f"{self.plot_border[1]:.1f}"]
+        y_tick_labels = [f"{self.plot_border[0]:.1f}", f"{self.plot_border[1]:.1f}"]
+
+        plt.xticks(x_tick_positions, x_tick_labels)
+        plt.yticks(y_tick_positions, y_tick_labels)
+
+        # Add legend
+        ax.legend(loc="upper right", fontsize="small", framealpha=0.8)
 
         if show:
             plt.show()
