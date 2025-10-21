@@ -125,6 +125,7 @@ class DiffusionSampling(Env):
         Returns:
             The log rewards for the input states.
         """
+        # Remove the last index, which encodes the time step.
         return self.target.log_reward(states.tensor[..., :-1])
 
 
@@ -257,20 +258,21 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         mixture_weight_range: tuple[float, float] = (0.3, 0.7),
         degree_of_freedom_adjustment: int = 2,
         seed: int = 3,
-        locs: np.Array | None = None,
+        locs: np.ndarray | None = None,
         device: torch.device = torch.device("cpu"),
     ) -> None:
         degree_of_freedom_wishart = dim + degree_of_freedom_adjustment
 
         rng = np.random.default_rng(seed)
-        if not isinstance(locs, np.Array):
+        if locs is None:
             locs = rng.uniform(
                 mean_val_range[0], mean_val_range[1], size=(num_components, dim)
             )
-        elif isinstance(locs, np.Array):
-            assert locs.shape == (num_components, dim)  # type: ignore
-        else:
-            raise ValueError(f"Invalid type for locs: {type(locs)}")
+        elif isinstance(locs, np.ndarray):
+            assert locs.shape == (num_components, dim)
+            assert (locs >= mean_val_range[0]).all() and (
+                locs <= mean_val_range[1]
+            ).all(), f"Locs must be within the mean value range {mean_val_range}"
 
         covariances = []
         for _ in range(num_components):
@@ -290,7 +292,7 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         print("+ covariances : ", covariances)
         print("+ mixture_weights : ", mixture_weights)
 
-        locs = torch.tensor(locs, device=device)
+        locs = torch.tensor(locs, device=device)  # type: ignore
         covariances = torch.tensor(covariances, device=device)
         mixture_weights = torch.tensor(mixture_weights, device=device)
 
