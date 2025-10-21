@@ -185,13 +185,13 @@ class BaseTarget(ABC):
             The gradient of the log reward function.
         """
         with torch.no_grad():
-            copy_x = x.detach().clone()
-            copy_x.requires_grad = True
+            copy_x = x.detach().clone().requires_grad_(True)
             with torch.enable_grad():
-                self.log_reward(copy_x).sum().backward()
+                log_reward = self.log_reward(copy_x).sum()
+                log_reward.backward()
                 lgv = copy_x.grad
                 assert lgv is not None
-        return lgv.data
+        return lgv
 
     def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
         """Sample from the target.
