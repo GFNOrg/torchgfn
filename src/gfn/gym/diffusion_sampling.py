@@ -46,6 +46,7 @@ class DiffusionSampling(Env):
             # TODO: add more targets here
             "easy_funnel": EasyFunnelTarget,  # Neal's funnel with std=1.0 for x0
             "hard_funnel": HardFunnelTarget,  # Neal's funnel with std=3.0 for x0
+            "many_well": ManyWellTarget,  # 32D default: product of 16 identical 2D double wells
         }
         self.target = DIFFUSION_TARGETS[target_str](device=device, **target_kwargs)
         self.dim = self.target.dim
@@ -470,7 +471,6 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         plt.close()
 
 
-# Minimal FunnelTarget implementation, following BaseTarget conventions
 class FunnelTarget(BaseTarget):
     """Neal's funnel distribution target.
 
@@ -651,6 +651,192 @@ class HardFunnelTarget(FunnelTarget):
         super().__init__(dim=dim, std=std, device=device, seed=seed, **kwargs)
 
 
-if __name__ == "__main__":
-    env = SimpleGaussianMixtureTarget()
-    env.visualize()
+class ManyWellTarget(BaseTarget):
+    """Many-well target distribution.
+
+    The 32D (default) instance is the product of 16 identical 2D double-well
+    components. Each 2D block (x1, x2) has unnormalized log-density
+        log p(x1, x2) = -x1^4 + 6 x1^2 + 0.5 x1 - 0.5 x2^2 + C
+    The overall log-density is the sum over all independent 2D blocks.
+
+    Sampling uses rejection sampling for the x1 coordinate in each block with a
+    simple Gaussian mixture proposal, and standard Normal for x2.
+    """
+
+    def __init__(
+        self,
+        dim: int = 32,
+        device: torch.device = torch.device("cpu"),
+        seed: int = 3,
+        **kwargs: Any,
+    ) -> None:
+        # Simple mixture proposal for x1: 3 equally weighted Normals
+        self.component_mix = torch.tensor([1 / 3, 1 / 3, 1 / 3], device=device)
+        self.means = torch.tensor([-2.0, 0.0, 2.0], device=device)
+        self.scales = torch.tensor([1.0, 1.0, 1.0], device=device)
+
+        # Visualization borders for the first two dims
+        self.plot_border = [-4.0, 4.0]
+
+        super().__init__(device=device, dim=dim, n_gt_xs=10_000, seed=seed)
+
+    @staticmethod
+    def _block_log_density(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        # Per 2D block log p(x1, x2) up to an additive constant
+        return -(x1**4) + 6.0 * (x1**2) + 0.5 * x1 - 0.5 * (x2**2)
+
+    def log_reward(self, x: torch.Tensor) -> torch.Tensor:
+        batched = x.ndim == 2
+        if not batched:
+            x = x.unsqueeze(0)
+
+        assert (
+            self.dim % 2 == 0
+        ), "ManyWellTarget requires an even dimension (pairs of coordinates)."
+
+        # Reshape into (..., n_blocks, 2)
+        n_blocks = self.dim // 2
+        x_pairs = x.view(x.shape[0], n_blocks, 2)
+        x1 = x_pairs[..., 0]
+        x2 = x_pairs[..., 1]
+
+        block_logs = self._block_log_density(x1, x2)
+        logp = block_logs.sum(dim=-1)
+        if not batched:
+            logp = logp.squeeze(0)
+
+        return logp
+
+    def _make_proposal(self) -> D.MixtureSameFamily:
+        mix = D.Categorical(self.component_mix)
+        com = D.Normal(self.means, self.scales)
+
+        return D.MixtureSameFamily(mixture_distribution=mix, component_distribution=com)
+
+    def _compute_envelope_k(self, proposal: D.Distribution) -> float:
+        # Coarse grid-based envelope to upper bound target/proposal ratio
+        grid = torch.linspace(-6.0, 6.0, 201, device=self.device)
+        target_log = -(grid**4) + 6.0 * (grid**2) + 0.5 * grid
+        prop_log = proposal.log_prob(grid)
+        k = torch.exp(target_log - prop_log).max().item()
+
+        return float(1.2 * k)  # small safety margin
+
+    def _rejection_sampling_x1(
+        self, n_samples: int, proposal: D.Distribution, k: float
+    ) -> torch.Tensor:
+        # Basic rejection sampler with vectorized batches and refill loop
+        collected: list[torch.Tensor] = []
+        remaining = n_samples
+        while remaining > 0:
+            # Oversample for higher acceptance rate
+            z = proposal.sample((remaining * 10,))
+            u = torch.rand_like(z) * (k * torch.exp(proposal.log_prob(z)))
+            accept = torch.exp(-(z**4) + 6.0 * (z**2) + 0.5 * z) > u
+            accepted = z[accept]
+            if accepted.shape[0] == 0:
+                continue
+            if accepted.shape[0] >= remaining:
+                collected.append(accepted[:remaining])
+                remaining = 0
+            else:
+                collected.append(accepted)
+                remaining -= accepted.shape[0]
+
+        return torch.cat(collected, dim=0)
+
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
+        if seed is not None:
+            set_seed(seed)
+
+        assert (
+            self.dim % 2 == 0
+        ), "ManyWellTarget requires an even dimension (pairs of coordinates)."
+        n_blocks = self.dim // 2
+
+        proposal = self._make_proposal()
+        k = self._compute_envelope_k(proposal)
+
+        xs = torch.empty(batch_size, self.dim, device=self.device)
+        standard_normal = D.Normal(
+            torch.tensor(0.0, device=self.device),
+            torch.tensor(1.0, device=self.device),
+        )
+        for b in range(n_blocks):
+            x1 = self._rejection_sampling_x1(batch_size, proposal, k)
+            x2 = standard_normal.sample((batch_size,))
+            xs[:, 2 * b] = x1
+            xs[:, 2 * b + 1] = x2
+        return xs
+
+    def visualize(
+        self,
+        samples: torch.Tensor | None = None,
+        show: bool = False,
+        prefix: str = "",
+        linspace_n_steps: int = 100,
+        max_n_samples: int = 500,
+    ) -> None:
+        if self.dim < 2:
+            raise ValueError("Visualization requires at least 2 dimensions.")
+
+        fig = plt.figure()
+        ax = fig.add_subplot()
+
+        x0, x1 = torch.meshgrid(
+            torch.linspace(
+                self.plot_border[0],
+                self.plot_border[1],
+                linspace_n_steps,
+                device=self.device,
+            ),
+            torch.linspace(
+                self.plot_border[0],
+                self.plot_border[1],
+                linspace_n_steps,
+                device=self.device,
+            ),
+            indexing="ij",
+        )
+        grid = torch.stack([x0.ravel(), x1.ravel()], dim=1)
+        # Only first block matters in 2D visualization
+        logp = self._block_log_density(grid[:, 0], grid[:, 1]).reshape(x0.shape)
+        pdf_values = torch.exp(logp)
+        ax.contourf(x0, x1, pdf_values, levels=20)
+
+        if samples is not None:
+            plt.scatter(
+                samples[:max_n_samples, 0].clamp(
+                    self.plot_border[0], self.plot_border[1]
+                ),
+                samples[:max_n_samples, 1].clamp(
+                    self.plot_border[0], self.plot_border[1]
+                ),
+                c="r",
+                alpha=0.5,
+                marker="x",
+            )
+
+        ax.axhline(
+            y=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="y=0"
+        )
+        ax.axvline(
+            x=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="x=0"
+        )
+
+        x_tick_positions = [self.plot_border[0], self.plot_border[1]]
+        y_tick_positions = [self.plot_border[0], self.plot_border[1]]
+        x_tick_labels = [f"{self.plot_border[0]:.1f}", f"{self.plot_border[1]:.1f}"]
+        y_tick_labels = [f"{self.plot_border[0]:.1f}", f"{self.plot_border[1]:.1f}"]
+        plt.xticks(x_tick_positions, x_tick_labels)
+        plt.yticks(y_tick_positions, y_tick_labels)
+
+        ax.legend(fontsize="small", framealpha=0.8)
+
+        if show:
+            plt.show()
+        else:
+            os.makedirs("viz", exist_ok=True)
+            plt.savefig(f"viz/{prefix}many_well.png")
+
+        plt.close()
