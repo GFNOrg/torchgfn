@@ -280,8 +280,7 @@ class PinnedBrownianMotionForward(PolicyMixin, Estimator):
         t_curr = input.tensor[:, [-1]]
 
         out = torch.where(
-            (t_curr - 1.0).abs()
-            < self.dt * 1e-2,  # Exit case; self.dt as an adaptive threshold
+            (1.0 - t_curr) < self.dt * 1e-2,  # sf case; t_curr is >= 0.
             torch.full_like(s_curr, -float("inf")),
             self.module(self.preprocessor(input)),
         )
@@ -351,8 +350,7 @@ class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
         t_curr = input.tensor[:, [-1]]  # shape: (*batch_shape,)
 
         out = torch.where(
-            (t_curr - self.dt).abs()
-            < self.dt * 1e-2,  # Exit case; self.dt as an adaptive threshold
+            (t_curr - self.dt) < self.dt * 1e-2,  # s0 case; t_curr and dt are >= 0.
             torch.zeros_like(s_curr),
             self.module(self.preprocessor(input)),
         )
