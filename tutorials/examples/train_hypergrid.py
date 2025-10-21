@@ -556,9 +556,38 @@ def main(args):  # noqa: C901
 
         import wandb
 
-        if distributed_context.my_rank == 0:
-            wandb.init(project=args.wandb_project)
-            wandb.config.update(args)
+        # Generate shared group name for wandb across all processes
+        group_name = None
+        if args.distributed:
+            # Use the training group and perform in-place broadcasts
+            pg = distributed_context.train_global_group
+            is_root = distributed_context.my_rank == 0
+
+            if is_root:
+                group_name = wandb.util.generate_id()
+                group_name_bytes = group_name.encode("utf-8")
+                group_name_len_tensor = torch.tensor([len(group_name_bytes)], dtype=torch.long)
+            else:
+                group_name_bytes = None
+                group_name_len_tensor = torch.zeros(1, dtype=torch.long)
+
+            # Broadcast the length
+            dist.broadcast(group_name_len_tensor, src=0, group=pg)
+            group_name_len = int(group_name_len_tensor.item())
+
+            # Broadcast the payload
+            if is_root:
+                payload = torch.tensor(list(group_name_bytes), dtype=torch.uint8)
+            else:
+                payload = torch.empty(group_name_len, dtype=torch.uint8)
+
+            dist.broadcast(payload, src=0, group=pg)
+            group_name = bytes(payload.tolist()).decode("utf-8")
+        else:
+            group_name = wandb.util.generate_id()
+
+        wandb.init(project=args.wandb_project, group=group_name)
+        wandb.config.update(args)
 
     # Initialize the preprocessor.
     preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
@@ -840,8 +869,8 @@ def main(args):  # noqa: C901
                         to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
-                        loss=to_log["loss"],
-                        l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
+                        loss_0=to_log["loss_0"],
+                        l1_dist_0=to_log["l1_dist_0"],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
                     )
 
