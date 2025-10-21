@@ -1,6 +1,6 @@
 import os
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,6 +26,7 @@ class DiffusionSampling(Env):
         self,
         target_str: str,
         target_kwargs: dict[str, Any],
+        num_discretization_steps: float,
         device: torch.device = torch.device("cpu"),
         check_action_validity: bool = False,
     ) -> None:
@@ -34,6 +35,7 @@ class DiffusionSampling(Env):
         Args:
             target_str: The string identifier for the target.
             target_kwargs: The keyword arguments for the target.
+            num_discretization_steps: The number of discretization steps.
             device: The device to use.
             check_action_validity: Whether to check the action validity.
         """
@@ -43,6 +45,7 @@ class DiffusionSampling(Env):
         }
         self.target = DIFFUSION_TARGETS[target_str](device=device, **target_kwargs)
         self.dim = self.target.dim
+        self.dt = 1.0 / num_discretization_steps
 
         default_dtype = torch.get_default_dtype()
 
@@ -51,14 +54,14 @@ class DiffusionSampling(Env):
         super().__init__(
             s0=s0,
             state_shape=(self.dim + 1,),
-            action_shape=(self.dim + 1,),
+            action_shape=(self.dim,),
             # dummy action is never used since all trajectories are terminated at
             # time == 1 (i.e., we don't need to pad shorter trajectories)
             dummy_action=torch.full(
-                (self.dim + 1,), float("inf"), device=device, dtype=default_dtype
+                (self.dim,), float("inf"), device=device, dtype=default_dtype
             ),
             exit_action=torch.full(
-                (self.dim + 1,), -float("inf"), device=device, dtype=default_dtype
+                (self.dim,), -float("inf"), device=device, dtype=default_dtype
             ),
             check_action_validity=check_action_validity,
         )
@@ -67,25 +70,31 @@ class DiffusionSampling(Env):
         """Step function for the SimpleGaussianMixtureModel environment.
 
         Args:
-            states: The current states (not used here).
-            actions: The actions, which correspond to the next states.
+            states: The current states.
+            actions: The actions, which correspond to the changes to the states.
 
         Returns:
             The next states.
         """
-        return self.States(actions.tensor)
+        next_states_tensor = states.tensor.clone()
+        next_states_tensor[..., :-1] = next_states_tensor[..., :-1] + actions.tensor
+        next_states_tensor[..., -1] = next_states_tensor[..., -1] + self.dt
+        return self.States(next_states_tensor)
 
     def backward_step(self, states: States, actions: Actions) -> States:
         """Backward step function for the SimpleGaussianMixtureModel environment.
 
         Args:
-            states: The current states (not used here).
-            actions: The actions, which correspond to the previous states.
+            states: The current states.
+            actions: The actions, which correspond to the changes to the states.
 
         Returns:
             The previous states.
         """
-        return self.States(actions.tensor)
+        prev_states_tensor = states.tensor.clone()
+        prev_states_tensor[..., :-1] = prev_states_tensor[..., :-1] - actions.tensor
+        prev_states_tensor[..., -1] = prev_states_tensor[..., -1] - self.dt
+        return self.States(prev_states_tensor)
 
     def is_action_valid(
         self,
@@ -96,23 +105,24 @@ class DiffusionSampling(Env):
         """Check if the actions are valid.
 
         Args:
-            states: The current states (not used here).
+            states: The current states.
             actions: The actions to check.
 
         Returns:
             True if the actions are valid, False otherwise.
         """
-        assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
-        time = states.tensor[0, -1].item()
+        time = states.tensor[..., -1].flatten()[0].item()
         # TODO: support randomized discretization
         assert (
-            states.tensor[:, -1] == time
+            states.tensor[..., -1] == time
         ).all(), "Time must be the same for all states in the batch"
 
         if not backward and time == 1.0:  # Terminate if time == 1.0 for forward steps
-            return bool((actions.tensor == self.sf).all().item())
+            sf = cast(torch.Tensor, self.sf)
+            return bool((actions.tensor == sf[:-1]).all().item())
         elif backward and time == 0.0:  # Return to s0 if time == 0.0 for backward steps
-            return bool((actions.tensor == self.s0).all().item())
+            s0 = cast(torch.Tensor, self.s0)
+            return bool((actions.tensor == s0[:-1]).all().item())
         else:
             return True
 
@@ -285,23 +295,29 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         )
         mixture_weights = mixture_weights / mixture_weights.sum()
 
-        # Convert to torch tensors
         print("+ Gaussian Mixture Target initialization:")
-        print("+ num_components : ", num_components)
-        print("+ locs : ", locs)
-        print("+ covariances : ", covariances)
-        print("+ mixture_weights : ", mixture_weights)
+        print("+ num_components: ", num_components)
+        print("+ mixture_weights: ", mixture_weights)
+        for i, (loc, cov) in enumerate(zip(locs, covariances)):
+            loc_str = np.array2string(loc, precision=2, separator=", ").replace(
+                "\n", " "
+            )
+            cov_str = np.array2string(cov, precision=2, separator=", ").replace(
+                "\n", " "
+            )
+            print(f"\tComponent {i+1}: loc={loc_str}, cov={cov_str}")
 
-        locs = torch.tensor(locs, device=device)  # type: ignore
-        covariances = torch.tensor(covariances, device=device)
-        mixture_weights = torch.tensor(mixture_weights, device=device)
+        # Convert to torch tensors
+        locs_tsr = torch.tensor(locs, device=device)
+        covariances_tsr = torch.tensor(covariances, device=device)
+        mixture_weights_tsr = torch.tensor(mixture_weights, device=device)
 
         # Define the distribution
         self.distribution = torch.distributions.MixtureSameFamily(
-            torch.distributions.Categorical(probs=mixture_weights),
+            torch.distributions.Categorical(probs=mixture_weights_tsr),
             torch.distributions.MultivariateNormal(
-                loc=locs,  # type: ignore
-                covariance_matrix=covariances,
+                loc=locs_tsr,
+                covariance_matrix=covariances_tsr,
             ),
         )
 
@@ -438,7 +454,7 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         plt.yticks(y_tick_positions, y_tick_labels)
 
         # Add legend
-        ax.legend(loc="upper right", fontsize="small", framealpha=0.8)
+        ax.legend(fontsize="small", framealpha=0.8)
 
         if show:
             plt.show()

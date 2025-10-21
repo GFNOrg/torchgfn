@@ -14,7 +14,6 @@ import argparse
 import math
 from typing import Any
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Distribution
@@ -180,9 +179,9 @@ class PISGradNetForward(nn.Module):  # TODO: support Learnable Backward policy
         # TODO: learn variance, lp, clipping, ...
         if torch.isnan(out).any():
             print("+ out has {} nans".format(torch.isnan(out).sum()))
+            out = torch.nan_to_num(out)
 
-        mean = torch.nan_to_num(out)
-        return mean
+        return out
 
 
 class FixedBackwardModule(nn.Module):
@@ -204,8 +203,7 @@ class IsotropicGaussianWithTime(Distribution):
         self,
         loc: torch.Tensor,
         scale: torch.Tensor,
-        time: torch.Tensor,
-        sample_detach: bool = True,
+        actions_detach: bool = True,
     ):
         """
         Initialize the IsotropicGaussianWithTime distribution.
@@ -213,30 +211,27 @@ class IsotropicGaussianWithTime(Distribution):
         Args:
             loc: The mean of the Gaussian distribution (shape: (*batch_shape, s_dim))
             scale: The scale of the Gaussian distribution (shape: (*batch_shape, 1))
-            time: The corresponding next (if forward) or previous (if backward) time step
-                (shape: (*batch_shape, 1))
-            sample_detach: Whether to detach the sample from the graph.
+            actions_detach: Whether to detach the actions from the graph.
         """
         super().__init__()
         self.loc = loc  # shape: (*batch_shape, s_dim)
         self.scale = scale  # shape: (*batch_shape, 1)
-        self.time = time  # shape: (*batch_shape, 1)
-        self.sample_detach = sample_detach
+        self.actions_detach = actions_detach
 
     def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         noise = torch.randn(sample_shape + self.loc.shape, device=self.loc.device)
-        _sample = self.loc + self.scale * noise
-        if self.sample_detach:
-            _sample = _sample.detach()
-        return torch.cat([_sample, self.time], dim=-1)
+        actions = self.loc + self.scale * noise
+        if self.actions_detach:
+            actions = actions.detach()
+        return actions
 
-    def log_prob(self, sample: torch.Tensor) -> torch.Tensor:
-        noise = (sample[:, :-1] - self.loc) / self.scale
+    def log_prob(self, actions: torch.Tensor) -> torch.Tensor:
+        noise = (actions - self.loc) / self.scale
         scale_squeezed = self.scale.squeeze(-1)
         logprobs = torch.where(
             (
-                (scale_squeezed.abs() < 1e-8)  # Dirac delta case
-                | (sample[:, -1].isinf())  # Exit case
+                (scale_squeezed.abs() < 1e-6)  # Exit case for backward sampling
+                | (actions[..., 0].isinf())  # Exit case for forward sampling
             ),
             torch.zeros_like(scale_squeezed),
             -0.5 * (LOGTWOPI + 2 * torch.log(self.scale) + noise**2).sum(dim=-1),
@@ -285,7 +280,8 @@ class PinnedBrownianMotionForward(PolicyMixin, Estimator):
         t_curr = input.tensor[:, [-1]]
 
         out = torch.where(
-            (t_curr - 1.0).abs() < 1e-8,  # Exit case
+            (t_curr - 1.0).abs()
+            < self.dt * 1e-2,  # Exit case; self.dt as an adaptive threshold
             torch.full_like(s_curr, -float("inf")),
             self.module(self.preprocessor(input)),
         )
@@ -309,20 +305,10 @@ class PinnedBrownianMotionForward(PolicyMixin, Estimator):
         # TODO: add epsilon-noisy exploration
     ) -> IsotropicGaussianWithTime:
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
-        s_curr = states.tensor[:, :-1]
-        t_curr = states.tensor[:, [-1]]
-
-        fwd_mean = s_curr + self.dt * module_output
+        fwd_mean = self.dt * module_output
         fwd_std = torch.tensor(self.sigma * self.dt**0.5, device=fwd_mean.device)
         fwd_std = fwd_std.repeat(fwd_mean.shape[0], 1)
-
-        # Return a distribution whose sample has shape (batch, s_dim+1)
-        next_time = torch.where(
-            (t_curr - 1.0).abs() < 1e-8,  # Exit case
-            torch.full_like(t_curr, -float("inf")),
-            t_curr + self.dt,
-        )
-        return IsotropicGaussianWithTime(fwd_mean, fwd_std, next_time)
+        return IsotropicGaussianWithTime(fwd_mean, fwd_std)
 
 
 class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
@@ -350,8 +336,7 @@ class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
 
         # Pinned-Brownian Motion related
         self.sigma = sigma
-        self.num_discretization_steps = num_discretization_steps
-        self.dt = 1.0 / self.num_discretization_steps
+        self.dt = 1.0 / num_discretization_steps
 
     def forward(self, input: States) -> torch.Tensor:
         """Forward pass of the module.
@@ -366,7 +351,8 @@ class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
         t_curr = input.tensor[:, [-1]]  # shape: (*batch_shape,)
 
         out = torch.where(
-            (t_curr - self.dt).abs() < 1e-8,  # Exit case for backward steps
+            (t_curr - self.dt).abs()
+            < self.dt * 1e-2,  # Exit case; self.dt as an adaptive threshold
             torch.zeros_like(s_curr),
             self.module(self.preprocessor(input)),
         )
@@ -385,7 +371,7 @@ class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
     def to_probability_distribution(
         self,
         states: States,
-        module_output: torch.Tensor,
+        module_output: torch.Tensor,  # TODO: support learnable backward mean and var
         **policy_kwargs: Any,
         # TODO: add epsilon-noisy exploration
     ) -> IsotropicGaussianWithTime:
@@ -393,17 +379,9 @@ class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
         s_curr = states.tensor[:, :-1]
         t_curr = states.tensor[:, [-1]]
 
-        bwd_mean = s_curr - s_curr * self.dt / t_curr
+        bwd_mean = s_curr * self.dt / t_curr
         bwd_std = self.sigma * (self.dt * (t_curr - self.dt) / t_curr).sqrt()
-
-        prev_time = torch.where(
-            (t_curr - self.dt).abs() < 1e-8,  # Exit case for backward steps
-            torch.zeros_like(t_curr),
-            t_curr - self.dt,
-        )
-
-        # Return a distribution whose sample has shape (batch, s_dim+1)
-        return IsotropicGaussianWithTime(bwd_mean, bwd_std, prev_time)
+        return IsotropicGaussianWithTime(bwd_mean, bwd_std)
 
 
 ###########
@@ -422,12 +400,12 @@ def main(args):
         "dim": args.dim,
         "num_components": args.num_components,
         "seed": args.target_seed,
-        "locs": np.array([[-5.0, -5.0], [5, 5]]),  # TODO: make configurable.
         # Other kwargs use defaults inside the target class
     }
     env = DiffusionSampling(
         target_str=args.target,
         target_kwargs=target_kwargs,
+        num_discretization_steps=args.num_steps,
         device=device,
         check_action_validity=False,
     )
@@ -505,7 +483,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_components", type=int, default=2, help="Mixture components"
     )
-    parser.add_argument("--target_seed", type=int, default=6, help="Target RNG seed")
+    parser.add_argument("--target_seed", type=int, default=2, help="Target RNG seed")
 
     # Discretization / diffusion params
     parser.add_argument(
@@ -514,7 +492,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sigma",
         type=float,
-        default=2.0,
+        default=5.0,  # 5.0 is for simple_gmm target, you might need to change this for other targets
         help="diffusion coefficient for the pinned Brownian motion",
     )
 
@@ -528,7 +506,7 @@ if __name__ == "__main__":
 
     # Training
     parser.add_argument("--n_iterations", type=int, default=2000)
-    parser.add_argument("--batch_size", type=int, default=2000)
+    parser.add_argument("--batch_size", type=int, default=200)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr_logz", type=float, default=1e-1)
 
