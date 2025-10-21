@@ -764,7 +764,7 @@ def main(args):  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
             if averaging_policy is not None:
-                gflownet, optimizer = averaging_policy(
+                gflownet, optimizer, averaging_info = averaging_policy(
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
@@ -817,6 +817,7 @@ def main(args):  # noqa: C901
                 f"score_{my_rank}": score,
                 f"l1_dist_{my_rank}": None,  # only logged if calculate_partition.
             }
+            to_log.update({f"{k}_{my_rank}": v for k, v in averaging_info.items()})
 
             if log_this_iter:
                 validation_info, all_visited_terminating_states = env.validate(

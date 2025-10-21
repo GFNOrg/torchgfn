@@ -21,7 +21,7 @@ class SpawnPolicy(ABC):
         iteration: int,
         model: GFlowNet,
         local_metric: Optional[float] = None,
-    ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer, dict]:
         """Possibly perform a spawn/averaging step on this iteration."""
         raise NotImplementedError
 
@@ -39,11 +39,11 @@ class AverageAllPolicy(SpawnPolicy):
         model: GFlowNet,
         optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
-    ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer, dict]:
         if not dist.is_available() or not dist.is_initialized():
-            return model, optimizer
+            return model, optimizer, {}
         if iteration % self.average_every != 0:
-            return model, optimizer
+            return model, optimizer, {"averaged_this_iteration": False}
 
         world_size = float(dist.get_world_size())
         for param in model.parameters():
@@ -51,7 +51,7 @@ class AverageAllPolicy(SpawnPolicy):
             dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=dist.group.WORLD)
             param.data.copy_(param_tensor / world_size)
 
-        return model, optimizer
+        return model, optimizer, {"averaged_this_iteration": True}
 
 
 class AsyncSelectiveAveragingPolicy(SpawnPolicy):
@@ -134,10 +134,10 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         model: GFlowNet,
         optimizer: torch.optim.Optimizer,
         local_metric: Optional[float] = None,
-    ) -> Tuple[GFlowNet, torch.optim.Optimizer]:
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer, dict]:
         self._ensure_initialized(model)
         if not dist.is_available() or not dist.is_initialized():
-            return model, optimizer
+            return model, optimizer, {}
 
         # Non-blocking metric send on cadence
         if local_metric is not None and iteration % self.average_every == 0:
@@ -161,6 +161,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
         # If a spawn (full rebuild) has been requested, build a fresh model + optimizer
         # and seed it with the averaged weights received in the background thread.
+        averaged_this_iteration = False
         if self._new_weights is not None and self._model_builder is not None:
             new_weights: Optional[Dict[str, torch.Tensor]] = None
             with self._pending_lock:
@@ -172,8 +173,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 for name, param in model.named_parameters():
                     if name in new_weights:
                         param.data.copy_(new_weights[name])
+                averaged_this_iteration = True
 
-        return model, optimizer
+        return model, optimizer, {"averaged_this_iteration": averaged_this_iteration}
 
     # ---------------- Rank 0 metric aggregation and dispatch ----------------
     def _rank0_post_metric_recvs(self) -> None:
