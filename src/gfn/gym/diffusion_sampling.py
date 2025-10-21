@@ -1,3 +1,4 @@
+import math
 import os
 from abc import ABC, abstractmethod
 from typing import Any, cast
@@ -5,6 +6,7 @@ from typing import Any, cast
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.distributions as D
 from scipy.stats import wishart
 
 from gfn.actions import Actions
@@ -42,6 +44,8 @@ class DiffusionSampling(Env):
         DIFFUSION_TARGETS = {
             "simple_gmm": SimpleGaussianMixtureTarget,
             # TODO: add more targets here
+            "easy_funnel": EasyFunnelTarget,  # Neal's funnel with std=1.0 for x0
+            "hard_funnel": HardFunnelTarget,  # Neal's funnel with std=3.0 for x0
         }
         self.target = DIFFUSION_TARGETS[target_str](device=device, **target_kwargs)
         self.dim = self.target.dim
@@ -270,6 +274,7 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         seed: int = 3,
         locs: np.ndarray | None = None,
         device: torch.device = torch.device("cpu"),
+        **kwargs: Any,
     ) -> None:
         degree_of_freedom_wishart = dim + degree_of_freedom_adjustment
 
@@ -463,6 +468,187 @@ class SimpleGaussianMixtureTarget(BaseTarget):
             plt.savefig(f"viz/{prefix}simple_gmm.png")
 
         plt.close()
+
+
+# Minimal FunnelTarget implementation, following BaseTarget conventions
+class FunnelTarget(BaseTarget):
+    """Neal's funnel distribution target.
+
+    x0 ~ Normal(0, std^2), and for i >= 1: xi | x0 ~ Normal(0, exp(x0)).
+
+    Args:
+        dim: Total dimensionality (x0 plus dim-1 conditional coordinates).
+        std: Standard deviation for the marginal prior on x0.
+        device: Torch device.
+        seed: RNG seed.
+    """
+
+    def __init__(
+        self,
+        dim: int = 10,
+        std: float = 1.0,
+        device: torch.device = torch.device("cpu"),
+        seed: int = 3,
+        **kwargs: Any,
+    ) -> None:
+        self.std = float(std)
+        self.device = device
+
+        # A simple default border for 2D visualization
+        self.plot_border = [-10.0, 10.0]
+
+        super().__init__(device=device, dim=dim, n_gt_xs=10_000, seed=seed)
+
+    def log_reward(self, x: torch.Tensor) -> torch.Tensor:
+        """Log-density of Neal's funnel distribution.
+
+        Returns log p(x0) + sum_i log p(xi | x0), i=1..dim-1.
+        """
+        batched = x.ndim == 2
+        if not batched:
+            x = x.unsqueeze(0)
+
+        x0 = x[..., 0]
+        xs = x[..., 1:]
+
+        # p(x0) = Normal(0, std)
+        normal_x0 = D.Normal(
+            torch.tensor(0.0, device=self.device),
+            torch.tensor(self.std, device=self.device),
+        )
+        log_p_x0 = normal_x0.log_prob(x0)
+
+        # p(xs | x0): each xi | x0 ~ Normal(0, exp(x0)) with variance exp(x0)
+        # Sum of independent Gaussians log-probs
+        dim_minus_1 = self.dim - 1
+        xs_sq_sum = xs.pow(2).sum(dim=-1)
+        log_two_pi = math.log(2.0 * math.pi)
+        log_cond = -0.5 * (
+            dim_minus_1 * log_two_pi + dim_minus_1 * x0 + xs_sq_sum * torch.exp(-x0)
+        )
+
+        log_prob = log_p_x0 + log_cond
+        if not batched:
+            log_prob = log_prob.squeeze(0)
+        return log_prob
+
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
+        if seed is not None:
+            set_seed(seed)
+
+        # Sample x0 ~ Normal(0, std)
+        normal_x0 = D.Normal(
+            torch.tensor(0.0, device=self.device),
+            torch.tensor(self.std, device=self.device),
+        )
+        x0 = normal_x0.sample((batch_size,))
+
+        # Sample xs | x0 with variance exp(x0) => std = exp(0.5 * x0)
+        eps = torch.randn(batch_size, self.dim - 1, device=self.device)
+        xs = eps * torch.exp(0.5 * x0).unsqueeze(-1)
+
+        return torch.cat([x0.unsqueeze(-1), xs], dim=-1)
+
+    def visualize(
+        self,
+        samples: torch.Tensor | None = None,
+        show: bool = False,
+        prefix: str = "",
+        linspace_n_steps: int = 100,
+        max_n_samples: int = 500,
+    ) -> None:
+        """Visualize only supported for 2D (x0, x1)."""
+        if self.dim != 2:
+            raise ValueError(
+                f"Visualization is only supported for 2D, but got {self.dim}D"
+            )
+
+        fig = plt.figure()
+        ax = fig.add_subplot()
+
+        x0, x1 = torch.meshgrid(
+            torch.linspace(
+                self.plot_border[0],
+                self.plot_border[1],
+                linspace_n_steps,
+                device=self.device,
+            ),
+            torch.linspace(
+                self.plot_border[0],
+                self.plot_border[1],
+                linspace_n_steps,
+                device=self.device,
+            ),
+            indexing="ij",
+        )
+        grid = torch.stack([x0.ravel(), x1.ravel()], dim=1)
+        logp = self.log_reward(grid).reshape(x0.shape)
+        pdf_values = torch.exp(logp)
+        ax.contourf(x0, x1, pdf_values, levels=20)
+
+        if samples is not None:
+            plt.scatter(
+                samples[:max_n_samples, 0].clamp(
+                    self.plot_border[0], self.plot_border[1]
+                ),
+                samples[:max_n_samples, 1].clamp(
+                    self.plot_border[0], self.plot_border[1]
+                ),
+                c="r",
+                alpha=0.5,
+                marker="x",
+            )
+
+        # Add dashed lines at 0
+        ax.axhline(
+            y=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="y=0"
+        )
+        ax.axvline(
+            x=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="x=0"
+        )
+
+        # Set x-ticks and y-ticks to show extremes
+        x_tick_positions = [self.plot_border[0], self.plot_border[1]]
+        y_tick_positions = [self.plot_border[0], self.plot_border[1]]
+        x_tick_labels = [f"{self.plot_border[0]:.1f}", f"{self.plot_border[1]:.1f}"]
+        y_tick_labels = [f"{self.plot_border[0]:.1f}", f"{self.plot_border[1]:.1f}"]
+        plt.xticks(x_tick_positions, x_tick_labels)
+        plt.yticks(y_tick_positions, y_tick_labels)
+
+        # Add legend
+        ax.legend(fontsize="small", framealpha=0.8)
+
+        if show:
+            plt.show()
+        else:
+            os.makedirs("viz", exist_ok=True)
+            plt.savefig(f"viz/{prefix}funnel.png")
+
+        plt.close()
+
+
+class EasyFunnelTarget(FunnelTarget):
+    def __init__(
+        self,
+        dim: int = 10,
+        std: float = 1.0,
+        device: torch.device = torch.device("cpu"),
+        seed: int = 3,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(dim=dim, std=std, device=device, seed=seed, **kwargs)
+
+
+class HardFunnelTarget(FunnelTarget):
+    def __init__(
+        self,
+        dim: int = 10,
+        std: float = 3.0,
+        device: torch.device = torch.device("cpu"),
+        seed: int = 3,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(dim=dim, std=std, device=device, seed=seed, **kwargs)
 
 
 if __name__ == "__main__":
