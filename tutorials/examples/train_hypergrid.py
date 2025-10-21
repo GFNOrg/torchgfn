@@ -92,8 +92,8 @@ class ModesReplayBufferManager(ReplayBufferManager):
         self.discovered_modes.update(modes_found)
         return float(score)
 
-    def _local_metadata(self) -> int:
-        return len(self.discovered_modes)
+    def _compute_metadata(self) -> dict:
+        return {"n_modes_found": len(self.discovered_modes)}
 
 
 def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
@@ -804,44 +804,39 @@ def main(args):  # noqa: C901
         with Timer(timing, "validation", enabled=args.timing):
             assert visited_terminating_states is not None
             all_visited_terminating_states.extend(visited_terminating_states)
-            if distributed_context.my_rank == 0:
+            my_rank = distributed_context.my_rank
+            to_log = {
+                f"loss_{my_rank}": loss.item(),
+                f"sample_time_{my_rank}": sample_timer.elapsed,
+                f"to_train_samples_time_{my_rank}": to_train_samples_timer.elapsed,
+                f"loss_time_{my_rank}": loss_timer.elapsed,
+                f"loss_backward_time_{my_rank}": loss_backward_timer.elapsed,
+                f"opt_time_{my_rank}": opt_timer.elapsed,
+                f"model_averaging_time_{my_rank}": model_averaging_timer.elapsed,
+                f"rest_time_{my_rank}": rest_time,
+                f"score_{my_rank}": score,
+                f"l1_dist_{my_rank}": None,  # only logged if calculate_partition.
+            }
 
-                to_log = {
-                    "loss": loss.item(),
-                    "sample_time": sample_timer.elapsed,
-                    "to_train_samples_time": to_train_samples_timer.elapsed,
-                    "loss_time": loss_timer.elapsed,
-                    "loss_backward_time": loss_backward_timer.elapsed,
-                    "opt_time": opt_timer.elapsed,
-                    "model_averaging_time": model_averaging_timer.elapsed,
-                    "rest_time": rest_time,
-                    "l1_dist": None,  # only logged if calculate_partition.
-                }
+            if log_this_iter:
+                validation_info, all_visited_terminating_states = env.validate(
+                    gflownet,
+                    args.validation_samples,
+                    all_visited_terminating_states,
+                )
+                assert all_visited_terminating_states is not None
+                to_log.update({f"{k}_{my_rank}": v for k, v in validation_info.items()})
 
-                if log_this_iter:
-                    validation_info, all_visited_terminating_states = env.validate(
-                        gflownet,
-                        args.validation_samples,
-                        all_visited_terminating_states,
-                    )
-                    assert all_visited_terminating_states is not None
-
-                    print(
-                        "+ rank 0, visited_terminating_states = ",
-                        len(visited_terminating_states),
-                    )
-
-                    to_log.update(validation_info)
-
+                if my_rank == 0:
                     if args.distributed:
                         manager_rank = distributed_context.assigned_buffer
                         assert manager_rank is not None
-                        n_modes_found = ReplayBufferManager.get_metadata(manager_rank)
+                        metadata = ReplayBufferManager.get_metadata(manager_rank)
+                        to_log.update(metadata)
                     else:
                         modes_found.update(env.modes_found(visited_terminating_states))
                         n_modes_found = len(modes_found)
-
-                    to_log["n_modes_found"] = n_modes_found
+                        to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
                         loss=to_log["loss"],
@@ -1190,6 +1185,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--timing",
         action="store_true",
+        default=True,
         help="Report timing information at the end of training",
     )
 
