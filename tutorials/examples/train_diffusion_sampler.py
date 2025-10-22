@@ -458,15 +458,20 @@ def main(args):
         loss.backward()
         optimizer.step()
 
-        if it == 0 or (it + 1) % args.vis_interval == 0 or it == args.n_iterations - 1:
-            with torch.no_grad():
-                samples_states = gflownet.sample_terminating_states(env, args.vis_n)
-                xs = samples_states.tensor[:, :-1]
-                env.target.visualize(
-                    samples=xs,
-                    prefix=f"it{it}_",
-                    show=False,
-                )  # type: ignore[attr-defined]
+        if args.visualize:
+            if (
+                it == 0
+                or (it + 1) % args.vis_interval == 0
+                or it == args.n_iterations - 1
+            ):
+                with torch.no_grad():
+                    samples_states = gflownet.sample_terminating_states(env, args.vis_n)
+                    xs = samples_states.tensor[:, :-1]
+                    env.target.visualize(
+                        samples=xs,
+                        prefix=f"it{it}_",
+                        show=False,
+                    )  # type: ignore[attr-defined]
 
         pbar.set_postfix({"loss": float(loss.item())})
 
@@ -515,6 +520,7 @@ if __name__ == "__main__":
     # Visualization
     parser.add_argument("--vis_interval", type=int, default=200)
     parser.add_argument("--vis_n", type=int, default=2000)
+    parser.add_argument("--visualize", action="store_true")
 
     args = parser.parse_args()
 

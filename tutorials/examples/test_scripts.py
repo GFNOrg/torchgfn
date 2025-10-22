@@ -25,6 +25,9 @@ from tutorials.examples.train_bayesian_structure import (
 from tutorials.examples.train_bit_sequences import main as train_bitsequence_main
 from tutorials.examples.train_box import main as train_box_main
 from tutorials.examples.train_conditional import main as train_conditional_main
+from tutorials.examples.train_diffusion_sampler import (
+    main as train_diffusion_sampler_main,
+)
 from tutorials.examples.train_discreteebm import main as train_discreteebm_main
 from tutorials.examples.train_graph_ring import main as train_graph_ring_main
 from tutorials.examples.train_graph_triangle import main as train_graph_triangle_main
@@ -153,6 +156,31 @@ class LineArgs(CommonArgs):
     n_trajectories: int = 10
     plot: bool = False
     wandb_project: str = ""
+
+
+@dataclass
+class DiffusionSamplerArgs:
+    no_cuda: bool = True
+    seed: int = 0
+    target: str = "gmm_2"
+    dim: int | None = None
+    num_components: int | None = None
+    target_seed: int = 2
+    num_steps: int = 8
+    sigma: float = 5.0
+    harmonics_dim: int = 16
+    t_emb_dim: int = 16
+    s_emb_dim: int = 16
+    hidden_dim: int = 32
+    joint_layers: int = 1
+    zero_init: bool = False
+    n_iterations: int = 3
+    batch_size: int = 16
+    lr: float = 1e-3
+    lr_logz: float = 1e-1
+    vis_interval: int = 10
+    vis_n: int = 100
+    visualize: bool = False
 
 
 @dataclass
@@ -586,6 +614,14 @@ def test_line_smoke_fp64():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_line_main(namespace_args)  # Just ensure it runs without errors.
+
+
+def test_diffusion_sampler_smoke():
+    """Smoke test for the diffusion sampler training script."""
+    args = DiffusionSamplerArgs()
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_diffusion_sampler_main(namespace_args)  # Runs without errors.
 
 
 @pytest.mark.parametrize("seq_size", [4, 8])
