@@ -97,7 +97,7 @@ class ReplayBuffer:
         assert self.training_container is not None, "Buffer is empty, it has no device!"
         return self.training_container.device
 
-    def add(self, training_container: ContainerUnion) -> None:
+    def add(self, training_container: ContainerUnion) -> float | None:
         """Adds a training container to the buffer.
 
         The type of the training container is dynamically set based on the type of the
@@ -116,7 +116,7 @@ class ReplayBuffer:
         if self.remote_manager_rank is not None:
             self._add_counter += 1
             if self._add_counter % self.remote_buffer_freq == 0:
-                self._send_objs(training_container)
+                return self._send_objs(training_container)
 
     def _send_objs(self, training_container: ContainerUnion) -> float:
         """Sends a training container to the remote manager."""
