@@ -566,7 +566,9 @@ def main(args):  # noqa: C901
             if is_root:
                 group_name = wandb.util.generate_id()
                 group_name_bytes = group_name.encode("utf-8")
-                group_name_len_tensor = torch.tensor([len(group_name_bytes)], dtype=torch.long)
+                group_name_len_tensor = torch.tensor(
+                    [len(group_name_bytes)], dtype=torch.long
+                )
             else:
                 group_name_bytes = None
                 group_name_len_tensor = torch.zeros(1, dtype=torch.long)
@@ -577,6 +579,7 @@ def main(args):  # noqa: C901
 
             # Broadcast the payload
             if is_root:
+                assert group_name_bytes is not None
                 payload = torch.tensor(list(group_name_bytes), dtype=torch.uint8)
             else:
                 payload = torch.empty(group_name_len, dtype=torch.uint8)
@@ -870,7 +873,9 @@ def main(args):  # noqa: C901
 
                     pbar.set_postfix(
                         loss_0=to_log["loss_0"],
-                        l1_dist_0=to_log["l1_dist_0"],  # only logged if calculate_partition.
+                        l1_dist_0=to_log[
+                            "l1_dist_0"
+                        ],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
                     )
 
