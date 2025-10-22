@@ -792,6 +792,7 @@ def main(args):  # noqa: C901
                 dist.barrier(group=distributed_context.train_global_group)
 
         # Model averaging.
+        averaging_info = {}
         with Timer(
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
