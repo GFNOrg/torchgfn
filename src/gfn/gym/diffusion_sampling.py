@@ -1,3 +1,4 @@
+import inspect
 import math
 import os
 from abc import ABC, abstractmethod
@@ -14,6 +15,30 @@ from gfn.env import Env
 from gfn.states import States
 from gfn.utils.common import set_seed
 
+# Lightweight typing alias for the target registry entries.
+TargetEntry = tuple[type["BaseTarget"], dict[str, Any]]
+
+
+def _filter_kwargs_for_callable(
+    callable_obj: Any, kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    """Filter a kwargs dict to only the parameters accepted by callable_obj."""
+    sig = inspect.signature(callable_obj)
+
+    # If the callable accepts **kwargs, no filtering is necessary.
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return kwargs
+
+    accepted_names = {
+        name
+        for name, p in sig.parameters.items()
+        if p.kind
+        in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    # Remove common non-forwarded parameters if present in kwargs.
+    accepted_names -= {"self"}
+    return {k: v for k, v in kwargs.items() if k in accepted_names}
+
 
 class DiffusionSampling(Env):
     """Diffusion sampling environment.
@@ -27,7 +52,7 @@ class DiffusionSampling(Env):
     def __init__(
         self,
         target_str: str,
-        target_kwargs: dict[str, Any],
+        target_kwargs: dict[str, Any] | None,
         num_discretization_steps: float,
         device: torch.device = torch.device("cpu"),
         check_action_validity: bool = False,
@@ -36,24 +61,44 @@ class DiffusionSampling(Env):
 
         Args:
             target_str: The string identifier for the target.
-            target_kwargs: The keyword arguments for the target.
+            target_kwargs: The keyword arguments for the target, overriding the
+                defaults.
             num_discretization_steps: The number of discretization steps.
             device: The device to use.
             check_action_validity: Whether to check the action validity.
         """
-        DIFFUSION_TARGETS = {
-            "simple_gmm": SimpleGaussianMixtureTarget,
-            # TODO: add more targets here
-            "easy_funnel": EasyFunnelTarget,  # Neal's funnel with std=1.0 for x0
-            "hard_funnel": HardFunnelTarget,  # Neal's funnel with std=3.0 for x0
-            "many_well": ManyWellTarget,  # 32D default: product of 16 identical 2D double wells
+        # Registry of available targets.
+        self.DIFFUSION_TARGETS: dict[str, TargetEntry] = {
+            "gmm_2": (SimpleGaussianMixtureTarget, {"num_components": 2}),
+            "gmm_4": (SimpleGaussianMixtureTarget, {"num_components": 4}),
+            "gmm_8": (SimpleGaussianMixtureTarget, {"num_components": 8}),
+            "easy_funnel": (EasyFunnelTarget, {}),  # Neal's funnel with std=1.0 for x0
+            "hard_funnel": (HardFunnelTarget, {}),  # Neal's funnel with std=3.0 for x0
+            # 32D default: product of 16 identical 2D double wells.
+            "many_well": (ManyWellTarget, {"dim": 32}),
+            # Uses user-defined dim.
+            "custom_well": (ManyWellTarget, {}),
         }
-        self.target = DIFFUSION_TARGETS[target_str](device=device, **target_kwargs)
+
+        # Initalize the target.
+        if target_str not in self.DIFFUSION_TARGETS:
+            _ = self.list_available_targets()
+            raise ValueError(f"Invalid target: {target_str}")
+
+        target_cls, default_kwargs = self.DIFFUSION_TARGETS[target_str]
+        merged_kwargs = _filter_kwargs_for_callable(
+            target_cls.__init__,
+            {**default_kwargs, **(target_kwargs or {})},
+        )
+        print("DiffusionSampling:")
+        print(f"+ Initalizing target {target_cls.__name__} with kwargs: {merged_kwargs}")
+        self.target = target_cls(device=device, **merged_kwargs)
+
         self.dim = self.target.dim
         self.dt = 1.0 / num_discretization_steps
 
-        default_dtype = torch.get_default_dtype()
-
+        # Note that all states in this environment contain a time (last) dimension.
+        # This is crucial to prevent cycles in the DAG of the GFlowNet.
         s0 = torch.zeros((self.dim + 1,), device=device)  # + 1 for time
 
         super().__init__(
@@ -63,13 +108,31 @@ class DiffusionSampling(Env):
             # dummy action is never used since all trajectories are terminated at
             # time == 1 (i.e., we don't need to pad shorter trajectories)
             dummy_action=torch.full(
-                (self.dim,), float("inf"), device=device, dtype=default_dtype
+                (self.dim,), float("inf"), device=device, dtype=torch.get_default_dtype()
             ),
             exit_action=torch.full(
-                (self.dim,), -float("inf"), device=device, dtype=default_dtype
+                (self.dim,),
+                -float("inf"),
+                device=device,
+                dtype=torch.get_default_dtype(),
             ),
             check_action_validity=check_action_validity,
         )
+
+    def list_available_targets(self) -> dict[str, dict[str, Any]]:
+        """Return metadata about available targets and their default kwargs.
+
+        This helper allows users to easily see which kwargs are provided by default
+        for each alias. Note that accepted/required kwargs are determined by each
+        target class's constructor signature.
+        """
+        out = {}
+        print("Available DiffusionSampling targets:")
+        for alias, (cls, defaults) in self.DIFFUSION_TARGETS.items():
+            print(f"+ {alias}: {cls.__name__} with kwargs: {defaults}")
+            out[alias] = {"class": cls.__name__, "defaults": dict(defaults)}
+
+        return out
 
     def step(self, states: States, actions: Actions) -> States:
         """Step function for the SimpleGaussianMixtureModel environment.
@@ -228,7 +291,14 @@ class BaseTarget(ABC):
         """
         raise NotImplementedError
 
-    def visualize(self, samples: torch.Tensor | None = None, show: bool = False) -> None:
+    def visualize(
+        self,
+        samples: torch.Tensor | None = None,
+        show: bool = False,
+        prefix: str = "",
+        linspace_n_steps: int = 100,
+        max_n_samples: int = 1000,
+    ) -> None:
         """Visualize the target.
 
         Args:
@@ -259,7 +329,8 @@ class BaseTarget(ABC):
 class SimpleGaussianMixtureTarget(BaseTarget):
     """Simple Gaussian Mixture Target distribution.
 
-    This target distribution is adapted from https://github.com/DenisBless/variational_sampling_methods/blob/main/targets/gaussian_mixture.py.
+    This target distribution is adapted from
+    https://github.com/DenisBless/variational_sampling_methods/blob/main/targets/gaussian_mixture.py.
 
     Attributes:
         ...
@@ -275,7 +346,6 @@ class SimpleGaussianMixtureTarget(BaseTarget):
         seed: int = 3,
         locs: np.ndarray | None = None,
         device: torch.device = torch.device("cpu"),
-        **kwargs: Any,
     ) -> None:
         degree_of_freedom_wishart = dim + degree_of_freedom_adjustment
 
@@ -489,7 +559,6 @@ class FunnelTarget(BaseTarget):
         std: float = 1.0,
         device: torch.device = torch.device("cpu"),
         seed: int = 3,
-        **kwargs: Any,
     ) -> None:
         self.std = float(std)
         self.device = device
@@ -668,7 +737,6 @@ class ManyWellTarget(BaseTarget):
         dim: int = 32,
         device: torch.device = torch.device("cpu"),
         seed: int = 3,
-        **kwargs: Any,
     ) -> None:
         # Simple mixture proposal for x1: 3 equally weighted Normals
         self.component_mix = torch.tensor([1 / 3, 1 / 3, 1 / 3], device=device)

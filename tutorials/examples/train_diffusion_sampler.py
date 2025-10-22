@@ -393,13 +393,15 @@ def main(args):
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
 
-    # Setup diffusion sampling environment
-    target_kwargs = {
-        "dim": args.dim,
-        "num_components": args.num_components,
-        "seed": args.target_seed,
-        # Other kwargs use defaults inside the target class
-    }
+    # Pass command-line arguments to the target class for the diffusion sampling
+    # environment.
+    target_kwargs = {"seed": args.target_seed}
+    if args.dim is not None:
+        target_kwargs["dim"] = args.dim
+    if args.num_components is not None:
+        target_kwargs["num_components"] = args.num_components
+
+    # Set up environment.
     env = DiffusionSampling(
         target_str=args.target,
         target_kwargs=target_kwargs,
@@ -476,10 +478,12 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
 
     # Target / environment
-    parser.add_argument("--target", type=str, default="simple_gmm", help="Target name")
-    parser.add_argument("--dim", type=int, default=2, help="State dimension")
+    parser.add_argument("--target", type=str, default="gmm_2", help="Target name")
     parser.add_argument(
-        "--num_components", type=int, default=2, help="Mixture components"
+        "--dim", type=int, default=None, help="State dimension override for the target"
+    )
+    parser.add_argument(
+        "--num_components", type=int, default=None, help="Mixture components"
     )
     parser.add_argument("--target_seed", type=int, default=2, help="Target RNG seed")
 
