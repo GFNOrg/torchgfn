@@ -92,8 +92,8 @@ class ModesReplayBufferManager(ReplayBufferManager):
         self.discovered_modes.update(modes_found)
         return float(score)
 
-    def _local_metadata(self) -> int:
-        return len(self.discovered_modes)
+    def _compute_metadata(self) -> dict:
+        return {"n_modes_found": len(self.discovered_modes)}
 
 
 def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
@@ -556,9 +556,41 @@ def main(args):  # noqa: C901
 
         import wandb
 
-        if distributed_context.my_rank == 0:
-            wandb.init(project=args.wandb_project)
-            wandb.config.update(args)
+        # Generate shared group name for wandb across all processes
+        group_name = None
+        if args.distributed:
+            # Use the training group and perform in-place broadcasts
+            pg = distributed_context.train_global_group
+            is_root = distributed_context.my_rank == 0
+
+            if is_root:
+                group_name = wandb.util.generate_id()
+                group_name_bytes = group_name.encode("utf-8")
+                group_name_len_tensor = torch.tensor(
+                    [len(group_name_bytes)], dtype=torch.long
+                )
+            else:
+                group_name_bytes = None
+                group_name_len_tensor = torch.zeros(1, dtype=torch.long)
+
+            # Broadcast the length
+            dist.broadcast(group_name_len_tensor, src=0, group=pg)
+            group_name_len = int(group_name_len_tensor.item())
+
+            # Broadcast the payload
+            if is_root:
+                assert group_name_bytes is not None
+                payload = torch.tensor(list(group_name_bytes), dtype=torch.uint8)
+            else:
+                payload = torch.empty(group_name_len, dtype=torch.uint8)
+
+            dist.broadcast(payload, src=0, group=pg)
+            group_name = bytes(payload.tolist()).decode("utf-8")
+        else:
+            group_name = wandb.util.generate_id()
+
+        wandb.init(project=args.wandb_project, group=group_name)
+        wandb.config.update(args)
 
     # Initialize the preprocessor.
     preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
@@ -760,11 +792,12 @@ def main(args):  # noqa: C901
                 dist.barrier(group=distributed_context.train_global_group)
 
         # Model averaging.
+        averaging_info = {}
         with Timer(
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
             if averaging_policy is not None:
-                gflownet, optimizer = averaging_policy(
+                gflownet, optimizer, averaging_info = averaging_policy(
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
@@ -805,48 +838,46 @@ def main(args):  # noqa: C901
         with Timer(timing, "validation", enabled=args.timing):
             assert visited_terminating_states is not None
             all_visited_terminating_states.extend(visited_terminating_states)
-            if distributed_context.my_rank == 0:
+            my_rank = distributed_context.my_rank
+            to_log = {
+                f"loss_{my_rank}": loss.item(),
+                f"sample_time_{my_rank}": sample_timer.elapsed,
+                f"to_train_samples_time_{my_rank}": to_train_samples_timer.elapsed,
+                f"loss_time_{my_rank}": loss_timer.elapsed,
+                f"loss_backward_time_{my_rank}": loss_backward_timer.elapsed,
+                f"opt_time_{my_rank}": opt_timer.elapsed,
+                f"model_averaging_time_{my_rank}": model_averaging_timer.elapsed,
+                f"rest_time_{my_rank}": rest_time,
+                f"score_{my_rank}": score,
+                f"l1_dist_{my_rank}": None,  # only logged if calculate_partition.
+            }
+            to_log.update({f"{k}_{my_rank}": v for k, v in averaging_info.items()})
 
-                to_log = {
-                    "loss": loss.item(),
-                    "sample_time": sample_timer.elapsed,
-                    "to_train_samples_time": to_train_samples_timer.elapsed,
-                    "loss_time": loss_timer.elapsed,
-                    "loss_backward_time": loss_backward_timer.elapsed,
-                    "opt_time": opt_timer.elapsed,
-                    "model_averaging_time": model_averaging_timer.elapsed,
-                    "rest_time": rest_time,
-                    "l1_dist": None,  # only logged if calculate_partition.
-                }
+            if log_this_iter:
+                validation_info, all_visited_terminating_states = env.validate(
+                    gflownet,
+                    args.validation_samples,
+                    all_visited_terminating_states,
+                )
+                assert all_visited_terminating_states is not None
+                to_log.update({f"{k}_{my_rank}": v for k, v in validation_info.items()})
 
-                if log_this_iter:
-                    validation_info, all_visited_terminating_states = env.validate(
-                        gflownet,
-                        args.validation_samples,
-                        all_visited_terminating_states,
-                    )
-                    assert all_visited_terminating_states is not None
-
-                    print(
-                        "+ rank 0, visited_terminating_states = ",
-                        len(visited_terminating_states),
-                    )
-
-                    to_log.update(validation_info)
-
+                if my_rank == 0:
                     if args.distributed:
                         manager_rank = distributed_context.assigned_buffer
                         assert manager_rank is not None
-                        n_modes_found = ReplayBufferManager.get_metadata(manager_rank)
+                        metadata = ReplayBufferManager.get_metadata(manager_rank)
+                        to_log.update(metadata)
                     else:
                         modes_found.update(env.modes_found(visited_terminating_states))
                         n_modes_found = len(modes_found)
-
-                    to_log["n_modes_found"] = n_modes_found
+                        to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
-                        loss=to_log["loss"],
-                        l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
+                        loss_0=to_log["loss_0"],
+                        l1_dist_0=to_log[
+                            "l1_dist_0"
+                        ],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
                     )
 
@@ -1191,6 +1222,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--timing",
         action="store_true",
+        default=True,
         help="Report timing information at the end of training",
     )
 

@@ -57,9 +57,9 @@ class ReplayBufferManager:
         """Default score function if none provided, placeholder."""
         return math.inf
 
-    def _compute_metadata(self) -> int:
+    def _compute_metadata(self) -> dict:
         raise NotImplementedError(
-            "_local_metadata is not implemented for default replay buffer manager"
+            "_compute_metadata is not implemented for default replay buffer manager"
         )
 
     def run(self):
@@ -77,7 +77,10 @@ class ReplayBufferManager:
 
             elif msg.message_type == MessageType.GET_METADATA:
                 metadata = self._compute_metadata()
-                metadata_tensor = torch.tensor([metadata], dtype=torch.int32)
+                msg = Message(message_type=MessageType.DATA, message_data=metadata)
+                metadata_tensor = msg.serialize()
+                length_metadata_tensor = torch.IntTensor([len(metadata_tensor)])
+                dist.send(length_metadata_tensor, dst=sender_rank)
                 dist.send(metadata_tensor, dst=sender_rank)
 
             elif msg.message_type == MessageType.EXIT:
@@ -121,13 +124,16 @@ class ReplayBufferManager:
         )
 
     @staticmethod
-    def get_metadata(manager_rank: int) -> int:
+    def get_metadata(manager_rank: int) -> dict:
         """Sends a get metadata signal to the replay buffer manager."""
         msg = Message(message_type=MessageType.GET_METADATA, message_data=None)
         msg_bytes = msg.serialize()
         length_tensor = torch.IntTensor([len(msg_bytes)])
         dist.send(length_tensor, dst=manager_rank)
         dist.send(msg_bytes, dst=manager_rank)
-        metadata_tensor = torch.IntTensor([0])
+        length_metadata_tensor = torch.IntTensor([0])
+        dist.recv(length_metadata_tensor, src=manager_rank)
+        metadata_tensor = torch.ByteTensor(length_metadata_tensor.item())
         dist.recv(metadata_tensor, src=manager_rank)
-        return int(metadata_tensor.item())
+        metadata = Message.deserialize(metadata_tensor)
+        return metadata.message_data
