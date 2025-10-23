@@ -1,3 +1,5 @@
+import math
+
 import torch
 from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
@@ -213,3 +215,58 @@ class GraphActionDistribution(Distribution):
             log_prob[add_edge_idx] += log_prob_edge_index_all[add_edge_idx]
 
         return log_prob
+
+
+class IsotropicGaussian(Distribution):
+    """Isotropic Gaussian distribution.
+
+    This class is used to sample from and compute the log probabilities of isotropic
+    Gaussian distributions, given the mean (loc) and std (scale) of the distribution.
+    This is used primarily in the diffusion samplers.
+
+    Attributes:
+        loc: The mean of the Gaussian distribution (shape: (*batch_shape, s_dim))
+        scale: The scale of the Gaussian distribution (shape: (*batch_shape, 1))
+        actions_detach: Whether to detach the actions from the graph.
+    """
+
+    def __init__(
+        self,
+        loc: torch.Tensor,
+        scale: torch.Tensor,
+        actions_detach: bool = True,
+    ):
+        """Initialize the IsotropicGaussian distribution.
+
+        Args:
+            loc: The mean of the Gaussian distribution (shape: (*batch_shape, s_dim))
+            scale: The scale of the Gaussian distribution (shape: (*batch_shape, 1))
+            actions_detach: Whether to detach the actions from the graph.
+        """
+        super().__init__(validate_args=False)
+        self.loc = loc  # shape: (*batch_shape, s_dim)
+        self.scale = scale  # shape: (*batch_shape, 1)
+        self.actions_detach = actions_detach
+
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
+        noise = torch.randn(sample_shape + self.loc.shape, device=self.loc.device)
+        actions = self.loc + self.scale * noise
+        if self.actions_detach:
+            actions = actions.detach()
+        return actions
+
+    def log_prob(self, actions: torch.Tensor) -> torch.Tensor:
+        noise = (actions - self.loc) / self.scale
+        scale_squeezed = self.scale.squeeze(-1)
+        logprobs = torch.where(
+            (
+                (
+                    scale_squeezed.abs() < 1e-6
+                )  # Exit case for backward sampling, when using pinned Brownian motion
+                | (actions[..., 0].isinf())  # Exit case for forward sampling
+            ),
+            torch.zeros_like(scale_squeezed),
+            -0.5
+            * (math.log(2 * math.pi) + 2 * torch.log(self.scale) + noise**2).sum(dim=-1),
+        )
+        return logprobs

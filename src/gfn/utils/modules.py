@@ -1501,3 +1501,220 @@ class SinusoidalPositionalEmbedding(nn.Module):
             )
         else:
             return self._pe[:seq_len]
+
+
+class DiffusionPISTimeEncoding(nn.Module):
+    """Time Encoding Module for DiffusionPISGradNet.
+
+    See DiffusionPISGradNet for more details.
+    """
+
+    def __init__(self, harmonics_dim: int, t_emb_dim: int, hidden_dim: int) -> None:
+        super().__init__()
+        self.timestep_phase = nn.Parameter(torch.randn(harmonics_dim)[None])
+        self.t_model = nn.Sequential(
+            nn.Linear(2 * harmonics_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, t_emb_dim),
+        )
+        self.register_buffer(
+            "pe", torch.linspace(start=0.1, end=100, steps=harmonics_dim)[None]
+        )
+
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Arguments:
+            t: torch.Tensor
+        """
+        t_sin = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).sin()  # type: ignore
+        t_cos = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).cos()  # type: ignore
+        t_emb = torch.cat([t_sin, t_cos], dim=-1)
+        return self.t_model(t_emb)
+
+
+class DiffusionPISStateEncoding(nn.Module):
+    """State Encoding Module for DiffusionPISGradNet.
+
+    See DiffusionPISGradNet for more details.
+    """
+
+    def __init__(self, x_dim: int, s_emb_dim: int) -> None:
+        super().__init__()
+
+        self.s_model = nn.Linear(x_dim, s_emb_dim)
+
+    def forward(self, s: torch.Tensor) -> torch.Tensor:
+        return self.s_model(s)
+
+
+class DiffusionPISJointPolicy(nn.Module):
+    """Joint Policy Module for DiffusionPISGradNet.
+
+    See DiffusionPISGradNet for more details.
+    """
+
+    def __init__(
+        self,
+        s_emb_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        num_layers: int,
+        zero_init: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.model = nn.Sequential(
+            nn.GELU(),  # Because this model accepts embeddings (linear projections).
+            nn.Linear(s_emb_dim, hidden_dim),
+            nn.GELU(),
+            *[
+                nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.GELU())
+                for _ in range(num_layers - 1)
+            ],
+            nn.Linear(hidden_dim, out_dim),
+        )
+
+        if zero_init:
+            self.model[-1].weight.data.fill_(1e-8)  # type: ignore
+            self.model[-1].bias.data.fill_(0.0)  # type: ignore
+
+    def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        return self.model(s_emb + t_emb)
+
+
+class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward policy
+    """PISGradNet for diffusion sampling.
+
+    This architecture was first introduced in Path Integral Sampler (PIS) (https://arxiv.org/abs/2111.15141)
+    and adapted for GFlowNet-based training by Sendera et al. (https://arxiv.org/abs/2508.03044).
+
+    Attributes:
+        s_dim: The dimension of the states.
+        harmonics_dim: The dimension of the Fourier features.
+        t_emb_dim: The dimension of the time embedding.
+        s_emb_dim: The dimension of the state embedding.
+        hidden_dim: The dimension of the hidden layers.
+        joint_layers: The number of layers in the joint policy.
+        zero_init: Whether to initialize the weights and biases of the final layer to zero.
+        out_dim: The dimension of the output.
+        t_model: The time encoding module.
+        s_model: The state encoding module.
+        joint_model: The joint policy module.
+    """
+
+    def __init__(
+        self,
+        s_dim: int,  # dimension of states (== target.dim)
+        harmonics_dim: int = 64,
+        t_emb_dim: int = 64,
+        s_emb_dim: int = 64,
+        hidden_dim: int = 64,
+        joint_layers: int = 2,
+        zero_init: bool = False,
+        # predict_flow: bool,  # TODO: support predict flow for db or subtb
+        # share_embeddings: bool = False,
+        # flow_harmonics_dim: int = 64,
+        # flow_t_emb_dim: int = 64,
+        # flow_s_emb_dim: int = 64,
+        # flow_hidden_dim: int = 64,
+        # flow_layers: int = 2,
+        # lp: bool,  # TODO: support Langevin parameterization
+        # lp_layers: int = 3,
+        # lp_scaling_per_dimension: bool = True,
+        # clipping: bool = False,  # TODO: support clipping
+        # out_clip: float = 1e4,
+        # lp_clip: float = 1e2,
+        # learn_variance: bool = True,  # TODO: support learnable variance
+        # log_var_range: float = 4.0,
+    ):
+        """Initialize the PISGradNetForward.
+
+        Args:
+            s_dim: The dimension of the states.
+            harmonics_dim: The dimension of the Fourier features.
+            t_emb_dim: The dimension of the time embedding.
+            s_emb_dim: The dimension of the state embedding.
+            hidden_dim: The dimension of the hidden layers.
+            joint_layers: The number of layers in the joint policy.
+            zero_init: Whether to initialize the weights and biases of the final layer to zero.
+        """
+        super().__init__()
+        self.s_dim = s_dim
+        self.input_dim = s_dim + 1  # + 1 for time, for the default IdentityPreprocessor
+        self.harmonics_dim = harmonics_dim
+        self.t_emb_dim = t_emb_dim
+        self.s_emb_dim = s_emb_dim
+        self.hidden_dim = hidden_dim
+        self.joint_layers = joint_layers
+        self.zero_init = zero_init
+        self.out_dim = s_dim  # 2 * out_dim if learn_variance is True
+
+        assert (
+            self.s_emb_dim == self.t_emb_dim
+        ), "Dimensionality of state embedding and time embedding should be the same!"
+
+        self.t_model = DiffusionPISTimeEncoding(
+            self.harmonics_dim, self.t_emb_dim, self.hidden_dim
+        )
+        self.s_model = DiffusionPISStateEncoding(self.s_dim, self.s_emb_dim)
+        self.joint_model = DiffusionPISJointPolicy(
+            self.s_emb_dim,
+            self.hidden_dim,
+            self.out_dim,
+            self.joint_layers,
+            self.zero_init,
+        )
+
+    def forward(
+        self,
+        preprocessed_states: torch.Tensor,
+        # grad_logr_fn: Callable,  # TODO: grad_logr_fn for lp
+    ) -> torch.Tensor:
+        """Forward pass of the module.
+
+        Args:
+            preprocessed_states: The preprocessed states (shape: (*batch_shape, s_dim + 1))
+
+        Returns:
+            The output of the module (shape: (*batch_shape, s_dim)).
+        """
+        s = preprocessed_states[..., :-1]
+        t = preprocessed_states[..., -1]
+        s_emb = self.s_model(s)
+        t_emb = self.t_model(t)
+        out = self.joint_model(s_emb, t_emb)
+
+        # TODO: learn variance, lp, clipping, ...
+        if torch.isnan(out).any():
+            print("+ out has {} nans".format(torch.isnan(out).sum()))
+            out = torch.nan_to_num(out)
+
+        return out
+
+
+class DiffusionFixedBackwardModule(nn.Module):
+    """Fixed Backward Module for DiffusionPISGradNet.
+
+    Attributes:
+        input_dim: The dimension of the input.
+    """
+
+    def __init__(self, s_dim: int):
+        """Initialize the FixedBackwardModule.
+
+        Args:
+            s_dim: The dimension of the states.
+        """
+        super().__init__()
+        self.input_dim = s_dim + 1  # + 1 for time, for the default IdentityPreprocessor
+
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the module.
+
+        Args:
+            preprocessed_states: The preprocessed states (shape: (*batch_shape, s_dim + 1))
+
+        Returns:
+            The output of the module (shape: (*batch_shape, s_dim)).
+        """
+        return torch.zeros_like(preprocessed_states[..., :-1])
