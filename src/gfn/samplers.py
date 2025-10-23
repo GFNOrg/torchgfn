@@ -400,6 +400,123 @@ class LocalSearchSampler(Sampler):
             back_steps,
         )
 
+    def _reconstruct_from_junctions(
+        self,
+        env: Env,
+        prev_trajectories: Trajectories,
+        n_prevs: torch.Tensor,
+        conditioning: torch.Tensor | None,
+        save_estimator_outputs: bool,
+        save_logprobs: bool,
+        **policy_kwargs: Any,
+    ) -> Trajectories:
+        """Gather junction states and reconstruct forward suffixes with self.estimator.
+
+        This isolates the PolicyMixin-dependent sampling.
+        """
+        # Derive junction positions and gather the junction states (one per traj).
+        junction_states_tsr = torch.gather(
+            prev_trajectories.states.tensor,
+            0,
+            (n_prevs)
+            .view(1, -1, 1)
+            .expand(-1, -1, *prev_trajectories.states.state_shape),
+        ).squeeze(0)
+
+        # Reconstruct forward suffixes starting from the junction states using the
+        # forward policy estimator owned by `self`.
+        recon_trajectories = super().sample_trajectories(
+            env,
+            states=env.states_from_tensor(junction_states_tsr),
+            conditioning=conditioning,
+            save_estimator_outputs=save_estimator_outputs,
+            save_logprobs=save_logprobs,
+            **policy_kwargs,
+        )
+
+        return recon_trajectories
+
+    @staticmethod
+    def _metropolis_hastings_accept(
+        prev_log_rewards: torch.Tensor,
+        new_log_rewards: torch.Tensor,
+        prev_log_pf: torch.Tensor,
+        new_log_pf: torch.Tensor,
+        prev_log_pb: torch.Tensor,
+        new_log_pb: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute MH acceptance mask for candidate trajectories.
+
+        The acceptance probability is
+        min{1, R(x') p_B(x->s') p_F(s'->x') / [R(x) p_B(x'->s') p_F(s'->x)]}.
+        """
+        log_accept_ratio = torch.clamp_max(
+            new_log_rewards
+            + prev_log_pb.sum(0)
+            + new_log_pf.sum(0)
+            - prev_log_rewards
+            - new_log_pb.sum(0)
+            - prev_log_pf.sum(0),
+            0.0,
+        )
+        return torch.rand(
+            new_log_rewards.shape[0], device=log_accept_ratio.device
+        ) < torch.exp(log_accept_ratio)
+
+    @staticmethod
+    def _splice_pf(
+        n_prevs: torch.Tensor,
+        prev_log_pf: torch.Tensor,
+        n_recons: torch.Tensor,
+        recon_log_pf: torch.Tensor,
+        T_new: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Splice per-step PF log-probs of prefix and reconstructed suffix.
+
+        Args:
+            n_prevs: Number of prefix steps kept from prev trajectories (N,).
+            prev_log_pf: Per-step PF for prev trajectories (T_prev, N).
+            n_recons: Number of reconstruction steps per trajectory (N,).
+            recon_log_pf: Per-step PF for reconstructed trajectories (T_recon, N).
+            T_new: Maximum trajectory length of the spliced trajectories.
+            device: Torch device for the output tensor.
+
+        Returns:
+            Spliced per-step PF log-probs of shape (T_new, N).
+        """
+        bs = int(n_prevs.shape[0])
+
+        # Determine maxima for mask construction
+        max_n_prev = n_prevs.max()
+        max_n_recon = n_recons.max()
+
+        # Build masks over states time (T_new + 1), then adapt to per-step PF (T_new)
+        idx_states = (
+            torch.arange(T_new + 1, device=n_prevs.device).unsqueeze(1).expand(-1, bs)
+        )
+        prev_mask = (idx_states < n_prevs).transpose(0, 1)  # (bs, T_new+1)
+        action_recon_mask = (
+            (idx_states[:-1] >= n_prevs) & (idx_states[:-1] <= (n_prevs + n_recons - 1))
+        ).transpose(
+            0, 1
+        )  # (bs, T_new)
+        action_recon_mask2 = (idx_states[:max_n_recon] <= (n_recons - 1)).transpose(
+            0, 1
+        )  # (bs, max_n_recon)
+
+        # Transpose PF tensors to (bs, time)
+        prev_pf_t = prev_log_pf.transpose(0, 1)
+        recon_pf_t = recon_log_pf.transpose(0, 1)
+
+        # Allocate and fill spliced PF
+        new_pf_t = torch.full((bs, T_new), 0.0).to(device=device, dtype=prev_pf_t.dtype)
+        prev_mask_trunc = prev_mask[:, :max_n_prev]
+        new_pf_t[prev_mask[:, :-1]] = prev_pf_t[:, :max_n_prev][prev_mask_trunc]
+        new_pf_t[action_recon_mask] = recon_pf_t[action_recon_mask2]
+
+        return new_pf_t.transpose(0, 1)
+
     def local_search(
         self,
         env: Env,
@@ -417,9 +534,10 @@ class LocalSearchSampler(Sampler):
 
         This method implements the local search algorithm by:
         1. For each trajectory, performing K backward steps to reach a junction state
-        2. Reconstructing the trajectory from the junction state using the forward policy
-        3. Optionally applying Metropolis-Hastings acceptance criterion to decide whether
-           to accept the new trajectory.
+        2. Reconstructing the trajectory from the junction state using the forward
+           policy estimator.
+        3. Optionally applying Metropolis-Hastings acceptance criterion to decide
+           whether to accept the new trajectory.
 
         Args:
             env: The environment to sample trajectories from.
@@ -449,25 +567,30 @@ class LocalSearchSampler(Sampler):
         # High-level outline:
         # 1) Choose the backtrack length K per-trajectory (either from `back_steps` or
         #    via a ratio of current lengths). This determines how much prefix to keep.
-        # 2) Sample backward trajectories from terminal states using the backward policy,
-        #    then reverse them into forward-time to obtain the prefix trajectories.
+        # 2) Sample backward trajectories from terminal states using the backward
+        #    policy estimator, then reverse them into forward-time to obtain the prefix
+        #    trajectories.
         # 3) Extract the junction states at step `n_prevs = L - K - 1` and reconstruct
         #    forward suffixes using the forward policy starting from those junctions.
         # 4) Optionally compute PF/PB per-step log-probabilities for MH acceptance.
         # 5) Splice prefix and suffix into candidate new trajectories.
-        # 6) Accept/reject (MH or greedy by reward), return the candidates and update mask.
+        # 6) Accept/reject (MH or greedy by reward), return the candidates and update
+        #    mask.
+
         # TODO: Implement local search for GraphStates.
-        if isinstance(env.States, GraphStates):
+        # Guard against graph-based states; not yet supported.
+        if issubclass(env.States, GraphStates):
             raise NotImplementedError("Local search is not implemented for GraphStates.")
 
         # Ensure PF/PB log-probabilities are computed when MH acceptance is requested.
         save_logprobs = save_logprobs or use_metropolis_hastings
 
-        # K-step backward sampling with the backward estimator,
-        # where K is the number of backward steps used in https://arxiv.org/abs/2202.01361.
-        # Compute per-trajectory backtrack length K. When specified via `back_ratio`,
-        # K is proportional to the previous trajectory length; otherwise clamp the
-        # provided `back_steps` to valid bounds.
+        # 1) K-step backward sampling with the backward estimator, where K is the
+        # number of backward steps. When specified via `back_ratio`, K is proportional
+        # to the previous trajectory length; otherwise clamp the provided `back_steps`
+        # to valid bounds. This is used in https://arxiv.org/abs/2202.01361.
+
+        # Compute per-trajectory backtrack length K.
         K = self._compute_back_steps(
             trajectories.terminating_idx, back_steps, back_ratio
         )
@@ -490,22 +613,15 @@ class LocalSearchSampler(Sampler):
         prev_trajectories = prev_trajectories.reverse_backward_trajectories()
         assert prev_trajectories.log_rewards is not None
 
-        # Reconstructing with self.estimator
-        # 2) Derive junction positions and gather the junction states (one per traj).
+        # Reconstruct suffixes from junction states using self.estimator.
         n_prevs = prev_trajectories.terminating_idx - K - 1
-        junction_states_tsr = torch.gather(
-            prev_trajectories.states.tensor,
-            0,
-            (n_prevs).view(1, -1, 1).expand(-1, -1, *trajectories.states.state_shape),
-        ).squeeze(0)
-        # 3) Reconstruct forward suffixes starting from the junction states using
-        #    the forward policy estimator owned by `self`.
-        recon_trajectories = super().sample_trajectories(
+        recon_trajectories = self._reconstruct_from_junctions(
             env,
-            states=env.states_from_tensor(junction_states_tsr),
-            conditioning=conditioning,
-            save_estimator_outputs=save_estimator_outputs,
-            save_logprobs=save_logprobs,
+            prev_trajectories,
+            n_prevs,
+            conditioning,
+            save_estimator_outputs,
+            save_logprobs,
             **policy_kwargs,
         )
 
@@ -537,33 +653,67 @@ class LocalSearchSampler(Sampler):
             else None
         )
 
-        # 6) Splice prefix and suffix into candidate trajectories (and aligned PF/PB).
-        (
-            new_trajectories,
-            new_trajectories_log_pf,
-            new_trajectories_log_pb,
-        ) = self._combine_prev_and_recon_trajectories(
+        # 6) Splice prefix and suffix into candidate trajectories.
+        new_trajectories = prev_trajectories.splice_from_reconstruction(
             n_prevs=n_prevs,
-            prev_trajectories=prev_trajectories,
-            recon_trajectories=recon_trajectories,
-            prev_trajectories_log_pf=prev_trajectories_log_pf,
-            recon_trajectories_log_pf=recon_trajectories_log_pf,
-            prev_trajectories_log_pb=prev_trajectories_log_pb,
-            recon_trajectories_log_pb=recon_trajectories_log_pb,
+            recon=recon_trajectories,
             debug=debug,
         )
+
+        # Build PF by splicing prev/recon PF log-probs.
+        if save_logprobs:
+            assert prev_trajectories_log_pf is not None
+            assert recon_trajectories_log_pf is not None
+            T_new = int(new_trajectories.max_length)
+            n_recons = recon_trajectories.terminating_idx
+            new_trajectories.log_probs = self._splice_pf(
+                n_prevs=n_prevs,
+                prev_log_pf=prev_trajectories_log_pf,
+                n_recons=n_recons,
+                recon_log_pf=recon_trajectories_log_pf,
+                T_new=T_new,
+                device=new_trajectories.states.device,
+            )
+
+        # Compute PF/PB sums for MH without building full per-step spliced tensors.
+        if use_metropolis_hastings:
+            assert prev_trajectories_log_pb is not None
+            assert prev_trajectories_log_pf is not None
+            assert recon_trajectories_log_pb is not None
+            assert recon_trajectories_log_pf is not None
+
+            # Sum over prefix/suffix per trajectory using n_prevs and recon lengths.
+            # Prefix sums: [0:n_prev)
+            sum_prev_pf = prev_trajectories_log_pf.cumsum(0)
+            sum_prev_pb = prev_trajectories_log_pb.cumsum(0)
+            prefix_idx = (n_prevs - 1).clamp_min(0).view(1, -1)
+            prefix_pf = sum_prev_pf.gather(0, prefix_idx).squeeze(0)
+            prefix_pb = sum_prev_pb.gather(0, prefix_idx).squeeze(0)
+            zero_prefix = torch.zeros_like(prefix_pf)
+            prefix_pf = torch.where(n_prevs > 0, prefix_pf, zero_prefix)
+            prefix_pb = torch.where(n_prevs > 0, prefix_pb, zero_prefix)
+
+            # Suffix sums from recon: [0:n_recon)
+            n_recons = recon_trajectories.terminating_idx
+            sum_recon_pf = recon_trajectories_log_pf.cumsum(0)
+            sum_recon_pb = recon_trajectories_log_pb.cumsum(0)
+            suffix_idx = (n_recons - 1).clamp_min(0).view(1, -1)
+            suffix_pf = sum_recon_pf.gather(0, suffix_idx).squeeze(0)
+            suffix_pb = sum_recon_pb.gather(0, suffix_idx).squeeze(0)
+            zero_suffix = torch.zeros_like(suffix_pf)
+            suffix_pf = torch.where(n_recons > 0, suffix_pf, zero_suffix)
+            suffix_pb = torch.where(n_recons > 0, suffix_pb, zero_suffix)
 
         # 7) Accept/reject. With MH, accept with probability:
         #    min\{1, R(x') p_B(x->s') p_F(s'->x') / [R(x) p_B(x'->s') p_F(s'->x)]\}.
         #    Without MH, accept when the episodic reward improves (ties accepted).
         if use_metropolis_hastings:
-            assert (
-                prev_trajectories_log_pb is not None
-                and new_trajectories_log_pf is not None
-                and new_trajectories_log_pb is not None
-                and prev_trajectories_log_pf is not None
-                and new_trajectories.log_rewards is not None
-            )
+            assert prev_trajectories_log_pb is not None
+            assert prev_trajectories_log_pf is not None
+            assert recon_trajectories_log_pb is not None
+            assert recon_trajectories_log_pf is not None
+            assert prev_trajectories.log_rewards is not None
+            assert new_trajectories.log_rewards is not None
 
             # The acceptance ratio is: min(1, R(x')p(x->s'->x') / R(x)p(x'->s'-> x))
             # Also, note this:
@@ -573,13 +723,19 @@ class LocalSearchSampler(Sampler):
             # = p_B(tau|x)p_F(tau') / p_B(tau'|x')p_F(tau)
             # Combine episodic reward and log-prob sums, clamp at 0 (min with 1 in prob
             # space).
+            prev_total_pf = prev_trajectories_log_pf.sum(0)
+            prev_total_pb = prev_trajectories_log_pb.sum(0)
+            assert isinstance(prefix_pf, torch.Tensor)
+            assert isinstance(prefix_pb, torch.Tensor)
+            new_total_pf = prefix_pf + suffix_pf
+            new_total_pb = prefix_pb + suffix_pb
             log_accept_ratio = torch.clamp_max(
                 new_trajectories.log_rewards
-                + prev_trajectories_log_pb.sum(0)
-                + new_trajectories_log_pf.sum(0)
+                + prev_total_pb
+                + new_total_pf
                 - prev_trajectories.log_rewards
-                - new_trajectories_log_pb.sum(0)
-                - prev_trajectories_log_pf.sum(0),
+                - new_total_pb
+                - prev_total_pf,
                 0.0,
             )
             is_updated = torch.rand(
@@ -689,266 +845,3 @@ class LocalSearchSampler(Sampler):
             search_indices[is_updated] = last_indices[is_updated]
 
         return trajectories
-
-    @staticmethod
-    def _combine_prev_and_recon_trajectories(  # noqa: C901
-        n_prevs: torch.Tensor,
-        prev_trajectories: Trajectories,
-        recon_trajectories: Trajectories,
-        prev_trajectories_log_pf: torch.Tensor | None = None,
-        recon_trajectories_log_pf: torch.Tensor | None = None,
-        prev_trajectories_log_pb: torch.Tensor | None = None,
-        recon_trajectories_log_pb: torch.Tensor | None = None,
-        debug: bool = False,
-    ) -> tuple[Trajectories, torch.Tensor | None, torch.Tensor | None]:
-        """Combines previous and reconstructed trajectories to create new trajectories.
-
-        This static method combines two trajectory segments: `prev_trajectories` and
-        `recon_trajectories` to create `new_trajectories`. Specifically,
-        `new_trajectories` is constructed by replacing certain portion of the
-        `prev_trajectories` with `recon_trajectories`. See self.local_search for how
-        to generate `prev_trajectories` and `recon_trajectories`.
-
-        Args:
-            n_prevs: Tensor indicating how many steps to take from prev_trajectories
-                for each trajectory in the batch.
-            prev_trajectories: Trajectories obtained from backward sampling.
-            recon_trajectories: Trajectories obtained from forward reconstruction.
-            prev_trajectories_log_pf: Optional log probabilities for forward policy
-                on `prev_trajectories`.
-            recon_trajectories_log_pf: Optional log probabilities for forward policy
-                on `recon_trajectories`.
-            prev_trajectories_log_pb: Optional log probabilities for backward policy
-                on `prev_trajectories`.
-            recon_trajectories_log_pb: Optional log probabilities for backward policy
-                on `recon_trajectories`.
-            debug: If True, performs additional validation checks for debugging.
-
-        Returns:
-            A tuple containing:
-            - the `new_trajectories` Trajectories object with the combined trajectories
-            - the `new_trajectories_log_pf` tensor of combined forward log probabilities
-            - the `new_trajectories_log_pb` tensor of combined backward log probabilities
-
-        Note:
-            This method performs complex tensor operations to efficiently combine
-            trajectory segments. The debug mode compares the vectorized approach
-            with a for-loop implementation to ensure correctness.
-        """
-        # Goal: splice each trajectory's prefix (from backward sampling, now forward-ordered)
-        # with its reconstructed suffix (from the forward policy), starting at the
-        # junction step `n_prevs[i]`. We mirror this splice on PF/PB per-step tensors
-        # when they are provided.
-        new_trajectories_log_pf = None
-        new_trajectories_log_pb = None
-
-        bs = prev_trajectories.n_trajectories
-        device = prev_trajectories.states.device
-        env = prev_trajectories.env
-
-        # Obtain full trajectories by concatenating the backward and forward parts.
-        # Determine per-batch prefix lengths (n_prevs) and suffix lengths (n_recons),
-        # plus their maxima to size the output tensors.
-        max_n_prev = n_prevs.max()
-        n_recons = recon_trajectories.terminating_idx
-        max_n_recon = n_recons.max()
-
-        new_trajectories_log_rewards = recon_trajectories.log_rewards  # Episodic reward
-        new_trajectories_dones = n_prevs + n_recons
-        max_traj_len = int(new_trajectories_dones.max().item())
-
-        # Create helper indices and masks
-        # Build helper indices and masks over (time, batch). `prev_mask` selects the
-        # prefix region; `state_recon_mask`/`action_recon_mask` select the suffix
-        # region for states/actions respectively. The corresponding `*_mask2` versions
-        # index into the recon tensors without offset.
-        idx = torch.arange(max_traj_len + 1).unsqueeze(1).expand(-1, bs).to(n_prevs)
-
-        prev_mask = idx < n_prevs
-        state_recon_mask = (idx >= n_prevs) * (idx <= n_prevs + n_recons)
-        state_recon_mask2 = idx[: max_n_recon + 1] <= n_recons
-        action_recon_mask = (idx[:-1] >= n_prevs) * (idx[:-1] <= n_prevs + n_recons - 1)
-        action_recon_mask2 = idx[:max_n_recon] <= n_recons - 1
-
-        # Transpose to (batch, time, ...) for efficient advanced indexing.
-        prev_trajectories_states_tsr = prev_trajectories.states.tensor.transpose(0, 1)
-        prev_trajectories_actions_tsr = prev_trajectories.actions.tensor.transpose(0, 1)
-        recon_trajectories_states_tsr = recon_trajectories.states.tensor.transpose(0, 1)
-        recon_trajectories_actions_tsr = recon_trajectories.actions.tensor.transpose(
-            0, 1
-        )
-        prev_mask = prev_mask.transpose(0, 1)
-        state_recon_mask = state_recon_mask.transpose(0, 1)
-        state_recon_mask2 = state_recon_mask2.transpose(0, 1)
-        action_recon_mask = action_recon_mask.transpose(0, 1)
-        action_recon_mask2 = action_recon_mask2.transpose(0, 1)
-
-        # Prepare output state/action tensors in transposed shapes. Initialize to
-        # sink/dummy values and fill prefix/suffix segments below.
-        new_trajectories_states_tsr = env.sf.repeat(bs, max_traj_len + 1, 1).to(
-            prev_trajectories.states.tensor
-        )
-        new_trajectories_actions_tsr = env.dummy_action.repeat(bs, max_traj_len, 1).to(
-            prev_trajectories.actions.tensor
-        )
-
-        # Assign prefix segment from `prev_trajectories` using `prev_mask`.
-        prev_mask_truc = prev_mask[:, :max_n_prev]
-        new_trajectories_states_tsr[prev_mask] = prev_trajectories_states_tsr[
-            :, :max_n_prev
-        ][prev_mask_truc]
-        new_trajectories_actions_tsr[prev_mask[:, :-1]] = prev_trajectories_actions_tsr[
-            :, :max_n_prev
-        ][prev_mask_truc]
-
-        # Assign the second part (reconstructed from forward policy) of the trajectory
-        new_trajectories_states_tsr[state_recon_mask] = recon_trajectories_states_tsr[
-            state_recon_mask2
-        ]
-        new_trajectories_actions_tsr[action_recon_mask] = recon_trajectories_actions_tsr[
-            action_recon_mask2
-        ]
-
-        # Transpose back
-        new_trajectories_states_tsr = new_trajectories_states_tsr.transpose(0, 1)
-        new_trajectories_actions_tsr = new_trajectories_actions_tsr.transpose(0, 1)
-
-        # Similarly, splice PF/PB per-step log-probabilities if they were provided.
-        if (
-            prev_trajectories_log_pf is not None
-            and recon_trajectories_log_pf is not None
-        ):
-            prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)
-            recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(0, 1)
-            new_trajectories_log_pf = torch.full((bs, max_traj_len), 0.0).to(
-                device=device, dtype=prev_trajectories_log_pf.dtype  # type: ignore
-            )
-            new_trajectories_log_pf[prev_mask[:, :-1]] = prev_trajectories_log_pf[  # type: ignore
-                :, :max_n_prev
-            ][
-                prev_mask_truc
-            ]
-            new_trajectories_log_pf[action_recon_mask] = recon_trajectories_log_pf[  # type: ignore
-                action_recon_mask2
-            ]
-            new_trajectories_log_pf = new_trajectories_log_pf.transpose(0, 1)
-        if (
-            prev_trajectories_log_pb is not None
-            and recon_trajectories_log_pb is not None
-        ):
-            prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)
-            recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(0, 1)
-            new_trajectories_log_pb = torch.full((bs, max_traj_len), 0.0).to(
-                device=device, dtype=prev_trajectories_log_pb.dtype  # type: ignore
-            )
-            new_trajectories_log_pb[prev_mask[:, :-1]] = prev_trajectories_log_pb[  # type: ignore
-                :, :max_n_prev
-            ][
-                prev_mask_truc
-            ]
-            new_trajectories_log_pb[action_recon_mask] = recon_trajectories_log_pb[  # type: ignore
-                action_recon_mask2
-            ]
-            new_trajectories_log_pb = new_trajectories_log_pb.transpose(0, 1)
-
-        # ------------------------------ DEBUG ------------------------------
-        # If `debug` is True (expected only when testing), compare the
-        # vectorized approach's results (above) to the for-loop results (below).
-        if debug:
-            _new_trajectories_states_tsr = env.sf.repeat(max_traj_len + 1, bs, 1).to(
-                prev_trajectories.states.tensor
-            )
-            _new_trajectories_actions_tsr = env.dummy_action.repeat(
-                max_traj_len, bs, 1
-            ).to(prev_trajectories.actions.tensor)
-
-            if (
-                prev_trajectories_log_pf is not None
-                and recon_trajectories_log_pf is not None
-            ):
-                _new_trajectories_log_pf = torch.full((max_traj_len, bs), 0.0).to(
-                    device=device, dtype=prev_trajectories_log_pf.dtype
-                )
-                prev_trajectories_log_pf = prev_trajectories_log_pf.transpose(0, 1)
-                recon_trajectories_log_pf = recon_trajectories_log_pf.transpose(0, 1)
-
-            if (
-                prev_trajectories_log_pb is not None
-                and recon_trajectories_log_pb is not None
-            ):
-                _new_trajectories_log_pb = torch.full((max_traj_len, bs), 0.0).to(
-                    device=device, dtype=prev_trajectories_log_pb.dtype
-                )
-                prev_trajectories_log_pb = prev_trajectories_log_pb.transpose(0, 1)
-                recon_trajectories_log_pb = recon_trajectories_log_pb.transpose(0, 1)
-
-            for i in range(bs):
-                _n_prev = n_prevs[i]
-
-                # Backward part (prefix)
-                _new_trajectories_states_tsr[: _n_prev + 1, i] = (
-                    prev_trajectories.states.tensor[: _n_prev + 1, i]
-                )
-                _new_trajectories_actions_tsr[:_n_prev, i] = (
-                    prev_trajectories.actions.tensor[:_n_prev, i]
-                )
-
-                # Forward part (suffix)
-                _len_recon = recon_trajectories.terminating_idx[i]
-                _new_trajectories_states_tsr[
-                    _n_prev + 1 : _n_prev + _len_recon + 1, i
-                ] = recon_trajectories.states.tensor[1 : _len_recon + 1, i]
-                _new_trajectories_actions_tsr[_n_prev : _n_prev + _len_recon, i] = (
-                    recon_trajectories.actions.tensor[:_len_recon, i]
-                )
-
-                if (
-                    prev_trajectories_log_pf is not None
-                    and recon_trajectories_log_pf is not None
-                ):
-                    _new_trajectories_log_pf[:_n_prev, i] = prev_trajectories_log_pf[
-                        :_n_prev, i
-                    ]
-                    _new_trajectories_log_pf[_n_prev : _n_prev + _len_recon, i] = (
-                        recon_trajectories_log_pf[:_len_recon, i]
-                    )
-                if (
-                    prev_trajectories_log_pb is not None
-                    and recon_trajectories_log_pb is not None
-                ):
-                    _new_trajectories_log_pb[:_n_prev, i] = prev_trajectories_log_pb[
-                        :_n_prev, i
-                    ]
-                    _new_trajectories_log_pb[_n_prev : _n_prev + _len_recon, i] = (
-                        recon_trajectories_log_pb[:_len_recon, i]
-                    )
-
-            assert torch.all(_new_trajectories_states_tsr == new_trajectories_states_tsr)
-            assert torch.all(
-                _new_trajectories_actions_tsr == new_trajectories_actions_tsr
-            )
-            if (
-                prev_trajectories_log_pf is not None
-                and recon_trajectories_log_pf is not None
-            ):
-                assert torch.all(_new_trajectories_log_pf == new_trajectories_log_pf)
-            if (
-                prev_trajectories_log_pb is not None
-                and recon_trajectories_log_pb is not None
-            ):
-                assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
-
-        # Materialize the spliced trajectories container (forward-time), carrying over
-        # the prefix conditioning and episodic reward from the reconstructed suffix.
-        new_trajectories = Trajectories(
-            env=env,
-            states=env.states_from_tensor(new_trajectories_states_tsr),
-            conditioning=prev_trajectories.conditioning,
-            actions=env.actions_from_tensor(new_trajectories_actions_tsr),
-            terminating_idx=new_trajectories_dones,
-            is_backward=False,
-            log_rewards=new_trajectories_log_rewards,
-            log_probs=new_trajectories_log_pf,
-        )
-
-        return new_trajectories, new_trajectories_log_pf, new_trajectories_log_pb
