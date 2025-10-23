@@ -198,7 +198,7 @@ class FixedBackwardModule(nn.Module):
 ###########################################
 
 
-class IsotropicGaussianWithTime(Distribution):
+class IsotropicGaussian(Distribution):
     def __init__(
         self,
         loc: torch.Tensor,
@@ -206,7 +206,7 @@ class IsotropicGaussianWithTime(Distribution):
         actions_detach: bool = True,
     ):
         """
-        Initialize the IsotropicGaussianWithTime distribution.
+        Initialize the IsotropicGaussian distribution.
 
         Args:
             loc: The mean of the Gaussian distribution (shape: (*batch_shape, s_dim))
@@ -239,7 +239,7 @@ class IsotropicGaussianWithTime(Distribution):
         return logprobs
 
 
-class PinnedBrownianMotionForward(PolicyMixin, Estimator):
+class PinnedBrownianMotionForward(PolicyMixin, Estimator):  # TODO: support OU process
     def __init__(
         self,
         s_dim: int,
@@ -302,15 +302,15 @@ class PinnedBrownianMotionForward(PolicyMixin, Estimator):
         module_output: torch.Tensor,
         **policy_kwargs: Any,
         # TODO: add epsilon-noisy exploration
-    ) -> IsotropicGaussianWithTime:
+    ) -> IsotropicGaussian:
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
         fwd_mean = self.dt * module_output
         fwd_std = torch.tensor(self.sigma * self.dt**0.5, device=fwd_mean.device)
         fwd_std = fwd_std.repeat(fwd_mean.shape[0], 1)
-        return IsotropicGaussianWithTime(fwd_mean, fwd_std)
+        return IsotropicGaussian(fwd_mean, fwd_std)
 
 
-class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
+class PinnedBrownianMotionBackward(PolicyMixin, Estimator):  # TODO: support OU process
     def __init__(
         self,
         s_dim: int,
@@ -372,14 +372,14 @@ class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
         module_output: torch.Tensor,  # TODO: support learnable backward mean and var
         **policy_kwargs: Any,
         # TODO: add epsilon-noisy exploration
-    ) -> IsotropicGaussianWithTime:
+    ) -> IsotropicGaussian:
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
         s_curr = states.tensor[:, :-1]
         t_curr = states.tensor[:, [-1]]
 
         bwd_mean = s_curr * self.dt / t_curr
         bwd_std = self.sigma * (self.dt * (t_curr - self.dt) / t_curr).sqrt()
-        return IsotropicGaussianWithTime(bwd_mean, bwd_std)
+        return IsotropicGaussian(bwd_mean, bwd_std)
 
 
 ###########
