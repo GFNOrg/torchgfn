@@ -7,7 +7,7 @@ from gfn.states import DiscreteStates
 from gfn.actions import Actions
 
 # Assuming chip_design is in the python path
-from .helpers.chip_design import utils as placement_util
+from .helpers.chip_design import utils as placement_util, SAMPLE_NETLIST_FILE, SAMPLE_INIT_PLACEMENT
 from .helpers.chip_design.utils import cost_info_function
 
 
@@ -26,8 +26,8 @@ class ChipDesign(DiscreteEnv):
 
     def __init__(
         self,
-        netlist_file: str,
-        init_placement: str,
+        netlist_file: str = SAMPLE_NETLIST_FILE,
+        init_placement: str = SAMPLE_INIT_PLACEMENT,
         std_cell_placer_mode: str = "fd",
         wirelength_weight: float = 1.0,
         density_weight: float = 1.0,

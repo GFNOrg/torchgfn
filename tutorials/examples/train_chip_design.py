@@ -28,16 +28,7 @@ class ChipDesignPreprocessor(Preprocessor):
 
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-
-    # Use a simple test case
-    netlist_file = "src/gfn/gym/helpers/chip_design/test_data/sample_clustered/netlist.pb.txt"
-    init_placement = "src/gfn/gym/helpers/chip_design/test_data/sample_clustered/initial.plc"
-
-    env = ChipDesign(
-        netlist_file=netlist_file,
-        init_placement=init_placement,
-        device=str(device),
-    )
+    env = ChipDesign(device=str(device))
 
     preprocessor = ChipDesignPreprocessor(env, embedding_dim=args.embedding_dim)
 
