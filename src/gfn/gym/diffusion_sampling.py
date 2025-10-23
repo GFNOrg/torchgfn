@@ -494,6 +494,7 @@ class Funnel(BaseTarget):
                 use_log_reward=True,
             )
 
+        plt.tight_layout()
         if show:
             plt.show()
         else:
@@ -646,6 +647,7 @@ class ManyWell(BaseTarget):
                 use_log_reward=True,
             )
 
+        plt.tight_layout()
         if show:
             plt.show()
         else:
