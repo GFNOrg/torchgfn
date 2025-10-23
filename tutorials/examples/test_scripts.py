@@ -162,7 +162,7 @@ class LineArgs(CommonArgs):
 class DiffusionSamplerArgs:
     no_cuda: bool = True
     seed: int = 0
-    target: str = "gmm_2"
+    target: str = "gmm2"
     dim: int | None = None
     num_components: int | None = None
     target_seed: int = 2
