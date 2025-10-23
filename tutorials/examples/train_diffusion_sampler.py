@@ -213,7 +213,7 @@ class IsotropicGaussianWithTime(Distribution):
             scale: The scale of the Gaussian distribution (shape: (*batch_shape, 1))
             actions_detach: Whether to detach the actions from the graph.
         """
-        super().__init__()
+        super().__init__(validate_args=False)
         self.loc = loc  # shape: (*batch_shape, s_dim)
         self.scale = scale  # shape: (*batch_shape, 1)
         self.actions_detach = actions_detach
@@ -280,7 +280,7 @@ class PinnedBrownianMotionForward(PolicyMixin, Estimator):
         t_curr = input.tensor[:, [-1]]
 
         out = torch.where(
-            (1.0 - t_curr) < self.dt * 1e-2,  # sf case; t_curr is >= 0.
+            (1.0 - t_curr) < self.dt * 1e-2,  # sf case; when t_curr is 1.0
             torch.full_like(s_curr, -float("inf")),
             self.module(self.preprocessor(input)),
         )
@@ -350,7 +350,7 @@ class PinnedBrownianMotionBackward(PolicyMixin, Estimator):
         t_curr = input.tensor[:, [-1]]  # shape: (*batch_shape,)
 
         out = torch.where(
-            (t_curr - self.dt) < self.dt * 1e-2,  # s0 case; t_curr and dt are >= 0.
+            (t_curr - self.dt) < self.dt * 1e-2,  # s0 case; when t_curr - dt is 0.0
             torch.zeros_like(s_curr),
             self.module(self.preprocessor(input)),
         )
@@ -483,7 +483,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
 
     # Target / environment
-    parser.add_argument("--target", type=str, default="gmm_2", help="Target name")
+    parser.add_argument("--target", type=str, default="gmm2", help="Target name")
     parser.add_argument(
         "--dim", type=int, default=None, help="State dimension override for the target"
     )

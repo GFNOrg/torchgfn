@@ -1,9 +1,10 @@
+import inspect
 import os
 import random
 import threading
 import time
 import warnings
-from typing import Callable, Tuple
+from typing import Any, Callable, Tuple
 
 import numpy as np
 import torch
@@ -80,6 +81,27 @@ def get_available_cpus() -> int:
 
     # 3. Last resort.
     return os.cpu_count() or 1
+
+
+def filter_kwargs_for_callable(
+    callable_obj: Any, kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    """Filter a kwargs dict to only the parameters accepted by callable_obj."""
+    sig = inspect.signature(callable_obj)
+
+    # If the callable accepts **kwargs, no filtering is necessary.
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return kwargs
+
+    accepted_names = {
+        name
+        for name, p in sig.parameters.items()
+        if p.kind
+        in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    # Remove common non-forwarded parameters if present in kwargs.
+    accepted_names -= {"self"}
+    return {k: v for k, v in kwargs.items() if k in accepted_names}
 
 
 # -----------------------------------------------------------------------------
