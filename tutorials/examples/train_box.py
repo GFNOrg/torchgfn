@@ -12,12 +12,12 @@ from typing import Optional
 
 import numpy as np
 import torch
+import wandb
 from numpy.typing import NDArray
 from scipy.special import logsumexp
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm, trange
 
-import wandb
 from gfn.estimators import ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
