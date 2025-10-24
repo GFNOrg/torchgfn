@@ -55,7 +55,7 @@ class Box(Env):
 
         super().__init__(
             s0=s0,
-            state_shape=(2,),  # ()
+            state_shape=(2,),
             action_shape=(2,),
             dummy_action=dummy_action,
             exit_action=exit_action,

@@ -1120,6 +1120,7 @@ class GraphStates(States):
         """
         for graph in self.data.flat:
             graph.to(str(device))
+        self._device = device
         return self
 
     def clone(self) -> GraphStates:

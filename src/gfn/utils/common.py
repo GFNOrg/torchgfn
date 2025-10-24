@@ -1,9 +1,11 @@
+import inspect
 import os
 import random
 import threading
 import time
 import warnings
-from typing import Callable, Tuple
+from contextlib import contextmanager
+from typing import Any, Callable, Tuple
 
 import numpy as np
 import torch
@@ -47,6 +49,41 @@ def default_fill_value_for_dtype(dtype: torch.dtype) -> int | float:
         return -float("inf")
 
 
+def ensure_same_device(device1: torch.device, device2: torch.device) -> None:
+    """Ensure that two tensors are on the same device.
+
+    Args:
+        device1: The first device.
+        device2: The second device.
+
+    Raises:
+        ValueError: If the devices are not the same.
+    """
+    try:
+        assert device1 == device2
+        return
+    except AssertionError:
+        pass
+
+    if device1.type != device2.type:
+        raise ValueError(f"The devices have different types: {device1}, {device2}")
+
+    # Device indices must differ since the device types are the same.
+    index1, index2 = device1.index, device2.index
+
+    # Both have not-None index but they are different.
+    if index1 is not None and index2 is not None:
+        raise ValueError(f"Device index mismatch: {device1}, {device2}")
+
+    # If one device index is None and the other is not,
+    # the None index defaults to torch.cuda.current_device().
+    # Check that the not-None index matches the current device index.
+    current_device = torch.cuda.current_device()
+    for idx in (index1, index2):
+        if idx is not None and idx != current_device:
+            raise ValueError(f"Device index mismatch: {device1}, {device2}")
+
+
 def get_available_cpus() -> int:
     """Return the number of *usable* CPUs for the current process.
 
@@ -80,6 +117,27 @@ def get_available_cpus() -> int:
 
     # 3. Last resort.
     return os.cpu_count() or 1
+
+
+def filter_kwargs_for_callable(
+    callable_obj: Any, kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    """Filter a kwargs dict to only the parameters accepted by callable_obj."""
+    sig = inspect.signature(callable_obj)
+
+    # If the callable accepts **kwargs, no filtering is necessary.
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return kwargs
+
+    accepted_names = {
+        name
+        for name, p in sig.parameters.items()
+        if p.kind
+        in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    # Remove common non-forwarded parameters if present in kwargs.
+    accepted_names -= {"self"}
+    return {k: v for k, v in kwargs.items() if k in accepted_names}
 
 
 # -----------------------------------------------------------------------------
@@ -203,39 +261,50 @@ def set_seed(seed: int, performance_mode: bool = False) -> None:
             os.environ["MKL_NUM_THREADS"] = "1"
 
 
-def ensure_same_device(device1: torch.device, device2: torch.device) -> None:
-    """Ensure that two tensors are on the same device.
+@contextmanager
+def temporarily_set_seed(seed):
+    """Context manager that temporarily sets seeds for multiple RNGs.
 
     Args:
-        device1: The first device.
-        device2: The second device.
+        seed: The seed value to use within the context
 
-    Raises:
-        ValueError: If the devices are not the same.
+    Example:
+        >>> with set_seed(42):
+        ...     # Random operations here will use seed 42
+        ...     x = random.random()
+        >>> # Original random state is restored here
     """
+    # Save current states
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+
+    # For PyTorch (if available)
+    torch_state = None
+    torch_cuda_state = None
+    if torch is not None:
+        torch_state = torch.get_rng_state()
+        if torch.cuda.is_available():
+            torch_cuda_state = torch.cuda.get_rng_state_all()
+
     try:
-        assert device1 == device2
-        return
-    except AssertionError:
-        pass
+        # Set new seeds
+        random.seed(seed)
+        np.random.seed(seed)
+        if torch is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
 
-    if device1.type != device2.type:
-        raise ValueError(f"The devices have different types: {device1}, {device2}")
+        yield  # Control returns to the with block
 
-    # Device indices must differ since the device types are the same.
-    index1, index2 = device1.index, device2.index
-
-    # Both have not-None index but they are different.
-    if index1 is not None and index2 is not None:
-        raise ValueError(f"Device index mismatch: {device1}, {device2}")
-
-    # If one device index is None and the other is not,
-    # the None index defaults to torch.cuda.current_device().
-    # Check that the not-None index matches the current device index.
-    current_device = torch.cuda.current_device()
-    for idx in (index1, index2):
-        if idx is not None and idx != current_device:
-            raise ValueError(f"Device index mismatch: {device1}, {device2}")
+    finally:
+        # Restore original states
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+        if torch_state is not None:
+            torch.set_rng_state(torch_state)
+        if torch_cuda_state is not None:
+            torch.cuda.set_rng_state_all(torch_cuda_state)
 
 
 # -----------------------------------------------------------------------------

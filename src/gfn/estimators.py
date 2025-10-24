@@ -10,7 +10,11 @@ from torch.distributions import Categorical, Distribution
 from gfn.actions import GraphActions, GraphActionType
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
-from gfn.utils.distributions import GraphActionDistribution, UnsqueezedCategorical
+from gfn.utils.distributions import (
+    GraphActionDistribution,
+    IsotropicGaussian,
+    UnsqueezedCategorical,
+)
 from gfn.utils.handlers import (
     has_conditioning_exception_handler,
     no_conditioning_exception_handler,
@@ -1221,3 +1225,215 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         init_carry_fn = cast(Callable[[int, torch.device], Any], init_carry)
 
         return init_carry_fn(batch_size, device)
+
+
+class DiffusionPolicyEstimator(PolicyMixin, Estimator):
+    """Base class for diffusion policy estimators."""
+
+    def __init__(self, s_dim: int, module: nn.Module, is_backward: bool = False):
+        """Initialize the DiffusionPolicyEstimator.
+
+        Args:
+            s_dim: The dimension of the states.
+            module: The neural network module to use.
+            is_backward: Flag indicating whether this estimator is for backward policy,
+                i.e., is used for predicting probability distributions over parents.
+        """
+        self.s_dim = s_dim
+        super().__init__(
+            module=module,
+            preprocessor=None,  # Use the IdentityPreprocessor
+            is_backward=is_backward,
+        )
+
+    @property
+    def expected_output_dim(self) -> int:
+        return self.s_dim
+
+    @abstractmethod
+    def forward(self, input: States) -> torch.Tensor:
+        """Forward pass of the module.
+
+        Args:
+            input: The input to the module as states.
+
+        Returns:
+            The output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def to_probability_distribution(
+        self,
+        states: States,
+        module_output: torch.Tensor,
+        **policy_kwargs: Any,
+    ) -> IsotropicGaussian:
+        """Transform the output of the module into a IsotropicGaussian distribution.
+
+        Args:
+            states: The states to use, states.tensor.shape = (*batch_shape, s_dim + 1).
+            module_output: The output of the module (actions), as a tensor of shape
+                (*batch_shape, s_dim).
+            **policy_kwargs: Keyword arguments to modify the distribution.
+
+        Returns:
+            A IsotropicGaussian distribution.
+        """
+        raise NotImplementedError
+
+
+class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU process
+    def __init__(
+        self,
+        s_dim: int,
+        pf_module: nn.Module,
+        sigma: float,
+        num_discretization_steps: int,
+    ):
+        """Initialize the PinnedBrownianMotionForward.
+
+        Args:
+            s_dim: The dimension of the states.
+            pf_module: The neural network module to use for the forward policy.
+            sigma: The diffusion coefficient parameter for the pinned Brownian motion.
+            num_discretization_steps: The number of discretization steps.
+        """
+        super().__init__(s_dim=s_dim, module=pf_module, is_backward=False)
+
+        # Pinned Brownian Motion related
+        self.sigma = sigma
+        self.num_discretization_steps = num_discretization_steps
+        self.dt = 1.0 / self.num_discretization_steps
+
+    def forward(self, input: States) -> torch.Tensor:
+        """Forward pass of the module.
+
+        Args:
+            input: The input to the module as states.
+
+        Returns:
+            The output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        out = self.module(self.preprocessor(input))
+
+        if self.expected_output_dim is not None:
+            assert out.shape[-1] == self.expected_output_dim, (
+                f"Module output shape {out.shape} does not match expected output "
+                f"dimension {self.expected_output_dim}"
+            )
+        return out
+
+    def to_probability_distribution(
+        self,
+        states: States,
+        module_output: torch.Tensor,
+        **policy_kwargs: Any,
+        # TODO: add epsilon-noisy exploration
+    ) -> IsotropicGaussian:
+        """Transform the output of the module into a IsotropicGaussian distribution,
+        which is the distribution of the next states under the pinned Brownian motion
+        controlled by the output of the module.
+
+        Args:
+            states: The states to use, states.tensor.shape = (*batch_shape, s_dim + 1).
+            module_output: The output of the module (actions), as a tensor of shape
+                (*batch_shape, s_dim).
+            **policy_kwargs: Keyword arguments to modify the distribution.
+
+        Returns:
+            A IsotropicGaussian distribution (distribution of the next states)
+        """
+        assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
+        s_curr = states.tensor[:, :-1]
+        t_curr = states.tensor[:, [-1]]
+
+        module_output = torch.where(
+            (1.0 - t_curr) < self.dt * 1e-2,  # sf case; when t_curr is 1.0
+            torch.full_like(s_curr, -float("inf")),  # This is the exit action
+            module_output,
+        )
+
+        fwd_mean = self.dt * module_output
+        fwd_std = torch.tensor(self.sigma * self.dt**0.5, device=fwd_mean.device)
+        fwd_std = fwd_std.repeat(fwd_mean.shape[0], 1)
+        return IsotropicGaussian(fwd_mean, fwd_std)
+
+
+class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support OU process
+    def __init__(
+        self,
+        s_dim: int,
+        pb_module: nn.Module,
+        sigma: float,
+        num_discretization_steps: int,
+    ):
+        """Initialize the PinnedBrownianMotionForward.
+
+        Args:
+            s_dim: The dimension of the states.
+            pb_module: The neural network module to use for the backward policy.
+            sigma: The diffusion coefficient parameter for the pinned Brownian motion.
+            num_discretization_steps: The number of discretization steps.
+        """
+        super().__init__(s_dim=s_dim, module=pb_module, is_backward=True)
+
+        # Pinned Brownian Motion related
+        self.sigma = sigma
+        self.dt = 1.0 / num_discretization_steps
+
+    def forward(self, input: States) -> torch.Tensor:
+        """Forward pass of the module.
+
+        Args:
+            input: The input to the module as states.
+
+        Returns:
+            The output of the module, as a tensor of shape (*batch_shape, output_dim).
+        """
+        out = self.module(self.preprocessor(input))
+
+        if self.expected_output_dim is not None:
+            assert out.shape[-1] == self.expected_output_dim, (
+                f"Module output shape {out.shape} does not match expected output "
+                f"dimension {self.expected_output_dim}"
+            )
+        return out
+
+    def to_probability_distribution(
+        self,
+        states: States,
+        module_output: torch.Tensor,  # TODO: support learnable backward mean and var
+        **policy_kwargs: Any,
+        # TODO: add epsilon-noisy exploration
+    ) -> IsotropicGaussian:
+        """Transform the output of the module into a IsotropicGaussian distribution,
+        which is the distribution of the previous states under the pinned Brownian motion
+        process, possibly controlled by the output of the backward module. If the module
+        is a fixed backward module, the `module_output` is a zero vector (no control).
+
+        Args:
+            states: The states to use, states.tensor.shape = (*batch_shape, s_dim + 1).
+            module_output: The output of the module (actions), as a tensor of shape
+                (*batch_shape, s_dim).
+            **policy_kwargs: Keyword arguments to modify the distribution.
+
+        Returns:
+            A IsotropicGaussian distribution (distribution of the previous states)
+        """
+        assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
+        s_curr = states.tensor[:, :-1]
+        t_curr = states.tensor[:, [-1]]  # shape: (*batch_shape,)
+
+        is_s0 = (t_curr - self.dt) < self.dt * 1e-2  # s0 case; when t_curr - dt is 0.0
+        bwd_mean = torch.where(
+            is_s0,
+            s_curr,
+            s_curr * self.dt / t_curr,
+        )
+        bwd_std = torch.where(
+            is_s0,
+            torch.zeros_like(t_curr),
+            self.sigma * (self.dt * (t_curr - self.dt) / t_curr).sqrt(),
+        )
+        return IsotropicGaussian(bwd_mean, bwd_std)
