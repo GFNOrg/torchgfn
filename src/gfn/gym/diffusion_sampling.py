@@ -1,3 +1,4 @@
+import math
 import os
 from abc import ABC, abstractmethod
 from typing import Any, cast
@@ -133,7 +134,7 @@ class BaseTarget(ABC):
 
     def cached_sample(
         self, batch_size: int, seed: int | None = None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
         """Cached sample from the target.
 
         Args:
@@ -152,8 +153,12 @@ class BaseTarget(ABC):
             return self.gt_xs[:batch_size], self.gt_xs_log_rewards[:batch_size]
         else:
             if self.gt_xs is None or self.gt_xs_log_rewards is None:
-                self.gt_xs = self.sample(batch_size, seed)
-                self.gt_xs_log_rewards = self.log_reward(self.gt_xs)
+                try:
+                    self.gt_xs = self.sample(batch_size, seed)
+                    self.gt_xs_log_rewards = self.log_reward(self.gt_xs)
+                except NotImplementedError:
+                    self.gt_xs = None
+                    self.gt_xs_log_rewards = None
             elif batch_size > self.gt_xs.size(0):
                 gt_xs_new = self.sample(batch_size - self.gt_xs.size(0), seed)
                 gt_xs_log_rewards_new = self.log_reward(gt_xs_new)
@@ -222,9 +227,10 @@ class SimpleGaussianMixture(BaseTarget):
             print(f"\tComponent {i+1}: loc={loc_str}, cov={cov_str}")
 
         # Convert to torch tensors
-        locs_tsr = torch.tensor(locs, device=device)
-        covariances_tsr = torch.tensor(covariances, device=device)
-        mixture_weights_tsr = torch.tensor(mixture_weights, device=device)
+        dtype = torch.get_default_dtype()
+        locs_tsr = torch.tensor(locs, device=device, dtype=dtype)
+        covariances_tsr = torch.tensor(covariances, device=device, dtype=dtype)
+        mixture_weights_tsr = torch.tensor(mixture_weights, device=device, dtype=dtype)
 
         # Define the distribution
         self.distribution = torch.distributions.MixtureSameFamily(
@@ -522,6 +528,10 @@ class ManyWell(BaseTarget):
         device: torch.device = torch.device("cpu"),
         seed: int = 0,
     ) -> None:
+        assert (
+            dim % 2 == 0
+        ), "ManyWellTarget requires an even dimension (pairs of coordinates)."
+
         # Simple mixture proposal for x1: 3 equally weighted Normals
         self.component_mix = torch.tensor([1 / 3, 1 / 3, 1 / 3], device=device)
         self.means = torch.tensor([-2.0, 0.0, 2.0], device=device)
@@ -534,6 +544,9 @@ class ManyWell(BaseTarget):
             plot_border=3.0,
             seed=seed,
         )
+
+        self.Z_x1 = 11784.50927
+        self.Z_x2 = np.sqrt(2 * np.pi)
 
     @staticmethod
     def _block_log_density(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
@@ -605,9 +618,6 @@ class ManyWell(BaseTarget):
         if seed is not None:
             set_seed(seed)
 
-        assert (
-            self.dim % 2 == 0
-        ), "ManyWellTarget requires an even dimension (pairs of coordinates)."
         n_blocks = self.dim // 2
 
         proposal = self._make_proposal()
@@ -624,6 +634,9 @@ class ManyWell(BaseTarget):
             xs[:, 2 * b] = x1
             xs[:, 2 * b + 1] = x2
         return xs
+
+    def gt_logz(self) -> float:
+        return (self.dim // 2) * (np.log(self.Z_x1) + np.log(self.Z_x2))
 
     def visualize(
         self,
@@ -728,7 +741,7 @@ class DiffusionSampling(Env):
             # dummy action is never used since all trajectories are terminated at
             # time == 1 (i.e., we don't need to pad shorter trajectories)
             dummy_action=torch.full(
-                (self.dim,), float("inf"), device=device, dtype=torch.get_default_dtype()
+                (self.dim,), 0.0, device=device, dtype=torch.get_default_dtype()
             ),
             exit_action=torch.full(
                 (self.dim,),
@@ -738,6 +751,28 @@ class DiffusionSampling(Env):
             ),
             check_action_validity=check_action_validity,
         )
+
+    def make_states_class(self) -> type[States]:
+        """Returns the States class for diffusion sampling."""
+        env = self
+
+        class DiffusionSamplingStates(States):
+            """States for diffusion sampling."""
+
+            state_shape = env.state_shape
+            s0 = env.s0
+            sf = env.sf
+
+            @property
+            def is_initial_state(self) -> torch.Tensor:
+                """Returns a tensor that is True for states that are s0
+
+                When time is close enought to 0.0 (considering floating point errors),
+                the state is s0.
+                """
+                return (self.tensor[..., -1] - 0.0) < env.dt * 1e-2
+
+        return DiffusionSamplingStates
 
     @classmethod
     def list_available_targets(cls) -> dict[str, dict[str, Any]]:
@@ -826,3 +861,51 @@ class DiffusionSampling(Env):
         """
         # Remove the last index, which encodes the time step.
         return self.target.log_reward(states.tensor[..., :-1])
+
+    @staticmethod
+    def density_metrics(
+        fwd_log_pfs: torch.Tensor,
+        fwd_log_pbs: torch.Tensor,
+        fwd_log_rewards: torch.Tensor,
+        log_Z_learned: float,
+        bwd_log_pfs: torch.Tensor | None = None,
+        bwd_log_pbs: torch.Tensor | None = None,
+        bwd_log_rewards: torch.Tensor | None = None,
+        gt_log_Z: float | None = None,
+    ) -> dict:
+        bsz = fwd_log_pfs.shape[1]
+        assert bsz == fwd_log_pbs.shape[1] == fwd_log_rewards.shape[0]
+        assert fwd_log_pfs.ndim == fwd_log_pbs.ndim == 2
+
+        log_weights = fwd_log_rewards + fwd_log_pbs.sum(0) - fwd_log_pfs.sum(0)
+        iw_elbo = torch.logsumexp(log_weights, dim=0) - math.log(bsz)
+        elbo = log_weights.mean().item()
+
+        # EUBO, if the ground truth samples are available
+        if (
+            bwd_log_rewards is not None
+            and bwd_log_pfs is not None
+            and bwd_log_pbs is not None
+        ):
+            gt_bsz = bwd_log_pfs.shape[1]
+            assert gt_bsz == bwd_log_pbs.shape[1] == bwd_log_rewards.shape[0]
+            assert bwd_log_pfs.ndim == bwd_log_pbs.ndim == 2
+            eubo = (
+                (bwd_log_rewards + bwd_log_pbs.sum(0) - bwd_log_pfs.sum(0)).mean().item()
+            )
+        else:
+            eubo = float("nan")
+
+        ess = 1.0 / (log_weights.softmax(0) ** 2).sum().item()
+
+        metrics = {
+            "log_Z_learned": log_Z_learned,
+            "elbo": elbo,
+            "eubo": eubo,
+            "iw_elbo": iw_elbo,
+            "Δ_elbo": (gt_log_Z - elbo) if gt_log_Z is not None else float("nan"),
+            "Δ_eubo": (gt_log_Z - eubo) if gt_log_Z is not None else float("nan"),
+            "Δ_iw_elbo": (gt_log_Z - iw_elbo) if gt_log_Z is not None else float("nan"),
+            "ess(%)": ess / bsz * 100,
+        }
+        return metrics

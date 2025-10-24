@@ -5,22 +5,111 @@ with SimpleGaussianMixtureTarget as the target unnormalized distribution.
 
 Here, we use the pinned Brownian motion as the reference process; see https://arxiv.org/abs/2402.05098
 for more details, and see https://arxiv.org/abs/2302.13834 or https://arxiv.org/abs/2211.01364 for
-Ornstein-Uhlenbeck process as the reference process.
+examples of using the Ornstein-Uhlenbeck process as the reference process.
 
 Reference: https://github.com/GFNOrg/gfn-diffusion
 """
 
 import argparse
+import math
 
 import torch
 from tqdm import tqdm
 
 from gfn.estimators import PinnedBrownianMotionBackward, PinnedBrownianMotionForward
-from gfn.gflownet import TBGFlowNet
+from gfn.gflownet import PFBasedGFlowNet, TBGFlowNet
 from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.samplers import Sampler
 from gfn.utils.common import set_seed
 from gfn.utils.modules import DiffusionFixedBackwardModule, DiffusionPISGradNetForward
+from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
+
+
+def evaluate_density_metrics(
+    gflownet: PFBasedGFlowNet,
+    env: DiffusionSampling,
+    eval_n: int,
+    eval_batch_size: int,
+) -> dict:
+    assert gflownet.pb is not None
+    fwd_sampler = Sampler(estimator=gflownet.pf)
+
+    n_batches = math.ceil(eval_n / eval_batch_size)
+    fwd_log_pfs_list = []
+    fwd_log_pbs_list = []
+    fwd_log_rewards_list = []
+    for i in range(n_batches):
+        batch_size = (
+            eval_batch_size if i < n_batches - 1 else eval_n - i * eval_batch_size
+        )
+        trajectories = fwd_sampler.sample_trajectories(
+            env,
+            n=batch_size,
+            save_logprobs=True,
+            save_estimator_outputs=False,
+        )
+        fwd_log_pfs, fwd_log_pbs = get_trajectory_pfs_and_pbs(
+            gflownet.pf,
+            gflownet.pb,
+            trajectories,
+            recalculate_all_logprobs=False,
+        )
+        fwd_log_rewards = trajectories.log_rewards
+        fwd_log_pfs_list.append(fwd_log_pfs)
+        fwd_log_pbs_list.append(fwd_log_pbs)
+        fwd_log_rewards_list.append(fwd_log_rewards)
+    fwd_log_pfs = torch.cat(fwd_log_pfs_list, dim=0)
+    fwd_log_pbs = torch.cat(fwd_log_pbs_list, dim=0)
+    fwd_log_rewards = torch.cat(fwd_log_rewards_list, dim=0)
+
+    gt_xs, gt_xs_log_rewards = env.target.cached_sample(batch_size=eval_n)
+    if gt_xs is not None and gt_xs_log_rewards is not None:
+        bwd_sampler = Sampler(estimator=gflownet.pb)
+        bwd_log_pfs_list = []
+        bwd_log_pbs_list = []
+        bwd_log_rewards_list = []
+        for i in range(n_batches):
+            xs_batch = gt_xs[i * eval_batch_size : (i + 1) * eval_batch_size]
+            xs_batch_with_time = torch.cat(
+                [xs_batch, torch.ones(xs_batch.shape[0], 1) * 1.0], dim=1
+            )
+            states_batch = env.states_from_tensor(xs_batch_with_time)
+            bwd_trajectories = bwd_sampler.sample_trajectories(
+                env,
+                states=states_batch,
+                save_logprobs=False,  # backward logprobs can't be saved (TODO: fix this)
+                save_estimator_outputs=False,
+            )
+            bwd_trajectories_reversed = bwd_trajectories.reverse_backward_trajectories()
+            bwd_log_pfs, bwd_log_pbs = get_trajectory_pfs_and_pbs(
+                gflownet.pf,
+                gflownet.pb,
+                bwd_trajectories_reversed,
+                recalculate_all_logprobs=False,
+            )
+            bwd_log_rewards = bwd_trajectories_reversed.log_rewards
+            bwd_log_pfs_list.append(bwd_log_pfs)
+            bwd_log_pbs_list.append(bwd_log_pbs)
+            bwd_log_rewards_list.append(bwd_log_rewards)
+        bwd_log_pfs = torch.cat(bwd_log_pfs_list, dim=0)
+        bwd_log_pbs = torch.cat(bwd_log_pbs_list, dim=0)
+        bwd_log_rewards = torch.cat(bwd_log_rewards_list, dim=0)
+
+    assert isinstance(gflownet.logZ, torch.nn.Parameter)  # TODO: support other cases
+    try:
+        gt_logz = env.target.gt_logz()
+    except NotImplementedError:
+        gt_logz = None
+    return env.density_metrics(
+        fwd_log_pfs=fwd_log_pfs,
+        fwd_log_pbs=fwd_log_pbs,
+        fwd_log_rewards=fwd_log_rewards,
+        log_Z_learned=gflownet.logZ.item(),
+        bwd_log_pfs=bwd_log_pfs,
+        bwd_log_pbs=bwd_log_pbs,
+        bwd_log_rewards=bwd_log_rewards,
+        gt_log_Z=gt_logz,
+    )
 
 
 def main(args):
@@ -94,6 +183,15 @@ def main(args):
         loss.backward()
         optimizer.step()
 
+        if it == 0 or (it + 1) % args.eval_interval == 0 or it == args.n_iterations - 1:
+            density_metrics = evaluate_density_metrics(
+                gflownet, env, args.eval_n, args.eval_batch_size
+            )
+            print(f"Evaluation metrics at iteration {it}:")
+            for key, value in density_metrics.items():
+                print(f"{key}: {value:.4f}")
+            print("-" * 40)
+
         if args.visualize:
             if (
                 it == 0
@@ -139,7 +237,7 @@ if __name__ == "__main__":
         help="diffusion coefficient for the pinned Brownian motion",
     )
 
-    # Model (PISGradNet)
+    # Model (DiffusionPISGradNetForward)
     parser.add_argument("--harmonics_dim", type=int, default=64)
     parser.add_argument("--t_emb_dim", type=int, default=64)
     parser.add_argument("--s_emb_dim", type=int, default=64)
@@ -152,6 +250,11 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=200)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr_logz", type=float, default=1e-1)
+
+    # Evaluation
+    parser.add_argument("--eval_interval", type=int, default=200)
+    parser.add_argument("--eval_n", type=int, default=2000)
+    parser.add_argument("--eval_batch_size", type=int, default=2000)
 
     # Visualization
     parser.add_argument("--vis_interval", type=int, default=200)

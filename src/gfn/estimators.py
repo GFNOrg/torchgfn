@@ -1315,14 +1315,7 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        s_curr = input.tensor[:, :-1]
-        t_curr = input.tensor[:, [-1]]
-
-        out = torch.where(
-            (1.0 - t_curr) < self.dt * 1e-2,  # sf case; when t_curr is 1.0
-            torch.full_like(s_curr, -float("inf")),
-            self.module(self.preprocessor(input)),
-        )
+        out = self.module(self.preprocessor(input))
 
         if self.expected_output_dim is not None:
             assert out.shape[-1] == self.expected_output_dim, (
@@ -1352,6 +1345,15 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
             A IsotropicGaussian distribution (distribution of the next states)
         """
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
+        s_curr = states.tensor[:, :-1]
+        t_curr = states.tensor[:, [-1]]
+
+        module_output = torch.where(
+            (1.0 - t_curr) < self.dt * 1e-2,  # sf case; when t_curr is 1.0
+            torch.full_like(s_curr, -float("inf")),  # This is the exit action
+            module_output,
+        )
+
         fwd_mean = self.dt * module_output
         fwd_std = torch.tensor(self.sigma * self.dt**0.5, device=fwd_mean.device)
         fwd_std = fwd_std.repeat(fwd_mean.shape[0], 1)
@@ -1389,14 +1391,7 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        s_curr = input.tensor[:, :-1]
-        t_curr = input.tensor[:, [-1]]  # shape: (*batch_shape,)
-
-        out = torch.where(
-            (t_curr - self.dt) < self.dt * 1e-2,  # s0 case; when t_curr - dt is 0.0
-            torch.zeros_like(s_curr),
-            self.module(self.preprocessor(input)),
-        )
+        out = self.module(self.preprocessor(input))
 
         if self.expected_output_dim is not None:
             assert out.shape[-1] == self.expected_output_dim, (
@@ -1428,8 +1423,17 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         """
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
         s_curr = states.tensor[:, :-1]
-        t_curr = states.tensor[:, [-1]]
+        t_curr = states.tensor[:, [-1]]  # shape: (*batch_shape,)
 
-        bwd_mean = s_curr * self.dt / t_curr
-        bwd_std = self.sigma * (self.dt * (t_curr - self.dt) / t_curr).sqrt()
+        is_s0 = (t_curr - self.dt) < self.dt * 1e-2  # s0 case; when t_curr - dt is 0.0
+        bwd_mean = torch.where(
+            is_s0,
+            s_curr,
+            s_curr * self.dt / t_curr,
+        )
+        bwd_std = torch.where(
+            is_s0,
+            torch.zeros_like(t_curr),
+            self.sigma * (self.dt * (t_curr - self.dt) / t_curr).sqrt(),
+        )
         return IsotropicGaussian(bwd_mean, bwd_std)
