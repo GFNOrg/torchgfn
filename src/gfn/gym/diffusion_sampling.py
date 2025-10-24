@@ -1,6 +1,7 @@
 import math
 import os
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from typing import Any, cast
 
 import matplotlib.pyplot as plt
@@ -13,7 +14,7 @@ from gfn.actions import Actions
 from gfn.env import Env
 from gfn.gym.helpers.diffusion_utils import viz_2d_slice
 from gfn.states import States
-from gfn.utils.common import filter_kwargs_for_callable, set_seed
+from gfn.utils.common import filter_kwargs_for_callable, temporarily_set_seed
 
 # Lightweight typing alias for the target registry entries.
 TargetEntry = tuple[type["BaseTarget"], dict[str, Any]]
@@ -283,9 +284,9 @@ class SimpleGaussianMixture(BaseTarget):
         Returns:
             The samples.
         """
-        if seed is not None:
-            set_seed(seed)  # TODO: use context manager
-        return self.distribution.sample((batch_size,))
+        with temporarily_set_seed(seed) if seed is not None else nullcontext():
+            samples = self.distribution.sample((batch_size,))
+        return samples
 
     def gt_logz(self) -> float:
         """Log partition function of the target.
@@ -457,16 +458,14 @@ class Funnel(BaseTarget):
         return log_prob
 
     def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
-        if seed is not None:
-            set_seed(seed)
+        with temporarily_set_seed(seed) if seed is not None else nullcontext():
+            # Sample x0 ~ Normal(0, std^2)
+            x0 = self.dist_dominant.sample((batch_size,))
 
-        # Sample x0 ~ Normal(0, std^2)
-        x0 = self.dist_dominant.sample((batch_size,))
+            # Sample xs | x0 with variance exp(x0) => std = exp(0.5 * x0)
+            eps = torch.randn(batch_size, self.dim - 1, device=self.device)
 
-        # Sample xs | x0 with variance exp(x0) => std = exp(0.5 * x0)
-        eps = torch.randn(batch_size, self.dim - 1, device=self.device)
         xs = eps * torch.exp(0.5 * x0)
-
         return torch.cat([x0, xs], dim=-1)
 
     def gt_logz(self) -> float:
@@ -615,24 +614,22 @@ class ManyWell(BaseTarget):
         return torch.cat(collected, dim=0)
 
     def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
-        if seed is not None:
-            set_seed(seed)
+        with temporarily_set_seed(seed) if seed is not None else nullcontext():
+            n_blocks = self.dim // 2
 
-        n_blocks = self.dim // 2
+            proposal = self._make_proposal()
+            k = self._compute_envelope_k(proposal)
 
-        proposal = self._make_proposal()
-        k = self._compute_envelope_k(proposal)
-
-        xs = torch.empty(batch_size, self.dim, device=self.device)
-        standard_normal = D.Normal(
-            torch.tensor(0.0, device=self.device),
-            torch.tensor(1.0, device=self.device),
-        )
-        for b in range(n_blocks):
-            x1 = self._rejection_sampling_x1(batch_size, proposal, k)
-            x2 = standard_normal.sample((batch_size,))
-            xs[:, 2 * b] = x1
-            xs[:, 2 * b + 1] = x2
+            xs = torch.empty(batch_size, self.dim, device=self.device)
+            standard_normal = D.Normal(
+                torch.tensor(0.0, device=self.device),
+                torch.tensor(1.0, device=self.device),
+            )
+            for b in range(n_blocks):
+                x1 = self._rejection_sampling_x1(batch_size, proposal, k)
+                x2 = standard_normal.sample((batch_size,))
+                xs[:, 2 * b] = x1
+                xs[:, 2 * b + 1] = x2
         return xs
 
     def gt_logz(self) -> float:
