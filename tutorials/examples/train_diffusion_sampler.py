@@ -71,7 +71,8 @@ def evaluate_density_metrics(
         for i in range(n_batches):
             xs_batch = gt_xs[i * eval_batch_size : (i + 1) * eval_batch_size]
             xs_batch_with_time = torch.cat(
-                [xs_batch, torch.ones(xs_batch.shape[0], 1) * 1.0], dim=1
+                [xs_batch, torch.ones(xs_batch.shape[0], 1, device=xs_batch.device)],
+                dim=1,
             )
             states_batch = env.states_from_tensor(xs_batch_with_time)
             bwd_trajectories = bwd_sampler.sample_trajectories(
