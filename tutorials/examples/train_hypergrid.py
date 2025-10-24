@@ -802,6 +802,7 @@ def main(args):  # noqa: C901
                     model=gflownet,
                     optimizer=optimizer,
                     local_metric=score if score is not None else -loss.item(),
+                    group=distributed_context.train_global_group,
                 )
 
         # Calculate how long this iteration took.
