@@ -178,6 +178,9 @@ class DiffusionSamplerArgs:
     batch_size: int = 16
     lr: float = 1e-3
     lr_logz: float = 1e-1
+    eval_interval: int = 10
+    eval_n: int = 100
+    eval_batch_size: int = 100
     vis_interval: int = 10
     vis_n: int = 100
     visualize: bool = False
