@@ -15,23 +15,17 @@
 """PlacementCost client class."""
 
 import json
+import os
 import socket
 import subprocess
 import tempfile
 from typing import Any, Text
+import logging
 
-from absl import flags
-from absl import logging
-
-# pyformat: disable
-flags.DEFINE_string('plc_wrapper_main', 'plc_wrapper_main',
-                    'Path to plc_wrapper_main binary.')
-# pyformat: enable
-
-FLAGS = flags.FLAGS
+logger = logging.getLogger(__name__)
 
 
-class PlacementCost(object):
+class PlacementCost:
   """PlacementCost object wrapper."""
 
   BUFFER_LEN = 1024 * 1024
@@ -40,6 +34,7 @@ class PlacementCost(object):
   def __init__(
       self,
       netlist_file: Text,
+      plc_wrapper_main: str = os.path.join(os.path.dirname(__file__), 'plc_wrapper_main'),
       macro_macro_x_spacing: float = 0.0,
       macro_macro_y_spacing: float = 0.0,
   ) -> None:
@@ -53,17 +48,17 @@ class PlacementCost(object):
       macro_macro_x_spacing: Macro-to-macro x spacing in microns.
       macro_macro_y_spacing: Macro-to-macro y spacing in microns.
     """
-    if not FLAGS.plc_wrapper_main:
-      raise ValueError('FLAGS.plc_wrapper_main should be specified.')
+    if not plc_wrapper_main:
+      raise ValueError('plc_wrapper_main should be specified.')
 
     self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     address = tempfile.NamedTemporaryFile().name
     self.sock.bind(address)
     self.sock.listen(1)
     args = [
-        FLAGS.plc_wrapper_main,  #
-        '--uid=',
-        '--gid=',
+        plc_wrapper_main,
+        '--uid=0',
+        '--gid=0',
         f'--pipe_address={address}',
         f'--netlist_file={netlist_file}',
         f'--macro_macro_x_spacing={macro_macro_x_spacing}',
@@ -96,9 +91,9 @@ class PlacementCost(object):
             output = json.loads(json_str)
             break
           except json.decoder.JSONDecodeError as e:
-            logging.warn('JSONDecode Error for %s \n %s', name, e)
+            logger.warning('JSONDecode Error for %s \n %s', name, e)
             if retry < PlacementCost.MAX_RETRY:
-              logging.info(
+              logger.info(
                   'Looking for more data for %s on connection:%s/%s',
                   name,
                   retry,
@@ -125,7 +120,7 @@ class PlacementCost(object):
 
     return f
 
-  def __del__(self) -> None:
+  def close(self) -> None:
     self.conn.close()
     self.process.kill()
     self.process.wait()

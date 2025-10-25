@@ -32,10 +32,12 @@ class ChipDesign(DiscreteEnv):
         wirelength_weight: float = 1.0,
         density_weight: float = 1.0,
         congestion_weight: float = 0.5,
-        device: str = "cpu",
+        device: str | None = None,
         check_action_validity: bool = True,
     ):
-        self.device = torch.device(device)
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
         self.plc = placement_util.create_placement_cost(
             netlist_file=netlist_file, init_placement=init_placement
         )

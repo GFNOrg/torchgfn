@@ -26,8 +26,6 @@ from absl import logging
 from . import plc_client
 import numpy as np
 
-import tensorflow.io.gfile as gfile
-
 
 COST_COMPONENTS = ['wirelength', 'congestion', 'density']
 
@@ -117,7 +115,7 @@ def extract_attribute_from_comments(
     if filename:
       f = filename.split(',')[0]
       if f:
-        with gfile.GFile(f, 'r') as infile:
+        with open(f, 'r') as infile:
           for line in infile:
             if line.startswith('#'):
               match = re.search(rf'{attribute} : ([-\w]+)', line)
@@ -137,7 +135,7 @@ def get_blockages_from_comments(
       continue
     blockages = []
     try:
-      with gfile.GFile(filename, 'r') as infile:
+      with open(filename, 'r') as infile:
         for line in infile:
           if line.startswith('# Blockage : '):
             blockages.append([float(x) for x in line.split()[3:8]])
@@ -158,7 +156,7 @@ def extract_sizes_from_comments(
   for filename in filenames:
     if not filename:
       continue
-    with gfile.GFile(filename, 'r') as infile:
+    with open(filename, 'r') as infile:
       for line in infile:
         if line.startswith('#'):
           fp_re = re.search(
@@ -220,7 +218,9 @@ def create_placement_cost(
     )
 
   plc = plc_client.PlacementCost(
-      netlist_file, macro_macro_x_spacing, macro_macro_y_spacing
+      netlist_file,
+      macro_macro_x_spacing=macro_macro_x_spacing,
+      macro_macro_y_spacing=macro_macro_y_spacing
   )
 
   plc.make_soft_macros_square()
@@ -423,7 +423,7 @@ def read_node_order_file(
     plc: plc_client.PlacementCost, node_order_file: str
 ) -> List[int]:
   """Reads the node order from a file."""
-  with gfile.GFile(node_order_file, 'r') as f:
+  with open(node_order_file, 'r') as f:
     node_order = [plc.get_node_index(line.strip()) for line in f.readlines()]
   return node_order
 
@@ -434,7 +434,7 @@ def save_node_order_file(
     node_order_file: str,
 ) -> None:
   """Saves the node order to a file."""
-  with gfile.GFile(node_order_file, 'w') as f:
+  with open(node_order_file, 'w') as f:
     for node_index in node_order:
       if not plc.is_node_soft_macro(node_index):
         f.write(plc.get_node_name(node_index) + '\n')
@@ -559,7 +559,7 @@ def extract_blockages_from_file(
   """Reads blockage information from a given file."""
   blockages = []
   try:
-    with gfile.GFile(filename, 'r') as infile:
+    with open(filename, 'r') as infile:
       for line in infile:
         if line.startswith('#'):
           continue
