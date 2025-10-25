@@ -8,6 +8,7 @@ from .hypergrid import HyperGrid
 from .line import Line
 from .perfect_tree import PerfectBinaryTree
 from .set_addition import SetAddition
+from .chip_design import ChipDesign
 
 __all__ = [
     "Box",
@@ -20,4 +21,5 @@ __all__ = [
     "GraphBuildingOnEdges",
     "PerfectBinaryTree",
     "SetAddition",
+    "ChipDesign",
 ]
