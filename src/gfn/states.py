@@ -457,13 +457,11 @@ class DiscreteStates(States, ABC):
             forward_masks = torch.ones(
                 (*self.batch_shape, self.__class__.n_actions),
                 dtype=torch.bool,
-                device=self.__class__.device,
             )
         if backward_masks is None:
             backward_masks = torch.ones(
                 (*self.batch_shape, self.__class__.n_actions - 1),
                 dtype=torch.bool,
-                device=self.__class__.device,
             )
 
         self.forward_masks: torch.Tensor = forward_masks

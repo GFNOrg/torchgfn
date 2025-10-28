@@ -22,9 +22,10 @@ import re
 import textwrap
 from typing import Dict, Iterator, List, Optional, Tuple, Union
 
-from absl import logging
 from . import plc_client
+
 import numpy as np
+import logging
 
 
 COST_COMPONENTS = ['wirelength', 'congestion', 'density']

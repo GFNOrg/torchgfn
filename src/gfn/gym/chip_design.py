@@ -1,6 +1,6 @@
 """GFlowNet environment for chip placement."""
 import torch
-from typing import Optional
+from typing import Optional, Sequence
 
 from gfn.env import DiscreteEnv
 from gfn.states import DiscreteStates
@@ -58,8 +58,8 @@ class ChipDesign(DiscreteEnv):
         ]
         self.n_macros = len(self._hard_macro_indices)
 
-        s0 = torch.full((self.n_macros,), -1, dtype=torch.long, device=self.device)
-        sf = torch.full((self.n_macros,), -2, dtype=torch.long, device=self.device)
+        s0 = torch.full((self.n_macros,), -1, dtype=torch.long, device=device)
+        sf = torch.full((self.n_macros,), -2, dtype=torch.long, device=device)
         n_actions = self.n_grid_cells + 1
 
         super().__init__(
@@ -73,9 +73,14 @@ class ChipDesign(DiscreteEnv):
 
     def make_states_class(self) -> "type[ChipDesignStates]":
         """Creates the ChipDesignStates class."""
+        env = self
 
         class ChipDesignStates(DiscreteStates):
             """A class to represent the states of the chip design environment."""
+            state_shape = (self.n_macros,)
+            s0 = env.s0
+            sf = env.sf
+            n_actions = env.n_actions
 
             def __init__(
                 self,
@@ -114,6 +119,24 @@ class ChipDesign(DiscreteEnv):
                     forward_masks=self.forward_masks[index],
                     backward_masks=self.backward_masks[index],
                 )
+            
+            def extend(self, other: "ChipDesignStates") -> None:
+                """Extends the states with another states."""
+                super().extend(other)
+                self.current_node_idx = torch.cat(
+                    (self.current_node_idx, other.current_node_idx),
+                    dim=len(self.batch_shape) - 1,
+                )
+            
+            @classmethod
+            def stack(cls, states: Sequence["ChipDesignStates"]) -> "ChipDesignStates":
+                """Stacks the states with another states."""
+                stacked = super().stack(states)
+                stacked.current_node_idx = torch.stack(
+                    [s.current_node_idx for s in states],
+                    dim=0,
+                )
+                return stacked
 
         return ChipDesignStates
 
