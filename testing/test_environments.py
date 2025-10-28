@@ -7,7 +7,7 @@ from tensordict import TensorDict
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import NonValidActionsError
-from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym import Box, ChipDesign, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.perfect_tree import PerfectBinaryTree
 from gfn.gym.set_addition import SetAddition
@@ -779,3 +779,29 @@ def test_perfect_binary_tree_bwd_step():
     expected_states = torch.tensor([[0], [0]], dtype=torch.long)
     assert torch.equal(states.tensor, expected_states)
     assert torch.all(states.is_initial_state)
+
+
+def test_chip_design():
+    BATCH_SIZE = 2
+
+    env = ChipDesign()
+    states = env.reset(batch_shape=BATCH_SIZE)
+    assert states.tensor.shape == (BATCH_SIZE, env.n_macros)
+    assert torch.all(states.tensor == -1)
+
+    # Place macros
+    for i in range(env.n_macros):
+        actions = env.actions_from_tensor(format_tensor([i] * BATCH_SIZE))
+        expected_tensor = states.tensor.clone()
+        states = env._step(states, actions)
+        expected_tensor[..., i] = i
+        assert torch.equal(states.tensor, expected_tensor)
+
+    # Exit action (valid)
+    actions = env.actions_from_tensor(format_tensor([env.n_actions - 1] * BATCH_SIZE))
+    final_states = env._step(states, actions)
+    assert torch.all(final_states.is_sink_state)
+
+    # Check rewards
+    rewards = env.log_reward(states)
+    assert torch.all(rewards == rewards[0])

@@ -1,14 +1,83 @@
 """GFlowNet environment for chip placement."""
 import torch
-from typing import Optional, Sequence
+from typing import Optional, Sequence, ClassVar
 
 from gfn.env import DiscreteEnv
 from gfn.states import DiscreteStates
 from gfn.actions import Actions
 
-# Assuming chip_design is in the python path
-from .helpers.chip_design import utils as placement_util, SAMPLE_NETLIST_FILE, SAMPLE_INIT_PLACEMENT
-from .helpers.chip_design.utils import cost_info_function
+from gfn.gym.helpers.chip_design import utils as placement_util, SAMPLE_NETLIST_FILE, SAMPLE_INIT_PLACEMENT
+from gfn.gym.helpers.chip_design.utils import cost_info_function
+
+
+class ChipDesignStates(DiscreteStates):
+    """A class to represent the states of the chip design environment."""
+    state_shape: ClassVar[tuple[int, ...]]
+    s0: ClassVar[torch.Tensor]
+    sf: ClassVar[torch.Tensor]
+    n_actions: ClassVar[int]
+
+    def __init__(
+        self,
+        tensor: torch.Tensor,
+        forward_masks: Optional[torch.Tensor] = None,
+        backward_masks: Optional[torch.Tensor] = None,
+        current_node_idx: Optional[torch.Tensor] = None,
+    ):
+        super().__init__(tensor=tensor, forward_masks=forward_masks, backward_masks=backward_masks)
+        if current_node_idx is None:
+            is_unplaced = tensor == -1
+            is_unplaced_padded = torch.cat(
+                [
+                    is_unplaced,
+                    torch.ones_like(is_unplaced[..., :1]),
+                ],
+                dim=-1,
+            )
+            current_node_idx = is_unplaced_padded.long().argmax(dim=-1)
+
+        self.current_node_idx = current_node_idx
+
+    def clone(self) -> "ChipDesignStates":
+        """Creates a copy of the states."""
+        return self.__class__(
+            self.tensor.clone(),
+            current_node_idx=self.current_node_idx.clone(),
+            forward_masks=self.forward_masks.clone(),
+            backward_masks=self.backward_masks.clone(),
+        )
+
+    def __getitem__(self, index) -> "ChipDesignStates":
+        """Gets a subset of the states."""
+        return self.__class__(
+            self.tensor[index],
+            current_node_idx=self.current_node_idx[index],
+            forward_masks=self.forward_masks[index],
+            backward_masks=self.backward_masks[index],
+        )
+    
+    def __setitem__(self, index, value: "ChipDesignStates") -> None:
+        """Sets a subset of the states."""
+        super().__setitem__(index, value)
+        self.current_node_idx[index] = value.current_node_idx
+    
+    def extend(self, other: "ChipDesignStates") -> None:
+        """Extends the states with another states."""
+        super().extend(other)
+        self.current_node_idx = torch.cat(
+            (self.current_node_idx, other.current_node_idx),
+            dim=len(self.batch_shape) - 1,
+        )
+    
+    @classmethod
+    def stack(cls, states: Sequence["ChipDesignStates"]) -> "ChipDesignStates":
+        """Stacks the states with another states."""
+        stacked = super().stack(states)
+        stacked.current_node_idx = torch.stack(
+            [s.current_node_idx for s in states],
+            dim=0,
+        )
+        return stacked
 
 
 class ChipDesign(DiscreteEnv):
@@ -69,79 +138,23 @@ class ChipDesign(DiscreteEnv):
             sf=sf,
             check_action_validity=check_action_validity,
         )
-        self.States: "type[ChipDesignStates]" = self.make_states_class()
+        self.States: type[ChipDesignStates] = self.make_states_class()
 
-    def make_states_class(self) -> "type[ChipDesignStates]":
+    def make_states_class(self) -> type[ChipDesignStates]:
         """Creates the ChipDesignStates class."""
         env = self
-
-        class ChipDesignStates(DiscreteStates):
-            """A class to represent the states of the chip design environment."""
-            state_shape = (self.n_macros,)
+        class BaseChipDesignStates(ChipDesignStates):
+            state_shape = env.state_shape
             s0 = env.s0
             sf = env.sf
             n_actions = env.n_actions
-
-            def __init__(
-                self,
-                tensor: torch.Tensor,
-                current_node_idx: Optional[torch.Tensor] = None,
-                **kwargs,
-            ):
-                super().__init__(tensor=tensor, **kwargs)
-                if current_node_idx is None:
-                    is_unplaced = tensor == -1
-                    is_unplaced_padded = torch.cat(
-                        [
-                            is_unplaced,
-                            torch.ones_like(is_unplaced[..., :1]),
-                        ],
-                        dim=-1,
-                    )
-                    current_node_idx = is_unplaced_padded.long().argmax(dim=-1)
-
-                self.current_node_idx = current_node_idx
-
-            def clone(self) -> "ChipDesignStates":
-                """Creates a copy of the states."""
-                return self.__class__(
-                    self.tensor.clone(),
-                    self.current_node_idx.clone(),
-                    forward_masks=self.forward_masks.clone(),
-                    backward_masks=self.backward_masks.clone(),
-                )
-
-            def __getitem__(self, index) -> "ChipDesignStates":
-                """Gets a subset of the states."""
-                return self.__class__(
-                    self.tensor[index],
-                    self.current_node_idx[index],
-                    forward_masks=self.forward_masks[index],
-                    backward_masks=self.backward_masks[index],
-                )
-            
-            def extend(self, other: "ChipDesignStates") -> None:
-                """Extends the states with another states."""
-                super().extend(other)
-                self.current_node_idx = torch.cat(
-                    (self.current_node_idx, other.current_node_idx),
-                    dim=len(self.batch_shape) - 1,
-                )
-            
-            @classmethod
-            def stack(cls, states: Sequence["ChipDesignStates"]) -> "ChipDesignStates":
-                """Stacks the states with another states."""
-                stacked = super().stack(states)
-                stacked.current_node_idx = torch.stack(
-                    [s.current_node_idx for s in states],
-                    dim=0,
-                )
-                return stacked
-
-        return ChipDesignStates
+            device = env.device
+        return BaseChipDesignStates
 
     def _apply_state_to_plc(self, state_tensor: torch.Tensor):
         """Applies a single state tensor to the plc object."""
+        assert state_tensor.shape == (self.n_macros,)
+
         self.plc.unplace_all_nodes()
         for i in range(self.n_macros):
             loc = state_tensor[i].item()
@@ -149,7 +162,7 @@ class ChipDesign(DiscreteEnv):
                 node_index = self._hard_macro_indices[i]
                 self.plc.place_node(node_index, loc)
 
-    def update_masks(self, states: "ChipDesignStates") -> None:
+    def update_masks(self, states: ChipDesignStates) -> None:
         """Updates the forward and backward masks of the states."""
         states.forward_masks.zero_()
         states.backward_masks.zero_()
@@ -171,10 +184,10 @@ class ChipDesign(DiscreteEnv):
 
             if current_node_idx > 0:
                 last_placed_loc = state_tensor[current_node_idx - 1].item()
-                if last_placed_loc != -1:
-                    states.backward_masks[i, last_placed_loc] = True
+                assert last_placed_loc != -1, "Last placed location should not be -1"
+                states.backward_masks[i, last_placed_loc] = True
 
-    def step(self, states: "ChipDesignStates", actions: Actions) -> "ChipDesignStates":
+    def step(self, states: ChipDesignStates, actions: Actions) -> ChipDesignStates:
         """Performs a forward step in the environment."""
         new_tensor = states.tensor.clone()
 
@@ -193,8 +206,8 @@ class ChipDesign(DiscreteEnv):
         return self.States(tensor=new_tensor, current_node_idx=new_current_node_idx)
 
     def backward_step(
-        self, states: "ChipDesignStates", actions: Actions
-    ) -> "ChipDesignStates":
+        self, states: ChipDesignStates, actions: Actions
+    ) -> ChipDesignStates:
         """Performs a backward step in the environment."""
         new_tensor = states.tensor.clone()
         rows = torch.arange(len(states), device=self.device)
@@ -213,7 +226,7 @@ class ChipDesign(DiscreteEnv):
                 f"{self.std_cell_placer_mode} is not a supported std_cell_placer_mode."
             )
 
-    def log_reward(self, final_states: "ChipDesignStates") -> torch.Tensor:
+    def log_reward(self, final_states: ChipDesignStates) -> torch.Tensor:
         """Computes the log reward of the final states."""
         rewards = torch.zeros(len(final_states), device=self.device)
         for i in range(len(final_states)):

@@ -40,6 +40,7 @@ from tutorials.examples.train_hypergrid_local_search import (
 from tutorials.examples.train_hypergrid_simple import main as train_hypergrid_simple_main
 from tutorials.examples.train_ising import main as train_ising_main
 from tutorials.examples.train_line import main as train_line_main
+from tutorials.examples.train_chip_design import main as train_chip_design_main
 
 
 @dataclass
@@ -255,6 +256,16 @@ class ConditionalArgs(CommonArgs):
     validation_interval: int = 100
     validation_samples: int = 200000
     n_eval_samples: int = 10000
+    no_cuda: bool = True  # Disable CUDA for tests
+
+
+@dataclass
+class ChipDesignArgs(CommonArgs):
+    n_iterations: int = 10
+    embedding_dim: int = 32
+    batch_size: int = 16
+    seed: int = 4444
+    lr: float = 1e-3
     no_cuda: bool = True  # Disable CUDA for tests
 
 
@@ -741,5 +752,9 @@ def test_hypergrid_exploration_smoke():
     train_hypergrid_exploration_main(namespace_args)  # Runs without errors.
 
 
-if __name__ == "__main__":
-    test_graph_triangle_smoke()
+def test_chip_design_smoke():
+    """Smoke test for the chip design training script."""
+    args = ChipDesignArgs()
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    train_chip_design_main(namespace_args)  # Runs without errors.

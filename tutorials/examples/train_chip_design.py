@@ -67,8 +67,10 @@ def main(args):
     print("Training finished.")
     # Sample some final states and print them
     final_states = gflownet.sample_terminating_states(env, n=5)
+    final_rewards = torch.exp(env.log_reward(final_states))
     print("Sampled final placements (macro locations):")
-    print(final_states.tensor)
+    for i in range(len(final_states)):
+        print(final_states.tensor[i], " with reward ", final_rewards[i].item())
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
