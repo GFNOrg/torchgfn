@@ -24,6 +24,7 @@ from tutorials.examples.train_bayesian_structure import (
 )
 from tutorials.examples.train_bit_sequences import main as train_bitsequence_main
 from tutorials.examples.train_box import main as train_box_main
+from tutorials.examples.train_chip_design import main as train_chip_design_main
 from tutorials.examples.train_conditional import main as train_conditional_main
 from tutorials.examples.train_discreteebm import main as train_discreteebm_main
 from tutorials.examples.train_graph_ring import main as train_graph_ring_main
@@ -40,7 +41,6 @@ from tutorials.examples.train_hypergrid_local_search import (
 from tutorials.examples.train_hypergrid_simple import main as train_hypergrid_simple_main
 from tutorials.examples.train_ising import main as train_ising_main
 from tutorials.examples.train_line import main as train_line_main
-from tutorials.examples.train_chip_design import main as train_chip_design_main
 
 
 @dataclass

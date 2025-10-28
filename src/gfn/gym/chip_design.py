@@ -1,17 +1,20 @@
 """GFlowNet environment for chip placement."""
+
+from typing import ClassVar, Optional, Sequence
+
 import torch
-from typing import Optional, Sequence, ClassVar
 
-from gfn.env import DiscreteEnv
-from gfn.states import DiscreteStates
 from gfn.actions import Actions
-
-from gfn.gym.helpers.chip_design import utils as placement_util, SAMPLE_NETLIST_FILE, SAMPLE_INIT_PLACEMENT
+from gfn.env import DiscreteEnv
+from gfn.gym.helpers.chip_design import SAMPLE_INIT_PLACEMENT, SAMPLE_NETLIST_FILE
+from gfn.gym.helpers.chip_design import utils as placement_util
 from gfn.gym.helpers.chip_design.utils import cost_info_function
+from gfn.states import DiscreteStates
 
 
 class ChipDesignStates(DiscreteStates):
     """A class to represent the states of the chip design environment."""
+
     state_shape: ClassVar[tuple[int, ...]]
     s0: ClassVar[torch.Tensor]
     sf: ClassVar[torch.Tensor]
@@ -24,7 +27,9 @@ class ChipDesignStates(DiscreteStates):
         backward_masks: Optional[torch.Tensor] = None,
         current_node_idx: Optional[torch.Tensor] = None,
     ):
-        super().__init__(tensor=tensor, forward_masks=forward_masks, backward_masks=backward_masks)
+        super().__init__(
+            tensor=tensor, forward_masks=forward_masks, backward_masks=backward_masks
+        )
         if current_node_idx is None:
             is_unplaced = tensor == -1
             is_unplaced_padded = torch.cat(
@@ -55,12 +60,12 @@ class ChipDesignStates(DiscreteStates):
             forward_masks=self.forward_masks[index],
             backward_masks=self.backward_masks[index],
         )
-    
+
     def __setitem__(self, index, value: "ChipDesignStates") -> None:
         """Sets a subset of the states."""
         super().__setitem__(index, value)
         self.current_node_idx[index] = value.current_node_idx
-    
+
     def extend(self, other: "ChipDesignStates") -> None:
         """Extends the states with another states."""
         super().extend(other)
@@ -68,7 +73,7 @@ class ChipDesignStates(DiscreteStates):
             (self.current_node_idx, other.current_node_idx),
             dim=len(self.batch_shape) - 1,
         )
-    
+
     @classmethod
     def stack(cls, states: Sequence["ChipDesignStates"]) -> "ChipDesignStates":
         """Stacks the states with another states."""
@@ -143,12 +148,14 @@ class ChipDesign(DiscreteEnv):
     def make_states_class(self) -> type[ChipDesignStates]:
         """Creates the ChipDesignStates class."""
         env = self
+
         class BaseChipDesignStates(ChipDesignStates):
             state_shape = env.state_shape
             s0 = env.s0
             sf = env.sf
             n_actions = env.n_actions
             device = env.device
+
         return BaseChipDesignStates
 
     def _apply_state_to_plc(self, state_tensor: torch.Tensor):

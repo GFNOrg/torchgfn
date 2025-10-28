@@ -1,18 +1,22 @@
 import argparse
+
 import torch
+import torch.nn as nn
 from tqdm import tqdm
 
-from gfn.gflownet import TBGFlowNet
-from gfn.gym.chip_design import ChipDesign
 from gfn.estimators import DiscretePolicyEstimator
-from gfn.utils.modules import MLP
+from gfn.gflownet import TBGFlowNet
+from gfn.gym.chip_design import ChipDesign, ChipDesignStates
 from gfn.preprocessors import Preprocessor
-import torch.nn as nn
+from gfn.utils.modules import MLP
+
 
 class ChipDesignPreprocessor(Preprocessor):
     def __init__(self, env, embedding_dim=64):
         super().__init__(output_dim=env.n_macros * embedding_dim)
-        self.embedding = nn.Embedding(env.n_grid_cells + 2, embedding_dim) # +2 for -1 and -2
+        self.embedding = nn.Embedding(
+            env.n_grid_cells + 2, embedding_dim
+        )  # +2 for -1 and -2
         self.n_macros = env.n_macros
         self.embedding_dim = embedding_dim
 
@@ -27,27 +31,35 @@ class ChipDesignPreprocessor(Preprocessor):
 
 
 def main(args):
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
     env = ChipDesign(device=str(device))
 
     preprocessor = ChipDesignPreprocessor(env, embedding_dim=args.embedding_dim)
 
+    output_dim = preprocessor.output_dim
+    assert output_dim is not None
     module_pf = MLP(
-        input_dim=preprocessor.output_dim,
+        input_dim=output_dim,
         output_dim=env.n_actions,
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
     )
     module_pb = MLP(
-        input_dim=preprocessor.output_dim,
+        input_dim=output_dim,
         output_dim=env.n_actions - 1,
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
         trunk=module_pf.trunk,
     )
 
-    pf_estimator = DiscretePolicyEstimator(module_pf, env.n_actions, preprocessor=preprocessor)
-    pb_estimator = DiscretePolicyEstimator(module_pb, env.n_actions, preprocessor=preprocessor, is_backward=True)
+    pf_estimator = DiscretePolicyEstimator(
+        module_pf, env.n_actions, preprocessor=preprocessor
+    )
+    pb_estimator = DiscretePolicyEstimator(
+        module_pb, env.n_actions, preprocessor=preprocessor, is_backward=True
+    )
 
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0).to(device)
 
@@ -67,10 +79,12 @@ def main(args):
     print("Training finished.")
     # Sample some final states and print them
     final_states = gflownet.sample_terminating_states(env, n=5)
+    assert isinstance(final_states, ChipDesignStates)
     final_rewards = torch.exp(env.log_reward(final_states))
     print("Sampled final placements (macro locations):")
     for i in range(len(final_states)):
         print(final_states.tensor[i], " with reward ", final_rewards[i].item())
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

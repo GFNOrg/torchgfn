@@ -8,6 +8,7 @@ from tensordict import TensorDict
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import NonValidActionsError
 from gfn.gym import Box, ChipDesign, DiscreteEBM, HyperGrid
+from gfn.gym.chip_design import ChipDesignStates
 from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.perfect_tree import PerfectBinaryTree
 from gfn.gym.set_addition import SetAddition
@@ -803,5 +804,6 @@ def test_chip_design():
     assert torch.all(final_states.is_sink_state)
 
     # Check rewards
-    rewards = env.log_reward(states)
+    assert isinstance(final_states, ChipDesignStates)
+    rewards = env.log_reward(final_states)
     assert torch.all(rewards == rewards[0])

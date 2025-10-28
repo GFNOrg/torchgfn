@@ -2,13 +2,13 @@
 
 from .bitSequence import BitSequence, BitSequencePlus
 from .box import Box
+from .chip_design import ChipDesign
 from .discrete_ebm import DiscreteEBM
 from .graph_building import GraphBuilding, GraphBuildingOnEdges
 from .hypergrid import HyperGrid
 from .line import Line
 from .perfect_tree import PerfectBinaryTree
 from .set_addition import SetAddition
-from .chip_design import ChipDesign
 
 __all__ = [
     "Box",
