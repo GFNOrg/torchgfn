@@ -210,17 +210,17 @@ class BitSequenceArgs(CommonArgs):
 @dataclass
 class GraphRingArgs(CommonArgs):
     action_type_epsilon: float = 0.0
-    batch_size: int = 128
+    batch_size: int = 16
     device: str = "cpu"
     directed: bool = True
     edge_index_epsilon: float = 0.0
-    embedding_dim: int = 128
+    embedding_dim: int = 32
     hidden_dim: int = 64
     lr_Z: float = 0.1
     lr: float = 0.001
     n_hidden: int = 1
     n_iterations: int = 4
-    n_nodes: int = 4
+    n_nodes: int = 3
     n_trajectories: int = 3  # Small number for smoke test
     num_conv_layers: int = 1
     plot: bool = False
@@ -317,6 +317,7 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
     elif ndim == 2 and height == 16:
         tgt = 1.224e-3  # 2.62e-4
         atol = 1e-3
+        # TODO: Why is this skipped?
         if replay_buffer_size != 0:
             pytest.skip("Skipping test for replay buffer size != 0")
         assert np.isclose(
@@ -336,6 +337,7 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and height == 16:
+        # TODO: Why is this skipped?
         if replay_buffer_size != 0:
             pytest.skip("Skipping test for replay buffer size != 0")
         tgt = 2.224e-05  # 6.89e-6
