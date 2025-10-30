@@ -772,3 +772,6 @@ def test_graph_masks_device_on_cuda(datas):
     assert stacked.device.type == "cuda"
     _assert_tensordict_on_device(stacked.forward_masks, stacked.device)
     _assert_tensordict_on_device(stacked.backward_masks, stacked.device)
+
+if __name__ == "__main__":
+    test_discrete_masks_device_on_cuda()

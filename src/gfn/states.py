@@ -448,7 +448,7 @@ class DiscreteStates(States, ABC):
             backward_masks: Optional boolean tensor of shape (*batch_shape, n_actions - 1)
                 indicating backward actions allowed at each state.
         """
-        super().__init__(tensor)
+        super().__init__(tensor.to(self.__class__.device))
         assert tensor.shape == self.batch_shape + self.state_shape
 
         # In the usual case, no masks are provided and we produce these defaults.
