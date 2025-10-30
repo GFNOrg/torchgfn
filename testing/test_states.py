@@ -60,7 +60,6 @@ def simple_discrete_state():
     class SimpleDiscreteStates(DiscreteStates):
         state_shape = (2,)  # 2-dimensional state
         n_actions = 3  # 3 possible actions
-        device = torch.device("cpu")
         s0 = torch.tensor([0.0, 0.0])
         sf = torch.tensor([1.0, 1.0])
 
@@ -79,7 +78,6 @@ def empty_discrete_state():
     class SimpleDiscreteStates(DiscreteStates):
         state_shape = (2,)  # 2-dimensional state
         n_actions = 3  # 3 possible actions
-        device = torch.device("cpu")
         s0 = torch.tensor([0.0, 0.0])
         sf = torch.tensor([1.0, 1.0])
 
@@ -685,10 +683,19 @@ def test_discrete_masks_device_consistency_after_mask_ops(simple_discrete_state)
     assert state.forward_masks.device == state.device
 
 
-def _assert_tensordict_on_device(td, device):
-    for v in td.values():
-        if isinstance(v, torch.Tensor):
-            assert v.device == device
+def normalize_device(device):
+    """Normalize device to use index form (cuda:0 instead of cuda)"""
+    device = torch.device(device)
+    if device.type == "cuda" and device.index is None:
+        return torch.device(f"cuda:{torch.cuda.current_device()}")
+    return device
+
+
+def _assert_tensordict_on_device(tensordict, device):
+    device = normalize_device(device)
+    for k, v in tensordict.items():
+        v_device = normalize_device(v.device)
+        assert v_device == device, f"Tensor {k} on {v.device} != {device}"
 
 
 def test_graph_masks_device_consistency(simple_graph_state):
@@ -724,7 +731,6 @@ def test_discrete_masks_device_on_cuda():
     class SimpleDiscreteStates(DiscreteStates):
         state_shape = (2,)
         n_actions = 3
-        device = torch.device("cpu")
         s0 = torch.tensor([0.0, 0.0])
         sf = torch.tensor([1.0, 1.0])
 
@@ -755,6 +761,7 @@ def test_discrete_masks_device_on_cuda():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_graph_masks_device_on_cuda(datas):
+
     # Build two graphs on CUDA
     s1 = MyGraphStates(datas[:1]).to(torch.device("cuda"))
     s2 = MyGraphStates(datas[1:2]).to(torch.device("cuda"))
@@ -764,6 +771,7 @@ def test_graph_masks_device_on_cuda(datas):
     assert s2.device.type == "cuda"
 
     # Masks on single states are on CUDA
+    print("comparing {} : {}".format(s1.forward_masks.device, s1.device))
     _assert_tensordict_on_device(s1.forward_masks, s1.device)
     _assert_tensordict_on_device(s1.backward_masks, s1.device)
 
@@ -772,3 +780,203 @@ def test_graph_masks_device_on_cuda(datas):
     assert stacked.device.type == "cuda"
     _assert_tensordict_on_device(stacked.forward_masks, stacked.device)
     _assert_tensordict_on_device(stacked.backward_masks, stacked.device)
+
+
+def test_states_cross_device_extend_raises_meta():
+    dev1, dev2 = torch.device("cpu"), torch.device("meta")
+
+    class SimpleTensorStates(States):
+        state_shape = (2,)
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    a = SimpleTensorStates(torch.tensor([[0.5, 0.5]], device=dev1))
+    b = SimpleTensorStates(torch.tensor([[0.1, 0.2]], device=dev2))
+    with pytest.raises(RuntimeError):
+        a.extend(b)
+
+
+def test_discrete_cross_device_extend_raises_meta():
+    dev1, dev2 = torch.device("cpu"), torch.device("meta")
+
+    class SimpleDiscreteStates(DiscreteStates):
+        state_shape = (2,)
+        n_actions = 3
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    a = SimpleDiscreteStates(torch.tensor([[0.5, 0.5]], device=dev1))
+    b = SimpleDiscreteStates(torch.tensor([[0.1, 0.2]], device=dev2))
+    with pytest.raises(AssertionError):
+        a.extend(b)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_states_instance_to_cuda_roundtrip():
+    cpu = torch.device("cpu")
+    cuda = torch.device("cuda")
+
+    class SimpleTensorStates(States):
+        state_shape = (2,)
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    st = SimpleTensorStates(torch.tensor([[0.5, 0.5]], device=cpu))
+    assert st.device.type == "cpu"
+    st.to(cuda)
+    assert st.device.type == "cuda"
+    st.to(cpu)
+    assert st.device.type == "cpu"
+
+
+def test_states_instance_device_cpu_noop():
+    dev1, dev2 = torch.device("cpu"), torch.device("cpu")
+
+    class SimpleTensorStates(States):
+        state_shape = (2,)
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    st = SimpleTensorStates(torch.tensor([[0.5, 0.5]], device=dev1))
+    assert st.device == dev1
+    st.to(dev2)
+    assert st.device == dev2
+
+
+def test_discrete_instance_device_cpu_noop():
+    dev1, dev2 = torch.device("cpu"), torch.device("cpu")
+
+    class SimpleDiscreteStates(DiscreteStates):
+        state_shape = (2,)
+        n_actions = 3
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    tensor = torch.tensor([[0.5, 0.5]], device=dev1)
+    ds = SimpleDiscreteStates(tensor)
+    assert ds.device == dev1
+    assert ds.forward_masks.device == dev1
+    assert ds.backward_masks.device == dev1
+    ds.to(dev2)
+    assert ds.device == dev2
+    assert ds.forward_masks.device == dev2
+    assert ds.backward_masks.device == dev2
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_states_cross_device_extend_raises_cuda():
+    cpu = torch.device("cpu")
+    cuda = torch.device("cuda")
+
+    class SimpleTensorStates(States):
+        state_shape = (2,)
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    a = SimpleTensorStates(torch.tensor([[0.5, 0.5]], device=cpu))
+    b = SimpleTensorStates(torch.tensor([[0.1, 0.2]], device=cuda))
+    with pytest.raises(RuntimeError):
+        a.extend(b)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_discrete_cross_device_extend_raises_cuda():
+    cpu = torch.device("cpu")
+    cuda = torch.device("cuda")
+
+    class SimpleDiscreteStates(DiscreteStates):
+        state_shape = (2,)
+        n_actions = 3
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    a = SimpleDiscreteStates(torch.tensor([[0.5, 0.5]], device=cpu))
+    b = SimpleDiscreteStates(torch.tensor([[0.1, 0.2]], device=cuda))
+    with pytest.raises(AssertionError):
+        a.extend(b)
+
+
+def test_graphstates_instance_device_and_masks_cpu(datas):
+    dev1, dev2 = torch.device("cpu"), torch.device("cpu")
+    s1 = MyGraphStates(datas[:1])
+    assert s1.device == dev1
+    fm = s1.forward_masks
+    bm = s1.backward_masks
+    _assert_tensordict_on_device(fm, s1.device)
+    _assert_tensordict_on_device(bm, s1.device)
+    # to() with same cpu device is a no-op but should preserve consistency
+    s1.to(dev2)
+    assert s1.device == dev2
+    fm2 = s1.forward_masks
+    bm2 = s1.backward_masks
+    _assert_tensordict_on_device(fm2, s1.device)
+    _assert_tensordict_on_device(bm2, s1.device)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_tensor_states_two_instances_different_devices_cuda():
+    cpu = torch.device("cpu")
+    cuda = torch.device("cuda")
+
+    class SimpleTensorStates(States):
+        state_shape = (2,)
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    A = SimpleTensorStates(torch.tensor([[0.1, 0.2]], device=cpu))
+    B = SimpleTensorStates(torch.tensor([[0.3, 0.4]], device=cuda))
+    assert A.device.type == "cpu"
+    assert B.device.type == "cuda"
+    assert torch.all(A.is_initial_state == torch.tensor([False], device=A.device))
+    assert torch.all(B.is_initial_state == torch.tensor([False], device=B.device))
+    # Move B back to cpu; A should be unaffected
+    B.to(cpu)
+    assert B.device.type == "cpu"
+    assert A.device.type == "cpu"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_discrete_states_two_instances_different_devices_cuda():
+    cpu = torch.device("cpu")
+    cuda = torch.device("cuda")
+
+    class SimpleDiscreteStates(DiscreteStates):
+        state_shape = (2,)
+        n_actions = 3
+        s0 = torch.tensor([0.0, 0.0])
+        sf = torch.tensor([1.0, 1.0])
+
+    A = SimpleDiscreteStates(torch.tensor([[0.5, 0.5]], device=cpu))
+    B = SimpleDiscreteStates(
+        torch.tensor([[0.1, 0.2]], device=cuda),
+        torch.ones((1, 3), dtype=torch.bool, device=cuda),
+        torch.ones((1, 2), dtype=torch.bool, device=cuda),
+    )
+    assert A.device.type == "cpu"
+    assert B.device.type == "cuda"
+    # Mask devices are consistent with instance devices
+    assert A.forward_masks.device.type == "cpu"
+    assert B.forward_masks.device.type == "cuda"
+    # Move B back to cpu; A should be unaffected
+    B.to(cpu)
+    assert B.device.type == "cpu"
+    assert A.device.type == "cpu"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_graph_states_two_instances_different_devices_cuda(datas):
+    cpu = torch.device("cpu")
+    cuda = torch.device("cuda")
+
+    s_cpu = MyGraphStates(datas[:1])
+    s_cuda = MyGraphStates(datas[1:2]).to(cuda)
+    assert s_cpu.device.type == "cpu"
+    assert s_cuda.device.type == "cuda"
+    # is_initial_state / is_sink_state should work without mutating class templates
+    _ = s_cpu.is_initial_state
+    _ = s_cpu.is_sink_state
+    _ = s_cuda.is_initial_state
+    _ = s_cuda.is_sink_state
+    # Move back and ensure consistency
+    s_cuda.to(cpu)
+    assert s_cuda.device.type == "cpu"

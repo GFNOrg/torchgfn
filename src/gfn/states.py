@@ -72,7 +72,7 @@ class States(ABC):
         )
     )
 
-    def __init__(self, tensor: torch.Tensor) -> None:
+    def __init__(self, tensor: torch.Tensor, device: torch.device | None = None) -> None:
         """Initializes a States object with a batch of states.
 
         Args:
@@ -83,7 +83,9 @@ class States(ABC):
         assert self.sf.shape == self.state_shape
         assert tensor.shape[-len(self.state_shape) :] == self.state_shape
 
-        self.tensor = tensor
+        # Per-instance device resolution: prefer explicit device, else infer from tensor
+        resolved_device = device if device is not None else tensor.device
+        self.tensor = tensor.to(resolved_device)
 
     @property
     def device(self) -> torch.device:
@@ -300,7 +302,7 @@ class States(ABC):
                     self.tensor,
                     self.__class__.sf.repeat(
                         required_first_dim - self.batch_shape[0], self.batch_shape[1], 1
-                    ),
+                    ).to(self.tensor.device),
                 ),
                 dim=0,
             )
@@ -348,11 +350,15 @@ class States(ABC):
         """
         if isinstance(self.__class__.s0, torch.Tensor):
             if len(self.batch_shape) == 1:
-                source_states_tensor = self.__class__.s0
+                try:
+                    ensure_same_device(self.device, self.__class__.s0.device)
+                    source_states_tensor = self.__class__.s0
+                except ValueError:
+                    source_states_tensor = self.__class__.s0.to(self.device)
             else:
                 source_states_tensor = self.__class__.s0.repeat(
                     *self.batch_shape, *((1,) * len(self.__class__.state_shape))
-                )
+                ).to(self.device)
         else:
             raise NotImplementedError(
                 "is_initial_state is not implemented by default "
@@ -369,11 +375,15 @@ class States(ABC):
         """
         if isinstance(self.__class__.sf, torch.Tensor):
             if len(self.batch_shape) == 1:
-                sink_states = self.__class__.sf
+                try:
+                    ensure_same_device(self.device, self.__class__.sf.device)
+                    sink_states = self.__class__.sf
+                except ValueError:
+                    sink_states = self.__class__.sf.to(self.device)
             else:
                 sink_states = self.__class__.sf.repeat(
                     *self.batch_shape, *((1,) * len(self.__class__.state_shape))
-                ).to(self.tensor.device)
+                ).to(self.device)
         else:
             raise NotImplementedError(
                 "is_sink_state is not implemented by default "
@@ -414,6 +424,18 @@ class States(ABC):
 
         return stacked_states
 
+    def to(self, device: torch.device) -> States:
+        """Moves the States tensor to the specified device in-place.
+
+        Args:
+            device: The device to move to.
+
+        Returns:
+            The States object on the specified device.
+        """
+        self.tensor = self.tensor.to(device)
+        return self
+
 
 class DiscreteStates(States, ABC):
     """Base class for states of discrete environments.
@@ -430,13 +452,13 @@ class DiscreteStates(States, ABC):
     """
 
     n_actions: ClassVar[int]
-    device: ClassVar[torch.device]
 
     def __init__(
         self,
         tensor: torch.Tensor,
         forward_masks: Optional[torch.Tensor] = None,
         backward_masks: Optional[torch.Tensor] = None,
+        device: torch.device | None = None,
     ) -> None:
         """Initializes a DiscreteStates container with a batch of states and masks.
 
@@ -448,7 +470,7 @@ class DiscreteStates(States, ABC):
             backward_masks: Optional boolean tensor of shape (*batch_shape, n_actions - 1)
                 indicating backward actions allowed at each state.
         """
-        super().__init__(tensor)
+        super().__init__(tensor, device=device)
         assert tensor.shape == self.batch_shape + self.state_shape
 
         # In the usual case, no masks are provided and we produce these defaults.
@@ -457,14 +479,18 @@ class DiscreteStates(States, ABC):
             forward_masks = torch.ones(
                 (*self.batch_shape, self.__class__.n_actions),
                 dtype=torch.bool,
-                device=self.__class__.device,
+                device=self.device,
             )
+        else:
+            forward_masks = forward_masks.to(self.device)
         if backward_masks is None:
             backward_masks = torch.ones(
                 (*self.batch_shape, self.__class__.n_actions - 1),
                 dtype=torch.bool,
-                device=self.__class__.device,
+                device=self.device,
             )
+        else:
+            backward_masks = backward_masks.to(self.device)
 
         self.forward_masks: torch.Tensor = forward_masks
         self.backward_masks: torch.Tensor = backward_masks
@@ -553,7 +579,7 @@ class DiscreteStates(States, ABC):
         Args:
             other: DiscreteStates object to concatenate with.
         """
-        assert self.__class__.device == other.device, "Devices must match"
+        assert self.device == other.device, "Devices must match"
         super().extend(other)
         self.forward_masks = torch.cat(
             (self.forward_masks, other.forward_masks), dim=len(self.batch_shape) - 1
@@ -671,6 +697,20 @@ class DiscreteStates(States, ABC):
         else:
             self.forward_masks = torch.zeros(shape).to(self.device).bool()
 
+    def to(self, device: torch.device) -> DiscreteStates:
+        """Moves the tensor and masks to the specified device in-place.
+
+        Args:
+            device: The device to move to.
+
+        Returns:
+            The DiscreteStates object on the specified device.
+        """
+        self.tensor = self.tensor.to(device)
+        self.forward_masks = self.forward_masks.to(device)
+        self.backward_masks = self.backward_masks.to(device)
+        return self
+
 
 class GraphStates(States):
     """Base class for graph-based state representations.
@@ -715,13 +755,60 @@ class GraphStates(States):
         self.categorical_node_features = categorical_node_features
         self.categorical_edge_features = categorical_edge_features
         self.data = data
-        self._device = device
+
+        # Resolve device per instance: prefer explicit, else infer, else default
+
+        if device is not None:
+            resolved_device = device
+        else:
+            inferred_device: torch.device | None = None
+
+            # Get the device from the first graph in the data array.
+            if data.size > 0:
+                g = data.flat[0]
+                assert isinstance(g, GeometricData)
+                assert isinstance(g.x, torch.Tensor)
+                inferred_device = g.x.device
+
+            if inferred_device is not None:
+                resolved_device = inferred_device
+            else:
+                resolved_device = torch.empty(0).device
+
+        self._device = resolved_device
+
+        # Move graphs to resolved device.
         if data.size > 0:
             g = data.flat[0]
-            if self._device is None:
-                self._device = cast(torch.Tensor, g.x).device
-            else:
-                ensure_same_device(self._device, cast(torch.Tensor, g.x).device)
+            assert isinstance(g.x, torch.Tensor)
+            if g.x.device != resolved_device:
+                for graph in self.data.flat:
+                    graph.to(str(resolved_device))
+
+    @property
+    def device(self) -> torch.device:
+        """The device on which the states are stored.
+
+        Returns:
+            The device of the underlying array of GeometricData.
+        """
+        assert self._device is not None
+        return self._device
+
+    def to(self, device: torch.device) -> GraphStates:
+        """Moves the GraphStates to the specified device.
+
+        Args:
+            device: The device to move to.
+
+        Returns:
+            The GraphStates object on the specified device.
+        """
+        for graph in self.data.flat:
+            graph.to(str(device))
+        self._device = device
+
+        return self
 
     @property
     def tensor(self) -> GeometricBatch:
@@ -757,16 +844,6 @@ class GraphStates(States):
             return GeometricBatch.from_data_list([dummy_graph])
 
         return GeometricBatch.from_data_list(self.data.flatten().tolist())
-
-    @property
-    def device(self) -> torch.device:
-        """The device on which the graphs are stored.
-
-        Returns:
-            The device of the graphs.
-        """
-        assert self._device is not None
-        return self._device
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
@@ -935,6 +1012,7 @@ class GraphStates(States):
                 GraphActions.EDGE_INDEX_KEY: edge_masks,
             },
             batch_size=self.batch_shape,
+            device=self.device,
         )
 
     @property
@@ -974,7 +1052,7 @@ class GraphStates(States):
         )
 
         for i, graph in enumerate(self.data.flat):
-            node_idxs = torch.arange(len(graph.x.flatten()))
+            node_idxs = torch.arange(len(graph.x.flatten()), device=self.device)
             has_edge = torch.any(
                 node_idxs[:, None] == graph.edge_index.flatten()[None], dim=1
             )
@@ -1020,6 +1098,7 @@ class GraphStates(States):
                 GraphActions.EDGE_INDEX_KEY: edge_masks,
             },
             batch_size=self.batch_shape,
+            device=self.device,
         )
 
     def __repr__(self) -> str:
@@ -1108,20 +1187,6 @@ class GraphStates(States):
             )
         else:
             return index
-
-    def to(self, device: torch.device) -> GraphStates:
-        """Moves the GraphStates to the specified device.
-
-        Args:
-            device: The device to move to.
-
-        Returns:
-            The GraphStates object on the specified device.
-        """
-        for graph in self.data.flat:
-            graph.to(str(device))
-        self._device = device
-        return self
 
     def clone(self) -> GraphStates:
         """Returns a detached clone of the current instance.
@@ -1235,7 +1300,19 @@ class GraphStates(States):
         Returns:
             A boolean tensor of shape (*batch_shape,) that is True for sink states.
         """
-        return self._compare(self.sf)
+        g = self.sf
+
+        if isinstance(g.x, torch.Tensor):
+            try:
+                ensure_same_device(self.device, cast(torch.Tensor, g.x).device)
+                other = g
+            except ValueError:
+                other = g.clone()
+                other.to(str(self.device))
+        else:
+            other = g
+
+        return self._compare(other)
 
     @property
     def is_initial_state(self) -> torch.Tensor:
@@ -1244,7 +1321,17 @@ class GraphStates(States):
         Returns:
             A boolean tensor of shape (*batch_shape,) that is True for initial states.
         """
-        return self._compare(self.s0)
+        g = self.s0
+        if getattr(g, "x", None) is not None:
+            try:
+                ensure_same_device(self.device, cast(torch.Tensor, g.x).device)  # type: ignore[attr-defined]
+                other = g
+            except ValueError:
+                other = g.clone()
+                other.to(str(self.device))
+        else:
+            other = g
+        return self._compare(other)
 
     @classmethod
     def stack(cls, states: List[GraphStates]) -> GraphStates:

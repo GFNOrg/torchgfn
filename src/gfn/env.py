@@ -614,7 +614,6 @@ class DiscreteEnv(Env, ABC):
             sf = env.sf
             make_random_states = env.make_random_states
             n_actions = env.n_actions
-            device = env.device
 
         return DiscreteEnvStates
 
