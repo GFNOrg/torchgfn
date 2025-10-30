@@ -7,6 +7,7 @@ import torch
 def cpu_only():
     torch.set_default_device("cpu")
 
+
 # Fixture to reset torch deterministic algorithms state after each test.
 @pytest.fixture(autouse=True)
 def reset_torch_determinism():

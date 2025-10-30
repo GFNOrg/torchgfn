@@ -686,8 +686,8 @@ def test_discrete_masks_device_consistency_after_mask_ops(simple_discrete_state)
 def normalize_device(device):
     """Normalize device to use index form (cuda:0 instead of cuda)"""
     device = torch.device(device)
-    if device.type == 'cuda' and device.index is None:
-        return torch.device(f'cuda:{torch.cuda.current_device()}')
+    if device.type == "cuda" and device.index is None:
+        return torch.device(f"cuda:{torch.cuda.current_device()}")
     return device
 
 
