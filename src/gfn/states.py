@@ -755,22 +755,60 @@ class GraphStates(States):
         self.categorical_node_features = categorical_node_features
         self.categorical_edge_features = categorical_edge_features
         self.data = data
+
         # Resolve device per instance: prefer explicit, else infer, else default
-        inferred: torch.device | None = None
+
+        if device is not None:
+            resolved_device = device
+        else:
+            inferred_device: torch.device | None = None
+
+            # Get the device from the first graph in the data array.
+            if data.size > 0:
+                g = data.flat[0]
+                assert isinstance(g, GeometricData)
+                assert isinstance(g.x, torch.Tensor)
+                inferred_device = g.x.device
+
+            if inferred_device is not None:
+                resolved_device = inferred_device
+            else:
+                resolved_device = torch.empty(0).device
+
+        self._device = resolved_device
+
+        # Move graphs to resolved device.
         if data.size > 0:
             g = data.flat[0]
-            if getattr(g, "x", None) is not None:
-                inferred = cast(torch.Tensor, g.x).device
-        resolved_device = (
-            device
-            if device is not None
-            else (inferred if inferred is not None else torch.empty(0).device)
-        )
-        self._device = resolved_device
-        # Move graphs to resolved device
-        if data.size > 0:
-            for graph in self.data.flat:
-                graph.to(str(resolved_device))
+            assert isinstance(g.x, torch.Tensor)
+            if g.x.device != resolved_device:
+                for graph in self.data.flat:
+                    graph.to(str(resolved_device))
+
+    @property
+    def device(self) -> torch.device:
+        """The device on which the states are stored.
+
+        Returns:
+            The device of the underlying array of GeometricData.
+        """
+        assert self._device is not None
+        return self._device
+
+    def to(self, device: torch.device) -> GraphStates:
+        """Moves the GraphStates to the specified device.
+
+        Args:
+            device: The device to move to.
+
+        Returns:
+            The GraphStates object on the specified device.
+        """
+        for graph in self.data.flat:
+            graph.to(str(device))
+        self._device = device
+
+        return self
 
     @property
     def tensor(self) -> GeometricBatch:
@@ -806,16 +844,6 @@ class GraphStates(States):
             return GeometricBatch.from_data_list([dummy_graph])
 
         return GeometricBatch.from_data_list(self.data.flatten().tolist())
-
-    @property
-    def device(self) -> torch.device:
-        """The device on which the graphs are stored.
-
-        Returns:
-            The device of the graphs.
-        """
-        assert self._device is not None
-        return self._device
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
@@ -1160,20 +1188,6 @@ class GraphStates(States):
         else:
             return index
 
-    def to(self, device: torch.device) -> GraphStates:
-        """Moves the GraphStates to the specified device.
-
-        Args:
-            device: The device to move to.
-
-        Returns:
-            The GraphStates object on the specified device.
-        """
-        for graph in self.data.flat:
-            graph.to(str(device))
-        self._device = device
-        return self
-
     def clone(self) -> GraphStates:
         """Returns a detached clone of the current instance.
 
@@ -1287,15 +1301,17 @@ class GraphStates(States):
             A boolean tensor of shape (*batch_shape,) that is True for sink states.
         """
         g = self.sf
-        if getattr(g, "x", None) is not None:
+
+        if isinstance(g.x, torch.Tensor):
             try:
-                ensure_same_device(self.device, cast(torch.Tensor, g.x).device)  # type: ignore[attr-defined]
+                ensure_same_device(self.device, cast(torch.Tensor, g.x).device)
                 other = g
             except ValueError:
                 other = g.clone()
                 other.to(str(self.device))
         else:
             other = g
+
         return self._compare(other)
 
     @property

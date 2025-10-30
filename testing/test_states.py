@@ -782,17 +782,8 @@ def test_graph_masks_device_on_cuda(datas):
     _assert_tensordict_on_device(stacked.backward_masks, stacked.device)
 
 
-def _cpu_devices():
-    return torch.device("cpu"), torch.device("cpu")
-
-
-def _cpu_and_meta_devices():
-    # Meta is a dummy device for mismatch-only tests; do not transfer back from meta
-    return torch.device("cpu"), torch.device("meta")
-
-
 def test_states_cross_device_extend_raises_meta():
-    dev1, dev2 = _cpu_and_meta_devices()
+    dev1, dev2 = torch.device("cpu"), torch.device("meta")
 
     class SimpleTensorStates(States):
         state_shape = (2,)
@@ -806,7 +797,7 @@ def test_states_cross_device_extend_raises_meta():
 
 
 def test_discrete_cross_device_extend_raises_meta():
-    dev1, dev2 = _cpu_and_meta_devices()
+    dev1, dev2 = torch.device("cpu"), torch.device("meta")
 
     class SimpleDiscreteStates(DiscreteStates):
         state_shape = (2,)
@@ -839,7 +830,7 @@ def test_states_instance_to_cuda_roundtrip():
 
 
 def test_states_instance_device_cpu_noop():
-    dev1, dev2 = _cpu_devices()
+    dev1, dev2 = torch.device("cpu"), torch.device("cpu")
 
     class SimpleTensorStates(States):
         state_shape = (2,)
@@ -853,7 +844,7 @@ def test_states_instance_device_cpu_noop():
 
 
 def test_discrete_instance_device_cpu_noop():
-    dev1, dev2 = _cpu_devices()
+    dev1, dev2 = torch.device("cpu"), torch.device("cpu")
 
     class SimpleDiscreteStates(DiscreteStates):
         state_shape = (2,)
@@ -906,7 +897,7 @@ def test_discrete_cross_device_extend_raises_cuda():
 
 
 def test_graphstates_instance_device_and_masks_cpu(datas):
-    dev1, dev2 = _cpu_devices()
+    dev1, dev2 = torch.device("cpu"), torch.device("cpu")
     s1 = MyGraphStates(datas[:1])
     assert s1.device == dev1
     fm = s1.forward_masks
