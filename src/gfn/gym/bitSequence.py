@@ -49,9 +49,7 @@ class BitSequenceStates(DiscreteStates):
             tensor, forward_masks=forward_masks, backward_masks=backward_masks
         )
         if length is None:
-            length = torch.zeros(
-                self.batch_shape, dtype=torch.long, device=self.__class__.device
-            )
+            length = torch.zeros(self.batch_shape, dtype=torch.long, device=self.device)
         assert is_int_dtype(length)
         self.length = length
         assert self.length is not None
@@ -275,7 +273,6 @@ class BitSequence(DiscreteEnv):
             sf = env.sf
             make_random_states = env.make_random_states
             n_actions = env.n_actions
-            device = env.device
             word_size = env.word_size
 
         return BitSequenceStatesImplementation
@@ -339,7 +336,7 @@ class BitSequence(DiscreteEnv):
 
         is_done = states.length == self.words_per_seq
         states.forward_masks = torch.ones_like(
-            states.forward_masks, dtype=torch.bool, device=states.__class__.device
+            states.forward_masks, dtype=torch.bool, device=states.device
         )
         states.forward_masks[is_done, :-1] = False
         states.forward_masks[~is_done, -1] = False
@@ -348,7 +345,7 @@ class BitSequence(DiscreteEnv):
 
         last_actions = states.tensor[~is_sink, states[~is_sink].length - 1]
         states.backward_masks = torch.zeros_like(
-            states.backward_masks, dtype=torch.bool, device=states.__class__.device
+            states.backward_masks, dtype=torch.bool, device=states.device
         )
         states.backward_masks[~is_sink, last_actions] = True
 
@@ -782,7 +779,7 @@ class BitSequencePlus(BitSequence):
 
         is_done = states.length == self.words_per_seq
         states.forward_masks = torch.ones_like(
-            states.forward_masks, dtype=torch.bool, device=states.__class__.device
+            states.forward_masks, dtype=torch.bool, device=states.device
         )
         states.forward_masks[is_done, :-1] = False
         states.forward_masks[~is_done, -1] = False
@@ -792,7 +789,7 @@ class BitSequencePlus(BitSequence):
         last_actions = states.tensor[~is_sink, states[~is_sink].length - 1]
         first_actions = states.tensor[~is_sink, 0]
         states.backward_masks = torch.zeros_like(
-            states.backward_masks, dtype=torch.bool, device=states.__class__.device
+            states.backward_masks, dtype=torch.bool, device=states.device
         )
         states.backward_masks[~is_sink, last_actions] = True
         states.backward_masks[~is_sink, first_actions + (self.n_actions - 1) // 2] = True
