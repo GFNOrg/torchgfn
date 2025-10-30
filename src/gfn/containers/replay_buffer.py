@@ -132,7 +132,10 @@ class ReplayBuffer:
 
         # Receive a dummy score back
         score = torch.zeros(1, dtype=torch.float32)
+        print(f"Rank {dist.get_rank()} score: {score}")
+        print(f"Rank {dist.get_rank()} sending data to rank {self.remote_manager_rank}")
         dist.recv(score, src=self.remote_manager_rank)
+        print(f"Rank {dist.get_rank()} score: {score} after receiving")
 
         return score.item()
 
@@ -291,6 +294,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         capacity: int = 1000,
         cutoff_distance: float = 0.0,
         p_norm_distance: float = 1.0,
+        remote_manager_rank: int | None = None,
+        remote_buffer_freq: int = 1,
     ):
         """Initializes a NormBasedDiversePrioritizedReplayBuffer instance.
 
@@ -300,8 +305,18 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             cutoff_distance: Threshold used to determine whether a new terminating
                 state is different enough from those already in the buffer.
             p_norm_distance: p-norm value for distance calculation (used in torch.cdist).
+            remote_manager_rank: Rank of the assigned remote replay buffer manager, or
+                None if no remote manager is assigned.
+            remote_buffer_freq: Frequency (in number of add() calls) at which to contact
+                the remote buffer manager.
         """
-        super().__init__(env, capacity, prioritized_capacity=True)
+        super().__init__(
+            env,
+            capacity,
+            prioritized_capacity=True,
+            remote_manager_rank=remote_manager_rank,
+            remote_buffer_freq=remote_buffer_freq,
+        )
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
 

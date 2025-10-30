@@ -31,7 +31,7 @@ import os
 import time
 from argparse import ArgumentParser
 from math import ceil
-from typing import Tuple, cast
+from typing import Optional, Tuple, cast
 
 import matplotlib.pyplot as plt
 import torch
@@ -62,6 +62,68 @@ from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
     AverageAllPolicy,
 )
+
+
+class PerformanceTracker:
+    """Agent-level performance tracker for selective averaging."""
+
+    def __init__(
+        self,
+        decay: float = 0.98,
+        warmup: int = 100,
+        threshold: Optional[float] = None,
+        cooldown: int = 200,
+    ) -> None:
+        self.decay = float(decay)
+        self.warmup = int(warmup)
+        self.threshold = threshold  # None disables triggering
+        self.cooldown = int(cooldown)
+
+        # This keeps track of the last time the performance tracker was triggered.
+        # It is used to prevent the performance tracker from being triggered too
+        # frequently. It is initialized to a value that is less than the cooldown value.
+        self._last_trigger_iter: int = -self.cooldown
+
+        # Initialize the performance tracker (sets, _ema, _updates, _triggered).
+        self.reset()
+
+    def update(self, score: float, iteration: int) -> float:
+        """Update the exponential moving average with a new score."""
+        self._updates += 1
+        if self._ema is None:
+            self._ema = float(score)
+        else:
+            self._ema = self.decay * self._ema + (1.0 - self.decay) * float(score)
+
+        if self.threshold is None:
+            return False
+        if self._updates < self.warmup:
+            return False
+        if iteration - self._last_trigger_iter < self.cooldown:
+            return False
+
+        if self._ema is not None and self.threshold is not None:
+            if self._ema < self.threshold:
+                self._triggered = True
+                self._last_trigger_iter = int(iteration)
+
+        return self._triggered
+
+    @property
+    def triggered(self) -> bool:
+        """Whether the performance tracker has been triggered."""
+        return self._triggered
+
+    @property
+    def ema(self) -> Optional[float]:
+        """Exponential moving average of the performance score."""
+        return self._ema
+
+    def reset(self) -> None:
+        """Reset the performance tracker."""
+        self._ema = None
+        self._updates = 0
+        self._triggered = False
 
 
 class ModesReplayBufferManager(ReplayBufferManager):
@@ -622,6 +684,8 @@ def main(args):  # noqa: C901
                 capacity=args.replay_buffer_size,
                 cutoff_distance=args.cutoff_distance,
                 p_norm_distance=args.p_norm_distance,
+                remote_manager_rank=distributed_context.assigned_buffer,
+                remote_buffer_freq=1,
             )
         else:
             replay_buffer = ReplayBuffer(
@@ -656,6 +720,14 @@ def main(args):  # noqa: C901
             with_stack=True,
         )
         prof.start()
+
+    # Agent performance tracker.
+    performance_tracker = PerformanceTracker(
+        decay=args.performance_tracker_decay,
+        warmup=args.performance_tracker_warmup,
+        threshold=args.performance_tracker_threshold,
+        cooldown=args.performance_tracker_cooldown,
+    )
 
     if args.distributed:
         # Create and start error handler.
@@ -741,6 +813,8 @@ def main(args):  # noqa: C901
             if replay_buffer is not None:
                 with torch.no_grad():
                     score = replay_buffer.add(training_samples)
+                    assert score is not None
+                    performance_tracker.update(score, iteration)
                     training_objects = replay_buffer.sample(
                         n_samples=per_node_batch_size
                     )
@@ -1241,6 +1315,32 @@ if __name__ == "__main__":
         "--use_restarts",
         action="store_true",
         help="Use restarts.",
+    )
+
+    # Performance tracker settings.
+    parser.add_argument(
+        "--performance_tracker_decay",
+        type=float,
+        default=0.98,
+        help="Decay factor for the performance tracker.",
+    )
+    parser.add_argument(
+        "--performance_tracker_warmup",
+        type=int,
+        default=100,
+        help="Warmup period for the performance tracker.",
+    )
+    parser.add_argument(
+        "--performance_tracker_threshold",
+        type=float,
+        default=1,
+        help="Threshold for the performance tracker. If None, the performance tracker is not triggered.",
+    )
+    parser.add_argument(
+        "--performance_tracker_cooldown",
+        type=int,
+        default=200,
+        help="Cooldown period for the performance tracker.",
     )
 
     args = parser.parse_args()
