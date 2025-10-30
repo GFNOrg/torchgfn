@@ -984,6 +984,7 @@ class GraphStates(States):
                 GraphActions.EDGE_INDEX_KEY: edge_masks,
             },
             batch_size=self.batch_shape,
+            device=self.device,
         )
 
     @property
@@ -1023,7 +1024,7 @@ class GraphStates(States):
         )
 
         for i, graph in enumerate(self.data.flat):
-            node_idxs = torch.arange(len(graph.x.flatten()))
+            node_idxs = torch.arange(len(graph.x.flatten()), device=self.device)
             has_edge = torch.any(
                 node_idxs[:, None] == graph.edge_index.flatten()[None], dim=1
             )
@@ -1069,6 +1070,7 @@ class GraphStates(States):
                 GraphActions.EDGE_INDEX_KEY: edge_masks,
             },
             batch_size=self.batch_shape,
+            device=self.device,
         )
 
     def __repr__(self) -> str:

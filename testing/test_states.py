@@ -683,10 +683,19 @@ def test_discrete_masks_device_consistency_after_mask_ops(simple_discrete_state)
     assert state.forward_masks.device == state.device
 
 
-def _assert_tensordict_on_device(td, device):
-    for v in td.values():
-        if isinstance(v, torch.Tensor):
-            assert v.device == device
+def normalize_device(device):
+    """Normalize device to use index form (cuda:0 instead of cuda)"""
+    device = torch.device(device)
+    if device.type == 'cuda' and device.index is None:
+        return torch.device(f'cuda:{torch.cuda.current_device()}')
+    return device
+
+
+def _assert_tensordict_on_device(tensordict, device):
+    device = normalize_device(device)
+    for k, v in tensordict.items():
+        v_device = normalize_device(v.device)
+        assert v_device == device, f"Tensor {k} on {v.device} != {device}"
 
 
 def test_graph_masks_device_consistency(simple_graph_state):
@@ -752,6 +761,7 @@ def test_discrete_masks_device_on_cuda():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_graph_masks_device_on_cuda(datas):
+
     # Build two graphs on CUDA
     s1 = MyGraphStates(datas[:1]).to(torch.device("cuda"))
     s2 = MyGraphStates(datas[1:2]).to(torch.device("cuda"))
@@ -761,6 +771,7 @@ def test_graph_masks_device_on_cuda(datas):
     assert s2.device.type == "cuda"
 
     # Masks on single states are on CUDA
+    print("comparing {} : {}".format(s1.forward_masks.device, s1.device))
     _assert_tensordict_on_device(s1.forward_masks, s1.device)
     _assert_tensordict_on_device(s1.backward_masks, s1.device)
 
@@ -978,7 +989,3 @@ def test_graph_states_two_instances_different_devices_cuda(datas):
     # Move back and ensure consistency
     s_cuda.to(cpu)
     assert s_cuda.device.type == "cpu"
-
-
-if __name__ == "__main__":
-    test_discrete_masks_device_on_cuda()
