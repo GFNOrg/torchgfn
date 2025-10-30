@@ -1,6 +1,6 @@
 """GFlowNet environment for chip placement."""
 
-from typing import ClassVar, Optional, Sequence
+from typing import ClassVar, Optional, Sequence, cast
 
 import torch
 
@@ -82,7 +82,7 @@ class ChipDesignStates(DiscreteStates):
             [s.current_node_idx for s in states],
             dim=0,
         )
-        return stacked
+        return cast(ChipDesignStates, stacked)
 
 
 class ChipDesign(DiscreteEnv):
@@ -183,16 +183,16 @@ class ChipDesign(DiscreteEnv):
             else:
                 # Apply partial placement to plc to get mask for next node
                 self._apply_state_to_plc(state_tensor)
-                node_to_place = self._hard_macro_indices[current_node_idx]
+                node_to_place = self._hard_macro_indices[int(current_node_idx)]
                 mask = self.plc.get_node_mask(node_to_place)
                 mask = torch.tensor(mask, dtype=torch.bool, device=self.device)
                 states.forward_masks[i, : self.n_grid_cells] = mask
                 states.forward_masks[i, -1] = False  # No exit
 
             if current_node_idx > 0:
-                last_placed_loc = state_tensor[current_node_idx - 1].item()
+                last_placed_loc = state_tensor[int(current_node_idx - 1)].item()
                 assert last_placed_loc != -1, "Last placed location should not be -1"
-                states.backward_masks[i, last_placed_loc] = True
+                states.backward_masks[i, int(last_placed_loc)] = True
 
     def step(self, states: ChipDesignStates, actions: Actions) -> ChipDesignStates:
         """Performs a forward step in the environment."""
