@@ -32,6 +32,7 @@ import time
 from argparse import ArgumentParser
 from math import ceil
 from typing import Optional, Tuple, cast
+import random
 
 import matplotlib.pyplot as plt
 import torch
@@ -149,9 +150,22 @@ class ModesReplayBufferManager(ReplayBufferManager):
         self.env = env
 
     def scoring_function(self, obj) -> float:
+        print("Score - Computing score for object:", obj)
+        print("Score - Terminating states:", obj.terminating_states)
         modes_found = self.env.modes_found(obj.terminating_states)
+        if modes_found > 0:
+            print("*** MODES FOUND! ***")
+        print("Score - Modes found in this object:", modes_found)
+        assert isinstance(modes_found, set), "Expected modes_found to be a set"
         score = len(modes_found - self.discovered_modes)
+
+        # Generate a random float between two specific values (e.g., 1.0 and 100.0)
+        score = random.uniform(1.0, 100.0)
+
+        print("Score - New modes found:", score)
+        print("Score - Modes discovered before update:", self.discovered_modes)
         self.discovered_modes.update(modes_found)
+        print("Score - Updated discovered modes:", self.discovered_modes)
         return float(score)
 
     def _compute_metadata(self) -> dict:
@@ -606,7 +620,7 @@ def main(args):  # noqa: C901
             num_training_ranks=num_training_ranks,
             diverse_replay_buffer=args.diverse_replay_buffer,
             capacity=args.global_replay_buffer_size,
-        )
+        )  # TODO: If the remote_manager_rank is set, does this produce an infinite loop?
         replay_buffer_manager.run()
         return 0.0
 

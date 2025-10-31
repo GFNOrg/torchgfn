@@ -63,7 +63,7 @@ class ReplayBufferManager:
         )
 
     def run(self):
-        """Runs on remote buffer manager ranks. Waits for training data, computes dummy reward, sends back."""
+        """Runs on remote buffer manager ranks. Waits for training data, computes reward, sends back."""
 
         while self.is_running:
             # Receive data
@@ -73,8 +73,8 @@ class ReplayBufferManager:
             if msg.message_type == MessageType.DATA:
                 score = self.scoring_function(msg.message_data)
                 score_tensor = torch.tensor([score], dtype=torch.float32)
-                print(f"Rank {self.rank} score: {score}")
-                print(f"Rank {self.rank} sending score to rank {sender_rank}")
+                print(f"Manager - Rank {self.rank} score: {score}")
+                print(f"Manager - Rank {self.rank} sending score to rank {sender_rank}")
                 dist.send(score_tensor, dst=sender_rank)
                 self.replay_buffer.add(msg.message_data)
 
@@ -91,25 +91,25 @@ class ReplayBufferManager:
                 if self.exit_counter == self.num_training_ranks:
                     self.is_running = False
                     print(
-                        f"Replay buffer manager {self.rank} received exit signals from all training ranks. Exiting."
+                        f"Manager - Replay buffer {self.rank} received exit signals from all training ranks. Exiting."
                     )
             else:
                 raise ValueError(
-                    f"Rank {self.rank} received unknown message type: {msg.message_type}"
+                    f"Manager - Rank {self.rank} received unknown message type: {msg.message_type}"
                 )
 
     def _recv_object(self):
-        # Receive the length
+        # Receive the length.
         length_tensor = torch.IntTensor([0])
         sender_rank = dist.recv(length_tensor)
         length = length_tensor.item()
 
-        # Receive the actual serialized data
+        # Receive the actual serialized data.
         byte_tensor = torch.ByteTensor(length)
         dist.recv(byte_tensor, src=sender_rank)
 
-        # Deserialize back into object
-        # obj_bytes = bytes(byte_tensor.tolist())
+        # Deserialize back into object.
+        # obj_bytes = bytes(byte_tensor.tolist()). # TODO -- Remove?
         msg = Message.deserialize(byte_tensor)
         return sender_rank, msg, length
 
