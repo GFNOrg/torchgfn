@@ -19,7 +19,6 @@ from typing import cast
 
 import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
 import torch
 from tqdm import tqdm
 
@@ -433,6 +432,8 @@ def main(args):
 
     # Adjust layout and save to home directory.
     if args.plot:
+        import seaborn as sns
+
         # Create a figure with 3 subplots arranged horizontally
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
 
