@@ -69,9 +69,12 @@ class ReplayBufferManager:
             # Receive data
             sender_rank, msg, msg_data_len = self._recv_object()
 
+            # Recieved some data to add to the buffer.
             if msg.message_type == MessageType.DATA:
                 score = self.scoring_function(msg.message_data)
                 score_tensor = torch.tensor([score], dtype=torch.float32)
+                print(f"Rank {self.rank} score: {score}")
+                print(f"Rank {self.rank} sending score to rank {sender_rank}")
                 dist.send(score_tensor, dst=sender_rank)
                 self.replay_buffer.add(msg.message_data)
 
@@ -128,12 +131,16 @@ class ReplayBufferManager:
         """Sends a get metadata signal to the replay buffer manager."""
         msg = Message(message_type=MessageType.GET_METADATA, message_data=None)
         msg_bytes = msg.serialize()
+
         length_tensor = torch.IntTensor([len(msg_bytes)])
         dist.send(length_tensor, dst=manager_rank)
+
         dist.send(msg_bytes, dst=manager_rank)
         length_metadata_tensor = torch.IntTensor([0])
+
         dist.recv(length_metadata_tensor, src=manager_rank)
         metadata_tensor = torch.ByteTensor(length_metadata_tensor.item())
+
         dist.recv(metadata_tensor, src=manager_rank)
         metadata = Message.deserialize(metadata_tensor)
         return metadata.message_data
