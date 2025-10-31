@@ -32,7 +32,6 @@ import time
 from argparse import ArgumentParser
 from math import ceil
 from typing import Optional, Tuple, cast
-import random
 
 import matplotlib.pyplot as plt
 import torch
@@ -136,6 +135,13 @@ class ModesReplayBufferManager(ReplayBufferManager):
         diverse_replay_buffer: bool = False,
         capacity: int = 10000,
         remote_manager_rank: int | None = None,
+        # Scoring config
+        w_retained: float = 1.0,
+        w_novelty: float = 0.1,
+        w_reward: float = 0.05,
+        w_mode_bonus: float = 10.0,
+        p_norm_novelty: float = 2.0,
+        cdist_max_bytes: int = 268435456,
     ):
         super().__init__(
             env,
@@ -148,25 +154,131 @@ class ModesReplayBufferManager(ReplayBufferManager):
         )
         self.discovered_modes = set()
         self.env = env
+        # Scoring configuration parameters.
+        self._scoring_config = {
+            "w_retained": w_retained,
+            "w_novelty": w_novelty,
+            "w_reward": w_reward,
+            "w_mode_bonus": w_mode_bonus,
+            "p_norm_novelty": p_norm_novelty,
+            "cdist_max_bytes": cdist_max_bytes,
+        }
+
+    @property
+    def scoring_config(self) -> dict:
+        """Returns the scoring configuration parameters."""
+        return self._scoring_config
 
     def scoring_function(self, obj) -> float:
+
         print("Score - Computing score for object:", obj)
         print("Score - Terminating states:", obj.terminating_states)
-        modes_found = self.env.modes_found(obj.terminating_states)
-        if modes_found > 0:
-            print("*** MODES FOUND! ***")
-        print("Score - Modes found in this object:", modes_found)
-        assert isinstance(modes_found, set), "Expected modes_found to be a set"
-        score = len(modes_found - self.discovered_modes)
+        print("Score - Log rewards:", obj.log_rewards)
 
-        # Generate a random float between two specific values (e.g., 1.0 and 100.0)
-        score = random.uniform(1.0, 100.0)
+        # A) Retention (usefulness)
+        if not self.replay_buffer.prioritized_capacity:
+            retained_count = 0
 
-        print("Score - New modes found:", score)
+        # If the buffer is empty, retain all the new objects.
+        if self.replay_buffer.training_container is None:
+            retained_count = len(obj)
+
+        # If the buffer isn't full yet, we retain all the new objects.
+        elif (
+            len(self.replay_buffer.training_container) + len(obj)
+            <= self.replay_buffer.capacity
+        ):
+            retained_count = len(obj)
+
+        # If the buffer is full, we keep the high reward items only.
+        elif self.replay_buffer.prioritized_capacity:
+            assert self.replay_buffer.training_container.log_rewards is not None
+            assert obj.log_rewards is not None
+
+            # The old log_rewards are already sorted in ascending order.
+            old_log_rewards = self.replay_buffer.training_container.log_rewards
+
+            threshold = old_log_rewards.min()
+            new_log_rewards = obj.log_rewards
+            retained_new_log_rewards = new_log_rewards[new_log_rewards >= threshold]
+            retained_count = len(retained_new_log_rewards)
+
+        print("Score - Retained count:", retained_count)
+
+        # B) Novelty (sum of distances vs pre-add buffer). Higher distances are better.
+        if (
+            self.replay_buffer.training_container is None
+            or len(self.replay_buffer.training_container) == 0
+        ):
+            novelty_sum = float(len(obj))  # Placeholder value when the buffer is empty.
+
+        else:
+            # Compute the batch x buffer distances of the terminating states.
+            batch = obj.terminating_states.tensor.to(torch.get_default_dtype())
+            buf = self.replay_buffer.training_container.terminating_states.tensor.to(
+                torch.get_default_dtype()
+            )
+
+            m_ = batch.shape[0]
+            n_ = buf.shape[0]
+
+            batch = batch.view(m_, -1)
+            buf = buf.view(n_, -1)
+
+            # Compute the chunk size based on the max bytes per chunk.
+            bytes_per = 8 if batch.dtype == torch.float64 else 4
+            chunk = max(1, int(self.cdist_max_bytes // max(1, (m_ * bytes_per))))
+            min_d = torch.full(
+                (m_,),
+                0.0,  # torch.finfo(batch.dtype).max,
+                dtype=batch.dtype,
+                device=batch.device,
+            )
+            for start in range(0, n_, chunk):
+                end = min(start + chunk, n_)
+
+                # Loop over chunks of the buffer to compute batch x buffer distances.
+                distances = torch.cdist(
+                    batch,
+                    buf[start:end],
+                    p=self._scoring_config["p_norm_novelty"],
+                )
+                min_d = torch.minimum(min_d, distances.min(dim=1).values)
+
+            # Sum the minimum batch x buffer distances for each batch element.
+            novelty_sum = float(min_d.sum().item())
+            print("Score - Min distances:", min_d)
+
+        print("Score - Novelty sum:", novelty_sum)
+
+        # C) High reward term (sum over batch)
+        assert (
+            obj.log_rewards is not None
+        ), "log_rewards is None in submitted trajectories!"
+        reward_sum = float(obj.log_rewards.exp().sum().item())
+        print("Score - Reward sum:", reward_sum)
+
+        # D) Mode bonus
         print("Score - Modes discovered before update:", self.discovered_modes)
-        self.discovered_modes.update(modes_found)
-        print("Score - Updated discovered modes:", self.discovered_modes)
-        return float(score)
+
+        n_new_modes = 0.0
+        modes_found = self.env.modes_found(obj.terminating_states)
+        if isinstance(modes_found, set):
+            new_modes = modes_found - self.discovered_modes
+            if new_modes:
+                n_new_modes = float(len(new_modes))
+                self.discovered_modes.update(new_modes)
+
+        print("Score - New modes found:", n_new_modes)
+        print("Score - Modes discovered after update:", self.discovered_modes)
+
+        # Compute the final score.
+        final_score = self._scoring_config["w_retained"] * float(retained_count)
+        final_score += self._scoring_config["w_novelty"] * novelty_sum
+        final_score += self._scoring_config["w_reward"] * reward_sum
+        final_score += self._scoring_config["w_mode_bonus"] * n_new_modes
+        print("Score - Final score:", final_score)
+        return final_score
 
     def _compute_metadata(self) -> dict:
         return {"n_modes_found": len(self.discovered_modes)}
