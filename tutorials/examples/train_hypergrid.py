@@ -153,7 +153,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
         print("Score - Computing score for object:", obj)
         print("Score - Terminating states:", obj.terminating_states)
         modes_found = self.env.modes_found(obj.terminating_states)
-        if modes_found > 0:
+        if len(modes_found) > 0:
             print("*** MODES FOUND! ***")
         print("Score - Modes found in this object:", modes_found)
         assert isinstance(modes_found, set), "Expected modes_found to be a set"
