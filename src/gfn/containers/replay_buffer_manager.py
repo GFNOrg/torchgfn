@@ -48,7 +48,7 @@ class ReplayBufferManager:
             self.replay_buffer = ReplayBuffer(
                 env,
                 capacity=self.capacity,
-                prioritized_capacity=False,
+                prioritized_capacity=True,  # Always prioritize high reward items.
                 remote_manager_rank=self.remote_manager_rank,
                 remote_buffer_freq=1,
             )

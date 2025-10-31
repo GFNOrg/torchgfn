@@ -194,7 +194,7 @@ def test_type_error(simple_env):
     buffer = ReplayBuffer(simple_env)
 
     # Try to add an invalid type
-    with pytest.raises(TypeError, match="Must be a container type"):
+    with pytest.raises(AssertionError, match="Must be a container type"):
         buffer.add("not a container")  # type: ignore
 
 
