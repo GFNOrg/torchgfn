@@ -171,9 +171,9 @@ class ModesReplayBufferManager(ReplayBufferManager):
 
     def scoring_function(self, obj) -> float:
 
-        print("Score - Computing score for object:", obj)
-        print("Score - Terminating states:", obj.terminating_states)
-        print("Score - Log rewards:", obj.log_rewards)
+        # print("Score - Computing score for object:", obj)
+        # print("Score - Terminating states:", obj.terminating_states)
+        # print("Score - Log rewards:", obj.log_rewards)
 
         # A) Retention (usefulness)
         if not self.replay_buffer.prioritized_capacity:
@@ -205,7 +205,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
 
         print("Score - Retained count:", retained_count)
 
-        # B) Novelty (sum of distances vs pre-add buffer). Higher distances are better.
+        # B) Novelty (sum of min-distances vs pre-add buffer). Higher min-distances are better.
         if (
             self.replay_buffer.training_container is None
             or len(self.replay_buffer.training_container) == 0
@@ -227,10 +227,13 @@ class ModesReplayBufferManager(ReplayBufferManager):
 
             # Compute the chunk size based on the max bytes per chunk.
             bytes_per = 8 if batch.dtype == torch.float64 else 4
-            chunk = max(1, int(self.cdist_max_bytes // max(1, (m_ * bytes_per))))
-            min_d = torch.full(
+            chunk = max(
+                1,
+                int(self._scoring_config["cdist_max_bytes"] // max(1, (m_ * bytes_per))),
+            )
+            min_dist = torch.full(
                 (m_,),
-                0.0,  # torch.finfo(batch.dtype).max,
+                torch.finfo(batch.dtype).max,
                 dtype=batch.dtype,
                 device=batch.device,
             )
@@ -243,11 +246,11 @@ class ModesReplayBufferManager(ReplayBufferManager):
                     buf[start:end],
                     p=self._scoring_config["p_norm_novelty"],
                 )
-                min_d = torch.minimum(min_d, distances.min(dim=1).values)
+                min_dist = torch.minimum(min_dist, distances.min(dim=1).values)
 
             # Sum the minimum batch x buffer distances for each batch element.
-            novelty_sum = float(min_d.sum().item())
-            print("Score - Min distances:", min_d)
+            novelty_sum = float(min_dist.sum().item())
+            print("Score - Min distances:", min_dist)
 
         print("Score - Novelty sum:", novelty_sum)
 
