@@ -74,6 +74,7 @@ class ReplayBuffer:
         self.training_container: ContainerUnion | None = None
         self.prioritized_capacity = prioritized_capacity
         self.prioritized_sampling = prioritized_sampling
+        self.pending_container: ContainerUnion | None = None
 
         # Remote buffer fields
         self.remote_manager_rank = remote_manager_rank
@@ -115,8 +116,23 @@ class ReplayBuffer:
         # Handle remote buffer communication
         if self.remote_manager_rank is not None:
             self._add_counter += 1
+
+            if self.pending_container is None:
+                self.pending_container = self.initialize(training_container)
+            assert self.pending_container is not None
+            assert isinstance(training_container, type(self.pending_container))  # type: ignore
+
+            self.pending_container.extend(training_container)  # type: ignore
+
+            if isinstance(self.pending_container, (Trajectories, Transitions)):
+                self.pending_container.log_probs = None
+            if isinstance(self.pending_container, Trajectories):
+                self.pending_container.estimator_outputs = None
             if self._add_counter % self.remote_buffer_freq == 0:
-                return self._send_objs(training_container)
+                score = self._send_objs(self.pending_container)
+                self.pending_container = None
+                print("Cleared pending container.", flush=True)
+                return score
 
     def _send_objs(self, training_container: ContainerUnion) -> float:
         """Sends a training container to the remote manager."""
@@ -166,11 +182,11 @@ class ReplayBuffer:
                 object to set the buffer type.
         """
         if isinstance(training_container, Trajectories):
-            self.training_container = cast(ContainerUnion, Trajectories(self.env))
+            return cast(ContainerUnion, Trajectories(self.env))  # type: ignore
         elif isinstance(training_container, Transitions):
-            self.training_container = cast(ContainerUnion, Transitions(self.env))
+            return cast(ContainerUnion, Transitions(self.env))  # type: ignore
         elif isinstance(training_container, StatesContainer):
-            self.training_container = cast(ContainerUnion, StatesContainer(self.env))
+            return cast(ContainerUnion, StatesContainer(self.env))  # type: ignore
         else:
             raise ValueError(f"Unsupported type: {type(training_container)}")
 
@@ -182,7 +198,7 @@ class ReplayBuffer:
                 to add.
         """
         if self.training_container is None:
-            self.initialize(training_container)
+            self.training_container = self.initialize(training_container)
         assert self.training_container is not None
         assert isinstance(training_container, type(self.training_container))  # type: ignore
 
