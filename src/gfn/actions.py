@@ -280,7 +280,7 @@ class Actions(ABC):
                 *self.batch_shape, *((1,) * len(self.__class__.action_shape))
             )
         return self._compare(exit_actions_tensor)
-    
+
     def clone(self) -> Actions:
         """Returns a clone of the Actions object.
 

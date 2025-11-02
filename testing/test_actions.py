@@ -53,7 +53,9 @@ def test_action(action_fixture, request):
     extended_actions = deepcopy(exit_actions)
     batch_shape = dummy_actions.batch_shape
     extended_actions.extend(dummy_actions)
-    assert dummy_actions.batch_shape == batch_shape, "Batch shape of `other` should not change"
+    assert (
+        dummy_actions.batch_shape == batch_shape
+    ), "Batch shape of `other` should not change"
     assert extended_actions.batch_shape == (BATCH * 2,)
     assert torch.all(
         extended_actions.tensor
