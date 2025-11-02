@@ -62,8 +62,15 @@ def main(args):
     )
 
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0).to(device)
-
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
+
+    print("Sampling initial states...")
+    # Sample some final states and print them
+    final_states = gflownet.sample_terminating_states(env, n=5)
+    final_rewards = torch.exp(env.log_reward(final_states))
+    print("Sampled final placements (macro locations):")
+    for i in range(len(final_states)):
+        print(final_states.tensor[i], " with reward ", final_rewards[i].item())
 
     for i in tqdm(range(args.n_iterations)):
         trajectories = gflownet.sample_trajectories(env, n=args.batch_size)
