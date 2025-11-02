@@ -188,6 +188,7 @@ class Actions(ABC):
         if len(self.batch_shape) == len(other.batch_shape) == 1:
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
         elif len(self.batch_shape) == len(other.batch_shape) == 2:
+            other = other.clone()
             self.extend_with_dummy_actions(
                 required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
@@ -279,6 +280,14 @@ class Actions(ABC):
                 *self.batch_shape, *((1,) * len(self.__class__.action_shape))
             )
         return self._compare(exit_actions_tensor)
+    
+    def clone(self) -> Actions:
+        """Returns a clone of the Actions object.
+
+        Returns:
+            A new Actions object with the same tensor.
+        """
+        return self.__class__(self.tensor.clone())
 
 
 class GraphActionType(enum.IntEnum):
