@@ -129,7 +129,7 @@ class Sampler:
         env: Env,
         n: Optional[int] = None,
         states: Optional[States] = None,
-        conditioning: Optional[torch.Tensor] = None,
+        conditioning: Optional[torch.Tensor] = None,  # TODO: rename to conditions
         save_estimator_outputs: bool = False,
         save_logprobs: bool = False,
         **policy_kwargs: Any,
@@ -144,7 +144,9 @@ class Sampler:
             env: Environment to sample in.
             n: Number of trajectories if ``states`` is None.
             states: Starting states (batch shape length 1) or ``None``.
-            conditioning: Optional conditioning aligned with the batch.
+            conditioning: Optional conditioning tensor for conditional environments,
+                with shape (n_trajectories, condition_vector_dim); each row is the
+                condition vector for each trajectory.
             save_estimator_outputs: If True, store per‑step estimator outputs. Useful
                 for off-policy training with tempered policies.
             save_logprobs: If True, store per‑step log‑probs.  Useful for on-policy
@@ -189,8 +191,8 @@ class Sampler:
         device = states.device
 
         if conditioning is not None:
-            assert states.batch_shape == conditioning.shape[: len(states.batch_shape)]
             ensure_same_device(states.device, conditioning.device)
+            assert conditioning.shape[0] == n_trajectories
 
         if policy_estimator.is_backward:
             dones = states.is_initial_state
@@ -307,25 +309,6 @@ class Sampler:
         if stacked_estimator_outputs is not None:
             if len(stacked_estimator_outputs) == 0:
                 stacked_estimator_outputs = None
-
-        # Broadcast conditioning tensor to match states batch shape if needed
-        if conditioning is not None:
-            # The states have batch shape (max_length, n_trajectories). The
-            # conditioning tensor should have shape (n_trajectories,) or
-            # (n_trajectories, 1). We need to broadcast it to (max_length,
-            # n_trajectories, 1) for the estimator
-            if len(conditioning.shape) == 1:
-                # conditioning has shape (n_trajectories,)
-                conditioning = (
-                    conditioning.unsqueeze(0)
-                    .unsqueeze(-1)
-                    .expand(stacked_states.batch_shape[0], -1, 1)
-                )
-            elif len(conditioning.shape) == 2 and conditioning.shape[1] == 1:
-                # conditioning has shape (n_trajectories, 1)
-                conditioning = conditioning.unsqueeze(0).expand(
-                    stacked_states.batch_shape[0], -1, -1
-                )
 
         trajectories = Trajectories(
             env=env,

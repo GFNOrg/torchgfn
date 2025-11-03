@@ -89,15 +89,6 @@ def get_trajectory_pfs(
     if trajectories.is_backward:
         raise ValueError("Backward trajectories are not supported")
 
-    state_mask = ~trajectories.states.is_sink_state
-    action_mask = ~trajectories.actions.is_dummy
-
-    valid_states = trajectories.states[state_mask]
-    valid_actions = trajectories.actions[action_mask]
-
-    if valid_states.batch_shape != valid_actions.batch_shape:
-        raise AssertionError("Something wrong happening with log_pf evaluations")
-
     if trajectories.has_log_probs and not recalculate_all_logprobs:
         log_pf_trajectories = trajectories.log_probs
         assert log_pf_trajectories is not None
@@ -119,13 +110,9 @@ def get_trajectory_pfs(
             # Per-step path.
             N = trajectories.n_trajectories
             device = trajectories.states.device
-            cond = trajectories.conditioning
+            cond = trajectories.conditioning  # shape (N, cond_dim)
 
-            # TODO: Why do we need this?
-            if cond is not None and len(cond.shape) >= 2:
-                cond = cond[0]
-
-            ctx = policy_pf.init_context(int(N), device, cond)  # type: ignore[arg-type]
+            ctx = policy_pf.init_context(int(N), device, cond)
 
             T = trajectories.max_length
             log_pf_trajectories = torch.full(
@@ -136,15 +123,17 @@ def get_trajectory_pfs(
             )
 
             for t in range(T):
-                state_ok = ~trajectories.states.is_sink_state[t]
-                action_ok = ~trajectories.actions.is_dummy[t]
-                step_mask = state_ok & action_ok
+                step_states = trajectories.states[t]
+                step_actions = trajectories.actions[t]
+
+                assert (step_states.is_sink_state == step_actions.is_dummy).all()
+                step_mask = ~step_states.is_sink_state
+
+                valid_step_states = step_states[step_mask]
+                valid_step_actions = step_actions[step_mask]
 
                 if not torch.any(step_mask):
                     continue
-
-                step_states = trajectories.states[t][step_mask]
-                step_actions = trajectories.actions.tensor[t][step_mask]
 
                 # Optimization: forward cached estimator outputs when available
                 if (
@@ -161,25 +150,27 @@ def get_trajectory_pfs(
                     ctx.current_estimator_output = None
 
                 # Build distribution for active rows and compute step log-probs
+                # TODO: masking ctx with step_mask outside of compute_dist and log_probs,
+                # i.e., implement __getitem__ for ctx. (maybe we should contain only the
+                # tensors, and not additional metadata like the batch size, device, etc.)
                 dist, ctx = policy_pf.compute_dist(
-                    step_states, ctx, step_mask, **policy_kwargs
+                    valid_step_states, ctx, step_mask, **policy_kwargs
                 )
                 step_log_probs, ctx = policy_pf.log_probs(
-                    step_actions, dist, ctx, step_mask, vectorized=False
+                    valid_step_actions.tensor, dist, ctx, step_mask, vectorized=False
                 )
-
-                # Pad back to full batch size.
-                if fill_value != 0.0:
-                    padded = torch.full(
-                        (N,), fill_value, device=device, dtype=step_log_probs.dtype
-                    )
-                    padded[step_mask] = step_log_probs[step_mask]
-                    step_log_probs = padded
 
                 # Store in trajectory-level tensor.
                 log_pf_trajectories[t] = step_log_probs
 
         else:
+            state_mask = ~trajectories.states.is_sink_state
+            action_mask = ~trajectories.actions.is_dummy
+            assert (state_mask[:-1] == action_mask).all()  # state_mask[-1] is all False
+
+            valid_states = trajectories.states[state_mask]
+            valid_actions = trajectories.actions[action_mask]
+
             # Vectorized path.
             log_pf_trajectories = torch.full_like(
                 trajectories.actions.tensor[..., 0],
@@ -192,16 +183,12 @@ def get_trajectory_pfs(
 
             # Build conditioning per-step shape to align with valid_states
             masked_cond = None
-            cond = trajectories.conditioning
-
-            if cond is not None:
+            if trajectories.conditioning is not None:
+                # trajectories.conditioning shape: (N, cond_dim)
+                # Repeat it to (T, N, cond_dim) and then mask it with the state_mask
                 T = trajectories.states.tensor.shape[0]
-                # If conditioning already has time dim (T, N, ...), index directly.
-                if cond.shape[0] == T:
-                    masked_cond = cond[state_mask]
-                else:
-                    # Broadcast (N, ...) to (T, N, ...), then index.
-                    masked_cond = cond.unsqueeze(0).expand((T,) + cond.shape)[state_mask]
+                masked_cond = trajectories.conditioning.repeat(T, 1, 1)
+                masked_cond = masked_cond[state_mask]
 
             ctx_v = policy_pf.init_context(
                 int(len(valid_states)),
@@ -219,10 +206,7 @@ def get_trajectory_pfs(
 
             # Build distribution and compute vectorized log-probs
             dist, ctx_v = policy_pf.compute_dist(
-                valid_states,
-                ctx_v,
-                step_mask=None,
-                **policy_kwargs,
+                valid_states, ctx_v, step_mask=None, **policy_kwargs
             )
             valid_log_pf_actions, _ = policy_pf.log_probs(
                 valid_actions.tensor, dist, ctx_v, step_mask=None, vectorized=True
@@ -336,10 +320,9 @@ def get_trajectory_pbs(
         # Per-step pb evaluation (state at t+1, action at t)
         N = trajectories.n_trajectories
         device = trajectories.states.device
-        cond = trajectories.conditioning
-        if cond is not None and len(cond.shape) >= 2:
-            cond_step0 = cond[0]  # TODO: Why do we need this?
-        ctx = policy_pb.init_context(int(N), device, cond_step0)  # type: ignore[arg-type]
+        cond = trajectories.conditioning  # shape (N, cond_dim)
+
+        ctx = policy_pb.init_context(int(N), device, cond)
 
         # Iterate per-step with masking (state at t+1, action at t)
         for t in range(trajectories.max_length):

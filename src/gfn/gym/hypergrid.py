@@ -16,7 +16,6 @@ import torch
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
 from gfn.states import DiscreteStates
-from gfn.utils.common import ensure_same_device
 
 if platform.system() == "Windows":
     multiprocessing.set_start_method("spawn", force=True)
@@ -113,17 +112,20 @@ class HyperGrid(DiscreteEnv):
         self._all_states_tensor = None  # Populated optionally in init.
         self._log_partition = None  # Populated optionally in init.
         self._true_dist = None  # Populated at first request.
-        self.calculate_partition = calculate_partition
+
+        # If we store the all states, the partition function is calculated automatically.
+        self.calculate_partition = calculate_partition or store_all_states
         self.store_all_states = store_all_states
 
         # Pre-computes these values when printing.
+        if self.store_all_states or self.calculate_partition:
+            self._enumerate_all_states_tensor()
+
         if self.store_all_states:
-            self._store_all_states_tensor()
             assert self._all_states_tensor is not None
             print(f"+ Environment has {len(self._all_states_tensor)} states")
-
         if self.calculate_partition:
-            self._calculate_log_partition()
+            assert self._log_partition is not None
             print(f"+ Environment log partition is {self._log_partition}")
 
         if isinstance(device, str):
@@ -375,96 +377,56 @@ class HyperGrid(DiscreteEnv):
         """Returns the number of terminating states in the environment."""
         return self.n_states
 
-    # Functions for calculating the true log partition function / state enumeration.
-    def _calculate_log_partition(self, batch_size: int = 20_000):
-        """Calculates the log partition of the complete hypergrid.
-
-        Args:
-            batch_size: The batch size to use for the calculation.
-        """
-
-        if self._log_partition is None and self.calculate_partition:
-            if self._all_states_tensor is not None:
-                self._log_partition = (
-                    self.reward_fn(self._all_states_tensor).sum().log().item()
-                )
-                return
-
-            # The # of possible combinations (with repetition) of
-            # numbers, where each
-            # number can be any integer from 0 to
-            # (inclusive), is given by:
-            # n = (k + 1) ** n -- note that k in our case is height-1, as it represents
-            # a python index.
-            max_height_idx = self.height - 1  # Handles 0 indexing.
-            n_expected = (max_height_idx + 1) ** self.ndim
-            n_found = 0
-            start_time = time()
-            total_reward = 0
-
-            for batch in self._generate_combinations_in_batches(
-                self.ndim,
-                max_height_idx,
-                batch_size,
-            ):
-                batch = torch.LongTensor(list(batch))
-                rewards = self.reward_fn(
-                    batch
-                )  # Operates on raw tensors due to multiprocessing.
-                total_reward += rewards.sum().item()  # Accumulate.
-                n_found += batch.shape[0]
-
-            assert n_expected == n_found, "failed to compute reward of all indices!"
-            end_time = time()
-            total_log_reward = log(total_reward)
-
-            print(
-                "log_partition = {}, calculated in {} minutes".format(
-                    total_log_reward,
-                    (end_time - start_time) / 60.0,
-                )
-            )
-
-            self._log_partition = total_log_reward
-
-    def _store_all_states_tensor(self, batch_size: int = 20_000):
+    def _enumerate_all_states_tensor(self, batch_size: int = 20_000):
         """Enumerates all states_tensor of the complete hypergrid.
 
         Args:
             batch_size: The batch size to use for the calculation.
         """
-        if self._all_states_tensor is None:
+
+        # Check if we really need to enumerate
+        need_to_enumerate = (
+            self.store_all_states and self._all_states_tensor is None
+        ) or (self.calculate_partition and self._log_partition is None)
+
+        if need_to_enumerate:
             start_time = time()
             all_states_tensor = []
+            total_rewards = 0.0
 
             for batch in self._generate_combinations_in_batches(
                 self.ndim,
                 self.height - 1,  # Handles 0 indexing.
                 batch_size,
             ):
-                all_states_tensor.append(torch.LongTensor(list(batch)))
-
-            all_states_tensor = torch.cat(all_states_tensor, dim=0)
+                batch_tensor = torch.LongTensor(list(batch))
+                if self.store_all_states:
+                    all_states_tensor.append(batch_tensor)
+                if self.calculate_partition:
+                    # Operates on raw tensors due to multiprocessing.
+                    total_rewards += self.reward_fn(batch_tensor).sum().item()
             end_time = time()
 
             print(
-                "calculated tensor of all states in {} minutes".format(
+                "Enumerated all states in {} minutes".format(
                     (end_time - start_time) / 60.0,
                 )
             )
 
-            self._all_states_tensor = all_states_tensor
+            if self.store_all_states:
+                self._all_states_tensor = torch.cat(all_states_tensor, dim=0)
+
+            if self.calculate_partition:
+                self._log_partition = log(total_rewards)
 
     @property
     def true_dist(self) -> torch.Tensor | None:
         """Returns the pmf over all states in the hypergrid."""
         if self._true_dist is None and self.all_states is not None:
-            assert torch.all(
-                self.get_states_indices(self.all_states)
-                == torch.arange(self.n_states, device=self.device)
-            )
-            self._true_dist = self.reward(self.all_states)
-            self._true_dist /= self._true_dist.sum()
+            all_rewards = self.reward(self.all_states)
+            self._true_dist = all_rewards / all_rewards.sum()
+        else:
+            raise ValueError("true_dist is not available without all_states")
 
         return self._true_dist
 
@@ -492,35 +454,31 @@ class HyperGrid(DiscreteEnv):
     @property
     def all_states(self) -> DiscreteStates | None:
         """Returns a tensor of all hypergrid states as a `DiscreteStates` instance."""
+        if not self.store_all_states:
+            return None
+
         if self._all_states_tensor is None:
-            if not self.store_all_states:
-                return None
-            self._store_all_states_tensor()
+            self._enumerate_all_states_tensor()
 
         assert self._all_states_tensor is not None
-        try:
-            ensure_same_device(self._all_states_tensor.device, self.device)
-        except ValueError:
-            self._all_states_tensor = self._all_states_tensor.to(self.device)
-
-        all_states = self.States(self._all_states_tensor)
-        return all_states
+        assert torch.all(
+            self.get_states_indices(self._all_states_tensor)
+            == torch.arange(self.n_states, device=self.device)
+        )
+        self._all_states_tensor = self._all_states_tensor.to(self.device)
+        return self.States(self._all_states_tensor)
 
     @property
     def terminating_states(self) -> DiscreteStates | None:
         """Returns all terminating states of the environment."""
         return self.all_states
 
-    # Helper methods for enumerating all possible states.
-    def _generate_combinations_chunk(self, numbers, n, start, end):
-        """Generate combinations with replacement for the specified range."""
-        # islice accesses a subset of the full iterator - each job does unique work.
-        return itertools.islice(itertools.product(numbers, repeat=n), start, end)
-
     def _worker(self, task):
         """Executes a single call to `generate_combinations_chunk`."""
         numbers, n, start, end = task
-        return self._generate_combinations_chunk(numbers, n, start, end)
+        # Generate combinations with replacement for the specified range.
+        # islice accesses a subset of the full iterator - each job does unique work.
+        return itertools.islice(itertools.product(numbers, repeat=n), start, end)
 
     def _generate_combinations_in_batches(self, n, k, batch_size):
         """Uses Pool to collect subsets of the results of itertools.product in parallel."""

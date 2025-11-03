@@ -30,6 +30,7 @@ import torch
 from torch.optim import Adam
 from tqdm import tqdm
 
+from gfn.env import ConditionalEnv
 from gfn.estimators import (
     ConditionalDiscretePolicyEstimator,
     ConditionalLogZEstimator,
@@ -52,7 +53,7 @@ from gfn.utils.training import get_terminating_state_dist
 DEFAULT_SEED: int = 4444
 
 
-class ConditionalHyperGrid(HyperGrid):
+class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
     """HyperGrid environment with conditioning-aware rewards.
 
     Conditioning values:
@@ -62,62 +63,85 @@ class ConditionalHyperGrid(HyperGrid):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.conditioning = None
-        self._original_reward_fn = self.reward_fn
+        self._original_reward_fn = self.reward_fn  # Rename, just to avoid confusion
+        self._max_reward: float = (
+            self.reward_fn_kwargs.get("R0", 0.1)
+            + self.reward_fn_kwargs.get("R1", 0.5)
+            + self.reward_fn_kwargs.get("R2", 2.0)
+        )
+        self._log_partition_cache: dict[torch.Tensor, float] = {}
+        self._true_dist_cache: dict[torch.Tensor, torch.Tensor] = {}
 
-    def set_conditioning(self, conditioning: torch.Tensor):
-        """Set the conditioning for the environment."""
-        self.conditioning = conditioning
+    def sample_conditions(self, batch_size: int) -> torch.Tensor:
+        """Sample conditions for the environment."""
+        return torch.rand((batch_size, 1), device=self.device)
 
-    def reward(self, states: DiscreteStates) -> torch.Tensor:
+    def reward(self, states: DiscreteStates, conditions: torch.Tensor) -> torch.Tensor:
         """Compute rewards based on current conditioning.
 
         Conditioning is continuous from 0 to 1:
         - 0: Fully uniform reward (all states get R0+R1+R2)
         - 1: Fully original HyperGrid reward
         - In between: Linear interpolation between uniform and original
+
+        Args:
+            states: The states to compute rewards for.
+                states.tensor.shape should be (batch_size, *state_shape)
+            conditions: The conditions to compute rewards for.
+                conditions.shape should be (batch_size, 1)
+
+        Returns:
+            A tensor of shape (batch_size,) containing the rewards.
         """
         # Get original rewards
         original_rewards = self._original_reward_fn(states.tensor)
-
-        if self.conditioning is None:
-            return original_rewards
-
-        # Apply conditioning-based modification
-        # conditioning shape: (batch_size, 1) or (1, 1)
-        # original_rewards shape: (batch_size,)
+        # shape: (batch_size,)
 
         # Expand conditioning to match batch shape if needed
-        cond = self.conditioning.squeeze(-1)  # Remove feature dim
-
-        # Handle different scenarios for batch size mismatch
-        if cond.shape[0] != original_rewards.shape[0]:
-            if cond.shape[0] == 1:
-                # Single conditioning value, broadcast to all states
-                cond = cond.expand(original_rewards.shape[0])
-            else:
-                # Multiple conditioning values but different batch size
-                # This can happen during DB loss calculation with transitions
-                # Use the first conditioning value as a fallback
-                if len(cond) > 0:
-                    cond = cond[0].expand(original_rewards.shape[0])
-                else:
-                    # No conditioning available, return original rewards
-                    return original_rewards
+        cond = conditions.squeeze(-1)  # Remove feature dim; shape: (batch_size,)
 
         # For uniform, all states get the max reward (R0+R1+R2)
-        max_reward = (
-            self.reward_fn_kwargs.get("R0", 0.1)
-            + self.reward_fn_kwargs.get("R1", 0.5)
-            + self.reward_fn_kwargs.get("R2", 2.0)
-        )
-        uniform_rewards = torch.full_like(original_rewards, max_reward)
+        uniform_rewards = torch.full_like(original_rewards, self._max_reward)
 
         # Linear interpolation between uniform and original based on conditioning
-        # rewards = (1 - cond) * uniform + cond * original
         rewards = (1 - cond) * uniform_rewards + cond * original_rewards
-
         return rewards
+
+    def log_partition(self, condition: torch.Tensor) -> float:
+        """Compute the log partition for the given condition.
+
+        Args:
+            condition: The condition to compute the log partition for.
+                condition.shape should be (1,)
+
+        Returns:
+            The log partition function, as a float.
+        """
+        if condition not in self._log_partition_cache:
+            assert self.all_states is not None
+            all_rewards = self.reward(
+                self.all_states, condition.repeat(self.n_states, 1)
+            )
+            self._log_partition_cache[condition] = all_rewards.sum().log().item()
+        return self._log_partition_cache[condition]
+
+    def true_dist(self, condition: torch.Tensor) -> torch.Tensor:
+        """Compute the true distribution for the given condition.
+
+        Args:
+            condition: The condition to compute the true distribution for.
+            condition.shape should be (1,)
+
+        Returns:
+            The true distribution for the given condition as a 1-dimensional tensor.
+        """
+        if condition not in self._true_dist_cache:
+            assert self.all_states is not None
+            all_rewards = self.reward(
+                self.all_states, condition.repeat(self.n_states, 1)
+            )
+            self._true_dist_cache[condition] = all_rewards / all_rewards.sum()
+        return self._true_dist_cache[condition]
 
 
 def build_conditional_pf_pb(
@@ -364,12 +388,7 @@ def train(
     final_loss = None
     for it in (pbar := tqdm(range(n_iterations), dynamic_ncols=True)):
         # Sample conditioning uniformly from [0, 1] for this batch
-        conditioning = torch.rand((batch_size,)).to(device)
-        # Keep as continuous value between 0 and 1
-        conditioning = conditioning.unsqueeze(-1)  # Add feature dimension for MLP
-
-        # Set conditioning in environment for reward calculation
-        env.set_conditioning(conditioning)
+        conditioning = env.sample_conditions(batch_size).to(device)
 
         # Sample trajectories with conditioning
         trajectories = gflownet.sample_trajectories(
@@ -406,10 +425,9 @@ def train(
             l1_dists = []
             for cond_val in test_cond_values:
                 # Set conditioning for this validation
-                conditioning_val = torch.full(
+                eval_conditioning = torch.full(
                     (validation_samples, 1), cond_val, device=device
                 )
-                env.set_conditioning(conditioning_val)
 
                 # Sample fresh trajectories for this conditioning value
                 # This follows the validate function's approach but with conditioning support
@@ -417,7 +435,7 @@ def train(
                     sampled_trajectories = gflownet.sample_trajectories(
                         env,
                         n=validation_samples,
-                        conditioning=conditioning_val,
+                        conditioning=eval_conditioning,
                         save_logprobs=False,
                         save_estimator_outputs=False,
                         epsilon=0.0,  # No exploration during validation
@@ -428,7 +446,9 @@ def train(
 
                 # Update discovered modes for conditioning=1
                 if cond_val == 1.0:
-                    rewards = env.reward(sampled_states)
+                    rewards = env.reward(
+                        sampled_states, torch.tensor([cond_val], device=device)
+                    )
                     modes = sampled_states[rewards >= mode_reward_threshold].tensor
                     modes_found = set([tuple(s.tolist()) for s in modes])
                     discovered_modes.update(modes_found)
@@ -437,15 +457,11 @@ def train(
                 empirical_dist = get_terminating_state_dist(env, sampled_states)
 
                 # Compute true distribution for this conditioning value
-                uniform_dist = torch.ones(env.n_states, device=device) / env.n_states
-                # Get original HyperGrid true_dist
-                env.set_conditioning(torch.ones((1, 1), device=device))
-                original_true_dist = env.true_dist
-                # Interpolate
-                true_dist = (1 - cond_val) * uniform_dist + cond_val * original_true_dist
-
+                true_conditional_dist = env.true_dist(
+                    torch.tensor([cond_val], device=device)
+                )
                 # L1 distance as computed in validate function
-                l1_dist = (empirical_dist - true_dist).abs().mean().item()
+                l1_dist = (empirical_dist - true_conditional_dist).abs().mean().item()
                 l1_dists.append(l1_dist)
 
             # Print concise results
@@ -748,7 +764,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=500,
+        default=200,
         help="Batch size, i.e. number of trajectories to sample per training iteration",
     )
     parser.add_argument(

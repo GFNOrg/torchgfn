@@ -414,7 +414,7 @@ class Env(ABC):
             The log partition function.
         """
         raise NotImplementedError(
-            "The environment does not support enumeration of states"
+            "The environment may not support enumeration of states"
         )
 
     @property
@@ -425,7 +425,85 @@ class Env(ABC):
             The true distribution as a 1-dimensional tensor.
         """
         raise NotImplementedError(
-            "The environment does not support enumeration of states"
+            "The environment may not support enumeration of states"
+        )
+
+
+class ConditionalEnv(Env, ABC):
+    """Base class for conditional environments.
+
+    Conditional environments are environments that have a conditioning variable.
+    For now, we assume that the condition only affects the rewards, not the dynamics of
+    the environment.
+    """
+
+    @abstractmethod
+    def sample_conditions(self, batch_size: int) -> torch.Tensor:
+        """Sample conditions for the environment.
+
+        Args:
+            batch_size: The number of conditions to sample.
+
+        Returns:
+            A tensor of shape (batch_size, condition_vector_dim) containing the conditions.
+        """
+        raise NotImplementedError
+
+    def reward(self, states: States, conditions: torch.Tensor) -> torch.Tensor:
+        """Compute rewards for the conditional environment.
+
+        Args:
+            states: The states to compute rewards for.
+                states.tensor.shape should be (batch_size, *state_shape)
+            conditions: The conditions to compute rewards for.
+                conditions.shape should be (batch_size, condition_vector_dim)
+
+        Returns:
+            A tensor of shape (batch_size,) containing the rewards.
+        """
+        raise NotImplementedError
+
+    def log_reward(self, states: States, conditions: torch.Tensor) -> torch.Tensor:
+        """Compute log rewards for the conditional environment.
+
+        Args:
+            states: The states to compute log rewards for.
+                states.tensor.shape should be (batch_size, *state_shape)
+            conditions: The conditions to compute log rewards for.
+                conditions.shape should be (batch_size, condition_vector_dim)
+
+        Returns:
+            A tensor of shape (batch_size,) containing the log rewards.
+        """
+        return torch.log(self.reward(states, conditions))
+
+    def log_partition(self, condition: torch.Tensor) -> float:
+        """Optional method to return the logarithm of the partition function for a
+        given condition.
+
+        Args:
+            condition: The condition to compute the log partition for.
+                condition.shape should be (condition_vector_dim,)
+
+        Returns:
+            The log partition function, as a float.
+        """
+        raise NotImplementedError(
+            "The environment may not support enumeration of states"
+        )
+
+    def true_dist(self, condition: torch.Tensor) -> torch.Tensor:
+        """Optional method to return the true distribution for a given condition.
+
+        Args:
+            condition: The condition to compute the true distribution for.
+                condition.shape should be (condition_vector_dim,)
+
+        Returns:
+            The true distribution for the given condition as a 1-dimensional tensor.
+        """
+        raise NotImplementedError(
+            "The environment may not support enumeration of states"
         )
 
 
