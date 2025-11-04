@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import Sequence
 
 import torch
@@ -247,11 +248,12 @@ class Trajectories(Container):
         if self._log_rewards is None:
             if isinstance(self.env, ConditionalEnv):
                 assert self.conditioning is not None
-                self._log_rewards = self.env.log_reward(
-                    self.terminating_states, self.conditioning
+                log_reward_fn = partial(
+                    self.env.log_reward, conditions=self.conditioning
                 )
             else:
-                self._log_rewards = self.env.log_reward(self.terminating_states)
+                log_reward_fn = self.env.log_reward
+            self._log_rewards = log_reward_fn(self.terminating_states)
 
         assert self._log_rewards.shape == (self.n_trajectories,)
         return self._log_rewards

@@ -504,7 +504,6 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
         conditioning = torch.full(
             (n_eval_samples, 1), cond_value, dtype=torch.float, device=device
         )
-        env.set_conditioning(conditioning)
 
         # Sample without exploration
         print(
@@ -523,21 +522,7 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
         term_states = cast(DiscreteStates, trajectories.terminating_states)
 
         empirical_dist = get_terminating_state_dist(env, term_states)
-
-        # Get true distribution for this conditioning
-        # Linear interpolation between uniform and original
-        uniform_dist = torch.ones(env.n_states, device=device) / env.n_states
-
-        # Temporarily set single conditioning to get true_dist for original hypergrid
-        original_cond = torch.ones((1, 1), device=device)
-        env.set_conditioning(original_cond)
-        original_dist = env.true_dist
-
-        # Compute interpolated true distribution
-        true_dist = (1 - cond_value) * uniform_dist + cond_value * original_dist
-
-        # Restore conditioning for this batch
-        env.set_conditioning(conditioning)
+        true_dist = env.true_dist(torch.tensor([cond_value], device=device))
 
         if cond_value == 0:
             dist_type = "Uniform"
