@@ -53,7 +53,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         self,
         env: Env,
         n: int,
-        conditioning: torch.Tensor | None = None,
+        conditions: torch.Tensor | None = None,
         save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
@@ -63,7 +63,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         Args:
             env: The environment to sample trajectories from.
             n: Number of trajectories to sample.
-            conditioning: Optional conditioning tensor for conditional environments.
+            conditions: Optional conditions tensor for conditional environments.
             save_logprobs: Whether to save the logprobs of the actions (useful for
                 on-policy learning).
             save_estimator_outputs: Whether to save the estimator outputs (useful for
@@ -241,7 +241,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         self,
         env: Env,
         n: int,
-        conditioning: torch.Tensor | None = None,
+        conditions: torch.Tensor | None = None,
         save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
@@ -251,7 +251,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         Args:
             env: The environment to sample trajectories from.
             n: Number of trajectories to sample.
-            conditioning: Optional conditioning tensor for conditional environments.
+            conditions: Optional conditions tensor for conditional environments.
             save_logprobs: Whether to save the logprobs of the actions.
             save_estimator_outputs: Whether to save the estimator outputs.
             **policy_kwargs: Additional keyword arguments for the sampler.
@@ -263,7 +263,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         trajectories = sampler.sample_trajectories(
             env,
             n=n,
-            conditioning=conditioning,
+            conditions=conditions,
             save_logprobs=save_logprobs,
             save_estimator_outputs=save_estimator_outputs,
             **policy_kwargs,

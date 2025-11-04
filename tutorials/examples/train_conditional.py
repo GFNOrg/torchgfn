@@ -3,22 +3,22 @@
 Conditional GFlowNet training on the HyperGrid environment.
 
 This script demonstrates how to train conditional GFlowNets that learn different
-distributions based on a continuous conditioning variable on the HyperGrid environment.
-The conditioning interpolates between two extremes:
+distributions based on a continuous condition variable on the HyperGrid environment.
+The condition interpolates between two extremes:
 
-- Conditioning = 0: Uniform distribution (all states get reward R0+R1+R2)
-- Conditioning = 1: Original HyperGrid multi-modal distribution
-- Conditioning ∈ (0,1): Linear interpolation between uniform and original
+- Condition = 0: Uniform distribution (all states get reward R0+R1+R2)
+- Condition = 1: Original HyperGrid multi-modal distribution
+- Condition ∈ (0,1): Linear interpolation between uniform and original
 
 During training:
-- Conditioning values are sampled uniformly from [0, 1] for each batch
-- The GFlowNet learns to generate different distributions based on the conditioning
-- LogZ is modeled as a function of conditioning only (not states)
+- Condition values are sampled uniformly from [0, 1] for each batch
+- The GFlowNet learns to generate different distributions based on the condition
+- LogZ is modeled as a function of condition only (not states)
 
 During validation:
-- Fresh trajectories are sampled for multiple conditioning values [0, 0.25, 0.5, 0.75, 1]
+- Fresh trajectories are sampled for multiple condition values [0, 0.25, 0.5, 0.75, 1]
 - L1 distance is computed between empirical and true distributions
-- Mode discovery is tracked for conditioning=1
+- Mode discovery is tracked for condition=1
 
 Example usage:
 python train_conditional.py --ndim 2 --height 8 --epsilon 0.1
@@ -54,9 +54,9 @@ DEFAULT_SEED: int = 4444
 
 
 class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
-    """HyperGrid environment with conditioning-aware rewards.
+    """HyperGrid environment with condition-aware rewards.
 
-    Conditioning values:
+    Condition values:
     - 0: Uniform reward (all terminal states get reward=1.0)
     - 1: Normal HyperGrid reward (original multi-modal reward landscape)
     """
@@ -77,9 +77,9 @@ class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
         return torch.rand((batch_size, 1), device=self.device)
 
     def reward(self, states: DiscreteStates, conditions: torch.Tensor) -> torch.Tensor:
-        """Compute rewards based on current conditioning.
+        """Compute rewards based on current conditions.
 
-        Conditioning is continuous from 0 to 1:
+        A condition is continuous from 0 to 1:
         - 0: Fully uniform reward (all states get R0+R1+R2)
         - 1: Fully original HyperGrid reward
         - In between: Linear interpolation between uniform and original
@@ -97,13 +97,13 @@ class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
         original_rewards = self._original_reward_fn(states.tensor)
         # shape: (batch_size,)
 
-        # Expand conditioning to match batch shape if needed
+        # Expand conditions to match batch shape if needed
         cond = conditions.squeeze(-1)  # Remove feature dim; shape: (batch_size,)
 
         # For uniform, all states get the max reward (R0+R1+R2)
         uniform_rewards = torch.full_like(original_rewards, self._max_reward)
 
-        # Linear interpolation between uniform and original based on conditioning
+        # Linear interpolation between uniform and original based on conditions
         rewards = (1 - cond) * uniform_rewards + cond * original_rewards
         return rewards
 
@@ -176,7 +176,7 @@ def build_conditional_pf_pb(
         trunk=module_PF.trunk,
     )
 
-    # Encoder for the Conditioning information.
+    # Encoder for the condition information.
     module_cond = MLP(
         input_dim=1,
         output_dim=CONCAT_SIZE,
@@ -235,7 +235,7 @@ def build_conditional_logF_scalar_estimator(
         hidden_dim=256,
         n_hidden_layers=1,
     )
-    module_conditioning_logF = MLP(
+    module_condition_logF = MLP(
         input_dim=1,
         output_dim=CONCAT_SIZE,
         hidden_dim=16,
@@ -250,7 +250,7 @@ def build_conditional_logF_scalar_estimator(
 
     logF_estimator = ConditionalScalarEstimator(
         module_state_logF,
-        module_conditioning_logF,
+        module_condition_logF,
         module_final_logF,
         preprocessor=preprocessor,
     )
@@ -270,10 +270,10 @@ def build_tb_gflownet(env: HyperGrid) -> TBGFlowNet:
     """
     pf_estimator, pb_estimator = build_conditional_pf_pb(env)
 
-    # Create conditional logZ estimator that only depends on conditioning
-    # LogZ should be a function of conditioning only, not states
+    # Create conditional logZ estimator that only depends on conditions
+    # LogZ should be a function of condition only, not states
     module_logZ = MLP(
-        input_dim=1,  # Only conditioning input
+        input_dim=1,  # Only condition input
         output_dim=1,  # Scalar output
         hidden_dim=64,
         n_hidden_layers=2,
@@ -376,7 +376,7 @@ def train(
         f"+ Training parameters: n_iter={n_iterations}, batch_size={batch_size}, lr={lr}, epsilon={epsilon}"
     )
 
-    # Track discovered modes for conditioning=1
+    # Track discovered modes for condition=1
     discovered_modes = set()
     mode_reward_threshold = (
         env.reward_fn_kwargs.get("R2", 2.0)
@@ -387,14 +387,14 @@ def train(
 
     final_loss = None
     for it in (pbar := tqdm(range(n_iterations), dynamic_ncols=True)):
-        # Sample conditioning uniformly from [0, 1] for this batch
-        conditioning = env.sample_conditions(batch_size).to(device)
+        # Sample conditions uniformly from [0, 1] for this batch
+        conditions = env.sample_conditions(batch_size).to(device)
 
-        # Sample trajectories with conditioning
+        # Sample trajectories with conditions
         trajectories = gflownet.sample_trajectories(
             env,
             n=batch_size,
-            conditioning=conditioning,
+            conditions=conditions,
             save_logprobs=False,
             save_estimator_outputs=True,
             epsilon=epsilon,
@@ -419,23 +419,23 @@ def train(
 
         # Validation at regular intervals
         if (it + 1) % validation_interval == 0:
-            # Test multiple conditioning values
+            # Test multiple condition values
             test_cond_values = [0.0, 0.25, 0.5, 0.75, 1.0]
 
             l1_dists = []
             for cond_val in test_cond_values:
-                # Set conditioning for this validation
-                eval_conditioning = torch.full(
+                # Set conditions for this validation
+                conditions_val = torch.full(
                     (validation_samples, 1), cond_val, device=device
                 )
 
-                # Sample fresh trajectories for this conditioning value
-                # This follows the validate function's approach but with conditioning support
+                # Sample fresh trajectories for this conditions value
+                # This follows the validate function's approach but with conditions support
                 with torch.no_grad():
                     sampled_trajectories = gflownet.sample_trajectories(
                         env,
                         n=validation_samples,
-                        conditioning=eval_conditioning,
+                        conditions=conditions_val,
                         save_logprobs=False,
                         save_estimator_outputs=False,
                         epsilon=0.0,  # No exploration during validation
@@ -444,7 +444,7 @@ def train(
                         DiscreteStates, sampled_trajectories.terminating_states
                     )
 
-                # Update discovered modes for conditioning=1
+                # Update discovered modes for condition=1
                 if cond_val == 1.0:
                     rewards = env.reward(
                         sampled_states, torch.tensor([cond_val], device=device)
@@ -456,7 +456,7 @@ def train(
                 # Compute empirical distribution using validate's helper function
                 empirical_dist = get_terminating_state_dist(env, sampled_states)
 
-                # Compute true distribution for this conditioning value
+                # Compute true distribution for this condition values
                 true_conditional_dist = env.true_dist(
                     torch.tensor([cond_val], device=device)
                 )
@@ -492,27 +492,25 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
 
     results = {}
 
-    # Test a range of conditioning values
+    # Test a range of condition values
     test_cond_values = [0.0, 0.25, 0.5, 0.75, 1.0]
 
     for cond_value in test_cond_values:
         print(f"\n{'=' * 60}")
-        print(f"Evaluating Conditioning={cond_value}")
+        print(f"Evaluating condition={cond_value}")
         print(f"{'=' * 60}")
 
-        # Set fixed conditioning for evaluation
-        conditioning = torch.full(
+        # Set fixed condition for evaluation
+        conditions = torch.full(
             (n_eval_samples, 1), cond_value, dtype=torch.float, device=device
         )
 
         # Sample without exploration
-        print(
-            f"Sampling {n_eval_samples} trajectories with conditioning={cond_value}..."
-        )
+        print(f"Sampling {n_eval_samples} trajectories with condition={cond_value}...")
         trajectories = gflownet.sample_trajectories(
             env,
             n=n_eval_samples,
-            conditioning=conditioning,
+            conditions=conditions,
             save_logprobs=False,
             save_estimator_outputs=False,
             epsilon=0.0,  # No exploration
@@ -549,7 +547,7 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
             f"  Top {min(5, top_k)} true probs:      {[f'{p:.4f}' for p in true_topk_vals[:5].tolist()]}"
         )
 
-        # Additional metrics for each conditioning
+        # Additional metrics for each condition
         if cond_value == 0.0:
             # For uniform, check uniformity
             max_prob = empirical_dist.max().item()
@@ -584,7 +582,7 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
             else:
                 print(f"  L1 distance {l1_dist:.3f} > 0.1")
 
-        else:  # Intermediate conditioning values
+        else:  # Intermediate condition values
             # Show interpolation quality metrics
             print("\nInterpolation Metrics:")
             # Compute variance as a measure of spread
@@ -616,7 +614,7 @@ def evaluate_conditional_sampling(env, gflownet, device, n_eval_samples=10000):
     print("=" * 60)
     for cond_val in test_cond_values:
         print(
-            f"Conditioning={cond_val:.2f}: L1 distance = {results[cond_val]['l1_dist']:.6f}"
+            f"Condition={cond_val:.2f}: L1 distance = {results[cond_val]['l1_dist']:.6f}"
         )
 
     return results

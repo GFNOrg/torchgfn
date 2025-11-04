@@ -110,7 +110,7 @@ def get_trajectory_pfs(
             # Per-step path.
             N = trajectories.n_trajectories
             device = trajectories.states.device
-            cond = trajectories.conditioning  # shape (N, cond_dim)
+            cond = trajectories.conditions  # shape (N, cond_dim)
 
             ctx = policy_pf.init_context(int(N), device, cond)
 
@@ -181,19 +181,19 @@ def get_trajectory_pfs(
             if len(valid_states) == 0:
                 return log_pf_trajectories
 
-            # Build conditioning per-step shape to align with valid_states
+            # Build conditions per-step shape to align with valid_states
             masked_cond = None
-            if trajectories.conditioning is not None:
-                # trajectories.conditioning shape: (N, cond_dim)
+            if trajectories.conditions is not None:
+                # trajectories.conditions shape: (N, cond_dim)
                 # Repeat it to (T, N, cond_dim) and then mask it with the state_mask
-                T = trajectories.states.tensor.shape[0]
-                masked_cond = trajectories.conditioning.repeat(T, 1, 1)
+                T = trajectories.max_length + 1
+                masked_cond = trajectories.conditions.repeat(T, 1, 1)
                 masked_cond = masked_cond[state_mask]
 
             ctx_v = policy_pf.init_context(
                 int(len(valid_states)),
                 trajectories.states.device,
-                conditioning=masked_cond,
+                conditions=masked_cond,
             )
 
             # Optional estimator output cache reuse.
@@ -280,7 +280,7 @@ def get_trajectory_pbs(
     # Using all non-initial states, calculate the backward policy, and the logprobs
     # of those actions.
     masked_cond = None
-    cond = trajectories.conditioning
+    cond = trajectories.conditions
     if cond is not None:
         T = trajectories.states.tensor.shape[0]
         if cond.shape[0] == T:
@@ -320,8 +320,7 @@ def get_trajectory_pbs(
         # Per-step pb evaluation (state at t+1, action at t)
         N = trajectories.n_trajectories
         device = trajectories.states.device
-        cond = trajectories.conditioning  # shape (N, cond_dim)
-
+        cond = trajectories.conditions  # shape (N, cond_dim)
         ctx = policy_pb.init_context(int(N), device, cond)
 
         # Iterate per-step with masking (state at t+1, action at t)
@@ -363,7 +362,7 @@ def get_trajectory_pbs(
     # The backward policy supports vectorized evaluation.
     else:
         ctx_v = policy_pb.init_context(
-            int(len(valid_states)), trajectories.states.device, conditioning=masked_cond  # type: ignore[arg-type]
+            int(len(valid_states)), trajectories.states.device, conditions=masked_cond  # type: ignore[arg-type]
         )
         dist, ctx_v = policy_pb.compute_dist(
             valid_states,
@@ -459,7 +458,7 @@ def get_transition_pfs(
 
         N = transitions.n_transitions
         device = transitions.states.device
-        cond = transitions.conditioning
+        cond = transitions.conditions
 
         # For static typing, cast to the policy protocol before calling mixin methods.
         policy_pf = cast(PolicyEstimatorProtocol, pf)
@@ -531,7 +530,7 @@ def get_transition_pbs(
     ctx = policy_pb.init_context(
         int(transitions.n_transitions),
         transitions.states.device,
-        transitions.conditioning,
+        transitions.conditions,
     )
 
     # Legacy-complete masking for PB on transitions:

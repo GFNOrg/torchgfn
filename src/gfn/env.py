@@ -432,8 +432,8 @@ class Env(ABC):
 class ConditionalEnv(Env, ABC):
     """Base class for conditional environments.
 
-    Conditional environments are environments that have a conditioning variable.
-    For now, we assume that the condition only affects the rewards, not the dynamics of
+    Conditional environments are environments with condition variables.
+    For now, we assume that the conditions only affect the rewards, not the dynamics of
     the environment.
     """
 
