@@ -266,7 +266,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             # Compute the condition matrix broadcast to match valid_states.
             # The conditions tensor has shape (max_length, n_trajectories, 1)
             # We need to index it to match the valid states
-            raise NotImplementedError  # FIXME: implement this
             conditions = trajectories.conditions[mask]
 
             with has_conditions_exception_handler("logF", self.logF):
