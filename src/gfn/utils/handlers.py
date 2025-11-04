@@ -6,11 +6,11 @@ from gfn.containers import Container
 
 
 @contextmanager
-def has_conditioning_exception_handler(
+def has_conditions_exception_handler(
     target_name: str,
     target: Any,
 ):
-    """A context manager that handles exceptions when conditioning is passed.
+    """A context manager that handles exceptions when conditions is passed.
 
     Args:
         target_name: The name of the target.
@@ -19,17 +19,17 @@ def has_conditioning_exception_handler(
     try:
         yield
     except TypeError as e:
-        print(f"conditioning was passed but {target_name} is {type(target)}")
+        print(f"conditions was passed but {target_name} is {type(target)}")
         print(f"error: {str(e)}")
         raise
 
 
 @contextmanager
-def no_conditioning_exception_handler(
+def no_conditions_exception_handler(
     target_name: str,
     target: Any,
 ):
-    """A context manager that handles exceptions when no conditioning is passed.
+    """A context manager that handles exceptions when no conditions is passed.
 
     Args:
         target_name: The name of the target.
@@ -38,7 +38,7 @@ def no_conditioning_exception_handler(
     try:
         yield
     except TypeError as e:
-        print(f"conditioning was not passed but {target_name} is {type(target)}")
+        print(f"conditions was not passed but {target_name} is {type(target)}")
         print(f"error: {str(e)}")
         raise
 
@@ -57,9 +57,7 @@ def is_callable_exception_handler(
     try:
         yield
     except:  # noqa
-        print(
-            f"conditioning was passed but {target_name} is not callable: {type(target)}"
-        )
+        print(f"conditions was passed but {target_name} is not callable: {type(target)}")
         raise
 
 
