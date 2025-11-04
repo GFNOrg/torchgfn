@@ -64,68 +64,6 @@ from tutorials.examples.multinode.spawn_policy import (
 )
 
 
-class PerformanceTracker:
-    """Agent-level performance tracker for selective averaging."""
-
-    def __init__(
-        self,
-        decay: float = 0.98,
-        warmup: int = 100,
-        threshold: Optional[float] = None,
-        cooldown: int = 200,
-    ) -> None:
-        self.decay = float(decay)
-        self.warmup = int(warmup)
-        self.threshold = threshold  # None disables triggering
-        self.cooldown = int(cooldown)
-
-        # This keeps track of the last time the performance tracker was triggered.
-        # It is used to prevent the performance tracker from being triggered too
-        # frequently. It is initialized to a value that is less than the cooldown value.
-        self._last_trigger_iter: int = -self.cooldown
-
-        # Initialize the performance tracker (sets, _ema, _updates, _triggered).
-        self.reset()
-
-    def update(self, score: float, iteration: int) -> float:
-        """Update the exponential moving average with a new score."""
-        self._updates += 1
-        if self._ema is None:
-            self._ema = float(score)
-        else:
-            self._ema = self.decay * self._ema + (1.0 - self.decay) * float(score)
-
-        if self.threshold is None:
-            return False
-        if self._updates < self.warmup:
-            return False
-        if iteration - self._last_trigger_iter < self.cooldown:
-            return False
-
-        if self._ema is not None and self.threshold is not None:
-            if self._ema < self.threshold:
-                self._triggered = True
-                self._last_trigger_iter = int(iteration)
-
-        return self._triggered
-
-    @property
-    def triggered(self) -> bool:
-        """Whether the performance tracker has been triggered."""
-        return self._triggered
-
-    @property
-    def ema(self) -> Optional[float]:
-        """Exponential moving average of the performance score."""
-        return self._ema
-
-    def reset(self) -> None:
-        """Reset the performance tracker."""
-        self._ema = None
-        self._updates = 0
-        self._triggered = False
-
-
 class ModesReplayBufferManager(ReplayBufferManager):
     def __init__(
         self,
@@ -142,6 +80,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
         w_mode_bonus: float = 10.0,
         p_norm_novelty: float = 2.0,
         cdist_max_bytes: int = 268435456,
+        ema_decay: float = 0.98,
     ):
         super().__init__(
             env,
@@ -154,6 +93,8 @@ class ModesReplayBufferManager(ReplayBufferManager):
         )
         self.discovered_modes = set()
         self.env = env
+        self._ema_decay: float = float(ema_decay)
+        self._score_ema: Optional[float] = None
         # Scoring configuration parameters.
         self._scoring_config = {
             "w_retained": w_retained,
@@ -281,7 +222,13 @@ class ModesReplayBufferManager(ReplayBufferManager):
         final_score += self._scoring_config["w_reward"] * reward_sum
         final_score += self._scoring_config["w_mode_bonus"] * n_new_modes
         print("Score - Final score:", final_score)
-        return final_score
+        # Update and return EMA of the score
+        if self._score_ema is None:
+            self._score_ema = float(final_score)
+        else:
+            self._score_ema = self._ema_decay * float(self._score_ema) + (1.0 - self._ema_decay) * float(final_score)
+        print("Score - EMA score:", self._score_ema)
+        return float(self._score_ema)
 
     def _compute_metadata(self) -> dict:
         return {"n_modes_found": len(self.discovered_modes)}
@@ -850,14 +797,6 @@ def main(args):  # noqa: C901
         )
         prof.start()
 
-    # Agent performance tracker.
-    performance_tracker = PerformanceTracker(
-        decay=args.performance_tracker_decay,
-        warmup=args.performance_tracker_warmup,
-        threshold=args.performance_tracker_threshold,
-        cooldown=args.performance_tracker_cooldown,
-    )
-
     if args.distributed:
         # Create and start error handler.
         def cleanup():
@@ -891,6 +830,8 @@ def main(args):  # noqa: C901
                 replacement_ratio=args.replacement_ratio,
                 averaging_strategy=args.averaging_strategy,
                 momentum=args.momentum,
+                threshold=args.performance_tracker_threshold,
+                cooldown=args.performance_tracker_cooldown,
             )
         else:
             averaging_policy = AverageAllPolicy(average_every=args.average_every)
@@ -943,7 +884,6 @@ def main(args):  # noqa: C901
                 with torch.no_grad():
                     score = replay_buffer.add(training_samples)
                     assert score is not None
-                    performance_tracker.update(score, iteration)
                     training_objects = replay_buffer.sample(
                         n_samples=per_node_batch_size
                     )

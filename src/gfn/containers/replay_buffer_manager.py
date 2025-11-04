@@ -73,8 +73,6 @@ class ReplayBufferManager:
             if msg.message_type == MessageType.DATA:
                 score = self.scoring_function(msg.message_data)
                 score_tensor = torch.tensor([score], dtype=torch.float32)
-                print(f"Manager - Rank {self.rank} score: {score}")
-                print(f"Manager - Rank {self.rank} sending score to rank {sender_rank}")
                 dist.send(score_tensor, dst=sender_rank)
                 self.replay_buffer.add(msg.message_data)
 

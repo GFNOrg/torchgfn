@@ -130,10 +130,7 @@ class ReplayBuffer:
 
         # Receive a dummy score back
         score = torch.zeros(1, dtype=torch.float32)
-        print(f"Agent - Rank {dist.get_rank()} score: {score}")
-        print(f"Agent - Rank {dist.get_rank()} sending data to rank {self.remote_manager_rank}")
         dist.recv(score, src=self.remote_manager_rank)
-        print(f"Agent - Rank {dist.get_rank()} score: {score} after receiving")
 
         return score.item()
 
