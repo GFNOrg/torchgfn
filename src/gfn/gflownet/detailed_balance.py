@@ -10,8 +10,8 @@ from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimato
 from gfn.gflownet.base import PFBasedGFlowNet, loss_reduce
 from gfn.states import States
 from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
+    has_conditions_exception_handler,
+    no_conditions_exception_handler,
     warn_about_recalculating_logprobs,
 )
 from gfn.utils.prob_calculations import get_transition_pfs_and_pbs
@@ -200,11 +200,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         )
 
         # LogF is potentially a conditional computation.
-        if transitions.conditioning is not None:
-            with has_conditioning_exception_handler("logF", self.logF):
-                log_F_s = self.logF(states, transitions.conditioning).squeeze(-1)
+        if transitions.conditions is not None:
+            with has_conditions_exception_handler("logF", self.logF):
+                log_F_s = self.logF(states, transitions.conditions).squeeze(-1)
         else:
-            with no_conditioning_exception_handler("logF", self.logF):
+            with no_conditions_exception_handler("logF", self.logF):
                 log_F_s = self.logF(states).squeeze(-1)
 
         if self.forward_looking:
@@ -228,14 +228,14 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             return torch.tensor(0.0, device=transitions.device)
 
         # LogF is potentially a conditional computation.
-        if transitions.conditioning is not None:
-            with has_conditioning_exception_handler("logF", self.logF):
+        if transitions.conditions is not None:
+            with has_conditions_exception_handler("logF", self.logF):
                 valid_log_F_s_next = self.logF(
                     valid_next_states,
-                    transitions.conditioning[~transitions.is_terminating],
+                    transitions.conditions[~transitions.is_terminating],
                 ).squeeze(-1)
         else:
-            with no_conditioning_exception_handler("logF", self.logF):
+            with no_conditions_exception_handler("logF", self.logF):
                 valid_log_F_s_next = self.logF(valid_next_states).squeeze(-1)
 
         log_F_s_next = torch.zeros_like(log_pb_actions)
@@ -366,11 +366,11 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         check_compatibility(states, actions, transitions)
 
-        if transitions.conditioning is not None:
-            with has_conditioning_exception_handler("pf", self.pf):
-                module_output = self.pf(states, transitions.conditioning[mask])
+        if transitions.conditions is not None:
+            with has_conditions_exception_handler("pf", self.pf):
+                module_output = self.pf(states, transitions.conditions[mask])
         else:
-            with no_conditioning_exception_handler("pf", self.pf):
+            with no_conditions_exception_handler("pf", self.pf):
                 module_output = self.pf(states)
 
         if len(states) == 0:
@@ -390,13 +390,11 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         # The following two lines are slightly inefficient, given that most
         # next_states are also states, for which we already did a forward pass.
-        if transitions.conditioning is not None:
-            with has_conditioning_exception_handler("pf", self.pf):
-                module_output = self.pf(
-                    valid_next_states, transitions.conditioning[mask]
-                )
+        if transitions.conditions is not None:
+            with has_conditions_exception_handler("pf", self.pf):
+                module_output = self.pf(valid_next_states, transitions.conditions[mask])
         else:
-            with no_conditioning_exception_handler("pf", self.pf):
+            with no_conditions_exception_handler("pf", self.pf):
                 module_output = self.pf(valid_next_states)
 
         valid_log_pf_s_prime_exit = self.pf.to_probability_distribution(
@@ -408,13 +406,13 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         non_exit_actions = actions[~actions.is_exit]
 
         if self.pb is not None:
-            if transitions.conditioning is not None:
-                with has_conditioning_exception_handler("pb", self.pb):
+            if transitions.conditions is not None:
+                with has_conditions_exception_handler("pb", self.pb):
                     module_output = self.pb(
-                        valid_next_states, transitions.conditioning[mask]
+                        valid_next_states, transitions.conditions[mask]
                     )
             else:
-                with no_conditioning_exception_handler("pb", self.pb):
+                with no_conditions_exception_handler("pb", self.pb):
                     module_output = self.pb(valid_next_states)
 
             valid_log_pb_actions = self.pb.to_probability_distribution(

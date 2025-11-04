@@ -748,7 +748,7 @@ def test_conditional_with_exploration():
 
 
 def test_conditional_loss_types():
-    """Test that different GFlowNet loss types work with conditioning."""
+    """Test that different GFlowNet loss types work with conditions."""
     loss_types = ["tb", "db", "subtb", "fm"]
     losses = []
 

@@ -481,9 +481,7 @@ class _DummyPolicy(PolicyMixin):
 
     # Minimal callable module that matches the `PolicyMixin` expectation of `self.module`
     class _Module:
-        def __call__(
-            self, states: _FakeStates, conditioning: torch.Tensor | None = None
-        ):
+        def __call__(self, states: _FakeStates, conditions: torch.Tensor | None = None):
             n = states.batch_shape[0]
             return torch.zeros((n, 3), device=states.tensor.device)
 
@@ -497,8 +495,8 @@ class _DummyPolicy(PolicyMixin):
         # Build a simple categorical policy directly from the provided logits
         return Categorical(logits=est_out)
 
-    def __call__(self, states: _FakeStates, conditioning: torch.Tensor | None = None):
-        return self.module(states, conditioning)
+    def __call__(self, states: _FakeStates, conditions: torch.Tensor | None = None):
+        return self.module(states, conditions)
 
 
 class _DummyRecurrentPolicy(RecurrentPolicyMixin):
@@ -522,7 +520,7 @@ class _DummyRecurrentPolicy(RecurrentPolicyMixin):
 
 
 def test_rollout_context_basic():
-    ctx = RolloutContext(batch_size=4, device=torch.device("cpu"), conditioning=None)
+    ctx = RolloutContext(batch_size=4, device=torch.device("cpu"), conditions=None)
     assert ctx.batch_size == 4
     assert ctx.device.type == "cpu"
     # extras supports arbitrary entries
@@ -536,7 +534,7 @@ def test_default_adapter_compute_record():
     device = torch.device("cpu")
     n = 5
     states = _FakeStates(n, device)
-    ctx = policy.init_context(n, device, conditioning=None)
+    ctx = policy.init_context(n, device, conditions=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
     dist, ctx = policy.compute_dist(
@@ -568,7 +566,7 @@ def test_recurrent_adapter_requires_init_carry():
         is_backward = False
 
     with pytest.raises(TypeError, match="requires.*init_carry"):
-        _ = _BadRecurrentPolicy().init_context(2, torch.device("cpu"), conditioning=None)
+        _ = _BadRecurrentPolicy().init_context(2, torch.device("cpu"), conditions=None)
 
 
 def test_recurrent_adapter_flow():
@@ -577,7 +575,7 @@ def test_recurrent_adapter_flow():
     device = torch.device("cpu")
     n = 3
     states = _FakeStates(n, device)
-    ctx = policy.init_context(n, device, conditioning=None)
+    ctx = policy.init_context(n, device, conditions=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
     dist, ctx = policy.compute_dist(
@@ -664,7 +662,7 @@ def test_integration_recurrent_sequence_model_with_adapter(
     )
 
     # Use the estimator directly via `RecurrentPolicyMixin`
-    ctx = estimator.init_context(batch_size, device, conditioning=None)
+    ctx = estimator.init_context(batch_size, device, conditions=None)
 
     tokens = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
     states = _SeqStates(tokens, vocab_size)
@@ -726,7 +724,7 @@ def test_integration_transformer_sequence_model_with_adapter(
     )
 
     # Use the estimator directly via `RecurrentPolicyMixin`
-    ctx = estimator.init_context(batch_size, device, conditioning=None)
+    ctx = estimator.init_context(batch_size, device, conditions=None)
 
     tokens = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
     states = _SeqStates(tokens, vocab_size)
