@@ -883,7 +883,6 @@ def main(args):  # noqa: C901
             if replay_buffer is not None:
                 with torch.no_grad():
                     score = replay_buffer.add(training_samples)
-                    assert score is not None
                     training_objects = replay_buffer.sample(
                         n_samples=per_node_batch_size
                     )
@@ -940,11 +939,12 @@ def main(args):  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
             if averaging_policy is not None:
+                assert score is not None
                 gflownet, optimizer, averaging_info = averaging_policy(
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
-                    local_metric=score if score is not None else -loss.item(),
+                    local_metric=score,
                     group=distributed_context.train_global_group,
                 )
 
