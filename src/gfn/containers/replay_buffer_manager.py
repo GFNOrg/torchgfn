@@ -53,9 +53,9 @@ class ReplayBufferManager:
                 remote_buffer_freq=1,
             )
 
-    def default_scoring_function(self, obj) -> float:
+    def default_scoring_function(self, obj) -> dict[str, float]:
         """Default score function if none provided, placeholder."""
-        return math.inf
+        return {"score": math.inf}
 
     def _compute_metadata(self) -> dict:
         raise NotImplementedError(
@@ -71,10 +71,13 @@ class ReplayBufferManager:
 
             # Recieved some data to add to the buffer.
             if msg.message_type == MessageType.DATA:
-                score = self.scoring_function(msg.message_data)
-                score_tensor = torch.tensor([score], dtype=torch.float32)
-                dist.send(score_tensor, dst=sender_rank)
                 self.replay_buffer.add(msg.message_data)
+                score_dict = self.scoring_function(msg.message_data)
+                message = Message(message_type=MessageType.DATA, message_data=score_dict)
+                message_tensor = message.serialize()
+                length_message_tensor = torch.IntTensor([len(message_tensor)])
+                dist.send(length_message_tensor, dst=sender_rank)
+                dist.send(message_tensor, dst=sender_rank)
 
             elif msg.message_type == MessageType.GET_METADATA:
                 metadata = self._compute_metadata()

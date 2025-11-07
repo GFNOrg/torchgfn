@@ -97,7 +97,7 @@ class ReplayBuffer:
         assert self.training_container is not None, "Buffer is empty, it has no device!"
         return self.training_container.device
 
-    def add(self, training_container: ContainerUnion) -> float | None:
+    def add(self, training_container: ContainerUnion) -> dict[str, float] | None:
         """Adds a training container to the buffer.
 
         The type of the training container is dynamically set based on the type of the
@@ -116,7 +116,7 @@ class ReplayBuffer:
             if self._add_counter % self.remote_buffer_freq == 0:
                 return self._send_objs(training_container)
 
-    def _send_objs(self, training_container: ContainerUnion) -> float:
+    def _send_objs(self, training_container: ContainerUnion) -> dict[str, float]:
         """Sends a training container to the remote manager."""
         msg = Message(MessageType.DATA, training_container)
         msg_tensor = msg.serialize()
@@ -128,11 +128,17 @@ class ReplayBuffer:
         # Now send the actual content
         dist.send(msg_tensor, dst=self.remote_manager_rank)
 
-        # Receive a dummy score back
-        score = torch.zeros(1, dtype=torch.float32)
-        dist.recv(score, src=self.remote_manager_rank)
+        # Receive the length of the score dictionary
+        length_tensor = torch.zeros(1, dtype=torch.int32)
+        dist.recv(length_tensor, src=self.remote_manager_rank)
+        length = length_tensor.item()
 
-        return score.item()
+        # Receive the actual score dictionary
+        score_tensor = torch.ByteTensor(length)
+        dist.recv(score_tensor, src=self.remote_manager_rank)
+        score_dict = Message.deserialize(score_tensor).message_data
+
+        return score_dict
 
     def __repr__(self) -> str:
         """Returns a string representation of the ReplayBuffer.

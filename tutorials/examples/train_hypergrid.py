@@ -76,7 +76,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
         # Scoring config
         w_retained: float = 1.0,
         w_novelty: float = 0.1,
-        w_reward: float = 0.05,
+        w_reward: float = 0.0,
         w_mode_bonus: float = 10.0,
         p_norm_novelty: float = 2.0,
         cdist_max_bytes: int = 268435456,
@@ -96,21 +96,14 @@ class ModesReplayBufferManager(ReplayBufferManager):
         self._ema_decay: float = float(ema_decay)
         self._score_ema: Optional[float] = None
         # Scoring configuration parameters.
-        self._scoring_config = {
-            "w_retained": w_retained,
-            "w_novelty": w_novelty,
-            "w_reward": w_reward,
-            "w_mode_bonus": w_mode_bonus,
-            "p_norm_novelty": p_norm_novelty,
-            "cdist_max_bytes": cdist_max_bytes,
-        }
+        self.w_retained = w_retained
+        self.w_novelty = w_novelty
+        self.w_reward = w_reward
+        self.w_mode_bonus = w_mode_bonus
+        self.p_norm_novelty = p_norm_novelty
+        self.cdist_max_bytes = cdist_max_bytes
 
-    @property
-    def scoring_config(self) -> dict:
-        """Returns the scoring configuration parameters."""
-        return self._scoring_config
-
-    def scoring_function(self, obj) -> float:
+    def scoring_function(self, obj) -> dict[str, float]:
 
         # print("Score - Computing score for object:", obj)
         # print("Score - Terminating states:", obj.terminating_states)
@@ -170,7 +163,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
             bytes_per = 8 if batch.dtype == torch.float64 else 4
             chunk = max(
                 1,
-                int(self._scoring_config["cdist_max_bytes"] // max(1, (m_ * bytes_per))),
+                int(self.cdist_max_bytes // max(1, (m_ * bytes_per))),
             )
             min_dist = torch.full(
                 (m_,),
@@ -185,7 +178,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
                 distances = torch.cdist(
                     batch,
                     buf[start:end],
-                    p=self._scoring_config["p_norm_novelty"],
+                    p=self.p_norm_novelty,
                 )
                 min_dist = torch.minimum(min_dist, distances.min(dim=1).values)
 
@@ -217,18 +210,25 @@ class ModesReplayBufferManager(ReplayBufferManager):
         print("Score - Modes discovered after update:", self.discovered_modes)
 
         # Compute the final score.
-        final_score = self._scoring_config["w_retained"] * float(retained_count)
-        final_score += self._scoring_config["w_novelty"] * novelty_sum
-        final_score += self._scoring_config["w_reward"] * reward_sum
-        final_score += self._scoring_config["w_mode_bonus"] * n_new_modes
+        final_score = self.w_retained * float(retained_count)
+        final_score += self.w_novelty * novelty_sum
+        final_score += self.w_reward * reward_sum
+        final_score += self.w_mode_bonus * n_new_modes
         print("Score - Final score:", final_score)
         # Update and return EMA of the score
         if self._score_ema is None:
-            self._score_ema = float(final_score)
+            self._score_ema = final_score
         else:
-            self._score_ema = self._ema_decay * float(self._score_ema) + (1.0 - self._ema_decay) * float(final_score)
+            self._score_ema = self._ema_decay * self._score_ema + (1.0 - self._ema_decay) * float(final_score)
         print("Score - EMA score:", self._score_ema)
-        return float(self._score_ema)
+        return {
+            "score": float(self._score_ema),
+            "score_before_ema": final_score,
+            "retained_count": retained_count,
+            "novelty_sum": novelty_sum,
+            "reward_sum": reward_sum,
+            "n_new_modes": n_new_modes,
+        }
 
     def _compute_metadata(self) -> dict:
         return {"n_modes_found": len(self.discovered_modes)}
@@ -879,10 +879,10 @@ def main(args):  # noqa: C901
         ) as to_train_samples_timer:
             training_samples = gflownet.to_training_samples(trajectories)
 
-            score = None
+            score_dict = None
             if replay_buffer is not None:
                 with torch.no_grad():
-                    score = replay_buffer.add(training_samples)
+                    score_dict = replay_buffer.add(training_samples)
                     training_objects = replay_buffer.sample(
                         n_samples=per_node_batch_size
                     )
@@ -939,12 +939,12 @@ def main(args):  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
             if averaging_policy is not None:
-                assert score is not None
+                assert score_dict is not None
                 gflownet, optimizer, averaging_info = averaging_policy(
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
-                    local_metric=score,
+                    local_metric=score_dict["score"],
                     group=distributed_context.train_global_group,
                 )
 
@@ -981,20 +981,19 @@ def main(args):  # noqa: C901
         with Timer(timing, "validation", enabled=args.timing):
             assert visited_terminating_states is not None
             all_visited_terminating_states.extend(visited_terminating_states)
-            my_rank = distributed_context.my_rank
             to_log = {
-                f"loss_{my_rank}": loss.item(),
-                f"sample_time_{my_rank}": sample_timer.elapsed,
-                f"to_train_samples_time_{my_rank}": to_train_samples_timer.elapsed,
-                f"loss_time_{my_rank}": loss_timer.elapsed,
-                f"loss_backward_time_{my_rank}": loss_backward_timer.elapsed,
-                f"opt_time_{my_rank}": opt_timer.elapsed,
-                f"model_averaging_time_{my_rank}": model_averaging_timer.elapsed,
-                f"rest_time_{my_rank}": rest_time,
-                f"score_{my_rank}": score,
-                f"l1_dist_{my_rank}": None,  # only logged if calculate_partition.
+                f"loss": loss.item(),
+                f"sample_time": sample_timer.elapsed,
+                f"to_train_samples_time": to_train_samples_timer.elapsed,
+                f"loss_time": loss_timer.elapsed,
+                f"loss_backward_time": loss_backward_timer.elapsed,
+                f"opt_time": opt_timer.elapsed,
+                f"model_averaging_time": model_averaging_timer.elapsed,
+                f"rest_time": rest_time,
+                f"l1_dist": None,  # only logged if calculate_partition.
             }
-            to_log.update({f"{k}_{my_rank}": v for k, v in averaging_info.items()})
+            to_log.update(averaging_info)
+            to_log.update(score_dict)
 
             if log_this_iter:
                 validation_info, all_visited_terminating_states = env.validate(
@@ -1003,9 +1002,9 @@ def main(args):  # noqa: C901
                     all_visited_terminating_states,
                 )
                 assert all_visited_terminating_states is not None
-                to_log.update({f"{k}_{my_rank}": v for k, v in validation_info.items()})
+                to_log.update(validation_info)
 
-                if my_rank == 0:
+                if distributed_context.my_rank == 0:
                     if args.distributed:
                         manager_rank = distributed_context.assigned_buffer
                         assert manager_rank is not None
@@ -1017,9 +1016,9 @@ def main(args):  # noqa: C901
                         to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
-                        loss_0=to_log["loss_0"],
-                        l1_dist_0=to_log[
-                            "l1_dist_0"
+                        loss=to_log["loss"],
+                        l1_dist=to_log[
+                            "l1_dist"
                         ],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
                     )
@@ -1402,7 +1401,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--performance_tracker_threshold",
         type=float,
-        default=1,
+        default=100,
         help="Threshold for the performance tracker. If None, the performance tracker is not triggered.",
     )
     parser.add_argument(
