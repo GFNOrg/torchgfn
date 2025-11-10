@@ -200,26 +200,6 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             with no_conditions_exception_handler("logF", self.logF):
                 log_F_s = self.logF(states).squeeze(-1)
 
-        if self.forward_looking:
-            import warnings  # type: ignore
-
-            warnings.warn(
-                "Rewards should be defined over edges in forward-looking settings. "
-                "The current implementation is a special case of this, where the edge "
-                "reward is defined as the difference between the reward of two states "
-                "that the edge connects. If your environment is not the case, "
-                "forward-looking may be inappropriate."
-            )
-
-            # Reward calculation can also be conditional.
-            if transitions.conditions is not None:
-                log_rewards = env.log_reward(states, transitions.conditions)  # type: ignore
-            else:
-                log_rewards = env.log_reward(states)
-            if math.isfinite(self.log_reward_clip_min):
-                log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
-            log_F_s = log_F_s + log_rewards
-
         ### Compute log_F_s_next
         log_F_s_next = torch.zeros_like(log_F_s)
         is_terminating = transitions.is_terminating
@@ -237,6 +217,36 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         else:
             with no_conditions_exception_handler("logF", self.logF):
                 log_F_s_next[is_intermediate] = self.logF(interm_next_states).squeeze(-1)
+
+        # Apply forward-looking if applicable
+        if self.forward_looking:
+            import warnings  # type: ignore
+
+            warnings.warn(
+                "Rewards should be defined over edges in forward-looking settings. "
+                "The current implementation is a special case of this, where the edge "
+                "reward is defined as the difference between the reward of two states "
+                "that the edge connects. If your environment is not the case, "
+                "forward-looking may be inappropriate."
+            )
+
+            # Reward calculation can also be conditional.
+            if transitions.conditions is not None:
+                log_rewards_state = env.log_reward(states, transitions.conditions)  # type: ignore
+                log_rewards_next = env.log_reward(
+                    interm_next_states, transitions.conditions[is_intermediate]  # type: ignore
+                )
+            else:
+                log_rewards_state = env.log_reward(states)
+                log_rewards_next = env.log_reward(interm_next_states)
+            if math.isfinite(self.log_reward_clip_min):
+                log_rewards_state = log_rewards_state.clamp_min(self.log_reward_clip_min)
+                log_rewards_next = log_rewards_next.clamp_min(self.log_reward_clip_min)
+
+            log_F_s = log_F_s + log_rewards_state
+            log_F_s_next[is_intermediate] = (
+                log_F_s_next[is_intermediate] + log_rewards_next
+            )
 
         # Assign log_F_s_next for terminating transitions as log_rewards
         log_rewards = transitions.log_rewards
