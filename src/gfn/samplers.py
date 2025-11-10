@@ -192,7 +192,7 @@ class Sampler:
 
         if conditions is not None:
             ensure_same_device(states.device, conditions.device)
-            assert states.batch_shape == conditions.shape[0]
+            assert conditions.shape[0] == n_trajectories
 
         if policy_estimator.is_backward:
             dones = states.is_initial_state
