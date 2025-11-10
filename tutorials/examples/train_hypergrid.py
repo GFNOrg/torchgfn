@@ -629,7 +629,7 @@ def main(args) -> dict:  # noqa: C901
                 capacity=args.replay_buffer_size,
                 prioritized_capacity=False,
                 remote_manager_rank=distributed_context.assigned_buffer,
-                remote_buffer_freq=1,
+                remote_buffer_freq=args.remote_buffer_freq,
             )
 
     gflownet = gflownet.to(device)
@@ -987,6 +987,13 @@ if __name__ == "__main__":
         type=str,
         default="gloo",
         help="Distributed backend to use: gloo, ccl or mpi",
+    )
+
+    parser.add_argument(
+        "--remote_buffer_freq",
+        type=int,
+        default=1,
+        help="Frequency (in training iterations) at which training ranks sends trajectories to remote replay buffer",
     )
 
     # Selective averaging settings.

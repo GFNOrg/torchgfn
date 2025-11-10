@@ -131,7 +131,6 @@ class ReplayBuffer:
             if self._add_counter % self.remote_buffer_freq == 0:
                 score = self._send_objs(self.pending_container)
                 self.pending_container = None
-                print("Cleared pending container.", flush=True)
                 return score
 
     def _send_objs(self, training_container: ContainerUnion) -> float:
