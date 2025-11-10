@@ -160,20 +160,6 @@ reportUnboundVariable = "warning"
 reportGeneralTypeIssues = "none"
 reportAttributeAccessIssue = false
 
-[tool.pytest.ini_options]
-reportOptionalMemberAccess = "error"
-filterwarnings = [
-    "ignore::pytest.PytestConfigWarning",
-]
-# Add some useful, commonly used settings.
-reportUnusedImport = true
-reportUnusedVariable = true
-reportOptionalSubscript = true
-reportOptionalCall = true
-reportOptionalIterable = true
-reportOptionalContextManager = true
-reportOptionalOperand = true
-
 [tool.tox]
 legacy_tox_ini = '''
 [tox]
@@ -200,3 +186,15 @@ pythonpath = [
     "tutorials",
     "testing"
 ]
+reportOptionalMemberAccess = "error"
+filterwarnings = [
+    "ignore::pytest.PytestConfigWarning",
+]
+# Add some useful, commonly used settings.
+reportUnusedImport = true
+reportUnusedVariable = true
+reportOptionalSubscript = true
+reportOptionalCall = true
+reportOptionalIterable = true
+reportOptionalContextManager = true
+reportOptionalOperand = true
