@@ -471,7 +471,7 @@ def train(
             if len(l1_dists) > 0:
                 l1_dists_str = [f"{l1_dist:.6f}" for l1_dist in l1_dists]
                 l1_dists_str = ", ".join(l1_dists_str)
-                log_str += f"L1=[{l1_dists_str}]"
+                log_str += f"L1=[{l1_dists_str}], "
                 log_str += f"modes={len(discovered_modes) / n_pixels_per_mode}"
             print(log_str)
 

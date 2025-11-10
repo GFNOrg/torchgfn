@@ -399,6 +399,7 @@ class Trajectories(Container):
             # The actions have batch shape (max_length, n_trajectories)
             # We need to repeat the condition vector tensor to match the actions
             conditions = self.conditions.repeat(self.actions.batch_shape[0], 1, 1)
+            assert conditions.shape[:2] == self.actions.batch_shape
             # Then we mask it with the valid action mask.
             conditions = conditions[valid_action_mask]
         else:
@@ -475,6 +476,7 @@ class Trajectories(Container):
             # The states have batch shape (n_trajectories, n_states)
             # We need to repeat it to match the batch shape of the states,
             conditions = self.conditions.repeat(self.states.batch_shape[0], 1, 1)
+            assert conditions.shape[:2] == self.states.batch_shape
             # Then we mask it with the valid state mask.
             conditions = conditions[is_valid]
 

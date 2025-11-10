@@ -5,7 +5,7 @@ import torch
 
 from gfn.actions import Actions
 from gfn.containers import Trajectories, Transitions
-from gfn.env import Env
+from gfn.env import ConditionalEnv, Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import PFBasedGFlowNet, loss_reduce
 from gfn.states import States
@@ -208,7 +208,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 log_F_s = self.logF(states).squeeze(-1)
 
         if self.forward_looking:
-            log_rewards = env.log_reward(states)
+            if isinstance(env, ConditionalEnv):
+                assert transitions.conditions is not None
+                log_rewards = env.log_reward(states, transitions.conditions).squeeze(-1)
+            else:
+                log_rewards = env.log_reward(states).squeeze(-1)
             if math.isfinite(self.log_reward_clip_min):
                 log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
             log_F_s = log_F_s + log_rewards

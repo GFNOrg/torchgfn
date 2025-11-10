@@ -5,7 +5,7 @@ from typing import List, Literal, Tuple, TypeAlias
 import torch
 
 from gfn.containers import Trajectories
-from gfn.env import Env
+from gfn.env import ConditionalEnv, Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.utils.handlers import (
@@ -264,21 +264,26 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         if trajectories.conditions is not None:
             # Compute the condition matrix broadcast to match valid_states.
-            # The conditions tensor has shape (max_length, n_trajectories, 1)
-            # We need to index it to match the valid states
-            conditions = trajectories.conditions[mask]
-
+            # The conditions tensor has shape (n_trajectories, condition_vector_dim)
+            # We need to repeat it to match the batch shape of the states
+            conditions = trajectories.conditions.repeat(states.batch_shape[0], 1, 1)
+            assert conditions.shape[:2] == states.batch_shape
+            conditions = conditions[mask]
             with has_conditions_exception_handler("logF", self.logF):
-                log_F = self.logF(valid_states, conditions)
+                log_F = self.logF(valid_states, conditions).squeeze(-1)
+
+            if self.forward_looking:
+                assert isinstance(env, ConditionalEnv)
+                log_F = log_F + env.log_reward(valid_states, conditions)
+
         else:
             with no_conditions_exception_handler("logF", self.logF):
                 log_F = self.logF(valid_states).squeeze(-1)
 
-        if self.forward_looking:
-            log_rewards = env.log_reward(states).unsqueeze(-1)
-            log_F = log_F + log_rewards
+            if self.forward_looking:
+                log_F = log_F + env.log_reward(valid_states)
 
-        log_state_flows[mask[:-1]] = log_F.squeeze()
+        log_state_flows[mask[:-1]] = log_F
         return log_state_flows
 
     def calculate_masks(
