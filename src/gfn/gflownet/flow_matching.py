@@ -4,7 +4,7 @@ from typing import Any
 import torch
 
 from gfn.containers import StatesContainer, Trajectories
-from gfn.env import DiscreteEnv
+from gfn.env import Env
 from gfn.estimators import (
     DiscretePolicyEstimator,
     PolicyMixin,
@@ -59,7 +59,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
     def sample_trajectories(
         self,
-        env: DiscreteEnv,
+        env: Env,
         n: int,
         conditions: torch.Tensor | None = None,
         save_logprobs: bool = False,
@@ -96,7 +96,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
     def flow_matching_loss(
         self,
-        env: DiscreteEnv,
+        env: Env,
         states: DiscreteStates,
         conditions: torch.Tensor | None,
         reduction: str = "mean",
@@ -194,7 +194,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
     def reward_matching_loss(
         self,
-        env: DiscreteEnv,
+        env: Env,
         terminating_states: DiscreteStates,
         conditions: torch.Tensor | None,
         log_rewards: torch.Tensor | None,
@@ -231,7 +231,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
     def loss(
         self,
-        env: DiscreteEnv,
+        env: Env,
         states_container: StatesContainer[DiscreteStates],
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
@@ -254,6 +254,10 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             The computed flow matching loss as a tensor. The shape depends on the
             reduction method.
         """
+        if not env.is_discrete:
+            raise NotImplementedError(
+                "Flow Matching GFlowNet only supports discrete environments for now."
+            )
         assert isinstance(states_container.intermediary_states, DiscreteStates)
         assert isinstance(states_container.terminating_states, DiscreteStates)
         if recalculate_all_logprobs:

@@ -30,7 +30,7 @@ import torch
 from torch.optim import Adam
 from tqdm import tqdm
 
-from gfn.env import ConditionalEnv
+from gfn.env import ConditionalEnv, DiscreteEnv
 from gfn.estimators import (
     ConditionalDiscretePolicyEstimator,
     ConditionalLogZEstimator,
@@ -342,7 +342,7 @@ def build_subTB_gflownet(env):
 
 
 def train(
-    env,
+    env: ConditionalEnv,
     gflownet,
     seed,
     device,
@@ -388,7 +388,7 @@ def train(
     final_loss = None
     for it in (pbar := tqdm(range(n_iterations), dynamic_ncols=True)):
         # Sample conditions uniformly from [0, 1] for this batch
-        conditions = env.sample_conditions(batch_size).to(device)
+        conditions = env.sample_conditions(batch_size)
 
         # Sample trajectories with conditions
         trajectories = gflownet.sample_trajectories(
@@ -454,28 +454,26 @@ def train(
                     discovered_modes.update(modes_found)
 
                 # Compute empirical distribution using validate's helper function
-                empirical_dist = get_terminating_state_dist(env, sampled_states)
-
-                # Compute true distribution for this condition values
-                true_conditional_dist = env.true_dist(
-                    torch.tensor([cond_val], device=device)
-                )
-                # L1 distance as computed in validate function
-                l1_dist = (empirical_dist - true_conditional_dist).abs().mean().item()
-                l1_dists.append(l1_dist)
+                if isinstance(env, DiscreteEnv):
+                    empirical_dist = env.get_terminating_state_dist(sampled_states)
+                    # Compute true distribution for this condition values
+                    true_conditional_dist = env.true_dist(
+                        torch.tensor([cond_val], device=device)
+                    )
+                    # L1 distance as computed in validate function
+                    l1_dist = (
+                        (empirical_dist - true_conditional_dist).abs().mean().item()
+                    )
+                    l1_dists.append(l1_dist)
 
             # Print concise results
-            print(
-                "Iter {}: L1=[{:.6f}, {:.6f}, {:.6f}, {:.6f}, {:.6f}] modes={}".format(
-                    it + 1,
-                    l1_dists[0],
-                    l1_dists[1],
-                    l1_dists[2],
-                    l1_dists[3],
-                    l1_dists[4],
-                    len(discovered_modes) / n_pixels_per_mode,
-                )
-            )
+            log_str = f"Iter {it + 1}: "
+            if len(l1_dists) > 0:
+                l1_dists_str = [f"{l1_dist:.6f}" for l1_dist in l1_dists]
+                l1_dists_str = ", ".join(l1_dists_str)
+                log_str += f"L1=[{l1_dists_str}]"
+                log_str += f"modes={len(discovered_modes) / n_pixels_per_mode}"
+            print(log_str)
 
     print("\n" + "=" * 60)
     print("+ Training complete!")
