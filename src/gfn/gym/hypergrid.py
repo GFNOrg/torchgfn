@@ -422,11 +422,12 @@ class HyperGrid(DiscreteEnv):
     @property
     def true_dist(self) -> torch.Tensor | None:
         """Returns the pmf over all states in the hypergrid."""
-        if self._true_dist is None and self.all_states is not None:
+        if self._true_dist is None:
+            assert (
+                self.all_states is not None
+            ), "true_dist is not available without all_states"
             all_rewards = self.reward(self.all_states)
             self._true_dist = all_rewards / all_rewards.sum()
-        else:
-            raise ValueError("true_dist is not available without all_states")
 
         return self._true_dist
 
