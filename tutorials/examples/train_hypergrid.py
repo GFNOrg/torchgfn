@@ -636,7 +636,6 @@ def main(args):  # noqa: C901
 
     n_iterations = ceil(args.n_trajectories / args.batch_size)
     per_node_batch_size = args.batch_size // distributed_context.world_size
-    validation_info = {"l1_dist": float("inf")}
     modes_found = set()
     # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
@@ -931,11 +930,6 @@ def main(args):  # noqa: C901
         # Create figure with 3 subplots with proper spacing.
         plot_results(env, gflownet, l1_distances, validation_steps)
 
-    try:
-        result = validation_info["l1_dist"]
-    except KeyError:
-        result = validation_info["n_modes_found"]
-
     if distributed_context.my_rank == 0:
         print("+ Training complete - final_score={:.6f}".format(result))
 
@@ -946,9 +940,6 @@ def main(args):  # noqa: C901
     ):
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
-
-    return result
-
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -1244,4 +1235,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    result = main(args)
+    main(args)
