@@ -930,6 +930,7 @@ def main(args):  # noqa: C901
         # Create figure with 3 subplots with proper spacing.
         plot_results(env, gflownet, l1_distances, validation_steps)
 
+    result = validation_info.get("l1_dist", loss.detach().item())
     if distributed_context.my_rank == 0:
         print("+ Training complete - final_score={:.6f}".format(result))
 
@@ -940,6 +941,9 @@ def main(args):  # noqa: C901
     ):
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
+
+    return result
+
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -1235,4 +1239,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    main(args)
+    result = main(args)
