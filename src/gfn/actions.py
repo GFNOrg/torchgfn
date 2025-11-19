@@ -188,7 +188,7 @@ class Actions(ABC):
         if len(self.batch_shape) == len(other.batch_shape) == 1:
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
         elif len(self.batch_shape) == len(other.batch_shape) == 2:
-            other = other.clone()
+            other = other.clone()  # TODO: Is there a more efficient way?
             self.extend_with_dummy_actions(
                 required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
