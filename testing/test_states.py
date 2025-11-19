@@ -358,7 +358,9 @@ def test_extend_empty_state(empty_state_fixture, simple_state_fixture, request):
     if not isinstance(empty_state, simple_state.__class__):
         pytest.skip("States must be of same type")
 
+    pre_extend_shape = simple_state.batch_shape
     empty_state.extend(simple_state)
+    assert simple_state.batch_shape == pre_extend_shape
 
     # Check that the empty state now has the same content as the simple state
     assert empty_state.batch_shape == simple_state.batch_shape
@@ -382,7 +384,9 @@ def test_extend_1d(simple_graph_state):
     original_num_nodes = simple_graph_state.tensor.x.size(0)
     original_num_edges = simple_graph_state.tensor.num_edges
 
+    other_state_batch_shape = other_state.batch_shape
     simple_graph_state.extend(other_state)
+    assert other_state.batch_shape == other_state_batch_shape
 
     # Check batch shape is updated
     assert simple_graph_state.batch_shape[0] == 2
@@ -425,7 +429,9 @@ def test_extend_2d(datas):
     expected_edges += 2 * MyGraphStates.sf.num_edges
 
     # Extend state1 with state2
+    pre_extend_shape = state2.batch_shape
     state1.extend(state2)
+    assert state2.batch_shape == pre_extend_shape
     # Check final shape should be (max_len=3, B=4)
     assert state1.batch_shape == (3, 4)
 
@@ -642,7 +648,9 @@ def test_discrete_masks_device_consistency_index_clone_flatten_extend(
 
     # Extend (devices must already match by contract)
     other = state.clone()
+    pre_extend_shape = other.batch_shape
     state.extend(other)
+    assert other.batch_shape == pre_extend_shape
     assert state.forward_masks.device == state.device
     assert state.backward_masks.device == state.device
 
