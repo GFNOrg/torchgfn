@@ -102,7 +102,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 special case.
 
         """
-        super().__init__(pf, pb, constant_pb=constant_pb)
+        super().__init__(
+            pf, pb, constant_pb=constant_pb, log_reward_clip_min=log_reward_clip_min
+        )
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
@@ -110,7 +112,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda
-        self.log_reward_clip_min = log_reward_clip_min
         self.forward_looking = forward_looking
 
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
