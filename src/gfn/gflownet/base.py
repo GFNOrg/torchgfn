@@ -223,7 +223,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         # Advisory: recurrent PF with non-recurrent PB is unusual
         # (tree DAGs typically prefer pb=None with constant_pb=True).
         # Import locally to avoid circular imports during module import time.
-        from gfn.estimators import RecurrentDiscretePolicyEstimator  # type: ignore
+        from gfn.estimators import RecurrentDiscretePolicyEstimator
 
         if isinstance(self.pf, RecurrentDiscretePolicyEstimator) and isinstance(
             self.pb, Estimator

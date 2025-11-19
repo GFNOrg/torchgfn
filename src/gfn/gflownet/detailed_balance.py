@@ -95,7 +95,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         )
 
         # Disallow recurrent PF for transition-based DB
-        from gfn.estimators import RecurrentDiscretePolicyEstimator  # type: ignore
+        from gfn.estimators import RecurrentDiscretePolicyEstimator
 
         if isinstance(self.pf, RecurrentDiscretePolicyEstimator):
             raise TypeError(
@@ -220,7 +220,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         # Apply forward-looking if applicable
         if self.forward_looking:
-            import warnings  # type: ignore
+            import warnings
 
             warnings.warn(
                 "Rewards should be defined over edges in forward-looking settings. "
