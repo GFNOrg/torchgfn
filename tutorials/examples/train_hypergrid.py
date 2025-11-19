@@ -482,7 +482,7 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     plt.close()
 
 
-def main(args):  # noqa: C901
+def main(args) -> dict:
     """Trains a GFlowNet on the Hypergrid Environment, potentially distributed."""
 
     if args.half_precision:
@@ -546,7 +546,7 @@ def main(args):  # noqa: C901
             capacity=args.global_replay_buffer_size,
         )
         replay_buffer_manager.run()
-        return 0.0
+        return {}
 
     # Initialize WandB.
     use_wandb = args.wandb_project != ""
@@ -837,20 +837,19 @@ def main(args):  # noqa: C901
         with Timer(timing, "validation", enabled=args.timing):
             assert visited_terminating_states is not None
             all_visited_terminating_states.extend(visited_terminating_states)
-            my_rank = distributed_context.my_rank
             to_log = {
-                f"loss_{my_rank}": loss.item(),
-                f"sample_time_{my_rank}": sample_timer.elapsed,
-                f"to_train_samples_time_{my_rank}": to_train_samples_timer.elapsed,
-                f"loss_time_{my_rank}": loss_timer.elapsed,
-                f"loss_backward_time_{my_rank}": loss_backward_timer.elapsed,
-                f"opt_time_{my_rank}": opt_timer.elapsed,
-                f"model_averaging_time_{my_rank}": model_averaging_timer.elapsed,
-                f"rest_time_{my_rank}": rest_time,
-                f"score_{my_rank}": score,
-                f"l1_dist_{my_rank}": None,  # only logged if calculate_partition.
+                "loss": loss.item(),
+                "sample_time": sample_timer.elapsed,
+                "to_train_samples_time": to_train_samples_timer.elapsed,
+                "loss_time": loss_timer.elapsed,
+                "loss_backward_time": loss_backward_timer.elapsed,
+                "opt_time": opt_timer.elapsed,
+                "model_averaging_time": model_averaging_timer.elapsed,
+                "rest_time": rest_time,
+                "score": score,
+                "l1_dist": None,  # only logged if calculate_partition.
             }
-            to_log.update({f"{k}_{my_rank}": v for k, v in averaging_info.items()})
+            to_log.update(averaging_info)
 
             if log_this_iter:
                 validation_info, all_visited_terminating_states = env.validate(
@@ -859,9 +858,9 @@ def main(args):  # noqa: C901
                     all_visited_terminating_states,
                 )
                 assert all_visited_terminating_states is not None
-                to_log.update({f"{k}_{my_rank}": v for k, v in validation_info.items()})
+                to_log.update(validation_info)
 
-                if my_rank == 0:
+                if distributed_context.my_rank == 0:
                     if args.distributed:
                         manager_rank = distributed_context.assigned_buffer
                         assert manager_rank is not None
@@ -873,9 +872,9 @@ def main(args):  # noqa: C901
                         to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
-                        loss_0=to_log["loss_0"],
-                        l1_dist_0=to_log[
-                            "l1_dist_0"
+                        loss=to_log["loss"],
+                        l1_dist=to_log[
+                            "l1_dist"
                         ],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
                     )
@@ -930,9 +929,8 @@ def main(args):  # noqa: C901
         # Create figure with 3 subplots with proper spacing.
         plot_results(env, gflownet, l1_distances, validation_steps)
 
-    result = validation_info.get("l1_dist", loss.detach().item())
     if distributed_context.my_rank == 0:
-        print("+ Training complete - final_score={:.6f}".format(result))
+        print("Training complete, logs:", to_log)
 
     if (
         args.distributed
@@ -942,7 +940,7 @@ def main(args):  # noqa: C901
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
 
-    return result
+    return to_log
 
 
 if __name__ == "__main__":
@@ -1239,4 +1237,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    result = main(args)
+    main(args)
