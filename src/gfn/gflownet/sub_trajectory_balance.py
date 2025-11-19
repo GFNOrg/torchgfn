@@ -9,8 +9,8 @@ from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
+    has_conditions_exception_handler,
+    no_conditions_exception_handler,
     warn_about_recalculating_logprobs,
 )
 
@@ -262,16 +262,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         mask = ~states.is_sink_state
         valid_states = states[mask]
 
-        if trajectories.conditioning is not None:
-            # Compute the conditioning matrix broadcast to match valid_states.
-            # The conditioning tensor has shape (max_length, n_trajectories, 1)
+        if trajectories.conditions is not None:
+            # Compute the condition matrix broadcast to match valid_states.
+            # The conditions tensor has shape (max_length, n_trajectories, 1)
             # We need to index it to match the valid states
-            conditioning = trajectories.conditioning[mask]
+            conditions = trajectories.conditions[mask]
 
-            with has_conditioning_exception_handler("logF", self.logF):
-                log_F = self.logF(valid_states, conditioning)
+            with has_conditions_exception_handler("logF", self.logF):
+                log_F = self.logF(valid_states, conditions)
         else:
-            with no_conditioning_exception_handler("logF", self.logF):
+            with no_conditions_exception_handler("logF", self.logF):
                 log_F = self.logF(valid_states).squeeze(-1)
 
         if self.forward_looking:
