@@ -198,7 +198,7 @@ class Transitions(Container):
             If not provided at initialization, log rewards are computed on demand for
             terminating transitions.
         """
-        if self.is_backward:
+        if self.is_backward:  # TODO: Why can't backward trajectories have log_rewards?
             return None
 
         if self._log_rewards is None:
