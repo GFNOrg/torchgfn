@@ -482,7 +482,7 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     plt.close()
 
 
-def main(args) -> dict:
+def main(args) -> dict:  # noqa: C901
     """Trains a GFlowNet on the Hypergrid Environment, potentially distributed."""
 
     if args.half_precision:
@@ -873,9 +873,7 @@ def main(args) -> dict:
 
                     pbar.set_postfix(
                         loss=to_log["loss"],
-                        l1_dist=to_log[
-                            "l1_dist"
-                        ],  # only logged if calculate_partition.
+                        l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
                     )
 
