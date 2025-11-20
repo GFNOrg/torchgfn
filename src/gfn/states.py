@@ -271,6 +271,7 @@ class States(ABC):
 
         elif len(other.batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
+            other = other.clone()  # TODO: Is there a more efficient way?
             self.pad_dim0_with_sf(
                 required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
@@ -580,7 +581,20 @@ class DiscreteStates(States, ABC):
             other: DiscreteStates object to concatenate with.
         """
         assert self.device == other.device, "Devices must match"
-        super().extend(other)
+        if len(other.batch_shape) == len(self.batch_shape) == 1:
+            # This corresponds to adding a state to a trajectory
+            self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
+        elif len(other.batch_shape) == len(self.batch_shape) == 2:
+            # This corresponds to adding a trajectory to a batch of trajectories
+            other = other.clone()
+            self.pad_dim0_with_sf(
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
+            )
+            other.pad_dim0_with_sf(
+                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
+            )
+            self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
+
         self.forward_masks = torch.cat(
             (self.forward_masks, other.forward_masks), dim=len(self.batch_shape) - 1
         )
