@@ -414,7 +414,7 @@ class Env(ABC):
             The log partition function.
         """
         raise NotImplementedError(
-            "The environment may not support enumeration of states"
+            "The environment does not support calculating the log partition"
         )
 
     @property
@@ -425,7 +425,7 @@ class Env(ABC):
             The true distribution as a 1-dimensional tensor.
         """
         raise NotImplementedError(
-            "The environment may not support enumeration of states"
+            "The environment does not support enumeration of states"
         )
 
 

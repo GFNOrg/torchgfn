@@ -484,11 +484,12 @@ class Trajectories(Container):
             log_rewards = None
         else:
             log_rewards = torch.full(
-                (len(states),),
-                fill_value=-float("inf"),
-                device=states.device,
+                self.states.batch_shape, fill_value=-float("inf"), device=states.device
             )
-            log_rewards[is_terminating] = self.log_rewards
+            log_rewards[self.terminating_idx - 1, torch.arange(len(self))] = (
+                self.log_rewards
+            )
+            log_rewards = log_rewards[is_valid]
 
         return StatesContainer[DiscreteStates](
             env=self.env,
