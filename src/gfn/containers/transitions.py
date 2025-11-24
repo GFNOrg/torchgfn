@@ -162,6 +162,7 @@ class Transitions(Container):
         states_tensor = self.states.tensor
         next_states_tensor = self.next_states.tensor
 
+        # FIXME: This is not working for GraphStates.
         states_repr = ",\t".join(
             [
                 f"{str(state.numpy())} -> {str(next_state.numpy())}"
