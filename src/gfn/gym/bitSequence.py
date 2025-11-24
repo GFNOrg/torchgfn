@@ -238,7 +238,6 @@ class BitSequence(DiscreteEnv):
             self.words_per_seq, dtype=torch.long, device=torch.device(device_str)
         )
         state_shape = s0.shape
-        action_shape = (1,)
         dummy_action = -torch.ones(1, dtype=torch.long)
         exit_action = (self.n_actions - 1) * torch.ones(1, dtype=torch.long)
         sf = (self.n_actions - 1) * torch.ones(
@@ -248,7 +247,6 @@ class BitSequence(DiscreteEnv):
             self.n_actions,
             s0,
             state_shape,
-            action_shape,
             dummy_action,
             exit_action,
             sf,
@@ -750,7 +748,6 @@ class BitSequencePlus(BitSequence):
             self.words_per_seq, dtype=torch.long, device=torch.device(device_str)
         )
         state_shape = s0.shape
-        action_shape = (1,)
         dummy_action = -torch.ones(1, dtype=torch.long)
         exit_action = (n_actions - 1) * torch.ones(1, dtype=torch.long)
         sf = ((n_actions - 1) // 2) * torch.ones(
@@ -761,7 +758,6 @@ class BitSequencePlus(BitSequence):
             n_actions,
             s0,
             state_shape,
-            action_shape,
             dummy_action,
             exit_action,
             sf,
