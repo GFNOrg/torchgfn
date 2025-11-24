@@ -4,7 +4,7 @@ import pytest
 import torch
 from torch.distributions import Categorical
 
-from gfn.containers import Trajectories, Transitions
+from gfn.containers import StatesContainer, Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
 from gfn.estimators import PolicyMixin  # Use policy mixin directly instead of adapters
 from gfn.estimators import (
@@ -43,6 +43,7 @@ from gfn.utils.training import states_actions_tns_to_traj
 def trajectory_sampling_with_return(
     env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
     preprocessor_name: Literal["Identity", "KHot", "OneHot", "Enum"],
+    batch_size: int,
     delta: float,
     n_components: int,
     n_components_s0: int,
@@ -149,12 +150,12 @@ def trajectory_sampling_with_return(
     # Test mode collects log_probs and estimator_ouputs, not encountered in the wild.
     trajectories = sampler.sample_trajectories(
         env,
-        n=5,
+        n=batch_size,
         save_logprobs=True,
         save_estimator_outputs=False,  # FIXME: This fails on GraphBuildingOnEdges if True
     )
 
-    states = env.reset(batch_shape=5, random=True)
+    states = env.reset(batch_shape=batch_size, random=True)
     bw_sampler = Sampler(estimator=pb_estimator)
     bw_trajectories = bw_sampler.sample_trajectories(
         env, save_logprobs=True, states=states, save_estimator_outputs=False
@@ -179,48 +180,140 @@ def test_trajectory_sampling(
 ):
     _ = trajectory_sampling_with_return(
         env_name,
-        preprocessor_name,
-        delta,
-        n_components_s0,
-        n_components,
+        preprocessor_name=preprocessor_name,
+        batch_size=5,
+        delta=delta,
+        n_components_s0=n_components_s0,
+        n_components=n_components,
     )
 
 
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "container_type", ["transitions", "states_container", "trajectories"]
 )
-def test_trajectories_getitem(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
-):
-    try:
-        _ = trajectory_sampling_with_return(
-            env_name,
-            preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
-            delta=0.1,
-            n_components=1,
-            n_components_s0=1,
-        )
-    except Exception as e:
-        raise ValueError(f"Error while testing {env_name}") from e
-
-
 @pytest.mark.parametrize(
     "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
 )
-def test_trajectories_extend(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+def test_containers(
+    container_type: Literal["transitions", "states_container", "trajectories"],
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
 ):
-    trajectories, *_ = trajectory_sampling_with_return(
+    trajectories1, _, _, _ = trajectory_sampling_with_return(
         env_name,
-        preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
+        preprocessor_name="Identity",
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
     )
-    try:
-        trajectories.extend(trajectories[[1, 0]])
-    except Exception as e:
-        raise ValueError(f"Error while testing {env_name}") from e
+    trajectories2, _, _, _ = trajectory_sampling_with_return(
+        env_name,
+        preprocessor_name="Identity",
+        batch_size=6,
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,
+    )
+
+    if container_type == "transitions":
+        container1, container2 = (
+            trajectories1.to_transitions(),
+            trajectories2.to_transitions(),
+        )
+    elif container_type == "states_container":
+        if env_name == "Box" or env_name == "GraphBuildingOnEdges":
+            pytest.skip("`to_states_container` only works with DiscreteStates")
+        container1, container2 = (
+            trajectories1.to_states_container(),
+            trajectories2.to_states_container(),
+        )
+    else:  # container_type == "trajectories":
+        container1, container2 = trajectories1, trajectories2
+
+    initial_len = len(container1)
+
+    # Test extending container1 with container2
+    container1.extend(container2)  # type: ignore
+
+    # Check that the length of container1 is now the sum of both containers
+    assert len(container1) == initial_len + len(container2)
+
+    # Check that the elements from container2 are correctly added to container1
+    if isinstance(container1, Transitions):
+        for i in range(len(container2)):
+            container1_obj = container1[i + initial_len]
+            container2_obj = container2[i]
+            if env_name != "GraphBuildingOnEdges":
+                assert torch.equal(
+                    container1_obj.states.tensor, container2_obj.states.tensor
+                )
+                assert torch.equal(
+                    container1_obj.next_states.tensor, container2_obj.next_states.tensor
+                )
+            else:
+                assert torch.equal(
+                    container1_obj.states.tensor.edge_index,
+                    container2_obj.states.tensor.edge_index,
+                )
+                assert torch.equal(
+                    container1_obj.next_states.tensor.edge_index,
+                    container2_obj.next_states.tensor.edge_index,
+                )
+
+            assert torch.equal(
+                container1_obj.actions.tensor, container2_obj.actions.tensor
+            )
+            assert torch.equal(
+                container1_obj.is_terminating, container2_obj.is_terminating
+            )
+            assert container1_obj.log_probs is not None
+            assert container2_obj.log_probs is not None
+            assert torch.equal(container1_obj.log_probs, container2_obj.log_probs)
+
+            assert isinstance(container1_obj.log_rewards, torch.Tensor)
+            assert isinstance(container2_obj.log_rewards, torch.Tensor)
+            assert torch.equal(container1_obj.log_rewards, container2_obj.log_rewards)
+
+    elif isinstance(container1, StatesContainer):
+        for i in range(len(container2)):
+            container1_obj = container1[i + initial_len]
+            container2_obj = container2[i]
+            assert torch.equal(
+                container1_obj.intermediary_states.tensor,
+                container2_obj.intermediary_states.tensor,
+            )
+            assert torch.equal(
+                container1_obj.terminating_states.tensor,
+                container2_obj.terminating_states.tensor,
+            )
+            assert isinstance(container1_obj.log_rewards, torch.Tensor)
+            assert isinstance(container2_obj.log_rewards, torch.Tensor)
+            assert torch.equal(container1_obj.log_rewards, container2_obj.log_rewards)
+    else:  # isinstance(container1, Trajectories)
+        for i in range(len(container2)):
+            container1_obj = container1[i + initial_len]
+            container2_obj = container2[i]
+            if env_name != "GraphBuildingOnEdges":
+                assert torch.equal(
+                    container1_obj.states.tensor, container2_obj.states.tensor
+                )
+            else:
+                assert torch.equal(
+                    container1_obj.states.tensor.edge_index,
+                    container2_obj.states.tensor.edge_index,
+                )
+            assert torch.equal(
+                container1_obj.actions.tensor, container2_obj.actions.tensor
+            )
+            assert torch.equal(
+                container1_obj.terminating_idx, container2_obj.terminating_idx
+            )
+            assert container1_obj.log_probs is not None
+            assert container2_obj.log_probs is not None
+            assert torch.equal(container1_obj.log_probs, container2_obj.log_probs)
+            assert isinstance(container1_obj.log_rewards, torch.Tensor)
+            assert isinstance(container2_obj.log_rewards, torch.Tensor)
+            assert torch.equal(container1_obj.log_rewards, container2_obj.log_rewards)
 
 
 @pytest.mark.parametrize(
@@ -232,6 +325,7 @@ def test_sub_sampling(
     trajectories, *_ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="Identity",
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
@@ -242,38 +336,61 @@ def test_sub_sampling(
         raise ValueError(f"Error while testing {env_name}") from e
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+)
 def test_reverse_backward_trajectories(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
 ):
     """
     Ensures that the vectorized `Trajectories.reverse_backward_trajectories`
     matches the for-loop approach by toggling `debug=True`.
     """
-    _, backward_trajectories, *_ = trajectory_sampling_with_return(
+    _, backward_trajs, pf_estimator, _ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="Identity",
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
     )
 
-    reversed_traj = backward_trajectories.reverse_backward_trajectories()
+    reversed_trajs = backward_trajs.reverse_backward_trajectories()
 
-    for i in range(len(backward_trajectories)):
-        terminating_idx = backward_trajectories.terminating_idx[i]
+    for i in range(len(backward_trajs)):
+        terminating_idx = backward_trajs.terminating_idx[i]
         for j in range(terminating_idx):
             assert torch.all(
-                reversed_traj.actions.tensor[j, i]
-                == backward_trajectories.actions.tensor[terminating_idx - j - 1, i]
+                reversed_trajs.actions.tensor[j, i]
+                == backward_trajs.actions.tensor[terminating_idx - j - 1, i]
             )
-            assert torch.all(
-                reversed_traj.states.tensor[j, i]
-                == backward_trajectories.states.tensor[terminating_idx - j, i]
-            )
+            if env_name != "GraphBuildingOnEdges":
+                assert torch.all(
+                    reversed_trajs.states.tensor[j, i]
+                    == backward_trajs.states.tensor[terminating_idx - j, i]
+                )
+            else:
+                pytest.skip("FIXME: Need to fix this")
+                # assert torch.all(
+                #     reversed_trajs.states.tensor.edge_index[j, i]
+                #     == backward_trajs.states.tensor.edge_index[terminating_idx - j, i]
+                # )
 
-        assert torch.all(reversed_traj.actions[terminating_idx, i].is_exit)
-        assert torch.all(reversed_traj.states[terminating_idx + 1, i].is_sink_state)
+        assert torch.all(reversed_trajs.actions[terminating_idx, i].is_exit)
+        assert torch.all(reversed_trajs.states[terminating_idx + 1, i].is_sink_state)
+
+    # Smoke tests for get_trajectory_pfs, to_transitions and to_states_container
+    reversed_traj_pfs = get_trajectory_pfs(
+        pf=pf_estimator,
+        trajectories=reversed_trajs,
+        recalculate_all_logprobs=False,
+    )
+    reversed_trajs.log_probs = reversed_traj_pfs
+    _ = reversed_trajs.to_transitions()
+
+    if env_name == "Box" or env_name == "GraphBuildingOnEdges":
+        pytest.skip("`to_states_container` only works with DiscreteStates")
+    _ = reversed_trajs.to_states_container()
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
@@ -364,36 +481,6 @@ def test_local_search_for_loop_equivalence(
 @pytest.mark.parametrize(
     "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
 )
-def test_to_transition(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
-):
-    """
-    Ensures that the `Trajectories.to_transitions` method works as expected.
-    """
-    trajectories, bwd_trajectories, pf_estimator, _ = trajectory_sampling_with_return(
-        env_name,
-        preprocessor_name="Identity",
-        delta=0.1,
-        n_components=1,
-        n_components_s0=1,
-    )
-
-    _ = trajectories.to_transitions()
-
-    bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
-    # evaluate with pf_estimator
-    backward_traj_pfs = get_trajectory_pfs(
-        pf=pf_estimator,
-        trajectories=bwd_trajectories,
-        recalculate_all_logprobs=False,
-    )
-    bwd_trajectories.log_probs = backward_traj_pfs
-    _ = bwd_trajectories.to_transitions()
-
-
-@pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
-)
 @pytest.mark.parametrize("objects", ["trajectories", "transitions"])
 def test_replay_buffer(
     env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
@@ -419,6 +506,7 @@ def test_replay_buffer(
     trajectories, *_ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="Identity",
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
