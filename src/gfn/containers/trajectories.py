@@ -473,9 +473,10 @@ class Trajectories(Container):
         conditions = None
         if self.conditions is not None:
             # The conditions tensor has shape (n_trajectories, condition_vector_dim)
-            # The states have batch shape (n_trajectories, n_states)
-            # We need to repeat it to match the batch shape of the states,
+            # The states have batch shape (max_length, n_trajectories)
+            # We need to repeat the conditions to match the batch shape of the states.
             conditions = self.conditions.repeat(self.states.batch_shape[0], 1, 1)
+            # (max_length, n_trajectories, condition_vector_dim)
             assert conditions.shape[:2] == self.states.batch_shape
             # Then we mask it with the valid state mask.
             conditions = conditions[is_valid]
