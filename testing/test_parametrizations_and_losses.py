@@ -2,7 +2,7 @@ from typing import Literal, cast
 
 import pytest
 import torch
-from test_samplers_and_trajectories import trajectory_sampling_with_return
+from test_samplers_and_containers import trajectory_sampling_with_return
 
 from gfn.containers import Trajectories
 from gfn.estimators import DiscretePolicyEstimator, ScalarEstimator
@@ -83,6 +83,7 @@ def test_get_pfs_and_pbs(
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
         env_name,
         preprocessor_name,
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
@@ -105,6 +106,7 @@ def test_get_scores(
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
         env_name,
         preprocessor_name,
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
