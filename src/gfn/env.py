@@ -445,9 +445,8 @@ class DiscreteEnv(Env, ABC):
         sf: Tensor of shape (*state_shape) representing the sink (final) state.
         n_actions: The number of actions in the environment.
         state_shape: Tuple representing the shape of the states.
-        action_shape: Tuple representing the shape of the actions.
-        dummy_action: Tensor of shape (*action_shape) representing the dummy action.
-        exit_action: Tensor of shape (*action_shape) representing the exit action.
+        dummy_action: Tensor of shape (1,) representing the dummy action.
+        exit_action: Tensor of shape (1,) representing the exit action.
         States: The States class associated with this environment.
         Actions: The Actions class associated with this environment.
         is_discrete: Class variable, whether the environment is discrete.
@@ -463,7 +462,6 @@ class DiscreteEnv(Env, ABC):
         s0: torch.Tensor,
         state_shape: Tuple | int,
         # Advanced parameters (optional):
-        action_shape: Tuple | int = (1,),
         dummy_action: Optional[torch.Tensor] = None,
         exit_action: Optional[torch.Tensor] = None,
         sf: Optional[torch.Tensor] = None,
@@ -475,10 +473,9 @@ class DiscreteEnv(Env, ABC):
             n_actions: The number of actions in the environment.
             s0: Tensor of shape (*state_shape) representing the initial state.
             state_shape: Tuple representing the shape of the states.
-            action_shape: Tuple representing the shape of the actions.
-            dummy_action: (Optional) Tensor of shape (*action_shape) representing the
+            dummy_action: (Optional) Tensor of shape (1,) representing the
                 dummy (padding) action.
-            exit_action: (Optional) Tensor of shape (*action_shape) representing the
+            exit_action: (Optional) Tensor of shape (1,) representing the
                 exit action.
             sf: (Optional) Tensor of shape (*state_shape) representing the final state.
             check_action_validity: Whether to check the action validity.
@@ -512,24 +509,20 @@ class DiscreteEnv(Env, ABC):
         if exit_action is None:
             exit_action = torch.tensor([n_actions - 1], device=s0.device)
 
-        # If these shapes are integers, convert them to tuples.
-        if isinstance(action_shape, int):
-            action_shape = (action_shape,)
-
         if isinstance(state_shape, int):
             state_shape = (state_shape,)
 
         assert dummy_action is not None
         assert exit_action is not None
         assert s0.shape == state_shape
-        assert dummy_action.shape == action_shape
-        assert exit_action.shape == action_shape
+        assert dummy_action.shape == (1,)
+        assert exit_action.shape == (1,)
 
         self.n_actions = n_actions  # Before init, for compatibility with States.
         super().__init__(
             s0,
             state_shape,
-            action_shape,
+            (1,),  # action shape is always (1,) for discrete environments
             dummy_action,
             exit_action,
             sf,
