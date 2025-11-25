@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--benchmark-output",
         type=str,
-        default="hypergrid_benchmark.png",
+        default=str(Path.home() / "hypergrid_benchmark.png"),
         help="Output path for benchmark plot.",
     )
     parser.add_argument(
