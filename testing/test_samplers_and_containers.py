@@ -370,6 +370,7 @@ def test_reverse_backward_trajectories(
                     == backward_trajs.states.tensor[terminating_idx - j, i]
                 )
             else:
+                # reverse_backward_trajectories seems do not correctly support GraphBuildingOnEdges
                 pytest.skip("FIXME: Need to fix this")
                 # assert torch.all(
                 #     reversed_trajs.states.tensor.edge_index[j, i]
