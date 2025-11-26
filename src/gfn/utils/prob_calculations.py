@@ -96,6 +96,26 @@ def get_trajectory_pfs(
     valid_actions = trajectories.actions[action_mask]
 
     if valid_states.batch_shape != valid_actions.batch_shape:
+        print(
+            "[DEBUG get_trajectory_pfs] state_mask shape:",
+            state_mask.shape,
+            "action_mask shape:",
+            action_mask.shape,
+        )
+        print(
+            "[DEBUG get_trajectory_pfs] valid_states.batch_shape:",
+            valid_states.batch_shape,
+            "valid_actions.batch_shape:",
+            valid_actions.batch_shape,
+        )
+        print(
+            "[DEBUG get_trajectory_pfs] trajectories.states.is_sink_state:",
+            trajectories.states.is_sink_state.shape,
+        )
+        print(
+            "[DEBUG get_trajectory_pfs] trajectories.actions.is_dummy:",
+            trajectories.actions.is_dummy.shape,
+        )
         raise AssertionError("Something wrong happening with log_pf evaluations")
 
     if trajectories.has_log_probs and not recalculate_all_logprobs:

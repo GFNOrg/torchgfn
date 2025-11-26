@@ -27,12 +27,11 @@ def try_compile_gflownet(
 
     results: dict[str, bool] = {}
     for name in components:
+
+        # If the estimator does not exist, we cannot compile it.
         if not hasattr(gfn, name):
-            msg = (
-                f"GFlowNet of type {type(gfn).__name__} has no '{name}' attribute; "
-                "expected a valid estimator when attempting compilation."
-            )
-            raise AttributeError(msg)
+            results[name] = False
+            continue
 
         estimator = getattr(gfn, name)
         module = getattr(estimator, "module", None)
@@ -49,4 +48,5 @@ def try_compile_gflownet(
             results[name] = True
         except Exception:
             results[name] = False
+
     return results

@@ -9,12 +9,13 @@ import argparse
 import statistics
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, cast
+from typing import Any, Dict, Iterable, List, cast
 
 import torch
 from torch.func import vmap
 from tqdm import tqdm
 
+from gfn.containers import Trajectories
 from gfn.estimators import DiscretePolicyEstimator, ScalarEstimator
 from gfn.gflownet.detailed_balance import DBGFlowNet
 from gfn.gflownet.flow_matching import FMGFlowNet
@@ -27,6 +28,215 @@ from gfn.utils.common import set_seed
 from gfn.utils.compile import try_compile_gflownet
 from gfn.utils.modules import MLP, DiscreteUniform
 from gfn.utils.training import validate
+
+
+# Local subclasses for benchmarking-only optimizations (no core library changes)
+class HyperGridWithTensorStep(HyperGrid):
+    def step_tensor(
+        self, states: torch.Tensor, actions: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        assert states.dtype == torch.long
+        device = states.device
+        batch = states.shape[0]
+        ndim = self.ndim
+        exit_idx = self.n_actions - 1
+
+        if actions.ndim == 1:
+            actions_idx = actions.view(-1, 1)
+        else:
+            assert actions.shape[-1] == 1
+            actions_idx = actions
+
+        is_exit = actions_idx.squeeze(-1) == exit_idx
+
+        next_states = states.clone()
+        non_exit_mask = ~is_exit
+        if torch.any(non_exit_mask):
+            sel_states = next_states[non_exit_mask]
+            sel_actions = actions_idx[non_exit_mask]
+            sel_states = sel_states.scatter(-1, sel_actions, 1, reduce="add")
+            next_states[non_exit_mask] = sel_states
+        if torch.any(is_exit):
+            # Ensure exit actions land exactly on the sink state so downstream
+            # `is_sink_state` masks match the action padding semantics assumed
+            # by `Trajectories` and probability calculations.
+            next_states[is_exit] = self.sf.to(device=device)
+
+        next_forward_masks = torch.ones(
+            (batch, self.n_actions), dtype=torch.bool, device=device
+        )
+        next_forward_masks[:, :ndim] = next_states != (self.height - 1)
+        next_forward_masks[:, ndim] = True
+        return next_states, next_forward_masks, is_exit
+
+    def forward_action_masks(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        """Returns forward-action masks for a batch of state tensors."""
+        base = states_tensor != (self.height - 1)
+        return torch.cat(
+            [
+                base,
+                torch.ones(
+                    (states_tensor.shape[0], 1),
+                    dtype=torch.bool,
+                    device=states_tensor.device,
+                ),
+            ],
+            dim=-1,
+        )
+
+
+class ChunkedHyperGridSampler(Sampler):
+    def __init__(self, estimator, chunk_size: int):
+        super().__init__(estimator)
+        self.chunk_size = int(chunk_size)
+
+    def sample_trajectories(  # noqa: C901
+        self,
+        env: HyperGridWithTensorStep,
+        n: int | None = None,
+        states: DiscreteStates | None = None,
+        conditions: torch.Tensor | None = None,
+        save_estimator_outputs: bool = False,  # unused in chunked fast path
+        save_logprobs: bool = False,  # unused in chunked fast path
+        **policy_kwargs: Any,
+    ):
+        assert self.chunk_size > 0
+        assert hasattr(env, "step_tensor")
+        epsilon = float(policy_kwargs.get("epsilon", 0.0))
+
+        if states is None:
+            assert n is not None
+            states_obj = env.reset(batch_shape=(n,))
+        else:
+            states_obj = states
+
+        estimator = self.estimator
+        module = getattr(estimator, "module", None)
+        assert module is not None
+        height = int(env.height)
+        exit_idx = env.n_actions - 1
+
+        curr_states = states_obj.tensor
+        batch = curr_states.shape[0]
+        device = curr_states.device
+
+        forward_masks = env.forward_action_masks(curr_states)
+        done = torch.zeros(batch, dtype=torch.bool, device=device)
+        actions_seq: List[torch.Tensor] = []
+        dones_seq: List[torch.Tensor] = []
+
+        def sample_actions_from_logits(
+            logits: torch.Tensor, masks: torch.Tensor, eps: float
+        ) -> torch.Tensor:
+            masked_logits = logits.masked_fill(~masks, float("-inf"))
+            probs = torch.softmax(masked_logits, dim=-1)
+
+            if eps > 0.0:
+                valid_counts = masks.sum(dim=-1, keepdim=True).clamp_min(1)
+                uniform = masks.to(probs.dtype) / valid_counts.to(probs.dtype)
+                probs = (1.0 - eps) * probs + eps * uniform
+
+            # Ensure exit actions have probability 1.0 so that they land exactly on
+            # the sink state and downstream `is_sink_state` masks match the action
+            # padding semantics assumed by `Trajectories` and probability calculations.
+            nan_rows = torch.isnan(probs).any(dim=-1)
+            if nan_rows.any():
+                probs[nan_rows] = 0.0
+                probs[nan_rows, exit_idx] = 1.0
+
+            return torch.multinomial(probs, 1)
+
+        def _chunk_loop(
+            current_states: torch.Tensor,
+            current_masks: torch.Tensor,
+            done_mask: torch.Tensor,
+        ):
+            actions_list: List[torch.Tensor] = []
+            dones_list: List[torch.Tensor] = []
+            for _ in range(self.chunk_size):
+                if done_mask.any():
+                    current_masks = current_masks.clone()
+                    current_masks[done_mask] = False
+                    current_masks[done_mask, exit_idx] = True
+                khot = torch.nn.functional.one_hot(
+                    current_states, num_classes=height
+                ).to(dtype=torch.get_default_dtype())
+                khot = khot.view(current_states.shape[0], -1)
+                logits = module(khot)
+                actions = sample_actions_from_logits(logits, current_masks, epsilon)
+                next_states, next_masks, is_exit = env.step_tensor(
+                    current_states, actions
+                )
+                record_actions = actions.clone()
+
+                # Replace actions for already-finished trajectories with the dummy
+                # action so that their timeline matches the padded semantics expected
+                # by Trajectories (actions.is_dummy aligns with states.is_sink_state[:-1]).
+                if done_mask.any():
+                    dummy_val = env.dummy_action.to(device=device)
+                    record_actions[done_mask] = dummy_val
+                actions_list.append(record_actions)
+                dones_list.append(is_exit)
+
+                current_states = next_states
+                current_masks = next_masks
+                done_mask = done_mask | is_exit
+
+                if bool(done_mask.all().item()):
+                    break
+
+            return current_states, current_masks, done_mask, actions_list, dones_list
+
+        chunk_fn = _chunk_loop
+        if hasattr(torch, "compile"):
+            try:
+                chunk_fn = torch.compile(_chunk_loop, mode="reduce-overhead")  # type: ignore
+            except Exception:
+                pass
+
+        while not bool(done.all().item()):
+            curr_states, forward_masks, done, actions_chunk, dones_chunk = chunk_fn(
+                curr_states, forward_masks, done
+            )
+            if actions_chunk:
+                actions_seq.extend(actions_chunk)
+                dones_seq.extend(dones_chunk)
+
+        if actions_seq:
+            actions_tsr = torch.stack([a for a in actions_seq], dim=0)
+            T = actions_tsr.shape[0]
+            s = states_obj.tensor
+            states_stack = [s]
+            for t in range(T):
+                s, fm, is_exit = env.step_tensor(s, actions_tsr[t])
+                states_stack.append(s)
+            states_tsr = torch.stack(states_stack, dim=0)
+            is_exit_seq = torch.stack(dones_seq, dim=0)
+            first_exit = torch.argmax(is_exit_seq.to(torch.long), dim=0)
+            never_exited = ~is_exit_seq.any(dim=0)
+            first_exit = torch.where(
+                never_exited, torch.tensor(T - 1, device=device), first_exit
+            )
+            terminating_idx = first_exit + 1
+        else:
+            states_tsr = states_obj.tensor.unsqueeze(0)
+            actions_tsr = env.actions_from_batch_shape((0, states_tsr.shape[1])).tensor
+            terminating_idx = torch.zeros(
+                states_tsr.shape[1], dtype=torch.long, device=device
+            )
+
+        trajectories = Trajectories(
+            env=env,
+            states=env.states_from_tensor(states_tsr),
+            conditions=None,
+            actions=env.actions_from_tensor(actions_tsr),
+            terminating_idx=terminating_idx,
+            is_backward=False,
+            log_rewards=None,
+            log_probs=None,
+            estimator_outputs=None,
+        )
+        return trajectories
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +272,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-vmap", action="store_true", help="Use vmap TB loss.")
     parser.add_argument("--benchmark", action="store_true", help="Run benchmark mode.")
     parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=0,
+        help="Enable chunked sampler fast path when > 0.",
+    )
+    parser.add_argument(
         "--benchmark-output",
         type=str,
         default=str(Path.home() / "hypergrid_benchmark.png"),
@@ -90,14 +306,32 @@ def main() -> None:
     device = resolve_device(args.device)
 
     if args.benchmark:
-        scenarios = [
-            ("Baseline", False, False),
-            (f"Compile ({args.compile_mode})", True, False),
-            ("Vmap", False, True),
-            (f"Compile+Vmap ({args.compile_mode})", True, True),
+        base_scenarios: list[tuple[str, bool, bool, bool]] = [
+            ("Baseline", False, False, False),
+            (f"Compile ({args.compile_mode})", True, False, False),
+            ("Vmap", False, True, False),
+            (f"Compile+Vmap ({args.compile_mode})", True, True, False),
         ]
+        if args.chunk_size > 0:
+            base_scenarios += [
+                (f"Chunk ({args.chunk_size})", False, False, True),
+                (
+                    f"Compile+Chunk ({args.compile_mode},{args.chunk_size})",
+                    True,
+                    False,
+                    True,
+                ),
+                (f"Chunk+Vmap ({args.chunk_size})", False, True, True),
+                (
+                    f"Compile+Chunk+Vmap ({args.compile_mode},{args.chunk_size})",
+                    True,
+                    True,
+                    True,
+                ),
+            ]
+        scenarios = base_scenarios
         results: list[dict[str, Any]] = []
-        for label, enable_compile, use_vmap in scenarios:
+        for label, enable_compile, use_vmap, use_chunk in scenarios:
             result = train_with_options(
                 args,
                 device,
@@ -107,6 +341,7 @@ def main() -> None:
                 quiet=True,
                 timing=True,
                 record_history=True,
+                use_chunk=use_chunk,
             )
             result["label"] = label
             results.append(result)
@@ -122,7 +357,8 @@ def main() -> None:
             print(
                 f"- {result['label']}: {result['elapsed']:.2f}s "
                 f"({speedup:.2f}x) | compile_mode={result['compile_mode']} "
-                f"| vmap={'on' if result['effective_vmap'] else 'off'}"
+                f"| vmap={'on' if result['effective_vmap'] else 'off'} "
+                f"| chunk={'on' if result.get('chunk_size_effective', 0) > 0 else 'off'}"
             )
 
         plot_benchmark(results, args.benchmark_output)
@@ -137,6 +373,7 @@ def main() -> None:
         quiet=False,
         timing=False,
         record_history=False,
+        use_chunk=args.chunk_size > 0,
     )
 
 
@@ -150,6 +387,7 @@ def train_with_options(
     quiet: bool,
     timing: bool,
     record_history: bool,
+    use_chunk: bool = False,
 ) -> dict[str, Any]:
     set_seed(args.seed)
     (
@@ -158,7 +396,7 @@ def train_with_options(
         sampler,
         optimizer,
         visited_states,
-    ) = build_training_components(args, device)
+    ) = build_training_components(args, device, use_chunk=use_chunk)
     metrics = init_metrics()
 
     compile_mode = args.compile_mode if enable_compile else "none"
@@ -231,6 +469,7 @@ def train_with_options(
         "use_compile": enable_compile,
         "requested_vmap": requested_vmap,
         "effective_vmap": effective_vmap,
+        "chunk_size_effective": (args.chunk_size if use_chunk else 0),
     }
 
 
@@ -293,8 +532,8 @@ def run_iterations(
         last_loss = loss.item()
         if (
             record_history
-            and losses_history is not None
-            and iter_time_history is not None
+            and (losses_history is not None)
+            and (iter_time_history is not None)
         ):
             losses_history.append(last_loss)
             iter_duration = (
@@ -431,14 +670,19 @@ def run_validation_if_needed(
         print(str_info)
 
 
-def build_training_components(args: argparse.Namespace, device: torch.device) -> tuple[
+def build_training_components(
+    args: argparse.Namespace, device: torch.device, *, use_chunk: bool = False
+) -> tuple[
     HyperGrid,
     TBGFlowNet | DBGFlowNet | FMGFlowNet,
     Sampler,
     torch.optim.Optimizer,
     DiscreteStates,
 ]:
-    env = HyperGrid(
+    EnvClass = (
+        HyperGridWithTensorStep if (use_chunk and args.chunk_size > 0) else HyperGrid
+    )
+    env = EnvClass(
         ndim=args.ndim,
         height=args.height,
         reward_fn_str="original",
@@ -477,7 +721,11 @@ def build_training_components(args: argparse.Namespace, device: torch.device) ->
             device
         )
         optimizer = torch.optim.Adam(gflownet.logF.parameters(), lr=args.lr)
-        sampler = Sampler(estimator=logF_estimator)
+        sampler = (
+            ChunkedHyperGridSampler(estimator=logF_estimator, chunk_size=args.chunk_size)
+            if use_chunk and args.chunk_size > 0
+            else Sampler(estimator=logF_estimator)
+        )
     else:
         pf_estimator = DiscretePolicyEstimator(
             module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
@@ -509,7 +757,11 @@ def build_training_components(args: argparse.Namespace, device: torch.device) ->
             optimizer.add_param_group(
                 {"params": gflownet.logz_parameters(), "lr": args.lr_logz}
             )
-        sampler = Sampler(estimator=pf_estimator)
+        sampler = (
+            ChunkedHyperGridSampler(estimator=pf_estimator, chunk_size=args.chunk_size)
+            if use_chunk and args.chunk_size > 0
+            else Sampler(estimator=pf_estimator)
+        )
 
     visited_states = env.states_from_batch_shape((0,))
     return env, gflownet, sampler, optimizer, visited_states
