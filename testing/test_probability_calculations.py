@@ -430,9 +430,9 @@ def test_trajectory_states_sink_consistency():
         save_estimator_outputs=False,
         save_logprobs=False,
     )
-    
+
     # Test the consistency between sink states and dummy actions
     # sink states (excluding the last one) should equal dummy actions
-    assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions.is_dummy), (
-        "Sink states (excluding last) should correspond to dummy actions"
-    )
+    assert trajectories.states.is_sink_state[:-1].equal(
+        trajectories.actions.is_dummy
+    ), "Sink states (excluding last) should correspond to dummy actions"
