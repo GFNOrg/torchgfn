@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Literal
 
 import torch
 
@@ -28,6 +28,7 @@ class SetAddition(DiscreteEnv):
         max_items: int,
         reward_fn: Callable,
         fixed_length: bool = False,
+        device: Literal["cpu", "cuda"] | torch.device = "cpu",
         check_action_validity: bool = True,
     ):
         """Initializes the SetAddition environment.
@@ -39,12 +40,13 @@ class SetAddition(DiscreteEnv):
             fixed_length: Whether the trajectories have a fixed length.
             check_action_validity: Whether to check the action validity.
         """
+        device = torch.device(device)
         self.n_items = n_items
         self.reward_fn = reward_fn
         self.max_traj_len = max_items
         self.fixed_length = fixed_length
         n_actions = n_items + 1
-        s0 = torch.zeros(n_items)
+        s0 = torch.zeros(n_items, device=device)
         state_shape = (n_items,)
 
         super().__init__(

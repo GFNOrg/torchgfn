@@ -383,7 +383,7 @@ class BitSequence(DiscreteEnv):
         assert (
             actions.tensor.squeeze()
             == states.tensor[
-                torch.arange(states.tensor.shape[0]),
+                torch.arange(states.tensor.shape[0], device=states.tensor.device),
                 states.length - 1,
             ]
         ).all()
@@ -598,15 +598,19 @@ class BitSequence(DiscreteEnv):
         Returns:
             The generated test set in the decimal representation.
         """
-        g = torch.Generator()
+        g = torch.Generator(device=self.device)
         if seed is not None:
             g.manual_seed(seed)
 
-        K = torch.randint(0, self.seq_size, (self.n_modes, k), generator=g)
+        K = torch.randint(
+            0, self.seq_size, (self.n_modes, k), generator=g, device=self.device
+        )
         test_set = self.modes.repeat_interleave(k, dim=0)
         for i in range(self.n_modes * k):
-            n_changes = K.view(-1)[i]
-            indices = torch.randperm(self.seq_size, generator=g)[:n_changes]
+            n_changes = int(K.view(-1)[i].item())
+            indices = torch.randperm(self.seq_size, generator=g, device=self.device)[
+                :n_changes
+            ]
             test_set[i, indices] = 1 - test_set[i, indices]
         return self.states_from_tensor(
             self.binary_to_integers(test_set, k=self.word_size)
