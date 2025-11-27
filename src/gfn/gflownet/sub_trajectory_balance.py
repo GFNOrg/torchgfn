@@ -492,18 +492,32 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Returns:
             The contributions tensor of shape (max_len * (max_len+1) / 2, n_trajectories).
         """
-        L = self.lamda
-        max_len = trajectories.max_length
-        t_idx = trajectories.terminating_idx
 
-        # The following tensor represents the weights given to each possible
-        # sub-trajectory length.
-        contributions = (L ** torch.arange(max_len, device=t_idx.device).double()).to(
-            torch.get_default_dtype()
-        )
-        contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
+        max_len = trajectories.max_length
+        if max_len == 0 or len(trajectories) == 0:
+            return torch.zeros(
+                (0, len(trajectories)),
+                device=trajectories.device,
+                dtype=torch.get_default_dtype(),
+            )
+
+        dtype = torch.get_default_dtype()
+        device = trajectories.device
+        t_idx = trajectories.terminating_idx.to(dtype)
+
+        # Clamp lambda away from 0/1 to avoid divisions by zero or log(0) while keeping
+        # the computation compatible with torch.compile.
+        lamda = torch.as_tensor(self.lamda, device=device, dtype=dtype)
+        finfo = torch.finfo(dtype)
+        lamda = torch.clamp(lamda, finfo.tiny, 1 - finfo.eps)
+
+        # Geometric weights for each possible sub-trajectory length, computed in log
+        # space to reduce error when lamda is close to 1.
+        lengths = torch.arange(max_len, device=device, dtype=dtype)
+        log_weights = lengths * torch.log(lamda)
+        contributions = torch.exp(log_weights).unsqueeze(-1).repeat(1, len(trajectories))
         contributions = contributions.repeat_interleave(
-            torch.arange(max_len, 0, -1, device=t_idx.device),
+            torch.arange(max_len, 0, -1, device=device),
             dim=0,
             output_size=int(max_len * (max_len + 1) / 2),
         )
@@ -512,13 +526,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         # where n is the length of the trajectory corresponding to that column
         # We can do it the ugly way, or using the cool identity:
         # https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
-        per_trajectory_denom = (
-            1.0
-            / (1 - L) ** 2
-            * (L * (L ** t_idx.double() - 1) + (1 - L) * t_idx.double())
-        ).to(torch.get_default_dtype())
-        contributions = contributions / per_trajectory_denom / len(trajectories)
+        # Closed-form normalization:
+        # sum_{i=0}^{n-1} (n - i) * lamda^i
+        lamda_pow_n = torch.pow(lamda, t_idx)
+        numerator = lamda * (lamda_pow_n - 1) + (1 - lamda) * t_idx
+        denominator = (1 - lamda) ** 2
+        per_trajectory_denom = numerator / denominator
 
+        contributions = contributions / per_trajectory_denom / len(trajectories)
         return contributions
 
     def loss(
