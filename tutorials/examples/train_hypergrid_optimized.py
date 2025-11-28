@@ -18,6 +18,13 @@ import torch
 from torch.func import vmap
 from tqdm import tqdm
 
+try:  # Enable scalar captures for torch.compile to avoid graph breaks on .item().
+    import torch._dynamo as _torch_dynamo
+
+    _torch_dynamo.config.capture_scalar_outputs = True
+except Exception:  # pragma: no cover - defensive fallback on older PyTorch
+    _torch_dynamo = None
+
 from gfn.containers import Trajectories
 from gfn.env import Env, EnvFastPathMixin
 from gfn.estimators import (
@@ -295,38 +302,20 @@ def _normalize_env_keys(requested: list[str]) -> list[str]:
 class HyperGridWithTensorStep(HyperGrid):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._unit_step_cache: dict[
-            tuple[torch.device, torch.dtype], torch.Tensor
-        ] = {}
-        self._sink_state_cache: dict[
-            tuple[torch.device, torch.dtype], torch.Tensor
-        ] = {}
+        eye = torch.eye(self.ndim, dtype=torch.long)
+        zero_row = torch.zeros((1, self.ndim), dtype=torch.long)
+        self._unit_step_template = torch.cat([eye, zero_row], dim=0)
+        self._sink_state_template = self.sf.to(dtype=torch.long).clone()
 
     def _get_unit_steps(
         self, device: torch.device, dtype: torch.dtype
     ) -> torch.Tensor:
-        key = (device, dtype)
-        cached = self._unit_step_cache.get(key)
-        if cached is None:
-            identity = torch.eye(
-                self.ndim, dtype=dtype, device=device, requires_grad=False
-            )
-            zero_row = torch.zeros(
-                (1, self.ndim), dtype=dtype, device=device, requires_grad=False
-            )
-            cached = torch.cat([identity, zero_row], dim=0)
-            self._unit_step_cache[key] = cached
-        return cached
+        return self._unit_step_template.to(device=device, dtype=dtype)
 
     def _get_sink_state(
         self, device: torch.device, dtype: torch.dtype
     ) -> torch.Tensor:
-        key = (device, dtype)
-        cached = self._sink_state_cache.get(key)
-        if cached is None:
-            cached = self.sf.to(device=device, dtype=dtype)
-            self._sink_state_cache[key] = cached
-        return cached
+        return self._sink_state_template.to(device=device, dtype=dtype)
 
     def step_tensor(
         self, states: torch.Tensor, actions: torch.Tensor
@@ -1293,12 +1282,14 @@ def run_scenario(
     ) = build_training_components(args, device, scenario, flow_variant, env_cfg)
     metrics = init_metrics()
     use_vmap = scenario.use_vmap and flow_variant.supports_vmap
+    compiled_any = False
 
     if scenario.use_compile:
         compile_results = try_compile_gflownet(
             gflownet,
             mode=DEFAULT_COMPILE_MODE,
         )
+        compiled_any = any(compile_results.values())
         formatted = ", ".join(
             f"{name}:{'✓' if success else 'x'}"
             for name, success in compile_results.items()
@@ -1321,7 +1312,7 @@ def run_scenario(
             track_time=False,
             record_history=False,
             supports_validation=env_cfg.supports_validation,
-            mark_compiled_step=scenario.use_compile,
+            mark_compiled_step=compiled_any,
         )
 
     elapsed, history = run_iterations(
@@ -1339,7 +1330,7 @@ def run_scenario(
         track_time=True,
         record_history=True,
         supports_validation=env_cfg.supports_validation,
-        mark_compiled_step=scenario.use_compile,
+        mark_compiled_step=compiled_any,
     )
 
     validation_info = metrics["validation_info"]
