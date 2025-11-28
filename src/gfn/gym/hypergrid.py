@@ -217,14 +217,20 @@ class HyperGrid(EnvFastPathMixin, DiscreteEnv):
         next_states = states_tensor.clone()
 
         non_exit_mask = ~is_exit_action
-        if torch.any(non_exit_mask):
-            sel_states = next_states[non_exit_mask]
-            sel_actions = actions_idx[non_exit_mask]
-            sel_states = sel_states.scatter(-1, sel_actions, 1, reduce="add")
-            next_states[non_exit_mask] = sel_states
+        non_exit_mask_exp = non_exit_mask.unsqueeze(-1)
+        safe_actions = torch.where(
+            non_exit_mask_exp, actions_idx, torch.zeros_like(actions_idx)
+        )
+        delta = torch.zeros_like(next_states)
+        delta = delta.scatter(-1, safe_actions, 1, reduce="add")
+        delta = delta * non_exit_mask_exp.to(next_states.dtype)
+        next_states = next_states + delta
 
-        if torch.any(is_exit_action):
-            next_states[is_exit_action] = self.sf.to(device=states_tensor.device)
+        sink_state = self.sf.to(device=states_tensor.device)
+        while sink_state.ndim < next_states.ndim:
+            sink_state = sink_state.unsqueeze(0)
+        sink_state = sink_state.expand_as(next_states)
+        next_states = torch.where(is_exit_action.unsqueeze(-1), sink_state, next_states)
 
         forward_masks = self.forward_action_masks_tensor(next_states)
         backward_masks = next_states != 0
