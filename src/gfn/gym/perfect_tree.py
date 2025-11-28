@@ -42,7 +42,7 @@ class PerfectBinaryTree(DiscreteEnv):
         self,
         reward_fn: Callable,
         depth: int = 4,
-        device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device | None = None,
         check_action_validity: bool = True,
     ):
         """Initializes the PerfectBinaryTree environment.
@@ -52,6 +52,9 @@ class PerfectBinaryTree(DiscreteEnv):
             depth: The depth of the tree.
             check_action_validity: Whether to check the action validity.
         """
+        if device is None:
+            device = torch.get_default_device()
+
         device = torch.device(device)
         self.reward_fn = reward_fn
         self.depth = depth
@@ -126,9 +129,8 @@ class PerfectBinaryTree(DiscreteEnv):
             self.inverse_transition_table.get(tuple(tuple_)) for tuple_ in tuples
         ]
         next_states_tns = (
-            torch.tensor(next_states_tns, device=states.tensor.device)
+            torch.tensor(next_states_tns, device=states.tensor.device, dtype=torch.int64)
             .reshape(-1, 1)
-            .long()
         )
         return self.States(next_states_tns)
 
@@ -146,9 +148,8 @@ class PerfectBinaryTree(DiscreteEnv):
         tuples = tuple(tuple(tuple_) for tuple_ in tuples)
         next_states_tns = [self.transition_table.get(tuple_) for tuple_ in tuples]
         next_states_tns = (
-            torch.tensor(next_states_tns, device=states.tensor.device)
+            torch.tensor(next_states_tns, device=states.tensor.device, dtype=torch.int64)
             .reshape(-1, 1)
-            .long()
         )
         return self.States(next_states_tns)
 

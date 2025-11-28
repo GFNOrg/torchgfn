@@ -28,7 +28,7 @@ class SetAddition(DiscreteEnv):
         max_items: int,
         reward_fn: Callable,
         fixed_length: bool = False,
-        device: Literal["cpu", "cuda"] | torch.device = "cpu",
+        device: Literal["cpu", "cuda"] | torch.device | None = None,
         check_action_validity: bool = True,
     ):
         """Initializes the SetAddition environment.
@@ -40,6 +40,9 @@ class SetAddition(DiscreteEnv):
             fixed_length: Whether the trajectories have a fixed length.
             check_action_validity: Whether to check the action validity.
         """
+        if device is None:
+            device = torch.get_default_device()
+
         device = torch.device(device)
         self.n_items = n_items
         self.reward_fn = reward_fn
