@@ -318,14 +318,10 @@ class HyperGridWithTensorStep(HyperGrid):
         self._unit_step_template = torch.cat([eye, zero_row], dim=0)
         self._sink_state_template = self.sf.to(dtype=torch.long).clone()
 
-    def _get_unit_steps(
-        self, device: torch.device, dtype: torch.dtype
-    ) -> torch.Tensor:
+    def _get_unit_steps(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         return self._unit_step_template.to(device=device, dtype=dtype)
 
-    def _get_sink_state(
-        self, device: torch.device, dtype: torch.dtype
-    ) -> torch.Tensor:
+    def _get_sink_state(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         return self._sink_state_template.to(device=device, dtype=dtype)
 
     def step_tensor(
@@ -462,9 +458,7 @@ class ChunkedHyperGridSampler(Sampler):
         exit_template_cache: dict[tuple[int, torch.dtype], torch.Tensor] = {}
         dummy_template_cache: dict[tuple[int, torch.dtype], torch.Tensor] = {}
 
-        def _broadcast_done_mask(
-            mask: torch.Tensor, target_ndim: int
-        ) -> torch.Tensor:
+        def _broadcast_done_mask(mask: torch.Tensor, target_ndim: int) -> torch.Tensor:
             view_shape = mask.shape + (1,) * (target_ndim - mask.ndim)
             return mask.view(view_shape)
 
@@ -491,10 +485,15 @@ class ChunkedHyperGridSampler(Sampler):
 
         device_type = curr_states.device.type
         compile_allowed = (
-            hasattr(torch, "compile") and device_type in ("cuda", "cpu") and conditions is None and not policy_kwargs
+            hasattr(torch, "compile")
+            and device_type in ("cuda", "cpu")
+            and conditions is None
+            and not policy_kwargs
         )
         compile_key = (id(env), device_type)
-        chunk_fn: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], tuple] | None = None
+        chunk_fn: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], tuple] | None = (
+            None
+        )
         chunk_fn_compiled = False
         if compile_allowed:
             chunk_fn = self._compiled_chunk_cache.get(compile_key)
@@ -605,9 +604,9 @@ class ChunkedHyperGridSampler(Sampler):
 
                 if actions_buf is None:
                     batch = current_states.shape[0]
-                    empty_actions = env.actions_from_batch_shape(
-                        (0, batch)
-                    ).tensor.to(device=current_states.device)
+                    empty_actions = env.actions_from_batch_shape((0, batch)).tensor.to(
+                        device=current_states.device
+                    )
                     actions_out = empty_actions
                 else:
                     actions_out = actions_buf[:steps_taken]
@@ -663,7 +662,7 @@ class ChunkedHyperGridSampler(Sampler):
             states_tsr = torch.cat(states_seq, dim=0)
             action_shape = getattr(env, "action_shape", None)
             if action_shape:
-                tail_shape = tuple(actions_tsr.shape[-len(action_shape):])
+                tail_shape = tuple(actions_tsr.shape[-len(action_shape) :])
                 if tail_shape != tuple(action_shape):
                     if tuple(action_shape) == (1,):
                         actions_tsr = actions_tsr.unsqueeze(-1)
@@ -777,7 +776,9 @@ class ChunkedDiffusionSampler(Sampler):
             key = (target_ndim, dtype)
             tensor = cache.get(key)
             if tensor is None:
-                tensor = _expand_front(base_value.to(device=device, dtype=dtype), target_ndim)
+                tensor = _expand_front(
+                    base_value.to(device=device, dtype=dtype), target_ndim
+                )
                 cache[key] = tensor
             return tensor
 
@@ -798,7 +799,9 @@ class ChunkedDiffusionSampler(Sampler):
             for _ in range(chunk_size):
                 if bool(done_mask.all().item()):
                     assert action_template is not None
-                    pad_actions = _fill_like_reference(action_template, dummy_action_value)
+                    pad_actions = _fill_like_reference(
+                        action_template, dummy_action_value
+                    )
                     local_recorded_actions.append(pad_actions)
                     local_sinks.append(done_mask.clone())
                     local_states.append(current_states.clone())
@@ -866,7 +869,10 @@ class ChunkedDiffusionSampler(Sampler):
         chunk_fn_compiled = False
         device_type = curr_states.device.type
         compile_allowed = (
-            hasattr(torch, "compile") and device_type in ("cuda", "cpu") and conditions is None and not policy_kwargs
+            hasattr(torch, "compile")
+            and device_type in ("cuda", "cpu")
+            and conditions is None
+            and not policy_kwargs
         )
         cache_key = (id(env), device_type)
         if compile_allowed:
@@ -909,7 +915,7 @@ class ChunkedDiffusionSampler(Sampler):
             states_tsr = torch.stack(states_stack, dim=0)
             action_shape = getattr(env, "action_shape", None)
             if action_shape:
-                tail_shape = tuple(actions_tsr.shape[-len(action_shape):])
+                tail_shape = tuple(actions_tsr.shape[-len(action_shape) :])
                 if tail_shape != tuple(action_shape):
                     if tuple(action_shape) == (1,):
                         actions_tsr = actions_tsr.unsqueeze(-1)
@@ -992,9 +998,9 @@ class FastKHotDiscretePolicyEstimator(FastPolicyMixin, DiscretePolicyEstimator):
         safe_states = torch.where(
             sink_mask, torch.zeros_like(states_tensor), states_tensor
         )
-        khot = torch.nn.functional.one_hot(
-            safe_states, num_classes=self.height
-        ).to(dtype=torch.get_default_dtype())
+        khot = torch.nn.functional.one_hot(safe_states, num_classes=self.height).to(
+            dtype=torch.get_default_dtype()
+        )
         if sink_mask.any():
             khot = khot * (~sink_mask).unsqueeze(-1).to(khot.dtype)
         return khot.view(states_tensor.shape[0], -1)
@@ -1434,7 +1440,11 @@ def run_iterations(
             metrics["measured_steps"] += 1
 
         last_loss = loss.item()
-        if record_history and losses_history is not None and iter_time_history is not None:
+        if (
+            record_history
+            and losses_history is not None
+            and iter_time_history is not None
+        ):
             losses_history.append(last_loss)
             iter_duration = (
                 (time.perf_counter() - iter_start) if iter_start is not None else 0.0
