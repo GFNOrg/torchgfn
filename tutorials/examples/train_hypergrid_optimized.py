@@ -106,18 +106,26 @@ HYPERGRID_SCENARIOS: list[ScenarioConfig] = [
         use_vmap=False,
     ),
     ScenarioConfig(
-        name="Library Fast Path",
-        description="Core EnvFastPath + CompiledChunkSampler + compile + vmap TB.",
-        sampler="compiled_chunk",
+        name="VMap Only",
+        description="VMAP Accelerated Loss.",
+        sampler="standard",
+        use_script_env=False,
+        use_compile=False,
+        use_vmap=True,
+    ),
+    ScenarioConfig(
+        name="Compile Only (core)",
+        description="Standard env + sampler with torch.compile but no chunking.",
+        sampler="standard",
         use_script_env=False,
         use_compile=True,
         use_vmap=True,
     ),
     ScenarioConfig(
-        name="Script Env + Compiled Chunk",
-        description="Script-local tensor env + library CompiledChunkSampler + compile/vmap.",
+        name="Library Fast Path",
+        description="Core EnvFastPath + CompiledChunkSampler + compile + vmap TB.",
         sampler="compiled_chunk",
-        use_script_env=True,
+        use_script_env=False,
         use_compile=True,
         use_vmap=True,
     ),
@@ -139,6 +147,22 @@ DIFFUSION_SCENARIOS: list[ScenarioConfig] = [
         use_script_env=False,
         use_compile=False,
         use_vmap=False,
+    ),
+    ScenarioConfig(
+        name="Diffusion VMap Only",
+        description="Pinned Brownian sampler without compilation or chunking.",
+        sampler="standard",
+        use_script_env=False,
+        use_compile=False,
+        use_vmap=True,
+    ),
+    ScenarioConfig(
+        name="Diffusion Compile Only",
+        description="Standard diffusion sampler with torch.compile but no chunking.",
+        sampler="standard",
+        use_script_env=False,
+        use_compile=True,
+        use_vmap=True,
     ),
     ScenarioConfig(
         name="Diffusion Library Fast Path",
@@ -193,10 +217,11 @@ VARIANT_COLORS: dict[str, str] = {
 }
 SCENARIO_LINESTYLES: dict[str, Any] = {
     "Baseline (core)": "-",
+    "Compile Only (core)": "-.",
     "Library Fast Path": "--",  # fast-path compiled
-    "Script Env + Compiled Chunk": "dashdot",
     "Script Fast Path": ":",
     "Diffusion Baseline": "-",
+    "Diffusion Compile Only": "-.",
     "Diffusion Library Fast Path": "--",
     "Diffusion Script Fast Path": ":",
 }
@@ -1208,6 +1233,7 @@ def run_scenario(
             track_time=False,
             record_history=False,
             supports_validation=env_cfg.supports_validation,
+            mark_compiled_step=scenario.use_compile,
         )
 
     elapsed, history = run_iterations(
@@ -1225,6 +1251,7 @@ def run_scenario(
         track_time=True,
         record_history=True,
         supports_validation=env_cfg.supports_validation,
+        mark_compiled_step=scenario.use_compile,
     )
 
     validation_info = metrics["validation_info"]
@@ -1272,6 +1299,7 @@ def run_iterations(
     track_time: bool,
     record_history: bool,
     supports_validation: bool,
+    mark_compiled_step: bool = False,
 ) -> tuple[float | None, Dict[str, list[float]] | None]:
     if n_iters <= 0:
         empty_history = {"losses": [], "iter_times": []} if record_history else None
@@ -1290,6 +1318,8 @@ def run_iterations(
 
     for _ in iterator:
         iter_start = time.perf_counter() if (track_time or record_history) else None
+        if mark_compiled_step:
+            _mark_cudagraph_step()
         trajectories = sampler.sample_trajectories(
             env,
             n=args.batch_size,
