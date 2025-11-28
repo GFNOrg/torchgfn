@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import statistics
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, cast
@@ -268,16 +269,20 @@ class HyperGridWithTensorStep(HyperGrid):
 
         next_states = states.clone()
         non_exit_mask = ~is_exit
-        if torch.any(non_exit_mask):
-            sel_states = next_states[non_exit_mask]
-            sel_actions = actions_idx[non_exit_mask]
-            sel_states = sel_states.scatter(-1, sel_actions, 1, reduce="add")
-            next_states[non_exit_mask] = sel_states
-        if torch.any(is_exit):
-            # Ensure exit actions land exactly on the sink state so downstream
-            # `is_sink_state` masks match the action padding semantics assumed
-            # by `Trajectories` and probability calculations.
-            next_states[is_exit] = self.sf.to(device=device)
+        non_exit_mask_exp = non_exit_mask.unsqueeze(-1)
+        safe_actions = torch.where(
+            non_exit_mask_exp, actions_idx, torch.zeros_like(actions_idx)
+        )
+        delta = torch.zeros_like(next_states)
+        delta = delta.scatter(-1, safe_actions, 1, reduce="add")
+        delta = delta * non_exit_mask_exp.to(next_states.dtype)
+        next_states = next_states + delta
+
+        # Ensure exit actions land exactly on the sink state so downstream
+        # `is_sink_state` masks match the action padding semantics assumed
+        # by `Trajectories` and probability calculations.
+        sink_state = self.sf.to(device=device).unsqueeze(0).expand_as(next_states)
+        next_states = torch.where(is_exit.unsqueeze(-1), sink_state, next_states)
 
         next_forward_masks = torch.ones(
             (batch, self.n_actions), dtype=torch.bool, device=device
@@ -326,7 +331,8 @@ class ChunkedHyperGridSampler(Sampler):
     ):
         assert self.chunk_size > 0
         assert hasattr(env, "step_tensor")
-        epsilon = float(policy_kwargs.get("epsilon", 0.0))
+        policy_kwargs = dict(policy_kwargs)
+        epsilon = float(policy_kwargs.pop("epsilon", 0.0))
 
         if states is None:
             assert n is not None
@@ -334,10 +340,12 @@ class ChunkedHyperGridSampler(Sampler):
         else:
             states_obj = states
 
-        estimator = self.estimator
-        module = getattr(estimator, "module", None)
-        assert module is not None
-        height = int(env.height)
+        if not isinstance(self.estimator, FastPolicyMixin):
+            raise TypeError(
+                "ChunkedHyperGridSampler requires a FastPolicy-compatible estimator."
+            )
+        policy = cast(FastPolicyMixin, self.estimator)
+        chunk_size = max(1, self.chunk_size)
         exit_idx = env.n_actions - 1
 
         curr_states = states_obj.tensor
@@ -370,31 +378,28 @@ class ChunkedHyperGridSampler(Sampler):
             next_states, next_masks, is_exit_states = step_result
             return next_states, next_masks, is_exit_states
 
+        exit_action_value = env.exit_action.to(device=device)
+        dummy_action_value = env.dummy_action.to(device=device)
+
         forward_masks = compute_forward_masks(curr_states)
         done = torch.zeros(batch, dtype=torch.bool, device=device)
         actions_seq: List[torch.Tensor] = []
         dones_seq: List[torch.Tensor] = []
+        states_stack: List[torch.Tensor] = [curr_states.clone()]
 
-        def sample_actions_from_logits(
-            logits: torch.Tensor, masks: torch.Tensor, eps: float
-        ) -> torch.Tensor:
-            masked_logits = logits.masked_fill(~masks, float("-inf"))
-            probs = torch.softmax(masked_logits, dim=-1)
+        def _expand_front(tensor: torch.Tensor, target_ndim: int) -> torch.Tensor:
+            expand_dims = target_ndim - tensor.ndim
+            if expand_dims <= 0:
+                return tensor
+            view_shape = (1,) * expand_dims + tuple(tensor.shape)
+            return tensor.view(view_shape)
 
-            if eps > 0.0:
-                valid_counts = masks.sum(dim=-1, keepdim=True).clamp_min(1)
-                uniform = masks.to(probs.dtype) / valid_counts.to(probs.dtype)
-                probs = (1.0 - eps) * probs + eps * uniform
-
-            # Ensure exit actions have probability 1.0 so that they land exactly on
-            # the sink state and downstream `is_sink_state` masks match the action
-            # padding semantics assumed by `Trajectories` and probability calculations.
-            nan_rows = torch.isnan(probs).any(dim=-1)
-            if nan_rows.any():
-                probs[nan_rows] = 0.0
-                probs[nan_rows, exit_idx] = 1.0
-
-            return torch.multinomial(probs, 1)
+        def _expand_back(tensor: torch.Tensor, target_ndim: int) -> torch.Tensor:
+            expand_dims = target_ndim - tensor.ndim
+            if expand_dims <= 0:
+                return tensor
+            view_shape = tuple(tensor.shape) + (1,) * expand_dims
+            return tensor.view(view_shape)
 
         def _chunk_loop(
             current_states: torch.Tensor,
@@ -403,38 +408,72 @@ class ChunkedHyperGridSampler(Sampler):
         ):
             actions_list: List[torch.Tensor] = []
             dones_list: List[torch.Tensor] = []
-            for _ in range(self.chunk_size):
-                if done_mask.any():
-                    current_masks = current_masks.clone()
-                    current_masks[done_mask] = False
-                    current_masks[done_mask, exit_idx] = True
-                states_for_encoding = torch.clamp(current_states, min=0)
-                khot = torch.nn.functional.one_hot(
-                    states_for_encoding, num_classes=height
-                ).to(dtype=torch.get_default_dtype())
-                khot = khot.view(current_states.shape[0], -1)
-                logits = module(khot)
-                actions = sample_actions_from_logits(logits, current_masks, epsilon)
-                next_states, next_masks, is_exit = step_tensor(current_states, actions)
-                record_actions = actions.clone()
+            states_list: List[torch.Tensor] = []
+            for _ in range(chunk_size):
+                if bool(done_mask.all().item()):
+                    break
 
-                # Replace actions for already-finished trajectories with the dummy
-                # action so that their timeline matches the padded semantics expected
-                # by Trajectories (actions.is_dummy aligns with states.is_sink_state[:-1]).
+                masks = current_masks
                 if done_mask.any():
-                    dummy_val = env.dummy_action.to(device=device)
-                    record_actions[done_mask] = dummy_val
+                    masks = masks.clone()
+                    masks[done_mask] = False
+                    masks[done_mask, exit_idx] = True
+
+                features = policy.fast_features(
+                    current_states,
+                    forward_masks=masks,
+                    backward_masks=None,
+                    conditions=conditions,
+                )
+                dist = policy.fast_distribution(
+                    features,
+                    forward_masks=masks,
+                    backward_masks=None,
+                    states_tensor=current_states,
+                    epsilon=epsilon,
+                    **policy_kwargs,
+                )
+                sampled_actions = dist.sample()
+                step_actions = sampled_actions
+                record_actions = sampled_actions
+
+                if done_mask.any():
+                    mask = _expand_back(done_mask, sampled_actions.ndim)
+                    exit_fill = _expand_front(
+                        exit_action_value.to(
+                            device=sampled_actions.device, dtype=sampled_actions.dtype
+                        ),
+                        sampled_actions.ndim,
+                    )
+                    dummy_fill = _expand_front(
+                        dummy_action_value.to(
+                            device=sampled_actions.device, dtype=sampled_actions.dtype
+                        ),
+                        sampled_actions.ndim,
+                    )
+                    step_actions = torch.where(mask, exit_fill, sampled_actions)
+                    record_actions = torch.where(mask, dummy_fill, sampled_actions)
+
+                next_states, next_masks, is_exit = step_tensor(
+                    current_states, step_actions
+                )
+
                 actions_list.append(record_actions)
                 dones_list.append(is_exit)
+                states_list.append(next_states.clone())
 
                 current_states = next_states
                 current_masks = next_masks
                 done_mask = done_mask | is_exit
 
-                if bool(done_mask.all().item()):
-                    break
-
-            return current_states, current_masks, done_mask, actions_list, dones_list
+            return (
+                current_states,
+                current_masks,
+                done_mask,
+                actions_list,
+                dones_list,
+                states_list,
+            )
 
         chunk_fn = _chunk_loop
         if hasattr(torch, "compile"):
@@ -444,34 +483,35 @@ class ChunkedHyperGridSampler(Sampler):
                 pass
 
         while not bool(done.all().item()):
-            curr_states, forward_masks, done, actions_chunk, dones_chunk = chunk_fn(
-                curr_states, forward_masks, done
-            )
+            (
+                curr_states,
+                forward_masks,
+                done,
+                actions_chunk,
+                dones_chunk,
+                states_chunk,
+            ) = chunk_fn(curr_states, forward_masks, done)
             if actions_chunk:
                 actions_seq.extend(actions_chunk)
                 dones_seq.extend(dones_chunk)
+                states_stack.extend(states_chunk)
 
         if actions_seq:
-            actions_tsr = torch.stack([a for a in actions_seq], dim=0)
-            replay_actions = actions_tsr.clone()
-            dummy_val = env.dummy_action.to(device=device, dtype=replay_actions.dtype)
-            exit_val = env.exit_action.to(device=device, dtype=replay_actions.dtype)
-
-            mask = replay_actions == dummy_val
-            if mask.any():
-                exit_fill = exit_val
-                while exit_fill.ndim < replay_actions.ndim:
-                    exit_fill = exit_fill.unsqueeze(0)
-                replay_actions = torch.where(mask, exit_fill, replay_actions)
-
-            T = actions_tsr.shape[0]
-            s = states_obj.tensor
-            states_stack = [s]
-            for t in range(T):
-                s, _, _ = step_tensor(s, replay_actions[t])
-                states_stack.append(s)
+            actions_tsr = torch.stack(actions_seq, dim=0)
             states_tsr = torch.stack(states_stack, dim=0)
+            action_shape = getattr(env, "action_shape", None)
+            if action_shape:
+                tail_shape = tuple(actions_tsr.shape[-len(action_shape):])
+                if tail_shape != tuple(action_shape):
+                    if tuple(action_shape) == (1,):
+                        actions_tsr = actions_tsr.unsqueeze(-1)
+                    else:
+                        raise ValueError(
+                            "ChunkedHyperGridSampler produced actions with shape "
+                            f"{actions_tsr.shape}, expected trailing dims {action_shape}."
+                        )
             is_exit_seq = torch.stack(dones_seq, dim=0)
+            T = actions_tsr.shape[0]
             first_exit = torch.argmax(is_exit_seq.to(torch.long), dim=0)
             never_exited = ~is_exit_seq.any(dim=0)
             first_exit = torch.where(
@@ -543,9 +583,40 @@ class ChunkedDiffusionSampler(Sampler):
         exit_action_value = env.exit_action.to(device=curr_states.device)
         dummy_action_value = env.dummy_action.to(device=curr_states.device)
 
-        step_actions_seq: List[torch.Tensor] = []
         recorded_actions_seq: List[torch.Tensor] = []
         sink_seq: List[torch.Tensor] = []
+        states_stack: List[torch.Tensor] = [curr_states.clone()]
+
+        exit_template_cache: dict[tuple[int, torch.dtype], torch.Tensor] = {}
+        dummy_template_cache: dict[tuple[int, torch.dtype], torch.Tensor] = {}
+
+        def _expand_front(tensor: torch.Tensor, target_ndim: int) -> torch.Tensor:
+            expand_dims = target_ndim - tensor.ndim
+            if expand_dims <= 0:
+                return tensor
+            view_shape = (1,) * expand_dims + tuple(tensor.shape)
+            return tensor.view(view_shape)
+
+        def _expand_back(tensor: torch.Tensor, target_ndim: int) -> torch.Tensor:
+            expand_dims = target_ndim - tensor.ndim
+            if expand_dims <= 0:
+                return tensor
+            view_shape = tuple(tensor.shape) + (1,) * expand_dims
+            return tensor.view(view_shape)
+
+        def _get_template(
+            cache: dict[tuple[int, torch.dtype], torch.Tensor],
+            base_value: torch.Tensor,
+            target_ndim: int,
+            dtype: torch.dtype,
+            device: torch.device,
+        ) -> torch.Tensor:
+            key = (target_ndim, dtype)
+            tensor = cache.get(key)
+            if tensor is None:
+                tensor = _expand_front(base_value.to(device=device, dtype=dtype), target_ndim)
+                cache[key] = tensor
+            return tensor
 
         def _chunk_loop(current_states: torch.Tensor, done_mask: torch.Tensor) -> tuple[
             torch.Tensor,
@@ -554,12 +625,12 @@ class ChunkedDiffusionSampler(Sampler):
             List[torch.Tensor],
             List[torch.Tensor],
         ]:
-            local_step_actions: List[torch.Tensor] = []
             local_recorded_actions: List[torch.Tensor] = []
             local_sinks: List[torch.Tensor] = []
+            local_states: List[torch.Tensor] = []
 
             for _ in range(chunk_size):
-                if bool(done_mask.all().item()):
+                if torch.all(done_mask):
                     break
 
                 features = policy.fast_features(
@@ -576,29 +647,27 @@ class ChunkedDiffusionSampler(Sampler):
                     **policy_kwargs,
                 )
                 sampled_actions = dist.sample()
+                step_actions = sampled_actions
+                record_actions = sampled_actions
 
-                if done_mask.any():
-                    mask = done_mask
-                    while mask.ndim < sampled_actions.ndim:
-                        mask = mask.unsqueeze(-1)
-
-                    exit_fill = exit_action_value.to(
-                        device=sampled_actions.device, dtype=sampled_actions.dtype
+                if torch.any(done_mask):
+                    mask = _expand_back(done_mask, sampled_actions.ndim)
+                    exit_fill = _get_template(
+                        exit_template_cache,
+                        exit_action_value,
+                        sampled_actions.ndim,
+                        sampled_actions.dtype,
+                        sampled_actions.device,
                     )
-                    while exit_fill.ndim < sampled_actions.ndim:
-                        exit_fill = exit_fill.unsqueeze(0)
-
-                    dummy_fill = dummy_action_value.to(
-                        device=sampled_actions.device, dtype=sampled_actions.dtype
+                    dummy_fill = _get_template(
+                        dummy_template_cache,
+                        dummy_action_value,
+                        sampled_actions.ndim,
+                        sampled_actions.dtype,
+                        sampled_actions.device,
                     )
-                    while dummy_fill.ndim < sampled_actions.ndim:
-                        dummy_fill = dummy_fill.unsqueeze(0)
-
                     step_actions = torch.where(mask, exit_fill, sampled_actions)
                     record_actions = torch.where(mask, dummy_fill, sampled_actions)
-                else:
-                    step_actions = sampled_actions
-                    record_actions = sampled_actions
 
                 step_res = env.step_tensor(current_states, step_actions)
                 current_states = step_res.next_states
@@ -607,16 +676,16 @@ class ChunkedDiffusionSampler(Sampler):
                     sinks = env.states_from_tensor(current_states).is_sink_state
 
                 done_mask = done_mask | sinks
-                local_step_actions.append(step_actions)
                 local_recorded_actions.append(record_actions)
                 local_sinks.append(sinks)
+                local_states.append(current_states.clone())
 
             return (
                 current_states,
                 done_mask,
-                local_step_actions,
                 local_recorded_actions,
                 local_sinks,
+                local_states,
             )
 
         chunk_fn = _chunk_loop
@@ -624,36 +693,41 @@ class ChunkedDiffusionSampler(Sampler):
         if hasattr(torch, "compile") and device_type in ("cuda", "cpu"):
             try:
                 chunk_fn = torch.compile(_chunk_loop, mode="reduce-overhead")  # type: ignore[arg-type]
-            except Exception:
-                raise RuntimeError(
-                    "Compilation of _chunk_loop for Diffusion Sampling fails on MPS"
+            except Exception as exc:  # pragma: no cover - compile fallback
+                warnings.warn(
+                    f"Compilation of diffusion chunk loop failed ({exc}); using eager version.",
+                    stacklevel=2,
                 )
+                chunk_fn = _chunk_loop
 
         while not bool(done.all().item()):
             (
                 curr_states,
                 done,
-                step_actions_chunk,
                 recorded_actions_chunk,
                 sinks_chunk,
+                states_chunk,
             ) = chunk_fn(curr_states, done)
-            if step_actions_chunk:
-                step_actions_seq.extend(step_actions_chunk)
+            if recorded_actions_chunk:
                 recorded_actions_seq.extend(recorded_actions_chunk)
                 sink_seq.extend(sinks_chunk)
+                states_stack.extend(states_chunk)
 
         if recorded_actions_seq:
             actions_tsr = torch.stack(recorded_actions_seq, dim=0)
-            T = actions_tsr.shape[0]
-
-            s = states_obj.tensor
-            states_stack = [s]
-            for t in range(T):
-                step = env.step_tensor(s, step_actions_seq[t])
-                s = step.next_states
-                states_stack.append(s)
             states_tsr = torch.stack(states_stack, dim=0)
-
+            action_shape = getattr(env, "action_shape", None)
+            if action_shape:
+                tail_shape = tuple(actions_tsr.shape[-len(action_shape):])
+                if tail_shape != tuple(action_shape):
+                    if tuple(action_shape) == (1,):
+                        actions_tsr = actions_tsr.unsqueeze(-1)
+                    else:
+                        raise ValueError(
+                            "ChunkedDiffusionSampler produced actions with shape "
+                            f"{actions_tsr.shape}, expected trailing dims {action_shape}."
+                        )
+            T = actions_tsr.shape[0]
             sinks_tsr = torch.stack(sink_seq, dim=0)
             first_sink = torch.argmax(sinks_tsr.to(torch.long), dim=0)
             never_sink = ~sinks_tsr.any(dim=0)
@@ -1156,11 +1230,7 @@ def run_iterations(
             metrics["measured_steps"] += 1
 
         last_loss = loss.item()
-        if (
-            record_history
-            and losses_history is not None
-            and iter_time_history is not None
-        ):
+        if record_history and losses_history is not None and iter_time_history is not None:
             losses_history.append(last_loss)
             iter_duration = (
                 (time.perf_counter() - iter_start) if iter_start is not None else 0.0
@@ -1328,7 +1398,7 @@ def _build_hypergrid_components(
         trunk=module_pf.trunk,
     )
 
-    if scenario.sampler == "compiled_chunk":
+    if scenario.sampler in {"compiled_chunk", "script_chunk"}:
         pf_estimator = FastKHotDiscretePolicyEstimator(env, module_pf, preprocessor)
     else:
         pf_estimator = DiscretePolicyEstimator(
