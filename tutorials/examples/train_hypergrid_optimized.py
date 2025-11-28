@@ -293,51 +293,79 @@ def _normalize_env_keys(requested: list[str]) -> list[str]:
 
 # Local subclasses for benchmarking-only optimizations (no core library changes)
 class HyperGridWithTensorStep(HyperGrid):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._unit_step_cache: dict[
+            tuple[torch.device, torch.dtype], torch.Tensor
+        ] = {}
+        self._sink_state_cache: dict[
+            tuple[torch.device, torch.dtype], torch.Tensor
+        ] = {}
+
+    def _get_unit_steps(
+        self, device: torch.device, dtype: torch.dtype
+    ) -> torch.Tensor:
+        key = (device, dtype)
+        cached = self._unit_step_cache.get(key)
+        if cached is None:
+            identity = torch.eye(
+                self.ndim, dtype=dtype, device=device, requires_grad=False
+            )
+            zero_row = torch.zeros(
+                (1, self.ndim), dtype=dtype, device=device, requires_grad=False
+            )
+            cached = torch.cat([identity, zero_row], dim=0)
+            self._unit_step_cache[key] = cached
+        return cached
+
+    def _get_sink_state(
+        self, device: torch.device, dtype: torch.dtype
+    ) -> torch.Tensor:
+        key = (device, dtype)
+        cached = self._sink_state_cache.get(key)
+        if cached is None:
+            cached = self.sf.to(device=device, dtype=dtype)
+            self._sink_state_cache[key] = cached
+        return cached
+
     def step_tensor(
         self, states: torch.Tensor, actions: torch.Tensor
     ) -> Env.TensorStepResult:
         assert states.dtype == torch.long
         device = states.device
         batch = states.shape[0]
-        ndim = self.ndim
         exit_idx = self.n_actions - 1
 
         if actions.ndim == 1:
-            actions_idx = actions.view(-1, 1)
+            action_idx = actions
         else:
-            assert actions.shape[-1] == 1
-            actions_idx = actions
+            action_idx = actions.view(-1)
 
-        is_exit = actions_idx.squeeze(-1) == exit_idx
+        action_idx = action_idx.to(torch.long)
+        is_exit = action_idx == exit_idx
 
-        next_states = states.clone()
-        non_exit_mask = ~is_exit
-        non_exit_mask_exp = non_exit_mask.unsqueeze(-1)
-        safe_actions = torch.where(
-            non_exit_mask_exp, actions_idx, torch.zeros_like(actions_idx)
+        unit_steps = self._get_unit_steps(device, states.dtype)
+        deltas = unit_steps.index_select(0, action_idx.clamp(max=exit_idx))
+        next_states = states + deltas
+
+        sink_state = self._get_sink_state(device, states.dtype).view(1, -1)
+        next_states = torch.where(
+            is_exit.view(-1, 1), sink_state.expand_as(next_states), next_states
         )
-        delta = torch.zeros_like(next_states)
-        delta = delta.scatter(-1, safe_actions, 1, reduce="add")
-        delta = delta * non_exit_mask_exp.to(next_states.dtype)
-        next_states = next_states + delta
 
-        # Ensure exit actions land exactly on the sink state so downstream
-        # `is_sink_state` masks match the action padding semantics assumed
-        # by `Trajectories` and probability calculations.
-        sink_state = self.sf.to(device=device).unsqueeze(0).expand_as(next_states)
-        next_states = torch.where(is_exit.unsqueeze(-1), sink_state, next_states)
-
-        next_forward_masks = torch.ones(
-            (batch, self.n_actions), dtype=torch.bool, device=device
+        forward_masks = torch.cat(
+            [
+                next_states != (self.height - 1),
+                torch.ones((batch, 1), dtype=torch.bool, device=device),
+            ],
+            dim=-1,
         )
-        next_forward_masks[:, :ndim] = next_states != (self.height - 1)
-        next_forward_masks[:, ndim] = True
         backward_masks = next_states != 0
 
         return self.TensorStepResult(
             next_states=next_states,
             is_sink_state=is_exit,
-            forward_masks=next_forward_masks,
+            forward_masks=forward_masks,
             backward_masks=backward_masks,
         )
 
@@ -429,21 +457,37 @@ class ChunkedHyperGridSampler(Sampler):
         done = torch.zeros(batch, dtype=torch.bool, device=device)
         actions_seq: List[torch.Tensor] = []
         dones_seq: List[torch.Tensor] = []
-        states_stack: List[torch.Tensor] = [curr_states.clone()]
+        states_seq: List[torch.Tensor] = [curr_states.clone().unsqueeze(0)]
 
-        def _expand_front(tensor: torch.Tensor, target_ndim: int) -> torch.Tensor:
-            expand_dims = target_ndim - tensor.ndim
-            if expand_dims <= 0:
-                return tensor
-            view_shape = (1,) * expand_dims + tuple(tensor.shape)
-            return tensor.view(view_shape)
+        exit_template_cache: dict[tuple[int, torch.dtype], torch.Tensor] = {}
+        dummy_template_cache: dict[tuple[int, torch.dtype], torch.Tensor] = {}
 
-        def _expand_back(tensor: torch.Tensor, target_ndim: int) -> torch.Tensor:
-            expand_dims = target_ndim - tensor.ndim
-            if expand_dims <= 0:
-                return tensor
-            view_shape = tuple(tensor.shape) + (1,) * expand_dims
-            return tensor.view(view_shape)
+        def _broadcast_done_mask(
+            mask: torch.Tensor, target_ndim: int
+        ) -> torch.Tensor:
+            view_shape = mask.shape + (1,) * (target_ndim - mask.ndim)
+            return mask.view(view_shape)
+
+        def _get_template(
+            cache: dict[tuple[int, torch.dtype], torch.Tensor],
+            base_value: torch.Tensor,
+            target_ndim: int,
+            dtype: torch.dtype,
+            device: torch.device,
+        ) -> torch.Tensor:
+            key = (target_ndim, dtype)
+            tensor = cache.get(key)
+            if tensor is None:
+                tensor = base_value.to(device=device, dtype=dtype)
+                if tensor.ndim > target_ndim:
+                    raise ValueError(
+                        f"Base action tensor has ndim={tensor.ndim}, "
+                        f"but target_ndim={target_ndim}."
+                    )
+                leading = (1,) * (target_ndim - tensor.ndim)
+                tensor = tensor.view(leading + tuple(tensor.shape))
+                cache[key] = tensor
+            return tensor
 
         device_type = curr_states.device.type
         compile_allowed = (
@@ -464,18 +508,21 @@ class ChunkedHyperGridSampler(Sampler):
                 current_masks: torch.Tensor,
                 done_mask: torch.Tensor,
             ):
-                actions_list: List[torch.Tensor] = []
-                dones_list: List[torch.Tensor] = []
-                states_list: List[torch.Tensor] = []
-                action_template: torch.Tensor | None = None
+                actions_buf: torch.Tensor | None = None
+                dones_buf: torch.Tensor | None = None
+                states_buf: torch.Tensor | None = None
+                pad_template: torch.Tensor | None = None
                 steps_taken = 0
-                for _ in range(chunk_size):
+
+                for step in range(chunk_size):
                     if bool(done_mask.all().item()):
-                        assert action_template is not None
-                        pad_actions = _fill_like_reference(action_template, dummy_action_value)
-                        actions_list.append(pad_actions)
-                        dones_list.append(done_mask.clone())
-                        states_list.append(current_states.clone())
+                        assert actions_buf is not None
+                        assert dones_buf is not None
+                        assert states_buf is not None
+                        assert pad_template is not None
+                        actions_buf[step].copy_(pad_template)
+                        dones_buf[step].copy_(done_mask)
+                        states_buf[step].copy_(current_states)
                         continue
 
                     masks = current_masks
@@ -503,19 +550,21 @@ class ChunkedHyperGridSampler(Sampler):
                     record_actions = sampled_actions
 
                     if done_mask.any():
-                        mask = _expand_back(done_mask, sampled_actions.ndim)
-                        exit_fill = _expand_front(
-                            exit_action_value.to(
-                                device=sampled_actions.device, dtype=sampled_actions.dtype
-                            ),
+                        mask = _broadcast_done_mask(done_mask, sampled_actions.ndim)
+                        exit_fill = _get_template(
+                            exit_template_cache,
+                            exit_action_value,
                             sampled_actions.ndim,
-                        )
-                        dummy_fill = _expand_front(
-                            dummy_action_value.to(
-                                device=sampled_actions.device, dtype=sampled_actions.dtype
-                            ),
+                            sampled_actions.dtype,
+                            sampled_actions.device,
+                        ).expand_as(sampled_actions)
+                        dummy_fill = _get_template(
+                            dummy_template_cache,
+                            dummy_action_value,
                             sampled_actions.ndim,
-                        )
+                            sampled_actions.dtype,
+                            sampled_actions.device,
+                        ).expand_as(sampled_actions)
                         step_actions = torch.where(mask, exit_fill, sampled_actions)
                         record_actions = torch.where(mask, dummy_fill, sampled_actions)
 
@@ -523,23 +572,62 @@ class ChunkedHyperGridSampler(Sampler):
                         current_states, step_actions
                     )
 
-                    actions_list.append(record_actions)
-                    action_template = record_actions.detach()
-                    dones_list.append(is_exit)
-                    states_list.append(next_states.clone())
+                    if actions_buf is None:
+                        actions_buf = record_actions.new_empty(
+                            (chunk_size,) + tuple(record_actions.shape)
+                        )
+                        dones_buf = is_exit.new_empty(
+                            (chunk_size,) + tuple(is_exit.shape)
+                        )
+                        states_buf = next_states.new_empty(
+                            (chunk_size,) + tuple(next_states.shape)
+                        )
+                        pad_template = _get_template(
+                            dummy_template_cache,
+                            dummy_action_value,
+                            record_actions.ndim,
+                            record_actions.dtype,
+                            record_actions.device,
+                        ).expand_as(record_actions)
+
+                    assert actions_buf is not None
+                    assert dones_buf is not None
+                    assert states_buf is not None
+
+                    actions_buf[step].copy_(record_actions)
+                    dones_buf[step].copy_(is_exit)
+                    states_buf[step].copy_(next_states)
 
                     current_states = next_states
                     current_masks = next_masks
                     done_mask = done_mask | is_exit
                     steps_taken += 1
 
+                if actions_buf is None:
+                    batch = current_states.shape[0]
+                    empty_actions = env.actions_from_batch_shape(
+                        (0, batch)
+                    ).tensor.to(device=current_states.device)
+                    actions_out = empty_actions
+                else:
+                    actions_out = actions_buf[:steps_taken]
+
+                empty_dones = done_mask.new_empty((0,) + done_mask.shape)
+                empty_states = current_states.new_empty((0,) + current_states.shape)
+                dones_out = (
+                    dones_buf[:steps_taken] if dones_buf is not None else empty_dones
+                )
+                states_out = (
+                    states_buf[:steps_taken] if states_buf is not None else empty_states
+                )
+
                 return (
                     current_states,
                     current_masks,
                     done_mask,
-                    actions_list,
-                    dones_list,
-                    states_list,
+                    actions_out,
+                    dones_out,
+                    states_out,
                     torch.tensor(steps_taken, device=current_states.device),
                 )
 
@@ -566,13 +654,13 @@ class ChunkedHyperGridSampler(Sampler):
             ) = chunk_fn(curr_states, forward_masks, done)
             steps_taken = int(steps_taken_tensor.item())
             if steps_taken:
-                actions_seq.extend(actions_chunk[:steps_taken])
-                dones_seq.extend(dones_chunk[:steps_taken])
-                states_stack.extend(states_chunk[:steps_taken])
+                actions_seq.append(actions_chunk)
+                dones_seq.append(dones_chunk)
+                states_seq.append(states_chunk)
 
         if actions_seq:
-            actions_tsr = torch.stack(actions_seq, dim=0)
-            states_tsr = torch.stack(states_stack, dim=0)
+            actions_tsr = torch.cat(actions_seq, dim=0)
+            states_tsr = torch.cat(states_seq, dim=0)
             action_shape = getattr(env, "action_shape", None)
             if action_shape:
                 tail_shape = tuple(actions_tsr.shape[-len(action_shape):])
@@ -584,7 +672,7 @@ class ChunkedHyperGridSampler(Sampler):
                             "ChunkedHyperGridSampler produced actions with shape "
                             f"{actions_tsr.shape}, expected trailing dims {action_shape}."
                         )
-            is_exit_seq = torch.stack(dones_seq, dim=0)
+            is_exit_seq = torch.cat(dones_seq, dim=0)
             T = actions_tsr.shape[0]
             first_exit = torch.argmax(is_exit_seq.to(torch.long), dim=0)
             never_exited = ~is_exit_seq.any(dim=0)
