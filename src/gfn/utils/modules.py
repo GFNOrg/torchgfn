@@ -765,6 +765,57 @@ class GraphEdgeActionMLP(nn.Module):
         )
 
 
+class GraphScalarMLP(nn.Module):
+    """Graph encoder that maps adjacency structure to n scalar output."""
+
+    def __init__(
+        self,
+        n_nodes: int,
+        directed: bool,
+        embedding_dim: int = 128,
+        n_hidden_layers: int = 2,
+        n_outputs: int = 1,
+    ) -> None:
+        super().__init__()
+        assert n_nodes > 0, "n_nodes must be positive"
+        assert embedding_dim > 0, "embedding_dim must be positive"
+        assert n_hidden_layers >= 0, "n_hidden_layers must be non-negative"
+        self.n_nodes = n_nodes
+        self.is_directed = directed
+        self.input_dim = n_nodes**2
+
+        self.backbone = MLP(
+            input_dim=n_nodes**2,
+            output_dim=embedding_dim,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=n_hidden_layers,
+            add_layer_norm=True,
+        )
+        self.head = MLP(
+            input_dim=embedding_dim,
+            output_dim=n_outputs,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+        """Encode graphs into a scalar per element of the batch."""
+        batch_size = len(states_tensor)
+        device = states_tensor.x.device
+        adj = torch.zeros((batch_size, self.n_nodes, self.n_nodes), device=device)
+
+        if states_tensor.edge_index.numel() > 0:
+            for i in range(batch_size):
+                edges = states_tensor[i].edge_index
+                adj[i, edges[0], edges[1]] = 1
+                if not self.is_directed:
+                    adj[i, edges[1], edges[0]] = 1
+
+        embedding = self.backbone(adj.view(batch_size, -1))
+        return self.head(embedding)
+
+
 class GraphActionUniform(nn.Module):
     """Implements a uniform distribution over discrete actions given a graph state.
 
@@ -809,11 +860,16 @@ class GraphActionUniform(nn.Module):
                 ingestion by the uniform distribution.
 
         Returns:
-            A TensorDict containing logits for each action component, with all values set to 1 to represent a uniform distribution:
-            - GraphActions.ACTION_TYPE_KEY: Tensor of shape [*batch_shape, 3] for the 3 possible action types
-            - GraphActions.EDGE_CLASS_KEY: Tensor of shape [*batch_shape, num_edge_classes] for edge class logits
-            - GraphActions.NODE_CLASS_KEY: Tensor of shape [*batch_shape, num_node_classes] for node class logits
-            - GraphActions.EDGE_INDEX_KEY: Tensor of shape [*batch_shape, edges_dim] for edge index logits
+            A TensorDict containing logits for each action component, with all values
+              set to 1 to represent a uniform distribution:
+            - GraphActions.ACTION_TYPE_KEY: Tensor of shape [*batch_shape, 3] for the 3
+              possible action types
+            - GraphActions.EDGE_CLASS_KEY: Tensor of shape [*batch_shape,
+              num_edge_classes] for edge class logits
+            - GraphActions.NODE_CLASS_KEY: Tensor of shape [*batch_shape,
+              num_node_classes] for node class logits
+            - GraphActions.EDGE_INDEX_KEY: Tensor of shape [*batch_shape, edges_dim]
+              for edge index logits
         """
         device = states_tensor.x.device
         max_nodes = int(torch.max(states_tensor.ptr[1:] - states_tensor.ptr[:-1]))
@@ -1371,9 +1427,8 @@ class TransformerDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
                 raise ValueError(
                     "Value carry shape is incompatible with the provided tokens."
                 )
-            if (
-                key_carry.size(-1) != self.head_dim
-                or value_carry.size(-1) != self.head_dim
+            if (key_carry.size(-1) != self.head_dim) or (
+                value_carry.size(-1) != self.head_dim
             ):
                 raise ValueError("Key/value carry head dimension mismatch detected.")
             if key_carry.device != device or value_carry.device != device:

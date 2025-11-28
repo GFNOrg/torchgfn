@@ -10,7 +10,7 @@ def try_compile_gflownet(
     *,
     mode: str = "default",
     components: Iterable[str] = ("pf", "pb", "logZ", "logF"),
-) -> dict[str, bool]:
+) -> None:
     """Best-effort compilation of estimator modules attached to a GFlowNet.
     Args:
         gfn: The GFlowNet instance to compile.
@@ -19,32 +19,37 @@ def try_compile_gflownet(
     Returns:
         Mapping from component name to compilation success status.
     """
+    results: dict[str, bool] = {}
 
     if not hasattr(torch, "compile"):
-        return {name: False for name in components}
+        results = {name: False for name in components}
 
-    results: dict[str, bool] = {}
-    for name in components:
+    else:
+        for name in components:
 
-        # If the estimator does not exist, we cannot compile it.
-        if not hasattr(gfn, name):
-            results[name] = False
-            continue
+            # If the estimator does not exist, we cannot compile it.
+            if not hasattr(gfn, name):
+                results[name] = False
+                continue
 
-        estimator = getattr(gfn, name)
-        module = getattr(estimator, "module", None)
+            estimator = getattr(gfn, name)
+            module = getattr(estimator, "module", None)
 
-        # If the estimator does not have a module, we cannot compile it.
-        if module is None:
-            results[name] = False
-            continue
+            # If the estimator does not have a module, we cannot compile it.
+            if module is None:
+                results[name] = False
+                continue
 
-        # If the estimator does not have a module, we cannot compile it.
-        try:
-            assert isinstance(estimator.module, torch.nn.Module)
-            estimator.module = torch.compile(module, mode=mode)
-            results[name] = True
-        except Exception:
-            results[name] = False
+            # If the estimator does not have a module, we cannot compile it.
+            try:
+                assert isinstance(estimator.module, torch.nn.Module)
+                estimator.module = torch.compile(module, mode=mode)
+                results[name] = True
+            except Exception:
+                results[name] = False
 
-    return results
+    # Print the results.
+    formatted = ", ".join(
+        f"{name}:{'✓' if success else 'x'}" for name, success in results.items()
+    )
+    print(f"[compile] {formatted}")
