@@ -2,10 +2,10 @@ from typing import Callable, Literal
 
 import torch
 
-from gfn.env import Actions, DiscreteEnv, DiscreteStates
+from gfn.env import Actions, DiscreteEnv, DiscreteStates, EnvFastPathMixin
 
 
-class SetAddition(DiscreteEnv):
+class SetAddition(EnvFastPathMixin, DiscreteEnv):
     """Append only MDP, similarly to what is described in Remark 8 of Shen et al. 2023
     [Towards Understanding and Improving GFlowNet Training](https://proceedings.mlr.press/v202/shen23a.html)
 
@@ -118,6 +118,41 @@ class SetAddition(DiscreteEnv):
 
         states.backward_masks[..., : self.n_items] = states.tensor != 0
 
+    def forward_action_masks_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        """Tensor equivalent of `update_masks` for forward masks."""
+
+        batch = states_tensor.shape[0]
+        device = states_tensor.device
+        masks = torch.zeros((batch, self.n_actions), dtype=torch.bool, device=device)
+
+        n_items_per_state = states_tensor.sum(dim=-1)
+        states_that_must_end = n_items_per_state >= self.max_traj_len
+        states_that_may_continue = ~states_that_must_end
+
+        if states_that_may_continue.any():
+            cont_states = states_tensor[states_that_may_continue] == 0
+            cont_masks = torch.zeros(
+                (cont_states.shape[0], self.n_actions),
+                dtype=torch.bool,
+                device=device,
+            )
+            cont_masks[:, : self.n_items] = cont_states
+            masks[states_that_may_continue] = cont_masks
+
+        if states_that_must_end.any():
+            end_masks = torch.zeros(
+                (int(states_that_must_end.sum().item()), self.n_actions),
+                dtype=torch.bool,
+                device=device,
+            )
+            end_masks[:, -1] = True
+            masks[states_that_must_end] = end_masks
+
+        if not self.fixed_length:
+            masks[..., -1] = True
+
+        return masks
+
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Performs a step in the environment.
 
@@ -130,6 +165,45 @@ class SetAddition(DiscreteEnv):
         """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
         return self.States(new_states_tensor)
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> DiscreteEnv.TensorStepResult:
+        """Tensor-only transition mirroring the legacy `_step` path."""
+
+        if actions_tensor.ndim == 1:
+            actions_idx = actions_tensor.view(-1, 1)
+        else:
+            assert actions_tensor.shape[-1] == 1
+            actions_idx = actions_tensor
+
+        exit_idx = self.n_actions - 1
+        is_exit = actions_idx.squeeze(-1) == exit_idx
+        next_states = states_tensor.clone()
+
+        non_exit_mask = ~is_exit
+        if torch.any(non_exit_mask):
+            sel_states = next_states[non_exit_mask]
+            sel_actions = actions_idx[non_exit_mask]
+            sel_states = sel_states.scatter(-1, sel_actions, 1, reduce="add")
+            next_states[non_exit_mask] = sel_states
+
+        if torch.any(is_exit):
+            next_states[is_exit] = self.sf.to(device=states_tensor.device)
+
+        forward_masks = self.forward_action_masks_tensor(next_states)
+        backward_masks = torch.zeros_like(forward_masks)
+        backward_masks[..., : self.n_items] = next_states != 0
+        is_sink_state = (next_states == self.sf.to(device=states_tensor.device)).all(
+            dim=-1
+        )
+
+        return self.TensorStepResult(
+            next_states=next_states,
+            is_sink_state=is_sink_state,
+            forward_masks=forward_masks,
+            backward_masks=backward_masks,
+        )
 
     def backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Performs a backward step in the environment.

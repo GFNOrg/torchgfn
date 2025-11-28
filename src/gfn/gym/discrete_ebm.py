@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from gfn.actions import Actions
-from gfn.env import DiscreteEnv
+from gfn.env import DiscreteEnv, EnvFastPathMixin
 from gfn.states import DiscreteStates, States
 
 
@@ -59,7 +59,7 @@ class IsingModel(EnergyFunction):
         return -(states * tmp).sum(-1)
 
 
-class DiscreteEBM(DiscreteEnv):
+class DiscreteEBM(EnvFastPathMixin, DiscreteEnv):
     """Environment for discrete energy-based models.
 
     This environment is based on the paper https://arxiv.org/pdf/2202.01361.pdf.
@@ -132,6 +132,16 @@ class DiscreteEBM(DiscreteEnv):
         states.backward_masks[..., : self.ndim] = states.tensor == 0
         states.backward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == 1
 
+    def forward_action_masks_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        batch = states_tensor.shape[0]
+        device = states_tensor.device
+        masks = torch.zeros((batch, self.n_actions), dtype=torch.bool, device=device)
+        available = states_tensor == -1
+        masks[:, : self.ndim] = available
+        masks[:, self.ndim : 2 * self.ndim] = available
+        masks[:, -1] = torch.all(states_tensor != -1, dim=-1)
+        return masks
+
     def make_random_states(
         self, batch_shape: Tuple, device: torch.device | None = None
     ) -> DiscreteStates:
@@ -185,6 +195,49 @@ class DiscreteEBM(DiscreteEnv):
             -1, (actions.tensor[mask_1] - self.ndim), 1  # Set indices to 1.
         )
         return self.States(states.tensor)
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> DiscreteEnv.TensorStepResult:
+        if actions_tensor.ndim == 1:
+            actions_idx = actions_tensor
+        else:
+            actions_idx = actions_tensor.squeeze(-1)
+
+        exit_idx = self.n_actions - 1
+        next_states = states_tensor.clone()
+        device = states_tensor.device
+
+        is_exit = actions_idx == exit_idx
+        mask0 = (actions_idx < self.ndim) & ~is_exit
+        mask1 = (actions_idx >= self.ndim) & (actions_idx < 2 * self.ndim) & ~is_exit
+
+        if mask0.any():
+            rows = mask0.nonzero(as_tuple=True)[0]
+            cols = actions_idx[rows]
+            next_states[rows, cols] = 0
+
+        if mask1.any():
+            rows = mask1.nonzero(as_tuple=True)[0]
+            cols = actions_idx[rows] - self.ndim
+            next_states[rows, cols] = 1
+
+        if is_exit.any():
+            next_states[is_exit] = self.sf.to(device=device)
+
+        forward_masks = self.forward_action_masks_tensor(next_states)
+        backward_masks = torch.zeros_like(forward_masks)
+        backward_masks[:, : self.ndim] = next_states == 0
+        backward_masks[:, self.ndim : 2 * self.ndim] = next_states == 1
+
+        is_sink_state = torch.all(next_states == self.sf.to(device=device), dim=-1)
+
+        return self.TensorStepResult(
+            next_states=next_states,
+            is_sink_state=is_sink_state,
+            forward_masks=forward_masks,
+            backward_masks=backward_masks,
+        )
 
     def backward_step(self, states: States, actions: Actions) -> States:
         """Performs a backward step.

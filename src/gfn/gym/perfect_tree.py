@@ -2,11 +2,11 @@ from typing import Callable, Literal
 
 import torch
 
-from gfn.env import Actions, DiscreteEnv, DiscreteStates
+from gfn.env import Actions, DiscreteEnv, DiscreteStates, EnvFastPathMixin
 from gfn.states import States
 
 
-class PerfectBinaryTree(DiscreteEnv):
+class PerfectBinaryTree(EnvFastPathMixin, DiscreteEnv):
     r"""Perfect Tree Environment.
 
     This environment is a perfect binary tree, where there is a bijection between
@@ -75,6 +75,8 @@ class PerfectBinaryTree(DiscreteEnv):
             self.inverse_transition_table,
             self.term_states,
         ) = self._build_tree()
+        self._leaf_lower = 2**self.depth - 1
+        self._leaf_upper = 2 ** (self.depth + 1) - 1
 
     def _build_tree(self) -> tuple[dict, dict, DiscreteStates]:
         """Builds the tree and the transition tables.
@@ -191,6 +193,76 @@ class PerfectBinaryTree(DiscreteEnv):
 
         # Initial state has no available backward action
         states.backward_masks[initial_state_mask] = False
+
+    def _is_leaf_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        values = states_tensor.view(-1)
+        return (values >= self._leaf_lower) & (values < self._leaf_upper)
+
+    def forward_action_masks_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        batch = states_tensor.shape[0]
+        device = states_tensor.device
+        masks = torch.zeros((batch, self.n_actions), dtype=torch.bool, device=device)
+        leaf_mask = self._is_leaf_tensor(states_tensor)
+        sink_mask = (states_tensor == self.sf.to(device)).all(dim=-1)
+        non_leaf = ~(leaf_mask | sink_mask)
+        masks[non_leaf, : self.branching_factor] = True
+        masks[leaf_mask | sink_mask, -1] = True
+        return masks
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> DiscreteEnv.TensorStepResult:
+        if actions_tensor.ndim == 1:
+            actions_idx = actions_tensor.view(-1, 1)
+        else:
+            assert actions_tensor.shape[-1] == 1
+            actions_idx = actions_tensor
+
+        exit_idx = self.n_actions - 1
+        device = states_tensor.device
+        next_states = states_tensor.clone()
+        actions_flat = actions_idx.squeeze(-1)
+        state_vals = next_states.squeeze(-1)
+
+        is_exit = actions_flat == exit_idx
+        non_exit = ~is_exit
+        if non_exit.any():
+            parents = state_vals[non_exit]
+            child_idx = parents.clone()
+            left_mask = actions_flat[non_exit] == 0
+            right_mask = actions_flat[non_exit] == 1
+            if left_mask.any():
+                child_idx[left_mask] = 2 * parents[left_mask] + 1
+            if right_mask.any():
+                child_idx[right_mask] = 2 * parents[right_mask] + 2
+            next_states[non_exit, 0] = child_idx
+
+        if is_exit.any():
+            next_states[is_exit] = self.sf.to(device=device)
+
+        forward_masks = self.forward_action_masks_tensor(next_states)
+        backward_masks = torch.zeros(
+            (next_states.shape[0], self.branching_factor),
+            dtype=torch.bool,
+            device=device,
+        )
+        next_vals = next_states.squeeze(-1)
+        sink_mask = (next_states == self.sf.to(device)).all(dim=-1)
+        initial_mask = next_vals == self.s0.item()
+        even_mask = (next_vals % 2 == 0) & ~sink_mask
+        odd_mask = (next_vals % 2 == 1) & ~sink_mask
+        backward_masks[even_mask, 1] = True
+        backward_masks[odd_mask, 0] = True
+        backward_masks[initial_mask] = False
+
+        is_sink_state = sink_mask
+
+        return self.TensorStepResult(
+            next_states=next_states,
+            is_sink_state=is_sink_state,
+            forward_masks=forward_masks,
+            backward_masks=backward_masks,
+        )
 
     def get_states_indices(self, states: States):
         """Returns the indices of the states.

@@ -6,12 +6,14 @@ import torch
 
 from gfn.actions import Actions
 from gfn.containers import Trajectories
-from gfn.env import DiscreteEnv
+from gfn.env import DiscreteEnv, EnvFastPathMixin
 from gfn.states import DiscreteStates
 from gfn.utils.common import is_int_dtype
 
-# This environment is the torchgfn implmentation of the bit sequences task presented in :Malkin, Nikolay & Jain, Moksh & Bengio, Emmanuel & Sun, Chen & Bengio, Yoshua. (2022).
-# Trajectory Balance: Improved Credit Assignment in GFlowNets. https://arxiv.org/pdf/2201.13259
+# This environment is the torchgfn implmentation of the bit sequences task presented in
+# :Malkin, Nikolay & Jain, Moksh & Bengio, Emmanuel & Sun, Chen & Bengio, Yoshua.
+# (2022). Trajectory Balance: Improved Credit Assignment in GFlowNets.
+# https://arxiv.org/pdf/2201.13259
 
 
 class BitSequenceStates(DiscreteStates):
@@ -186,7 +188,7 @@ class BitSequenceStates(DiscreteStates):
         return [row_to_binary_string(tensor[i], mask[i]) for i in range(tensor.shape[0])]
 
 
-class BitSequence(DiscreteEnv):
+class BitSequence(EnvFastPathMixin, DiscreteEnv):
     """Append-only BitSequence environment.
 
     This environment represents a sequence of binary words and provides methods to
@@ -347,6 +349,18 @@ class BitSequence(DiscreteEnv):
         )
         states.backward_masks[~is_sink, last_actions] = True
 
+    def _lengths_from_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        return torch.count_nonzero(states_tensor != -1, dim=-1)
+
+    def forward_action_masks_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        batch = states_tensor.shape[0]
+        device = states_tensor.device
+        masks = torch.ones((batch, self.n_actions), dtype=torch.bool, device=device)
+        lengths = self._lengths_from_tensor(states_tensor)
+        masks[lengths == self.words_per_seq, :-1] = False
+        masks[lengths < self.words_per_seq, -1] = False
+        return masks
+
     def step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
         """Performs a step in the environment.
 
@@ -367,6 +381,56 @@ class BitSequence(DiscreteEnv):
             device=old_tensor.device,
         )
         return self.States(old_tensor)
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> DiscreteEnv.TensorStepResult:
+        if actions_tensor.ndim == 2 and actions_tensor.shape[-1] == 1:
+            actions_vals = actions_tensor.squeeze(-1)
+        else:
+            actions_vals = actions_tensor
+
+        exit_val = self.n_actions - 1
+        is_exit = actions_vals == exit_val
+        next_states = states_tensor.clone()
+
+        lengths = self._lengths_from_tensor(states_tensor)
+
+        non_exit_idx = (~is_exit).nonzero(as_tuple=True)[0]
+        if len(non_exit_idx) > 0:
+            insert_pos = lengths[non_exit_idx]
+            next_states[non_exit_idx, insert_pos] = actions_vals[non_exit_idx]
+
+        if is_exit.any():
+            sink_row = torch.full(
+                (self.words_per_seq,),
+                exit_val,
+                dtype=torch.long,
+                device=states_tensor.device,
+            )
+            next_states[is_exit] = sink_row
+
+        forward_masks = self.forward_action_masks_tensor(next_states)
+        backward_masks = torch.zeros(
+            (next_states.shape[0], self.n_actions - 1),
+            dtype=torch.bool,
+            device=states_tensor.device,
+        )
+        is_sink_state = torch.all(next_states == exit_val, dim=-1)
+        non_sink = ~is_sink_state
+        if non_sink.any():
+            new_lengths = self._lengths_from_tensor(next_states[non_sink])
+            last_idx = torch.clamp(new_lengths - 1, min=0)
+            rows = non_sink.nonzero(as_tuple=True)[0]
+            last_actions = next_states[rows, last_idx]
+            backward_masks[rows, last_actions] = True
+
+        return self.TensorStepResult(
+            next_states=next_states,
+            is_sink_state=is_sink_state,
+            forward_masks=forward_masks,
+            backward_masks=backward_masks,
+        )
 
     def backward_step(
         self, states: BitSequenceStates, actions: Actions
@@ -794,6 +858,69 @@ class BitSequencePlus(BitSequence):
         states.backward_masks[~is_sink, last_actions] = True
         states.backward_masks[~is_sink, first_actions + (self.n_actions - 1) // 2] = True
 
+    def forward_action_masks_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        return super().forward_action_masks_tensor(states_tensor)
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> DiscreteEnv.TensorStepResult:
+        if actions_tensor.ndim == 2 and actions_tensor.shape[-1] == 1:
+            actions_vals = actions_tensor.squeeze(-1)
+        else:
+            actions_vals = actions_tensor
+
+        exit_val = self.n_actions - 1
+        append_threshold = (self.n_actions - 1) // 2
+        is_exit = actions_vals == exit_val
+        append_mask = actions_vals < append_threshold
+        prepend_mask = (~is_exit) & (~append_mask)
+
+        next_states = states_tensor.clone()
+        lengths = self._lengths_from_tensor(states_tensor)
+
+        if append_mask.any():
+            idx = append_mask.nonzero(as_tuple=True)[0]
+            insert_pos = lengths[idx]
+            next_states[idx, insert_pos] = actions_vals[idx]
+
+        if prepend_mask.any():
+            idx = prepend_mask.nonzero(as_tuple=True)[0]
+            next_states[idx, 1:] = next_states[idx, :-1]
+            next_states[idx, 0] = actions_vals[idx] - append_threshold
+
+        if is_exit.any():
+            sink_row = torch.full(
+                (self.words_per_seq,),
+                exit_val,
+                dtype=torch.long,
+                device=states_tensor.device,
+            )
+            next_states[is_exit] = sink_row
+
+        forward_masks = self.forward_action_masks_tensor(next_states)
+        backward_masks = torch.zeros(
+            (next_states.shape[0], self.n_actions - 1),
+            dtype=torch.bool,
+            device=states_tensor.device,
+        )
+        is_sink_state = torch.all(next_states == exit_val, dim=-1)
+        non_sink = ~is_sink_state
+        if non_sink.any():
+            new_lengths = self._lengths_from_tensor(next_states[non_sink])
+            last_idx = torch.clamp(new_lengths - 1, min=0)
+            rows = non_sink.nonzero(as_tuple=True)[0]
+            last_actions = next_states[rows, last_idx]
+            first_actions = next_states[rows, 0]
+            backward_masks[rows, last_actions] = True
+            backward_masks[rows, first_actions + append_threshold] = True
+
+        return self.TensorStepResult(
+            next_states=next_states,
+            is_sink_state=is_sink_state,
+            forward_masks=forward_masks,
+            backward_masks=backward_masks,
+        )
+
     def step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
         """Performs a step in the environment.
 
@@ -808,16 +935,18 @@ class BitSequencePlus(BitSequence):
         old_tensor = states.tensor.clone()
         append_mask = (actions.tensor < (self.n_actions - 1) // 2).squeeze()
         prepend_mask = ~append_mask
-        assert states.length
-        old_tensor[append_mask & ~is_exit, states.length[append_mask & ~is_exit]] = (
-            actions.tensor[append_mask & ~is_exit].squeeze()
-        )
+        assert states.length is not None
+        append_rows = append_mask & ~is_exit
+        old_tensor[append_rows, states.length[append_rows]] = actions.tensor[
+            append_rows
+        ].squeeze()
 
         old_tensor[prepend_mask & ~is_exit, 1:] = old_tensor[
             prepend_mask & ~is_exit, :-1
         ]
-        old_tensor[prepend_mask & ~is_exit, 0] = (
-            actions.tensor[prepend_mask & ~is_exit].squeeze() - (self.n_actions - 1) // 2
+        prepend_rows = prepend_mask & ~is_exit
+        old_tensor[prepend_rows, 0] = (
+            actions.tensor[prepend_rows].squeeze() - (self.n_actions - 1) // 2
         )
 
         old_tensor[is_exit] = torch.full_like(

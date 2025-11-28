@@ -1,7 +1,14 @@
 import warnings
 from abc import ABC, abstractmethod
 from collections import Counter
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, cast
+from dataclasses import dataclass
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Optional,
+    Tuple,
+    cast,
+)
 
 if TYPE_CHECKING:
     from gfn.gflownet import GFlowNet
@@ -15,6 +22,25 @@ from gfn.utils.common import default_fill_value_for_dtype, ensure_same_device, s
 
 # Errors
 NonValidActionsError = type("NonValidActionsError", (ValueError,), {})
+
+
+class EnvFastPathMixin:
+    """Marker mixin for environments exposing tensor-only fast-path helpers.
+
+    Environments inheriting this mixin are expected to override:
+
+    - ``step_tensor``: vectorized transition operating purely on tensors.
+    - ``forward_action_masks_tensor``: tensor-based forward action masks.
+    - ``states_from_tensor_fast``: lightweight wrapper that avoids redundant
+      allocations when reconstructing ``States`` objects from raw tensors.
+
+    The mixin itself does not provide implementations; it purely signals that
+    the environment intends to support the fast path and enables nominal checks
+    such as ``isinstance(env, EnvFastPathMixin)`` without relying on structural
+    typing.
+    """
+
+    fast_path_enabled: bool = True
 
 
 class Env(ABC):
@@ -36,6 +62,22 @@ class Env(ABC):
     """
 
     is_discrete: bool = False
+
+    @dataclass
+    class TensorStepResult:
+        """Container returned by tensor-level step helpers.
+
+        Attributes:
+            next_states: Tensor containing the next states produced by the step.
+            is_sink_state: Optional boolean tensor indicating which rows are sink.
+            forward_masks: Optional boolean tensor with forward action masks.
+            backward_masks: Optional boolean tensor with backward action masks.
+        """
+
+        next_states: torch.Tensor
+        is_sink_state: torch.Tensor | None = None
+        forward_masks: torch.Tensor | None = None
+        backward_masks: torch.Tensor | None = None
 
     def __init__(
         self,
@@ -144,6 +186,51 @@ class Env(ABC):
             A batch of dummy actions.
         """
         return self.Actions.make_dummy_actions(batch_shape, device=self.device)
+
+    @property
+    def has_tensor_fast_path(self) -> bool:
+        """Whether this environment opts into the tensor-only fast API."""
+
+        return isinstance(self, EnvFastPathMixin)
+
+    def states_from_tensor_fast(self, tensor: torch.Tensor) -> States:
+        """Fallback helper recreating ``States`` objects from tensors.
+
+        Fast-path environments can override this to avoid redundant mask
+        recomputation or to attach cached metadata. The default simply calls
+        ``states_from_tensor``.
+        """
+
+        return self.states_from_tensor(tensor)
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> "Env.TensorStepResult":
+        """Tensor equivalent of `_step` with default object-based fallback.
+
+        Environments can override this method to provide compiler-friendly
+        implementations that avoid constructing `States`/`Actions`. The default
+        fallback simply wraps tensors into the standard containers and delegates
+        to `_step`, ensuring parity with the legacy path.
+        """
+
+        states = self.states_from_tensor(states_tensor.clone())
+        actions = self.actions_from_tensor(actions_tensor.clone())
+        new_states = self._step(states, actions)
+        return self.TensorStepResult(next_states=new_states.tensor.clone())
+
+    def forward_action_masks_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        """Tensor helper returning forward masks for the supplied states.
+
+        Base environments do not provide a generic implementation because mask
+        semantics are environment-specific. Subclasses (e.g., ``DiscreteEnv``)
+        are expected to override this to expose a fallback compatible with the
+        fast sampler path.
+        """
+
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not expose tensor forward masks."
+        )
 
     @abstractmethod
     def step(self, states: States, actions: Actions) -> States:
@@ -558,6 +645,21 @@ class DiscreteEnv(Env, ABC):
         out = super().states_from_batch_shape(batch_shape, random, sink)
         assert isinstance(out, DiscreteStates)
         return out
+
+    def states_from_tensor_fast(self, tensor: torch.Tensor) -> DiscreteStates:
+        """Return `DiscreteStates` without extra bookkeeping for fast paths."""
+
+        states = self.states_from_tensor(tensor)
+        assert isinstance(states, DiscreteStates)
+        return states
+
+    def forward_action_masks_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        """Recompute forward masks for the supplied state tensor."""
+
+        states = self.states_from_tensor(states_tensor.clone())
+        self.update_masks(states)
+        assert states.forward_masks is not None
+        return states.forward_masks.clone()
 
     def reset(
         self,

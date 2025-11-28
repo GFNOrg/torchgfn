@@ -4,11 +4,11 @@ import torch
 from torch.distributions import Normal  # TODO: extend to Beta
 
 from gfn.actions import Actions
-from gfn.env import Env
+from gfn.env import Env, EnvFastPathMixin
 from gfn.states import States
 
 
-class Line(Env):
+class Line(EnvFastPathMixin, Env):
     """Mixture of Gaussians Line environment.
 
     Attributes:
@@ -83,6 +83,32 @@ class Line(Env):
         states.tensor[..., 1] = states.tensor[..., 1] + 1  # Step counter.
         assert states.tensor.shape == states.batch_shape + (2,)
         return self.States(states.tensor)
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> Env.TensorStepResult:
+        next_states = states_tensor.clone()
+        if actions_tensor.ndim == 2 and actions_tensor.shape[-1] == 1:
+            action_vals = actions_tensor.squeeze(-1)
+        else:
+            action_vals = actions_tensor
+
+        exit_val = float(self.exit_action.item())
+        exit_mask = action_vals == exit_val
+        non_exit = ~exit_mask
+
+        next_states[non_exit, 0] = next_states[non_exit, 0] + action_vals[non_exit]
+        next_states[non_exit, 1] = next_states[non_exit, 1] + 1
+
+        if exit_mask.any():
+            assert isinstance(self.sf, torch.Tensor)
+            sf_tensor = self.sf.to(states_tensor.device)
+            sf_tensor = sf_tensor.to(states_tensor.dtype)
+            next_states[exit_mask] = sf_tensor
+
+        return self.TensorStepResult(
+            next_states=next_states, is_sink_state=exit_mask.clone()
+        )
 
     def backward_step(self, states: States, actions: Actions) -> States:
         """Performs a backward step in the environment.

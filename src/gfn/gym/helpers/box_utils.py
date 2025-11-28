@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch import Size, Tensor
 from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
 
-from gfn.estimators import Estimator, PolicyMixin
+from gfn.estimators import Estimator, FastPolicyMixin
 from gfn.gym import Box
 from gfn.states import States
 from gfn.utils.modules import MLP
@@ -936,7 +936,7 @@ def split_PF_module_output(
     return (exit_probability, mixture_logits, alpha_theta, beta_theta, alpha_r, beta_r)
 
 
-class BoxPFEstimator(Estimator, PolicyMixin):
+class BoxPFEstimator(FastPolicyMixin, Estimator):
     r"""Estimator for `P_F` for the Box environment.
 
     This estimator uses the `DistributionWrapper` distribution.
@@ -978,6 +978,7 @@ class BoxPFEstimator(Estimator, PolicyMixin):
             max_concentration: The maximum concentration for the Beta distributions.
         """
         super().__init__(module)
+        self.env = env
         self._n_comp_max = max(n_components_s0, n_components)
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
@@ -1059,8 +1060,33 @@ class BoxPFEstimator(Estimator, PolicyMixin):
             self.n_components_s0,
         )
 
+    def fast_features(
+        self,
+        states_tensor: torch.Tensor,
+        *,
+        forward_masks: torch.Tensor | None = None,
+        backward_masks: torch.Tensor | None = None,
+        conditions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return states_tensor
 
-class BoxPBEstimator(Estimator, PolicyMixin):
+    def fast_distribution(
+        self,
+        features: torch.Tensor,
+        *,
+        states_tensor: torch.Tensor | None = None,
+        forward_masks: torch.Tensor | None = None,
+        backward_masks: torch.Tensor | None = None,
+        **policy_kwargs: Any,
+    ) -> Distribution:
+        if states_tensor is None:
+            raise ValueError("states_tensor is required for BoxPFEstimator fast path.")
+        module_output = self.module(features)
+        states = self.env.states_from_tensor_fast(states_tensor)
+        return self.to_probability_distribution(states, module_output)
+
+
+class BoxPBEstimator(FastPolicyMixin, Estimator):
     r"""Estimator for `P_B` for the Box environment.
 
     This estimator uses the `QuarterCircle(northeastern=False)` distribution.
@@ -1096,6 +1122,7 @@ class BoxPBEstimator(Estimator, PolicyMixin):
         """
         super().__init__(module, is_backward=True)
         self.module = module
+        self.env = env
         self.n_components = n_components
 
         self.min_concentration = min_concentration
@@ -1145,3 +1172,28 @@ class BoxPBEstimator(Estimator, PolicyMixin):
             alpha=alpha,
             beta=beta,
         )
+
+    def fast_features(
+        self,
+        states_tensor: torch.Tensor,
+        *,
+        forward_masks: torch.Tensor | None = None,
+        backward_masks: torch.Tensor | None = None,
+        conditions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return states_tensor
+
+    def fast_distribution(
+        self,
+        features: torch.Tensor,
+        *,
+        states_tensor: torch.Tensor | None = None,
+        forward_masks: torch.Tensor | None = None,
+        backward_masks: torch.Tensor | None = None,
+        **policy_kwargs: Any,
+    ) -> Distribution:
+        if states_tensor is None:
+            raise ValueError("states_tensor is required for BoxPBEstimator fast path.")
+        module_output = self.module(features)
+        states = self.env.states_from_tensor_fast(states_tensor)
+        return self.to_probability_distribution(states, module_output)

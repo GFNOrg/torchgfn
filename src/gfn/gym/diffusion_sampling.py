@@ -11,7 +11,7 @@ import torch.distributions as D
 from scipy.stats import wishart
 
 from gfn.actions import Actions
-from gfn.env import Env
+from gfn.env import Env, EnvFastPathMixin
 from gfn.gym.helpers.diffusion_utils import viz_2d_slice
 from gfn.states import States
 from gfn.utils.common import filter_kwargs_for_callable, temporarily_set_seed
@@ -672,7 +672,7 @@ class ManyWell(BaseTarget):
 ######################################
 
 
-class DiffusionSampling(Env):
+class DiffusionSampling(EnvFastPathMixin, Env):
     """Diffusion sampling environment.
 
     Attributes:
@@ -801,6 +801,45 @@ class DiffusionSampling(Env):
         next_states_tensor[..., :-1] = next_states_tensor[..., :-1] + actions.tensor
         next_states_tensor[..., -1] = next_states_tensor[..., -1] + self.dt
         return self.States(next_states_tensor)
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> Env.TensorStepResult:
+        """Tensor fast-path equivalent of `_step`.
+
+        Mirrors the legacy wrapper by skipping already-sink rows, applying the action
+        update to the remaining states, and forcing exit actions onto the sink state.
+        """
+
+        assert states_tensor.shape[-1] == self.dim + 1
+        assert actions_tensor.shape[-1] == self.dim
+
+        device = states_tensor.device
+        dtype = states_tensor.dtype
+        sf_tensor = cast(torch.Tensor, self.sf).to(device=device, dtype=dtype)
+        exit_action = self.exit_action.to(device=device, dtype=dtype)
+
+        # Detect rows that are already padded sink states, and exit rows that should
+        # transition to the sink regardless of their current state.
+        sink_mask = torch.all(states_tensor == sf_tensor, dim=-1)
+        exit_mask = torch.all(actions_tensor == exit_action, dim=-1)
+        update_mask = ~(sink_mask | exit_mask)
+
+        next_states = states_tensor.clone()
+        if update_mask.any():
+            next_states[update_mask, :-1] = (
+                next_states[update_mask, :-1] + actions_tensor[update_mask]
+            )
+            dt = torch.as_tensor(self.dt, device=device, dtype=dtype)
+            next_states[update_mask, -1] = next_states[update_mask, -1] + dt
+
+        if exit_mask.any():
+            next_states[exit_mask] = sf_tensor
+
+        next_sink_mask = sink_mask | exit_mask
+        return self.TensorStepResult(
+            next_states=next_states, is_sink_state=next_sink_mask
+        )
 
     def backward_step(self, states: States, actions: Actions) -> States:
         """Backward step function for the SimpleGaussianMixtureModel environment.

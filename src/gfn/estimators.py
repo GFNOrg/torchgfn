@@ -241,6 +241,45 @@ class PolicyMixin:
         return getattr(ctx, "current_estimator_output", None)
 
 
+class FastPolicyMixin(PolicyMixin):
+    """Optional mixin for policies that ingest tensors directly on fast paths.
+
+    Estimators inheriting this mixin should implement the tensor-oriented hooks
+    below so samplers can bypass `States`/`Actions` allocation when environments
+    expose compatible helpers.
+    """
+
+    fast_path_enabled: bool = True
+
+    def fast_features(
+        self,
+        states_tensor: torch.Tensor,
+        *,
+        forward_masks: Optional[torch.Tensor] = None,
+        backward_masks: Optional[torch.Tensor] = None,
+        conditions: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Preprocess raw tensors into module-ready features."""
+
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement fast_features."
+        )
+
+    def fast_distribution(
+        self,
+        features: torch.Tensor,
+        *,
+        forward_masks: Optional[torch.Tensor] = None,
+        backward_masks: Optional[torch.Tensor] = None,
+        **policy_kwargs: Any,
+    ) -> Distribution:
+        """Build the action distribution from tensor features."""
+
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement fast_distribution."
+        )
+
+
 class RecurrentPolicyMixin(PolicyMixin):
     """Mixin for recurrent policies that maintain and update a rollout carry."""
 
@@ -1227,7 +1266,7 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         return init_carry_fn(batch_size, device)
 
 
-class DiffusionPolicyEstimator(PolicyMixin, Estimator):
+class DiffusionPolicyEstimator(FastPolicyMixin, Estimator):
     """Base class for diffusion policy estimators."""
 
     def __init__(self, s_dim: int, module: nn.Module, is_backward: bool = False):
@@ -1281,6 +1320,16 @@ class DiffusionPolicyEstimator(PolicyMixin, Estimator):
             A IsotropicGaussian distribution.
         """
         raise NotImplementedError
+
+    def fast_features(
+        self,
+        states_tensor: torch.Tensor,
+        *,
+        forward_masks: torch.Tensor | None = None,
+        backward_masks: torch.Tensor | None = None,
+        conditions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return states_tensor
 
 
 class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU process
@@ -1345,8 +1394,13 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
             A IsotropicGaussian distribution (distribution of the next states)
         """
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
-        s_curr = states.tensor[:, :-1]
-        t_curr = states.tensor[:, [-1]]
+        return self._distribution_from_tensor(states.tensor, module_output)
+
+    def _distribution_from_tensor(
+        self, states_tensor: torch.Tensor, module_output: torch.Tensor
+    ) -> IsotropicGaussian:
+        s_curr = states_tensor[:, :-1]
+        t_curr = states_tensor[:, [-1]]
 
         module_output = torch.where(
             (1.0 - t_curr) < self.dt * 1e-2,  # sf case; when t_curr is 1.0
@@ -1358,6 +1412,22 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
         fwd_std = torch.tensor(self.sigma * self.dt**0.5, device=fwd_mean.device)
         fwd_std = fwd_std.repeat(fwd_mean.shape[0], 1)
         return IsotropicGaussian(fwd_mean, fwd_std)
+
+    def fast_distribution(
+        self,
+        features: torch.Tensor,
+        *,
+        states_tensor: torch.Tensor | None = None,
+        forward_masks: torch.Tensor | None = None,
+        backward_masks: torch.Tensor | None = None,
+        **policy_kwargs: Any,
+    ) -> IsotropicGaussian:
+        if states_tensor is None:
+            raise ValueError(
+                "states_tensor is required for PinnedBrownianMotionForward fast path."
+            )
+        module_output = self.module(features)
+        return self._distribution_from_tensor(states_tensor, module_output)
 
 
 class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support OU process
@@ -1422,10 +1492,15 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
             A IsotropicGaussian distribution (distribution of the previous states)
         """
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
-        s_curr = states.tensor[:, :-1]
-        t_curr = states.tensor[:, [-1]]  # shape: (*batch_shape,)
+        return self._distribution_from_tensor(states.tensor, module_output)
 
-        is_s0 = (t_curr - self.dt) < self.dt * 1e-2  # s0 case; when t_curr - dt is 0.0
+    def _distribution_from_tensor(
+        self, states_tensor: torch.Tensor, module_output: torch.Tensor
+    ) -> IsotropicGaussian:
+        s_curr = states_tensor[:, :-1]
+        t_curr = states_tensor[:, [-1]]
+
+        is_s0 = (t_curr - self.dt) < self.dt * 1e-2
         bwd_mean = torch.where(
             is_s0,
             s_curr,
@@ -1437,3 +1512,19 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
             self.sigma * (self.dt * (t_curr - self.dt) / t_curr).sqrt(),
         )
         return IsotropicGaussian(bwd_mean, bwd_std)
+
+    def fast_distribution(
+        self,
+        features: torch.Tensor,
+        *,
+        states_tensor: torch.Tensor | None = None,
+        forward_masks: torch.Tensor | None = None,
+        backward_masks: torch.Tensor | None = None,
+        **policy_kwargs: Any,
+    ) -> IsotropicGaussian:
+        if states_tensor is None:
+            raise ValueError(
+                "states_tensor is required for PinnedBrownianMotionBackward fast path."
+            )
+        module_output = self.module(features)
+        return self._distribution_from_tensor(states_tensor, module_output)

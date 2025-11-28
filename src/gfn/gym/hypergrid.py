@@ -14,7 +14,7 @@ from typing import List, Literal, Tuple
 import torch
 
 from gfn.actions import Actions
-from gfn.env import DiscreteEnv
+from gfn.env import DiscreteEnv, EnvFastPathMixin
 from gfn.states import DiscreteStates
 from gfn.utils.common import ensure_same_device
 
@@ -48,7 +48,7 @@ def smallest_multiplier_to_integers(float_vector, precision=3):
     return smallest_multiplier
 
 
-class HyperGrid(DiscreteEnv):
+class HyperGrid(EnvFastPathMixin, DiscreteEnv):
     """HyperGrid environment from the GFlowNets paper.
 
     The states are represented as 1-d tensors of length `ndim` with values in
@@ -159,6 +159,15 @@ class HyperGrid(DiscreteEnv):
         )
         states.backward_masks = states.tensor != 0
 
+    def forward_action_masks_tensor(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        """Tensor-only equivalent of `update_masks` for forward masks."""
+
+        base = states_tensor != (self.height - 1)
+        exit_column = torch.ones(
+            (states_tensor.shape[0], 1), dtype=torch.bool, device=states_tensor.device
+        )
+        return torch.cat([base, exit_column], dim=-1)
+
     def make_random_states(
         self, batch_shape: Tuple[int, ...], device: torch.device | None = None
     ) -> DiscreteStates:
@@ -190,6 +199,45 @@ class HyperGrid(DiscreteEnv):
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
         assert new_states_tensor.shape == states.tensor.shape
         return self.States(new_states_tensor)
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> DiscreteEnv.TensorStepResult:
+        """Tensor-only transition combined with mask outputs for fast paths."""
+
+        assert states_tensor.dtype == torch.long
+        if actions_tensor.ndim == 1:
+            actions_idx = actions_tensor.view(-1, 1)
+        else:
+            assert actions_tensor.shape[-1] == 1
+            actions_idx = actions_tensor
+
+        exit_idx = self.n_actions - 1
+        is_exit_action = actions_idx.squeeze(-1) == exit_idx
+        next_states = states_tensor.clone()
+
+        non_exit_mask = ~is_exit_action
+        if torch.any(non_exit_mask):
+            sel_states = next_states[non_exit_mask]
+            sel_actions = actions_idx[non_exit_mask]
+            sel_states = sel_states.scatter(-1, sel_actions, 1, reduce="add")
+            next_states[non_exit_mask] = sel_states
+
+        if torch.any(is_exit_action):
+            next_states[is_exit_action] = self.sf.to(device=states_tensor.device)
+
+        forward_masks = self.forward_action_masks_tensor(next_states)
+        backward_masks = next_states != 0
+        is_sink_state = (next_states == self.sf.to(device=states_tensor.device)).all(
+            dim=-1
+        )
+
+        return self.TensorStepResult(
+            next_states=next_states,
+            is_sink_state=is_sink_state,
+            forward_masks=forward_masks,
+            backward_masks=backward_masks,
+        )
 
     def backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Performs a backward step in the environment.

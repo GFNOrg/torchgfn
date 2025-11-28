@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 import pytest
@@ -7,7 +7,8 @@ from tensordict import TensorDict
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import Env, NonValidActionsError
-from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym import BitSequence, BitSequencePlus, Box, DiscreteEBM, HyperGrid, Line
+from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.perfect_tree import PerfectBinaryTree
 from gfn.gym.set_addition import SetAddition
@@ -133,6 +134,45 @@ def test_HyperGrid_bwd_step():
         states = env._backward_step(states, failing_actions)
 
 
+def test_HyperGrid_fast_path_matches_legacy():
+    NDIM = 3
+    ENV_HEIGHT = 5
+    BATCH_SIZE = 64
+
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
+    states = env.reset(batch_shape=BATCH_SIZE, random=True, seed=123)
+
+    assert states.forward_masks is not None
+    tensor_masks = env.forward_action_masks_tensor(states.tensor)
+    assert states.forward_masks is not None
+    legacy_forward_masks = cast(torch.Tensor, states.forward_masks)
+    assert torch.equal(tensor_masks, legacy_forward_masks)
+
+    action_dist = torch.distributions.Categorical(
+        probs=states.forward_masks.to(dtype=torch.float32)
+    )
+    actions_tensor = action_dist.sample().unsqueeze(-1)
+
+    legacy_next = env._step(states, env.actions_from_tensor(actions_tensor.clone()))
+    assert legacy_next.forward_masks is not None
+    assert legacy_next.backward_masks is not None
+    legacy_step_forward = cast(torch.Tensor, legacy_next.forward_masks)
+    legacy_step_backward = cast(torch.Tensor, legacy_next.backward_masks)
+
+    fast = env.step_tensor(states.tensor, actions_tensor)
+
+    assert torch.equal(fast.next_states, legacy_next.tensor)
+    assert fast.is_sink_state is not None
+    fast_is_sink = cast(torch.Tensor, fast.is_sink_state)
+    assert torch.equal(fast_is_sink, legacy_next.is_sink_state)
+    assert fast.forward_masks is not None
+    fast_forward_masks = cast(torch.Tensor, fast.forward_masks)
+    assert fast.backward_masks is not None
+    fast_backward_masks = cast(torch.Tensor, fast.backward_masks)
+    assert torch.equal(fast_forward_masks, legacy_step_forward)
+    assert torch.equal(fast_backward_masks, legacy_step_backward)
+
+
 def test_DiscreteEBM_fwd_step():
     NDIM = 2
     BATCH_SIZE = 4
@@ -191,6 +231,45 @@ def test_DiscreteEBM_bwd_step():
     failing_actions = env.actions_from_tensor(format_tensor(failing_actions_list))
     with pytest.raises(NonValidActionsError):
         states = env._backward_step(states, failing_actions)
+
+
+def test_DiscreteEBM_fast_path_matches_legacy():
+    NDIM = 5
+    BATCH_SIZE = 48
+    env = DiscreteEBM(ndim=NDIM)
+    states_tensor = torch.randint(
+        -1, 2, (BATCH_SIZE, NDIM), dtype=torch.long, device=env.device
+    )
+    states = env.states_from_tensor(states_tensor.clone())
+    assert states.forward_masks is not None
+    forward_masks = cast(torch.Tensor, states.forward_masks)
+    actions_tensor = torch.distributions.Categorical(
+        probs=forward_masks.to(dtype=torch.float32)
+    ).sample()
+    actions_tensor = actions_tensor.unsqueeze(-1)
+
+    legacy_next = env._step(states, env.actions_from_tensor(actions_tensor.clone()))
+    assert legacy_next.forward_masks is not None
+    assert legacy_next.backward_masks is not None
+    legacy_forward = cast(torch.Tensor, legacy_next.forward_masks)
+    legacy_backward = cast(torch.Tensor, legacy_next.backward_masks)
+
+    fast = env.step_tensor(states.tensor, actions_tensor)
+    assert fast.forward_masks is not None
+    assert fast.backward_masks is not None
+    assert fast.is_sink_state is not None
+
+    assert torch.equal(fast.next_states, legacy_next.tensor)
+    assert torch.equal(fast.is_sink_state, legacy_next.is_sink_state)
+
+    non_sink = ~legacy_next.is_sink_state
+    if non_sink.any():
+        assert torch.equal(
+            cast(torch.Tensor, fast.forward_masks)[non_sink], legacy_forward[non_sink]
+        )
+        fast_backward = cast(torch.Tensor, fast.backward_masks)[non_sink, : 2 * NDIM]
+        legacy_backward_trim = legacy_backward[non_sink, : 2 * NDIM]
+        assert torch.equal(fast_backward, legacy_backward_trim)
 
 
 @pytest.mark.parametrize("delta", [0.1, 0.5, 1.0])
@@ -592,6 +671,28 @@ def test_graph_env():
     assert states.tensor.x.shape == (0, 1)
 
 
+def test_Line_fast_path_matches_legacy():
+    BATCH_SIZE = 32
+    env = Line(
+        mus=[0.0, 2.0],
+        sigmas=[0.5, 0.75],
+        init_value=0.1,
+        n_steps_per_trajectory=5,
+    )
+    states = env.reset(batch_shape=BATCH_SIZE)
+    actions_tensor = torch.randn(BATCH_SIZE, 1, device=states.device)
+    exit_mask = torch.rand(BATCH_SIZE, device=states.device) < 0.25
+    actions_tensor[exit_mask] = env.exit_action.item()
+
+    legacy_next = env._step(states, env.actions_from_tensor(actions_tensor.clone()))
+    fast = env.step_tensor(states.tensor, actions_tensor)
+
+    assert torch.allclose(fast.next_states, legacy_next.tensor)
+    assert fast.is_sink_state is not None
+    fast_sink = cast(torch.Tensor, fast.is_sink_state)
+    assert torch.equal(fast_sink, legacy_next.is_sink_state)
+
+
 def test_set_addition_fwd_step():
     N_ITEMS = 4
     MAX_ITEMS = 3
@@ -648,6 +749,147 @@ def test_set_addition_fwd_step():
     assert torch.allclose(rewards, expected_rewards)
 
 
+def test_box_fast_path_matches_legacy():
+    BATCH_SIZE = 48
+    DELTA = 0.2
+    env = Box(delta=DELTA)
+    states = env.reset(batch_shape=BATCH_SIZE)
+    actions_tensor = torch.zeros(
+        BATCH_SIZE, 2, dtype=torch.get_default_dtype(), device=states.device
+    )
+    exit_mask = torch.rand(BATCH_SIZE, device=states.device) < 0.2
+    actions_tensor[exit_mask] = env.exit_action.to(actions_tensor.device).to(
+        actions_tensor.dtype
+    )
+    non_exit_idx = (~exit_mask).nonzero(as_tuple=True)[0]
+    if len(non_exit_idx) > 0:
+        radii = torch.rand(len(non_exit_idx), device=states.device) * DELTA
+        angles = torch.rand(len(non_exit_idx), device=states.device) * 2 * torch.pi
+        actions_tensor[non_exit_idx, 0] = radii * torch.cos(angles)
+        actions_tensor[non_exit_idx, 1] = radii * torch.sin(angles)
+
+    legacy_next = env._step(states, env.actions_from_tensor(actions_tensor.clone()))
+    fast = env.step_tensor(states.tensor, actions_tensor)
+
+    assert torch.allclose(fast.next_states, legacy_next.tensor)
+    assert fast.is_sink_state is not None
+    assert torch.equal(cast(torch.Tensor, fast.is_sink_state), legacy_next.is_sink_state)
+
+
+def test_diffusion_sampling_fast_path_matches_legacy():
+    BATCH_SIZE = 16
+    env = DiffusionSampling(
+        target_str="gmm2", target_kwargs={}, num_discretization_steps=8.0
+    )
+    states = env.reset(batch_shape=BATCH_SIZE)
+    actions_tensor = torch.randn(
+        BATCH_SIZE, env.dim, device=states.device, dtype=states.tensor.dtype
+    )
+    exit_mask = torch.rand(BATCH_SIZE, device=states.device) < 0.2
+    if exit_mask.any():
+        exit_action = env.exit_action.to(device=states.device, dtype=states.tensor.dtype)
+        actions_tensor[exit_mask] = exit_action
+
+    legacy_next = env._step(states, env.actions_from_tensor(actions_tensor.clone()))
+    fast = env.step_tensor(states.tensor, actions_tensor)
+
+    assert torch.allclose(fast.next_states, legacy_next.tensor)
+    assert fast.is_sink_state is not None
+    assert torch.equal(cast(torch.Tensor, fast.is_sink_state), legacy_next.is_sink_state)
+
+
+def test_bitsequence_fast_path_matches_legacy():
+    BATCH_SIZE = 32
+    env = BitSequence(word_size=2, seq_size=8, n_modes=4, temperature=1.0)
+    states = env.reset(batch_shape=BATCH_SIZE)
+    for _ in range(3):
+        assert states.forward_masks is not None
+        masks = cast(torch.Tensor, states.forward_masks)
+        actions_tensor = (
+            torch.distributions.Categorical(probs=masks.to(dtype=torch.float32))
+            .sample()
+            .unsqueeze(-1)
+        )
+        states = env._step(states, env.actions_from_tensor(actions_tensor))
+
+    assert states.forward_masks is not None
+    forward_masks = cast(torch.Tensor, states.forward_masks)
+    actions_tensor = (
+        torch.distributions.Categorical(probs=forward_masks.to(dtype=torch.float32))
+        .sample()
+        .unsqueeze(-1)
+    )
+
+    legacy_next = env._step(states, env.actions_from_tensor(actions_tensor.clone()))
+    assert legacy_next.forward_masks is not None
+    assert legacy_next.backward_masks is not None
+
+    fast = env.step_tensor(states.tensor, actions_tensor)
+    assert fast.forward_masks is not None
+    assert fast.backward_masks is not None
+    assert fast.is_sink_state is not None
+
+    assert torch.equal(fast.next_states, legacy_next.tensor)
+    assert torch.equal(cast(torch.Tensor, fast.is_sink_state), legacy_next.is_sink_state)
+
+    non_sink = ~legacy_next.is_sink_state
+    if non_sink.any():
+        assert torch.equal(
+            cast(torch.Tensor, fast.forward_masks)[non_sink],
+            cast(torch.Tensor, legacy_next.forward_masks)[non_sink],
+        )
+        assert torch.equal(
+            cast(torch.Tensor, fast.backward_masks)[non_sink],
+            cast(torch.Tensor, legacy_next.backward_masks)[non_sink],
+        )
+
+
+def test_bitsequence_plus_fast_path_matches_legacy():
+    BATCH_SIZE = 24
+    env = BitSequencePlus(word_size=2, seq_size=16, n_modes=5, temperature=1.0)
+    states = env.reset(batch_shape=BATCH_SIZE)
+    for _ in range(4):
+        assert states.forward_masks is not None
+        masks = cast(torch.Tensor, states.forward_masks)
+        actions_tensor = (
+            torch.distributions.Categorical(probs=masks.to(dtype=torch.float32))
+            .sample()
+            .unsqueeze(-1)
+        )
+        states = env._step(states, env.actions_from_tensor(actions_tensor))
+
+    assert states.forward_masks is not None
+    forward_masks = cast(torch.Tensor, states.forward_masks)
+    actions_tensor = (
+        torch.distributions.Categorical(probs=forward_masks.to(dtype=torch.float32))
+        .sample()
+        .unsqueeze(-1)
+    )
+
+    legacy_next = env._step(states, env.actions_from_tensor(actions_tensor.clone()))
+    assert legacy_next.forward_masks is not None
+    assert legacy_next.backward_masks is not None
+
+    fast = env.step_tensor(states.tensor, actions_tensor)
+    assert fast.forward_masks is not None
+    assert fast.backward_masks is not None
+    assert fast.is_sink_state is not None
+
+    assert torch.equal(fast.next_states, legacy_next.tensor)
+    assert torch.equal(cast(torch.Tensor, fast.is_sink_state), legacy_next.is_sink_state)
+
+    non_sink = ~legacy_next.is_sink_state
+    if non_sink.any():
+        assert torch.equal(
+            cast(torch.Tensor, fast.forward_masks)[non_sink],
+            cast(torch.Tensor, legacy_next.forward_masks)[non_sink],
+        )
+        assert torch.equal(
+            cast(torch.Tensor, fast.backward_masks)[non_sink],
+            cast(torch.Tensor, legacy_next.backward_masks)[non_sink],
+        )
+
+
 def test_set_addition_bwd_step():
     N_ITEMS = 5
     MAX_ITEMS = 4
@@ -690,6 +932,49 @@ def test_set_addition_bwd_step():
     expected_states = torch.zeros((BATCH_SIZE, N_ITEMS), dtype=torch.get_default_dtype())
     assert torch.equal(states.tensor, expected_states)
     assert torch.all(states.is_initial_state)
+
+
+def test_set_addition_fast_path_matches_legacy():
+    N_ITEMS = 6
+    MAX_ITEMS = 4
+    BATCH_SIZE = 48
+
+    env = SetAddition(
+        n_items=N_ITEMS, max_items=MAX_ITEMS, reward_fn=lambda s: s.sum(-1)
+    )
+    states_tensor = torch.randint(
+        0, 2, (BATCH_SIZE, N_ITEMS), dtype=torch.get_default_dtype()
+    )
+    states = env.states_from_tensor(states_tensor.clone())
+
+    assert states.forward_masks is not None
+    forward_masks = cast(torch.Tensor, states.forward_masks)
+    actions_tensor = torch.distributions.Categorical(
+        probs=forward_masks.to(dtype=torch.float32)
+    ).sample()
+    actions_tensor = actions_tensor.unsqueeze(-1)
+
+    legacy_next = env._step(states, env.actions_from_tensor(actions_tensor.clone()))
+    assert legacy_next.forward_masks is not None
+    assert legacy_next.backward_masks is not None
+    legacy_forward = cast(torch.Tensor, legacy_next.forward_masks)
+    legacy_backward = cast(torch.Tensor, legacy_next.backward_masks)
+
+    fast = env.step_tensor(states.tensor, actions_tensor)
+    assert fast.forward_masks is not None
+    assert fast.backward_masks is not None
+    assert fast.is_sink_state is not None
+
+    assert torch.equal(fast.next_states, legacy_next.tensor)
+    assert torch.equal(fast.is_sink_state, legacy_next.is_sink_state)
+
+    fast_forward = cast(torch.Tensor, fast.forward_masks)
+    fast_backward = cast(torch.Tensor, fast.backward_masks)[..., : env.n_items]
+
+    non_sink = ~legacy_next.is_sink_state
+    if non_sink.any():
+        assert torch.equal(fast_forward[non_sink], legacy_forward[non_sink])
+        assert torch.equal(fast_backward[non_sink], legacy_backward[non_sink])
 
 
 def test_perfect_binary_tree_fwd_step():
@@ -779,6 +1064,49 @@ def test_perfect_binary_tree_bwd_step():
     expected_states = torch.tensor([[0], [0]], dtype=torch.long)
     assert torch.equal(states.tensor, expected_states)
     assert torch.all(states.is_initial_state)
+
+
+def test_perfect_binary_tree_fast_path_matches_legacy():
+    DEPTH = 4
+    BATCH_SIZE = 64
+
+    env = PerfectBinaryTree(
+        depth=DEPTH,
+        reward_fn=lambda s: s.to(torch.get_default_dtype()) + 1,
+    )
+    states_tensor = torch.randint(
+        0, env.n_nodes, (BATCH_SIZE, 1), dtype=torch.long, device=env.device
+    )
+    states = env.states_from_tensor(states_tensor.clone())
+    assert states.forward_masks is not None
+    forward_masks = cast(torch.Tensor, states.forward_masks)
+    actions_tensor = torch.distributions.Categorical(
+        probs=forward_masks.to(dtype=torch.float32)
+    ).sample()
+    actions_tensor = actions_tensor.unsqueeze(-1)
+
+    legacy_next = env._step(states, env.actions_from_tensor(actions_tensor.clone()))
+    assert legacy_next.forward_masks is not None
+    assert legacy_next.backward_masks is not None
+    legacy_forward = cast(torch.Tensor, legacy_next.forward_masks)
+    legacy_backward = cast(torch.Tensor, legacy_next.backward_masks)
+
+    fast = env.step_tensor(states.tensor, actions_tensor)
+    assert fast.forward_masks is not None
+    assert fast.backward_masks is not None
+    assert fast.is_sink_state is not None
+
+    assert torch.equal(fast.next_states, legacy_next.tensor)
+    assert torch.equal(fast.is_sink_state, legacy_next.is_sink_state)
+
+    non_sink = ~legacy_next.is_sink_state
+    if non_sink.any():
+        assert torch.equal(
+            cast(torch.Tensor, fast.forward_masks)[non_sink], legacy_forward[non_sink]
+        )
+        assert torch.equal(
+            cast(torch.Tensor, fast.backward_masks)[non_sink], legacy_backward[non_sink]
+        )
 
 
 # -----------------------------------------------------------------------------

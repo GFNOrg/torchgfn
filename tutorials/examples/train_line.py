@@ -7,7 +7,7 @@ from torch.distributions import Distribution, Normal  # TODO: extend to Beta
 from torch.distributions.independent import Independent
 from tqdm import trange
 
-from gfn.estimators import Estimator, PolicyMixin
+from gfn.estimators import Estimator, FastPolicyMixin
 from gfn.gflownet import TBGFlowNet  # TODO: Extend to SubTBGFlowNet
 from gfn.gym.line import Line
 from gfn.states import States
@@ -168,13 +168,14 @@ class GaussianStepMLP(MLP):
         return out
 
 
-class StepEstimator(Estimator, PolicyMixin):
+class StepEstimator(FastPolicyMixin, Estimator):
     """Estimator for PF and PB of the Line environment."""
 
     def __init__(self, env: Line, module: torch.nn.Module, backward: bool):
         super().__init__(module, is_backward=backward)
         self.backward = backward
         self.n_steps_per_trajectory = env.n_steps_per_trajectory
+        self.env = env
 
     @property
     def expected_output_dim(self) -> int:
@@ -206,6 +207,31 @@ class StepEstimator(Estimator, PolicyMixin):
             backward=self.backward,
             n_steps=self.n_steps_per_trajectory,
         )
+
+    def fast_features(
+        self,
+        states_tensor: torch.Tensor,
+        *,
+        forward_masks: torch.Tensor | None = None,
+        backward_masks: torch.Tensor | None = None,
+        conditions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return states_tensor
+
+    def fast_distribution(
+        self,
+        features: torch.Tensor,
+        *,
+        states_tensor: torch.Tensor | None = None,
+        forward_masks: torch.Tensor | None = None,
+        backward_masks: torch.Tensor | None = None,
+        **policy_kwargs,
+    ) -> Distribution:
+        if states_tensor is None:
+            raise ValueError("states_tensor is required for StepEstimator fast path.")
+        module_output = self.module(features)
+        states = self.env.states_from_tensor_fast(states_tensor)
+        return self.to_probability_distribution(states, module_output, **policy_kwargs)
 
 
 def train(

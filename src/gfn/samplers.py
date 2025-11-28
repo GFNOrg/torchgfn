@@ -1,11 +1,12 @@
+import warnings
 from typing import Any, List, Optional, Tuple, cast
 
 import torch
 
 from gfn.actions import Actions
 from gfn.containers import Trajectories
-from gfn.env import Env
-from gfn.estimators import Estimator, PolicyEstimatorProtocol
+from gfn.env import Env, EnvFastPathMixin
+from gfn.estimators import Estimator, FastPolicyMixin, PolicyEstimatorProtocol
 from gfn.states import GraphStates, States
 from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import graph_states_share_storage
@@ -890,3 +891,276 @@ class LocalSearchSampler(Sampler):
         )
 
         return new_trajectories, new_trajectories_log_pf, new_trajectories_log_pb
+
+
+class CompiledChunkSampler(Sampler):
+    """Chunked tensor sampler that stays on the fast path for torch.compile."""
+
+    def __init__(
+        self,
+        estimator: Estimator,
+        *,
+        chunk_size: int = 32,
+        compile_mode: str = "reduce-overhead",
+    ) -> None:
+        super().__init__(estimator)
+        self.chunk_size = int(chunk_size)
+        self.compile_mode = compile_mode
+
+    def sample_trajectories(
+        self,
+        env: Env,
+        n: Optional[int] = None,
+        states: Optional[States] = None,
+        conditions: Optional[torch.Tensor] = None,
+        save_estimator_outputs: bool = False,
+        save_logprobs: bool = False,
+        **policy_kwargs: Any,
+    ) -> Trajectories:
+
+        # Log-probs: we’d need to store each chunk’s dist (or sampled actions) plus a
+        # boolean mask of which rows were active, then call policy.fast_distribution
+        # (...).log_prob(...) during or after the chunk loop. Because done rows get
+        # forced to the exit action, we’d have to mask those out when accumulating
+        # log-probs so the padded semantics match Trajectories.log_probs. That means
+        # keeping per-step tensors shaped (chunk_len, batch, action_dim) and writing
+        # them into the context at the end.
+
+        # Estimator outputs: same idea—capture the raw tensor returned by policy.
+        # fast_features/fast_distribution (whatever we consider the “estimator output”)
+        # for active rows, pad them back to batch size, and append to a list per chunk
+        # so we can stack them like the legacy sampler.
+        if save_estimator_outputs or save_logprobs:
+            raise NotImplementedError(
+                "CompiledChunkSampler does not yet record log-probs or estimator outputs."
+            )
+
+        if not isinstance(env, EnvFastPathMixin):
+            raise TypeError(
+                "CompiledChunkSampler requires environments implementing EnvFastPathMixin."
+            )
+
+        if not isinstance(self.estimator, FastPolicyMixin):
+            raise TypeError(
+                "CompiledChunkSampler requires estimators implementing FastPolicyMixin."
+            )
+
+        assert self.chunk_size > 0, "chunk_size must be positive"
+
+        policy = cast(FastPolicyMixin, self.estimator)
+
+        if states is None:
+            assert n is not None, "Either `n` or `states` must be provided."
+            states_obj = env.reset(batch_shape=(n,))
+        else:
+            states_obj = states
+        assert len(states_obj.batch_shape) == 1, "States batch must be 1-D."
+
+        batch = states_obj.batch_shape[0]
+        device = states_obj.device
+
+        if conditions is not None:
+            assert (
+                conditions.shape[0] == batch
+            ), "Conditions batch dimension must match states batch size."
+            ensure_same_device(device, conditions.device)
+
+        curr_states = states_obj.tensor
+        done = states_obj.is_sink_state.clone()
+        exit_action_value = env.exit_action.to(device=curr_states.device)
+        dummy_action_value = env.dummy_action.to(device=curr_states.device)
+
+        # `step_actions_seq` keeps the raw sampled actions (with exits injected for
+        # finished rows) so we can exactly replay the tensor-forward environment when
+        # rebuilding the state stack after the chunk loop. `recorded_actions_seq`
+        # mirrors those actions but rewrites already-finished rows with the env dummy
+        # action so that downstream Trajectories consumers (DBG/SubTB losses) never see
+        # transitions originating from sink states.
+        recorded_actions_seq: List[torch.Tensor] = []
+        step_actions_seq: List[torch.Tensor] = []
+        sink_seq: List[torch.Tensor] = []
+
+        chunk_size = int(policy_kwargs.pop("chunk_size", self.chunk_size))
+
+        def _chunk_loop(current_states: torch.Tensor, done_mask: torch.Tensor) -> tuple[
+            torch.Tensor,
+            torch.Tensor,
+            List[torch.Tensor],
+            List[torch.Tensor],
+            List[torch.Tensor],
+        ]:
+            """
+            This function is the core of the chunked sampler. It is responsible for
+            sampling actions for a chunk of states. It is called in a loop until all
+            states are done. It returns the current states, a boolean mask indicating
+            which states are done, the actions sampled for the chunk, and a boolean
+            mask indicating which states are sinks.
+
+            The purpose of this function is to serve as a torch.compile-ed function to
+            speed up the sampling process. It is called in a loop until all states are
+            done.
+
+            Args:
+                current_states: The current states to sample actions for.
+                done_mask: A boolean mask indicating which states are done.
+
+            Returns:
+            """
+            local_step_actions: List[torch.Tensor] = []
+            local_recorded_actions: List[torch.Tensor] = []
+            local_sinks: List[torch.Tensor] = []
+
+            for _ in range(chunk_size):
+                if bool(done_mask.all().item()):
+                    break
+
+                state_view = current_states
+                features = policy.fast_features(
+                    state_view,
+                    forward_masks=None,
+                    backward_masks=None,
+                    conditions=conditions,
+                )
+                dist = policy.fast_distribution(
+                    features,
+                    forward_masks=None,
+                    backward_masks=None,
+                    states_tensor=state_view,
+                    **policy_kwargs,
+                )
+
+                actions_tensor = dist.sample()
+
+                if done_mask.any():
+                    # Broadcast the boolean mask and the per-env exit/dummy templates so
+                    # they match the estimator's sampled action tensor shape (covers
+                    # both scalar Discrete actions and potential multi-dim action
+                    # heads).
+                    mask = done_mask
+                    while mask.ndim < actions_tensor.ndim:
+                        mask = mask.unsqueeze(-1)
+
+                    exit_fill = exit_action_value.to(
+                        device=actions_tensor.device, dtype=actions_tensor.dtype
+                    )
+                    while exit_fill.ndim < actions_tensor.ndim:
+                        exit_fill = exit_fill.unsqueeze(0)
+
+                    dummy_fill = dummy_action_value.to(
+                        device=actions_tensor.device, dtype=actions_tensor.dtype
+                    )
+                    while dummy_fill.ndim < actions_tensor.ndim:
+                        dummy_fill = dummy_fill.unsqueeze(0)
+
+                    step_actions = torch.where(mask, exit_fill, actions_tensor)
+                    record_actions = torch.where(mask, dummy_fill, actions_tensor)
+                else:
+                    step_actions = actions_tensor
+                    record_actions = actions_tensor
+
+                # Only the step actions (exit-padded) are used to advance the tensor
+                # env. The recorded actions (dummy-padded) are used to reconstruct the
+                # state stack after the chunk loop.
+                step_res = env.step_tensor(current_states, step_actions)
+                current_states = step_res.next_states
+                sinks = step_res.is_sink_state
+                if sinks is None:
+                    sinks = env.states_from_tensor(current_states).is_sink_state
+
+                done_mask = done_mask | sinks
+                local_step_actions.append(step_actions)
+                local_recorded_actions.append(record_actions)
+                local_sinks.append(sinks)
+
+            return (
+                current_states,
+                done_mask,
+                local_step_actions,
+                local_recorded_actions,
+                local_sinks,
+            )
+
+        # Fallback to the non-compiled version if compilation fails.
+        chunk_fn = _chunk_loop
+        if hasattr(torch, "compile"):
+            try:
+                chunk_fn = torch.compile(_chunk_loop, mode=self.compile_mode)  # type: ignore[arg-type]
+            except Exception:
+                # If compilation fails, use the non-compiled version.
+                warnings.warn(
+                    "Compilation of chunk_loop failed, using non-compiled version.",
+                    stacklevel=2,
+                )
+                chunk_fn = _chunk_loop
+
+        # Main loop: call the compiled function until all states are done.
+        while not bool(done.all().item()):
+            (
+                curr_states,
+                done,
+                step_actions_chunk,
+                recorded_actions_chunk,
+                sinks_chunk,
+            ) = chunk_fn(curr_states, done)
+            if step_actions_chunk:
+                step_actions_seq.extend(step_actions_chunk)
+                recorded_actions_seq.extend(recorded_actions_chunk)
+                sink_seq.extend(sinks_chunk)
+
+        if recorded_actions_seq:
+            actions_tsr = torch.stack(recorded_actions_seq, dim=0)
+            T = actions_tsr.shape[0]
+
+            s = states_obj.tensor
+            states_stack = [s]
+            for t in range(T):
+                # Re-simulate using the true step actions so reconstructed states match
+                # the chunk rollout exactly even though padded (recorded) actions may
+                # differ.
+                step = env.step_tensor(s, step_actions_seq[t])
+                s = step.next_states
+                states_stack.append(s)
+            states_tsr = torch.stack(states_stack, dim=0)
+
+            sinks_tsr = torch.stack(sink_seq, dim=0)
+            first_sink = torch.argmax(sinks_tsr.to(torch.long), dim=0)
+            never_sink = ~sinks_tsr.any(dim=0)
+            first_sink = torch.where(
+                never_sink,
+                torch.tensor(T - 1, device=device),
+                first_sink,
+            )
+            terminating_idx = first_sink + 1
+        else:
+            states_tsr = states_obj.tensor.unsqueeze(0)
+            actions_tsr = env.actions_from_batch_shape((0, batch)).tensor
+            terminating_idx = torch.zeros(batch, dtype=torch.long, device=device)
+
+        # Ensure the stacked (dummy-padded) actions respect the environment's action
+        # shape before wrapping them into an Actions container (e.g., discrete envs
+        # expect (..., 1)). Without this guard DB/SubTB estimators would fail when the
+        # chunk sampler returns rank-1 tensors.
+        action_shape = getattr(env, "action_shape", None)
+        if action_shape:
+            tail_shape = tuple(actions_tsr.shape[-len(action_shape) :])
+            if tail_shape != tuple(action_shape):
+                if tuple(action_shape) == (1,):
+                    actions_tsr = actions_tsr.unsqueeze(-1)
+                else:
+                    raise ValueError(
+                        "CompiledChunkSampler produced actions with shape "
+                        f"{actions_tsr.shape}, expected trailing dims {action_shape}."
+                    )
+
+        trajectories = Trajectories(
+            env=env,
+            states=env.states_from_tensor(states_tsr),
+            conditions=conditions,
+            actions=env.actions_from_tensor(actions_tsr),
+            terminating_idx=terminating_idx,
+            is_backward=policy.is_backward,
+            log_rewards=None,
+            log_probs=None,
+            estimator_outputs=None,
+        )
+        return trajectories

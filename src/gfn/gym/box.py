@@ -4,11 +4,11 @@ from typing import Literal, Tuple
 import torch
 
 from gfn.actions import Actions
-from gfn.env import Env
+from gfn.env import Env, EnvFastPathMixin
 from gfn.states import States
 
 
-class Box(Env):
+class Box(EnvFastPathMixin, Env):
     """Box environment, corresponding to the one in Section 4.1 of https://arxiv.org/abs/2301.12594
 
     Attributes:
@@ -100,6 +100,26 @@ class Box(Env):
             The previous states as a States object.
         """
         return self.States(states.tensor - actions.tensor)
+
+    def step_tensor(
+        self, states_tensor: torch.Tensor, actions_tensor: torch.Tensor
+    ) -> Env.TensorStepResult:
+        next_states = states_tensor.clone()
+        exit_action = self.exit_action.to(states_tensor.device).to(states_tensor.dtype)
+        exit_mask = torch.all(actions_tensor == exit_action, dim=-1)
+        non_exit = ~exit_mask
+
+        next_states[non_exit] = next_states[non_exit] + actions_tensor[non_exit]
+
+        if exit_mask.any():
+            assert isinstance(self.sf, torch.Tensor)
+            sf_tensor = self.sf.to(states_tensor.device).to(states_tensor.dtype)
+            next_states[exit_mask] = sf_tensor
+
+        return self.TensorStepResult(
+            next_states=next_states,
+            is_sink_state=exit_mask.clone(),
+        )
 
     @staticmethod
     def norm(x: torch.Tensor) -> torch.Tensor:
