@@ -2,6 +2,17 @@
 r"""
 Optimized multi-environment (HyperGrid + Diffusion) training/benchmark script with
 optional torch.compile, vmap, and chunked sampling across several GFlowNet variants.
+
+
+TODO:
+
+We need actual profiling on CUDA (start with torch.profiler.profile(use_cuda=True) around chunk_fn) to see the kernel counts and copy sizes. If compile is failing, we must inspect the Dynamo logs to see what op blocks it (maybe the env.actions_from_batch_shape call inside _chunk_loop still triggers Python). If compile succeeds, then GPU is just overwhelmed by host-device copies and we should keep the script fast path on CPU.
+Next actions I recommend:
+Run the benchmark with TORCH_LOGS="graph_breaks" and TORCHDYNAMO_VERBOSE=1 so we can see why the chunk loops bail out of compilation. Share those snippets if possible.
+Profile the “Library Fast Path” on CUDA (PyTorch profiler) to find the hottest ops. If the C++ chunk sampler is dominated by scatter/where, we might need to batch them or increase chunk size to amortize kernel launches.
+For the script sampler, try forcing chunk_fn_compiled=False to confirm whether the slowdown is due to torch.compile overhead; if it runs faster without compilation, we’ll know the compiled graph is recomputing templates or copying more than expected.
+
+
 """
 
 from __future__ import annotations
