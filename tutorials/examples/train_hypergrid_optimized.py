@@ -674,14 +674,22 @@ class ChunkedDiffusionSampler(Sampler):
             List[torch.Tensor],
             List[torch.Tensor],
             List[torch.Tensor],
+            torch.Tensor,
         ]:
             local_recorded_actions: List[torch.Tensor] = []
             local_sinks: List[torch.Tensor] = []
             local_states: List[torch.Tensor] = []
+            action_template: torch.Tensor | None = None
+            steps_taken = 0
 
             for _ in range(chunk_size):
-                if torch.all(done_mask):
-                    break
+                if bool(done_mask.all().item()):
+                    assert action_template is not None
+                    pad_actions = _fill_like_reference(action_template, dummy_action_value)
+                    local_recorded_actions.append(pad_actions)
+                    local_sinks.append(done_mask.clone())
+                    local_states.append(current_states.clone())
+                    continue
 
                 features = policy.fast_features(
                     current_states,
@@ -727,8 +735,10 @@ class ChunkedDiffusionSampler(Sampler):
 
                 done_mask = done_mask | sinks
                 local_recorded_actions.append(record_actions)
+                action_template = record_actions.detach()
                 local_sinks.append(sinks)
                 local_states.append(current_states.clone())
+                steps_taken += 1
 
             return (
                 current_states,
@@ -736,6 +746,7 @@ class ChunkedDiffusionSampler(Sampler):
                 local_recorded_actions,
                 local_sinks,
                 local_states,
+                torch.tensor(steps_taken, device=current_states.device),
             )
 
         chunk_fn: Callable = _chunk_loop
@@ -772,11 +783,13 @@ class ChunkedDiffusionSampler(Sampler):
                 recorded_actions_chunk,
                 sinks_chunk,
                 states_chunk,
+                steps_taken_tensor,
             ) = chunk_fn(curr_states, done)
-            if recorded_actions_chunk:
-                recorded_actions_seq.extend(recorded_actions_chunk)
-                sink_seq.extend(sinks_chunk)
-                states_stack.extend(states_chunk)
+            steps_taken = int(steps_taken_tensor.item())
+            if steps_taken:
+                recorded_actions_seq.extend(recorded_actions_chunk[:steps_taken])
+                sink_seq.extend(sinks_chunk[:steps_taken])
+                states_stack.extend(states_chunk[:steps_taken])
 
         if recorded_actions_seq:
             actions_tsr = torch.stack(recorded_actions_seq, dim=0)

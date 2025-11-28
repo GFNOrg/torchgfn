@@ -22,6 +22,13 @@ def _mark_cudagraph_step() -> None:
         marker()
 
 
+def _fill_like_reference(reference: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+    fill = value.to(device=reference.device, dtype=reference.dtype)
+    while fill.ndim < reference.ndim:
+        fill = fill.unsqueeze(0)
+    return fill.expand_as(reference).clone()
+
+
 class Sampler:
     """Estimator‑driven sampler for GFlowNet environments.
 
@@ -998,6 +1005,7 @@ class CompiledChunkSampler(Sampler):
             List[torch.Tensor],
             List[torch.Tensor],
             List[torch.Tensor],
+            torch.Tensor,
         ]:
             """
             This function is the core of the chunked sampler. It is responsible for
@@ -1019,10 +1027,19 @@ class CompiledChunkSampler(Sampler):
             local_step_actions: List[torch.Tensor] = []
             local_recorded_actions: List[torch.Tensor] = []
             local_sinks: List[torch.Tensor] = []
+            step_template: torch.Tensor | None = None
+            record_template: torch.Tensor | None = None
+            steps_taken = 0
 
             for _ in range(chunk_size):
                 if bool(done_mask.all().item()):
-                    break
+                    assert step_template is not None and record_template is not None
+                    pad_step = _fill_like_reference(step_template, exit_action_value)
+                    pad_record = _fill_like_reference(record_template, dummy_action_value)
+                    local_step_actions.append(pad_step)
+                    local_recorded_actions.append(pad_record)
+                    local_sinks.append(done_mask.clone())
+                    continue
 
                 state_view = current_states
                 features = policy.fast_features(
@@ -1080,7 +1097,10 @@ class CompiledChunkSampler(Sampler):
                 done_mask = done_mask | sinks
                 local_step_actions.append(step_actions)
                 local_recorded_actions.append(record_actions)
+                step_template = step_actions.detach()
+                record_template = record_actions.detach()
                 local_sinks.append(sinks)
+                steps_taken += 1
 
             return (
                 current_states,
@@ -1088,6 +1108,7 @@ class CompiledChunkSampler(Sampler):
                 local_step_actions,
                 local_recorded_actions,
                 local_sinks,
+                torch.tensor(steps_taken, device=current_states.device),
             )
 
         chunk_fn: Callable = _chunk_loop
@@ -1125,11 +1146,13 @@ class CompiledChunkSampler(Sampler):
                 step_actions_chunk,
                 recorded_actions_chunk,
                 sinks_chunk,
+                steps_taken_tensor,
             ) = chunk_fn(curr_states, done)
-            if step_actions_chunk:
-                step_actions_seq.extend(step_actions_chunk)
-                recorded_actions_seq.extend(recorded_actions_chunk)
-                sink_seq.extend(sinks_chunk)
+            steps_taken = int(steps_taken_tensor.item())
+            if steps_taken:
+                step_actions_seq.extend(step_actions_chunk[:steps_taken])
+                recorded_actions_seq.extend(recorded_actions_chunk[:steps_taken])
+                sink_seq.extend(sinks_chunk[:steps_taken])
 
         if recorded_actions_seq:
             actions_tsr = torch.stack(recorded_actions_seq, dim=0)
