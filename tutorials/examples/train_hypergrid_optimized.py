@@ -12,7 +12,7 @@ import time
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, cast
+from typing import Any, Callable, Dict, Iterable, List, Literal, cast
 
 import torch
 from torch.func import vmap
@@ -43,6 +43,24 @@ from gfn.utils.modules import (
     DiffusionPISGradNetForward,
 )
 from gfn.utils.training import validate
+
+
+def _mark_cudagraph_step() -> None:
+    compiler = getattr(torch, "compiler", None)
+    if compiler is None:
+        return
+    marker = getattr(compiler, "cudagraph_mark_step_begin", None)
+    if callable(marker):
+        marker()
+
+
+def _fill_like_reference(reference: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+    """Broadcasts `value` to the shape/dtype/device of `reference`."""
+    fill = value.to(device=reference.device, dtype=reference.dtype)
+    while fill.ndim < reference.ndim:
+        fill = fill.unsqueeze(0)
+    return fill.expand_as(reference).clone()
+
 
 # Default HyperGrid configuration (easy to extend to multiple envs later on).
 HYPERGRID_KWARGS: Dict[str, Any] = {
@@ -318,6 +336,7 @@ class ChunkedHyperGridSampler(Sampler):
     def __init__(self, estimator, chunk_size: int):
         super().__init__(estimator)
         self.chunk_size = int(chunk_size)
+        self._compiled_chunk_cache: dict[tuple[int, str], Callable] = {}
 
     def sample_trajectories(  # noqa: C901
         self,
@@ -401,88 +420,116 @@ class ChunkedHyperGridSampler(Sampler):
             view_shape = tuple(tensor.shape) + (1,) * expand_dims
             return tensor.view(view_shape)
 
-        def _chunk_loop(
-            current_states: torch.Tensor,
-            current_masks: torch.Tensor,
-            done_mask: torch.Tensor,
-        ):
-            actions_list: List[torch.Tensor] = []
-            dones_list: List[torch.Tensor] = []
-            states_list: List[torch.Tensor] = []
-            for _ in range(chunk_size):
-                if bool(done_mask.all().item()):
-                    break
+        device_type = curr_states.device.type
+        compile_allowed = (
+            hasattr(torch, "compile") and device_type in ("cuda", "cpu") and conditions is None and not policy_kwargs
+        )
+        compile_key = (id(env), device_type)
+        chunk_fn: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], tuple] | None = None
+        chunk_fn_compiled = False
+        if compile_allowed:
+            chunk_fn = self._compiled_chunk_cache.get(compile_key)
+            if chunk_fn is not None:
+                chunk_fn_compiled = True
 
-                masks = current_masks
-                if done_mask.any():
-                    masks = masks.clone()
-                    masks[done_mask] = False
-                    masks[done_mask, exit_idx] = True
+        if chunk_fn is None:
 
-                features = policy.fast_features(
+            def _chunk_loop(
+                current_states: torch.Tensor,
+                current_masks: torch.Tensor,
+                done_mask: torch.Tensor,
+            ):
+                actions_list: List[torch.Tensor] = []
+                dones_list: List[torch.Tensor] = []
+                states_list: List[torch.Tensor] = []
+                action_template: torch.Tensor | None = None
+                steps_taken = 0
+                for _ in range(chunk_size):
+                    if bool(done_mask.all().item()):
+                        assert action_template is not None
+                        pad_actions = _fill_like_reference(action_template, dummy_action_value)
+                        actions_list.append(pad_actions)
+                        dones_list.append(done_mask.clone())
+                        states_list.append(current_states.clone())
+                        continue
+
+                    masks = current_masks
+                    if done_mask.any():
+                        masks = masks.clone()
+                        masks[done_mask] = False
+                        masks[done_mask, exit_idx] = True
+
+                    features = policy.fast_features(
+                        current_states,
+                        forward_masks=masks,
+                        backward_masks=None,
+                        conditions=conditions,
+                    )
+                    dist = policy.fast_distribution(
+                        features,
+                        forward_masks=masks,
+                        backward_masks=None,
+                        states_tensor=current_states,
+                        epsilon=epsilon,
+                        **policy_kwargs,
+                    )
+                    sampled_actions = dist.sample()
+                    step_actions = sampled_actions
+                    record_actions = sampled_actions
+
+                    if done_mask.any():
+                        mask = _expand_back(done_mask, sampled_actions.ndim)
+                        exit_fill = _expand_front(
+                            exit_action_value.to(
+                                device=sampled_actions.device, dtype=sampled_actions.dtype
+                            ),
+                            sampled_actions.ndim,
+                        )
+                        dummy_fill = _expand_front(
+                            dummy_action_value.to(
+                                device=sampled_actions.device, dtype=sampled_actions.dtype
+                            ),
+                            sampled_actions.ndim,
+                        )
+                        step_actions = torch.where(mask, exit_fill, sampled_actions)
+                        record_actions = torch.where(mask, dummy_fill, sampled_actions)
+
+                    next_states, next_masks, is_exit = step_tensor(
+                        current_states, step_actions
+                    )
+
+                    actions_list.append(record_actions)
+                    action_template = record_actions.detach()
+                    dones_list.append(is_exit)
+                    states_list.append(next_states.clone())
+
+                    current_states = next_states
+                    current_masks = next_masks
+                    done_mask = done_mask | is_exit
+                    steps_taken += 1
+
+                return (
                     current_states,
-                    forward_masks=masks,
-                    backward_masks=None,
-                    conditions=conditions,
-                )
-                dist = policy.fast_distribution(
-                    features,
-                    forward_masks=masks,
-                    backward_masks=None,
-                    states_tensor=current_states,
-                    epsilon=epsilon,
-                    **policy_kwargs,
-                )
-                sampled_actions = dist.sample()
-                step_actions = sampled_actions
-                record_actions = sampled_actions
-
-                if done_mask.any():
-                    mask = _expand_back(done_mask, sampled_actions.ndim)
-                    exit_fill = _expand_front(
-                        exit_action_value.to(
-                            device=sampled_actions.device, dtype=sampled_actions.dtype
-                        ),
-                        sampled_actions.ndim,
-                    )
-                    dummy_fill = _expand_front(
-                        dummy_action_value.to(
-                            device=sampled_actions.device, dtype=sampled_actions.dtype
-                        ),
-                        sampled_actions.ndim,
-                    )
-                    step_actions = torch.where(mask, exit_fill, sampled_actions)
-                    record_actions = torch.where(mask, dummy_fill, sampled_actions)
-
-                next_states, next_masks, is_exit = step_tensor(
-                    current_states, step_actions
+                    current_masks,
+                    done_mask,
+                    actions_list,
+                    dones_list,
+                    states_list,
+                    torch.tensor(steps_taken, device=current_states.device),
                 )
 
-                actions_list.append(record_actions)
-                dones_list.append(is_exit)
-                states_list.append(next_states.clone())
-
-                current_states = next_states
-                current_masks = next_masks
-                done_mask = done_mask | is_exit
-
-            return (
-                current_states,
-                current_masks,
-                done_mask,
-                actions_list,
-                dones_list,
-                states_list,
-            )
-
-        chunk_fn = _chunk_loop
-        if hasattr(torch, "compile"):
-            try:
-                chunk_fn = torch.compile(_chunk_loop, mode="reduce-overhead")  # type: ignore[arg-type]
-            except Exception:
-                pass
+            chunk_fn = _chunk_loop
+            if compile_allowed:
+                try:
+                    chunk_fn = torch.compile(_chunk_loop, mode="reduce-overhead")  # type: ignore[arg-type]
+                    self._compiled_chunk_cache[compile_key] = chunk_fn
+                    chunk_fn_compiled = True
+                except Exception:
+                    chunk_fn = _chunk_loop
 
         while not bool(done.all().item()):
+            if chunk_fn_compiled:
+                _mark_cudagraph_step()
             (
                 curr_states,
                 forward_masks,
@@ -490,11 +537,13 @@ class ChunkedHyperGridSampler(Sampler):
                 actions_chunk,
                 dones_chunk,
                 states_chunk,
+                steps_taken_tensor,
             ) = chunk_fn(curr_states, forward_masks, done)
-            if actions_chunk:
-                actions_seq.extend(actions_chunk)
-                dones_seq.extend(dones_chunk)
-                states_stack.extend(states_chunk)
+            steps_taken = int(steps_taken_tensor.item())
+            if steps_taken:
+                actions_seq.extend(actions_chunk[:steps_taken])
+                dones_seq.extend(dones_chunk[:steps_taken])
+                states_stack.extend(states_chunk[:steps_taken])
 
         if actions_seq:
             actions_tsr = torch.stack(actions_seq, dim=0)
@@ -545,6 +594,7 @@ class ChunkedDiffusionSampler(Sampler):
     def __init__(self, estimator: PinnedBrownianMotionForward, chunk_size: int):
         super().__init__(estimator)
         self.chunk_size = int(chunk_size)
+        self._compiled_chunk_cache: dict[tuple[int, str], Callable] = {}
 
     def sample_trajectories(  # noqa: C901
         self,
@@ -688,19 +738,34 @@ class ChunkedDiffusionSampler(Sampler):
                 local_states,
             )
 
-        chunk_fn = _chunk_loop
+        chunk_fn: Callable = _chunk_loop
+        chunk_fn_compiled = False
         device_type = curr_states.device.type
-        if hasattr(torch, "compile") and device_type in ("cuda", "cpu"):
-            try:
-                chunk_fn = torch.compile(_chunk_loop, mode="reduce-overhead")  # type: ignore[arg-type]
-            except Exception as exc:  # pragma: no cover - compile fallback
-                warnings.warn(
-                    f"Compilation of diffusion chunk loop failed ({exc}); using eager version.",
-                    stacklevel=2,
-                )
-                chunk_fn = _chunk_loop
+        compile_allowed = (
+            hasattr(torch, "compile") and device_type in ("cuda", "cpu") and conditions is None and not policy_kwargs
+        )
+        cache_key = (id(env), device_type)
+        if compile_allowed:
+            cached = self._compiled_chunk_cache.get(cache_key)
+            if cached is not None:
+                chunk_fn = cached
+                chunk_fn_compiled = True
+            else:
+                try:
+                    compiled = torch.compile(_chunk_loop, mode="reduce-overhead")  # type: ignore[arg-type]
+                    self._compiled_chunk_cache[cache_key] = compiled
+                    chunk_fn = compiled
+                    chunk_fn_compiled = True
+                except Exception as exc:  # pragma: no cover - compile fallback
+                    warnings.warn(
+                        f"Compilation of diffusion chunk loop failed ({exc}); using eager version.",
+                        stacklevel=2,
+                    )
+                    chunk_fn = _chunk_loop
 
         while not bool(done.all().item()):
+            if chunk_fn_compiled:
+                _mark_cudagraph_step()
             (
                 curr_states,
                 done,
@@ -797,9 +862,15 @@ class FastKHotDiscretePolicyEstimator(FastPolicyMixin, DiscretePolicyEstimator):
         conditions: torch.Tensor | None = None,
     ) -> torch.Tensor:
         assert states_tensor.dtype == torch.long
-        khot = torch.nn.functional.one_hot(states_tensor, num_classes=self.height).to(
-            dtype=torch.get_default_dtype()
+        sink_mask = states_tensor < 0  # HyperGrid sink state stores -1 in every dim.
+        safe_states = torch.where(
+            sink_mask, torch.zeros_like(states_tensor), states_tensor
         )
+        khot = torch.nn.functional.one_hot(
+            safe_states, num_classes=self.height
+        ).to(dtype=torch.get_default_dtype())
+        if sink_mask.any():
+            khot = khot * (~sink_mask).unsqueeze(-1).to(khot.dtype)
         return khot.view(states_tensor.shape[0], -1)
 
     def fast_distribution(

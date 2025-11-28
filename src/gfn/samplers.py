@@ -1,5 +1,5 @@
 import warnings
-from typing import Any, List, Optional, Tuple, cast
+from typing import Any, Callable, List, Optional, Tuple, cast
 
 import torch
 
@@ -11,6 +11,15 @@ from gfn.states import GraphStates, States
 from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import graph_states_share_storage
 from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
+
+
+def _mark_cudagraph_step() -> None:
+    compiler = getattr(torch, "compiler", None)
+    if compiler is None:
+        return
+    marker = getattr(compiler, "cudagraph_mark_step_begin", None)
+    if callable(marker):
+        marker()
 
 
 class Sampler:
@@ -906,6 +915,7 @@ class CompiledChunkSampler(Sampler):
         super().__init__(estimator)
         self.chunk_size = int(chunk_size)
         self.compile_mode = compile_mode
+        self._compiled_chunk_cache: dict[tuple[int, str], Callable] = {}
 
     def sample_trajectories(
         self,
@@ -1080,21 +1090,35 @@ class CompiledChunkSampler(Sampler):
                 local_sinks,
             )
 
-        # Fallback to the non-compiled version if compilation fails.
-        chunk_fn = _chunk_loop
-        if hasattr(torch, "compile"):
-            try:
-                chunk_fn = torch.compile(_chunk_loop, mode=self.compile_mode)  # type: ignore[arg-type]
-            except Exception:
-                # If compilation fails, use the non-compiled version.
-                warnings.warn(
-                    "Compilation of chunk_loop failed, using non-compiled version.",
-                    stacklevel=2,
-                )
-                chunk_fn = _chunk_loop
+        chunk_fn: Callable = _chunk_loop
+        chunk_fn_compiled = False
+        device_type = curr_states.device.type
+        compile_allowed = (
+            hasattr(torch, "compile") and device_type in ("cuda", "cpu") and conditions is None and not policy_kwargs
+        )
+        cache_key = (id(env), device_type)
+        if compile_allowed:
+            cached = self._compiled_chunk_cache.get(cache_key)
+            if cached is not None:
+                chunk_fn = cached
+                chunk_fn_compiled = True
+            else:
+                try:
+                    compiled = torch.compile(_chunk_loop, mode=self.compile_mode)  # type: ignore[arg-type]
+                    self._compiled_chunk_cache[cache_key] = compiled
+                    chunk_fn = compiled
+                    chunk_fn_compiled = True
+                except Exception:
+                    warnings.warn(
+                        "Compilation of chunk_loop failed, using non-compiled version.",
+                        stacklevel=2,
+                    )
+                    chunk_fn = _chunk_loop
 
         # Main loop: call the compiled function until all states are done.
         while not bool(done.all().item()):
+            if chunk_fn_compiled:
+                _mark_cudagraph_step()
             (
                 curr_states,
                 done,
