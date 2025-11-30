@@ -12,7 +12,6 @@ from gfn.utils.handlers import (
 from gfn.utils.prob_calculations import (
     get_trajectory_pbs,
     get_trajectory_pfs,
-    get_trajectory_pfs_and_pbs,
     get_transition_pbs,
     get_transition_pfs,
 )
@@ -418,9 +417,9 @@ def test_get_transition_pbs_matches_legacy_with_default_adapter():
 
 def test_trajectory_states_sink_consistency():
     """Test that sink states and dummy actions are consistent in trajectories.
-    
+
     This test verifies that for valid trajectories, sink states (excluding the last one)
-    should correspond to dummy actions. This was previously an assertion in 
+    should correspond to dummy actions. This was previously an assertion in
     get_trajectory_pfs_and_pbs function.
     """
     env, pf_estimator, _, pf_sampler = _build_env_pf_pb()
