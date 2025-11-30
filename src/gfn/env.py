@@ -271,7 +271,7 @@ class Env(ABC):
         assert not (random and sink)
 
         if random and seed is not None:
-            set_seed(seed, performance_mode=True)
+            set_seed(seed, deterministic_mode=False)  # TODO: configurable?
 
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)

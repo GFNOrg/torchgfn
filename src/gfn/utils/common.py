@@ -145,12 +145,12 @@ def filter_kwargs_for_callable(
 # -----------------------------------------------------------------------------
 
 
-def set_seed(seed: int, performance_mode: bool = False) -> None:
+def set_seed(seed: int, deterministic_mode: bool = False) -> None:
     """Used to control randomness for both single and distributed training.
 
     Args:
         seed: The seed to use for all random number generators
-        performance_mode: If True, disables deterministic behavior for better performance.
+        deterministic_mode: If True, uses deterministic behavior for better performance.
             In multi-GPU settings, this only affects cuDNN. In multi-CPU settings,
             this allows parallel processing in NumPy.
     """
@@ -186,19 +186,22 @@ def set_seed(seed: int, performance_mode: bool = False) -> None:
 
         # Set device-specific environment variables
         if torch.cuda.is_available():
-            # For GPU training, we can use multiple threads for CPU operations
-            if performance_mode:
-                os.environ["OMP_NUM_THREADS"] = str(num_cpus)
-                os.environ["MKL_NUM_THREADS"] = str(num_cpus)
-            else:
+            if deterministic_mode:
                 # For reproducibility in GPU training, we still want deterministic
                 # CPU operations
                 os.environ["OMP_NUM_THREADS"] = "1"
                 os.environ["MKL_NUM_THREADS"] = "1"
+            else:
+                # For GPU training, we can use multiple threads for CPU operations
+                os.environ["OMP_NUM_THREADS"] = str(num_cpus)
+                os.environ["MKL_NUM_THREADS"] = str(num_cpus)
         else:
             # For CPU-only training, we need to be more careful with threading
-            if performance_mode:
-
+            if deterministic_mode:
+                # For perfect reproducibility in CPU training, disable parallel processing
+                os.environ["OMP_NUM_THREADS"] = "1"
+                os.environ["MKL_NUM_THREADS"] = "1"
+            else:
                 # Allow parallel processing but with controlled number of threads
                 # Different backends might handle threading differently
                 if backend in ["mpi", "ccl"]:
@@ -211,10 +214,6 @@ def set_seed(seed: int, performance_mode: bool = False) -> None:
 
                 os.environ["OMP_NUM_THREADS"] = str(num_threads)
                 os.environ["MKL_NUM_THREADS"] = str(num_threads)
-            else:
-                # For perfect reproducibility in CPU training, disable parallel processing
-                os.environ["OMP_NUM_THREADS"] = "1"
-                os.environ["MKL_NUM_THREADS"] = "1"
 
     else:
         # Non-distributed training - use the global seed
@@ -237,7 +236,7 @@ def set_seed(seed: int, performance_mode: bool = False) -> None:
         threading.current_thread()._seed = seed
 
     # These are only set when we care about reproducibility over performance
-    if not performance_mode:
+    if deterministic_mode:
         # GPU-specific settings
         if torch.cuda.is_available():
             torch.backends.cudnn.deterministic = True
@@ -332,7 +331,8 @@ def make_dataloader_seed_fns(
 
     def _worker_init_fn(worker_id: int) -> None:  # pragma: no cover
         # Each worker gets a distinct seed in the same pattern used for ranks.
-        set_seed(base_seed + worker_id, performance_mode=False)
+        # TODO: Can this be false?
+        set_seed(base_seed + worker_id, deterministic_mode=True)
 
     gen = torch.Generator()
     gen.manual_seed(base_seed)
