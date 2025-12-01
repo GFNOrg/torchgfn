@@ -34,9 +34,6 @@ def get_trajectory_pfs_and_pbs(
     Returns:
         ``(log_pf[T,N], log_pb[T,N])``
     """
-    # TODO: Remove this assertion and move to a test.
-    # fill value is the value used for invalid states (sink state usually)
-    assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions.is_dummy)
 
     log_pf_trajectories = get_trajectory_pfs(
         pf,
