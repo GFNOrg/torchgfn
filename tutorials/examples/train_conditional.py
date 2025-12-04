@@ -61,6 +61,8 @@ class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
     - 1: Normal HyperGrid reward (original multi-modal reward landscape)
     """
 
+    condition_vector_dim: int = 1
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._original_reward_fn = self.reward_fn  # Rename, just to avoid confusion
@@ -72,12 +74,16 @@ class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
         self._log_partition_cache: dict[torch.Tensor, float] = {}
         self._true_dist_cache: dict[torch.Tensor, torch.Tensor] = {}
 
-    def sample_conditions(self, batch_size: int) -> torch.Tensor:
+    def sample_conditions(self, batch_shape: int | tuple[int, ...]) -> torch.Tensor:
         """Sample conditions for the environment."""
-        return torch.rand((batch_size, 1), device=self.device)
 
-    def reward(self, states: DiscreteStates, conditions: torch.Tensor) -> torch.Tensor:
-        """Compute rewards based on current conditions.
+        if isinstance(batch_shape, int):
+            batch_shape = (batch_shape,)
+
+        return torch.rand(batch_shape + (self.condition_vector_dim,), device=self.device)
+
+    def reward(self, states: DiscreteStates) -> torch.Tensor:
+        """Compute rewards for the conditional environment.
 
         A condition is continuous from 0 to 1:
         - 0: Fully uniform reward (all states get R0+R1+R2)
@@ -86,19 +92,18 @@ class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
 
         Args:
             states: The states to compute rewards for.
-                states.tensor.shape should be (batch_size, *state_shape)
-            conditions: The conditions to compute rewards for.
-                conditions.shape should be (batch_size, 1)
+                states.tensor.shape should be (*batch_shape, *state_shape)
 
         Returns:
-            A tensor of shape (batch_size,) containing the rewards.
+            A tensor of shape (*batch_shape,) containing the rewards.
         """
         # Get original rewards
         original_rewards = self._original_reward_fn(states.tensor)
-        # shape: (batch_size,)
+        # shape: (*batch_shape,)
 
-        # Expand conditions to match batch shape if needed
-        cond = conditions.squeeze(-1)  # Remove feature dim; shape: (batch_size,)
+        assert states.conditions is not None
+        # Remove feature dimension
+        cond = states.conditions.squeeze(-1)  # shape: (*batch_shape,)
 
         # For uniform, all states get the max reward (R0+R1+R2)
         uniform_rewards = torch.full_like(original_rewards, self._max_reward)
@@ -119,9 +124,10 @@ class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
         """
         if condition not in self._log_partition_cache:
             assert self.all_states is not None
-            all_rewards = self.reward(
-                self.all_states, condition.repeat(self.n_states, 1)
-            )
+            # Attach conditions to states for reward computation
+            states_with_cond = self.all_states.clone()
+            states_with_cond.conditions = condition.repeat(self.n_states, 1)
+            all_rewards = self.reward(states_with_cond)
             self._log_partition_cache[condition] = all_rewards.sum().log().item()
         return self._log_partition_cache[condition]
 
@@ -137,9 +143,10 @@ class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
         """
         if condition not in self._true_dist_cache:
             assert self.all_states is not None
-            all_rewards = self.reward(
-                self.all_states, condition.repeat(self.n_states, 1)
-            )
+            # Attach conditions to states for reward computation
+            states_with_cond = self.all_states.clone()
+            states_with_cond.conditions = condition.repeat(self.n_states, 1)
+            all_rewards = self.reward(states_with_cond)
             self._true_dist_cache[condition] = all_rewards / all_rewards.sum()
         return self._true_dist_cache[condition]
 
@@ -387,14 +394,10 @@ def train(
 
     final_loss = None
     for it in (pbar := tqdm(range(n_iterations), dynamic_ncols=True)):
-        # Sample conditions uniformly from [0, 1] for this batch
-        conditions = env.sample_conditions(batch_size)
-
         # Sample trajectories with conditions
         trajectories = gflownet.sample_trajectories(
             env,
             n=batch_size,
-            conditions=conditions,
             save_logprobs=False,
             save_estimator_outputs=True,
             epsilon=epsilon,
@@ -446,9 +449,13 @@ def train(
 
                 # Update discovered modes for condition=1
                 if cond_val == 1.0:
-                    rewards = env.reward(
-                        sampled_states, torch.tensor([cond_val], device=device)
+                    # Conditions are already in sampled_states from trajectory sampling
+                    # But we verify by computing with explicit conditions
+                    states_for_reward = sampled_states.clone()
+                    states_for_reward.conditions = torch.full(
+                        (len(sampled_states), 1), cond_val, device=device
                     )
+                    rewards = env.reward(states_for_reward)
                     modes = sampled_states[rewards >= mode_reward_threshold].tensor
                     modes_found = set([tuple(s.tolist()) for s in modes])
                     discovered_modes.update(modes_found)

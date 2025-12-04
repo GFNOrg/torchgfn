@@ -36,6 +36,7 @@ class BitSequenceStates(DiscreteStates):
         length: Optional[torch.Tensor] = None,
         forward_masks: Optional[torch.Tensor] = None,
         backward_masks: Optional[torch.Tensor] = None,
+        conditions: Optional[torch.Tensor] = None,
     ) -> None:
         """Initializes the BitSequencesStates object.
 
@@ -44,9 +45,13 @@ class BitSequenceStates(DiscreteStates):
             length: The tensor representing the length of each bit sequence.
             forward_masks: The tensor representing the forward masks.
             backward_masks: The tensor representing the backward masks.
+            conditions: The tensor representing the conditions.
         """
         super().__init__(
-            tensor, forward_masks=forward_masks, backward_masks=backward_masks
+            tensor,
+            forward_masks=forward_masks,
+            backward_masks=backward_masks,
+            conditions=conditions,
         )
         if length is None:
             length = torch.zeros(self.batch_shape, dtype=torch.long, device=self.device)
@@ -67,6 +72,7 @@ class BitSequenceStates(DiscreteStates):
             self.length.detach().clone(),
             self.forward_masks.detach().clone(),
             self.backward_masks.detach().clone(),
+            self.conditions.detach().clone() if self.conditions is not None else None,
         )
 
     def _check_both_forward_backward_masks_exist(self):
@@ -89,6 +95,7 @@ class BitSequenceStates(DiscreteStates):
             self.length[index],
             self.forward_masks[index],
             self.backward_masks[index],
+            self.conditions[index] if self.conditions is not None else None,
         )
 
     def __setitem__(
@@ -114,7 +121,11 @@ class BitSequenceStates(DiscreteStates):
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
         backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
-        return self.__class__(states, length, forward_masks, backward_masks)
+        if self.conditions is not None:
+            conditions = self.conditions.view(-1, self.conditions.shape[-1])
+        else:
+            conditions = None
+        return self.__class__(states, length, forward_masks, backward_masks, conditions)
 
     def extend(self, other: BitSequenceStates) -> None:
         """Extends the current BitSequencesStates object with another BitSequencesStates object.

@@ -107,7 +107,12 @@ def get_trajectory_pfs(
             # Per-step path.
             N = trajectories.n_trajectories
             device = trajectories.states.device
-            cond = trajectories.conditions  # shape (N, cond_dim)
+
+            if trajectories.states.has_conditions:
+                assert trajectories.states.conditions is not None
+                cond = trajectories.states.conditions[0]  # shape (N, cond_dim)
+            else:
+                cond = None
 
             ctx = policy_pf.init_context(int(N), device, cond)
 
@@ -180,12 +185,10 @@ def get_trajectory_pfs(
 
             # Build conditions per-step shape to align with valid_states
             masked_cond = None
-            if trajectories.conditions is not None:
-                # trajectories.conditions shape: (N, cond_dim)
-                # Repeat it to (T, N, cond_dim) and then mask it with the state_mask
-                T = trajectories.max_length + 1
-                masked_cond = trajectories.conditions.repeat(T, 1, 1)
-                masked_cond = masked_cond[state_mask]
+            if trajectories.states.has_conditions:
+                assert trajectories.states.conditions is not None
+                # trajectories.states.conditions shape: (T, N, cond_dim)
+                masked_cond = trajectories.states.conditions[state_mask]
 
             ctx_v = policy_pf.init_context(
                 int(len(valid_states)),
@@ -274,17 +277,6 @@ def get_trajectory_pbs(
     if len(valid_states) == 0:
         return log_pb_trajectories
 
-    # Using all non-initial states, calculate the backward policy, and the logprobs
-    # of those actions.
-    masked_cond = None
-    cond = trajectories.conditions
-    if cond is not None:
-        T = trajectories.states.tensor.shape[0]
-        if cond.shape[0] == T:
-            masked_cond = cond[state_mask]
-        else:
-            masked_cond = cond.unsqueeze(0).expand((T,) + cond.shape)[state_mask]
-
     # There is no backward policy in this case.
     if pb is None:
         # If pb is None, we assume that the gflownet DAG is a tree, and therefore
@@ -317,8 +309,15 @@ def get_trajectory_pbs(
         # Per-step pb evaluation (state at t+1, action at t)
         N = trajectories.n_trajectories
         device = trajectories.states.device
-        cond = trajectories.conditions  # shape (N, cond_dim)
-        ctx = policy_pb.init_context(int(N), device, cond)
+
+        if trajectories.states.has_conditions:
+            assert trajectories.states.conditions is not None
+            # Assumption: a trajectory has only one condition.
+            # Here we use the condition of the initial state of the trajectory.
+            cond = trajectories.states.conditions[0]
+        else:
+            cond = None
+        ctx = policy_pb.init_context(int(N), device, conditions=cond)
 
         # Iterate per-step with masking (state at t+1, action at t)
         for t in range(trajectories.max_length):
@@ -358,8 +357,13 @@ def get_trajectory_pbs(
 
     # The backward policy supports vectorized evaluation.
     else:
+        masked_cond = None
+        if trajectories.states.has_conditions:
+            assert trajectories.states.conditions is not None
+            masked_cond = trajectories.states.conditions[state_mask]
+
         ctx_v = policy_pb.init_context(
-            int(len(valid_states)), trajectories.states.device, conditions=masked_cond  # type: ignore[arg-type]
+            int(len(valid_states)), trajectories.states.device, conditions=masked_cond
         )
         dist, ctx_v = policy_pb.compute_dist(
             valid_states,
@@ -455,7 +459,7 @@ def get_transition_pfs(
 
         N = transitions.n_transitions
         device = transitions.states.device
-        cond = transitions.conditions
+        cond = states.conditions
 
         # For static typing, cast to the policy protocol before calling mixin methods.
         policy_pf = cast(PolicyEstimatorProtocol, pf)
@@ -527,7 +531,7 @@ def get_transition_pbs(
     ctx = policy_pb.init_context(
         int(transitions.n_transitions),
         transitions.states.device,
-        transitions.conditions,
+        transitions.states.conditions,
     )
 
     # Legacy-complete masking for PB on transitions:

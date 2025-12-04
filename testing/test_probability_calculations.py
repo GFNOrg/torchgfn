@@ -51,12 +51,9 @@ def _legacy_get_trajectory_pfs(
         estimator_outputs = trajectories.estimator_outputs[action_mask]
     else:
         masked_cond = None
-        if trajectories.conditions is not None:
-            cond_dim = (-1,) * len(trajectories.conditions.shape)
-            traj_len = trajectories.states.tensor.shape[0]
-            masked_cond = trajectories.conditions.unsqueeze(0).expand(
-                (traj_len,) + cond_dim
-            )[state_mask]
+        if trajectories.states.has_conditions:
+            assert trajectories.states.conditions is not None
+            masked_cond = trajectories.states.conditions[state_mask]
 
         # Call estimator with or without conditions.
         if masked_cond is not None:
@@ -165,8 +162,9 @@ def _legacy_get_trajectory_pbs(
         return log_pb_trajectories
 
     masked_cond = None
-    if trajectories.conditions is not None:
-        masked_cond = trajectories.conditions[state_mask]
+    if trajectories.states.has_conditions:
+        assert trajectories.states.conditions is not None
+        masked_cond = trajectories.states.conditions[state_mask]
 
     if pb is not None:
 
@@ -334,9 +332,11 @@ def _legacy_get_transition_pfs(
         return log_pf_actions
 
     # Call estimator with or without conditions.
-    if transitions.conditions is not None:
+    if transitions.states.has_conditions:
+        assert transitions.states.conditions is not None
+        masked_cond = transitions.states.conditions
         with has_conditions_exception_handler("pf", pf):
-            estimator_outputs = pf(states, transitions.conditions)
+            estimator_outputs = pf(states, masked_cond)
     else:
         with no_conditions_exception_handler("pf", pf):
             estimator_outputs = pf(states)
@@ -350,11 +350,11 @@ def _legacy_get_transition_pfs(
 def _legacy_get_transition_pbs(pb: DiscretePolicyEstimator | None, transitions):
     valid_next_states = transitions.next_states[~transitions.is_terminating]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]
-    masked_cond = (
-        transitions.conditions[~transitions.is_terminating]
-        if transitions.conditions is not None
-        else None
-    )
+    if transitions.states.has_conditions:
+        assert transitions.states.conditions is not None
+        masked_cond = transitions.states.conditions[~transitions.is_terminating]
+    else:
+        masked_cond = None
 
     log_pb_actions = torch.zeros(
         (transitions.n_transitions,), device=transitions.states.device

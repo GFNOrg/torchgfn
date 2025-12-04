@@ -98,7 +98,6 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         self,
         env: Env,
         states: DiscreteStates,
-        conditions: torch.Tensor | None,
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Computes the flow matching loss for the (non-initial) states.
@@ -146,10 +145,11 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
                 valid_backward_states, backward_actions
             )
 
-            if conditions is not None:
+            if states.has_conditions:
                 # Mask out only valid conditions elements.
-                valid_backward_conditions = conditions[valid_backward_mask]
-                valid_forward_conditions = conditions[valid_forward_mask]
+                assert states.conditions is not None
+                valid_backward_conditions = states.conditions[valid_backward_mask]
+                valid_forward_conditions = states.conditions[valid_forward_mask]
 
                 with has_conditions_exception_handler("logF", self.logF):
                     incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
@@ -174,11 +174,12 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         # Now the exit action.
         valid_forward_mask = states.forward_masks[:, -1]
-        if conditions is not None:
+        if states.has_conditions:
+            assert states.conditions is not None
             with has_conditions_exception_handler("logF", self.logF):
                 outgoing_log_flows[valid_forward_mask, -1] = self.logF(
                     states[valid_forward_mask],
-                    conditions[valid_forward_mask],
+                    states.conditions[valid_forward_mask],
                 )[:, -1]
         else:
             with no_conditions_exception_handler("logF", self.logF):
@@ -196,7 +197,6 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         self,
         env: Env,
         terminating_states: DiscreteStates,
-        conditions: torch.Tensor | None,
         log_rewards: torch.Tensor | None,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -216,9 +216,12 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         if len(terminating_states) == 0:
             return torch.tensor(0.0, device=terminating_states.device)
         del env  # Unused
-        if conditions is not None:
+        if terminating_states.has_conditions:
+            assert terminating_states.conditions is not None
             with has_conditions_exception_handler("logF", self.logF):
-                log_edge_flows = self.logF(terminating_states, conditions)
+                log_edge_flows = self.logF(
+                    terminating_states, terminating_states.conditions
+                )
         else:
             with no_conditions_exception_handler("logF", self.logF):
                 log_edge_flows = self.logF(terminating_states)
@@ -268,13 +271,11 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         fm_loss = self.flow_matching_loss(
             env,
             states_container.intermediary_states,
-            states_container.intermediary_conditions,
             reduction=reduction,
         )
         rm_loss = self.reward_matching_loss(
             env,
             states_container.terminating_states,
-            states_container.terminating_conditions,
             states_container.terminating_log_rewards,
             reduction=reduction,
         )

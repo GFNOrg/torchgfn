@@ -107,7 +107,11 @@ class Env(ABC):
         return self.States(tensor)
 
     def states_from_batch_shape(
-        self, batch_shape: Tuple, random: bool = False, sink: bool = False
+        self,
+        batch_shape: int | Tuple[int, ...],
+        random: bool = False,
+        sink: bool = False,
+        conditions: torch.Tensor | None = None,
     ) -> States:
         """Returns a batch of random, initial, or sink states with a given batch shape.
 
@@ -115,12 +119,18 @@ class Env(ABC):
             batch_shape: Tuple representing the shape of the batch of states.
             random: If True, initialize states randomly (requires implementation).
             sink: If True, initialize states as sink states ($s_f$).
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
 
         Returns:
             A batch of random, initial, or sink states.
         """
         return self.States.from_batch_shape(
-            batch_shape, random=random, sink=sink, device=self.device
+            batch_shape,
+            random=random,
+            sink=sink,
+            device=self.device,
+            conditions=conditions,
         )
 
     def actions_from_tensor(self, tensor: torch.Tensor) -> Actions:
@@ -252,7 +262,7 @@ class Env(ABC):
 
     def reset(
         self,
-        batch_shape: int | Tuple[int, ...] | list[int],
+        batch_shape: int | Tuple[int, ...],
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
@@ -275,8 +285,7 @@ class Env(ABC):
 
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
-        elif isinstance(batch_shape, list):
-            batch_shape = tuple(batch_shape)
+
         return self.states_from_batch_shape(
             batch_shape=batch_shape, random=random, sink=sink
         )
@@ -437,45 +446,61 @@ class ConditionalEnv(Env, ABC):
     the environment.
     """
 
+    condition_vector_dim: int
+
     @abstractmethod
-    def sample_conditions(self, batch_size: int) -> torch.Tensor:
+    def sample_conditions(self, batch_shape: int | Tuple[int, ...]) -> torch.Tensor:
         """Sample conditions for the environment.
 
         Args:
-            batch_size: The number of conditions to sample.
+            batch_shape: The shape of the batch of conditions to sample.
 
         Returns:
-            A tensor of shape (batch_size, condition_vector_dim) containing the conditions.
+            A tensor of shape (*batch_shape, condition_vector_dim) containing the conditions.
         """
         raise NotImplementedError
 
-    def reward(self, states: States, conditions: torch.Tensor) -> torch.Tensor:
+    def reset(
+        self,
+        batch_shape: int | Tuple[int, ...],
+        random: bool = False,
+        sink: bool = False,
+        seed: Optional[int] = None,
+    ) -> States:
+        """Instantiates a batch of random, initial, or sink states.
+
+        Args:
+            batch_shape: Shape of the batch (int or tuple).
+            random: If True, initialize states randomly.
+            sink: If True, initialize states as sink states ($s_f$).
+            seed: (Optional) Random seed for reproducibility.
+
+        Returns:
+            A batch of initial or sink states.
+        """
+        assert not (random and sink)
+
+        if random and seed is not None:
+            set_seed(seed, performance_mode=True)
+
+        if isinstance(batch_shape, int):
+            batch_shape = (batch_shape,)
+
+        conditions = self.sample_conditions(batch_shape)
+        return self.states_from_batch_shape(
+            batch_shape=batch_shape, random=random, sink=sink, conditions=conditions
+        )
+
+    def reward(self, states: States) -> torch.Tensor:
         """Compute rewards for the conditional environment.
 
         Args:
             states: The states to compute rewards for.
                 states.tensor.shape should be (batch_size, *state_shape)
-            conditions: The conditions to compute rewards for.
-                conditions.shape should be (batch_size, condition_vector_dim)
-
         Returns:
             A tensor of shape (batch_size,) containing the rewards.
         """
         raise NotImplementedError
-
-    def log_reward(self, states: States, conditions: torch.Tensor) -> torch.Tensor:
-        """Compute log rewards for the conditional environment.
-
-        Args:
-            states: The states to compute log rewards for.
-                states.tensor.shape should be (batch_size, *state_shape)
-            conditions: The conditions to compute log rewards for.
-                conditions.shape should be (batch_size, condition_vector_dim)
-
-        Returns:
-            A tensor of shape (batch_size,) containing the log rewards.
-        """
-        return torch.log(self.reward(states, conditions))
 
     def log_partition(self, condition: torch.Tensor) -> float:
         """Optional method to return the logarithm of the partition function for a
@@ -621,7 +646,11 @@ class DiscreteEnv(Env, ABC):
         return states_instance
 
     def states_from_batch_shape(
-        self, batch_shape: Tuple, random: bool = False, sink: bool = False
+        self,
+        batch_shape: int | Tuple[int, ...],
+        random: bool = False,
+        sink: bool = False,
+        conditions: torch.Tensor | None = None,
     ) -> DiscreteStates:
         r"""Returns a batch of random, initial, or sink states with a given batch shape.
 
@@ -633,7 +662,7 @@ class DiscreteEnv(Env, ABC):
         Returns:
             DiscreteStates: A batch of random, initial, or sink states.
         """
-        out = super().states_from_batch_shape(batch_shape, random, sink)
+        out = super().states_from_batch_shape(batch_shape, random, sink, conditions)
         assert isinstance(out, DiscreteStates)
         return out
 

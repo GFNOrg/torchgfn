@@ -63,7 +63,10 @@ class Box(Env):
         )
 
     def make_random_states(
-        self, batch_shape: Tuple[int, ...], device: torch.device | None = None
+        self,
+        batch_shape: Tuple[int, ...],
+        device: torch.device | None = None,
+        conditions: torch.Tensor | None = None,  # not used here
     ) -> States:
         """Generates random states tensor of shape (*batch_shape, 2).
 

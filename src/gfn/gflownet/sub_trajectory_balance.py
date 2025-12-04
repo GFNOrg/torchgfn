@@ -5,7 +5,7 @@ from typing import List, Literal, Tuple, TypeAlias
 import torch
 
 from gfn.containers import Trajectories
-from gfn.env import ConditionalEnv, Env
+from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.utils.handlers import (
@@ -263,28 +263,25 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         mask = ~states.is_sink_state
         valid_states = states[mask]
 
-        if trajectories.conditions is not None:
+        if trajectories.states.has_conditions:
+            assert trajectories.states.conditions is not None
             # Compute the condition matrix broadcast to match valid_states.
             # The conditions tensor has shape (n_trajectories, condition_vector_dim)
             # The states have batch shape (max_length, n_trajectories)
             # We need to repeat the conditions to match the batch shape of the states.
-            conditions = trajectories.conditions.repeat(states.batch_shape[0], 1, 1)
+            conditions = trajectories.states.conditions
             # (max_length, n_trajectories, condition_vector_dim)
             assert conditions.shape[:2] == states.batch_shape
             conditions = conditions[mask]
             with has_conditions_exception_handler("logF", self.logF):
                 log_F = self.logF(valid_states, conditions).squeeze(-1)
 
-            if self.forward_looking:
-                assert isinstance(env, ConditionalEnv)
-                log_F = log_F + env.log_reward(valid_states, conditions)
-
         else:
             with no_conditions_exception_handler("logF", self.logF):
                 log_F = self.logF(valid_states).squeeze(-1)
 
-            if self.forward_looking:
-                log_F = log_F + env.log_reward(valid_states)
+        if self.forward_looking:
+            log_F = log_F + env.log_reward(valid_states)
 
         log_state_flows[mask[:-1]] = log_F
         return log_state_flows
