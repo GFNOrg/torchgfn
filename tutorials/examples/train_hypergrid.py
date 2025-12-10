@@ -199,6 +199,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
         print("Score - Modes discovered before update:", self.discovered_modes)
 
         n_new_modes = 0.0
+        assert isinstance(obj.terminating_states, DiscreteStates)
         modes_found = self.env.modes_found(obj.terminating_states)
         if isinstance(modes_found, set):
             new_modes = modes_found - self.discovered_modes
