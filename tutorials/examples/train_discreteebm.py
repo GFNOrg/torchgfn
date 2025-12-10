@@ -15,9 +15,9 @@ from argparse import ArgumentParser
 from typing import cast
 
 import torch
+import wandb
 from tqdm import tqdm, trange
 
-import wandb
 from gfn.estimators import DiscretePolicyEstimator
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
