@@ -313,8 +313,14 @@ def temporarily_set_seed(seed):
 
 def make_dataloader_seed_fns(
     base_seed: int,
+    deterministic_mode: bool = False,
 ) -> Tuple[Callable[[int], None], torch.Generator]:
     """Return `(worker_init_fn, generator)` for DataLoader reproducibility.
+
+    Args:
+        base_seed: The base seed to use for the DataLoader.
+        deterministic_mode: If True, uses deterministic behavior for better
+            reproducibility at the cost of performance.
 
     Example
     -------
@@ -331,8 +337,7 @@ def make_dataloader_seed_fns(
 
     def _worker_init_fn(worker_id: int) -> None:  # pragma: no cover
         # Each worker gets a distinct seed in the same pattern used for ranks.
-        # TODO: Can this be false?
-        set_seed(base_seed + worker_id, deterministic_mode=True)
+        set_seed(base_seed + worker_id, deterministic_mode=deterministic_mode)
 
     gen = torch.Generator()
     gen.manual_seed(base_seed)
