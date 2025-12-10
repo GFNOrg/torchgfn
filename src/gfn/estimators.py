@@ -16,8 +16,8 @@ from gfn.utils.distributions import (
     UnsqueezedCategorical,
 )
 from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
+    has_conditions_exception_handler,
+    no_conditions_exception_handler,
 )
 
 REDUCTION_FUNCTIONS = {
@@ -37,7 +37,7 @@ class RolloutContext:
     __slots__ = (
         "batch_size",
         "device",
-        "conditioning",
+        "conditions",
         "carry",
         "trajectory_log_probs",
         "trajectory_estimator_outputs",
@@ -49,11 +49,11 @@ class RolloutContext:
         self,
         batch_size: int,
         device: torch.device,
-        conditioning: Optional[torch.Tensor] = None,
+        conditions: Optional[torch.Tensor] = None,
     ) -> None:
         self.batch_size = batch_size
         self.device = device
-        self.conditioning = conditioning
+        self.conditions = conditions
         self.carry = None
         self.trajectory_log_probs: List[torch.Tensor] = []
         self.trajectory_estimator_outputs: List[torch.Tensor] = []
@@ -77,7 +77,7 @@ class PolicyEstimatorProtocol(Protocol):
         self,
         batch_size: int,
         device: torch.device,
-        conditioning: Optional[torch.Tensor] = None,
+        conditions: Optional[torch.Tensor] = None,
     ) -> Any: ...
 
     def compute_dist(  # noqa: E704
@@ -115,16 +115,16 @@ class PolicyMixin:
         self,
         batch_size: int,
         device: torch.device,
-        conditioning: Optional[torch.Tensor] = None,
+        conditions: Optional[torch.Tensor] = None,
     ) -> RolloutContext:
         """Create a new per-rollout context.
 
-        Stores rollout invariants (batch size, device, optional conditioning) and
+        Stores rollout invariants (batch size, device, optional conditions) and
         initializes empty buffers for per-step artifacts.
 
         """
         return RolloutContext(
-            batch_size=batch_size, device=device, conditioning=conditioning
+            batch_size=batch_size, device=device, conditions=conditions
         )
 
     def compute_dist(
@@ -140,14 +140,14 @@ class PolicyMixin:
         Args:
             states_active: The states to run the estimator on.
             ctx: The context to run the estimator on.
-            step_mask: The mask to slice the conditioning to the active subset.
+            step_mask: The mask to slice the conditions to the active subset.
             save_estimator_outputs: Whether to save the estimator outputs.
             **policy_kwargs: Additional keyword arguments to pass to the estimator.
 
         Returns:
             A tuple containing the distribution and the context.
 
-        - Uses `step_mask` to slice conditioning to the active subset. When `step_mask`
+        - Uses `step_mask` to slice conditions to the active subset. When `step_mask`
           is None, the estimator running in a vectorized context.
         - Saves the raw estimator output in `ctx.current_estimator_output` for
           optional recording in `record_step`.
@@ -168,18 +168,18 @@ class PolicyMixin:
         # Otherwise, compute the estimator outputs.
         else:
             cond_active = None
-            if ctx.conditioning is not None:
+            if ctx.conditions is not None:
                 if step_mask is None:
-                    cond_active = ctx.conditioning
+                    cond_active = ctx.conditions
                 else:
-                    cond_active = ctx.conditioning[step_mask]
+                    cond_active = ctx.conditions[step_mask]
 
-            # Call estimator with or without conditioning (ensures preprocessor is applied).
+            # Call estimator with or without conditions (ensures preprocessor is applied).
             if cond_active is not None:
-                with has_conditioning_exception_handler("estimator", self):
+                with has_conditions_exception_handler("estimator", self):
                     estimator_outputs = self(states_active, cond_active)  # type: ignore[misc,call-arg]
             else:
-                with no_conditioning_exception_handler("estimator", self):
+                with no_conditions_exception_handler("estimator", self):
                     estimator_outputs = self(states_active)  # type: ignore[misc]
 
         # Build the distribution.
@@ -252,9 +252,9 @@ class RecurrentPolicyMixin(PolicyMixin):
         self,
         batch_size: int,
         device: torch.device,
-        conditioning: Optional[torch.Tensor] = None,
+        conditions: Optional[torch.Tensor] = None,
     ) -> RolloutContext:
-        ctx = super().init_context(batch_size, device, conditioning)
+        ctx = super().init_context(batch_size, device, conditions)
         init_carry = getattr(self, "init_carry", None)
         if not callable(init_carry):
             raise TypeError(
@@ -658,8 +658,8 @@ class LogitBasedEstimator(Estimator):
 class ConditionalLogZEstimator(ScalarEstimator):
     """Conditional logZ estimator.
 
-    This estimator is used to estimate the logZ of a GFlowNet from a conditioning
-    tensor. Since conditioning is a tensor, it does not have a preprocessor.
+    This estimator is used to estimate the logZ of a GFlowNet from a conditions tensor.
+    Since the conditions are given as a tensor, it does not have a preprocessor.
     Reduction is used to aggregate the outputs of the module into a single scalar.
 
     Attributes:
@@ -778,18 +778,18 @@ class DiscretePolicyEstimator(PolicyMixin, LogitBasedEstimator):
 class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
     r"""Conditional forward or backward policy estimators for discrete environments.
 
-    Estimates either, with conditioning $c$:
+    Estimates either, with condition $c$:
     - $s \mapsto (P_F(s' \mid s, c))_{s' \in Children(s)}$ (conditional forward policy)
     - $s' \mapsto (P_B(s \mid s', c))_{s \in Parents(s')}$ (conditional backward policy)
 
     This estimator is designed for discrete environments where the policy depends on
-    both the state and some conditioning information. It uses a multi-module architecture
-    where state and conditioning are processed separately before being combined.
+    both the state and some condition information. It uses a multi-module architecture
+    where states and conditions are processed separately before being combined.
 
     Attributes:
         module: The neural network module for state processing.
-        conditioning_module: The neural network module for conditioning processing.
-        final_module: The neural network module that combines state and conditioning.
+        condition_module: The neural network module for condition processing.
+        final_module: The neural network module that combines state and condition.
         n_actions: Total number of actions in the discrete environment.
         preprocessor: Preprocessor object that transforms raw States objects to tensors.
         is_backward: Flag indicating whether this estimator is for backward policy,
@@ -799,7 +799,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
     def __init__(
         self,
         state_module: nn.Module,
-        conditioning_module: nn.Module,
+        condition_module: nn.Module,
         final_module: nn.Module,
         n_actions: int,
         preprocessor: Preprocessor | None = None,
@@ -809,8 +809,8 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
 
         Args:
             state_module: The neural network module for state processing.
-            conditioning_module: The neural network module for conditioning processing.
-            final_module: The neural network module that combines state and conditioning.
+            condition_module: The neural network module for condition processing.
+            final_module: The neural network module that combines state and condition.
             n_actions: Total number of actions in the discrete environment.
             preprocessor: Preprocessor object that transforms states to tensors.
             is_backward: Flag indicating whether this estimator is for backward policy,
@@ -818,40 +818,40 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         """
         super().__init__(state_module, n_actions, preprocessor, is_backward)
         self.n_actions = n_actions
-        self.conditioning_module = conditioning_module
+        self.condition_module = condition_module
         self.final_module = final_module
 
-    def _forward_trunk(self, states: States, conditioning: torch.Tensor) -> torch.Tensor:
+    def _forward_trunk(self, states: States, conditions: torch.Tensor) -> torch.Tensor:
         """Forward pass of the trunk of the module.
 
-        This method processes the state and conditioning inputs separately, then
+        This method processes the states and conditions inputs separately, then
         combines them through the final module.
 
         Args:
             states: The input states.
-            conditioning: The conditioning tensor.
+            conditions: The condition tensor.
 
         Returns:
             The output of the trunk of the module, as a tensor of shape
                 (*batch_shape, output_dim).
         """
         state_out = self.module(self.preprocessor(states))
-        conditioning_out = self.conditioning_module(conditioning)
-        out = self.final_module(torch.cat((state_out, conditioning_out), -1))
+        condition_out = self.condition_module(conditions)
+        out = self.final_module(torch.cat((state_out, condition_out), -1))
 
         return out
 
-    def forward(self, states: States, conditioning: torch.Tensor) -> torch.Tensor:
+    def forward(self, states: States, conditions: torch.Tensor) -> torch.Tensor:
         """Forward pass of the module.
 
         Args:
             states: The input states.
-            conditioning: The conditioning tensor.
+            conditions: The condition tensor.
 
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, output_dim).
         """
-        out = self._forward_trunk(states, conditioning)
+        out = self._forward_trunk(states, conditions)
         assert out.shape[-1] == self.expected_output_dim, (
             f"Module output shape {out.shape} does not match expected output "
             f"dimension {self.expected_output_dim}"
@@ -868,8 +868,8 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
 
     Attributes:
         module: The neural network module for state processing.
-        conditioning_module: The neural network module for conditioning processing.
-        final_module: The neural network module that combines state and conditioning.
+        condition_module: The neural network module for condition processing.
+        final_module: The neural network module that combines state and condition.
         preprocessor: Preprocessor object that transforms raw States objects to tensors.
         is_backward: Always False for ConditionalScalarEstimator (since it's
             direction-agnostic).
@@ -879,7 +879,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
     def __init__(
         self,
         state_module: nn.Module,
-        conditioning_module: nn.Module,
+        condition_module: nn.Module,
         final_module: nn.Module,
         preprocessor: Preprocessor | None = None,
         reduction: str = "mean",
@@ -888,15 +888,15 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
 
         Args:
             state_module: The neural network module for state processing.
-            conditioning_module: The neural network module for conditioning processing.
-            final_module: The neural network module that combines state and conditioning.
+            condition_module: The neural network module for condition processing.
+            final_module: The neural network module that combines state and condition.
             preprocessor: Preprocessor object that transforms states to tensors.
             reduction: String name of one of the REDUCTION_FUNCTIONS keys.
         """
 
         super().__init__(
             state_module,
-            conditioning_module,
+            condition_module,
             final_module,
             n_actions=1,
             preprocessor=preprocessor,
@@ -907,17 +907,17 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         ), "reduction function not one of {}".format(REDUCTION_FUNCTIONS.keys())
         self.reduction_function = REDUCTION_FUNCTIONS[reduction]
 
-    def forward(self, states: States, conditioning: torch.Tensor) -> torch.Tensor:
+    def forward(self, states: States, conditions: torch.Tensor) -> torch.Tensor:
         """Forward pass of the module.
 
         Args:
             states: The input states.
-            conditioning: The tensor for conditioning.
+            conditions: The condition tensor.
 
         Returns:
             The output of the module, as a tensor of shape (*batch_shape, 1).
         """
-        out = self._forward_trunk(states, conditioning)
+        out = self._forward_trunk(states, conditions)
 
         # Ensures estimator outputs are always scalar.
         if out.shape[-1] != 1:

@@ -360,7 +360,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             training_container = training_container[idx_bigger_rewards]
 
             # TODO: Concatenate input with final state for conditional GFN.
-            if training_container.conditioning:
+            if training_container.conditions:
                 raise NotImplementedError(
                     "{instance.__class__.__name__} does not yet support conditional GFNs."
                 )
@@ -446,13 +446,13 @@ class TerminatingStateBuffer(ReplayBuffer):
             raise TypeError("Must be a StatesContainer")
 
         terminating_states = training_container.terminating_states
-        conditioning = training_container.conditioning
+        conditions = training_container.conditions
         log_rewards = training_container.log_rewards
 
         terminating_states_container = StatesContainer(
             env=self.env,
             states=terminating_states,
-            conditioning=conditioning,
+            conditions=conditions,
             is_terminating=torch.ones(
                 len(terminating_states), dtype=torch.bool, device=self.env.device
             ),

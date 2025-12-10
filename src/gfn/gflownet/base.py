@@ -53,7 +53,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         self,
         env: Env,
         n: int,
-        conditioning: torch.Tensor | None = None,
+        conditions: torch.Tensor | None = None,
         save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
@@ -63,7 +63,7 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
         Args:
             env: The environment to sample trajectories from.
             n: Number of trajectories to sample.
-            conditioning: Optional conditioning tensor for conditional environments.
+            conditions: Optional conditions tensor for conditional environments.
             save_logprobs: Whether to save the logprobs of the actions (useful for
                 on-policy learning).
             save_estimator_outputs: Whether to save the estimator outputs (useful for
@@ -168,6 +168,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         pb: The backward policy estimator, or None if it can be ignored (e.g., the
             gflownet DAG is a tree, and pb is therefore always 1).
         constant_pb: Whether to ignore the backward policy estimator.
+        log_reward_clip_min: If finite, clips log rewards to this value.
     """
 
     def __init__(
@@ -175,6 +176,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         pf: Estimator,
         pb: Estimator | None,
         constant_pb: bool = False,
+        log_reward_clip_min: float = float("-inf"),
     ) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
@@ -186,6 +188,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+            log_reward_clip_min: If finite, clips log rewards to this value.
 
         """
         super().__init__()
@@ -215,11 +218,12 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         self.pf = pf
         self.pb = pb
         self.constant_pb = constant_pb
+        self.log_reward_clip_min = log_reward_clip_min
 
         # Advisory: recurrent PF with non-recurrent PB is unusual
         # (tree DAGs typically prefer pb=None with constant_pb=True).
         # Import locally to avoid circular imports during module import time.
-        from gfn.estimators import RecurrentDiscretePolicyEstimator  # type: ignore
+        from gfn.estimators import RecurrentDiscretePolicyEstimator
 
         if isinstance(self.pf, RecurrentDiscretePolicyEstimator) and isinstance(
             self.pb, Estimator
@@ -241,7 +245,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         self,
         env: Env,
         n: int,
-        conditioning: torch.Tensor | None = None,
+        conditions: torch.Tensor | None = None,
         save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
@@ -251,7 +255,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         Args:
             env: The environment to sample trajectories from.
             n: Number of trajectories to sample.
-            conditioning: Optional conditioning tensor for conditional environments.
+            conditions: Optional conditions tensor for conditional environments.
             save_logprobs: Whether to save the logprobs of the actions.
             save_estimator_outputs: Whether to save the estimator outputs.
             **policy_kwargs: Additional keyword arguments for the sampler.
@@ -263,7 +267,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         trajectories = sampler.sample_trajectories(
             env,
             n=n,
-            conditioning=conditioning,
+            conditions=conditions,
             save_logprobs=save_logprobs,
             save_estimator_outputs=save_estimator_outputs,
             **policy_kwargs,
@@ -288,7 +292,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         return [v for k, v in self.named_parameters() if "pb" in k or "pf" in k]
 
 
-class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
+class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
     """A GFlowNet that operates on complete trajectories.
 
     Attributes:
@@ -297,31 +301,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
             pb is therefore always 1.
         constant_pb: Whether to ignore the backward policy estimator, e.g., if the
             gflownet DAG is a tree, and pb is therefore always 1.
+        log_reward_clip_min: If finite, clips log rewards to this value.
     """
-
-    def __init__(
-        self,
-        pf: Estimator,
-        pb: Estimator | None,
-        constant_pb: bool = False,
-    ) -> None:
-        """Initializes a TrajectoryBasedGFlowNet instance.
-
-        Args:
-            pf: The forward policy estimator.
-            pb: The backward policy estimator, or None if the gflownet DAG is a tree,
-                and pb is therefore always 1.
-            constant_pb: Whether to ignore the backward policy estimator, e.g., if the
-                gflownet DAG is a tree, and pb is therefore always 1. Must be set
-                explicitly by user to ensure that pb is an Estimator except under this
-                special case.
-
-        """
-        super().__init__(
-            pf,
-            pb,
-            constant_pb=constant_pb,
-        )
 
     def get_pfs_and_pbs(
         self,
@@ -388,8 +369,9 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
         total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)
 
         log_rewards = trajectories.log_rewards
+        assert log_rewards is not None
 
-        if math.isfinite(self.log_reward_clip_min) and log_rewards is not None:
+        if math.isfinite(self.log_reward_clip_min):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
         if torch.any(torch.isinf(total_log_pf_trajectories)):
@@ -399,7 +381,6 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories]):
 
         assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
         assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
-        assert log_rewards is not None
         return total_log_pf_trajectories - total_log_pb_trajectories - log_rewards
 
     def to_training_samples(self, trajectories: Trajectories) -> Trajectories:

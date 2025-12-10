@@ -298,7 +298,9 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
         height=height,
         replay_buffer_size=replay_buffer_size,
     )
-    final_l1_dist = train_hypergrid_main(args)
+    logs = train_hypergrid_main(args)
+    assert "l1_dist" in logs
+    final_l1_dist = logs["l1_dist"]
     assert final_l1_dist is not None
 
     if ndim == 2 and height == 8:
@@ -356,7 +358,9 @@ def test_hypergrid_fm(ndim: int, replay_buffer_size: int):
         height=8,
         replay_buffer_size=replay_buffer_size,
     )
-    final_l1_dist = train_hypergrid_main(args)
+    logs = train_hypergrid_main(args)
+    assert "l1_dist" in logs
+    final_l1_dist = logs["l1_dist"]
     if ndim == 2:
         if replay_buffer_size == 0:
             tgt = 5.024e-3  # 5.1e-4
@@ -396,8 +400,11 @@ def test_hypergrid_losses_and_replay_buffer(loss: str, replay_buffer_size: int):
         replay_buffer_size=replay_buffer_size,
         diverse_replay_buffer=False,
     )
-    final_l1_dist = train_hypergrid_main(args)
+    logs = train_hypergrid_main(args)
+
     if loss == "TB" and replay_buffer_size == 0:
+        assert "l1_dist" in logs
+        final_l1_dist = logs["l1_dist"]
         assert final_l1_dist > 0  # This is a sanity check that the script is running
 
 
@@ -748,7 +755,7 @@ def test_conditional_with_exploration():
 
 
 def test_conditional_loss_types():
-    """Test that different GFlowNet loss types work with conditioning."""
+    """Test that different GFlowNet loss types work with conditions."""
     loss_types = ["tb", "db", "subtb", "fm"]
     losses = []
 

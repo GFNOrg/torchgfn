@@ -9,8 +9,8 @@ from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
 from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
+    has_conditions_exception_handler,
+    no_conditions_exception_handler,
     warn_about_recalculating_logprobs,
 )
 
@@ -102,7 +102,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 special case.
 
         """
-        super().__init__(pf, pb, constant_pb=constant_pb)
+        super().__init__(
+            pf, pb, constant_pb=constant_pb, log_reward_clip_min=log_reward_clip_min
+        )
         assert any(
             isinstance(logF, cls)
             for cls in [ScalarEstimator, ConditionalScalarEstimator]
@@ -110,7 +112,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda
-        self.log_reward_clip_min = log_reward_clip_min
         self.forward_looking = forward_looking
 
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
@@ -262,16 +263,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         mask = ~states.is_sink_state
         valid_states = states[mask]
 
-        if trajectories.conditioning is not None:
-            # Compute the conditioning matrix broadcast to match valid_states.
-            # The conditioning tensor has shape (max_length, n_trajectories, 1)
+        if trajectories.conditions is not None:
+            # Compute the condition matrix broadcast to match valid_states.
+            # The conditions tensor has shape (max_length, n_trajectories, 1)
             # We need to index it to match the valid states
-            conditioning = trajectories.conditioning[mask]
+            conditions = trajectories.conditions[mask]
 
-            with has_conditioning_exception_handler("logF", self.logF):
-                log_F = self.logF(valid_states, conditioning)
+            with has_conditions_exception_handler("logF", self.logF):
+                log_F = self.logF(valid_states, conditions)
         else:
-            with no_conditioning_exception_handler("logF", self.logF):
+            with no_conditions_exception_handler("logF", self.logF):
                 log_F = self.logF(valid_states).squeeze(-1)
 
         if self.forward_looking:

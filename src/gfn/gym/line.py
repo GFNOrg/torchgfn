@@ -42,8 +42,10 @@ class Line(Env):
             check_action_validity: Whether to check the action validity.
         """
         assert len(mus) == len(sigmas)
-        self.mus = torch.tensor(mus)
-        self.sigmas = torch.tensor(sigmas)
+        device = torch.device(device)
+        dtype = torch.get_default_dtype()
+        self.mus = torch.tensor(mus, device=device, dtype=dtype)
+        self.sigmas = torch.tensor(sigmas, device=device, dtype=dtype)
         self.n_sd = n_sd
         self.n_steps_per_trajectory = n_steps_per_trajectory
         self.mixture = [Normal(m, s) for m, s in zip(self.mus, self.sigmas)]
@@ -53,9 +55,9 @@ class Line(Env):
         ub = torch.max(self.mus) + self.n_sd * torch.max(self.sigmas)
         assert lb < self.init_value < ub
 
-        s0 = torch.tensor([self.init_value, 0.0], device=device)
-        dummy_action = torch.tensor([float("inf")], device=device)
-        exit_action = torch.tensor([-float("inf")], device=device)
+        s0 = torch.tensor([self.init_value, 0.0], device=device, dtype=dtype)
+        dummy_action = torch.tensor([float("inf")], device=device, dtype=dtype)
+        exit_action = torch.tensor([-float("inf")], device=device, dtype=dtype)
         super().__init__(
             s0=s0,
             state_shape=(2,),  # [x_pos, step_counter].
@@ -128,7 +130,11 @@ class Line(Env):
             The log reward.
         """
         s = final_states.tensor[..., 0]
-        log_rewards = torch.empty((len(self.mixture),) + final_states.batch_shape)
+        log_rewards = torch.empty(
+            (len(self.mixture),) + final_states.batch_shape,
+            device=s.device,
+            dtype=s.dtype,
+        )
         for i, m in enumerate(self.mixture):
             log_rewards[i] = m.log_prob(s)
 
