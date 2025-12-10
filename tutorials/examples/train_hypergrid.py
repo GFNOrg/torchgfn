@@ -727,7 +727,7 @@ def main(args):  # noqa: C901
         else:
             group_name = wandb.util.generate_id()
 
-        wandb.init(project=args.wandb_project, group=group_name)
+        wandb.init(project=args.wandb_project, group=group_name, entity=args.wandb_entity)
         wandb.config.update(args)
 
     # Initialize the preprocessor.
@@ -993,7 +993,8 @@ def main(args):  # noqa: C901
                 f"l1_dist": None,  # only logged if calculate_partition.
             }
             to_log.update(averaging_info)
-            to_log.update(score_dict)
+            if score_dict is not None:
+                to_log.update(score_dict)
 
             if log_this_iter:
                 validation_info, all_visited_terminating_states = env.validate(
@@ -1011,7 +1012,7 @@ def main(args):  # noqa: C901
                         metadata = ReplayBufferManager.get_metadata(manager_rank)
                         to_log.update(metadata)
                     else:
-                        modes_found.update(env.modes_found(visited_terminating_states))
+                        modes_found.update(env.modes_found(all_visited_terminating_states))
                         n_modes_found = len(modes_found)
                         to_log["n_modes_found"] = n_modes_found
 
@@ -1130,7 +1131,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--global_replay_buffer_size",
         type=int,
-        default=10000,
+        default=8192,
         help="Global replay buffer size (only if using distributed computation)",
     )
     parser.add_argument(
@@ -1209,7 +1210,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=1000,
+        default=2048,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
     )
     parser.add_argument(
@@ -1320,6 +1321,12 @@ if __name__ == "__main__":
         type=str,
         default="torchgfn",
         help="Name of the wandb project. If empty, don't use wandb",
+    )
+    parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        default="torchgfn",
+        help="Name of the wandb entity. If empty, don't use wandb",
     )
     parser.add_argument(
         "--wandb_local",
