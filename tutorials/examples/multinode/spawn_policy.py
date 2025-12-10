@@ -122,7 +122,11 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             self._initialized = True
             return
         self._validate_params(
-            self.replacement_ratio, self.averaging_strategy, self.momentum, self.threshold, self.cooldown
+            self.replacement_ratio,
+            self.averaging_strategy,
+            self.momentum,
+            self.threshold,
+            self.cooldown,
         )
         self._model = model
         self._initialized = True
@@ -235,7 +239,10 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
             if should_dispatch:
                 ranks_to_replace, ranks_to_average = self._determine_ranks_for_averaging(
-                    all_metrics, world_size, self.replacement_ratio, self.averaging_strategy
+                    all_metrics,
+                    world_size,
+                    self.replacement_ratio,
+                    self.averaging_strategy,
                 )
                 weights = self._compute_averaging_weights(
                     all_metrics, ranks_to_average, self.averaging_strategy

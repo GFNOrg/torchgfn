@@ -41,7 +41,7 @@ from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
-from gfn.containers.replay_buffer_manager import ReplayBufferManager
+from gfn.containers.replay_buffer_manager import ContainerUnion, ReplayBufferManager
 from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
@@ -103,7 +103,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
         self.p_norm_novelty = p_norm_novelty
         self.cdist_max_bytes = cdist_max_bytes
 
-    def scoring_function(self, obj) -> dict[str, float]:
+    def scoring_function(self, obj: ContainerUnion) -> dict[str, float]:
 
         # print("Score - Computing score for object:", obj)
         # print("Score - Terminating states:", obj.terminating_states)
@@ -219,7 +219,9 @@ class ModesReplayBufferManager(ReplayBufferManager):
         if self._score_ema is None:
             self._score_ema = final_score
         else:
-            self._score_ema = self._ema_decay * self._score_ema + (1.0 - self._ema_decay) * float(final_score)
+            self._score_ema = self._ema_decay * self._score_ema + (
+                1.0 - self._ema_decay
+            ) * float(final_score)
         print("Score - EMA score:", self._score_ema)
         return {
             "score": float(self._score_ema),
@@ -727,7 +729,9 @@ def main(args) -> dict:  # noqa: C901
         else:
             group_name = wandb.util.generate_id()
 
-        wandb.init(project=args.wandb_project, group=group_name, entity=args.wandb_entity)
+        wandb.init(
+            project=args.wandb_project, group=group_name, entity=args.wandb_entity
+        )
         wandb.config.update(args)
 
     # Initialize the preprocessor.
@@ -1011,7 +1015,9 @@ def main(args) -> dict:  # noqa: C901
                         metadata = ReplayBufferManager.get_metadata(manager_rank)
                         to_log.update(metadata)
                     else:
-                        modes_found.update(env.modes_found(all_visited_terminating_states))
+                        modes_found.update(
+                            env.modes_found(all_visited_terminating_states)
+                        )
                         n_modes_found = len(modes_found)
                         to_log["n_modes_found"] = n_modes_found
 
