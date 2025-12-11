@@ -530,6 +530,7 @@ def main(args) -> dict:  # noqa: C901
         },
         calculate_partition=args.calculate_partition,
         store_all_states=args.store_all_states,
+        debug=__debug__,
     )
 
     if args.distributed and distributed_context.is_buffer_rank():

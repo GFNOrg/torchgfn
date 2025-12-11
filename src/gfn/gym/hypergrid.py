@@ -71,7 +71,6 @@ class HyperGrid(DiscreteEnv):
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         calculate_partition: bool = False,
         store_all_states: bool = False,
-        check_action_validity: bool = True,
         debug: bool = False,
     ):
         """Initializes the HyperGrid environment.
@@ -85,7 +84,6 @@ class HyperGrid(DiscreteEnv):
             calculate_partition: Whether to calculate the log partition function.
             store_all_states: Whether to store all states. If True, the true distribution
                 can be accessed via the `true_dist` property.
-            check_action_validity: Whether to check the action validity.
             debug: If True, emit States with debug guards (not compile-friendly).
         """
         if height <= 4:
@@ -142,7 +140,6 @@ class HyperGrid(DiscreteEnv):
             s0=s0,
             state_shape=state_shape,
             sf=sf,
-            check_action_validity=check_action_validity,
             debug=debug,
         )
         self.States: type[DiscreteStates] = self.States  # for type checking

@@ -36,6 +36,14 @@ Additionally, each subclass needs to define two more class variable tensors:
 - `dummy_action`: A tensor that is padded to sequences of actions in the shorter trajectories of a batch of trajectories. It is `[-1]` for discrete environments.
 - `exit_action`: A tensor that corresponds to the termination action. It is `[n_{actions} - 1]` fo discrete environments.
 
+### Debug guards and factory signatures
+
+`Actions` mirrors the `States` pattern: constructors and factories accept `debug: bool = False`. Keep `debug=False` in compiled/hot paths to avoid Python-side asserts; flip it on in development/tests to run shape/device validations. When defining custom subclasses, ensure:
+
+- `__init__(..., debug: bool = False, ...)` stores `self.debug` and only runs validations when `debug` is True.
+- Factory classmethods (`make_dummy_actions`, `make_exit_actions`, helpers like `from_tensor_dict`) accept `debug` (or `**kwargs`) and forward it to the constructor.
+- Environment helpers (`actions_from_tensor`, `actions_from_batch_shape`) should thread the env-level `debug` so all emitted actions share the setting.
+
 ## Containers
 
 Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Three containers are available:

@@ -19,10 +19,16 @@ _repo_root = Path(__file__).resolve().parents[2]
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
+# Ensure we run with Python debug mode enabled (no -O) so envs use debug guards.
+assert __debug__, "Tests must run without -O so __debug__ stays True."
+
 from tutorials.examples.train_bayesian_structure import (
     main as train_bayesian_structure_main,
 )
 from tutorials.examples.train_bit_sequences import main as train_bitsequence_main
+from tutorials.examples.train_bitsequence_recurrent import (
+    main as train_bitsequence_recurrent_main,
+)
 from tutorials.examples.train_box import main as train_box_main
 from tutorials.examples.train_conditional import main as train_conditional_main
 from tutorials.examples.train_diffusion_sampler import (
@@ -43,6 +49,9 @@ from tutorials.examples.train_hypergrid_local_search import (
 from tutorials.examples.train_hypergrid_simple import main as train_hypergrid_simple_main
 from tutorials.examples.train_ising import main as train_ising_main
 from tutorials.examples.train_line import main as train_line_main
+from tutorials.examples.train_with_example_modes import (
+    main as train_with_example_modes_main,
+)
 
 
 @dataclass
@@ -201,10 +210,15 @@ class BoxArgs(CommonArgs):
 
 @dataclass
 class BitSequenceArgs(CommonArgs):
-    n_iterations: int = 1000
+    n_iterations: int = 5000
     word_size: int = 1
     seq_size: int = 4
     n_modes: int = 2
+    temperature: float = 1.0
+    lr: 1e-4
+    lr_Z: 1e-2
+    seed: int = 0
+    batch_size: int = 32
 
 
 @dataclass
@@ -639,20 +653,18 @@ def test_diffusion_sampler_smoke():
 @pytest.mark.parametrize("seq_size", [4, 8])
 @pytest.mark.parametrize("n_modes", [2, 4])
 def test_bitsequence(seq_size: int, n_modes: int):
-    n_iterations = 1000
-    args = BitSequenceArgs(
-        seq_size=seq_size, n_modes=n_modes, n_iterations=n_iterations, seed=0
-    )
+    args = BitSequenceArgs(seq_size=seq_size, n_modes=n_modes)
     final_l1_dist = train_bitsequence_main(args)
     assert final_l1_dist is not None
+    # print(f"[DEBUG] BitSequence seq_size={seq_size}, n_modes={n_modes}, l1={final_l1_dist}")
     if seq_size == 4 and n_modes == 2:
-        assert final_l1_dist <= 1e-4
+        assert final_l1_dist <= 9e-5
     if seq_size == 4 and n_modes == 4:
-        assert final_l1_dist <= 1e-4
+        assert final_l1_dist <= 6e-8
     if seq_size == 8 and n_modes == 2:
-        assert final_l1_dist <= 1e-3
+        assert final_l1_dist <= 7e-5
     if seq_size == 8 and n_modes == 4:
-        assert final_l1_dist <= 1e-3
+        assert final_l1_dist <= 2e-4
 
 
 @pytest.mark.parametrize("gflownet", ["tb", "db", "subtb", "fm"])
@@ -787,6 +799,46 @@ def test_hypergrid_exploration_smoke():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_hypergrid_exploration_main(namespace_args)  # Runs without errors.
+
+
+def test_bitsequence_recurrent_smoke():
+    """Smoke test for the recurrent BitSequence training script."""
+    args = BitSequenceArgs(
+        n_iterations=50,
+        word_size=1,
+        seq_size=4,
+        n_modes=2,
+        seed=0,
+        batch_size=4,
+    )
+    args.embedding_dim = 4  # Added in manually (not relevant to other test).
+    args.hidden_size = 8  # Added in manually (not relevant to other test).
+
+    train_bitsequence_recurrent_main(Namespace(**asdict(args)))  # Runs without errors.
+
+
+def test_with_example_modes_smoke():
+    """Smoke test for example modes graph-building script."""
+    # Keep small for speed.
+    args = Namespace(
+        n_nodes=4,
+        max_rings=20,
+        device="cpu",
+        seed=0,
+        embedding_dim=16,
+        num_conv_layers=1,
+        lr=1e-3,
+        lr_Z=1e-3,
+        use_lr_scheduler=False,
+        n_iterations=2,
+        replay_buffer_max_size=50,
+        use_expert_data=False,
+        action_type_epsilon=0.0,
+        edge_index_epsilon=0.0,
+        batch_size=2,
+        plot=False,
+    )
+    train_with_example_modes_main(args)  # Runs without errors.
 
 
 if __name__ == "__main__":

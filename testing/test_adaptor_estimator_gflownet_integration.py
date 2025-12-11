@@ -26,7 +26,6 @@ def _make_bitsequence_env(
         H=H,
         device_str=str(device),
         seed=0,
-        check_action_validity=True,
     )
     return env
 

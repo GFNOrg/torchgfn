@@ -223,7 +223,6 @@ class BitSequence(DiscreteEnv):
         H: Optional[torch.Tensor] = None,
         device_str: str = "cpu",
         seed: int = 0,
-        check_action_validity: bool = True,
         debug: bool = False,
     ):
         """Initializes the BitSequence environment.
@@ -236,7 +235,6 @@ class BitSequence(DiscreteEnv):
             H: A tensor used to create the modes.
             device_str: The device to run the computations on ("cpu" or "cuda").
             seed: The seed for the random number generator.
-            check_action_validity: Whether to check the action validity.
             debug: If True, emit States with debug guards (not compile-friendly).
         """
         assert seq_size % word_size == 0, "word_size must divide seq_size."
@@ -261,7 +259,6 @@ class BitSequence(DiscreteEnv):
             dummy_action,
             exit_action,
             sf,
-            check_action_validity=check_action_validity,
             debug=debug,
         )
         self.H = H

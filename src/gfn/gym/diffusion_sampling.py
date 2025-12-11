@@ -678,7 +678,6 @@ class DiffusionSampling(Env):
     Attributes:
         target: The target distribution.
         device: The device to use.
-        check_action_validity: Whether to check the action validity.
     """
 
     # Registry of available targets.
@@ -697,7 +696,6 @@ class DiffusionSampling(Env):
         target_kwargs: dict[str, Any] | None,
         num_discretization_steps: float,
         device: torch.device = torch.device("cpu"),
-        check_action_validity: bool = False,
         debug: bool = False,
     ) -> None:
         """Initialize the DiffusionSampling environment.
@@ -708,7 +706,6 @@ class DiffusionSampling(Env):
                 defaults.
             num_discretization_steps: The number of discretization steps.
             device: The device to use.
-            check_action_validity: Whether to check the action validity.
             debug: If True, emit States with debug guards (not compile-friendly).
         """
 
@@ -748,7 +745,6 @@ class DiffusionSampling(Env):
                 device=device,
                 dtype=torch.get_default_dtype(),
             ),
-            check_action_validity=check_action_validity,
             debug=debug,
         )
 

@@ -45,7 +45,6 @@ class Env(ABC):
         dummy_action: torch.Tensor,
         exit_action: torch.Tensor,
         sf: Optional[torch.Tensor | GeometricData] = None,
-        check_action_validity: bool = True,
         debug: bool = False,
     ):
         """Initializes an environment.
@@ -59,8 +58,7 @@ class Env(ABC):
             exit_action: Tensor of shape (*action_shape) representing the exit action.
             sf: (Optional) Tensor of shape (*state_shape) or GeometricData representing
                 the sink (final) state.
-            check_action_validity: Whether to check the action validity.
-            debug: If True, States created by this env will run runtime guards
+            debug: If True, States/Actions created by this env will run runtime guards
                 (not torch.compile friendly). Keep False in compiled runs.
         """
         if isinstance(s0.device, str):  # This can happen when s0 is a GeometricData.
@@ -82,7 +80,6 @@ class Env(ABC):
         self.action_shape = action_shape
         self.dummy_action = dummy_action.to(s0.device)
         self.exit_action = exit_action.to(s0.device)
-        self.check_action_validity = check_action_validity
         self.debug = debug
 
         # Warning: don't use self.States or self.Actions to initialize an instance of
@@ -136,7 +133,7 @@ class Env(ABC):
         Returns:
             An Actions instance.
         """
-        return self.Actions(tensor)
+        return self.Actions(tensor, debug=self.debug)
 
     def actions_from_batch_shape(self, batch_shape: Tuple) -> Actions:
         """Returns a batch of dummy actions with the supplied batch shape.
@@ -147,7 +144,9 @@ class Env(ABC):
         Returns:
             A batch of dummy actions.
         """
-        return self.Actions.make_dummy_actions(batch_shape, device=self.device)
+        return self.Actions.make_dummy_actions(
+            batch_shape, device=self.device, debug=self.debug
+        )
 
     @abstractmethod
     def step(self, states: States, actions: Actions) -> States:
@@ -299,14 +298,19 @@ class Env(ABC):
         Returns:
             A batch of next states.
         """
-        assert states.batch_shape == actions.batch_shape
-        assert len(states.batch_shape) == 1, "Batch shape must be 1 for the step method."
+        if self.debug:
+            # Debug-only guards to avoid graph breaks in compiled runs.
+            assert states.batch_shape == actions.batch_shape
+            assert (
+                len(states.batch_shape) == 1
+            ), "Batch shape must be 1 for the step method."
 
         valid_states_idx: torch.Tensor = ~states.is_sink_state
-        assert valid_states_idx.shape == states.batch_shape
-        assert valid_states_idx.dtype == torch.bool
+        if self.debug:
+            assert valid_states_idx.shape == states.batch_shape
+            assert valid_states_idx.dtype == torch.bool
 
-        if self.check_action_validity:
+            # Action validity checks only when debug is enabled to keep compiled hot paths lean.
             valid_actions = actions[valid_states_idx]
             valid_states = states[valid_states_idx]
 
@@ -357,7 +361,8 @@ class Env(ABC):
         Returns:
             A batch of previous states.
         """
-        assert states.batch_shape == actions.batch_shape
+        if self.debug:
+            assert states.batch_shape == actions.batch_shape
 
         # IMPORTANT: states.clone() is used to ensure that the new states are a
         # distinct object from the old states. This is important for the sampler to
@@ -367,12 +372,13 @@ class Env(ABC):
         new_states = states.clone()
 
         valid_states_idx: torch.Tensor = ~new_states.is_initial_state
-        assert valid_states_idx.shape == new_states.batch_shape
-        assert valid_states_idx.dtype == torch.bool
+        if self.debug:
+            assert valid_states_idx.shape == new_states.batch_shape
+            assert valid_states_idx.dtype == torch.bool
         valid_actions = actions[valid_states_idx]
         valid_states = new_states[valid_states_idx]
 
-        if self.check_action_validity and not self.is_action_valid(
+        if self.debug and not self.is_action_valid(
             valid_states, valid_actions, backward=True
         ):
             raise NonValidActionsError(
@@ -469,7 +475,6 @@ class DiscreteEnv(Env, ABC):
         dummy_action: Optional[torch.Tensor] = None,
         exit_action: Optional[torch.Tensor] = None,
         sf: Optional[torch.Tensor] = None,
-        check_action_validity: bool = True,
         debug: bool = False,
     ):
         """Initializes a discrete environment.
@@ -483,7 +488,6 @@ class DiscreteEnv(Env, ABC):
             exit_action: (Optional) Tensor of shape (1,) representing the
                 exit action.
             sf: (Optional) Tensor of shape (*state_shape) representing the final state.
-            check_action_validity: Whether to check the action validity.
             debug: If True, States created by this env will run runtime guards
                 (not torch.compile friendly). Keep False in compiled runs.
         """
@@ -533,7 +537,6 @@ class DiscreteEnv(Env, ABC):
             dummy_action,
             exit_action,
             sf,
-            check_action_validity,
             debug=debug,
         )
 
@@ -644,8 +647,14 @@ class DiscreteEnv(Env, ABC):
             backward: If True, checks validity for backward actions.
 
         Returns:
-            True if all actions are valid in the given states, False otherwise.
+            True if all actions are valid in the given states, False otherwise. When
+            `debug` is False, returns True without checking to keep hot paths
+            compile-friendly.
         """
+        if not self.debug:
+            # Skip costly validity checks in production/compiled runs.
+            return True
+
         assert states.forward_masks is not None and states.backward_masks is not None
         masks_tensor = states.backward_masks if backward else states.forward_masks
         return bool(torch.gather(masks_tensor, 1, actions.tensor).all().item())
@@ -929,7 +938,6 @@ class GraphEnv(Env):
         num_node_classes: int,
         num_edge_classes: int,
         is_directed: bool,
-        check_action_validity: bool = True,
         debug: bool = False,
     ):
         """Initializes a graph-based environment.
@@ -940,7 +948,6 @@ class GraphEnv(Env):
             num_node_classes: Number of node classes.
             num_edge_classes: Number of edge classes.
             is_directed: Whether the graph is directed.
-            check_action_validity: Whether to check the action validity.
             debug: Kept for consistency with the other environments. Currently does not
                 optimize runtime.
         """
@@ -956,7 +963,6 @@ class GraphEnv(Env):
         self.num_node_classes = num_node_classes
         self.num_edge_classes = num_edge_classes
         self.is_directed = is_directed
-        self.check_action_validity = check_action_validity
         self.debug = debug
 
         assert s0.x is not None
