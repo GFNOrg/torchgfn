@@ -90,7 +90,9 @@ class States(ABC):
             # Keep shape validations in debug so compiled graphs avoid Python asserts.
             assert self.s0.shape == self.state_shape
             assert self.sf.shape == self.state_shape
-            assert tensor.shape[-len(self.state_shape) :] == self.state_shape
+            assert (
+                tensor.shape[-len(self.state_shape) :] == self.state_shape
+            )  # noqa: E203
 
         # Per-instance device resolution: prefer explicit device, else infer from tensor
         resolved_device = device if device is not None else tensor.device
@@ -493,7 +495,9 @@ class DiscreteStates(States, ABC):
             debug: If True, run mask/state validations even in compiled contexts.
         """
         super().__init__(tensor, device=device, debug=debug)
-        assert tensor.shape == self.batch_shape + self.state_shape
+        if debug:
+            # Keep shape validation in debug to avoid graph breaks in compiled regions.
+            assert tensor.shape == self.batch_shape + self.state_shape
 
         # In the usual case, no masks are provided and we produce these defaults.
         # Note: this **must** be updated externally by the env.
@@ -534,7 +538,12 @@ class DiscreteStates(States, ABC):
         )
 
     def _check_both_forward_backward_masks_exist(self):
-        assert self.forward_masks is not None and self.backward_masks is not None
+        # Only validate in debug to avoid graph breaks in compiled regions.
+        if self.debug:
+            if not torch.is_tensor(self.forward_masks):
+                raise TypeError("forward_masks must be tensors")
+            if not torch.is_tensor(self.backward_masks):
+                raise TypeError("backward_masks must be tensors")
 
     def __repr__(self) -> str:
         """Returns a detailed string representation of the DiscreteStates object.
@@ -691,13 +700,28 @@ class DiscreteStates(States, ABC):
             allow_exit: sets whether exiting can happen at any point in the
                 trajectory - if so, it should be set to True.
         """
+        if self.debug:
+            # Validate mask shape/dtype to catch silent misalignment during testing.
+            expected_shape = self.batch_shape + (self.n_actions - 1,)
+            if cond.shape != expected_shape:
+                raise ValueError(
+                    f"cond must have shape {expected_shape}; got {cond.shape}"
+                )
+            if cond.dtype is not torch.bool:
+                raise ValueError(f"cond must be boolean; got {cond.dtype}")
+
         # Resets masks in place to prevent side-effects across steps.
         self.forward_masks[:] = True
-        if allow_exit:
-            exit_idx = torch.zeros(self.batch_shape + (1,)).to(cond.device)
-        else:
-            exit_idx = torch.ones(self.batch_shape + (1,)).to(cond.device)
-        self.forward_masks[torch.cat([cond, exit_idx], dim=-1).bool()] = False
+        exit_mask = torch.zeros(
+            self.batch_shape + (1,), device=cond.device, dtype=cond.dtype
+        )
+
+        if not allow_exit:
+            exit_mask.fill_(True)
+
+        # Concatenate and mask in a single tensor op to stay torch.compile friendly.
+        # Sets the forward mask to be False where this concatenated mask is True.
+        self.forward_masks[torch.cat([cond, exit_mask], dim=-1)] = False
 
     def set_exit_masks(self, batch_idx: torch.Tensor) -> None:
         """Sets forward masks such that the only allowable next action is to exit.
@@ -708,15 +732,19 @@ class DiscreteStates(States, ABC):
             batch_idx: A boolean index along the batch dimension, along which to
                 enforce exits.
         """
-        self.forward_masks[batch_idx, :] = torch.cat(
-            [
-                torch.zeros([int(torch.sum(batch_idx).item()), *self.s0.shape]).to(
-                    self.device
-                ),
-                torch.ones([int(torch.sum(batch_idx).item()), 1]).to(self.device),
-            ],
-            dim=-1,
-        ).bool()
+        if self.debug:
+            if batch_idx.shape != self.batch_shape:
+                raise ValueError(
+                    f"batch_idx must have shape {self.batch_shape}; got {batch_idx.shape}"
+                )
+            if batch_idx.dtype is not torch.bool:
+                raise ValueError(f"batch_idx must be boolean; got {batch_idx.dtype}")
+
+        # Avoid Python .item() to stay torch.compile friendly. For any True entry in
+        # batch_idx (1D or 2D), zero all actions then set only the exit action True.
+        self.forward_masks[batch_idx] = False
+        # Use masked_fill on the last action slice to avoid advanced indexing graph breaks.
+        self.forward_masks[..., -1].masked_fill_(batch_idx, True)
 
     def init_forward_masks(self, set_ones: bool = True) -> None:
         """Initalizes forward masks.
@@ -1011,7 +1039,7 @@ class GraphStates(States):
             node_index_masks[i, graph.x.size(0)] = True
 
             ei0, ei1 = get_edge_indices(graph.x.size(0), self.is_directed, self.device)
-            edge_masks[i, len(ei0) :] = False
+            edge_masks[i, len(ei0) :] = False  # noqa: E203
 
             if graph.edge_index is not None and graph.edge_index.size(1) > 0:
                 edge_idx = torch.logical_and(

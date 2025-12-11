@@ -691,6 +691,140 @@ def test_discrete_masks_device_consistency_after_mask_ops(simple_discrete_state)
     assert state.forward_masks.device == state.device
 
 
+def _make_discrete(batch_shape: tuple[int, ...]) -> DiscreteStates:
+    class SimpleDiscreteStates(DiscreteStates):
+        state_shape = (2,)
+        n_actions = 4
+        s0 = torch.zeros(2)
+        sf = torch.ones(2)
+
+    tensor = torch.zeros(batch_shape + SimpleDiscreteStates.state_shape)
+    fm = torch.ones(batch_shape + (SimpleDiscreteStates.n_actions,), dtype=torch.bool)
+    bm = torch.ones(
+        batch_shape + (SimpleDiscreteStates.n_actions - 1,), dtype=torch.bool
+    )
+    return SimpleDiscreteStates(tensor, fm, bm, debug=True)
+
+
+def test_set_nonexit_action_masks_resets_each_call_1d():
+    state = _make_discrete((2,))
+
+    cond1 = torch.tensor([[False, True, False], [True, False, False]], dtype=torch.bool)
+    state.set_nonexit_action_masks(cond=cond1, allow_exit=True)
+    expected1 = torch.tensor(
+        [[True, False, True, True], [False, True, True, True]], dtype=torch.bool
+    )
+    assert torch.equal(state.forward_masks, expected1)
+
+    # Second call should start from all True because set_nonexit_action_masks resets.
+    cond2 = torch.zeros_like(cond1, dtype=torch.bool)
+    state.set_nonexit_action_masks(cond=cond2, allow_exit=True)
+    expected2 = torch.ones_like(expected1)
+    assert torch.equal(state.forward_masks, expected2)
+
+
+def test_set_nonexit_action_masks_resets_each_call_2d():
+    state = _make_discrete((2, 2))
+
+    cond1 = torch.tensor(
+        [
+            [[False, True, False], [True, False, False]],
+            [[False, False, True], [False, True, True]],
+        ],
+        dtype=torch.bool,
+    )
+    state.set_nonexit_action_masks(cond=cond1, allow_exit=False)
+    # When allow_exit is False, exit column is also masked to False.
+    expected1 = torch.tensor(
+        [
+            [[True, False, True, False], [False, True, True, False]],
+            [[True, True, False, False], [True, False, False, False]],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected1)
+
+    # Second call should reset masks before applying the new condition.
+    cond2 = torch.tensor(
+        [
+            [[True, False, True], [False, False, False]],
+            [[False, True, False], [True, True, False]],
+        ],
+        dtype=torch.bool,
+    )
+    state.set_nonexit_action_masks(cond=cond2, allow_exit=True)
+    expected2 = torch.tensor(
+        [
+            [[False, True, False, True], [True, True, True, True]],
+            [[True, False, True, True], [False, False, True, True]],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected2)
+
+
+def test_set_exit_masks_exit_only_1d():
+    state = _make_discrete((3,))
+    state.init_forward_masks(set_ones=True)
+
+    batch_idx = torch.tensor([True, False, True], dtype=torch.bool)
+    state.set_exit_masks(batch_idx)
+
+    expected = torch.tensor(
+        [
+            [False, False, False, True],
+            [True, True, True, True],
+            [False, False, False, True],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected)
+
+    # Running again with a different mask after re-init should not leak previous masks.
+    state.init_forward_masks(set_ones=True)
+    batch_idx2 = torch.tensor([False, True, False], dtype=torch.bool)
+    state.set_exit_masks(batch_idx2)
+    expected2 = torch.tensor(
+        [
+            [True, True, True, True],
+            [False, False, False, True],
+            [True, True, True, True],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected2)
+
+
+def test_set_exit_masks_exit_only_2d():
+    state = _make_discrete((2, 2))
+    state.init_forward_masks(set_ones=True)
+
+    batch_idx = torch.tensor([[True, False], [False, True]], dtype=torch.bool)
+    state.set_exit_masks(batch_idx)
+
+    expected = torch.tensor(
+        [
+            [[False, False, False, True], [True, True, True, True]],
+            [[True, True, True, True], [False, False, False, True]],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected)
+
+    # Re-init and apply a different mask to ensure previous updates don't leak.
+    state.init_forward_masks(set_ones=True)
+    batch_idx2 = torch.tensor([[False, False], [True, False]], dtype=torch.bool)
+    state.set_exit_masks(batch_idx2)
+    expected2 = torch.tensor(
+        [
+            [[True, True, True, True], [True, True, True, True]],
+            [[False, False, False, True], [True, True, True, True]],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected2)
+
+
 def normalize_device(device):
     """Normalize device to use index form (cuda:0 instead of cuda)"""
     device = torch.device(device)
