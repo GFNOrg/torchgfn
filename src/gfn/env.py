@@ -46,6 +46,7 @@ class Env(ABC):
         exit_action: torch.Tensor,
         sf: Optional[torch.Tensor | GeometricData] = None,
         check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes an environment.
 
@@ -59,6 +60,8 @@ class Env(ABC):
             sf: (Optional) Tensor of shape (*state_shape) or GeometricData representing
                 the sink (final) state.
             check_action_validity: Whether to check the action validity.
+            debug: If True, States created by this env will run runtime guards
+                (not torch.compile friendly). Keep False in compiled runs.
         """
         if isinstance(s0.device, str):  # This can happen when s0 is a GeometricData.
             s0.device = torch.device(s0.device)
@@ -80,6 +83,7 @@ class Env(ABC):
         self.dummy_action = dummy_action.to(s0.device)
         self.exit_action = exit_action.to(s0.device)
         self.check_action_validity = check_action_validity
+        self.debug = debug
 
         # Warning: don't use self.States or self.Actions to initialize an instance of
         # the class. Use self.states_from_tensor or self.actions_from_tensor instead.
@@ -104,7 +108,7 @@ class Env(ABC):
         Returns:
             A States instance.
         """
-        return self.States(tensor)
+        return self.States(tensor, debug=self.debug)
 
     def states_from_batch_shape(
         self, batch_shape: Tuple, random: bool = False, sink: bool = False
@@ -120,7 +124,7 @@ class Env(ABC):
             A batch of random, initial, or sink states.
         """
         return self.States.from_batch_shape(
-            batch_shape, random=random, sink=sink, device=self.device
+            batch_shape, random=random, sink=sink, device=self.device, debug=self.debug
         )
 
     def actions_from_tensor(self, tensor: torch.Tensor) -> Actions:
@@ -466,6 +470,7 @@ class DiscreteEnv(Env, ABC):
         exit_action: Optional[torch.Tensor] = None,
         sf: Optional[torch.Tensor] = None,
         check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes a discrete environment.
 
@@ -479,6 +484,8 @@ class DiscreteEnv(Env, ABC):
                 exit action.
             sf: (Optional) Tensor of shape (*state_shape) representing the final state.
             check_action_validity: Whether to check the action validity.
+            debug: If True, States created by this env will run runtime guards
+                (not torch.compile friendly). Keep False in compiled runs.
         """
         # Add validation/warnings for advanced usage
         if dummy_action is not None or exit_action is not None or sf is not None:
@@ -527,6 +534,7 @@ class DiscreteEnv(Env, ABC):
             exit_action,
             sf,
             check_action_validity,
+            debug=debug,
         )
 
     def states_from_tensor(self, tensor: torch.Tensor) -> DiscreteStates:
@@ -538,7 +546,7 @@ class DiscreteEnv(Env, ABC):
         Returns:
             An instance of DiscreteStates.
         """
-        states_instance = self.make_states_class()(tensor)
+        states_instance = self.make_states_class()(tensor, debug=self.debug)
         self.update_masks(states_instance)
         return states_instance
 
@@ -922,6 +930,7 @@ class GraphEnv(Env):
         num_edge_classes: int,
         is_directed: bool,
         check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes a graph-based environment.
 
@@ -932,6 +941,8 @@ class GraphEnv(Env):
             num_edge_classes: Number of edge classes.
             is_directed: Whether the graph is directed.
             check_action_validity: Whether to check the action validity.
+            debug: Kept for consistency with the other environments. Currently does not
+                optimize runtime.
         """
         assert s0.x is not None and sf.x is not None
         assert s0.edge_attr is not None and sf.edge_attr is not None
@@ -946,6 +957,7 @@ class GraphEnv(Env):
         self.num_edge_classes = num_edge_classes
         self.is_directed = is_directed
         self.check_action_validity = check_action_validity
+        self.debug = debug
 
         assert s0.x is not None
         assert sf.x is not None

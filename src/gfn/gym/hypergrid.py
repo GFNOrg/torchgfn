@@ -72,6 +72,7 @@ class HyperGrid(DiscreteEnv):
         calculate_partition: bool = False,
         store_all_states: bool = False,
         check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the HyperGrid environment.
 
@@ -85,6 +86,7 @@ class HyperGrid(DiscreteEnv):
             store_all_states: Whether to store all states. If True, the true distribution
                 can be accessed via the `true_dist` property.
             check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         if height <= 4:
             warnings.warn("+ Warning: height <= 4 can lead to unsolvable environments.")
@@ -141,6 +143,7 @@ class HyperGrid(DiscreteEnv):
             state_shape=state_shape,
             sf=sf,
             check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.States: type[DiscreteStates] = self.States  # for type checking
 
@@ -160,7 +163,10 @@ class HyperGrid(DiscreteEnv):
         states.backward_masks = states.tensor != 0
 
     def make_random_states(
-        self, batch_shape: Tuple[int, ...], device: torch.device | None = None
+        self,
+        batch_shape: Tuple[int, ...],
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> DiscreteStates:
         """Creates a batch of random states.
 
@@ -175,7 +181,7 @@ class HyperGrid(DiscreteEnv):
         tensor = torch.randint(
             0, self.height, batch_shape + self.s0.shape, device=device
         )
-        return self.States(tensor)
+        return self.States(tensor, debug=debug)
 
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Performs a step in the environment.

@@ -825,6 +825,81 @@ def test_set_exit_masks_exit_only_2d():
     assert torch.equal(state.forward_masks, expected2)
 
 
+def test_states_factory_requires_debug():
+    class NoDebugStates(States):
+        state_shape = (1,)
+        s0 = torch.tensor([0.0])
+        sf = torch.tensor([1.0])
+
+        @classmethod
+        def make_random_states(cls, batch_shape, device=None):
+            return cls(torch.zeros(batch_shape + cls.state_shape, device=device))
+
+    with pytest.raises(TypeError, match="must accept a `debug`"):
+        NoDebugStates.from_batch_shape((2,), random=True, debug=True)
+
+
+def test_discrete_states_factory_requires_debug():
+    class NoDebugDiscreteStates(DiscreteStates):
+        state_shape = (1,)
+        s0 = torch.tensor([0.0])
+        sf = torch.tensor([1.0])
+        n_actions = 2
+
+        @classmethod
+        def make_random_states(cls, batch_shape, device=None):
+            t = torch.zeros(batch_shape + cls.state_shape, device=device)
+            fm = torch.ones(
+                batch_shape + (cls.n_actions,), dtype=torch.bool, device=device
+            )
+            bm = torch.ones(
+                batch_shape + (cls.n_actions - 1,), dtype=torch.bool, device=device
+            )
+            return cls(t, fm, bm)
+
+    with pytest.raises(TypeError, match="must accept a `debug`"):
+        NoDebugDiscreteStates.from_batch_shape((2,), random=True, debug=True)
+
+
+def test_graph_states_factory_requires_debug():
+    class NoDebugGraphStates(GraphStates):
+        num_node_classes = 1
+        num_edge_classes = 1
+        is_directed = True
+        max_nodes = 2
+
+        s0 = GeometricData(
+            x=torch.zeros((1, 1)),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            edge_attr=torch.zeros((0, 1)),
+        )
+        sf = s0.clone()
+
+        @classmethod
+        def make_random_states(cls, batch_shape, device=None):
+            batch_shape = (
+                batch_shape if isinstance(batch_shape, tuple) else (batch_shape,)
+            )
+            data_array = np.empty(batch_shape, dtype=object)
+            for i in range(np.prod(batch_shape)):
+                data_array.flat[i] = cls.s0.clone()
+
+            if device is not None:
+                dev = device
+            else:
+                dev = cls.s0.x.device  # pyright: ignore[reportOptionalMemberAccess]
+
+            return cls(
+                data_array,
+                categorical_node_features=True,
+                categorical_edge_features=True,
+                device=dev,
+            )
+
+    with pytest.raises(TypeError, match="must accept a `debug`"):
+        NoDebugGraphStates.from_batch_shape((2,), random=True, debug=True)
+
+
 def normalize_device(device):
     """Normalize device to use index form (cuda:0 instead of cuda)"""
     device = torch.device(device)

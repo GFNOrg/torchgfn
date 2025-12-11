@@ -1,5 +1,6 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
+import inspect
 from abc import ABC
 from math import prod
 from typing import (
@@ -22,6 +23,25 @@ from torch_geometric.data import Data as GeometricData
 from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import GeometricBatch, get_edge_indices
+
+
+def _assert_factory_accepts_debug(factory: Callable, factory_name: str) -> None:
+    """Ensure the factory can accept a debug kwarg (explicit or via **kwargs)."""
+    try:
+        sig = inspect.signature(factory)
+    except (TypeError, ValueError):
+        return
+
+    params = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return
+    debug_param = params.get("debug")
+    if debug_param is not None:
+        return
+    raise TypeError(
+        f"{factory_name} must accept a `debug` keyword argument (or **kwargs) "
+        "to support debug-gated States construction."
+    )
 
 
 class States(ABC):
@@ -50,6 +70,12 @@ class States(ABC):
     trajectory. This dummy state should never be processed, and is used to pad the
     batch of states only.
 
+    Compile-related expectations:
+    - Hot paths should be called with tensors already on the target device and with
+      correct shapes; debug guards can be enabled during development/tests to validate.
+    - Set `debug=False` inside torch.compile regions to avoid Python-side graph breaks;
+      enable `debug=True` only when running eager checks.
+
     Attributes:
         tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of
             states.
@@ -66,9 +92,11 @@ class States(ABC):
     s0: ClassVar[torch.Tensor | GeometricData]
     sf: ClassVar[torch.Tensor | GeometricData]
 
-    make_random_states: Callable = lambda *x: (_ for _ in ()).throw(
-        NotImplementedError(
-            "The environment does not support initialization of random states."
+    make_random_states: Callable = staticmethod(
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            NotImplementedError(
+                "The environment does not support initialization of random states."
+            )
         )
     )
 
@@ -85,6 +113,8 @@ class States(ABC):
                 states.
             debug: If True, keep runtime guards active for safety; keep False in
                 compiled regions to avoid graph breaks when using torch.compile.
+                Preconditions when debug is False: `tensor` is already on the intended
+                device and its trailing dimensions equal `state_shape`.
         """
         if debug:
             # Keep shape validations in debug so compiled graphs avoid Python asserts.
@@ -124,6 +154,7 @@ class States(ABC):
         random: bool = False,
         sink: bool = False,
         device: torch.device | None = None,
+        debug: bool = False,
     ) -> States:
         r"""Creates a States object with the given batch shape.
 
@@ -138,6 +169,7 @@ class States(ABC):
             random: If True, initialize states randomly.
             sink: If True, initialize states as sink states ($s_f$).
             device: The device to create the states on.
+            debug: If True, keeps compile graph-breaking checks in the logic for safety.
 
         Returns:
             A States object with the specified batch shape and initialization.
@@ -149,15 +181,21 @@ class States(ABC):
             raise ValueError("Only one of `random` and `sink` should be True.")
 
         if random:
-            return cls.make_random_states(batch_shape, device=device)
+            _assert_factory_accepts_debug(cls.make_random_states, "make_random_states")
+            return cls.make_random_states(batch_shape, device=device, debug=debug)
         elif sink:
-            return cls.make_sink_states(batch_shape, device=device)
+            _assert_factory_accepts_debug(cls.make_sink_states, "make_sink_states")
+            return cls.make_sink_states(batch_shape, device=device, debug=debug)
         else:
-            return cls.make_initial_states(batch_shape, device=device)
+            _assert_factory_accepts_debug(cls.make_initial_states, "make_initial_states")
+            return cls.make_initial_states(batch_shape, device=device, debug=debug)
 
     @classmethod
     def make_initial_states(
-        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
+        cls,
+        batch_shape: tuple[int, ...],
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> States:
         r"""Creates a States object with all states set to $s_0$.
 
@@ -172,7 +210,10 @@ class States(ABC):
         assert cls.s0 is not None and state_ndim is not None
         device = cls.s0.device if device is None else device
         if isinstance(cls.s0, torch.Tensor):
-            return cls(cls.s0.repeat(*batch_shape, *((1,) * state_ndim)).to(device))
+            return cls(
+                cls.s0.repeat(*batch_shape, *((1,) * state_ndim)).to(device),
+                debug=debug,
+            )
         else:
             raise NotImplementedError(
                 f"make_initial_states is not implemented by default for {cls.__name__}"
@@ -180,7 +221,10 @@ class States(ABC):
 
     @classmethod
     def make_sink_states(
-        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
+        cls,
+        batch_shape: tuple[int, ...],
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> States:
         r"""Creates a States object with all states set to $s_f$.
 
@@ -195,7 +239,10 @@ class States(ABC):
         assert cls.sf is not None and state_ndim is not None
         device = cls.sf.device if device is None else device
         if isinstance(cls.sf, torch.Tensor):
-            return cls(cls.sf.repeat(*batch_shape, *((1,) * state_ndim)).to(device))
+            return cls(
+                cls.sf.repeat(*batch_shape, *((1,) * state_ndim)).to(device),
+                debug=debug,
+            )
         else:
             raise NotImplementedError(
                 f"make_sink_states is not implemented by default for {cls.__name__}"
@@ -471,6 +518,12 @@ class DiscreteStates(States, ABC):
         device: The device on which the states are stored.
         forward_masks: Boolean tensor indicating forward actions allowed at each state.
         backward_masks: Boolean tensor indicating backward actions allowed at each state.
+
+    Compile-related expectations:
+    - Inputs (state tensor and masks) should already be on the target device with
+      correct shapes; debug can be used to validate during development/tests.
+    - Mask helpers reset masks before applying new conditions; rely on this behavior
+      to avoid cross-step leakage.
     """
 
     n_actions: ClassVar[int]
@@ -699,6 +752,12 @@ class DiscreteStates(States, ABC):
                 times, cond might be state.tensor > 5 (assuming count starts at 0).
             allow_exit: sets whether exiting can happen at any point in the
                 trajectory - if so, it should be set to True.
+
+        Notes:
+            - Always resets `forward_masks` to all True before applying the new mask
+              so updates do not leak across steps.
+            - Works for 1D or 2D batch shapes; cond must match `batch_shape`.
+            - Debug guards validate shape/dtype but should be off in compiled regions.
         """
         if self.debug:
             # Validate mask shape/dtype to catch silent misalignment during testing.
@@ -731,6 +790,12 @@ class DiscreteStates(States, ABC):
         Args:
             batch_idx: A boolean index along the batch dimension, along which to
                 enforce exits.
+
+        Notes:
+            - Works for 1D or 2D batch shapes; `batch_idx` must match `batch_shape`.
+            - Clears all actions for the selected batch entries, then sets only the
+              exit action True via masked_fill to stay torch.compile friendly.
+            - Does not move devices; expects masks/tensors already on the target device.
         """
         if self.debug:
             if batch_idx.shape != self.batch_shape:
@@ -925,7 +990,10 @@ class GraphStates(States):
 
     @classmethod
     def make_initial_states(
-        cls, batch_shape: int | Tuple, device: torch.device | None = None
+        cls,
+        batch_shape: int | Tuple,
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> GraphStates:
         r"""Creates a numpy array of graphs consisting of initial states ($s_0$).
 
@@ -953,11 +1021,15 @@ class GraphStates(States):
             categorical_node_features=cls.s0.x.dtype == torch.long,
             categorical_edge_features=cls.s0.edge_attr.dtype == torch.long,
             device=device,
+            debug=debug,
         )
 
     @classmethod
     def make_sink_states(
-        cls, batch_shape: int | Tuple, device: torch.device | None = None
+        cls,
+        batch_shape: int | Tuple,
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> GraphStates:
         r"""Creates a numpy array of graphs consisting of sink states ($s_f$).
 
@@ -988,6 +1060,7 @@ class GraphStates(States):
             categorical_node_features=cls.sf.x.dtype == torch.long,
             categorical_edge_features=cls.sf.edge_attr.dtype == torch.long,
             device=device,
+            debug=debug,
         )
 
     @property

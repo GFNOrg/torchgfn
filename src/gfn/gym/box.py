@@ -29,6 +29,7 @@ class Box(Env):
         epsilon: float = 1e-4,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the Box environment.
 
@@ -40,6 +41,7 @@ class Box(Env):
             epsilon: A small value to avoid numerical issues.
             device: The device to use.
             check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
@@ -60,10 +62,14 @@ class Box(Env):
             dummy_action=dummy_action,
             exit_action=exit_action,
             check_action_validity=check_action_validity,
+            debug=debug,
         )
 
     def make_random_states(
-        self, batch_shape: Tuple[int, ...], device: torch.device | None = None
+        self,
+        batch_shape: Tuple[int, ...],
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> States:
         """Generates random states tensor of shape (*batch_shape, 2).
 
@@ -75,7 +81,7 @@ class Box(Env):
             A States object with random states.
         """
         device = self.device if device is None else device
-        return self.States(torch.rand(batch_shape + (2,), device=device))
+        return self.States(torch.rand(batch_shape + (2,), device=device), debug=debug)
 
     def step(self, states: States, actions: Actions) -> States:
         """Step function for the Box environment.

@@ -44,6 +44,7 @@ class PerfectBinaryTree(DiscreteEnv):
         depth: int = 4,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the PerfectBinaryTree environment.
 
@@ -51,6 +52,7 @@ class PerfectBinaryTree(DiscreteEnv):
             reward_fn: A function that computes the reward for a given state.
             depth: The depth of the tree.
             check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         device = torch.device(device)
         self.reward_fn = reward_fn
@@ -67,6 +69,7 @@ class PerfectBinaryTree(DiscreteEnv):
             (1,),
             sf=self.sf,
             check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.States: type[DiscreteStates] = self.States
 

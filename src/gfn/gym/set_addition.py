@@ -30,6 +30,7 @@ class SetAddition(DiscreteEnv):
         fixed_length: bool = False,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the SetAddition environment.
 
@@ -39,6 +40,7 @@ class SetAddition(DiscreteEnv):
             reward_fn: The reward function.
             fixed_length: Whether the trajectories have a fixed length.
             check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         device = torch.device(device)
         self.n_items = n_items
@@ -54,6 +56,7 @@ class SetAddition(DiscreteEnv):
             s0,
             state_shape,
             check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.States: type[DiscreteStates] = self.States
 
