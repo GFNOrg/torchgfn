@@ -811,10 +811,20 @@ def test_bitsequence_recurrent_smoke():
         seed=0,
         batch_size=4,
     )
-    args.embedding_dim = 4  # Added in manually (not relevant to other test).
-    args.hidden_size = 8  # Added in manually (not relevant to other test).
+    args_dict = asdict(args)
+    # Added (not needed for non-recurrent script).
+    args_dict.update(
+        embedding_dim=4,
+        hidden_size=8,
+        num_layers=2,
+        rnn_type="gru",
+        dropout=0.1,
+        lr_logz=1e-1,
+        lr=1e-3,
+        epsilon=0.1,
+    )
 
-    train_bitsequence_recurrent_main(Namespace(**asdict(args)))  # Runs without errors.
+    train_bitsequence_recurrent_main(Namespace(**args_dict))
 
 
 def test_with_example_modes_smoke():
