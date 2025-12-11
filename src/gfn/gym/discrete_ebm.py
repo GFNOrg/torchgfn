@@ -84,7 +84,7 @@ class DiscreteEBM(DiscreteEnv):
         energy: EnergyFunction | None = None,
         alpha: float = 1.0,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Discrete EBM environment.
 
@@ -94,7 +94,7 @@ class DiscreteEBM(DiscreteEnv):
                 Identity matrix is used.
             alpha: interaction strength the EBM. Defaults to 1.0.
             device: Device to use for the environment.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         self.ndim = ndim
 
@@ -116,7 +116,7 @@ class DiscreteEBM(DiscreteEnv):
             # exit_action=,
             n_actions=n_actions,
             sf=sf,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.States: type[DiscreteStates] = self.States
 
@@ -133,7 +133,7 @@ class DiscreteEBM(DiscreteEnv):
         states.backward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == 1
 
     def make_random_states(
-        self, batch_shape: Tuple, device: torch.device | None = None
+        self, batch_shape: Tuple, device: torch.device | None = None, debug: bool = False
     ) -> DiscreteStates:
         """Generates random states tensor of shape `(*batch_shape, ndim)`.
 
@@ -146,7 +146,7 @@ class DiscreteEBM(DiscreteEnv):
         """
         device = self.device if device is None else device
         tensor = torch.randint(-1, 2, batch_shape + (self.ndim,), device=device)
-        return self.States(tensor)
+        return self.States(tensor, debug=debug)
 
     def is_exit_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """Determines if the actions are exit actions.

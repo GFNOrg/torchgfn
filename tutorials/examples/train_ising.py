@@ -60,7 +60,7 @@ def main(args):
     N = args.L**2
     J = make_J(args.L, args.J)
     ising_energy = IsingModel(J)
-    env = DiscreteEBM(N, alpha=1, energy=ising_energy, device=device)
+    env = DiscreteEBM(N, alpha=1, energy=ising_energy, device=device, debug=__debug__)
 
     # Parametrization and losses
     pf_module = MLP(

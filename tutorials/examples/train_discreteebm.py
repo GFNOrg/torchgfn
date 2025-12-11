@@ -43,7 +43,7 @@ def main(args):  # noqa: C901
         wandb.config.update(args)
 
     # 1. Create the environment.
-    env = DiscreteEBM(ndim=args.ndim, alpha=args.alpha, device=device)
+    env = DiscreteEBM(ndim=args.ndim, alpha=args.alpha, device=device, debug=__debug__)
 
     # 2. Create the gflownet.
     # We need a LogEdgeFlowEstimator

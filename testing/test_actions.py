@@ -67,3 +67,23 @@ def test_action(action_fixture, request):
     extended_actions[0] = extended_actions[BATCH]
     is_exit_extended[0] = False
     assert torch.all(extended_actions.is_exit == is_exit_extended)
+
+
+def test_debug_shape_guard():
+    class SmallAction(Actions):
+        action_shape = (2,)
+        dummy_action = torch.zeros(2)
+        exit_action = torch.ones(2)
+
+    # Debug mode enforces shape checks.
+    with pytest.raises(ValueError):
+        SmallAction(torch.zeros(3), debug=True)
+
+    # Non-debug mode keeps hot path free of Python checks.
+    SmallAction(torch.zeros(3))
+
+
+def test_stack_preserves_debug_flag():
+    base = ContinuousActions(torch.arange(0, 10), debug=True)
+    stacked = ContinuousActions.stack([base, base])
+    assert getattr(stacked, "debug", False) is True

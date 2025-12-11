@@ -37,7 +37,7 @@ class GraphBuilding(GraphEnv):
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         s0: GeometricData | None = None,
         sf: GeometricData | None = None,
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the GraphBuilding environment.
 
@@ -51,7 +51,7 @@ class GraphBuilding(GraphEnv):
             device: The device to run computations on.
             s0: The initial state.
             sf: The sink state.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         if s0 is None:
             s0 = GeometricData(
@@ -82,7 +82,7 @@ class GraphBuilding(GraphEnv):
             num_node_classes=num_node_classes,
             num_edge_classes=num_edge_classes,
             is_directed=is_directed,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
 
     def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
@@ -290,13 +290,17 @@ class GraphBuilding(GraphEnv):
         return self.state_evaluator(final_states)
 
     def make_random_states(
-        self, batch_shape: Tuple, device: torch.device | None = None
+        self,
+        batch_shape: Tuple,
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> GraphStates:
         """Generates random states.
 
         Args:
             batch_shape: The shape of the batch.
             device: The device to use.
+            debug: If True, emit States with debug guards (not compile-friendly).
 
         Returns:
             A `GraphStates` object with random states.
@@ -338,7 +342,7 @@ class GraphBuilding(GraphEnv):
             )
             data_array.flat[i] = data
 
-        return self.States(data_array, device=device)
+        return self.States(data_array, device=device, debug=debug)
 
     def make_states_class(self) -> type[GraphStates]:
         """Creates a `GraphStates` class for this environment."""
@@ -413,7 +417,7 @@ class GraphBuildingOnEdges(GraphBuilding):
         state_evaluator: callable,
         directed: bool,
         device: Literal["cpu", "cuda"] | torch.device,
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the `GraphBuildingOnEdges` environment.
 
@@ -422,7 +426,6 @@ class GraphBuildingOnEdges(GraphBuilding):
             state_evaluator: A function that evaluates a state and returns a reward.
             directed: Whether the graph should be directed.
             device: The device to use.
-            check_action_validity: Whether to check the action validity.
         """
         self.n_nodes = n_nodes
         if directed:
@@ -459,7 +462,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             device=device,
             s0=s0,
             sf=sf,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
 
     def make_states_class(self) -> type[GraphStates]:
@@ -558,13 +561,17 @@ class GraphBuildingOnEdges(GraphBuilding):
         return GraphBuildingOnEdgesStates
 
     def make_random_states(
-        self, batch_shape: Tuple, device: torch.device | None = None
+        self,
+        batch_shape: Tuple,
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> GraphStates:
         """Makes a batch of random graph states with fixed number of nodes.
 
         Args:
             batch_shape: Shape of the batch dimensions.
             device: The device to use.
+            debug: If True, emit States with debug guards (not compile-friendly).
 
         Returns:
             A `GraphStates` object containing random graph states.
@@ -598,7 +605,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
             data_array.flat[i] = data
 
-        return self.States(data_array, device=device)
+        return self.States(data_array, device=device, debug=debug)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False

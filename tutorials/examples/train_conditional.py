@@ -641,6 +641,7 @@ def main(args):
         device=device,
         calculate_partition=True,  # Need this for validation
         store_all_states=True,  # Need this for validation
+        debug=__debug__,
     )
 
     seed = int(args.seed) if args.seed is not None else DEFAULT_SEED
