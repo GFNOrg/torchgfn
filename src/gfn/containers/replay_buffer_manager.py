@@ -20,7 +20,7 @@ class ReplayBufferManager:
         env: Env,
         rank: int,
         num_training_ranks: int,
-        scoring_function: Optional[Callable[[ContainerUnion], float]] = None,
+        scoring_function: Optional[Callable[[ContainerUnion], dict[str, float]]] = None,
         diverse_replay_buffer: bool = False,
         capacity: int = 10000,
         remote_manager_rank: int | None = None,
@@ -48,14 +48,14 @@ class ReplayBufferManager:
             self.replay_buffer = ReplayBuffer(
                 env,
                 capacity=self.capacity,
-                prioritized_capacity=False,
+                prioritized_capacity=True,  # Always prioritize high reward items.
                 remote_manager_rank=self.remote_manager_rank,
                 remote_buffer_freq=1,
             )
 
-    def default_scoring_function(self, obj) -> float:
+    def default_scoring_function(self, obj) -> dict[str, float]:
         """Default score function if none provided, placeholder."""
-        return math.inf
+        return {"score": math.inf}
 
     def _compute_metadata(self) -> dict:
         raise NotImplementedError(
@@ -63,17 +63,21 @@ class ReplayBufferManager:
         )
 
     def run(self):
-        """Runs on remote buffer manager ranks. Waits for training data, computes dummy reward, sends back."""
+        """Runs on remote buffer manager ranks. Waits for training data, computes reward, sends back."""
 
         while self.is_running:
             # Receive data
             sender_rank, msg, msg_data_len = self._recv_object()
 
+            # Recieved some data to add to the buffer.
             if msg.message_type == MessageType.DATA:
-                score = self.scoring_function(msg.message_data)
-                score_tensor = torch.tensor([score], dtype=torch.float32)
-                dist.send(score_tensor, dst=sender_rank)
                 self.replay_buffer.add(msg.message_data)
+                score_dict = self.scoring_function(msg.message_data)
+                message = Message(message_type=MessageType.DATA, message_data=score_dict)
+                message_tensor = message.serialize()
+                length_message_tensor = torch.IntTensor([len(message_tensor)])
+                dist.send(length_message_tensor, dst=sender_rank)
+                dist.send(message_tensor, dst=sender_rank)
 
             elif msg.message_type == MessageType.GET_METADATA:
                 metadata = self._compute_metadata()
@@ -88,25 +92,25 @@ class ReplayBufferManager:
                 if self.exit_counter == self.num_training_ranks:
                     self.is_running = False
                     print(
-                        f"Replay buffer manager {self.rank} received exit signals from all training ranks. Exiting."
+                        f"Manager - Replay buffer {self.rank} received exit signals from all training ranks. Exiting."
                     )
             else:
                 raise ValueError(
-                    f"Rank {self.rank} received unknown message type: {msg.message_type}"
+                    f"Manager - Rank {self.rank} received unknown message type: {msg.message_type}"
                 )
 
     def _recv_object(self):
-        # Receive the length
+        # Receive the length.
         length_tensor = torch.IntTensor([0])
         sender_rank = dist.recv(length_tensor)
         length = length_tensor.item()
 
-        # Receive the actual serialized data
+        # Receive the actual serialized data.
         byte_tensor = torch.ByteTensor(length)
         dist.recv(byte_tensor, src=sender_rank)
 
-        # Deserialize back into object
-        # obj_bytes = bytes(byte_tensor.tolist())
+        # Deserialize back into object.
+        # obj_bytes = bytes(byte_tensor.tolist()). # TODO -- Remove?
         msg = Message.deserialize(byte_tensor)
         return sender_rank, msg, length
 
@@ -128,12 +132,16 @@ class ReplayBufferManager:
         """Sends a get metadata signal to the replay buffer manager."""
         msg = Message(message_type=MessageType.GET_METADATA, message_data=None)
         msg_bytes = msg.serialize()
+
         length_tensor = torch.IntTensor([len(msg_bytes)])
         dist.send(length_tensor, dst=manager_rank)
+
         dist.send(msg_bytes, dst=manager_rank)
         length_metadata_tensor = torch.IntTensor([0])
+
         dist.recv(length_metadata_tensor, src=manager_rank)
         metadata_tensor = torch.ByteTensor(length_metadata_tensor.item())
+
         dist.recv(metadata_tensor, src=manager_rank)
         metadata = Message.deserialize(metadata_tensor)
         return metadata.message_data
