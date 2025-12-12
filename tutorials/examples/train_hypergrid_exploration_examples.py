@@ -311,7 +311,7 @@ def main(args):
         device=device,
         calculate_partition=True,
         store_all_states=True,
-        check_action_validity=__debug__,
+        debug=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
     _print_mode_stats(env)

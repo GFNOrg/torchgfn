@@ -33,7 +33,7 @@ def main(args):
     H = torch.randint(
         0, 2, (args.n_modes, args.seq_size), dtype=torch.long, device=device
     )
-    env = BitSequence(args.word_size, args.seq_size, args.n_modes, H=H)
+    env = BitSequence(args.word_size, args.seq_size, args.n_modes, H=H, debug=__debug__)
 
     if args.loss == "TB":
         pf = MLP(env.words_per_seq, env.n_actions)
