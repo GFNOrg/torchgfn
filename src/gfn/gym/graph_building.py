@@ -558,7 +558,10 @@ class GraphBuildingOnEdges(GraphBuilding):
         return GraphBuildingOnEdgesStates
 
     def make_random_states(
-        self, batch_shape: Tuple, device: torch.device | None = None
+        self,
+        batch_shape: Tuple,
+        device: torch.device | None = None,
+        conditions: torch.Tensor | None = None,  # not used here
     ) -> GraphStates:
         """Makes a batch of random graph states with fixed number of nodes.
 

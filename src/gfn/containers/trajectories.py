@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import partial
 from typing import Sequence
 
 import torch
@@ -9,7 +8,7 @@ from gfn.actions import Actions
 from gfn.containers.base import Container
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.transitions import Transitions
-from gfn.env import ConditionalEnv, Env
+from gfn.env import Env
 from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import ensure_same_device, is_int_dtype
 
@@ -30,8 +29,6 @@ class Trajectories(Container):
     Attributes:
         env: The environment where the states and actions are defined.
         states: States with batch_shape (max_length+1, n_trajectories).
-        conditions: (Optional) Tensor of shape (n_trajectories, condition_vector_dim)
-            containing the condition vectors for the trajectories.
         actions: Actions with batch_shape (max_length, n_trajectories).
         terminating_idx: Tensor of shape (n_trajectories,) indicating the time step
             at which each trajectory ends.
@@ -50,7 +47,6 @@ class Trajectories(Container):
         self,
         env: Env,
         states: States | None = None,
-        conditions: torch.Tensor | None = None,
         actions: Actions | None = None,
         terminating_idx: torch.Tensor | None = None,
         is_backward: bool = False,
@@ -64,8 +60,6 @@ class Trajectories(Container):
             env: The environment where the states and actions are defined.
             states: States with batch_shape (max_length+1, n_trajectories). If None,
                 an empty States object is created.
-            conditions: Optional tensor of shape (n_trajectories, condition_vector_dim)
-                containing the condition vectors for each trajectory.
             actions: Actions with batch_shape (max_length, n_trajectories). If None,
                 an empty Actions object is created.
             terminating_idx: Tensor of shape (n_trajectories,) indicating the time step
@@ -94,7 +88,6 @@ class Trajectories(Container):
                 ensure_same_device(obj.device, device)
 
         for tensor in [
-            conditions,
             terminating_idx,
             log_rewards,
             log_probs,
@@ -107,12 +100,6 @@ class Trajectories(Container):
             states if states is not None else env.states_from_batch_shape((0, 0))
         )
         assert len(self.states.batch_shape) == 2
-
-        self.conditions = conditions
-        assert self.conditions is None or (
-            len(self.conditions.shape) == 2
-            and self.conditions.shape[0] == self.n_trajectories
-        )
 
         self.actions = (
             actions if actions is not None else env.actions_from_batch_shape((0, 0))
@@ -246,12 +233,7 @@ class Trajectories(Container):
             return None
 
         if self._log_rewards is None:
-            if isinstance(self.env, ConditionalEnv):
-                assert self.conditions is not None
-                log_reward_fn = partial(self.env.log_reward, conditions=self.conditions)
-            else:
-                log_reward_fn = self.env.log_reward
-            self._log_rewards = log_reward_fn(self.terminating_states)
+            self._log_rewards = self.env.log_reward(self.terminating_states)
 
         assert self._log_rewards.shape == (self.n_trajectories,)
         return self._log_rewards
@@ -272,7 +254,6 @@ class Trajectories(Container):
         terminating_idx = self.terminating_idx[index]
         new_max_length = terminating_idx.max().item() if len(terminating_idx) > 0 else 0
         states = self.states[:, index]
-        conditions = self.conditions[index] if self.conditions is not None else None
         actions = self.actions[:, index]
         states = states[: 1 + new_max_length]
         actions = actions[:new_max_length]
@@ -301,7 +282,6 @@ class Trajectories(Container):
         return Trajectories(
             env=self.env,
             states=states,
-            conditions=conditions,
             actions=actions,
             terminating_idx=terminating_idx,
             is_backward=self.is_backward,
@@ -346,12 +326,6 @@ class Trajectories(Container):
             (self.terminating_idx, other.terminating_idx), dim=0
         )
 
-        # Concatenate conditions of the trajectories.
-        if self.conditions is not None and other.conditions is not None:
-            self.conditions = torch.cat((self.conditions, other.conditions), dim=0)
-        else:
-            self.conditions = None
-
         # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat((self._log_rewards, other._log_rewards), dim=0)
@@ -394,16 +368,6 @@ class Trajectories(Container):
             current Trajectories.
         """
         valid_action_mask = ~self.actions.is_dummy
-        if self.conditions is not None:
-            # The conditions tensor has shape (n_trajectories, condition_vector_dim)
-            # The actions have batch shape (max_length, n_trajectories)
-            # We need to repeat the condition vector tensor to match the actions
-            conditions = self.conditions.repeat(self.actions.batch_shape[0], 1, 1)
-            assert conditions.shape[:2] == self.actions.batch_shape
-            # Then we mask it with the valid action mask.
-            conditions = conditions[valid_action_mask]
-        else:
-            conditions = None
 
         states = self.states[:-1][valid_action_mask]
         next_states = self.states[1:][valid_action_mask]
@@ -438,7 +402,6 @@ class Trajectories(Container):
         return Transitions(
             env=self.env,
             states=states,
-            conditions=conditions,
             actions=actions,
             is_terminating=is_terminating,
             next_states=next_states,
@@ -470,17 +433,6 @@ class Trajectories(Container):
         states = states[is_valid]
         is_terminating = is_terminating[is_valid]
 
-        conditions = None
-        if self.conditions is not None:
-            # The conditions tensor has shape (n_trajectories, condition_vector_dim)
-            # The states have batch shape (max_length, n_trajectories)
-            # We need to repeat the conditions to match the batch shape of the states.
-            conditions = self.conditions.repeat(self.states.batch_shape[0], 1, 1)
-            # (max_length, n_trajectories, condition_vector_dim)
-            assert conditions.shape[:2] == self.states.batch_shape
-            # Then we mask it with the valid state mask.
-            conditions = conditions[is_valid]
-
         if self.log_rewards is None:
             log_rewards = None
         else:
@@ -495,7 +447,6 @@ class Trajectories(Container):
         return StatesContainer[DiscreteStates](
             env=self.env,
             states=states,
-            conditions=conditions,
             is_terminating=is_terminating,
             log_rewards=log_rewards,
             # FIXME: Add log_probs and estimator_outputs.
@@ -580,7 +531,6 @@ class Trajectories(Container):
         reversed_trajectories = Trajectories(
             env=self.env,
             states=new_states,
-            conditions=self.conditions,
             actions=new_actions,
             terminating_idx=self.terminating_idx + 1,
             is_backward=False,

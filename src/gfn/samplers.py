@@ -7,7 +7,6 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator, PolicyEstimatorProtocol
 from gfn.states import GraphStates, States
-from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import graph_states_share_storage
 from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 
@@ -187,12 +186,14 @@ class Sampler:
                     len(states.batch_shape) == 1
                 ), "States should have a batch_shape of length 1, w/ no trajectory dim!"
 
+        if conditions is not None:  # Explicitly set conditions if provided.
+            assert (
+                conditions.shape[:-1] == states.batch_shape
+            ), "Conditions must match states batch shape"
+            states.conditions = conditions
+
         n_trajectories = states.batch_shape[0]
         device = states.device
-
-        if conditions is not None:
-            ensure_same_device(states.device, conditions.device)
-            assert conditions.shape[0] == n_trajectories
 
         if policy_estimator.is_backward:
             dones = states.is_initial_state
@@ -213,7 +214,7 @@ class Sampler:
         step = 0
         if not hasattr(policy_estimator, "init_context"):
             raise TypeError("Estimator is not policy-capable (missing PolicyMixin)")
-        ctx = policy_estimator.init_context(n_trajectories, device, conditions)
+        ctx = policy_estimator.init_context(n_trajectories, device, states.conditions)
 
         while not all(dones):
             actions = env.actions_from_batch_shape((n_trajectories,))
@@ -251,6 +252,10 @@ class Sampler:
                 new_states = env._backward_step(states, actions)  # type: ignore[attr-defined]
             else:
                 new_states = env._step(states, actions)  # type: ignore[attr-defined]
+
+            # Propagate conditions to new states
+            if states.has_conditions:
+                new_states.conditions = states.conditions
 
             # Ensure that the new state is a distinct object from the old state.
             assert new_states is not states
@@ -313,7 +318,6 @@ class Sampler:
         trajectories = Trajectories(
             env=env,
             states=stacked_states,
-            conditions=conditions,
             actions=stacked_actions,
             terminating_idx=trajectories_terminating_idx,
             is_backward=policy_estimator.is_backward,
@@ -862,7 +866,6 @@ class LocalSearchSampler(Sampler):
         new_trajectories = Trajectories(
             env=env,
             states=env.states_from_tensor(new_trajectories_states_tsr),
-            conditions=prev_trajectories.conditions,
             actions=env.actions_from_tensor(new_trajectories_actions_tsr),
             terminating_idx=new_trajectories_dones,
             is_backward=False,
