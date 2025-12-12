@@ -491,17 +491,6 @@ class ConditionalEnv(Env, ABC):
             batch_shape=batch_shape, random=random, sink=sink, conditions=conditions
         )
 
-    def reward(self, states: States) -> torch.Tensor:
-        """Compute rewards for the conditional environment.
-
-        Args:
-            states: The states to compute rewards for.
-                states.tensor.shape should be (batch_size, *state_shape)
-        Returns:
-            A tensor of shape (batch_size,) containing the rewards.
-        """
-        raise NotImplementedError
-
     def log_partition(self, condition: torch.Tensor) -> float:
         """Optional method to return the logarithm of the partition function for a
         given condition.
