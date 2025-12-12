@@ -39,8 +39,8 @@ def try_compile_gflownet(
             results[name] = False
             continue
 
-        # If the estimator does not have a module, we cannot compile it.
         try:
+            # Attempt to compile the module.
             assert isinstance(estimator.module, torch.nn.Module)
             estimator.module = torch.compile(module, mode=mode)
             results[name] = True

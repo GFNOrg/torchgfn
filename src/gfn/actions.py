@@ -329,6 +329,13 @@ class GraphActions(Actions):
         EDGE_INDEX_KEY: 4,
     }
 
+    # Required by the Actions base class for DB/SubTB style algorithms.
+    action_shape = (5,)
+    dummy_action = torch.tensor(
+        [GraphActionType.DUMMY, -2, -2, -2, -2], dtype=torch.long
+    )
+    exit_action = torch.tensor([GraphActionType.EXIT, -1, -1, -1, -1], dtype=torch.long)
+
     def __init__(self, tensor: torch.Tensor):
         """Initializes a GraphActions object.
 
