@@ -31,7 +31,7 @@ import os
 import time
 from argparse import ArgumentParser
 from math import ceil
-from typing import Tuple, cast
+from typing import Optional, Tuple, cast
 
 import matplotlib.pyplot as plt
 import torch
@@ -41,7 +41,7 @@ from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
-from gfn.containers.replay_buffer_manager import ReplayBufferManager
+from gfn.containers.replay_buffer_manager import ContainerUnion, ReplayBufferManager
 from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
@@ -73,6 +73,14 @@ class ModesReplayBufferManager(ReplayBufferManager):
         diverse_replay_buffer: bool = False,
         capacity: int = 10000,
         remote_manager_rank: int | None = None,
+        # Scoring config
+        w_retained: float = 1.0,
+        w_novelty: float = 0.1,
+        w_reward: float = 0.0,
+        w_mode_bonus: float = 10.0,
+        p_norm_novelty: float = 2.0,
+        cdist_max_bytes: int = 268435456,
+        ema_decay: float = 0.98,
     ):
         super().__init__(
             env,
@@ -85,12 +93,145 @@ class ModesReplayBufferManager(ReplayBufferManager):
         )
         self.discovered_modes = set()
         self.env = env
+        self._ema_decay: float = float(ema_decay)
+        self._score_ema: Optional[float] = None
+        # Scoring configuration parameters.
+        self.w_retained = w_retained
+        self.w_novelty = w_novelty
+        self.w_reward = w_reward
+        self.w_mode_bonus = w_mode_bonus
+        self.p_norm_novelty = p_norm_novelty
+        self.cdist_max_bytes = cdist_max_bytes
 
-    def scoring_function(self, obj) -> float:
+    def scoring_function(self, obj: ContainerUnion) -> dict[str, float]:
+
+        # print("Score - Computing score for object:", obj)
+        # print("Score - Terminating states:", obj.terminating_states)
+        # print("Score - Log rewards:", obj.log_rewards)
+
+        # A) Retention (usefulness)
+        if not self.replay_buffer.prioritized_capacity:
+            retained_count = 0
+
+        # If the buffer is empty, retain all the new objects.
+        if self.replay_buffer.training_container is None:
+            retained_count = len(obj)
+
+        # If the buffer isn't full yet, we retain all the new objects.
+        elif (
+            len(self.replay_buffer.training_container) + len(obj)
+            <= self.replay_buffer.capacity
+        ):
+            retained_count = len(obj)
+
+        # If the buffer is full, we keep the high reward items only.
+        elif self.replay_buffer.prioritized_capacity:
+            assert self.replay_buffer.training_container.log_rewards is not None
+            assert obj.log_rewards is not None
+
+            # The old log_rewards are already sorted in ascending order.
+            old_log_rewards = self.replay_buffer.training_container.log_rewards
+
+            threshold = old_log_rewards.min()
+            new_log_rewards = obj.log_rewards
+            retained_new_log_rewards = new_log_rewards[new_log_rewards >= threshold]
+            retained_count = len(retained_new_log_rewards)
+
+        print("Score - Retained count:", retained_count)
+
+        # B) Novelty (sum of min-distances vs pre-add buffer). Higher min-distances are better.
+        if (
+            self.replay_buffer.training_container is None
+            or len(self.replay_buffer.training_container) == 0
+        ):
+            novelty_sum = float(len(obj))  # Placeholder value when the buffer is empty.
+
+        else:
+            # Compute the batch x buffer distances of the terminating states.
+            batch = obj.terminating_states.tensor.to(torch.get_default_dtype())
+            buf = self.replay_buffer.training_container.terminating_states.tensor.to(
+                torch.get_default_dtype()
+            )
+
+            m_ = batch.shape[0]
+            n_ = buf.shape[0]
+
+            batch = batch.view(m_, -1)
+            buf = buf.view(n_, -1)
+
+            # Compute the chunk size based on the max bytes per chunk.
+            bytes_per = 8 if batch.dtype == torch.float64 else 4
+            chunk = max(
+                1,
+                int(self.cdist_max_bytes // max(1, (m_ * bytes_per))),
+            )
+            min_dist = torch.full(
+                (m_,),
+                torch.finfo(batch.dtype).max,
+                dtype=batch.dtype,
+                device=batch.device,
+            )
+            for start in range(0, n_, chunk):
+                end = min(start + chunk, n_)
+
+                # Loop over chunks of the buffer to compute batch x buffer distances.
+                distances = torch.cdist(
+                    batch,
+                    buf[start:end],
+                    p=self.p_norm_novelty,
+                )
+                min_dist = torch.minimum(min_dist, distances.min(dim=1).values)
+
+            # Sum the minimum batch x buffer distances for each batch element.
+            novelty_sum = float(min_dist.sum().item())
+            print("Score - Min distances:", min_dist)
+
+        print("Score - Novelty sum:", novelty_sum)
+
+        # C) High reward term (sum over batch)
+        assert (
+            obj.log_rewards is not None
+        ), "log_rewards is None in submitted trajectories!"
+        reward_sum = float(obj.log_rewards.exp().sum().item())
+        print("Score - Reward sum:", reward_sum)
+
+        # D) Mode bonus
+        print("Score - Modes discovered before update:", self.discovered_modes)
+
+        n_new_modes = 0.0
+        assert isinstance(obj.terminating_states, DiscreteStates)
         modes_found = self.env.modes_found(obj.terminating_states)
-        score = len(modes_found - self.discovered_modes)
-        self.discovered_modes.update(modes_found)
-        return float(score)
+        if isinstance(modes_found, set):
+            new_modes = modes_found - self.discovered_modes
+            if new_modes:
+                n_new_modes = float(len(new_modes))
+                self.discovered_modes.update(new_modes)
+
+        print("Score - New modes found:", n_new_modes)
+        print("Score - Modes discovered after update:", self.discovered_modes)
+
+        # Compute the final score.
+        final_score = self.w_retained * float(retained_count)
+        final_score += self.w_novelty * novelty_sum
+        final_score += self.w_reward * reward_sum
+        final_score += self.w_mode_bonus * n_new_modes
+        print("Score - Final score:", final_score)
+        # Update and return EMA of the score
+        if self._score_ema is None:
+            self._score_ema = final_score
+        else:
+            self._score_ema = self._ema_decay * self._score_ema + (
+                1.0 - self._ema_decay
+            ) * float(final_score)
+        print("Score - EMA score:", self._score_ema)
+        return {
+            "score": float(self._score_ema),
+            "score_before_ema": final_score,
+            "retained_count": retained_count,
+            "novelty_sum": novelty_sum,
+            "reward_sum": reward_sum,
+            "n_new_modes": n_new_modes,
+        }
 
     def _compute_metadata(self) -> dict:
         return {"n_modes_found": len(self.discovered_modes)}
@@ -530,6 +671,7 @@ def main(args) -> dict:  # noqa: C901
         },
         calculate_partition=args.calculate_partition,
         store_all_states=args.store_all_states,
+        debug=__debug__,
     )
 
     if args.distributed and distributed_context.is_buffer_rank():
@@ -544,7 +686,7 @@ def main(args) -> dict:  # noqa: C901
             num_training_ranks=num_training_ranks,
             diverse_replay_buffer=args.diverse_replay_buffer,
             capacity=args.global_replay_buffer_size,
-        )
+        )  # TODO: If the remote_manager_rank is set, does this produce an infinite loop?
         replay_buffer_manager.run()
         return {}
 
@@ -589,7 +731,9 @@ def main(args) -> dict:  # noqa: C901
         else:
             group_name = wandb.util.generate_id()
 
-        wandb.init(project=args.wandb_project, group=group_name)
+        wandb.init(
+            project=args.wandb_project, group=group_name, entity=args.wandb_entity
+        )
         wandb.config.update(args)
 
     # Initialize the preprocessor.
@@ -622,6 +766,8 @@ def main(args) -> dict:  # noqa: C901
                 capacity=args.replay_buffer_size,
                 cutoff_distance=args.cutoff_distance,
                 p_norm_distance=args.p_norm_distance,
+                remote_manager_rank=distributed_context.assigned_buffer,
+                remote_buffer_freq=1,
             )
         else:
             replay_buffer = ReplayBuffer(
@@ -689,6 +835,8 @@ def main(args) -> dict:  # noqa: C901
                 replacement_ratio=args.replacement_ratio,
                 averaging_strategy=args.averaging_strategy,
                 momentum=args.momentum,
+                threshold=args.performance_tracker_threshold,
+                cooldown=args.performance_tracker_cooldown,
             )
         else:
             averaging_policy = AverageAllPolicy(average_every=args.average_every)
@@ -736,10 +884,10 @@ def main(args) -> dict:  # noqa: C901
         ) as to_train_samples_timer:
             training_samples = gflownet.to_training_samples(trajectories)
 
-            score = None
+            score_dict = None
             if replay_buffer is not None:
                 with torch.no_grad():
-                    score = replay_buffer.add(training_samples)
+                    score_dict = replay_buffer.add(training_samples)
                     training_objects = replay_buffer.sample(
                         n_samples=per_node_batch_size
                     )
@@ -796,11 +944,12 @@ def main(args) -> dict:  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
             if averaging_policy is not None:
+                assert score_dict is not None
                 gflownet, optimizer, averaging_info = averaging_policy(
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
-                    local_metric=score if score is not None else -loss.item(),
+                    local_metric=score_dict["score"],
                     group=distributed_context.train_global_group,
                 )
 
@@ -846,10 +995,11 @@ def main(args) -> dict:  # noqa: C901
                 "opt_time": opt_timer.elapsed,
                 "model_averaging_time": model_averaging_timer.elapsed,
                 "rest_time": rest_time,
-                "score": score,
                 "l1_dist": None,  # only logged if calculate_partition.
             }
             to_log.update(averaging_info)
+            if score_dict is not None:
+                to_log.update(score_dict)
 
             if log_this_iter:
                 validation_info, all_visited_terminating_states = env.validate(
@@ -867,7 +1017,9 @@ def main(args) -> dict:  # noqa: C901
                         metadata = ReplayBufferManager.get_metadata(manager_rank)
                         to_log.update(metadata)
                     else:
-                        modes_found.update(env.modes_found(visited_terminating_states))
+                        modes_found.update(
+                            env.modes_found(all_visited_terminating_states)
+                        )
                         n_modes_found = len(modes_found)
                         to_log["n_modes_found"] = n_modes_found
 
@@ -979,7 +1131,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--global_replay_buffer_size",
         type=int,
-        default=10000,
+        default=8192,
         help="Global replay buffer size (only if using distributed computation)",
     )
     parser.add_argument(
@@ -1065,7 +1217,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=1000,
+        default=2048,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
     )
     parser.add_argument(
@@ -1178,6 +1330,12 @@ if __name__ == "__main__":
         help="Name of the wandb project. If empty, don't use wandb",
     )
     parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        default="torchgfn",
+        help="Name of the wandb entity. If empty, don't use wandb",
+    )
+    parser.add_argument(
         "--wandb_local",
         action="store_true",
         help="Stores wandb results locally, to be uploaded later.",
@@ -1239,6 +1397,32 @@ if __name__ == "__main__":
         "--use_restarts",
         action="store_true",
         help="Use restarts.",
+    )
+
+    # Performance tracker settings.
+    parser.add_argument(
+        "--performance_tracker_decay",
+        type=float,
+        default=0.98,
+        help="Decay factor for the performance tracker.",
+    )
+    parser.add_argument(
+        "--performance_tracker_warmup",
+        type=int,
+        default=100,
+        help="Warmup period for the performance tracker.",
+    )
+    parser.add_argument(
+        "--performance_tracker_threshold",
+        type=float,
+        default=100,
+        help="Threshold for the performance tracker. If None, the performance tracker is not triggered.",
+    )
+    parser.add_argument(
+        "--performance_tracker_cooldown",
+        type=int,
+        default=200,
+        help="Cooldown period for the performance tracker.",
     )
 
     args = parser.parse_args()

@@ -433,6 +433,7 @@ def main(args: Namespace):
         n_nodes=args.num_nodes,
         state_evaluator=scorer.state_evaluator,
         device=device,
+        debug=__debug__,
     )
 
     if args.module == "mlp":

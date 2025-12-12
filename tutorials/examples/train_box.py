@@ -105,7 +105,7 @@ def main(args: Namespace) -> float:  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
 
     # 1. Create the environment
-    env = Box(delta=args.delta, epsilon=1e-10, device=device)
+    env = Box(delta=args.delta, epsilon=1e-10, device=device, debug=__debug__)
     preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
     # 2. Create the gflownet.

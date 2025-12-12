@@ -32,7 +32,6 @@ def estimated_dist(gflownet: PFBasedGFlowNet, env: BitSequence):
         pf=gflownet.pf,
         trajectories=trajectories,
         recalculate_all_logprobs=True,
-        adapter=gflownet.pf_adapter,
     )
     pf = torch.exp(log_pf_trajectories.sum(dim=0))
 
@@ -59,7 +58,7 @@ def main(args):
         H=H,
         device_str=str(device),
         seed=args.seed,
-        check_action_validity=__debug__,
+        debug=__debug__,
     )
 
     # Model + Estimator
@@ -79,8 +78,7 @@ def main(args):
         is_backward=False,
     ).to(device)
 
-    # GFlowNet (Trajectory Balance), tree DAG -> pb=None, constant_pb=True,
-    # Use a recurrent adapter for the PF.
+    # GFlowNet (Trajectory Balance), tree DAG -> pb=None, constant_pb=True.
     gflownet = TBGFlowNet(
         pf=pf_estimator,
         pb=None,

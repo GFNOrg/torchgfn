@@ -36,6 +36,7 @@ class BitSequenceStates(DiscreteStates):
         length: Optional[torch.Tensor] = None,
         forward_masks: Optional[torch.Tensor] = None,
         backward_masks: Optional[torch.Tensor] = None,
+        debug: bool = False,
     ) -> None:
         """Initializes the BitSequencesStates object.
 
@@ -44,9 +45,13 @@ class BitSequenceStates(DiscreteStates):
             length: The tensor representing the length of each bit sequence.
             forward_masks: The tensor representing the forward masks.
             backward_masks: The tensor representing the backward masks.
+            debug: If True, enable runtime guards in the parent class (not compile-friendly).
         """
         super().__init__(
-            tensor, forward_masks=forward_masks, backward_masks=backward_masks
+            tensor,
+            forward_masks=forward_masks,
+            backward_masks=backward_masks,
+            debug=debug,
         )
         if length is None:
             length = torch.zeros(self.batch_shape, dtype=torch.long, device=self.device)
@@ -67,6 +72,7 @@ class BitSequenceStates(DiscreteStates):
             self.length.detach().clone(),
             self.forward_masks.detach().clone(),
             self.backward_masks.detach().clone(),
+            debug=self.debug,
         )
 
     def _check_both_forward_backward_masks_exist(self):
@@ -89,6 +95,7 @@ class BitSequenceStates(DiscreteStates):
             self.length[index],
             self.forward_masks[index],
             self.backward_masks[index],
+            debug=self.debug,
         )
 
     def __setitem__(
@@ -114,7 +121,9 @@ class BitSequenceStates(DiscreteStates):
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
         backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
-        return self.__class__(states, length, forward_masks, backward_masks)
+        return self.__class__(
+            states, length, forward_masks, backward_masks, debug=self.debug
+        )
 
     def extend(self, other: BitSequenceStates) -> None:
         """Extends the current BitSequencesStates object with another BitSequencesStates object.
@@ -214,7 +223,7 @@ class BitSequence(DiscreteEnv):
         H: Optional[torch.Tensor] = None,
         device_str: str = "cpu",
         seed: int = 0,
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the BitSequence environment.
 
@@ -226,7 +235,7 @@ class BitSequence(DiscreteEnv):
             H: A tensor used to create the modes.
             device_str: The device to run the computations on ("cpu" or "cuda").
             seed: The seed for the random number generator.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         assert seq_size % word_size == 0, "word_size must divide seq_size."
         self.words_per_seq: int = seq_size // word_size
@@ -250,7 +259,7 @@ class BitSequence(DiscreteEnv):
             dummy_action,
             exit_action,
             sf,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.H = H
         self.modes = self.make_modes_set(seed)  # set of modes written as binary
@@ -290,7 +299,9 @@ class BitSequence(DiscreteEnv):
         if length is None:
             mask = tensor != -1
             length = mask.long().sum(dim=-1)
-        states_instance = self.make_states_class()(tensor, length=length)
+        states_instance = self.make_states_class()(
+            tensor, length=length, debug=self.debug
+        )
         self.update_masks(states_instance)
         return states_instance
 

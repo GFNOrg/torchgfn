@@ -82,12 +82,16 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         averaging_strategy: str = "mean",
         momentum: float = 0.0,
         poll_interval_s: float = 0.01,
+        threshold: Optional[float] = None,
+        cooldown: int = 200,
     ) -> None:
         super().__init__(average_every)
         self.replacement_ratio = float(replacement_ratio)
         self.averaging_strategy = str(averaging_strategy)
         self.momentum = float(momentum)
         self.poll_interval_s = float(poll_interval_s)
+        self.threshold: Optional[float] = threshold
+        self.cooldown: int = int(cooldown)
         self._model_builder = model_builder
 
         self._initialized = False
@@ -96,6 +100,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self._bg_thread: Optional[threading.Thread] = None
         self._pending_lock = threading.Lock()
         self._last_iter_sent: int = -1
+        self._last_trigger_iter: int = -self.cooldown
 
         # When rebuilding a fresh model + optimizer is desired, we store the
         # averaged parameters and construct the new model at the next safe call.
@@ -117,7 +122,11 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             self._initialized = True
             return
         self._validate_params(
-            self.replacement_ratio, self.averaging_strategy, self.momentum
+            self.replacement_ratio,
+            self.averaging_strategy,
+            self.momentum,
+            self.threshold,
+            self.cooldown,
         )
         self._model = model
         self._initialized = True
@@ -217,15 +226,31 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             all_metrics = torch.zeros(world_size, dtype=torch.float32)
             for r, m in bucket.items():
                 all_metrics[r] = m
-            ranks_to_replace, ranks_to_average = self._determine_ranks_for_averaging(
-                all_metrics, world_size, self.replacement_ratio, self.averaging_strategy
-            )
-            weights = self._compute_averaging_weights(
-                all_metrics, ranks_to_average, self.averaging_strategy
-            )
-            self._rank0_dispatch_controls(
-                iteration, ranks_to_replace, ranks_to_average, weights
-            )
+            # Gate dispatch using threshold and cooldown if configured
+            should_dispatch = True
+            if self.threshold is not None:
+                # Cooldown window
+                if iteration - self._last_trigger_iter < self.cooldown:
+                    should_dispatch = False
+                else:
+                    # Trigger only if any metric falls below threshold
+                    if torch.min(all_metrics).item() >= float(self.threshold):
+                        should_dispatch = False
+
+            if should_dispatch:
+                ranks_to_replace, ranks_to_average = self._determine_ranks_for_averaging(
+                    all_metrics,
+                    world_size,
+                    self.replacement_ratio,
+                    self.averaging_strategy,
+                )
+                weights = self._compute_averaging_weights(
+                    all_metrics, ranks_to_average, self.averaging_strategy
+                )
+                self._rank0_dispatch_controls(
+                    iteration, ranks_to_replace, ranks_to_average, weights
+                )
+                self._last_trigger_iter = int(iteration)
             del self._rank0_buckets[iteration]
 
     def _rank0_dispatch_controls(
@@ -413,7 +438,11 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
     # ---------------- Local helpers (copied from selective policy to avoid lints) ----------------
     @staticmethod
     def _validate_params(
-        replacement_ratio: float, averaging_strategy: str, momentum: float
+        replacement_ratio: float,
+        averaging_strategy: str,
+        momentum: float,
+        threshold: Optional[float],
+        cooldown: int,
     ) -> None:
         if not 0.0 <= replacement_ratio <= 1.0:
             raise ValueError(
@@ -428,6 +457,8 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             raise ValueError(f"Unknown averaging_strategy: {averaging_strategy}")
         if not 0.0 <= momentum <= 1.0:
             raise ValueError(f"momentum must be between 0 and 1, got {momentum}")
+        if cooldown < 0:
+            raise ValueError(f"cooldown must be non-negative, got {cooldown}")
 
     @staticmethod
     def _determine_ranks_for_averaging(
