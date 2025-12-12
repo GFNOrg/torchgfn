@@ -806,11 +806,12 @@ class GraphScalarMLP(nn.Module):
         adj = torch.zeros((batch_size, self.n_nodes, self.n_nodes), device=device)
 
         if states_tensor.edge_index.numel() > 0:
-            for i in range(batch_size):
-                edges = states_tensor[i].edge_index
-                adj[i, edges[0], edges[1]] = 1
-                if not self.is_directed:
-                    adj[i, edges[1], edges[0]] = 1
+            # Vectorized over the batch dim.
+            B = torch.arange(batch_size)
+            edges = states_tensor.edge_index
+            adj[B, edges[:, 0], edges[:, 1]] = 1
+            if not self.is_directed:
+                adj[B, edges[:, 1], edges[:, 0]] = 1
 
         embedding = self.backbone(adj.view(batch_size, -1))
         return self.head(embedding)
