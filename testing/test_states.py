@@ -691,6 +691,215 @@ def test_discrete_masks_device_consistency_after_mask_ops(simple_discrete_state)
     assert state.forward_masks.device == state.device
 
 
+def _make_discrete(batch_shape: tuple[int, ...]) -> DiscreteStates:
+    class SimpleDiscreteStates(DiscreteStates):
+        state_shape = (2,)
+        n_actions = 4
+        s0 = torch.zeros(2)
+        sf = torch.ones(2)
+
+    tensor = torch.zeros(batch_shape + SimpleDiscreteStates.state_shape)
+    fm = torch.ones(batch_shape + (SimpleDiscreteStates.n_actions,), dtype=torch.bool)
+    bm = torch.ones(
+        batch_shape + (SimpleDiscreteStates.n_actions - 1,), dtype=torch.bool
+    )
+    return SimpleDiscreteStates(tensor, fm, bm, debug=True)
+
+
+def test_set_nonexit_action_masks_resets_each_call_1d():
+    state = _make_discrete((2,))
+
+    cond1 = torch.tensor([[False, True, False], [True, False, False]], dtype=torch.bool)
+    state.set_nonexit_action_masks(cond=cond1, allow_exit=True)
+    expected1 = torch.tensor(
+        [[True, False, True, True], [False, True, True, True]], dtype=torch.bool
+    )
+    assert torch.equal(state.forward_masks, expected1)
+
+    # Second call should start from all True because set_nonexit_action_masks resets.
+    cond2 = torch.zeros_like(cond1, dtype=torch.bool)
+    state.set_nonexit_action_masks(cond=cond2, allow_exit=True)
+    expected2 = torch.ones_like(expected1)
+    assert torch.equal(state.forward_masks, expected2)
+
+
+def test_set_nonexit_action_masks_resets_each_call_2d():
+    state = _make_discrete((2, 2))
+
+    cond1 = torch.tensor(
+        [
+            [[False, True, False], [True, False, False]],
+            [[False, False, True], [False, True, True]],
+        ],
+        dtype=torch.bool,
+    )
+    state.set_nonexit_action_masks(cond=cond1, allow_exit=False)
+    # When allow_exit is False, exit column is also masked to False.
+    expected1 = torch.tensor(
+        [
+            [[True, False, True, False], [False, True, True, False]],
+            [[True, True, False, False], [True, False, False, False]],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected1)
+
+    # Second call should reset masks before applying the new condition.
+    cond2 = torch.tensor(
+        [
+            [[True, False, True], [False, False, False]],
+            [[False, True, False], [True, True, False]],
+        ],
+        dtype=torch.bool,
+    )
+    state.set_nonexit_action_masks(cond=cond2, allow_exit=True)
+    expected2 = torch.tensor(
+        [
+            [[False, True, False, True], [True, True, True, True]],
+            [[True, False, True, True], [False, False, True, True]],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected2)
+
+
+def test_set_exit_masks_exit_only_1d():
+    state = _make_discrete((3,))
+    state.init_forward_masks(set_ones=True)
+
+    batch_idx = torch.tensor([True, False, True], dtype=torch.bool)
+    state.set_exit_masks(batch_idx)
+
+    expected = torch.tensor(
+        [
+            [False, False, False, True],
+            [True, True, True, True],
+            [False, False, False, True],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected)
+
+    # Running again with a different mask after re-init should not leak previous masks.
+    state.init_forward_masks(set_ones=True)
+    batch_idx2 = torch.tensor([False, True, False], dtype=torch.bool)
+    state.set_exit_masks(batch_idx2)
+    expected2 = torch.tensor(
+        [
+            [True, True, True, True],
+            [False, False, False, True],
+            [True, True, True, True],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected2)
+
+
+def test_set_exit_masks_exit_only_2d():
+    state = _make_discrete((2, 2))
+    state.init_forward_masks(set_ones=True)
+
+    batch_idx = torch.tensor([[True, False], [False, True]], dtype=torch.bool)
+    state.set_exit_masks(batch_idx)
+
+    expected = torch.tensor(
+        [
+            [[False, False, False, True], [True, True, True, True]],
+            [[True, True, True, True], [False, False, False, True]],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected)
+
+    # Re-init and apply a different mask to ensure previous updates don't leak.
+    state.init_forward_masks(set_ones=True)
+    batch_idx2 = torch.tensor([[False, False], [True, False]], dtype=torch.bool)
+    state.set_exit_masks(batch_idx2)
+    expected2 = torch.tensor(
+        [
+            [[True, True, True, True], [True, True, True, True]],
+            [[False, False, False, True], [True, True, True, True]],
+        ],
+        dtype=torch.bool,
+    )
+    assert torch.equal(state.forward_masks, expected2)
+
+
+def test_states_factory_requires_debug():
+    class NoDebugStates(States):
+        state_shape = (1,)
+        s0 = torch.tensor([0.0])
+        sf = torch.tensor([1.0])
+
+        @classmethod
+        def make_random_states(cls, batch_shape, device=None):
+            return cls(torch.zeros(batch_shape + cls.state_shape, device=device))
+
+    with pytest.raises(TypeError, match="must accept a `debug`"):
+        NoDebugStates.from_batch_shape((2,), random=True, debug=True)
+
+
+def test_discrete_states_factory_requires_debug():
+    class NoDebugDiscreteStates(DiscreteStates):
+        state_shape = (1,)
+        s0 = torch.tensor([0.0])
+        sf = torch.tensor([1.0])
+        n_actions = 2
+
+        @classmethod
+        def make_random_states(cls, batch_shape, device=None):
+            t = torch.zeros(batch_shape + cls.state_shape, device=device)
+            fm = torch.ones(
+                batch_shape + (cls.n_actions,), dtype=torch.bool, device=device
+            )
+            bm = torch.ones(
+                batch_shape + (cls.n_actions - 1,), dtype=torch.bool, device=device
+            )
+            return cls(t, fm, bm)
+
+    with pytest.raises(TypeError, match="must accept a `debug`"):
+        NoDebugDiscreteStates.from_batch_shape((2,), random=True, debug=True)
+
+
+def test_graph_states_factory_requires_debug():
+    class NoDebugGraphStates(GraphStates):
+        num_node_classes = 1
+        num_edge_classes = 1
+        is_directed = True
+        max_nodes = 2
+
+        s0 = GeometricData(
+            x=torch.zeros((1, 1)),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            edge_attr=torch.zeros((0, 1)),
+        )
+        sf = s0.clone()
+
+        @classmethod
+        def make_random_states(cls, batch_shape, device=None):
+            batch_shape = (
+                batch_shape if isinstance(batch_shape, tuple) else (batch_shape,)
+            )
+            data_array = np.empty(batch_shape, dtype=object)
+            for i in range(np.prod(batch_shape)):
+                data_array.flat[i] = cls.s0.clone()
+
+            if device is not None:
+                dev = device
+            else:
+                dev = cls.s0.x.device  # pyright: ignore[reportOptionalMemberAccess]
+
+            return cls(
+                data_array,
+                categorical_node_features=True,
+                categorical_edge_features=True,
+                device=dev,
+            )
+
+    with pytest.raises(TypeError, match="must accept a `debug`"):
+        NoDebugGraphStates.from_batch_shape((2,), random=True, debug=True)
+
+
 def normalize_device(device):
     """Normalize device to use index form (cuda:0 instead of cuda)"""
     device = torch.device(device)

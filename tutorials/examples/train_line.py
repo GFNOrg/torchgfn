@@ -290,6 +290,7 @@ def main(args):
         n_sd=4.5,
         n_steps_per_trajectory=5,
         device=device,
+        debug=__debug__,
     )
 
     # Hyperparameters.

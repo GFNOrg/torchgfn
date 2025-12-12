@@ -35,7 +35,6 @@ import torch
 from tensordict import TensorDict
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import trange
-from train_graph_ring import RingReward, init_env, init_gflownet, render_states
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.containers.replay_buffer import ReplayBuffer
@@ -46,6 +45,12 @@ from gfn.states import GraphStates
 from gfn.utils.common import set_seed
 from gfn.utils.graphs import from_edge_indices, hash_graph
 from gfn.utils.training import lr_grad_ratio
+from tutorials.examples.train_graph_ring import (
+    RingReward,
+    init_env,
+    init_gflownet,
+    render_states,
+)
 
 
 def per_step_decay(num_steps: int, total_drop: float) -> float:
@@ -89,7 +94,11 @@ def generate_all_rings(
     device = torch.device(device)
     state_evaluator = RingReward(directed=True, device=device)
     env = GraphBuildingOnEdges(
-        n_nodes=n_nodes, state_evaluator=state_evaluator, directed=True, device=device
+        n_nodes=n_nodes,
+        state_evaluator=state_evaluator,
+        directed=True,
+        device=device,
+        debug=__debug__,
     )
 
     valid_rings = []
@@ -111,6 +120,12 @@ def generate_all_rings(
                         [GraphActionType.ADD_EDGE], device=device
                     ),
                     GraphActions.NODE_CLASS_KEY: torch.zeros(
+                        1, dtype=torch.long, device=device
+                    ),
+                    # this node_index field isn't used, but is required for compatibility
+                    # with the GraphActions.from_tensor_dict method while debug=True.
+                    # TODO: is there a more elegant solution to this problem?
+                    GraphActions.NODE_INDEX_KEY: torch.zeros(
                         1, dtype=torch.long, device=device
                     ),
                     GraphActions.EDGE_CLASS_KEY: torch.zeros(
@@ -292,12 +307,12 @@ def main(args: Namespace):
             training_samples.extend(replay_buffer_samples)
 
         if iteration % 100 == 0 or iteration == 0 or iteration == args.n_iterations - 1:
-            n_modes_in_buffer = sum(
-                env.reward(
-                    replay_buffer.training_objects.terminating_states  # type: ignore
-                )
-                > 0.1
-            )
+            # Compute how many stored trajectories terminate in a true mode.
+            n_modes_in_buffer = 0
+            if replay_buffer.training_container is not None:
+                terminating_states = replay_buffer.training_container.terminating_states  # type: ignore[attr-defined]
+                if terminating_states is not None:
+                    n_modes_in_buffer = int(torch.sum(env.reward(terminating_states) > 0.1))  # type: ignore
 
         optimizer.zero_grad()
         loss = gflownet.loss(env, training_samples, recalculate_all_logprobs=True)  # type: ignore
