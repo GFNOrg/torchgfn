@@ -107,6 +107,7 @@ class HypergridArgs(CommonArgs):
     replay_buffer_size: int = 0
     timing: bool = True
     half_precision: bool = False
+    remote_buffer_freq = 1
 
 
 @dataclass
