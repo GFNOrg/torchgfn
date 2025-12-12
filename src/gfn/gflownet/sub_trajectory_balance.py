@@ -83,6 +83,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
         constant_pb: bool = False,
+        debug: bool = False,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -100,10 +101,15 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+            debug: If True, keep runtime safety checks active; disable in compiled runs.
 
         """
         super().__init__(
-            pf, pb, constant_pb=constant_pb, log_reward_clip_min=log_reward_clip_min
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
         )
         assert any(
             isinstance(logF, cls)
@@ -535,12 +541,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories to compute the loss with.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
+                Note: for geometric-based sub-trajectory weighting, 'mean' is not
+                supported and is coerced to 'sum' (a warning is emitted when
+                debug=True).
 
         Returns:
             The computed sub-trajectory balance loss as a tensor. The shape depends on
             the reduction method.
         """
-        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
+        if self.debug:
+            warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
             env, trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -576,7 +586,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             weights = ratio * (
                 L ** torch.arange(max_len, device=per_length_losses.device)
             )
-            assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
+            if self.debug:
+                assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
 
         # TODO: we need to know what reductions are valid for each weighting method.
@@ -593,17 +604,19 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             raise ValueError(f"Unknown weighting method {self.weighting}")
 
         flat_contributions = contributions[~flattening_mask]
-        assert (
-            flat_contributions.sum() - 1.0
-        ).abs() < 1e-5, f"{flat_contributions.sum()}"
+        if self.debug:
+            assert (
+                flat_contributions.sum() - 1.0
+            ).abs() < 1e-5, f"{flat_contributions.sum()}"
         final_scores = flat_contributions * all_scores[~flattening_mask].pow(2)
 
         # TODO: default was sum, should we allow mean?
         if reduction == "mean":
-            warnings.warn(
-                "Mean reduction is not supported for SubTBGFlowNet with geometric "
-                "weighting, using sum instead."
-            )
+            if self.debug:
+                warnings.warn(
+                    "Mean reduction is not supported for SubTBGFlowNet with geometric "
+                    "weighting, using sum instead."
+                )
             reduction = "sum"
 
         return loss_reduce(final_scores, reduction)

@@ -41,15 +41,18 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
     the default (non-recurrent) PolicyMixin interface.
     """
 
-    def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
+    def __init__(
+        self, logF: DiscretePolicyEstimator, alpha: float = 1.0, debug: bool = False
+    ):
         """Initializes a FMGFlowNet instance.
 
         Args:
             logF: A DiscretePolicyEstimator or ConditionalDiscretePolicyEstimator for
                 estimating the log flow of the edges (states -> next_states).
             alpha: A scalar weight for the reward matching loss.
+            debug: If True, keep runtime safety checks active; disable in compiled runs.
         """
-        super().__init__()
+        super().__init__(debug=debug)
         assert isinstance(
             logF, PolicyMixin
         ), "logF must use the default PolicyMixin interface"
@@ -254,9 +257,10 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             The computed flow matching loss as a tensor. The shape depends on the
             reduction method.
         """
-        assert isinstance(states_container.intermediary_states, DiscreteStates)
-        assert isinstance(states_container.terminating_states, DiscreteStates)
-        if recalculate_all_logprobs:
+        if self.debug:
+            assert isinstance(states_container.intermediary_states, DiscreteStates)
+            assert isinstance(states_container.terminating_states, DiscreteStates)
+        if recalculate_all_logprobs and self.debug:
             warnings.warn(
                 "recalculate_all_logprobs is not used for FM. Ignoring the argument."
             )
