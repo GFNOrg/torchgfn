@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Generic, Sequence, TypeVar, cast
 
 import torch
+
+from gfn.env import ConditionalEnv
 
 if TYPE_CHECKING:
     from gfn.env import Env
@@ -71,7 +74,8 @@ class StatesContainer(Container, Generic[StateType]):
 
         self.conditions = conditions
         assert self.conditions is None or (
-            self.conditions.shape[: len(batch_shape)] == batch_shape
+            len(self.conditions.shape) == 2
+            and self.conditions.shape[0] == len(self.states)
         )
 
         self.is_terminating = (
@@ -178,7 +182,15 @@ class StatesContainer(Container, Generic[StateType]):
                 fill_value=-float("inf"),
                 device=self.states.device,
             )
-            self._log_rewards[self.is_terminating] = self.env.log_reward(
+            if isinstance(self.env, ConditionalEnv):
+                assert self.conditions is not None
+                log_reward_fn = partial(
+                    self.env.log_reward,
+                    conditions=self.conditions[self.is_terminating],
+                )
+            else:
+                log_reward_fn = self.env.log_reward
+            self._log_rewards[self.is_terminating] = log_reward_fn(
                 self.terminating_states
             )
 

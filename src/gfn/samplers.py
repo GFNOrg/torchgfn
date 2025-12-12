@@ -191,8 +191,8 @@ class Sampler:
         device = states.device
 
         if conditions is not None:
-            assert states.batch_shape == conditions.shape[: len(states.batch_shape)]
             ensure_same_device(states.device, conditions.device)
+            assert conditions.shape[0] == n_trajectories
 
         if policy_estimator.is_backward:
             dones = states.is_initial_state
@@ -309,25 +309,6 @@ class Sampler:
         if stacked_estimator_outputs is not None:
             if len(stacked_estimator_outputs) == 0:
                 stacked_estimator_outputs = None
-
-        # Broadcast condition tensor to match states batch shape if needed
-        if conditions is not None:
-            # The states have batch shape (max_length, n_trajectories). The
-            # conditions tensor should have shape (n_trajectories,) or
-            # (n_trajectories, 1). We need to broadcast it to (max_length,
-            # n_trajectories, 1) for the estimator
-            if len(conditions.shape) == 1:
-                # conditions has shape (n_trajectories,)
-                conditions = (
-                    conditions.unsqueeze(0)
-                    .unsqueeze(-1)
-                    .expand(stacked_states.batch_shape[0], -1, 1)
-                )
-            elif len(conditions.shape) == 2 and conditions.shape[1] == 1:
-                # conditions has shape (n_trajectories, 1)
-                conditions = conditions.unsqueeze(0).expand(
-                    stacked_states.batch_shape[0], -1, -1
-                )
 
         trajectories = Trajectories(
             env=env,

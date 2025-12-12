@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Sequence
 
 import torch
+
+from gfn.env import ConditionalEnv
 
 if TYPE_CHECKING:
     from gfn.actions import Actions
@@ -92,7 +95,8 @@ class Transitions(Container):
 
         self.conditions = conditions
         assert self.conditions is None or (
-            self.conditions.shape[: len(batch_shape)] == batch_shape
+            len(self.conditions.shape) == 2
+            and self.conditions.shape[0] == self.n_transitions
         )
 
         self.actions = (
@@ -204,7 +208,15 @@ class Transitions(Container):
                 fill_value=-float("inf"),
                 device=self.states.device,
             )
-            self._log_rewards[self.is_terminating] = self.env.log_reward(
+            if isinstance(self.env, ConditionalEnv):
+                assert self.conditions is not None
+                log_reward_fn = partial(
+                    self.env.log_reward,
+                    conditions=self.conditions[self.is_terminating],
+                )
+            else:
+                log_reward_fn = self.env.log_reward
+            self._log_rewards[self.is_terminating] = log_reward_fn(
                 self.terminating_states
             )
 
@@ -231,10 +243,15 @@ class Transitions(Container):
             fill_value=-float("inf"),
             device=self.states.device,
         )
-        log_rewards[~is_sink_state, 0] = self.env.log_reward(self.states[~is_sink_state])
-        log_rewards[~is_sink_state, 1] = self.env.log_reward(
-            self.next_states[~is_sink_state]
-        )
+        if isinstance(self.env, ConditionalEnv):
+            assert self.conditions is not None
+            log_reward_fn = partial(
+                self.env.log_reward, conditions=self.conditions[~is_sink_state]
+            )
+        else:
+            log_reward_fn = self.env.log_reward
+        log_rewards[~is_sink_state, 0] = log_reward_fn(self.states[~is_sink_state])
+        log_rewards[~is_sink_state, 1] = log_reward_fn(self.next_states[~is_sink_state])
 
         assert (
             log_rewards.shape == (self.n_transitions, 2)
@@ -282,12 +299,6 @@ class Transitions(Container):
         Args:
             Another Transitions object to append.
         """
-        if self.conditions is not None:
-            # TODO: Support the case
-            raise NotImplementedError(
-                "`extend` is not implemented for conditional Transitions."
-            )
-
         if len(other) == 0:
             return
 
@@ -313,6 +324,12 @@ class Transitions(Container):
             (self.is_terminating, other.is_terminating), dim=0
         )
         self.next_states.extend(other.next_states)
+
+        # Concatenate conditions of the transitions.
+        if self.conditions is not None and other.conditions is not None:
+            self.conditions = torch.cat((self.conditions, other.conditions), dim=0)
+        else:
+            self.conditions = None
 
         # Concatenate log_rewards of the trajectories.
         if self._log_rewards is not None and other._log_rewards is not None:
