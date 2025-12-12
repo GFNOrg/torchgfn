@@ -619,7 +619,7 @@ def _build_bitsequence_recurrent_components(
         H=H,
         device_str=str(device),
         seed=args.seed,
-        check_action_validity=__debug__,
+        debug=__debug__,
     )
 
     pf_module = RecurrentDiscreteSequenceModel(
@@ -684,7 +684,7 @@ def _build_bitsequence_mlp_components(
         H=H,
         device_str=str(device),
         seed=args.seed,
-        check_action_validity=__debug__,
+        debug=__debug__,
     )
 
     pf_module = MLP(
@@ -783,7 +783,7 @@ def _build_diffusion_components(
         target_kwargs=target_kwargs,
         num_discretization_steps=args.diffusion_num_steps,
         device=device,
-        check_action_validity=False,
+        debug=False,
     )
 
     pf_module = DiffusionPISGradNetForward(
