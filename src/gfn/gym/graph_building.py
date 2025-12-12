@@ -379,6 +379,29 @@ class GraphBuilding(GraphEnv):
         env = self
 
         class GraphBuildingActions(GraphActions):
+            # Required by the Actions base class for DB/SubTB style algorithms.
+            action_shape = (5,)
+            dummy_action = torch.tensor(
+                [
+                    GraphActionType.DUMMY,
+                    -2,
+                    -2,
+                    -2,
+                    -2,
+                ],
+                dtype=torch.long,
+            )
+            exit_action = torch.tensor(
+                [
+                    GraphActionType.EXIT,
+                    -1,
+                    -1,
+                    -1,
+                    -1,
+                ],
+                dtype=torch.long,
+            )
+
             @classmethod
             def edge_index_action_to_src_dst(
                 cls, edge_index_action: torch.Tensor, n_nodes: int
