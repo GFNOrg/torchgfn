@@ -405,18 +405,25 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         if len(transitions) == 0:
             return torch.tensor(0.0, device=transitions.device)
 
+        conditions = (
+            transitions.conditions
+        )  # reuse locally to avoid repeated attribute lookups
         mask = ~transitions.next_states.is_sink_state
         states = transitions.states[mask]
         valid_next_states = transitions.next_states[mask]
         actions = transitions.actions[mask]
         all_log_rewards = transitions.all_log_rewards[mask]
 
+        # If no non-sink next states, bail out early to avoid needless estimator calls.
+        if len(states) == 0:
+            return torch.tensor(0.0, device=transitions.device)
+
         if self.debug:
             check_compatibility(states, actions, transitions)
 
-        if transitions.conditions is not None:
+        if conditions is not None:
             with has_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(states, transitions.conditions[mask])
+                module_output = self.pf(states, conditions[mask])
         else:
             with no_conditions_exception_handler("pf", self.pf):
                 module_output = self.pf(states)
@@ -440,9 +447,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         # The following two lines are slightly inefficient, given that most
         # next_states are also states, for which we already did a forward pass.
-        if transitions.conditions is not None:
+        if conditions is not None:
             with has_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(valid_next_states, transitions.conditions[mask])
+                module_output = self.pf(valid_next_states, conditions[mask])
         else:
             with no_conditions_exception_handler("pf", self.pf):
                 module_output = self.pf(valid_next_states)
@@ -454,11 +461,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         non_exit_actions = actions[~actions.is_exit]
 
         if self.pb is not None:
-            if transitions.conditions is not None:
+            if conditions is not None:
                 with has_conditions_exception_handler("pb", self.pb):
-                    module_output = self.pb(
-                        valid_next_states, transitions.conditions[mask]
-                    )
+                    module_output = self.pb(valid_next_states, conditions[mask])
             else:
                 with no_conditions_exception_handler("pb", self.pb):
                     module_output = self.pb(valid_next_states)
