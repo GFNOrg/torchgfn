@@ -194,6 +194,12 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         states = transitions.states
         actions = transitions.actions
+        conditions = (
+            transitions.conditions
+        )  # reuse locally to avoid repeated attribute lookups
+        next_states = (
+            transitions.next_states
+        )  # reuse to avoid repeated attribute lookups
 
         if len(states) == 0:
             return torch.tensor(0.0, device=transitions.device)
@@ -209,30 +215,39 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         # Compute log_F_s
         # LogF is potentially a conditional computation.
-        if transitions.conditions is not None:
+        if conditions is not None:
             with has_conditions_exception_handler("logF", self.logF):
-                log_F_s = self.logF(states, transitions.conditions).squeeze(-1)
+                log_F_s = self.logF(states, conditions).squeeze(-1)
         else:
             with no_conditions_exception_handler("logF", self.logF):
                 log_F_s = self.logF(states).squeeze(-1)
 
         # Compute log_F_s_next
-        log_F_s_next = torch.zeros_like(log_F_s)
+        # Preallocate once and fill; write terminating rewards first to avoid an extra zero fill.
+        log_F_s_next = torch.empty_like(log_F_s)
         is_terminating = transitions.is_terminating
         is_intermediate = ~is_terminating
 
-        # Assign log_F_s_next for intermediate next states
-        interm_next_states = transitions.next_states[is_intermediate]
-        # log_F is potentially a conditional computation.
-        if transitions.conditions is not None:
-            with has_conditions_exception_handler("logF", self.logF):
-                log_F_s_next[is_intermediate] = self.logF(
-                    interm_next_states,
-                    transitions.conditions[is_intermediate],
-                ).squeeze(-1)
-        else:
-            with no_conditions_exception_handler("logF", self.logF):
-                log_F_s_next[is_intermediate] = self.logF(interm_next_states).squeeze(-1)
+        # Assign log_F_s_next for terminating transitions directly from clamped rewards.
+        log_rewards = transitions.log_rewards
+        assert log_rewards is not None
+        log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
+        log_F_s_next[is_terminating] = log_rewards[is_terminating]
+
+        # Assign log_F_s_next for intermediate next states (skip work if none).
+        if torch.any(is_intermediate):
+            interm_idx = is_intermediate.nonzero(as_tuple=True)[0]
+            interm_next_states = next_states[interm_idx]
+            # log_F is potentially a conditional computation.
+            if conditions is not None:
+                with has_conditions_exception_handler("logF", self.logF):
+                    log_F_s_next[interm_idx] = self.logF(
+                        interm_next_states,
+                        conditions[interm_idx],
+                    ).squeeze(-1)
+            else:
+                with no_conditions_exception_handler("logF", self.logF):
+                    log_F_s_next[interm_idx] = self.logF(interm_next_states).squeeze(-1)
 
         # Apply forward-looking if applicable
         if self.forward_looking:
@@ -249,27 +264,25 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 )
 
             # Reward calculation can also be conditional.
-            if transitions.conditions is not None:
-                log_rewards_state = env.log_reward(states, transitions.conditions)  # type: ignore
-                log_rewards_next = env.log_reward(
-                    interm_next_states, transitions.conditions[is_intermediate]  # type: ignore
-                )
+            if conditions is not None:
+                log_rewards_state = env.log_reward(states, conditions)  # type: ignore
             else:
                 log_rewards_state = env.log_reward(states)
-                log_rewards_next = env.log_reward(interm_next_states)
+
             log_rewards_state = log_rewards_state.clamp_min(self.log_reward_clip_min)
-            log_rewards_next = log_rewards_next.clamp_min(self.log_reward_clip_min)
-
             log_F_s = log_F_s + log_rewards_state
-            log_F_s_next[is_intermediate] = (
-                log_F_s_next[is_intermediate] + log_rewards_next
-            )
 
-        # Assign log_F_s_next for terminating transitions as log_rewards
-        log_rewards = transitions.log_rewards
-        assert log_rewards is not None
-        log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
-        log_F_s_next[is_terminating] = log_rewards[is_terminating]
+            if torch.any(is_intermediate):
+                if conditions is not None:
+                    log_rewards_next = env.log_reward(
+                        next_states[interm_idx],
+                        conditions[interm_idx],  # type: ignore
+                    )
+                else:
+                    log_rewards_next = env.log_reward(next_states[interm_idx])
+
+                log_rewards_next = log_rewards_next.clamp_min(self.log_reward_clip_min)
+                log_F_s_next[interm_idx] = log_F_s_next[interm_idx] + log_rewards_next
 
         # Compute scores
         preds = log_pf + log_F_s
