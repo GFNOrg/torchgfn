@@ -58,10 +58,18 @@ from gfn.states import DiscreteStates
 from gfn.utils.common import Timer, set_seed
 from gfn.utils.distributed import DistributedContext, initialize_distributed_compute
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
-from tutorials.examples.multinode.spawn_policy import (
-    AsyncSelectiveAveragingPolicy,
-    AverageAllPolicy,
-)
+
+# Allow running both as a package module and as a standalone script
+try:
+    from tutorials.examples.multinode.spawn_policy import (
+        AsyncSelectiveAveragingPolicy,
+        AverageAllPolicy,
+    )
+except ImportError:
+    from multinode.spawn_policy import (
+        AsyncSelectiveAveragingPolicy,
+        AverageAllPolicy,
+    )
 
 
 class ModesReplayBufferManager(ReplayBufferManager):
@@ -1326,13 +1334,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="torchgfn",
+        default="",
         help="Name of the wandb project. If empty, don't use wandb",
     )
     parser.add_argument(
         "--wandb_entity",
         type=str,
-        default="torchgfn",
+        default="",
         help="Name of the wandb entity. If empty, don't use wandb",
     )
     parser.add_argument(

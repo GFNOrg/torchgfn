@@ -49,6 +49,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         init_logZ: float = 0.0,
         constant_pb: bool = False,
         log_reward_clip_min: float = -float("inf"),
+        debug: bool = False,
     ):
         """Initializes a TBGFlowNet instance.
 
@@ -63,9 +64,14 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
                 is therefore always 1. Must be set explicitly by user to ensure that pb
                 is an Estimator except under this special case.
             log_reward_clip_min: If finite, clips log rewards to this value.
+            debug: If True, keep runtime safety checks active; disable in compiled runs.
         """
         super().__init__(
-            pf, pb, constant_pb=constant_pb, log_reward_clip_min=log_reward_clip_min
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
         )
 
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
@@ -109,7 +115,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             reduction method.
         """
         del env  # unused
-        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
+        if self.debug:
+            warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         scores = self.get_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
@@ -119,14 +126,14 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         if trajectories.conditions is not None:
             with is_callable_exception_handler("logZ", self.logZ):
                 assert isinstance(self.logZ, ScalarEstimator)
-                logZ = self.logZ(trajectories.conditions)
+                logZ = self.logZ(trajectories.conditions)  # [N] or [..., 1]
         else:
-            logZ = self.logZ
+            logZ = self.logZ  # []
 
-        logZ = cast(torch.Tensor, logZ)
-        scores = (scores + logZ.squeeze()).pow(2)
+        logZ = cast(torch.Tensor, logZ).squeeze()  # [] or [N]
+        scores = torch.square(scores + logZ)  # [N]
         loss = loss_reduce(scores, reduction)
-        if torch.isnan(loss).any():
+        if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is nan")
 
         return loss
@@ -170,13 +177,15 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
             the reduction method.
         """
         del env  # unused
-        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
+        if self.debug:
+            warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         scores = self.get_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
-        scores = (scores - scores.mean()).pow(2)
+        scores = scores.sub_(scores.mean())  # [N], in-place mean-centering.
+        scores = torch.square(scores)  # [N]
         loss = loss_reduce(scores, reduction)
-        if torch.isnan(loss).any():
+        if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is NaN.")
 
         return loss
