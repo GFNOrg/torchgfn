@@ -499,15 +499,17 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Returns:
             The contributions tensor of shape (max_len * (max_len+1) / 2, n_trajectories).
         """
-        L = self.lamda
-        max_len = trajectories.max_length
         t_idx = trajectories.terminating_idx
+        default_dtype = torch.get_default_dtype()
+        lam = torch.as_tensor(self.lamda, device=t_idx.device, dtype=default_dtype)
+        max_len = trajectories.max_length
+
+        arange = torch.arange(max_len, device=t_idx.device, dtype=default_dtype)
+        pow_lam = lam.pow(arange)
 
         # The following tensor represents the weights given to each possible
         # sub-trajectory length.
-        contributions = (L ** torch.arange(max_len, device=t_idx.device).double()).to(
-            torch.get_default_dtype()
-        )
+        contributions = pow_lam
         contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
         contributions = contributions.repeat_interleave(
             torch.arange(max_len, 0, -1, device=t_idx.device),
@@ -515,15 +517,18 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             output_size=int(max_len * (max_len + 1) / 2),
         )
 
-        # Now we need to divide each column by n + (n-1) lambda +...+ 1*lambda^{n-1}
-        # where n is the length of the trajectory corresponding to that column
+        # Now we need to divide each column by
+        #   sum_{i=0}^{n-1} (n - i) * lambda^i
+        # where n is the length of the trajectory corresponding to that column.
         # We can do it the ugly way, or using the cool identity:
         # https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
-        per_trajectory_denom = (
-            1.0
-            / (1 - L) ** 2
-            * (L * (L ** t_idx.double() - 1) + (1 - L) * t_idx.double())
-        ).to(torch.get_default_dtype())
+        pow_cumsum = pow_lam.cumsum(0)
+        i_pow_cumsum = (arange * pow_lam).cumsum(0)
+        gather_idx = (t_idx.clamp(min=1) - 1).long()
+        sum_geom = pow_cumsum[gather_idx]
+        sum_i_geom = i_pow_cumsum[gather_idx]
+        t_idx_f = t_idx.to(default_dtype)
+        per_trajectory_denom = t_idx_f * sum_geom - sum_i_geom
         contributions = contributions / per_trajectory_denom / len(trajectories)
 
         return contributions
