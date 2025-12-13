@@ -126,12 +126,12 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         if trajectories.conditions is not None:
             with is_callable_exception_handler("logZ", self.logZ):
                 assert isinstance(self.logZ, ScalarEstimator)
-                logZ = self.logZ(trajectories.conditions)
+                logZ = self.logZ(trajectories.conditions)  # [N] or [..., 1]
         else:
-            logZ = self.logZ
+            logZ = self.logZ  # []
 
-        logZ = cast(torch.Tensor, logZ)
-        scores = (scores + logZ.squeeze()).pow(2)
+        logZ = cast(torch.Tensor, logZ).squeeze()  # [] or [N]
+        scores = torch.square(scores + logZ)  # [N]
         loss = loss_reduce(scores, reduction)
         if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is nan")
@@ -182,7 +182,8 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         scores = self.get_scores(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
-        scores = (scores - scores.mean()).pow(2)
+        scores = scores.sub_(scores.mean())  # [N], in-place mean-centering.
+        scores = torch.square(scores)  # [N]
         loss = loss_reduce(scores, reduction)
         if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is NaN.")
