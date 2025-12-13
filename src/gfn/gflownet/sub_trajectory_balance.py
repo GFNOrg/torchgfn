@@ -377,13 +377,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 ).unsqueeze(-1)
             )
 
-            flat_preds = preds[~flattening_mask]
-            if torch.any(torch.isnan(flat_preds)):
-                raise ValueError("NaN in preds")
+            if self.debug:
+                flat_preds = preds[~flattening_mask]
+                if torch.any(torch.isnan(flat_preds)):
+                    raise ValueError("NaN in preds")
 
-            flat_targets = targets[~flattening_mask]
-            if torch.any(torch.isnan(flat_targets)):
-                raise ValueError("NaN in targets")
+                flat_targets = targets[~flattening_mask]
+                if torch.any(torch.isnan(flat_targets)):
+                    raise ValueError("NaN in targets")
 
             flattening_masks.append(flattening_mask)
             scores.append(preds - targets)
