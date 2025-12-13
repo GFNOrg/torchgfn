@@ -1,75 +1,64 @@
-from types import MethodType
-
 import pytest
 import torch
 
+from gfn.containers.trajectories import Trajectories
+from gfn.estimators import DiscretePolicyEstimator, ScalarEstimator
 from gfn.gflownet.sub_trajectory_balance import SubTBGFlowNet
-
-
-class _DummyTrajectories:
-    """Minimal trajectories carrier for get_scores vectorization test."""
-
-    def __init__(self, terminating_idx: torch.Tensor, max_length: int):
-        self.terminating_idx = terminating_idx
-        self.max_length = max_length
-        self.n_trajectories = terminating_idx.shape[0]
-
-    def __len__(self) -> int:
-        return self.n_trajectories
+from gfn.gym.hypergrid import HyperGrid
+from gfn.preprocessors import KHotPreprocessor
+from gfn.samplers import Sampler
+from gfn.utils.modules import MLP
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_subtb_get_scores_vectorized_matches_original(seed: int):
     torch.manual_seed(seed)
-    max_len = 3
     n_traj = 4
 
-    # Synthetic inputs for the get_scores pipeline.
-    terminating_idx = torch.tensor([1, 2, 3, 2])
-    log_pf_trajectories = torch.randn(max_len, n_traj)
-    log_pb_trajectories = torch.randn(max_len, n_traj)
-    log_state_flows = torch.randn(max_len, n_traj)
-    sink_states_mask = torch.zeros(max_len, n_traj, dtype=torch.bool)
-    is_terminal_mask = torch.zeros(max_len, n_traj, dtype=torch.bool)
+    # Deterministic HyperGrid env and frozen estimators so real methods can run.
+    env = HyperGrid(ndim=2, height=3, device="cpu", debug=False)
+    preproc = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
-    preds_list = [torch.randn(max_len + 1 - i, n_traj) for i in range(1, max_len + 1)]
-    targets_list = [torch.randn(max_len + 1 - i, n_traj) for i in range(1, max_len + 1)]
+    # Tiny MLPs with random weights (frozen for determinism).
+    module_pf = MLP(input_dim=preproc.output_dim, output_dim=env.n_actions)
+    module_pb = MLP(input_dim=preproc.output_dim, output_dim=env.n_actions - 1)
+    module_logF = MLP(input_dim=preproc.output_dim, output_dim=1)
+    for mod in (module_pf, module_pb, module_logF):
+        for p in mod.parameters():
+            p.requires_grad_(False)
 
-    trajectories = _DummyTrajectories(
-        terminating_idx=terminating_idx, max_length=max_len
+    pf = DiscretePolicyEstimator(
+        module=module_pf,
+        n_actions=env.n_actions,
+        preprocessor=preproc,
+        is_backward=False,
     )
-    env = object()  # Unused by the monkeypatched methods.
+    pb = DiscretePolicyEstimator(
+        module=module_pb, n_actions=env.n_actions, preprocessor=preproc, is_backward=True
+    )
+    logF = ScalarEstimator(module=module_logF, preprocessor=preproc)
 
-    # Build a SubTBGFlowNet instance without running its heavy __init__.
-    model = SubTBGFlowNet.__new__(SubTBGFlowNet)
-    torch.nn.Module.__init__(model)
+    # Initialize model via __init__ to set up real methods.
+    model = SubTBGFlowNet(
+        pf=pf, pb=pb, logF=logF, weighting="geometric_within", lamda=0.9
+    )
     model.debug = False
     model.log_reward_clip_min = float("-inf")
+    model.eval()
+    pf.eval()
+    pb.eval()
+    logF.eval()
 
-    # Monkeypatch the dependencies used inside get_scores to deterministic tensors.
-    model.get_pfs_and_pbs = MethodType(
-        lambda self, traj, recalculate_all_logprobs=True: (
-            log_pf_trajectories,
-            log_pb_trajectories,
-        ),
-        model,
+    # Sample a deterministic batch of trajectories with frozen estimators.
+    sampler = Sampler(estimator=pf)
+    trajectories: Trajectories = sampler.sample_trajectories(
+        env,
+        n=n_traj,
+        epsilon=0.0,
+        save_logprobs=True,
+        save_estimator_outputs=False,
     )
-    model.calculate_log_state_flows = MethodType(
-        lambda self, _env, _traj, _log_pf: log_state_flows, model
-    )
-    model.calculate_masks = MethodType(
-        lambda self, _log_state_flows, _traj: (sink_states_mask, is_terminal_mask),
-        model,
-    )
-    model.calculate_preds = MethodType(
-        lambda self, _log_pf_cum, _log_state_flows, i: preds_list[i - 1], model
-    )
-    model.calculate_targets = MethodType(
-        lambda self, _traj, _preds, _log_pb_cum, _log_state_flows, _term_mask, _sink_mask, i: targets_list[
-            i - 1
-        ],
-        model,
-    )
+    max_len = trajectories.max_length  # noqa: F841 used implicitly by shapes
 
     def original_get_scores(self, env, trajectories, recalculate_all_logprobs=True):
         log_pf_trajectories_, log_pb_trajectories_ = self.get_pfs_and_pbs(
@@ -125,11 +114,62 @@ def test_subtb_get_scores_vectorized_matches_original(seed: int):
 
         return scores_orig, flattening_masks_orig
 
-    orig_scores, orig_masks = original_get_scores(model, env, trajectories)
-    vec_scores, vec_masks = model.get_scores(env, trajectories)  # type: ignore
+    def normalize_scores_masks(
+        scores, masks, trajectories: Trajectories
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Convert list outputs to padded tensors; pass tensors through unchanged."""
+        if isinstance(scores, torch.Tensor):
+            assert isinstance(masks, torch.Tensor)
+            return scores, masks
 
-    assert len(orig_scores) == len(vec_scores) == trajectories.max_length
-    for orig, vec in zip(orig_scores, vec_scores):
-        torch.testing.assert_close(vec, orig)
-    for orig_m, vec_m in zip(orig_masks, vec_masks):
-        assert torch.equal(vec_m, orig_m)
+        assert isinstance(scores, (list, tuple))
+        assert isinstance(masks, (list, tuple))
+
+        max_len = trajectories.max_length
+        n_traj = (
+            trajectories.n_trajectories
+            if hasattr(trajectories, "n_trajectories")
+            else len(trajectories)
+        )
+        device = trajectories.terminating_idx.device
+        dtype = scores[0].dtype
+
+        scores_padded = torch.zeros(
+            (max_len, max_len, n_traj), dtype=dtype, device=device
+        )
+        masks_padded = torch.ones(
+            (max_len, max_len, n_traj), dtype=torch.bool, device=device
+        )
+
+        for i, (s, m) in enumerate(zip(scores, masks), start=1):
+            seq_len = s.shape[0]
+            scores_padded[i - 1, :seq_len] = s
+            masks_padded[i - 1, :seq_len] = m
+
+        return scores_padded, masks_padded
+
+    # Recompute logprobs to ensure PF/PB are evaluated for both paths.
+    orig_scores_list, orig_masks_list = original_get_scores(
+        model, env, trajectories, recalculate_all_logprobs=True
+    )
+    vec_scores, vec_masks = model.get_scores(
+        env, trajectories, recalculate_all_logprobs=True
+    )  # type: ignore
+
+    vec_scores_t, vec_masks_t = normalize_scores_masks(
+        vec_scores, vec_masks, trajectories
+    )
+    orig_scores_t, orig_masks_t = normalize_scores_masks(
+        orig_scores_list, orig_masks_list, trajectories
+    )
+
+    valid_mask = ~orig_masks_t
+    if not torch.allclose(
+        vec_scores_t[valid_mask], orig_scores_t[valid_mask], equal_nan=True
+    ):
+        max_diff = (vec_scores_t[valid_mask] - orig_scores_t[valid_mask]).abs().max()
+        raise AssertionError(
+            f"Score mismatch on valid positions; max_abs_diff={max_diff.item()}"
+        )
+
+    torch.testing.assert_close(vec_masks_t, orig_masks_t, equal_nan=True)

@@ -1,4 +1,3 @@
-import math
 from typing import Tuple
 
 import torch
@@ -205,10 +204,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 not transitions.states.is_sink_state.any()
             ), "Transition from sink state is not allowed. This is a bug."
 
-        ### Compute log_pf and log_pb
+        # Compute log_pf and log_pb
         log_pf, log_pb = self.get_pfs_and_pbs(transitions, recalculate_all_logprobs)
 
-        ### Compute log_F_s
+        # Compute log_F_s
         # LogF is potentially a conditional computation.
         if transitions.conditions is not None:
             with has_conditions_exception_handler("logF", self.logF):
@@ -217,7 +216,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             with no_conditions_exception_handler("logF", self.logF):
                 log_F_s = self.logF(states).squeeze(-1)
 
-        ### Compute log_F_s_next
+        # Compute log_F_s_next
         log_F_s_next = torch.zeros_like(log_F_s)
         is_terminating = transitions.is_terminating
         is_intermediate = ~is_terminating
@@ -258,9 +257,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             else:
                 log_rewards_state = env.log_reward(states)
                 log_rewards_next = env.log_reward(interm_next_states)
-            if math.isfinite(self.log_reward_clip_min):
-                log_rewards_state = log_rewards_state.clamp_min(self.log_reward_clip_min)
-                log_rewards_next = log_rewards_next.clamp_min(self.log_reward_clip_min)
+            log_rewards_state = log_rewards_state.clamp_min(self.log_reward_clip_min)
+            log_rewards_next = log_rewards_next.clamp_min(self.log_reward_clip_min)
 
             log_F_s = log_F_s + log_rewards_state
             log_F_s_next[is_intermediate] = (
@@ -270,11 +268,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         # Assign log_F_s_next for terminating transitions as log_rewards
         log_rewards = transitions.log_rewards
         assert log_rewards is not None
-        if math.isfinite(self.log_reward_clip_min):
-            log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
+        log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
         log_F_s_next[is_terminating] = log_rewards[is_terminating]
 
-        ### Compute scores
+        # Compute scores
         preds = log_pf + log_F_s
         targets = log_pb + log_F_s_next
         scores = preds - targets
@@ -490,7 +487,8 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             on the reduction method.
         """
         del env
-        warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
+        if self.debug:
+            warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
         scores = self.get_scores(
             transitions,
             recalculate_all_logprobs=recalculate_all_logprobs,

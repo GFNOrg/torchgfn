@@ -211,7 +211,7 @@ class BoxArgs(CommonArgs):
 
 @dataclass
 class BitSequenceArgs(CommonArgs):
-    n_iterations: int = 5000
+    n_iterations: int = 1000
     word_size: int = 1
     seq_size: int = 4
     n_modes: int = 2
@@ -220,6 +220,7 @@ class BitSequenceArgs(CommonArgs):
     lr_Z: 1e-2
     seed: int = 0
     batch_size: int = 32
+    deterministic_mode: bool = True
 
 
 @dataclass
@@ -657,7 +658,9 @@ def test_bitsequence(seq_size: int, n_modes: int):
     args = BitSequenceArgs(seq_size=seq_size, n_modes=n_modes)
     final_l1_dist = train_bitsequence_main(args)
     assert final_l1_dist is not None
-    # print(f"[DEBUG] BitSequence seq_size={seq_size}, n_modes={n_modes}, l1={final_l1_dist}")
+    print(
+        f"[DEBUG] BitSequence seq_size={seq_size}, n_modes={n_modes}, l1={final_l1_dist}"
+    )
     if seq_size == 4 and n_modes == 2:
         assert final_l1_dist <= 9e-5
     if seq_size == 4 and n_modes == 4:
