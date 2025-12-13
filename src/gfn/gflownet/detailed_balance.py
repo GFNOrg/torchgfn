@@ -421,17 +421,19 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         if self.debug:
             check_compatibility(states, actions, transitions)
 
+        # Single pf forward for current states; reuse the resulting distribution for both
+        # taken-action log-probs and exit-action log-probs to avoid extra forwards.
         if conditions is not None:
             with has_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(states, conditions[mask])
+                pf_outputs = self.pf(states, conditions[mask])
         else:
             with no_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(states)
+                pf_outputs = self.pf(states)
 
         if len(states) == 0:
             return torch.tensor(0.0, device=transitions.device)
 
-        pf_dist = self.pf.to_probability_distribution(states, module_output)
+        pf_dist = self.pf.to_probability_distribution(states, pf_outputs)
 
         if transitions.has_log_probs and not recalculate_all_logprobs:
             valid_log_pf_actions = transitions[mask].log_probs
@@ -445,18 +447,23 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         ).expand_as(actions.tensor)
         valid_log_pf_s_exit = pf_dist.log_prob(exit_action_tensor)
 
-        # The following two lines are slightly inefficient, given that most
-        # next_states are also states, for which we already did a forward pass.
-        if conditions is not None:
-            with has_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(valid_next_states, conditions[mask])
-        else:
-            with no_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(valid_next_states)
+        # Reuse the exit_action tensor and create the next-state distribution once; this
+        # avoids an additional forward or repeated log_prob calls.
+        if len(valid_next_states) > 0:
+            if conditions is not None:
+                with has_conditions_exception_handler("pf", self.pf):
+                    pf_next_outputs = self.pf(valid_next_states, conditions[mask])
+            else:
+                with no_conditions_exception_handler("pf", self.pf):
+                    pf_next_outputs = self.pf(valid_next_states)
 
-        valid_log_pf_s_prime_exit = self.pf.to_probability_distribution(
-            valid_next_states, module_output
-        ).log_prob(exit_action_tensor[: len(valid_next_states)])
+            pf_next_dist = self.pf.to_probability_distribution(
+                valid_next_states, pf_next_outputs
+            )
+            valid_log_pf_s_prime_exit = pf_next_dist.log_prob(exit_action_tensor)
+        else:
+            # Should be rare because of the early return above; keep shape-friendly zero.
+            valid_log_pf_s_prime_exit = torch.zeros_like(valid_log_pf_s_exit)
 
         non_exit_actions = actions[~actions.is_exit]
 
