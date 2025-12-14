@@ -4,7 +4,7 @@ from typing import Any
 import torch
 
 from gfn.containers import StatesContainer, Trajectories
-from gfn.env import Env
+from gfn.env import DiscreteEnv
 from gfn.estimators import (
     DiscretePolicyEstimator,
     PolicyMixin,
@@ -59,7 +59,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
     def sample_trajectories(
         self,
-        env: Env,
+        env: DiscreteEnv,
         n: int,
         conditions: torch.Tensor | None = None,
         save_logprobs: bool = False,
@@ -96,7 +96,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
     def flow_matching_loss(
         self,
-        env: Env,
+        env: DiscreteEnv,
         states: DiscreteStates,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -193,7 +193,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
     def reward_matching_loss(
         self,
-        env: Env,
+        env: DiscreteEnv,
         terminating_states: DiscreteStates,
         log_rewards: torch.Tensor | None,
         reduction: str = "mean",
@@ -231,7 +231,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
     def loss(
         self,
-        env: Env,
+        env: DiscreteEnv,
         states_container: StatesContainer[DiscreteStates],
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
