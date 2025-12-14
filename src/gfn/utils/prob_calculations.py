@@ -161,6 +161,14 @@ def get_trajectory_pfs(
                     valid_step_actions.tensor, dist, ctx, step_mask, vectorized=False
                 )
 
+                # Pad back to full batch size.
+                if fill_value != 0.0:
+                    padded = torch.full(
+                        (N,), fill_value, device=device, dtype=step_log_probs.dtype
+                    )
+                    padded[step_mask] = step_log_probs[step_mask]
+                    step_log_probs = padded
+
                 # Store in trajectory-level tensor.
                 log_pf_trajectories[t] = step_log_probs
 
