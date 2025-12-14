@@ -528,6 +528,12 @@ class Trajectories(Container):
         #   new_states:  (max_len + 2, n_trajectories, *state_dim)
         # ---------------------------------------------------------------------
 
+        # Add conditions to the new states
+        if self.states.conditions is not None:
+            new_states.conditions = torch.cat(
+                (self.states.conditions[[0]], self.states.conditions), dim=0
+            )
+
         reversed_trajectories = Trajectories(
             env=self.env,
             states=new_states,

@@ -193,8 +193,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         ### Compute log_F_s
         # LogF is potentially a conditional computation.
-        if transitions.states.has_conditions:
-            assert transitions.states.conditions is not None
+        if transitions.states.conditions is not None:
             with has_conditions_exception_handler("logF", self.logF):
                 log_F_s = self.logF(states, transitions.states.conditions).squeeze(-1)
         else:
@@ -209,8 +208,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         # Assign log_F_s_next for intermediate next states
         interm_next_states = transitions.next_states[is_intermediate]
         # log_F is potentially a conditional computation.
-        if transitions.states.has_conditions:
-            assert transitions.states.conditions is not None
+        if transitions.states.conditions is not None:
             with has_conditions_exception_handler("logF", self.logF):
                 log_F_s_next[is_intermediate] = self.logF(
                     interm_next_states,
@@ -233,8 +231,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             )
 
             # Reward calculation can also be conditional.
-            if transitions.states.has_conditions:
-                assert transitions.states.conditions is not None
+            if transitions.states.conditions is not None:
                 log_rewards_state = env.log_reward(states, transitions.states.conditions)  # type: ignore
                 log_rewards_next = env.log_reward(
                     interm_next_states, transitions.states.conditions[is_intermediate]  # type: ignore
@@ -377,8 +374,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         check_compatibility(states, actions, transitions)
 
-        if transitions.states.has_conditions:
-            assert transitions.states.conditions is not None
+        if transitions.states.conditions is not None:
             with has_conditions_exception_handler("pf", self.pf):
                 module_output = self.pf(states, transitions.states.conditions[mask])
         else:
@@ -402,8 +398,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         # The following two lines are slightly inefficient, given that most
         # next_states are also states, for which we already did a forward pass.
-        if transitions.states.has_conditions:
-            assert transitions.states.conditions is not None
+        if transitions.states.conditions is not None:
             with has_conditions_exception_handler("pf", self.pf):
                 module_output = self.pf(
                     valid_next_states, transitions.states.conditions[mask]
@@ -421,8 +416,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         non_exit_actions = actions[~actions.is_exit]
 
         if self.pb is not None:
-            if transitions.states.has_conditions:
-                assert transitions.states.conditions is not None
+            if transitions.states.conditions is not None:
                 with has_conditions_exception_handler("pb", self.pb):
                     module_output = self.pb(
                         valid_next_states, transitions.states.conditions[mask]

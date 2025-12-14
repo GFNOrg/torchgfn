@@ -344,7 +344,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             training_container = training_container[idx_bigger_rewards]
 
             # TODO: Concatenate input with final state for conditional GFN.
-            if training_container.states.has_conditions:
+            if training_container.states.conditions is not None:
                 raise NotImplementedError(
                     "{instance.__class__.__name__} does not yet support conditional GFNs."
                 )

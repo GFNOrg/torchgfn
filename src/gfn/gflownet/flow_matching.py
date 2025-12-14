@@ -145,9 +145,8 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
                 valid_backward_states, backward_actions
             )
 
-            if states.has_conditions:
+            if states.conditions is not None:
                 # Mask out only valid conditions elements.
-                assert states.conditions is not None
                 valid_backward_conditions = states.conditions[valid_backward_mask]
                 valid_forward_conditions = states.conditions[valid_forward_mask]
 
@@ -174,8 +173,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         # Now the exit action.
         valid_forward_mask = states.forward_masks[:, -1]
-        if states.has_conditions:
-            assert states.conditions is not None
+        if states.conditions is not None:
             with has_conditions_exception_handler("logF", self.logF):
                 outgoing_log_flows[valid_forward_mask, -1] = self.logF(
                     states[valid_forward_mask],
@@ -216,8 +214,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         if len(terminating_states) == 0:
             return torch.tensor(0.0, device=terminating_states.device)
         del env  # Unused
-        if terminating_states.has_conditions:
-            assert terminating_states.conditions is not None
+        if terminating_states.conditions is not None:
             with has_conditions_exception_handler("logF", self.logF):
                 log_edge_flows = self.logF(
                     terminating_states, terminating_states.conditions

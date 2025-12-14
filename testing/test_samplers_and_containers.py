@@ -6,17 +6,19 @@ from torch.distributions import Categorical
 
 from gfn.containers import StatesContainer, Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
+from gfn.env import Env
 from gfn.estimators import PolicyMixin  # Use policy mixin directly instead of adapters
 from gfn.estimators import (
     RecurrentPolicyMixin,  # Use recurrent policy mixin instead of adapters
 )
 from gfn.estimators import RolloutContext  # New rollout context used by PolicyMixin
 from gfn.estimators import (
+    ConditionalDiscretePolicyEstimator,
     DiscreteGraphPolicyEstimator,
     DiscretePolicyEstimator,
     Estimator,
 )
-from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym import Box, ConditionalHyperGrid, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.preprocessors import (
@@ -25,10 +27,7 @@ from gfn.preprocessors import (
     KHotPreprocessor,
     OneHotPreprocessor,
 )
-from gfn.samplers import (
-    LocalSearchSampler,
-    Sampler,
-)
+from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.states import States
 from gfn.utils.modules import (
     MLP,
@@ -40,38 +39,51 @@ from gfn.utils.prob_calculations import get_trajectory_pfs
 from gfn.utils.training import states_actions_tns_to_traj
 
 
-def trajectory_sampling_with_return(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+def get_env_and_estimators(
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
     preprocessor_name: Literal["Identity", "KHot", "OneHot", "Enum"],
-    batch_size: int,
-    delta: float,
-    n_components: int,
-    n_components_s0: int,
-) -> Tuple[Trajectories, Trajectories, Estimator, Estimator]:
-    if preprocessor_name != "Identity" and env_name != "HyperGrid":
-        pytest.skip("Useless tests")
-    if (delta != 0.1 or n_components != 1 or n_components_s0 != 1) and env_name != "Box":
-        pytest.skip("Useless tests")
-
-    if env_name in ["HyperGrid", "DiscreteEBM"]:
-        if env_name == "HyperGrid":
-            env = HyperGrid(ndim=2, height=8)
-            if preprocessor_name == "KHot":
-                preprocessor = KHotPreprocessor(env.height, env.ndim)
-            elif preprocessor_name == "OneHot":
-                preprocessor = OneHotPreprocessor(
-                    n_states=env.n_states, get_states_indices=env.get_states_indices
-                )
-            elif preprocessor_name == "Identity":
-                preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
-            elif preprocessor_name == "Enum":
-                preprocessor = EnumPreprocessor(env.get_states_indices)
-            else:
-                raise ValueError("Invalid preprocessor name")
-
-        elif env_name == "DiscreteEBM":
-            env = DiscreteEBM(ndim=8)
+    delta: float,  # only used for Box environment
+    n_components: int,  # only used for Box environment
+    n_components_s0: int,  # only used for Box environment
+) -> Tuple[Env, Estimator, Estimator]:
+    if env_name == "HyperGrid":
+        env = HyperGrid(ndim=2, height=8)
+        if preprocessor_name == "KHot":
+            preprocessor = KHotPreprocessor(env.height, env.ndim)
+        elif preprocessor_name == "OneHot":
+            preprocessor = OneHotPreprocessor(
+                n_states=env.n_states, get_states_indices=env.get_states_indices
+            )
+        elif preprocessor_name == "Identity":
             preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+        elif preprocessor_name == "Enum":
+            preprocessor = EnumPreprocessor(env.get_states_indices)
+        else:
+            raise ValueError("Invalid preprocessor name")
+
+        assert isinstance(preprocessor.output_dim, int)
+
+        pf_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
+        pb_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
+        pf_estimator = DiscretePolicyEstimator(
+            module=pf_module,
+            n_actions=env.n_actions,
+            is_backward=False,
+            preprocessor=preprocessor,
+        )
+        pb_estimator = DiscretePolicyEstimator(
+            module=pb_module,
+            n_actions=env.n_actions,
+            is_backward=True,
+            preprocessor=preprocessor,
+        )
+
+    elif env_name == "DiscreteEBM":
+        env = DiscreteEBM(ndim=8)
+        assert preprocessor_name == "Identity"
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
         assert isinstance(preprocessor.output_dim, int)
 
@@ -113,6 +125,7 @@ def trajectory_sampling_with_return(
         pb_estimator = BoxPBEstimator(
             env=env, module=pb_module, n_components=n_components
         )
+
     elif env_name == "GraphBuildingOnEdges":
         env = GraphBuildingOnEdges(
             n_nodes=10,
@@ -143,8 +156,69 @@ def trajectory_sampling_with_return(
             module=pb_module,
             is_backward=True,
         )
+
+    elif env_name == "ConditionalHyperGrid":
+        env = ConditionalHyperGrid(ndim=2, height=4)
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+
+        assert isinstance(preprocessor.output_dim, int)
+
+        # Modules for forward policy
+        state_module = MLP(input_dim=preprocessor.output_dim, output_dim=16)
+        condition_module = MLP(input_dim=env.condition_dim, output_dim=16)
+        final_module = MLP(input_dim=32, output_dim=env.n_actions)  # 16+16=32
+
+        pf_estimator = ConditionalDiscretePolicyEstimator(
+            state_module=state_module,
+            condition_module=condition_module,
+            final_module=final_module,
+            n_actions=env.n_actions,
+            is_backward=False,
+            preprocessor=preprocessor,
+        )
+
+        # Modules for backward policy
+        pb_state_module = MLP(input_dim=preprocessor.output_dim, output_dim=16)
+        pb_condition_module = MLP(input_dim=env.condition_dim, output_dim=16)
+        pb_final_module = MLP(input_dim=32, output_dim=env.n_actions - 1)  # 16+16=32
+
+        pb_estimator = ConditionalDiscretePolicyEstimator(
+            state_module=pb_state_module,
+            condition_module=pb_condition_module,
+            final_module=pb_final_module,
+            n_actions=env.n_actions,
+            is_backward=True,
+            preprocessor=preprocessor,
+        )
+
     else:
         raise ValueError("Unknown environment name")
+
+    return env, pf_estimator, pb_estimator
+
+
+def trajectory_sampling_with_return(
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
+    preprocessor_name: Literal["Identity", "KHot", "OneHot", "Enum"],
+    batch_size: int,
+    delta: float,
+    n_components: int,
+    n_components_s0: int,
+) -> Tuple[Trajectories, Trajectories, Estimator, Estimator]:
+    if preprocessor_name != "Identity" and env_name != "HyperGrid":
+        pytest.skip("Useless tests")
+    if (delta != 0.1 or n_components != 1 or n_components_s0 != 1) and env_name != "Box":
+        pytest.skip("Useless tests")
+
+    env, pf_estimator, pb_estimator = get_env_and_estimators(
+        env_name,
+        preprocessor_name,
+        delta,
+        n_components,
+        n_components_s0,
+    )
 
     sampler = Sampler(estimator=pf_estimator)
     # Test mode collects log_probs and estimator_ouputs, not encountered in the wild.
@@ -165,14 +239,17 @@ def trajectory_sampling_with_return(
 
 
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
 )
 @pytest.mark.parametrize("preprocessor_name", ["KHot", "OneHot", "Identity", "Enum"])
 @pytest.mark.parametrize("delta", [0.1, 0.5, 0.8])
 @pytest.mark.parametrize("n_components_s0", [1, 2, 5])
 @pytest.mark.parametrize("n_components", [1, 2, 5])
 def test_trajectory_sampling(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
     preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"],
     delta: float,
     n_components_s0: int,
@@ -192,11 +269,14 @@ def test_trajectory_sampling(
     "container_type", ["transitions", "states_container", "trajectories"]
 )
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
 )
 def test_containers(
     container_type: Literal["transitions", "states_container", "trajectories"],
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
 ):
     trajectories1, _, _, _ = trajectory_sampling_with_return(
         env_name,
@@ -317,10 +397,13 @@ def test_containers(
 
 
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
 )
 def test_sub_sampling(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
 ):
     trajectories, *_ = trajectory_sampling_with_return(
         env_name,
@@ -337,10 +420,13 @@ def test_sub_sampling(
 
 
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
 )
 def test_reverse_backward_trajectories(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
 ):
     """
     Ensures that the vectorized `Trajectories.reverse_backward_trajectories`
@@ -394,66 +480,23 @@ def test_reverse_backward_trajectories(
     _ = reversed_trajs.to_states_container()
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "ConditionalHyperGrid"]
+)
 def test_local_search_for_loop_equivalence(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "ConditionalHyperGrid"]
 ):
     """
     Ensures that the vectorized `LocalSearchSampler.local_search` matches
     the for-loop approach by toggling `debug=True`.
     """
-    # Build environment
-    is_discrete = env_name in ["HyperGrid", "DiscreteEBM"]
-    if is_discrete:
-        if env_name == "HyperGrid":
-            env = HyperGrid(ndim=2, height=5)
-            preprocessor = KHotPreprocessor(env.height, env.ndim)
-        elif env_name == "DiscreteEBM":
-            env = DiscreteEBM(ndim=5)
-            preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
-        else:
-            raise ValueError("Unknown environment name")
-
-        assert isinstance(preprocessor.output_dim, int)
-        # Build pf & pb
-        pf_module = MLP(preprocessor.output_dim, env.n_actions)
-        pb_module = MLP(preprocessor.output_dim, env.n_actions - 1)
-        pf_estimator = DiscretePolicyEstimator(
-            module=pf_module,
-            n_actions=env.n_actions,
-            is_backward=False,
-            preprocessor=preprocessor,
-        )
-        pb_estimator = DiscretePolicyEstimator(
-            module=pb_module,
-            n_actions=env.n_actions,
-            is_backward=True,
-            preprocessor=preprocessor,
-        )
-
-    else:
-        env = Box(delta=0.1)
-
-        # Build pf & pb
-        pf_module = BoxPFMLP(
-            hidden_dim=32,
-            n_hidden_layers=2,
-            n_components=1,
-            n_components_s0=1,
-        )
-        pb_module = BoxPBMLP(
-            hidden_dim=32,
-            n_hidden_layers=2,
-            n_components=1,
-            trunk=pf_module.trunk,
-        )
-        pf_estimator = BoxPFEstimator(
-            env=env,
-            module=pf_module,
-            n_components=1,
-            n_components_s0=1,
-        )
-        pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
+    env, pf_estimator, pb_estimator = get_env_and_estimators(
+        env_name,
+        preprocessor_name="Identity",
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,
+    )
 
     # Build sampler
     sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)
@@ -480,16 +523,21 @@ def test_local_search_for_loop_equivalence(
 
 
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
 )
 @pytest.mark.parametrize("objects", ["trajectories", "transitions"])
 def test_replay_buffer(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
     objects: Literal["trajectories", "transitions"],
 ):
     """Test that the replay buffer works correctly with different types of objects."""
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=2, height=4)
+    elif env_name == "ConditionalHyperGrid":
+        env = ConditionalHyperGrid(ndim=2, height=4)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=8)
     elif env_name == "Box":

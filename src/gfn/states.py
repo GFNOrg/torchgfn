@@ -71,7 +71,7 @@ class States(ABC):
     s0: ClassVar[torch.Tensor | GeometricData]
     sf: ClassVar[torch.Tensor | GeometricData]
 
-    make_random_states: Callable = lambda batch_shape, device, conditions: (
+    make_random_states: Callable = lambda batch_shape, conditions, device: (
         _ for _ in ()
     ).throw(
         NotImplementedError(
@@ -82,17 +82,17 @@ class States(ABC):
     def __init__(
         self,
         tensor: torch.Tensor,
-        device: torch.device | None = None,
         conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> None:
         """Initializes a States object with a batch of states.
 
         Args:
             tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of
                 states.
-            device: The device to store the states on.
             conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
                 condition vectors for conditional GFlowNets.
+            device: The device to store the states on.
         """
         assert self.s0.shape == self.state_shape
         assert self.sf.shape == self.state_shape
@@ -170,8 +170,8 @@ class States(ABC):
         batch_shape: int | tuple[int, ...],
         random: bool = False,
         sink: bool = False,
-        device: torch.device | None = None,
         conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> States:
         r"""Creates a States object with the given batch shape.
 
@@ -185,9 +185,9 @@ class States(ABC):
             batch_shape: Shape of the batch dimensions.
             random: If True, initialize states randomly.
             sink: If True, initialize states as sink states ($s_f$).
-            device: The device to create the states on.
             conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
                 condition vectors for conditional GFlowNets.
+            device: The device to create the states on.
         Returns:
             A States object with the specified batch shape and initialization.
         """
@@ -203,22 +203,22 @@ class States(ABC):
             make_states_fn = cls.make_sink_states
         else:
             make_states_fn = cls.make_initial_states
-        return make_states_fn(batch_shape, device=device, conditions=conditions)
+        return make_states_fn(batch_shape, conditions=conditions, device=device)
 
     @classmethod
     def make_initial_states(
         cls,
         batch_shape: tuple[int, ...],
-        device: torch.device | None = None,
         conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> States:
         r"""Creates a States object with all states set to $s_0$.
 
         Args:
             batch_shape: Shape of the batch dimensions.
-            device: The device to create the states on.
             conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
                 condition vectors for conditional GFlowNets.
+            device: The device to create the states on.
         Returns:
             A States object with all states set to $s_0$.
         """
@@ -239,16 +239,16 @@ class States(ABC):
     def make_sink_states(
         cls,
         batch_shape: tuple[int, ...],
-        device: torch.device | None = None,
         conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> States:
         r"""Creates a States object with all states set to $s_f$.
 
         Args:
             batch_shape: Shape of the batch dimensions.
-            device: The device to create the states on.
             conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
                 condition vectors for conditional GFlowNets.
+            device: The device to create the states on.
         Returns:
             A States object with all states set to $s_f$.
         """
@@ -283,8 +283,10 @@ class States(ABC):
             f"{self.__class__.__name__}(",
             f"batch={self.batch_shape},",
             f"state={self.state_shape},",
-            f"device={self.device})",
         ]
+        if self.conditions is not None:
+            parts.append(f"conditions={self.conditions.shape},")
+        parts.append(f"device={self.device})")
         return " ".join(parts)
 
     def __getitem__(
@@ -298,9 +300,7 @@ class States(ABC):
         Returns:
             A new States object with the selected states and conditions.
         """
-        conditions = None
-        if self._conditions is not None:
-            conditions = self._conditions[index]
+        conditions = self.conditions[index] if self.conditions is not None else None
         new_states = self.__class__(self.tensor[index], conditions=conditions)
         return new_states
 
@@ -316,14 +316,14 @@ class States(ABC):
             states: States object containing the new states.
         """
         self.tensor[index] = states.tensor
-        if self._conditions is not None and states._conditions is not None:
-            self._conditions[index] = states._conditions
+        if self.conditions is not None and states.conditions is not None:
+            self.conditions[index] = states.conditions
         else:
-            if self._conditions is not None or states._conditions is not None:
+            if self.conditions is not None or states.conditions is not None:
                 warnings.warn(
                     "Inconsistent conditions when setting states. Setting to None."
                 )
-            self._conditions = None
+            self.conditions = None
 
     def clone(self) -> States:
         """Returns a clone of the current instance.
@@ -331,9 +331,7 @@ class States(ABC):
         Returns:
             A new States object with the same data and conditions.
         """
-        conditions = None
-        if self._conditions is not None:
-            conditions = self._conditions.clone()
+        conditions = self.conditions.clone() if self.conditions is not None else None
         cloned = self.__class__(self.tensor.clone(), conditions=conditions)
         return cloned
 
@@ -346,9 +344,12 @@ class States(ABC):
             A new States object with the batch dimension flattened.
         """
         states = self.tensor.view(-1, *self.state_shape)
-        flattened = self.__class__(states)
-        if self._conditions is not None:
-            flattened._conditions = self._conditions.view(-1, self._conditions.shape[-1])
+        conditions = (
+            self.conditions.view(-1, self.conditions.shape[-1])
+            if self.conditions is not None
+            else None
+        )
+        flattened = self.__class__(states, conditions=conditions)
         return flattened
 
     def extend(self, other: States) -> None:
@@ -379,17 +380,16 @@ class States(ABC):
                 f"extend is not implemented for batch shapes {self.batch_shape} and {other.batch_shape}"
             )
 
-        self._conditions = None
-        if self._conditions is not None and other._conditions is not None:
-            self._conditions = torch.cat(
-                (self._conditions, other._conditions), dim=len(self.batch_shape) - 1
+        if self.conditions is not None and other.conditions is not None:
+            self.conditions = torch.cat(
+                (self.conditions, other.conditions), dim=len(self.batch_shape) - 1
             )
         else:
-            if self._conditions is not None or other._conditions is not None:
+            if self.conditions is not None or other.conditions is not None:
                 warnings.warn(
                     "Inconsistent conditions when extending states. Setting to None."
                 )
-            self._conditions = None
+            self.conditions = None
 
     def pad_dim0_with_sf(self, required_first_dim: int) -> None:
         r"""Extends a 2-dimensional batch of states along the first batch dimension.
@@ -423,16 +423,18 @@ class States(ABC):
             dim=0,
         )
         # Pad conditions with -inf for sf states
-        if self._conditions is not None:
+        if self.conditions is not None:
             cond_pad = torch.full(
-                (pad_count, self.batch_shape[1], self._conditions.shape[-1]),
+                (pad_count, self.batch_shape[1], self.conditions.shape[-1]),
                 -float("inf"),
                 device=self.device,
             )
-            self._conditions = torch.cat((self._conditions, cond_pad), dim=0)
+            self.conditions = torch.cat((self.conditions, cond_pad), dim=0)
 
     def _compare(self, other: torch.Tensor) -> torch.Tensor:
         """Computes elementwise equality between state tensor and an external tensor.
+
+        Note that this does not check if the conditions are equal.
 
         Args:
             other: Tensor with shape (*batch_shape, *state_shape) representing states to
@@ -542,9 +544,9 @@ class States(ABC):
         stacked_states.tensor = torch.stack([s.tensor for s in states], dim=0)
 
         # Stack conditions if all states have them
-        if all(s._conditions is not None for s in states):
-            cond_tensors = cast(list[torch.Tensor], [s._conditions for s in states])
-            stacked_states._conditions = torch.stack(cond_tensors, dim=0)
+        if all(s.conditions is not None for s in states):
+            cond_tensors = cast(list[torch.Tensor], [s.conditions for s in states])
+            stacked_states.conditions = torch.stack(cond_tensors, dim=0)
 
         return stacked_states
 
@@ -558,8 +560,8 @@ class States(ABC):
             The States object on the specified device.
         """
         self.tensor = self.tensor.to(device)
-        if self._conditions is not None:
-            self._conditions = self._conditions.to(device)
+        if self.conditions is not None:
+            self.conditions = self.conditions.to(device)
         return self
 
 
@@ -584,8 +586,8 @@ class DiscreteStates(States, ABC):
         tensor: torch.Tensor,
         forward_masks: Optional[torch.Tensor] = None,
         backward_masks: Optional[torch.Tensor] = None,
-        device: torch.device | None = None,
         conditions: Optional[torch.Tensor] = None,
+        device: torch.device | None = None,
     ) -> None:
         """Initializes a DiscreteStates container with a batch of states and masks.
 
@@ -596,11 +598,11 @@ class DiscreteStates(States, ABC):
                 indicating forward actions allowed at each state.
             backward_masks: Optional boolean tensor of shape (*batch_shape, n_actions - 1)
                 indicating backward actions allowed at each state.
-            device: The device to store the states on.
             conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
                 condition vectors for conditional GFlowNets.
+            device: The device to store the states on.
         """
-        super().__init__(tensor, device=device, conditions=conditions)
+        super().__init__(tensor, conditions=conditions, device=device)
         assert tensor.shape == self.batch_shape + self.state_shape
 
         # In the usual case, no masks are provided and we produce these defaults.
@@ -635,12 +637,11 @@ class DiscreteStates(States, ABC):
             A new DiscreteStates object with the same data, masks, and conditions.
         """
         cloned = self.__class__(
-            self.tensor.clone(),
-            self.forward_masks.clone(),
-            self.backward_masks.clone(),
+            tensor=self.tensor.clone(),
+            forward_masks=self.forward_masks.clone(),
+            backward_masks=self.backward_masks.clone(),
+            conditions=self.conditions.clone() if self.conditions is not None else None,
         )
-        if self._conditions is not None:
-            cloned._conditions = self._conditions.clone()
         return cloned
 
     def _check_both_forward_backward_masks_exist(self):
@@ -657,9 +658,11 @@ class DiscreteStates(States, ABC):
             f"batch={self.batch_shape},",
             f"state={self.state_shape},",
             f"actions={self.n_actions},",
-            f"device={self.device},",
-            f"masks={tuple(self.forward_masks.shape)})",
+            f"masks={tuple(self.forward_masks.shape)},",
         ]
+        if self.conditions is not None:
+            parts.append(f"conditions={self.conditions.shape},")
+        parts.append(f"device={self.device})")
         return " ".join(parts)
 
     def __getitem__(
@@ -677,9 +680,8 @@ class DiscreteStates(States, ABC):
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks[index]
         backward_masks = self.backward_masks[index]
-        out = self.__class__(states, forward_masks, backward_masks)
-        if self._conditions is not None:
-            out._conditions = self._conditions[index]
+        conditions = self.conditions[index] if self.conditions is not None else None
+        out = self.__class__(states, forward_masks, backward_masks, conditions)
         return out
 
     def __setitem__(
@@ -706,9 +708,12 @@ class DiscreteStates(States, ABC):
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
         backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
-        flattened = self.__class__(states, forward_masks, backward_masks)
-        if self._conditions is not None:
-            flattened._conditions = self._conditions.view(-1, self._conditions.shape[-1])
+        conditions = (
+            self.conditions.view(-1, self.conditions.shape[-1])
+            if self.conditions is not None
+            else None
+        )
+        flattened = self.__class__(states, forward_masks, backward_masks, conditions)
         return flattened
 
     def extend(self, other: DiscreteStates) -> None:
@@ -739,17 +744,17 @@ class DiscreteStates(States, ABC):
             (self.backward_masks, other.backward_masks), dim=len(self.batch_shape) - 1
         )
 
-        if self._conditions is not None and other._conditions is not None:
-            self._conditions = torch.cat(
-                (self._conditions, other._conditions), dim=len(self.batch_shape) - 1
+        if self.conditions is not None and other.conditions is not None:
+            self.conditions = torch.cat(
+                (self.conditions, other.conditions), dim=len(self.batch_shape) - 1
             )
         else:
             # Inconsistent, raise a warning and set to None
-            if self._conditions is not None or other._conditions is not None:
+            if self.conditions is not None or other.conditions is not None:
                 warnings.warn(
                     "Inconsistent conditions when extending states. Setting to None."
                 )
-            self._conditions = None
+            self.conditions = None
 
     def pad_dim0_with_sf(self, required_first_dim: int) -> None:
         r"""Extends forward and backward masks along the first batch dimension.
@@ -873,8 +878,8 @@ class DiscreteStates(States, ABC):
         self.tensor = self.tensor.to(device)
         self.forward_masks = self.forward_masks.to(device)
         self.backward_masks = self.backward_masks.to(device)
-        if self._conditions is not None:
-            self._conditions = self._conditions.to(device)
+        if self.conditions is not None:
+            self.conditions = self.conditions.to(device)
         return self
 
 
@@ -907,8 +912,8 @@ class GraphStates(States):
         data: np.ndarray,
         categorical_node_features: bool = False,
         categorical_edge_features: bool = False,
-        device: torch.device | None = None,
         conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> None:
         """Initializes the GraphStates with a numpy array of `GeometricData` objects.
 
@@ -916,8 +921,9 @@ class GraphStates(States):
             data: A numpy array of `GeometricData` objects representing individual graphs.
             categorical_node_features: Whether the node features are categorical.
             categorical_edge_features: Whether the edge features are categorical.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to store the graphs on (optional).
-            conditions: The conditions to store the graphs on (optional).
         """
         assert isinstance(data, np.ndarray), "data must be a numpy array"
         self.categorical_node_features = categorical_node_features
@@ -987,8 +993,8 @@ class GraphStates(States):
         for graph in self.data.flat:
             graph.to(str(device))
         self._device = device
-        if self._conditions is not None:
-            self._conditions = self._conditions.to(device)
+        if self.conditions is not None:
+            self.conditions = self.conditions.to(device)
         return self
 
     @property
@@ -1039,15 +1045,16 @@ class GraphStates(States):
     def make_initial_states(
         cls,
         batch_shape: int | Tuple,
-        device: torch.device | None = None,
         conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> GraphStates:
         r"""Creates a numpy array of graphs consisting of initial states ($s_0$).
 
         Args:
             batch_shape: Shape of the batch dimensions.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: Device to create the graphs on.
-            conditions: The conditions to store the graphs on (optional).
 
         Returns:
             A GraphStates object containing copies of the initial state.
@@ -1076,15 +1083,16 @@ class GraphStates(States):
     def make_sink_states(
         cls,
         batch_shape: int | Tuple,
-        device: torch.device | None = None,
         conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> GraphStates:
         r"""Creates a numpy array of graphs consisting of sink states ($s_f$).
 
         Args:
             batch_shape: Shape of the batch dimensions.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: Device to create the graphs on.
-            conditions: The conditions to store the graphs on (optional).
         Returns:
             A GraphStates object containing copies of the sink state.
         """
@@ -1107,8 +1115,8 @@ class GraphStates(States):
             data_array,
             categorical_node_features=cls.sf.x.dtype == torch.long,
             categorical_edge_features=cls.sf.edge_attr.dtype == torch.long,
-            device=device,
             conditions=conditions,
+            device=device,
         )
 
     @property
@@ -1334,11 +1342,9 @@ class GraphStates(States):
             selected_graphs_array[0] = selected_graphs
             selected_graphs = selected_graphs_array.squeeze()
 
-        conditions = None
-        if self._conditions is not None:
-            conditions = self._conditions[index]
+        conditions = self.conditions[index] if self.conditions is not None else None
 
-        out = self.__class__(selected_graphs, device=self.device, conditions=conditions)
+        out = self.__class__(selected_graphs, conditions=conditions, device=self.device)
         return out
 
     def __setitem__(
@@ -1361,14 +1367,14 @@ class GraphStates(States):
             len_dst, len_src
         )
         self.data[index_np] = graph.data
-        if self._conditions is not None and graph._conditions is not None:
-            self._conditions[index] = graph._conditions
+        if self.conditions is not None and graph.conditions is not None:
+            self.conditions[index] = graph.conditions
         else:
-            if self._conditions is not None or graph._conditions is not None:
+            if self.conditions is not None or graph.conditions is not None:
                 warnings.warn(
                     "Inconsistent conditions when setting states. Setting to None."
                 )
-            self._conditions = None
+            self.conditions = None
 
     def _get_index_np(
         self, index: Union[int, Sequence[int], slice, torch.Tensor, Tuple]
@@ -1401,10 +1407,8 @@ class GraphStates(States):
         for i, graph in enumerate(self.data.flat):
             cloned_graphs.flat[i] = graph.clone()
 
-        conditions = None
-        if self._conditions is not None:
-            conditions = self._conditions.clone()
-        return self.__class__(cloned_graphs, device=self.device, conditions=conditions)
+        conditions = self.conditions.clone() if self.conditions is not None else None
+        return self.__class__(cloned_graphs, conditions=conditions, device=self.device)
 
     def pad_dim0_with_sf(self, required_first_dim: int) -> None:
         r"""Extends a 2-dimensional batch of graph states along the first batch dimension.
@@ -1431,13 +1435,13 @@ class GraphStates(States):
         self.data = np.concatenate([self.data, sf_states.data], axis=0)
 
         # Pad conditions with -inf for sf states
-        if self._conditions is not None:
+        if self.conditions is not None:
             cond_pad = torch.full(
-                (pad_count, self.batch_shape[1], self._conditions.shape[-1]),
+                (pad_count, self.batch_shape[1], self.conditions.shape[-1]),
                 -float("inf"),
                 device=self.device,
             )
-            self._conditions = torch.cat((self._conditions, cond_pad), dim=0)
+            self.conditions = torch.cat((self.conditions, cond_pad), dim=0)
 
     def extend(self, other: GraphStates):
         """Concatenates another GraphStates object along the batch dimension.
@@ -1464,19 +1468,21 @@ class GraphStates(States):
             )
 
         # Handle conditions for 2D case
-        if self._conditions is not None and other._conditions is not None:
-            self._conditions = torch.cat(
-                (self._conditions, other._conditions), dim=len(self.batch_shape) - 1
+        if self.conditions is not None and other.conditions is not None:
+            self.conditions = torch.cat(
+                (self.conditions, other.conditions), dim=len(self.batch_shape) - 1
             )
         else:
-            if self._conditions is not None or other._conditions is not None:
+            if self.conditions is not None or other.conditions is not None:
                 warnings.warn(
                     "Inconsistent conditions when extending states. Setting to None."
                 )
-            self._conditions = None
+            self.conditions = None
 
     def _compare(self, other: GeometricData) -> torch.Tensor:
         """Compares the current batch of graphs with another graph.
+
+        Note that this does not check if the conditions are equal.
 
         Args:
             other: A `GeometricData` object to compare with.
@@ -1594,8 +1600,8 @@ class GraphStates(States):
 
         # Stack conditions if all states have them
         conditions = None
-        if all(s._conditions is not None for s in states):
-            cond_tensors = cast(list[torch.Tensor], [s._conditions for s in states])
+        if all(s.conditions is not None for s in states):
+            cond_tensors = cast(list[torch.Tensor], [s.conditions for s in states])
             conditions = torch.stack(cond_tensors, dim=0)
 
-        return cls(stacked_graphs, device=states[0].device, conditions=conditions)
+        return cls(stacked_graphs, conditions=conditions, device=states[0].device)

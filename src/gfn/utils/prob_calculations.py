@@ -108,8 +108,7 @@ def get_trajectory_pfs(
             N = trajectories.n_trajectories
             device = trajectories.states.device
 
-            if trajectories.states.has_conditions:
-                assert trajectories.states.conditions is not None
+            if trajectories.states.conditions is not None:
                 cond = trajectories.states.conditions[0]  # shape (N, cond_dim)
             else:
                 cond = None
@@ -185,8 +184,7 @@ def get_trajectory_pfs(
 
             # Build conditions per-step shape to align with valid_states
             masked_cond = None
-            if trajectories.states.has_conditions:
-                assert trajectories.states.conditions is not None
+            if trajectories.states.conditions is not None:
                 # trajectories.states.conditions shape: (T, N, cond_dim)
                 masked_cond = trajectories.states.conditions[state_mask]
 
@@ -310,8 +308,7 @@ def get_trajectory_pbs(
         N = trajectories.n_trajectories
         device = trajectories.states.device
 
-        if trajectories.states.has_conditions:
-            assert trajectories.states.conditions is not None
+        if trajectories.states.conditions is not None:
             # Assumption: a trajectory has only one condition.
             # Here we use the condition of the initial state of the trajectory.
             cond = trajectories.states.conditions[0]
@@ -358,8 +355,7 @@ def get_trajectory_pbs(
     # The backward policy supports vectorized evaluation.
     else:
         masked_cond = None
-        if trajectories.states.has_conditions:
-            assert trajectories.states.conditions is not None
+        if trajectories.states.conditions is not None:
             masked_cond = trajectories.states.conditions[state_mask]
 
         ctx_v = policy_pb.init_context(

@@ -30,11 +30,11 @@ import torch
 from torch.optim import Adam
 from tqdm import tqdm
 
-from gfn.env import ConditionalEnv, DiscreteEnv
 from gfn.estimators import (
     ConditionalDiscretePolicyEstimator,
     ConditionalLogZEstimator,
     ConditionalScalarEstimator,
+    ScalarEstimator,
 )
 from gfn.gflownet import (
     DBGFlowNet,
@@ -43,7 +43,7 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
-from gfn.gym import HyperGrid
+from gfn.gym import ConditionalHyperGrid
 from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.common import set_seed
@@ -53,111 +53,13 @@ from gfn.utils.training import get_terminating_state_dist
 DEFAULT_SEED: int = 4444
 
 
-class ConditionalHyperGrid(HyperGrid, ConditionalEnv):
-    """HyperGrid environment with condition-aware rewards.
-
-    Condition values:
-    - 0: Uniform reward (all terminal states get reward=1.0)
-    - 1: Normal HyperGrid reward (original multi-modal reward landscape)
-    """
-
-    condition_vector_dim: int = 1
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._original_reward_fn = self.reward_fn  # Rename, just to avoid confusion
-        self._max_reward: float = (
-            self.reward_fn_kwargs.get("R0", 0.1)
-            + self.reward_fn_kwargs.get("R1", 0.5)
-            + self.reward_fn_kwargs.get("R2", 2.0)
-        )
-        self._log_partition_cache: dict[torch.Tensor, float] = {}
-        self._true_dist_cache: dict[torch.Tensor, torch.Tensor] = {}
-
-    def sample_conditions(self, batch_shape: int | tuple[int, ...]) -> torch.Tensor:
-        """Sample conditions for the environment."""
-
-        if isinstance(batch_shape, int):
-            batch_shape = (batch_shape,)
-
-        return torch.rand(batch_shape + (self.condition_vector_dim,), device=self.device)
-
-    def reward(self, states: DiscreteStates) -> torch.Tensor:
-        """Compute rewards for the conditional environment.
-
-        A condition is continuous from 0 to 1:
-        - 0: Fully uniform reward (all states get R0+R1+R2)
-        - 1: Fully original HyperGrid reward
-        - In between: Linear interpolation between uniform and original
-
-        Args:
-            states: The states to compute rewards for.
-                states.tensor.shape should be (*batch_shape, *state_shape)
-
-        Returns:
-            A tensor of shape (*batch_shape,) containing the rewards.
-        """
-        # Get original rewards
-        original_rewards = self._original_reward_fn(states.tensor)
-        # shape: (*batch_shape,)
-
-        assert states.conditions is not None
-        # Remove feature dimension
-        cond = states.conditions.squeeze(-1)  # shape: (*batch_shape,)
-
-        # For uniform, all states get the max reward (R0+R1+R2)
-        uniform_rewards = torch.full_like(original_rewards, self._max_reward)
-
-        # Linear interpolation between uniform and original based on conditions
-        rewards = (1 - cond) * uniform_rewards + cond * original_rewards
-        return rewards
-
-    def log_partition(self, condition: torch.Tensor) -> float:
-        """Compute the log partition for the given condition.
-
-        Args:
-            condition: The condition to compute the log partition for.
-                condition.shape should be (1,)
-
-        Returns:
-            The log partition function, as a float.
-        """
-        if condition not in self._log_partition_cache:
-            assert self.all_states is not None
-            # Attach conditions to states for reward computation
-            states_with_cond = self.all_states.clone()
-            states_with_cond.conditions = condition.repeat(self.n_states, 1)
-            all_rewards = self.reward(states_with_cond)
-            self._log_partition_cache[condition] = all_rewards.sum().log().item()
-        return self._log_partition_cache[condition]
-
-    def true_dist(self, condition: torch.Tensor) -> torch.Tensor:
-        """Compute the true distribution for the given condition.
-
-        Args:
-            condition: The condition to compute the true distribution for.
-            condition.shape should be (1,)
-
-        Returns:
-            The true distribution for the given condition as a 1-dimensional tensor.
-        """
-        if condition not in self._true_dist_cache:
-            assert self.all_states is not None
-            # Attach conditions to states for reward computation
-            states_with_cond = self.all_states.clone()
-            states_with_cond.conditions = condition.repeat(self.n_states, 1)
-            all_rewards = self.reward(states_with_cond)
-            self._true_dist_cache[condition] = all_rewards / all_rewards.sum()
-        return self._true_dist_cache[condition]
-
-
 def build_conditional_pf_pb(
-    env: HyperGrid,
+    env: ConditionalHyperGrid,
 ) -> tuple[ConditionalDiscretePolicyEstimator, ConditionalDiscretePolicyEstimator]:
     """Build conditional policy forward and backward estimators.
 
     Args:
-        env: The HyperGrid environment
+        env: The ConditionalHyperGrid environment
 
     Returns:
         A tuple of (forward policy estimator, backward policy estimator)
@@ -222,12 +124,12 @@ def build_conditional_pf_pb(
 
 
 def build_conditional_logF_scalar_estimator(
-    env: HyperGrid,
+    env: ConditionalHyperGrid,
 ) -> ConditionalScalarEstimator:
     """Build conditional log flow estimator.
 
     Args:
-        env: The HyperGrid environment
+        env: The ConditionalHyperGrid environment
 
     Returns:
         A conditional scalar estimator for log flow
@@ -266,11 +168,11 @@ def build_conditional_logF_scalar_estimator(
 
 
 # Build the GFlowNet -- Modules pre-concatenation.
-def build_tb_gflownet(env: HyperGrid) -> TBGFlowNet:
+def build_tb_gflownet(env: ConditionalHyperGrid) -> TBGFlowNet:
     """Build a Trajectory Balance GFlowNet.
 
     Args:
-        env: The HyperGrid environment
+        env: The ConditionalHyperGrid environment
 
     Returns:
         A TBGFlowNet instance
@@ -349,7 +251,7 @@ def build_subTB_gflownet(env):
 
 
 def train(
-    env: ConditionalEnv,
+    env: ConditionalHyperGrid,
     gflownet,
     seed,
     device,
@@ -390,7 +292,6 @@ def train(
         + env.reward_fn_kwargs.get("R1", 0.5)
         + env.reward_fn_kwargs.get("R0", 0.1)
     )
-    n_pixels_per_mode = round(env.height / 10) ** env.ndim
 
     final_loss = None
     for it in (pbar := tqdm(range(n_iterations), dynamic_ncols=True)):
@@ -426,6 +327,7 @@ def train(
             test_cond_values = [0.0, 0.25, 0.5, 0.75, 1.0]
 
             l1_dists = []
+            logZ_diffs = []
             for cond_val in test_cond_values:
                 # Set conditions for this validation
                 conditions_val = torch.full(
@@ -460,26 +362,38 @@ def train(
                     modes_found = set([tuple(s.tolist()) for s in modes])
                     discovered_modes.update(modes_found)
 
-                # Compute empirical distribution using validate's helper function
-                if isinstance(env, DiscreteEnv):
-                    empirical_dist = env.get_terminating_state_dist(sampled_states)
-                    # Compute true distribution for this condition values
-                    true_conditional_dist = env.true_dist(
+                # Compute log partition function for this condition value
+                if isinstance(gflownet, TBGFlowNet):
+                    true_log_Z = env.log_partition(
                         torch.tensor([cond_val], device=device)
                     )
-                    # L1 distance as computed in validate function
-                    l1_dist = (
-                        (empirical_dist - true_conditional_dist).abs().mean().item()
-                    )
-                    l1_dists.append(l1_dist)
+                    assert isinstance(gflownet.logZ, ScalarEstimator)
+                    learned_log_Z = gflownet.logZ(
+                        torch.tensor([cond_val], device=device)
+                    ).item()
+                    logZ_diffs.append(true_log_Z - learned_log_Z)
+
+                # Compute empirical distribution using validate's helper function
+                empirical_dist = env.get_terminating_state_dist(sampled_states)
+                # Compute true distribution for this condition value
+                true_conditional_dist = env.true_dist(
+                    torch.tensor([cond_val], device=device)
+                )
+                # L1 distance as computed in validate function
+                l1_dist = (empirical_dist - true_conditional_dist).abs().mean().item()
+                l1_dists.append(l1_dist)
 
             # Print concise results
-            log_str = f"Iter {it + 1}: "
+            log_str = f"[Iter {it + 1}]"
+            log_str += f"\n\tNum modes discovered: {len(discovered_modes)}"
             if len(l1_dists) > 0:
                 l1_dists_str = [f"{l1_dist:.6f}" for l1_dist in l1_dists]
                 l1_dists_str = ", ".join(l1_dists_str)
-                log_str += f"L1=[{l1_dists_str}], "
-                log_str += f"modes={len(discovered_modes) / n_pixels_per_mode}"
+                log_str += f"\n\tL1: [{l1_dists_str}]"
+            if len(logZ_diffs) > 0:
+                logZ_diffs_str = [f"{logZ_diff:.6f}" for logZ_diff in logZ_diffs]
+                logZ_diffs_str = ", ".join(logZ_diffs_str)
+                log_str += f"\n\tTrue logZ - Learned logZ: [{logZ_diffs_str}]"
             print(log_str)
 
     print("\n" + "=" * 60)

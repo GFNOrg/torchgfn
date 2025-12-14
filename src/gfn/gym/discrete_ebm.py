@@ -135,13 +135,15 @@ class DiscreteEBM(DiscreteEnv):
     def make_random_states(
         self,
         batch_shape: Tuple,
+        conditions: torch.Tensor | None = None,
         device: torch.device | None = None,
-        conditions: torch.Tensor | None = None,  # not used here
     ) -> DiscreteStates:
         """Generates random states tensor of shape `(*batch_shape, ndim)`.
 
         Args:
             batch_shape: The shape of the batch.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
 
         Returns:
@@ -149,7 +151,7 @@ class DiscreteEBM(DiscreteEnv):
         """
         device = self.device if device is None else device
         tensor = torch.randint(-1, 2, batch_shape + (self.ndim,), device=device)
-        return self.States(tensor)
+        return self.States(tensor, conditions=conditions)
 
     def is_exit_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """Determines if the actions are exit actions.

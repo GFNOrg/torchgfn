@@ -51,8 +51,7 @@ def _legacy_get_trajectory_pfs(
         estimator_outputs = trajectories.estimator_outputs[action_mask]
     else:
         masked_cond = None
-        if trajectories.states.has_conditions:
-            assert trajectories.states.conditions is not None
+        if trajectories.states.conditions is not None:
             masked_cond = trajectories.states.conditions[state_mask]
 
         # Call estimator with or without conditions.
@@ -162,8 +161,7 @@ def _legacy_get_trajectory_pbs(
         return log_pb_trajectories
 
     masked_cond = None
-    if trajectories.states.has_conditions:
-        assert trajectories.states.conditions is not None
+    if trajectories.states.conditions is not None:
         masked_cond = trajectories.states.conditions[state_mask]
 
     if pb is not None:
@@ -332,8 +330,7 @@ def _legacy_get_transition_pfs(
         return log_pf_actions
 
     # Call estimator with or without conditions.
-    if transitions.states.has_conditions:
-        assert transitions.states.conditions is not None
+    if transitions.states.conditions is not None:
         masked_cond = transitions.states.conditions
         with has_conditions_exception_handler("pf", pf):
             estimator_outputs = pf(states, masked_cond)
@@ -350,8 +347,7 @@ def _legacy_get_transition_pfs(
 def _legacy_get_transition_pbs(pb: DiscretePolicyEstimator | None, transitions):
     valid_next_states = transitions.next_states[~transitions.is_terminating]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]
-    if transitions.states.has_conditions:
-        assert transitions.states.conditions is not None
+    if transitions.states.conditions is not None:
         masked_cond = transitions.states.conditions[~transitions.is_terminating]
     else:
         masked_cond = None

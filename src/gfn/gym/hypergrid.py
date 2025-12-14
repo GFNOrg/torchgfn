@@ -164,13 +164,15 @@ class HyperGrid(DiscreteEnv):
     def make_random_states(
         self,
         batch_shape: Tuple[int, ...],
+        conditions: torch.Tensor | None = None,
         device: torch.device | None = None,
-        conditions: torch.Tensor | None = None,  # not used here
     ) -> DiscreteStates:
         """Creates a batch of random states.
 
         Args:
             batch_shape: The shape of the batch.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
 
         Returns:
@@ -180,7 +182,7 @@ class HyperGrid(DiscreteEnv):
         tensor = torch.randint(
             0, self.height, batch_shape + self.s0.shape, device=device
         )
-        return self.States(tensor)
+        return self.States(tensor, conditions=conditions)
 
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Performs a step in the environment.
@@ -503,6 +505,11 @@ class HyperGrid(DiscreteEnv):
                 yield result
 
 
+####################
+# Reward functions #
+####################
+
+
 class GridReward(ABC):
     """Base class for reward functions that can be pickled."""
 
@@ -639,3 +646,108 @@ class DeceptiveReward(GridReward):
         cancel_outer = (0.1 + self._EPS < ax).prod(-1) * R1
         ring_band = ((0.3 + self._EPS < ax) * (ax < 0.4 - self._EPS)).prod(-1) * R2
         return term1 - cancel_outer + ring_band
+
+
+#########################
+# Conditional HyperGrid #
+#########################
+
+
+class ConditionalHyperGrid(HyperGrid):
+    """HyperGrid environment with condition-aware rewards.
+
+    Let condition 'c' be a real value in [0, 1]. It defines the reward as a linear
+    interpolation between the uniform reward and the original reward. Special cases are:
+    - c = 0: Uniform reward (all terminal states get reward=R0+R1+R2)
+    - c = 1: Original HyperGrid reward (original multi-modal reward landscape)
+    """
+
+    is_conditional: bool = True
+    condition_dim: int = 1
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._original_reward_fn = self.reward_fn  # Rename, just to avoid confusion
+        self._max_reward: float = (
+            self.reward_fn_kwargs.get("R0", 0.1)
+            + self.reward_fn_kwargs.get("R1", 0.5)
+            + self.reward_fn_kwargs.get("R2", 2.0)
+        )
+        self._log_partition_cache: dict[torch.Tensor, float] = {}
+        self._true_dist_cache: dict[torch.Tensor, torch.Tensor] = {}
+
+    def sample_conditions(self, batch_shape: int | tuple[int, ...]) -> torch.Tensor:
+        """Sample conditions for the environment."""
+
+        if isinstance(batch_shape, int):
+            batch_shape = (batch_shape,)
+
+        return torch.rand(batch_shape + (self.condition_dim,), device=self.device)
+
+    def reward(self, states: DiscreteStates) -> torch.Tensor:
+        """Compute rewards for the conditional environment.
+
+        A condition is continuous from 0 to 1:
+        - 0: Fully uniform reward (all states get R0+R1+R2)
+        - 1: Fully original HyperGrid reward
+        - In between: Linear interpolation between uniform and original
+
+        Args:
+            states: The states to compute rewards for.
+                states.tensor.shape should be (*batch_shape, *state_shape)
+
+        Returns:
+            A tensor of shape (*batch_shape,) containing the rewards.
+        """
+        # Get original rewards
+        original_rewards = self._original_reward_fn(states.tensor)
+        # shape: (*batch_shape,)
+
+        assert states.conditions is not None
+        # Remove feature dimension
+        cond = states.conditions.squeeze(-1)  # shape: (*batch_shape,)
+
+        # For uniform, all states get the max reward (R0+R1+R2)
+        uniform_rewards = torch.full_like(original_rewards, self._max_reward)
+
+        # Linear interpolation between uniform and original based on conditions
+        rewards = (1 - cond) * uniform_rewards + cond * original_rewards
+        return rewards
+
+    def log_partition(self, condition: torch.Tensor) -> float:
+        """Compute the log partition for the given condition.
+
+        Args:
+            condition: The condition to compute the log partition for.
+                condition.shape should be (1,)
+
+        Returns:
+            The log partition function, as a float.
+        """
+        if condition not in self._log_partition_cache:
+            assert self.all_states is not None
+            # Attach conditions to states for reward computation
+            states_with_cond = self.all_states.clone()
+            states_with_cond.conditions = condition.repeat(self.n_states, 1)
+            all_rewards = self.reward(states_with_cond)
+            self._log_partition_cache[condition] = all_rewards.sum().log().item()
+        return self._log_partition_cache[condition]
+
+    def true_dist(self, condition: torch.Tensor) -> torch.Tensor:
+        """Compute the true distribution for the given condition.
+
+        Args:
+            condition: The condition to compute the true distribution for.
+            condition.shape should be (1,)
+
+        Returns:
+            The true distribution for the given condition as a 1-dimensional tensor.
+        """
+        if condition not in self._true_dist_cache:
+            assert self.all_states is not None
+            # Attach conditions to states for reward computation
+            states_with_cond = self.all_states.clone()
+            states_with_cond.conditions = condition.repeat(self.n_states, 1)
+            all_rewards = self.reward(states_with_cond)
+            self._true_dist_cache[condition] = all_rewards / all_rewards.sum()
+        return self._true_dist_cache[condition]
