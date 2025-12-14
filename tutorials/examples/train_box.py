@@ -276,19 +276,15 @@ def main(args: Namespace) -> float:  # noqa: C901
         states_visited += len(trajectories)
 
         to_log = {"loss": loss.item(), "states_visited": states_visited}
-        logZ_info = ""
+        tqdm_info = f"States: {states_visited}, Loss: {loss.item():.3f}"
         if args.loss != "ZVar":
             assert logZ is not None
-            to_log.update({"logZdiff": env.log_partition - logZ.item()})
-            logZ_info = f"logZ: {logZ.item():.2f}, "
+            true_logZ = env.log_partition()
+            assert true_logZ is not None
+            to_log.update({"logZdiff": true_logZ - logZ.item()})
+            tqdm_info += f", True logZ: {true_logZ:.2f}, Learned logZ: {logZ.item():.2f}"
         if use_wandb:
             wandb.log(to_log, step=iteration)
-        if iteration % (args.validation_interval // 5) == 0:
-            tqdm.write(
-                f"States: {states_visited}, "
-                f"Loss: {loss.item():.3f}, {logZ_info}"
-                f"true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
-            )
 
         if iteration % args.validation_interval == 0:
             validation_samples = gflownet.sample_terminating_states(
@@ -303,6 +299,10 @@ def main(args: Namespace) -> float:  # noqa: C901
                 wandb.log({"JSD": jsd}, step=iteration)
 
             to_log.update({"JSD": jsd})
+            tqdm_info += f", JSD: {jsd:.4f}"
+
+        if iteration % (args.validation_interval // 5) == 0:
+            tqdm.write(tqdm_info)
 
     return jsd
 

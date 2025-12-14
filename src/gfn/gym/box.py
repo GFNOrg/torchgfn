@@ -190,7 +190,6 @@ class Box(Env):
         assert reward.shape == final_states.batch_shape
         return reward
 
-    @property
-    def log_partition(self) -> float:
+    def log_partition(self, condition=None) -> float:  # condition is ignored
         """Returns the log partition of the reward function."""
         return log(self.R0 + (2 * 0.25) ** 2 * self.R1 + (2 * 0.1) ** 2 * self.R2)

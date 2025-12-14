@@ -426,8 +426,7 @@ class HyperGrid(DiscreteEnv):
             if self.calculate_partition:
                 self._log_partition = log(total_rewards)
 
-    @property
-    def true_dist(self) -> torch.Tensor | None:
+    def true_dist(self, condition=None) -> torch.Tensor | None:  # condition is ignored
         """Returns the pmf over all states in the hypergrid."""
         if self._true_dist is None:
             assert (
@@ -454,8 +453,7 @@ class HyperGrid(DiscreteEnv):
 
         return _all_indices(self.ndim, self.height)
 
-    @property
-    def log_partition(self) -> float | None:
+    def log_partition(self, condition=None) -> float | None:  # condition is ignored
         """Returns the log partition of the reward function."""
         return self._log_partition
 

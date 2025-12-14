@@ -142,8 +142,7 @@ class Line(Env):
         assert log_rewards.shape == final_states.batch_shape
         return log_rewards
 
-    @property
-    def log_partition(self) -> torch.Tensor:
+    def log_partition(self, condition=None) -> torch.Tensor:  # condition is ignored
         """Returns the log partition of the reward function."""
         n_modes = torch.tensor(len(self.mus), device=self.device)
         return n_modes.log()

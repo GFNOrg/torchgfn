@@ -346,8 +346,9 @@ def test_get_grid():
 
     # log(Z) should equal the environment log_partition.
     Z = rewards.sum()
-    assert env.log_partition is not None
-    assert np.isclose(Z.log().item(), env.log_partition)
+    true_logZ = env.log_partition()
+    assert true_logZ is not None
+    assert np.isclose(Z.log().item(), true_logZ)
 
     # State indices of the grid are ordered from 0:HEIGHT**2.
     assert (env.get_states_indices(all_states).ravel() == torch.arange(HEIGHT**2)).all()

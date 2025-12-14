@@ -306,14 +306,12 @@ class DiscreteEBM(DiscreteEnv):
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
         return self.states_from_tensor(all_states)
 
-    @property
-    def true_dist(self) -> torch.Tensor:
+    def true_dist(self, condition=None) -> torch.Tensor:  # condition is ignored
         """Returns the true probability mass function of the reward distribution."""
         true_dist = self.reward(self.terminating_states)
         return true_dist / true_dist.sum()
 
-    @property
-    def log_partition(self) -> float:
+    def log_partition(self, condition=None) -> float:  # condition is ignored
         """Returns the log partition of the reward function."""
         log_rewards = self.log_reward(self.terminating_states)
         return torch.logsumexp(log_rewards, -1).item()
