@@ -33,7 +33,7 @@ jobs:
 
       - name: Test with pytest (coverage, py3.10 only)
         if: matrix.python-version == '3.10'
-        run: pytest --cov=src/gfn --cov-report=xml --cov-report=term-missing --junitxml=junit.xml -o junit_family=legacy -x
+        run: pytest --cov=gfn --cov-report=xml --cov-report=term-missing --junitxml=junit.xml -o junit_family=legacy -x
 
       - name: Test with pytest (no coverage)
         if: matrix.python-version != '3.10'
