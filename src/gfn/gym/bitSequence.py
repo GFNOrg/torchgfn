@@ -449,10 +449,6 @@ class BitSequence(DiscreteEnv):
             ValueError: If the number of requested modes exceeds the number of
                 possible unique sequences.
         """
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-
         if self.H is None:
             self.H = torch.tensor(
                 [
@@ -472,11 +468,16 @@ class BitSequence(DiscreteEnv):
                 "Not enough unique sequences available for the set of modes."
             )
 
+        g = torch.Generator(device=self.device)
+        g.manual_seed(seed)
+
         unique_indices = set()
         unique_sequences = []
 
         while len(unique_sequences) < self.n_modes:
-            candidate = tuple(torch.randint(0, self.H.shape[0], (m,)).tolist())
+            candidate = tuple(
+                torch.randint(0, self.H.shape[0], (m,), generator=g).tolist()
+            )
             if candidate not in unique_indices:
                 unique_indices.add(candidate)
                 unique_sequences.append(candidate)

@@ -83,6 +83,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
         constant_pb: bool = False,
+        debug: bool = False,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -100,10 +101,15 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+            debug: If True, keep runtime safety checks active; disable in compiled runs.
 
         """
         super().__init__(
-            pf, pb, constant_pb=constant_pb, log_reward_clip_min=log_reward_clip_min
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
         )
         assert any(
             isinstance(logF, cls)
@@ -371,13 +377,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 ).unsqueeze(-1)
             )
 
-            flat_preds = preds[~flattening_mask]
-            if torch.any(torch.isnan(flat_preds)):
-                raise ValueError("NaN in preds")
+            if self.debug:
+                flat_preds = preds[~flattening_mask]
+                if torch.any(torch.isnan(flat_preds)):
+                    raise ValueError("NaN in preds")
 
-            flat_targets = targets[~flattening_mask]
-            if torch.any(torch.isnan(flat_targets)):
-                raise ValueError("NaN in targets")
+                flat_targets = targets[~flattening_mask]
+                if torch.any(torch.isnan(flat_targets)):
+                    raise ValueError("NaN in targets")
 
             flattening_masks.append(flattening_mask)
             scores.append(preds - targets)
@@ -492,15 +499,17 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Returns:
             The contributions tensor of shape (max_len * (max_len+1) / 2, n_trajectories).
         """
-        L = self.lamda
-        max_len = trajectories.max_length
         t_idx = trajectories.terminating_idx
+        default_dtype = torch.get_default_dtype()
+        lam = torch.as_tensor(self.lamda, device=t_idx.device, dtype=default_dtype)
+        max_len = trajectories.max_length
+
+        arange = torch.arange(max_len, device=t_idx.device, dtype=default_dtype)
+        pow_lam = lam.pow(arange)
 
         # The following tensor represents the weights given to each possible
         # sub-trajectory length.
-        contributions = (L ** torch.arange(max_len, device=t_idx.device).double()).to(
-            torch.get_default_dtype()
-        )
+        contributions = pow_lam
         contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
         contributions = contributions.repeat_interleave(
             torch.arange(max_len, 0, -1, device=t_idx.device),
@@ -508,15 +517,18 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             output_size=int(max_len * (max_len + 1) / 2),
         )
 
-        # Now we need to divide each column by n + (n-1) lambda +...+ 1*lambda^{n-1}
-        # where n is the length of the trajectory corresponding to that column
+        # Now we need to divide each column by
+        #   sum_{i=0}^{n-1} (n - i) * lambda^i
+        # where n is the length of the trajectory corresponding to that column.
         # We can do it the ugly way, or using the cool identity:
         # https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
-        per_trajectory_denom = (
-            1.0
-            / (1 - L) ** 2
-            * (L * (L ** t_idx.double() - 1) + (1 - L) * t_idx.double())
-        ).to(torch.get_default_dtype())
+        pow_cumsum = pow_lam.cumsum(0)
+        i_pow_cumsum = (arange * pow_lam).cumsum(0)
+        gather_idx = (t_idx.clamp(min=1) - 1).long()
+        sum_geom = pow_cumsum[gather_idx]
+        sum_i_geom = i_pow_cumsum[gather_idx]
+        t_idx_f = t_idx.to(default_dtype)
+        per_trajectory_denom = t_idx_f * sum_geom - sum_i_geom
         contributions = contributions / per_trajectory_denom / len(trajectories)
 
         return contributions
@@ -535,12 +547,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories to compute the loss with.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
+                Note: for geometric-based sub-trajectory weighting, 'mean' is not
+                supported and is coerced to 'sum' (a warning is emitted when
+                debug=True).
 
         Returns:
             The computed sub-trajectory balance loss as a tensor. The shape depends on
             the reduction method.
         """
-        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
+        if self.debug:
+            warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
             env, trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -576,7 +592,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             weights = ratio * (
                 L ** torch.arange(max_len, device=per_length_losses.device)
             )
-            assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
+            if self.debug:
+                assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
 
         # TODO: we need to know what reductions are valid for each weighting method.
@@ -593,17 +610,19 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             raise ValueError(f"Unknown weighting method {self.weighting}")
 
         flat_contributions = contributions[~flattening_mask]
-        assert (
-            flat_contributions.sum() - 1.0
-        ).abs() < 1e-5, f"{flat_contributions.sum()}"
+        if self.debug:
+            assert (
+                flat_contributions.sum() - 1.0
+            ).abs() < 1e-5, f"{flat_contributions.sum()}"
         final_scores = flat_contributions * all_scores[~flattening_mask].pow(2)
 
         # TODO: default was sum, should we allow mean?
         if reduction == "mean":
-            warnings.warn(
-                "Mean reduction is not supported for SubTBGFlowNet with geometric "
-                "weighting, using sum instead."
-            )
+            if self.debug:
+                warnings.warn(
+                    "Mean reduction is not supported for SubTBGFlowNet with geometric "
+                    "weighting, using sum instead."
+                )
             reduction = "sum"
 
         return loss_reduce(final_scores, reduction)

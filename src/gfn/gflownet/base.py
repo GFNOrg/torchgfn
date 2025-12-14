@@ -1,4 +1,3 @@
-import math
 import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Tuple, TypeVar
@@ -47,6 +46,16 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
     """
 
     log_reward_clip_min = float("-inf")  # Default off.
+
+    def __init__(self, debug: bool = False) -> None:
+        """Initialize shared GFlowNet state.
+
+        Args:
+            debug: If True, keep runtime safety checks and warnings active. Set False
+                in compiled hot paths to avoid graph breaks; use True in tests/debugging.
+        """
+        super().__init__()
+        self.debug = debug
 
     @abstractmethod
     def sample_trajectories(
@@ -148,6 +157,8 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
     def assert_finite_gradients(self):
         """Asserts that the gradients are finite."""
+        if not self.debug:
+            return
         for p in self.parameters():
             if p.grad is not None:
                 if not torch.isfinite(p.grad).all():
@@ -155,6 +166,8 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
     def assert_finite_parameters(self):
         """Asserts that the parameters are finite."""
+        if not self.debug:
+            return
         for p in self.parameters():
             if not torch.isfinite(p).all():
                 raise RuntimeError("GFlowNet has non-finite parameters")
@@ -177,6 +190,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         pb: Estimator | None,
         constant_pb: bool = False,
         log_reward_clip_min: float = float("-inf"),
+        debug: bool = False,
     ) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
@@ -189,9 +203,10 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
             log_reward_clip_min: If finite, clips log rewards to this value.
+            debug: If True, keep runtime safety checks active; disable in compiled runs.
 
         """
-        super().__init__()
+        super().__init__(debug=debug)
         # Technical note: pb may be constant for a variety of edge cases, for example,
         # if all terminal states can be reached with exactly the same number of
         # trajectories, and we assume a uniform backward policy, then we can omit the pb
@@ -365,23 +380,34 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
         )
 
         assert log_pf_trajectories is not None
-        total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)
-        total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)
+        total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)  # [N]
+        total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)  # [N]
 
         log_rewards = trajectories.log_rewards
         assert log_rewards is not None
-
-        if math.isfinite(self.log_reward_clip_min):
+        # Fast path: skip clamp when log_reward_clip_min is -inf to avoid extra work.
+        # TODO: Do we need log reward clamping at all?
+        if self.log_reward_clip_min != float("-inf"):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
-        if torch.any(torch.isinf(total_log_pf_trajectories)):
-            raise ValueError("Infinite pf logprobs found")
-        if torch.any(torch.isinf(total_log_pb_trajectories)):
-            raise ValueError("Infinite pb logprobs found")
+        # Keep runtime safety checks under `debug` to avoid graph breaks in torch.compile.
+        if self.debug:
+            if torch.any(torch.isinf(total_log_pf_trajectories)):
+                raise ValueError("Infinite pf logprobs found")
+            if torch.any(torch.isinf(total_log_pb_trajectories)):
+                raise ValueError("Infinite pb logprobs found")
+            assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
+            assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
 
-        assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
-        assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
-        return total_log_pf_trajectories - total_log_pb_trajectories - log_rewards
+        # Fused (pf - pb) then subtract rewards; keep it branch-free/out-of-place
+        # to stay friendly to torch.compile graphs.
+        scores = torch.sub(
+            total_log_pf_trajectories, total_log_pb_trajectories, alpha=1.0
+        )
+        # Subtract rewards in a separate op to avoid in-place mutations (graph-stable)
+        # while still keeping only one extra temporary.
+        scores = scores - log_rewards
+        return scores
 
     def to_training_samples(self, trajectories: Trajectories) -> Trajectories:
         """Returns the input trajectories as training samples.

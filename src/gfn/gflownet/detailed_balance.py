@@ -1,4 +1,3 @@
-import math
 from typing import Tuple
 
 import torch
@@ -59,7 +58,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         pb: The backward policy estimator.
         logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
             flow of the states.
-        forward_looking: Whether to use the forward-looking GFN loss.
+        forward_looking: Whether to use the forward-looking GFN loss. When True,
+            rewards must be defined over edges; this implementation treats the edge
+            reward as the difference between the successor and current state rewards,
+            so only valid if the environment follows that assumption.
         constant_pb: Whether to ignore the backward policy estimator, e.g., if the
             gflownet DAG is a tree, and pb is therefore always 1.
         log_reward_clip_min: If finite, clips log rewards to this value.
@@ -73,6 +75,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         forward_looking: bool = False,
         constant_pb: bool = False,
         log_reward_clip_min: float = -float("inf"),
+        debug: bool = False,
     ) -> None:
         """Initializes a DBGFlowNet instance.
 
@@ -82,16 +85,24 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 pb is therefore always 1.
             logF: A ScalarEstimator or ConditionalScalarEstimator for estimating the log
                 flow of the states.
-            forward_looking: Whether to use the forward-looking GFN loss.
+            forward_looking: Whether to use the forward-looking GFN loss. When True,
+                rewards should be defined over edges; this implementation treats the
+                edge reward as the difference between the successor and current state
+                rewards, so only valid if the environment follows that assumption.
             constant_pb: Whether to ignore the backward policy estimator, e.g., if the
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
             log_reward_clip_min: If finite, clips log rewards to this value.
+            debug: If True, keep runtime safety checks active; disable in compiled runs.
 
         """
         super().__init__(
-            pf, pb, constant_pb=constant_pb, log_reward_clip_min=log_reward_clip_min
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
         )
 
         # Disallow recurrent PF for transition-based DB
@@ -158,7 +169,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         )
 
     def get_scores(
-        self, env: Env, transitions: Transitions, recalculate_all_logprobs: bool = True
+        self,
+        env: Env,
+        transitions: Transitions,
+        recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
         r"""Calculates the scores for a batch of transitions.
 
@@ -174,88 +188,103 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             A tensor of shape (n_transitions,) representing the scores for each
             transition.
         """
-        if transitions.is_backward:
+        # Guard bad inputs under debug to avoid graph breaks in torch.compile.
+        if self.debug and transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
 
         states = transitions.states
         actions = transitions.actions
+        conditions = (
+            transitions.conditions
+        )  # reuse locally to avoid repeated attribute lookups
+        next_states = (
+            transitions.next_states
+        )  # reuse to avoid repeated attribute lookups
 
         if len(states) == 0:
             return torch.tensor(0.0, device=transitions.device)
 
-        check_compatibility(states, actions, transitions)
-        assert (
-            not transitions.states.is_sink_state.any()
-        ), "Transition from sink state is not allowed. This is a bug."
+        if self.debug:
+            check_compatibility(states, actions, transitions)
+            assert (
+                not transitions.states.is_sink_state.any()
+            ), "Transition from sink state is not allowed. This is a bug."
 
-        ### Compute log_pf and log_pb
+        # Compute log_pf and log_pb
         log_pf, log_pb = self.get_pfs_and_pbs(transitions, recalculate_all_logprobs)
 
-        ### Compute log_F_s
+        # Compute log_F_s
         # LogF is potentially a conditional computation.
-        if transitions.conditions is not None:
+        if conditions is not None:
             with has_conditions_exception_handler("logF", self.logF):
-                log_F_s = self.logF(states, transitions.conditions).squeeze(-1)
+                log_F_s = self.logF(states, conditions).squeeze(-1)
         else:
             with no_conditions_exception_handler("logF", self.logF):
                 log_F_s = self.logF(states).squeeze(-1)
 
-        ### Compute log_F_s_next
-        log_F_s_next = torch.zeros_like(log_F_s)
+        # Compute log_F_s_next
+        # Preallocate once and fill; write terminating rewards first to avoid an extra zero fill.
+        log_F_s_next = torch.empty_like(log_F_s)
         is_terminating = transitions.is_terminating
         is_intermediate = ~is_terminating
 
-        # Assign log_F_s_next for intermediate next states
-        interm_next_states = transitions.next_states[is_intermediate]
-        # log_F is potentially a conditional computation.
-        if transitions.conditions is not None:
-            with has_conditions_exception_handler("logF", self.logF):
-                log_F_s_next[is_intermediate] = self.logF(
-                    interm_next_states,
-                    transitions.conditions[is_intermediate],
-                ).squeeze(-1)
-        else:
-            with no_conditions_exception_handler("logF", self.logF):
-                log_F_s_next[is_intermediate] = self.logF(interm_next_states).squeeze(-1)
+        # Assign log_F_s_next for terminating transitions directly from clamped rewards.
+        log_rewards = transitions.log_rewards
+        assert log_rewards is not None
+        log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
+        log_F_s_next[is_terminating] = log_rewards[is_terminating]
+
+        # Assign log_F_s_next for intermediate next states (skip work if none).
+        if torch.any(is_intermediate):
+            interm_idx = is_intermediate.nonzero(as_tuple=True)[0]
+            interm_next_states = next_states[interm_idx]
+            # log_F is potentially a conditional computation.
+            if conditions is not None:
+                with has_conditions_exception_handler("logF", self.logF):
+                    log_F_s_next[interm_idx] = self.logF(
+                        interm_next_states,
+                        conditions[interm_idx],
+                    ).squeeze(-1)
+            else:
+                with no_conditions_exception_handler("logF", self.logF):
+                    log_F_s_next[interm_idx] = self.logF(interm_next_states).squeeze(-1)
 
         # Apply forward-looking if applicable
         if self.forward_looking:
-            import warnings
+            # Keep explanatory warning only in debug to avoid compile-time graph breaks.
+            if self.debug:
+                import warnings
 
-            warnings.warn(
-                "Rewards should be defined over edges in forward-looking settings. "
-                "The current implementation is a special case of this, where the edge "
-                "reward is defined as the difference between the reward of two states "
-                "that the edge connects. If your environment is not the case, "
-                "forward-looking may be inappropriate."
-            )
+                warnings.warn(
+                    "Rewards should be defined over edges in forward-looking settings. "
+                    "The current implementation is a special case of this, where the edge "
+                    "reward is defined as the difference between the reward of two states "
+                    "that the edge connects. If your environment is not the case, "
+                    "forward-looking may be inappropriate."
+                )
 
             # Reward calculation can also be conditional.
-            if transitions.conditions is not None:
-                log_rewards_state = env.log_reward(states, transitions.conditions)  # type: ignore
-                log_rewards_next = env.log_reward(
-                    interm_next_states, transitions.conditions[is_intermediate]  # type: ignore
-                )
+            if conditions is not None:
+                log_rewards_state = env.log_reward(states, conditions)  # type: ignore
             else:
                 log_rewards_state = env.log_reward(states)
-                log_rewards_next = env.log_reward(interm_next_states)
-            if math.isfinite(self.log_reward_clip_min):
-                log_rewards_state = log_rewards_state.clamp_min(self.log_reward_clip_min)
-                log_rewards_next = log_rewards_next.clamp_min(self.log_reward_clip_min)
 
+            log_rewards_state = log_rewards_state.clamp_min(self.log_reward_clip_min)
             log_F_s = log_F_s + log_rewards_state
-            log_F_s_next[is_intermediate] = (
-                log_F_s_next[is_intermediate] + log_rewards_next
-            )
 
-        # Assign log_F_s_next for terminating transitions as log_rewards
-        log_rewards = transitions.log_rewards
-        assert log_rewards is not None
-        if math.isfinite(self.log_reward_clip_min):
-            log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
-        log_F_s_next[is_terminating] = log_rewards[is_terminating]
+            if torch.any(is_intermediate):
+                if conditions is not None:
+                    log_rewards_next = env.log_reward(
+                        next_states[interm_idx],
+                        conditions[interm_idx],  # type: ignore
+                    )
+                else:
+                    log_rewards_next = env.log_reward(next_states[interm_idx])
 
-        ### Compute scores
+                log_rewards_next = log_rewards_next.clamp_min(self.log_reward_clip_min)
+                log_F_s_next[interm_idx] = log_F_s_next[interm_idx] + log_rewards_next
+
+        # Compute scores
         preds = log_pf + log_F_s
         targets = log_pb + log_F_s_next
         scores = preds - targets
@@ -279,17 +308,23 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             transitions: The Transitions object to compute the loss with.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
+                Run with self.debug=False for improved performance.
 
         Returns:
             The computed detailed balance loss as a tensor. The shape depends on the
             reduction method.
         """
-        warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
-        scores = self.get_scores(env, transitions, recalculate_all_logprobs)
+        if self.debug:
+            warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
+        scores = self.get_scores(
+            env,
+            transitions,
+            recalculate_all_logprobs=recalculate_all_logprobs,
+        )
         scores = scores**2
         loss = loss_reduce(scores, reduction)
 
-        if torch.isnan(loss).any():
+        if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is nan")
 
         return loss
@@ -327,6 +362,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         pf: Estimator,
         pb: Estimator | None,
         constant_pb: bool = False,
+        debug: bool = False,
     ) -> None:
         """Initializes a ModifiedDBGFlowNet instance.
 
@@ -334,12 +370,15 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             pf: Forward policy estimator.
             pb: Backward policy estimator or None.
             constant_pb: See base class.
+            debug: If True, keep runtime safety checks active; disable in compiled runs.
 
         """
-        super().__init__(pf, pb, constant_pb=constant_pb)
+        super().__init__(pf, pb, constant_pb=constant_pb, debug=debug)
 
     def get_scores(
-        self, transitions: Transitions, recalculate_all_logprobs: bool = True
+        self,
+        transitions: Transitions,
+        recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
         """Calculates DAG-GFN-style modified detailed balance scores.
 
@@ -360,31 +399,41 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         Returns:
             A tensor of shape (n_transitions,) containing the scores for each transition.
         """
-        if transitions.is_backward:
+        if self.debug and transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
 
         if len(transitions) == 0:
             return torch.tensor(0.0, device=transitions.device)
 
+        conditions = (
+            transitions.conditions
+        )  # reuse locally to avoid repeated attribute lookups
         mask = ~transitions.next_states.is_sink_state
         states = transitions.states[mask]
         valid_next_states = transitions.next_states[mask]
         actions = transitions.actions[mask]
         all_log_rewards = transitions.all_log_rewards[mask]
 
-        check_compatibility(states, actions, transitions)
+        # If no non-sink next states, bail out early to avoid needless estimator calls.
+        if len(states) == 0:
+            return torch.tensor(0.0, device=transitions.device)
 
-        if transitions.conditions is not None:
+        if self.debug:
+            check_compatibility(states, actions, transitions)
+
+        # Single pf forward for current states; reuse the resulting distribution for both
+        # taken-action log-probs and exit-action log-probs to avoid extra forwards.
+        if conditions is not None:
             with has_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(states, transitions.conditions[mask])
+                pf_outputs = self.pf(states, conditions[mask])
         else:
             with no_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(states)
+                pf_outputs = self.pf(states)
 
         if len(states) == 0:
             return torch.tensor(0.0, device=transitions.device)
 
-        pf_dist = self.pf.to_probability_distribution(states, module_output)
+        pf_dist = self.pf.to_probability_distribution(states, pf_outputs)
 
         if transitions.has_log_probs and not recalculate_all_logprobs:
             valid_log_pf_actions = transitions[mask].log_probs
@@ -392,33 +441,36 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         else:
             # Evaluate the log PF of the actions sampled off policy.
             valid_log_pf_actions = pf_dist.log_prob(actions.tensor)
-        valid_log_pf_s_exit = pf_dist.log_prob(
-            torch.full_like(actions.tensor, actions.__class__.exit_action[0].item())
-        )
+        # Avoid .item() in hot path to stay compile-friendly; broadcast exit_action tensor.
+        exit_action_tensor = actions.__class__.exit_action.to(
+            actions.tensor.device, dtype=actions.tensor.dtype
+        ).expand_as(actions.tensor)
+        valid_log_pf_s_exit = pf_dist.log_prob(exit_action_tensor)
 
-        # The following two lines are slightly inefficient, given that most
-        # next_states are also states, for which we already did a forward pass.
-        if transitions.conditions is not None:
-            with has_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(valid_next_states, transitions.conditions[mask])
+        # Reuse the exit_action tensor and create the next-state distribution once; this
+        # avoids an additional forward or repeated log_prob calls.
+        if len(valid_next_states) > 0:
+            if conditions is not None:
+                with has_conditions_exception_handler("pf", self.pf):
+                    pf_next_outputs = self.pf(valid_next_states, conditions[mask])
+            else:
+                with no_conditions_exception_handler("pf", self.pf):
+                    pf_next_outputs = self.pf(valid_next_states)
+
+            pf_next_dist = self.pf.to_probability_distribution(
+                valid_next_states, pf_next_outputs
+            )
+            valid_log_pf_s_prime_exit = pf_next_dist.log_prob(exit_action_tensor)
         else:
-            with no_conditions_exception_handler("pf", self.pf):
-                module_output = self.pf(valid_next_states)
-
-        valid_log_pf_s_prime_exit = self.pf.to_probability_distribution(
-            valid_next_states, module_output
-        ).log_prob(
-            torch.full_like(actions.tensor, actions.__class__.exit_action[0].item())
-        )
+            # Should be rare because of the early return above; keep shape-friendly zero.
+            valid_log_pf_s_prime_exit = torch.zeros_like(valid_log_pf_s_exit)
 
         non_exit_actions = actions[~actions.is_exit]
 
         if self.pb is not None:
-            if transitions.conditions is not None:
+            if conditions is not None:
                 with has_conditions_exception_handler("pb", self.pb):
-                    module_output = self.pb(
-                        valid_next_states, transitions.conditions[mask]
-                    )
+                    module_output = self.pb(valid_next_states, conditions[mask])
             else:
                 with no_conditions_exception_handler("pb", self.pb):
                     module_output = self.pb(valid_next_states)
@@ -435,7 +487,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         targets = all_log_rewards[:, 1] + valid_log_pb_actions + valid_log_pf_s_exit
 
         scores = preds - targets
-        if torch.any(torch.isinf(scores)):
+        if self.debug and torch.any(torch.isinf(scores)):
             raise ValueError("scores contains inf")
 
         return scores
@@ -460,9 +512,11 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             on the reduction method.
         """
         del env
-        warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
+        if self.debug:
+            warn_about_recalculating_logprobs(transitions, recalculate_all_logprobs)
         scores = self.get_scores(
-            transitions, recalculate_all_logprobs=recalculate_all_logprobs
+            transitions,
+            recalculate_all_logprobs=recalculate_all_logprobs,
         )
         scores = scores**2
         return loss_reduce(scores, reduction)
