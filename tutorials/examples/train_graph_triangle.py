@@ -71,6 +71,7 @@ def init_env(device: torch.device) -> GraphBuilding:
         is_directed=False,
         device=device,
         max_nodes=3,
+        debug=__debug__,
     )
     return env
 

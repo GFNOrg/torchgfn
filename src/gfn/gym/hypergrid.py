@@ -70,7 +70,7 @@ class HyperGrid(DiscreteEnv):
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
         calculate_partition: bool = False,
         store_all_states: bool = False,
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the HyperGrid environment.
 
@@ -83,7 +83,7 @@ class HyperGrid(DiscreteEnv):
             calculate_partition: Whether to calculate the log partition function.
             store_all_states: Whether to store all states. If True, the true distribution
                 can be accessed via the `true_dist` property.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         if height <= 4:
             warnings.warn("+ Warning: height <= 4 can lead to unsolvable environments.")
@@ -142,7 +142,7 @@ class HyperGrid(DiscreteEnv):
             s0=s0,
             state_shape=state_shape,
             sf=sf,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.States: type[DiscreteStates] = self.States  # for type checking
 
@@ -166,6 +166,7 @@ class HyperGrid(DiscreteEnv):
         batch_shape: Tuple[int, ...],
         conditions: torch.Tensor | None = None,
         device: torch.device | None = None,
+        debug: bool = False,
     ) -> DiscreteStates:
         """Creates a batch of random states.
 
@@ -174,6 +175,7 @@ class HyperGrid(DiscreteEnv):
             conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
                 condition vectors for conditional GFlowNets.
             device: The device to use.
+            debug: If True, emit States with debug guards (not compile-friendly).
 
         Returns:
             A `DiscreteStates` object with random states.
@@ -182,7 +184,7 @@ class HyperGrid(DiscreteEnv):
         tensor = torch.randint(
             0, self.height, batch_shape + self.s0.shape, device=device
         )
-        return self.States(tensor, conditions=conditions)
+        return self.States(tensor, conditions=conditions, debug=debug)
 
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Performs a step in the environment.

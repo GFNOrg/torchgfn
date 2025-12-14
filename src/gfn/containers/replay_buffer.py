@@ -74,6 +74,7 @@ class ReplayBuffer:
         self.training_container: ContainerUnion | None = None
         self.prioritized_capacity = prioritized_capacity
         self.prioritized_sampling = prioritized_sampling
+        self.pending_container: ContainerUnion | None = None
 
         # Remote buffer fields
         self.remote_manager_rank = remote_manager_rank
@@ -97,7 +98,7 @@ class ReplayBuffer:
         assert self.training_container is not None, "Buffer is empty, it has no device!"
         return self.training_container.device
 
-    def add(self, training_container: ContainerUnion) -> float | None:
+    def add(self, training_container: ContainerUnion) -> dict[str, float] | None:
         """Adds a training container to the buffer.
 
         The type of the training container is dynamically set based on the type of the
@@ -107,18 +108,30 @@ class ReplayBuffer:
             training_container: The Trajectories, Transitions, or StatesContainer
                 object to add.
         """
-        if not isinstance(training_container, ContainerUnion):
-            raise TypeError("Must be a container type")
-
+        assert isinstance(training_container, ContainerUnion), "Must be a container type"
         self._add_objs(training_container)
 
-        # Handle remote buffer communication
+        # Handle remote buffer communication.
         if self.remote_manager_rank is not None:
             self._add_counter += 1
-            if self._add_counter % self.remote_buffer_freq == 0:
-                return self._send_objs(training_container)
 
-    def _send_objs(self, training_container: ContainerUnion) -> float:
+            if self.pending_container is None:
+                self.pending_container = self.initialize(training_container)
+            assert self.pending_container is not None
+            assert isinstance(training_container, type(self.pending_container))  # type: ignore
+
+            self.pending_container.extend(training_container)  # type: ignore
+
+            if isinstance(self.pending_container, (Trajectories, Transitions)):
+                self.pending_container.log_probs = None
+            if isinstance(self.pending_container, Trajectories):
+                self.pending_container.estimator_outputs = None
+            if self._add_counter % self.remote_buffer_freq == 0:
+                score = self._send_objs(self.pending_container)
+                self.pending_container = None
+                return score
+
+    def _send_objs(self, training_container: ContainerUnion) -> dict[str, float]:
         """Sends a training container to the remote manager."""
         msg = Message(MessageType.DATA, training_container)
         msg_tensor = msg.serialize()
@@ -130,11 +143,17 @@ class ReplayBuffer:
         # Now send the actual content
         dist.send(msg_tensor, dst=self.remote_manager_rank)
 
-        # Receive a dummy score back
-        score = torch.zeros(1, dtype=torch.float32)
-        dist.recv(score, src=self.remote_manager_rank)
+        # Receive the length of the score dictionary
+        length_tensor = torch.zeros(1, dtype=torch.int32)
+        dist.recv(length_tensor, src=self.remote_manager_rank)
+        length = length_tensor.item()
 
-        return score.item()
+        # Receive the actual score dictionary
+        score_tensor = torch.ByteTensor(length)
+        dist.recv(score_tensor, src=self.remote_manager_rank)
+        score_dict = Message.deserialize(score_tensor).message_data
+
+        return score_dict
 
     def __repr__(self) -> str:
         """Returns a string representation of the ReplayBuffer.
@@ -166,11 +185,11 @@ class ReplayBuffer:
                 object to set the buffer type.
         """
         if isinstance(training_container, Trajectories):
-            self.training_container = cast(ContainerUnion, Trajectories(self.env))
+            return cast(ContainerUnion, Trajectories(self.env))  # type: ignore
         elif isinstance(training_container, Transitions):
-            self.training_container = cast(ContainerUnion, Transitions(self.env))
+            return cast(ContainerUnion, Transitions(self.env))  # type: ignore
         elif isinstance(training_container, StatesContainer):
-            self.training_container = cast(ContainerUnion, StatesContainer(self.env))
+            return cast(ContainerUnion, StatesContainer(self.env))  # type: ignore
         else:
             raise ValueError(f"Unsupported type: {type(training_container)}")
 
@@ -182,7 +201,7 @@ class ReplayBuffer:
                 to add.
         """
         if self.training_container is None:
-            self.initialize(training_container)
+            self.training_container = self.initialize(training_container)
         assert self.training_container is not None
         assert isinstance(training_container, type(self.training_container))  # type: ignore
 
@@ -291,6 +310,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         capacity: int = 1000,
         cutoff_distance: float = 0.0,
         p_norm_distance: float = 1.0,
+        remote_manager_rank: int | None = None,
+        remote_buffer_freq: int = 1,
     ):
         """Initializes a NormBasedDiversePrioritizedReplayBuffer instance.
 
@@ -300,8 +321,18 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             cutoff_distance: Threshold used to determine whether a new terminating
                 state is different enough from those already in the buffer.
             p_norm_distance: p-norm value for distance calculation (used in torch.cdist).
+            remote_manager_rank: Rank of the assigned remote replay buffer manager, or
+                None if no remote manager is assigned.
+            remote_buffer_freq: Frequency (in number of add() calls) at which to contact
+                the remote buffer manager.
         """
-        super().__init__(env, capacity, prioritized_capacity=True)
+        super().__init__(
+            env,
+            capacity,
+            prioritized_capacity=True,
+            remote_manager_rank=remote_manager_rank,
+            remote_buffer_freq=remote_buffer_freq,
+        )
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
 

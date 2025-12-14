@@ -133,7 +133,7 @@ def main(args):
         target_kwargs=target_kwargs,
         num_discretization_steps=args.num_steps,
         device=device,
-        check_action_validity=False,
+        debug=__debug__,
     )
 
     # Build forward/backward modules and estimators

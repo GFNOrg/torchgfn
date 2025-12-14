@@ -43,7 +43,7 @@ def test_HyperGrid_preprocessors(
     ND_BATCH_SHAPE = (4, 2)
     SEED = 1234
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True)
 
     if preprocessor_name == "Identity":
         preprocessor = IdentityPreprocessor(output_dim=NDIM)
@@ -72,7 +72,7 @@ def test_HyperGrid_fwd_step():
     NDIM = 2
     ENV_HEIGHT = BATCH_SIZE = 3
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True)
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, NDIM)
 
@@ -104,7 +104,7 @@ def test_HyperGrid_bwd_step():
     SEED = 1234
 
     # Testing the backward method from a batch of random (seeded) state.
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True)
     states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED)
 
     passing_actions_lists = [
@@ -161,7 +161,7 @@ def test_DiscreteEBM_fwd_step():
     NDIM = 2
     BATCH_SIZE = 4
 
-    env = DiscreteEBM(ndim=NDIM)
+    env = DiscreteEBM(ndim=NDIM, debug=True)
     states = env.reset(
         batch_shape=BATCH_SIZE, seed=1234
     )  # Instantiate a batch of initial states
@@ -197,7 +197,7 @@ def test_DiscreteEBM_bwd_step():
     SEED = 1234
 
     # Testing the backward method from a batch of random (seeded) state.
-    env = DiscreteEBM(ndim=NDIM)
+    env = DiscreteEBM(ndim=NDIM, debug=True)
     states = env.reset(batch_shape=BATCH_SIZE, random=True, seed=SEED)
 
     passing_actions_lists = [
@@ -219,7 +219,7 @@ def test_DiscreteEBM_bwd_step():
 
 @pytest.mark.parametrize("delta", [0.1, 0.5, 1.0])
 def test_box_fwd_step(delta: float):
-    env = Box(delta=delta)
+    env = Box(delta=delta, debug=True)
     BATCH_SIZE = 3
 
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
@@ -287,13 +287,13 @@ def test_states_getitem(ndim: int, env_name: str):
     ND_BATCH_SHAPE = (2, 3)
 
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim, height=8)
+        env = HyperGrid(ndim=ndim, height=8, debug=True)
     elif env_name == "ConditionalHyperGrid":
-        env = ConditionalHyperGrid(ndim=ndim, height=8)
+        env = ConditionalHyperGrid(ndim=ndim, height=8, debug=True)
     elif env_name == "DiscreteEBM":
-        env = DiscreteEBM(ndim=ndim)
+        env = DiscreteEBM(ndim=ndim, debug=True)
     elif env_name == "Box":
-        env = Box(delta=1.0 / ndim)
+        env = Box(delta=1.0 / ndim, debug=True)
     else:
         raise ValueError(f"Unknown env_name {env_name}")
 
@@ -326,7 +326,11 @@ def test_get_grid():
     NDIM = 2
 
     env = HyperGrid(
-        height=HEIGHT, ndim=NDIM, store_all_states=True, calculate_partition=True
+        height=HEIGHT,
+        ndim=NDIM,
+        store_all_states=True,
+        calculate_partition=True,
+        debug=True,
     )
     all_states = env.all_states
     assert all_states is not None
@@ -357,6 +361,7 @@ def test_graph_env():
         state_evaluator=lambda s: torch.zeros(s.batch_shape),
         num_node_classes=10,
         num_edge_classes=10,
+        debug=True,
     )
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.batch_shape == (BATCH_SIZE,)
@@ -626,7 +631,7 @@ def test_set_addition_fwd_step():
     BATCH_SIZE = 2
 
     env = SetAddition(
-        n_items=N_ITEMS, max_items=MAX_ITEMS, reward_fn=lambda s: s.sum(-1)
+        n_items=N_ITEMS, max_items=MAX_ITEMS, reward_fn=lambda s: s.sum(-1), debug=True
     )
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.tensor.shape == (BATCH_SIZE, N_ITEMS)
@@ -682,7 +687,7 @@ def test_set_addition_bwd_step():
     BATCH_SIZE = 2
 
     env = SetAddition(
-        n_items=N_ITEMS, max_items=MAX_ITEMS, reward_fn=lambda s: s.sum(-1)
+        n_items=N_ITEMS, max_items=MAX_ITEMS, reward_fn=lambda s: s.sum(-1), debug=True
     )
 
     # Start from a state with 3 items
@@ -728,6 +733,7 @@ def test_perfect_binary_tree_fwd_step():
     env = PerfectBinaryTree(
         depth=DEPTH,
         reward_fn=lambda s: s.to(torch.get_default_dtype()) + 1,
+        debug=True,
     )
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.tensor.shape == (BATCH_SIZE, 1)
@@ -771,7 +777,7 @@ def test_perfect_binary_tree_fwd_step():
 def test_perfect_binary_tree_bwd_step():
     DEPTH = 3
 
-    env = PerfectBinaryTree(depth=DEPTH, reward_fn=lambda s: s.float() + 1)
+    env = PerfectBinaryTree(depth=DEPTH, reward_fn=lambda s: s.float() + 1, debug=True)
 
     # Start from leaf nodes 8 and 12
     initial_tensor = torch.tensor([[8], [12]], dtype=torch.long)
@@ -843,6 +849,7 @@ def test_env_default_sf_float_dtypes(dtype: torch.dtype):
         dummy_action=dummy_action,
         exit_action=exit_action,
         sf=None,
+        debug=True,
     )
     assert env.sf.dtype == dtype
     assert isinstance(env.sf, torch.Tensor)
@@ -863,6 +870,7 @@ def test_env_default_sf_complex_dtypes(dtype: torch.dtype):
         dummy_action=dummy_action,
         exit_action=exit_action,
         sf=None,
+        debug=True,
     )
     assert env.sf.dtype == dtype
     assert isinstance(env.sf, torch.Tensor)
@@ -888,6 +896,7 @@ def test_env_default_sf_integer_dtypes(dtype: torch.dtype):
         dummy_action=dummy_action,
         exit_action=exit_action,
         sf=None,
+        debug=True,
     )
     assert env.sf.dtype == dtype
     assert isinstance(env.sf, torch.Tensor)
@@ -907,6 +916,7 @@ def test_env_default_sf_bool_dtype():
         dummy_action=dummy_action,
         exit_action=exit_action,
         sf=None,
+        debug=True,
     )
     assert env.sf.dtype == torch.bool
     assert isinstance(env.sf, torch.Tensor)
