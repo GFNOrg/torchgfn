@@ -11,7 +11,11 @@ from gfn.env import Env
 from gfn.estimators import Estimator
 from gfn.samplers import Sampler
 from gfn.states import States
-from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
+from gfn.utils.prob_calculations import (
+    get_trajectory_pbs,
+    get_trajectory_pfs,
+    get_trajectory_pfs_and_pbs,
+)
 
 TrainingSampleType = TypeVar("TrainingSampleType", bound=Container)
 
@@ -341,6 +345,32 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
             trajectories,
             fill_value,
             recalculate_all_logprobs,
+        )
+
+    def trajectory_log_probs_forward(
+        self,
+        trajectories: Trajectories,
+        fill_value: float = 0.0,
+        recalculate_all_logprobs: bool = True,
+    ) -> torch.Tensor:
+        """Evaluates forward logprobs only for each trajectory in the batch."""
+        return get_trajectory_pfs(
+            self.pf,
+            trajectories,
+            fill_value=fill_value,
+            recalculate_all_logprobs=recalculate_all_logprobs,
+        )
+
+    def trajectory_log_probs_backward(
+        self,
+        trajectories: Trajectories,
+        fill_value: float = 0.0,
+    ) -> torch.Tensor:
+        """Evaluates backward logprobs only for each trajectory in the batch."""
+        return get_trajectory_pbs(
+            self.pb,
+            trajectories,
+            fill_value=fill_value,
         )
 
     def get_scores(
