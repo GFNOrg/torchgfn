@@ -196,7 +196,10 @@ def _backward_mle_loss(
         pb_out = pb.module(pb_inp)
 
         is_s0 = (t_curr - dt) < dt * 1e-2
-        # Brownian bridge: at t_prev=0 we must hit 0 (base_mean=0, std=0).
+        # Brownian bridge (t_prev = t_curr - dt), conditioned to hit 0 at t=0:
+        #   mean_bb = s_curr * (1 - dt / t_curr)
+        #   std_bb  = sigma * sqrt(dt * (t_curr - dt) / t_curr)
+        # At t_prev=0, both mean and std collapse to 0.
         base_mean = torch.where(
             is_s0,
             torch.zeros_like(s_curr),
@@ -217,8 +220,8 @@ def _backward_mle_loss(
         else:
             corr_std = torch.zeros_like(base_std)
 
-        # Combine bridge variance with optional learned correction; match forward scaling via t_scale.
-        bwd_std = (base_std**2 + corr_std**2).sqrt() * math.sqrt(t_scale)
+        # Combine bridge variance with optional learned correction (no t_scale here; forward handles it).
+        bwd_std = (base_std**2 + corr_std**2).sqrt()
         noise = torch.randn_like(s_curr, device=device, dtype=dtype)
         s_prev = base_mean + mean_corr + bwd_std * noise
 
