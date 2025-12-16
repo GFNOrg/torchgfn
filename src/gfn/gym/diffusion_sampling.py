@@ -829,7 +829,7 @@ class ManyWell(BaseTarget):
 
 
 ######################################
-### Diffusion Sampling Environment ###
+# Diffusion Sampling Environment #
 ######################################
 
 

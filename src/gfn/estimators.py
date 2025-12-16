@@ -1,3 +1,4 @@
+import math
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Protocol, cast, runtime_checkable
@@ -1290,6 +1291,7 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
         pf_module: nn.Module,
         sigma: float,
         num_discretization_steps: int,
+        n_variance_outputs: int = 0,
     ):
         """Initialize the PinnedBrownianMotionForward.
 
@@ -1305,6 +1307,12 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
         self.sigma = sigma
         self.num_discretization_steps = num_discretization_steps
         self.dt = 1.0 / self.num_discretization_steps
+        self.n_variance_outputs = n_variance_outputs
+
+    @property
+    def expected_output_dim(self) -> int:
+        # Drift (s_dim) plus optional variance outputs.
+        return self.s_dim + self.n_variance_outputs
 
     def forward(self, input: States) -> torch.Tensor:
         """Forward pass of the module.
@@ -1351,18 +1359,32 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
             A IsotropicGaussian distribution (distribution of the next states)
         """
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
-        s_curr = states.tensor[:, :-1]
+        # s_curr = states.tensor[:, :-1]
         t_curr = states.tensor[:, [-1]]
 
         module_output = torch.where(
             (1.0 - t_curr) < self.dt * 1e-2,  # sf case; when t_curr is 1.0
-            torch.full_like(s_curr, -float("inf")),  # This is the exit action
+            # torch.full_like(s_curr, -float("inf")),  # This is the exit action
+            torch.full_like(module_output, -float("inf")),  # This is the exit action
             module_output,
         )
 
-        fwd_mean = self.dt * module_output
-        fwd_std = torch.tensor(self.sigma * self.dt**0.5, device=fwd_mean.device)
-        fwd_std = fwd_std.repeat(fwd_mean.shape[0], 1)
+        drift = module_output[..., : self.s_dim]
+        if self.n_variance_outputs > 0:
+            var_part = module_output[..., self.s_dim :]
+            # Reduce extra variance dims to a single scalar (isotropic for now).
+            log_std = var_part.mean(dim=-1, keepdim=True)
+            fwd_std = torch.exp(log_std) * math.sqrt(self.dt)
+        else:
+            fwd_std = torch.tensor(self.sigma * self.dt**0.5, device=drift.device)
+            fwd_std = fwd_std.repeat(drift.shape[0], 1)
+
+        # Match reference behavior: scale diffusion noise (not drift) by t_scale if present.
+        t_scale_factor = getattr(self.module, "t_scale", 1.0)
+        if t_scale_factor != 1.0:
+            fwd_std = fwd_std * math.sqrt(t_scale_factor)
+
+        fwd_mean = self.dt * drift
 
         # Optional exploration noise: combine variances (quadrature/logaddexp).
         exploration_std = policy_kwargs.pop("exploration_std", None)
@@ -1394,30 +1416,34 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         pb_module: nn.Module,
         sigma: float,
         num_discretization_steps: int,
+        n_variance_outputs: int = 0,
+        pb_scale_range: float = 0.1,
     ):
-        """Initialize the PinnedBrownianMotionForward.
+        """Initialize the PinnedBrownianMotionBackward.
 
         Args:
             s_dim: The dimension of the states.
             pb_module: The neural network module to use for the backward policy.
             sigma: The diffusion coefficient parameter for the pinned Brownian motion.
             num_discretization_steps: The number of discretization steps.
+            n_variance_outputs: Number of variance outputs (0=fixed, 1=learned corr).
+            pb_scale_range: Scaling applied to learned corrections (tanh-bounded).
         """
         super().__init__(s_dim=s_dim, module=pb_module, is_backward=True)
 
         # Pinned Brownian Motion related
         self.sigma = sigma
         self.dt = 1.0 / num_discretization_steps
+        self.n_variance_outputs = n_variance_outputs
+        self.pb_scale_range = pb_scale_range
+
+    @property
+    def expected_output_dim(self) -> int:
+        # Drift correction (s_dim) plus optional variance correction outputs.
+        return self.s_dim + self.n_variance_outputs
 
     def forward(self, input: States) -> torch.Tensor:
-        """Forward pass of the module.
-
-        Args:
-            input: The input to the module as states.
-
-        Returns:
-            The output of the module, as a tensor of shape (*batch_shape, output_dim).
-        """
+        """Forward pass of the module."""
         out = self.module(self.preprocessor(input))
 
         if self.expected_output_dim is not None:
@@ -1438,6 +1464,7 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         which is the distribution of the previous states under the pinned Brownian motion
         process, possibly controlled by the output of the backward module. If the module
         is a fixed backward module, the `module_output` is a zero vector (no control).
+        Includes optional learned corrections.
 
         Args:
             states: The states to use, states.tensor.shape = (*batch_shape, s_dim + 1).
@@ -1453,14 +1480,27 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         t_curr = states.tensor[:, [-1]]  # shape: (*batch_shape,)
 
         is_s0 = (t_curr - self.dt) < self.dt * 1e-2  # s0 case; when t_curr - dt is 0.0
-        bwd_mean = torch.where(
+        # Analytic Brownian bridge base
+        base_mean = torch.where(
             is_s0,
             s_curr,
             s_curr * self.dt / t_curr,
         )
-        bwd_std = torch.where(
+        base_std = torch.where(
             is_s0,
             torch.zeros_like(t_curr),
             self.sigma * (self.dt * (t_curr - self.dt) / t_curr).sqrt(),
         )
+
+        # Optional learned corrections (tanh-bounded); when n_variance_outputs==0, only mean corr.
+        mean_corr = module_output[..., : self.s_dim] * self.pb_scale_range
+        if self.n_variance_outputs > 0 and module_output.shape[-1] >= self.s_dim + 1:
+            log_std_corr = module_output[..., [-1]] * self.pb_scale_range
+            corr_std = torch.exp(log_std_corr)
+        else:
+            corr_std = torch.zeros_like(base_std)
+
+        bwd_mean = base_mean + mean_corr
+        bwd_std = (base_std**2 + corr_std**2).sqrt()
+
         return IsotropicGaussian(bwd_mean, bwd_std)
