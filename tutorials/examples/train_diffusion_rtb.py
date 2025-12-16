@@ -473,6 +473,7 @@ def plot_samples(
 def main(args: argparse.Namespace) -> None:
     set_seed(args.seed)
     device = torch.device(args.device)
+    torch.set_default_device(device)
 
     # Environment / target
     env = DiffusionSampling(
@@ -715,7 +716,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--save_fig_path",
         type=str,
-        default="~/rtb_final_samples.png",
+        default="output/rtb_final_samples.png",
         help="Path to save final samples plot",
     )
 
