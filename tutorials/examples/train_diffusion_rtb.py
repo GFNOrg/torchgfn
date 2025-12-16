@@ -29,7 +29,11 @@ from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.gym.helpers.diffusion_utils import viz_2d_slice
 from gfn.samplers import Sampler
 from gfn.utils.common import set_seed
-from gfn.utils.modules import DiffusionPISGradNetBackward, DiffusionPISGradNetForward
+from gfn.utils.modules import (
+    DiffusionFixedBackwardModule,
+    DiffusionPISGradNetBackward,
+    DiffusionPISGradNetForward,
+)
 
 
 def get_exploration_std(
@@ -192,7 +196,12 @@ def _backward_mle_loss(
         pb_out = pb.module(pb_inp)
 
         is_s0 = (t_curr - dt) < dt * 1e-2
-        base_mean = torch.where(is_s0, s_curr, s_curr * dt / t_curr)
+        # Brownian bridge: at t_prev=0 we must hit 0 (base_mean=0, std=0).
+        base_mean = torch.where(
+            is_s0,
+            torch.zeros_like(s_curr),
+            s_curr * (1.0 - dt / t_curr),
+        )
         base_std = torch.where(
             is_s0,
             torch.zeros_like(t_curr),
@@ -200,6 +209,7 @@ def _backward_mle_loss(
         )
 
         mean_corr = pb_out[..., :dim] * pb.pb_scale_range
+
         # Learned variance case.
         if pb_out.shape[-1] == dim + 1:
             log_std_corr = pb_out[..., [-1]] * pb.pb_scale_range
@@ -207,8 +217,8 @@ def _backward_mle_loss(
         else:
             corr_std = torch.zeros_like(base_std)
 
-        # Combine bridge variance with optional learned correction.
-        bwd_std = (base_std**2 + corr_std**2).sqrt()
+        # Combine bridge variance with optional learned correction; match forward scaling via t_scale.
+        bwd_std = (base_std**2 + corr_std**2).sqrt() * math.sqrt(t_scale)
         noise = torch.randn_like(s_curr, device=device, dtype=dtype)
         s_prev = base_mean + mean_corr + bwd_std * noise
 
@@ -290,28 +300,36 @@ def pretrain_prior_if_needed(
         device=device,
     )
 
-    # Build backward estimator.
-    pb_module = DiffusionPISGradNetBackward(
-        s_dim=s_dim,
-        harmonics_dim=args.harmonics_dim,
-        t_emb_dim=args.t_emb_dim,
-        s_emb_dim=args.s_emb_dim,
-        hidden_dim=args.hidden_dim,
-        joint_layers=args.joint_layers,
-        zero_init=args.zero_init,
-        clipping=args.clipping,
-        gfn_clip=args.gfn_clip,
-        pb_scale_range=args.pb_scale_range,
-        log_var_range=args.log_var_range,
-        learn_variance=args.learn_variance,
-    )
+    # Build backward estimator: learned pb if enabled, else fixed Brownian bridge.
+    if args.learn_pb:
+        pb_module = DiffusionPISGradNetBackward(
+            s_dim=s_dim,
+            harmonics_dim=args.harmonics_dim,
+            t_emb_dim=args.t_emb_dim,
+            s_emb_dim=args.s_emb_dim,
+            hidden_dim=args.hidden_dim,
+            joint_layers=args.joint_layers,
+            zero_init=args.zero_init,
+            clipping=args.clipping,
+            gfn_clip=args.gfn_clip,
+            pb_scale_range=args.pb_scale_range,
+            log_var_range=args.log_var_range,
+            learn_variance=args.learn_variance,
+        )
+        n_var_outputs = 1 if args.learn_variance else 0
+        pb_scale_range = args.pb_scale_range
+    else:
+        pb_module = DiffusionFixedBackwardModule(s_dim)
+        n_var_outputs = 0
+        pb_scale_range = 0.0
+
     pb_prior = PinnedBrownianMotionBackward(
         s_dim=s_dim,
         pb_module=pb_module,
-        sigma=args.sigma,
-        num_discretization_steps=args.num_steps,
-        n_variance_outputs=1 if args.learn_variance else 0,
-        pb_scale_range=args.pb_scale_range,
+        sigma=args.pretrain_sigma,
+        num_discretization_steps=args.pretrain_num_steps,
+        n_variance_outputs=n_var_outputs,
+        pb_scale_range=pb_scale_range,
     ).to(device)
 
     optim_params = [{"params": pf_prior.parameters(), "lr": args.pretrain_lr}]
@@ -383,10 +401,11 @@ def pretrain_prior_if_needed(
     # Quick visual check of the learned prior.
     with torch.no_grad():
         sampler_prior = Sampler(estimator=pf_prior)
-        term_states = sampler_prior.sample_terminating_states(
-            env_prior, n=args.pretrain_vis_n
+        trajectories = sampler_prior.sample_trajectories(
+            env=env_prior,
+            n=args.pretrain_vis_n,
         )
-        xs = term_states.tensor[:, :-1]
+        xs = trajectories.terminating_states.tensor[:, :-1]
         plot_samples(
             xs,
             env_prior.target,
@@ -642,7 +661,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--t_scale",
         type=float,
-        default=5.0,
+        default=1.0,  # 5.0
         help="Scale diffusion std to mirror reference (reference: 5.0)",
     )
     parser.add_argument(
