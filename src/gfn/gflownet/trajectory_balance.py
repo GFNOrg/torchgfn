@@ -181,7 +181,7 @@ class RelativeTrajectoryBalanceGFlowNet(TrajectoryBasedGFlowNet):
             log_reward_clip_min=log_reward_clip_min,
         )
         self.prior_pf = prior_pf
-        self.beta = beta
+        self.beta = torch.tensor(beta)
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
         self.debug = debug  # TODO: to be passed to base classes.
 
@@ -192,25 +192,6 @@ class RelativeTrajectoryBalanceGFlowNet(TrajectoryBasedGFlowNet):
     def logz_parameters(self) -> list[torch.Tensor]:
         """Returns parameters containing 'logZ'."""
         return [v for k, v in dict(self.named_parameters()).items() if "logZ" in k]
-
-    def _prior_log_pf(
-        self,
-        trajectories: Trajectories,
-        *,
-        fill_value: float = 0.0,
-        recalculate_all_logprobs: bool = True,
-    ) -> torch.Tensor:
-        """Computes prior forward log-probs along provided trajectories."""
-        # The prior is fixed; evaluate it without tracking gradients to keep its
-        # parameters out of the RTB optimization graph.
-        with torch.no_grad():
-            log_pf = get_trajectory_pfs(
-                self.prior_pf,
-                trajectories,
-                fill_value=fill_value,
-                recalculate_all_logprobs=recalculate_all_logprobs,
-            )
-        return log_pf.sum(dim=0)
 
     def loss(
         self,
@@ -223,28 +204,33 @@ class RelativeTrajectoryBalanceGFlowNet(TrajectoryBasedGFlowNet):
         del env  # unused
         warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
 
-        # Posterior log-probs (forward; backward ignored in RTB score).
+        # Posterior log-probs.
         log_pf_post = self.trajectory_log_probs_forward(
             trajectories,
             recalculate_all_logprobs=recalculate_all_logprobs,
         )
-        if self.debug:
-            assert log_pf_post is not None
-
-        total_log_pf_post = log_pf_post.sum(dim=0)
+        log_pf_post = log_pf_post.sum(dim=0)  # Sum along trajectory length.
 
         # Prior log-probs along the same trajectories.
-        total_log_pf_prior = self._prior_log_pf(
-            trajectories,
-            recalculate_all_logprobs=recalculate_all_logprobs,
-        )
+        # The prior is fixed; evaluate it without tracking gradients to keep its
+        # parameters out of the RTB optimization graph.
+        with torch.no_grad():
+            log_pf_prior = get_trajectory_pfs(
+                self.prior_pf,
+                trajectories,
+                fill_value=0.0,
+                recalculate_all_logprobs=True,
+            )
+            log_pf_prior = log_pf_prior.sum(dim=0)  # Sum along trajectory length.
 
+        # Get the rewards.
         log_rewards = trajectories.log_rewards
         if self.debug:
             assert log_rewards is not None
         if math.isfinite(self.log_reward_clip_min):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)  # type: ignore
 
+        # Get logZ.
         if trajectories.conditions is not None:
             with is_callable_exception_handler("logZ", self.logZ):
                 assert isinstance(self.logZ, ScalarEstimator)
@@ -253,10 +239,9 @@ class RelativeTrajectoryBalanceGFlowNet(TrajectoryBasedGFlowNet):
             logZ = self.logZ
         logZ = cast(torch.Tensor, logZ).squeeze()
 
-        scores = (
-            logZ + total_log_pf_post - total_log_pf_prior - self.beta * log_rewards.squeeze()  # type: ignore
-        ).pow(2)
-        loss = loss_reduce(scores, reduction)
+        scores = 0.5 * (log_pf_post + logZ - log_pf_prior - self.beta * log_rewards).pow(2)  # type: ignore
+
+        loss = loss_reduce(scores, reduction)  # Reduce across batch dimension.
         if torch.isnan(loss).any():
             raise ValueError("loss is nan")
 

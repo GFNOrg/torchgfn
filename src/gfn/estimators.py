@@ -1329,7 +1329,6 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
         states: States,
         module_output: torch.Tensor,
         **policy_kwargs: Any,
-        # TODO: add epsilon-noisy exploration
     ) -> IsotropicGaussian:
         """Transform the output of the module into a IsotropicGaussian distribution,
         which is the distribution of the next states under the pinned Brownian motion
@@ -1339,7 +1338,14 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
             states: The states to use, states.tensor.shape = (*batch_shape, s_dim + 1).
             module_output: The output of the module (actions), as a tensor of shape
                 (*batch_shape, s_dim).
-            **policy_kwargs: Keyword arguments to modify the distribution.
+            **policy_kwargs: Keyword arguments to modify the distribution. Supported
+                keys:
+                - exploration_std: Optional callable or float controlling extra
+                  exploration noise on top of the base diffusion std. The callable
+                  should accept an integer step index and return a non-negative
+                  standard deviation in state space. When provided, the extra noise
+                  is combined in variance-space (logaddexp) with the base diffusion
+                  variance; non-positive exploration is ignored.
 
         Returns:
             A IsotropicGaussian distribution (distribution of the next states)
@@ -1357,6 +1363,27 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
         fwd_mean = self.dt * module_output
         fwd_std = torch.tensor(self.sigma * self.dt**0.5, device=fwd_mean.device)
         fwd_std = fwd_std.repeat(fwd_mean.shape[0], 1)
+
+        # Optional exploration noise: combine variances (quadrature/logaddexp).
+        exploration_std = policy_kwargs.pop("exploration_std", None)
+        exploration_std_t = torch.as_tensor(
+            exploration_std if exploration_std is not None else 0.0,
+            device=fwd_std.device,
+            dtype=fwd_std.dtype,
+        ).clamp(min=0.0)
+
+        # Combine base diffusion variance σ_base^2 with exploration variance σ_expl^2:
+        # σ_combined = sqrt(σ_base^2 + σ_expl^2). torch.compile friendly.
+        base_log_var = 2 * fwd_std.log()  # log(σ_base^2)
+        extra_log_var = 2 * exploration_std_t.clamp(min=1e-12).log()  # log(σ_expl^2)
+        extra_log_var_tensor = extra_log_var.expand_as(base_log_var)
+        combined_log_var = torch.logaddexp(base_log_var, extra_log_var_tensor)
+        fwd_std = torch.where(
+            exploration_std_t > 0,
+            torch.exp(0.5 * combined_log_var),
+            fwd_std,
+        )
+
         return IsotropicGaussian(fwd_mean, fwd_std)
 
 

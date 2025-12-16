@@ -452,7 +452,7 @@ class Grid25GaussianMixture(BaseTarget):
         samples: torch.Tensor | None = None,
         show: bool = False,
         prefix: str = "",
-        linspace_n_steps: int = 100,
+        grid_width_n_points: int = 100,
         max_n_samples: int = 1000,
     ) -> None:
         assert self.plot_border is not None, "Visualization requires a plot border."
@@ -464,7 +464,7 @@ class Grid25GaussianMixture(BaseTarget):
             samples,
             plot_border=self.plot_border,
             use_log_reward=True,
-            # linspace_n_steps=linspace_n_steps,
+            grid_width_n_points=grid_width_n_points,
             max_n_samples=max_n_samples,
         )
         plt.tight_layout()
