@@ -1,21 +1,19 @@
 #!/usr/bin/env python
 """
-Minimal end-to-end Relative Trajectory Balance (RTB) training script for diffusion.
+Minimal end-to-end Relative Trajectory Balance (RTB) fine-tuning training script for
+diffusion models.
 
-Now includes:
-- Optional prior pretraining (auto-runs if the prior checkpoint is missing), so
-  finetuning starts from the same learned prior used in the reference scripts.
-- An optimizer helper that mirrors the reference param grouping (policy vs. logZ).
-- Hooks to add additional posterior targets (keep existing defaults).
+- Prior is pre-trained (auto-runs if the prior checkpoint is missing), so
+  finetuning starts from a learned prior.
+- Posterior is fine-tuned from this prior (pf).
 
-Uses the 25→9 GMM posterior target (`gmm25_posterior9`) by default with a learnable
-posterior forward policy and a fixed prior forward policy. Loss is RTB (no backward
-policy). At the end of training, saves a scatter plot of sampled states to the user's
-home directory.
+By default, uses the 25→9 GMM posterior target (`gmm25_posterior9`) by default with a
+learnable posterior forward policy and a fixed prior forward policy. Loss is RTB (no
+backward policy). This script outputs the prior weights alongside plots of samples
+from both the prior and posterior distributions.
 """
 
 import argparse
-import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -34,6 +32,23 @@ from gfn.utils.modules import (
     DiffusionPISGradNetBackward,
     DiffusionPISGradNetForward,
 )
+
+
+def resolve_output_paths(args: argparse.Namespace) -> argparse.Namespace:
+    """Resolve all output paths relative to this script's directory."""
+    script_dir = Path(__file__).resolve().parent
+    output_dir = Path(args.output_dir)
+    if not output_dir.is_absolute():
+        output_dir = script_dir / output_dir
+    output_dir = output_dir.expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    args.output_dir = output_dir
+    args.prior_ckpt_path = output_dir / "train_diffusion_rtb_prior_ckpt.pt"
+    args.pretrain_save_fig_path = output_dir / "train_diffusion_rtb_prior_samples.png"
+    args.save_fig_path = output_dir / "train_diffusion_rtb_posterior_samples.png"
+
+    return args
 
 
 def get_debug_metrics(estimator: torch.nn.Module) -> tuple[torch.Tensor, bool]:
@@ -124,65 +139,19 @@ def build_forward_estimator(
     ).to(device)
 
 
-def build_backward_estimator(
-    s_dim: int,
-    num_steps: int,
-    sigma: float,
-    harmonics_dim: int,
-    t_emb_dim: int,
-    s_emb_dim: int,
-    hidden_dim: int,
-    joint_layers: int,
-    zero_init: bool,
-    learn_variance: bool,
-    clipping: bool,
-    gfn_clip: float,
-    pb_scale_range: float,
-    log_var_range: float,
-    device: torch.device,
-) -> PinnedBrownianMotionBackward:
-    """Build learnable backward policy (pb) with optional variance correction."""
-    pb_module = DiffusionPISGradNetBackward(
-        s_dim=s_dim,
-        harmonics_dim=harmonics_dim,
-        t_emb_dim=t_emb_dim,
-        s_emb_dim=s_emb_dim,
-        hidden_dim=hidden_dim,
-        joint_layers=joint_layers,
-        zero_init=zero_init,
-        clipping=clipping,
-        gfn_clip=gfn_clip,
-        pb_scale_range=pb_scale_range,
-        log_var_range=log_var_range,
-        learn_variance=learn_variance,
-    )
-    return PinnedBrownianMotionBackward(
-        s_dim=s_dim,
-        pb_module=pb_module,
-        sigma=sigma,
-        num_discretization_steps=num_steps,
-        n_variance_outputs=1 if learn_variance else 0,
-        pb_scale_range=pb_scale_range,
-    ).to(device)
-
-
-def pretrain_prior_if_needed(
-    args: argparse.Namespace,
-    device: torch.device,
-    s_dim: int,
-) -> Path:
+def pretrain_prior(args: argparse.Namespace, device: torch.device, s_dim: int) -> None:
     """
     Auto-pretrain the prior if the checkpoint is missing.
     Saves to args.prior_ckpt_path and returns the resolved path.
     """
-    ckpt_path = Path(os.path.expanduser(args.prior_ckpt_path))
+    ckpt_path = Path(args.prior_ckpt_path)
 
     if ckpt_path.exists():
         if args.clobber_pretrained_prior:
             print(f"[pretrain] Clobbering existing prior checkpoint at {ckpt_path}")
             ckpt_path.unlink()
         else:
-            return ckpt_path
+            return
 
     print(f"[pretrain] Prior checkpoint missing at {ckpt_path}, starting pretraining...")
 
@@ -244,15 +213,13 @@ def pretrain_prior_if_needed(
         pb_scale_range=pb_scale_range,
     ).to(device)
 
-    optim_params = [{"params": pf_prior.parameters(), "lr": args.pretrain_lr}]
+    optim_params = [{"params": pf_prior.parameters(), "lr": args.lr}]
     if args.pretrain_learn_pb:
-        optim_params.append(
-            {"params": pb_prior.parameters(), "lr": args.pretrain_lr_back}
-        )
+        optim_params.append({"params": pb_prior.parameters(), "lr": args.lr})
     optimizer = torch.optim.Adam(
         optim_params,
-        lr=args.pretrain_lr,
-        weight_decay=args.pretrain_weight_decay,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
     )
 
     # MLE trainer (uses forward PF and optional PB).
@@ -264,7 +231,7 @@ def pretrain_prior_if_needed(
         t_scale=args.t_scale,
         pb_scale_range=args.pb_scale_range,
         learn_variance=args.learn_variance,
-        debug=args.debug_pretrain,
+        debug=__debug__,
     )
 
     def _save_checkpoint(pf_prior, pb_prior, optimizer, it, ckpt_path):
@@ -284,11 +251,11 @@ def pretrain_prior_if_needed(
 
     for it in pbar:
         with torch.no_grad():
-            batch = env_prior.target.sample(args.pretrain_batch_size)
+            batch = env_prior.target.sample(args.batch_size)
         optimizer.zero_grad()
         loss = mle_trainer.loss(batch, exploration_std=args.pretrain_exploration_factor)
         loss.backward()
-        if args.debug_pretrain:
+        if __debug__:
             total_norm, has_nan = get_debug_metrics(pf_prior)
             print(
                 f"[pretrain][debug] step={it} loss={loss.item():.4e} grad_norm={total_norm.item():.4e}"
@@ -317,18 +284,18 @@ def pretrain_prior_if_needed(
         plot_samples(
             xs,
             env_prior.target,
-            os.path.expanduser(args.pretrain_save_fig_path),
+            "RTB Prior Samples",
+            args.pretrain_save_fig_path,
             return_fig=False,
         )
         print(f"[pretrain] Saved prior samples plot to {args.pretrain_save_fig_path}")
-
-    return ckpt_path
 
 
 def plot_samples(
     xs: torch.Tensor,
     target,
-    save_path: str,
+    title: str,
+    save_path: Path | str,
     return_fig: bool = False,
 ):
     """Contour + scatter plot of samples against the posterior density."""
@@ -359,12 +326,10 @@ def plot_samples(
         max_n_samples=2000,
     )
 
-    ax.set_title("RTB posterior samples")
+    ax.set_title(title)
     fig.tight_layout()
-    dirpath = os.path.dirname(save_path)
-
-    if dirpath:
-        os.makedirs(dirpath, exist_ok=True)
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(save_path)
 
     if return_fig:
@@ -376,7 +341,8 @@ def plot_samples(
 
 
 def main(args: argparse.Namespace) -> None:
-    """Runs the posterio finetuning pipeline, including prior tuning if required."""
+    """Runs the posterior finetuning pipeline, including prior pretraining if required."""
+    args = resolve_output_paths(args)
     set_seed(args.seed)
     device = torch.device(args.device)
     torch.set_default_device(device)
@@ -431,9 +397,10 @@ def main(args: argparse.Namespace) -> None:
 
     # Pretrain prior if needed, then load weights into both prior and posterior so
     # finetuning starts from the learned prior.
-    prior_ckpt_path = pretrain_prior_if_needed(args, device, s_dim)
-    if prior_ckpt_path.exists():
-        ckpt = torch.load(prior_ckpt_path, map_location=device)
+    pretrain_prior(args, device, s_dim)
+
+    if args.prior_ckpt_path.exists():
+        ckpt = torch.load(args.prior_ckpt_path, map_location=device)
         state = ckpt.get("pf_state_dict", ckpt)
         missing, unexpected = pf_prior.load_state_dict(state, strict=False)
         if missing or unexpected:
@@ -442,7 +409,7 @@ def main(args: argparse.Namespace) -> None:
         pf_post.load_state_dict(pf_prior.state_dict(), strict=False)
     else:
         raise Exception(
-            f"pretrained weights not found at {prior_ckpt_path}, pretraining failed"
+            f"pretrained weights not found at {args.prior_ckpt_path}, pretraining failed"
         )
 
     # During finetuning, the prior is fixed, no grad,
@@ -455,7 +422,6 @@ def main(args: argparse.Namespace) -> None:
         prior_pf=pf_prior,
         init_logZ=0.0,
         beta=args.beta,
-        log_reward_clip_min=args.log_reward_clip_min,
     ).to(device)
 
     sampler = Sampler(estimator=pf_post)
@@ -501,14 +467,14 @@ def main(args: argparse.Namespace) -> None:
     with torch.no_grad():
         samples_states = gflownet.sample_terminating_states(env, n=args.vis_n)
         xs = samples_states.tensor[:, :-1]
-    save_path = os.path.expanduser(args.save_fig_path)
     plot_samples(
         xs,
         env.target,
-        save_path,
+        "RTB Posterior Samples",
+        args.save_fig_path,
         return_fig=False,
     )
-    print(f"Saved final samples scatter to {save_path}")
+    print(f"Saved final samples scatter to {args.save_fig_path}")
 
 
 if __name__ == "__main__":
@@ -571,7 +537,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--t_scale",
         type=float,
-        default=1.0,  # 5.0
+        default=5.0,
         help="Scale diffusion std to mirror reference (reference: 5.0)",
     )
     parser.add_argument(
@@ -587,12 +553,6 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr_logz", type=float, default=1e-1)
     parser.add_argument("--beta", type=float, default=1.0, help="RTB beta multiplier")
-    parser.add_argument(
-        "--log_reward_clip_min",
-        type=float,
-        default=-float("inf"),
-        help="Min clip for log reward",
-    )
     # Exploration noise (state-space Gaussian added in quadrature to PF std)
     parser.add_argument(
         "--exploration_factor",
@@ -603,7 +563,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--exploration_warm_down_start",
         type=float,
-        default=0,
+        default=500,
         help="Linearly warm down exploration after n iters (to 0 by exploration_warm_down_end iters)",
     )
     parser.add_argument(
@@ -620,19 +580,13 @@ if __name__ == "__main__":
         "--vis_n", type=int, default=2000, help="Number of samples for final plot"
     )
     parser.add_argument(
-        "--save_fig_path",
+        "--output_dir",
         type=str,
-        default="output/rtb_final_samples.png",
-        help="Path to save final samples plot",
+        default="output",
+        help="Base output dir (resolved relative to this script)",
     )
 
     # Prior pretraining / loading
-    parser.add_argument(
-        "--prior_ckpt_path",
-        type=str,
-        default="output/prior.pt",
-        help="Path to save/load the pretrained prior checkpoint",
-    )
     parser.add_argument(
         "--clobber_pretrained_prior",
         action="store_true",
@@ -676,61 +630,10 @@ if __name__ == "__main__":
         help="Exploration std for pretrain backward MLE (reference: off by default)",
     )
     parser.add_argument(
-        "--pretrain_batch_size",
-        type=int,
-        default=500,
-        help="Batch size for prior pretraining",
-    )
-    parser.add_argument(
         "--pretrain_steps",
         type=int,
         default=10000,
         help="Training steps for prior pretraining",
-    )
-    parser.add_argument(
-        "--pretrain_lr", type=float, default=1e-3, help="LR for prior pretraining"
-    )
-    parser.add_argument(
-        "--pretrain_lr_back",
-        type=float,
-        default=1e-3,
-        help="LR for backward policy during pretrain",
-    )
-    parser.add_argument(
-        "--pretrain_weight_decay",
-        type=float,
-        default=0.0,
-        help="Weight decay for prior pretraining",
-    )
-    parser.add_argument(
-        "--pretrain_log_interval",
-        type=int,
-        default=100,
-        help="Logging interval (steps) during prior pretraining (reference: 100)",
-    )
-    parser.add_argument(
-        "--pretrain_ckpt_interval",
-        type=int,
-        default=1000,
-        help="Checkpoint interval during prior pretraining (reference: 1000)",
-    )
-    parser.add_argument(
-        "--pretrain_vis_n",
-        type=int,
-        default=2000,
-        help="Number of samples to plot after prior pretraining",
-    )
-    parser.add_argument(
-        "--pretrain_save_fig_path",
-        type=str,
-        default="output/prior_pretrain.png",
-        help="Path to save prior samples plot after pretraining",
-    )
-    parser.add_argument(
-        "--debug_pretrain",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Enable extra NaN/grad checks during pretrain loss",
     )
 
     # Optimizer extras
