@@ -51,6 +51,32 @@ def resolve_output_paths(args: argparse.Namespace) -> argparse.Namespace:
     return args
 
 
+def forward_kwargs(
+    args: argparse.Namespace,
+    s_dim: int,
+    num_steps: int,
+    sigma: float,
+    device: torch.device,
+) -> dict:
+    return dict(
+        s_dim=s_dim,
+        num_steps=num_steps,
+        sigma=sigma,
+        harmonics_dim=args.harmonics_dim,
+        t_emb_dim=args.t_emb_dim,
+        s_emb_dim=args.s_emb_dim,
+        hidden_dim=args.hidden_dim,
+        joint_layers=args.joint_layers,
+        zero_init=args.zero_init,
+        learn_variance=args.learn_var,
+        clipping=args.clipping,
+        gfn_clip=args.gfn_clip,
+        t_scale=args.t_scale,
+        log_var_range=args.log_var_range,
+        device=device,
+    )
+
+
 def get_debug_metrics(estimator: torch.nn.Module) -> tuple[torch.Tensor, bool]:
     """Compute gradient norm for a module; return (total_norm, has_nan)."""
     grad_list = [p.grad.norm() for p in estimator.parameters() if p.grad is not None]
@@ -164,21 +190,13 @@ def pretrain_prior(args: argparse.Namespace, device: torch.device, s_dim: int) -
     )
 
     pf_prior = build_forward_estimator(
-        s_dim=s_dim,
-        num_steps=args.pretrain_num_steps,
-        sigma=args.pretrain_sigma,
-        harmonics_dim=args.harmonics_dim,
-        t_emb_dim=args.t_emb_dim,
-        s_emb_dim=args.s_emb_dim,
-        hidden_dim=args.hidden_dim,
-        joint_layers=args.joint_layers,
-        zero_init=args.zero_init,
-        learn_variance=args.learn_variance,
-        clipping=args.clipping,
-        gfn_clip=args.gfn_clip,
-        t_scale=args.t_scale,
-        log_var_range=args.log_var_range,
-        device=device,
+        **forward_kwargs(
+            args,
+            s_dim=s_dim,
+            num_steps=args.pretrain_num_steps,
+            sigma=args.pretrain_sigma,
+            device=device,
+        )
     )
 
     # Build backward estimator: learned pb if enabled, else fixed Brownian bridge.
@@ -195,9 +213,9 @@ def pretrain_prior(args: argparse.Namespace, device: torch.device, s_dim: int) -
             gfn_clip=args.gfn_clip,
             pb_scale_range=args.pb_scale_range,
             log_var_range=args.log_var_range,
-            learn_variance=args.learn_variance,
+            learn_variance=args.learn_var,
         )
-        n_var_outputs = 1 if args.learn_variance else 0
+        n_var_outputs = 1 if args.learn_var else 0
         pb_scale_range = args.pb_scale_range
     else:
         pb_module = DiffusionFixedBackwardModule(s_dim)
@@ -230,7 +248,7 @@ def pretrain_prior(args: argparse.Namespace, device: torch.device, s_dim: int) -
         sigma=args.pretrain_sigma,
         t_scale=args.t_scale,
         pb_scale_range=args.pb_scale_range,
-        learn_variance=args.learn_variance,
+        learn_variance=args.learn_var,
         debug=__debug__,
     )
 
@@ -359,40 +377,16 @@ def main(args: argparse.Namespace) -> None:
 
     # Posterior forward (trainable)
     pf_post = build_forward_estimator(
-        s_dim=s_dim,
-        num_steps=args.num_steps,
-        sigma=args.sigma,
-        harmonics_dim=args.harmonics_dim,
-        t_emb_dim=args.t_emb_dim,
-        s_emb_dim=args.s_emb_dim,
-        hidden_dim=args.hidden_dim,
-        joint_layers=args.joint_layers,
-        zero_init=args.zero_init,
-        learn_variance=args.learn_variance,
-        clipping=args.clipping,
-        gfn_clip=args.gfn_clip,
-        t_scale=args.t_scale,
-        log_var_range=args.log_var_range,
-        device=device,
+        **forward_kwargs(
+            args, s_dim=s_dim, num_steps=args.num_steps, sigma=args.sigma, device=device
+        )
     )
 
     # Prior forward.
     pf_prior = build_forward_estimator(
-        s_dim=s_dim,
-        num_steps=args.num_steps,
-        sigma=args.sigma,
-        harmonics_dim=args.harmonics_dim,
-        t_emb_dim=args.t_emb_dim,
-        s_emb_dim=args.s_emb_dim,
-        hidden_dim=args.hidden_dim,
-        joint_layers=args.joint_layers,
-        zero_init=args.zero_init,
-        learn_variance=args.learn_variance,
-        clipping=args.clipping,
-        gfn_clip=args.gfn_clip,
-        t_scale=args.t_scale,
-        log_var_range=args.log_var_range,
-        device=device,
+        **forward_kwargs(
+            args, s_dim=s_dim, num_steps=args.num_steps, sigma=args.sigma, device=device
+        )
     )
 
     # Pretrain prior if needed, then load weights into both prior and posterior so
@@ -478,171 +472,75 @@ def main(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
+
+    def add_arg_group(
+        parser: argparse.ArgumentParser,
+        specs: list[tuple[tuple[str, ...], dict]],
+    ) -> None:
+        for args, kwargs in specs:
+            parser.add_argument(*args, **kwargs)
+
+    # fmt: off
     parser = argparse.ArgumentParser()
-    # System
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cpu",
-        choices=["cpu", "cuda", "mps"],
-        help="Device for training.",
-    )
-    parser.add_argument("--seed", type=int, default=0, help="Random seed")
+    system_args = [
+        (("--device",), {"type": str, "default": "cpu", "choices": ["cpu", "cuda", "mps"], "help": "Device for training."}),
+        (("--seed",), {"type": int, "default": 0, "help": "Random seed"}),
+    ]
 
-    # Target / environment
-    parser.add_argument(
-        "--target",
-        type=str,
-        default="gmm25_posterior9",
-        help="Diffusion target (default: gmm25_posterior9)",
-    )
-    parser.add_argument(
-        "--num_steps",
-        type=int,
-        default=100,
-        help="number of discretization steps (reference=100)",
-    )
-    parser.add_argument(
-        "--sigma",
-        type=float,
-        default=2.0,
-        help="diffusion coefficient for the pinned Brownian motion",
-    )
+    finetune_args = [
+        (("--target",), {"type": str, "default": "gmm25_posterior9", "help": "Diffusion target"}),
+        (("--num_steps",), {"type": int, "default": 100, "help": "Discretization steps"}),
+        (("--sigma",), {"type": float, "default": 2.0, "help": "Pinned Brownian motion sigma"}),
+        (("--harmonics_dim",), {"type": int, "default": 64}),
+        (("--t_emb_dim",), {"type": int, "default": 64}),
+        (("--s_emb_dim",), {"type": int, "default": 64}),
+        (("--hidden_dim",), {"type": int, "default": 64}),
+        (("--joint_layers",), {"type": int, "default": 2}),
+        (("--zero_init",), {"action": "store_true", "default": True}),
+        (("--learn_var",), {"action": "store_true", "default": False, "help": "Learned variance"}),
+        (("--clipping",), {"action": argparse.BooleanOptionalAction, "default": False, "help": "Clip model outputs"}),
+        (("--gfn_clip",), {"type": float, "default": 1e4, "help": "Drift clip value"}),
+        (("--t_scale",), {"type": float, "default": 5.0, "help": "Diffusion std scale"}),
+        (("--log_var_range",), {"type": float, "default": 4.0, "help": "Bound for learned log-std"}),
+    ]
 
-    # Model (DiffusionPISGradNetForward)
-    parser.add_argument("--harmonics_dim", type=int, default=64)
-    parser.add_argument("--t_emb_dim", type=int, default=64)
-    parser.add_argument("--s_emb_dim", type=int, default=64)
-    parser.add_argument("--hidden_dim", type=int, default=64)
-    parser.add_argument("--joint_layers", type=int, default=2)
-    parser.add_argument("--zero_init", action="store_true", default=True)
-    parser.add_argument(
-        "--learn_variance",
-        action="store_true",
-        default=False,
-        help="Use learned scalar variance in the diffusion forward policy (ref default: off)",
-    )
-    parser.add_argument(
-        "--clipping",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Clip model outputs (reference default: off)",
-    )
-    parser.add_argument(
-        "--gfn_clip",
-        type=float,
-        default=1e4,
-        help="Clipping value for drift outputs (reference: 1e4)",
-    )
-    parser.add_argument(
-        "--t_scale",
-        type=float,
-        default=5.0,
-        help="Scale diffusion std to mirror reference (reference: 5.0)",
-    )
-    parser.add_argument(
-        "--log_var_range",
-        type=float,
-        default=4.0,
-        help="Range to bound learned log-std when learn_variance is enabled (reference: 4.0)",
-    )
+    pretrain_args = [
+        (("--clobber_pretrained_prior",), {"action": "store_true", "default": False, "help": "Overwrite existing prior"}),
+        (("--pretrain_learn_pb",), {"action": "store_true", "default": False, "help": "Enable learned backward policy"}),
+        (("--pb_scale_range",), {"type": float, "default": 0.1, "help": "Tanh scaling for pb"}),
+        (("--pretrain_target",), {"type": str, "default": "gmm25_prior", "help": "Target used for pretraining"}),
+        (("--pretrain_num_steps",), {"type": int, "default": 100, "help": "Pretrain discretization steps"}),
+        (("--pretrain_sigma",), {"type": float, "default": 2.0, "help": "Pretrain diffusion sigma"}),
+        (("--pretrain_exploration_factor",), {"type": float, "default": 0.0, "help": "Pretrain std expansion"}),
+        (("--pretrain_steps",), {"type": int, "default": 10000, "help": "Pretrain steps"}),
+        (("--pretrain_log_interval",), {"type": int, "default": 100, "help": "Pretrain log interval"}),
+        (("--pretrain_vis_n",), {"type": int, "default": 2000, "help": "Pretrain samples to plot"}),
+    ]
 
-    # Training
-    parser.add_argument("--n_iterations", type=int, default=5000)
-    parser.add_argument("--batch_size", type=int, default=500)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--lr_logz", type=float, default=1e-1)
-    parser.add_argument("--beta", type=float, default=1.0, help="RTB beta multiplier")
-    # Exploration noise (state-space Gaussian added in quadrature to PF std)
-    parser.add_argument(
-        "--exploration_factor",
-        type=float,
-        default=0.5,
-        help="Base exploration std applied per step when exploratory is enabled (reference ~0.5)",
-    )
-    parser.add_argument(
-        "--exploration_warm_down_start",
-        type=float,
-        default=500,
-        help="Linearly warm down exploration after n iters (to 0 by exploration_warm_down_end iters)",
-    )
-    parser.add_argument(
-        "--exploration_warm_down_end",
-        type=float,
-        default=4500,
-        help="Linearly warm down exploration after n iters (to 0 by exploration_warm_down_end iters)",
-    )
+    train_args = [
+        (("--n_iterations",), {"type": int, "default": 5000}),
+        (("--batch_size",), {"type": int, "default": 500}),
+        (("--lr",), {"type": float, "default": 1e-3}),
+        (("--lr_logz",), {"type": float, "default": 1e-1}),
+        (("--weight_decay",), {"type": float, "default": 0.0, "help": "Weight decay"}),
+        (("--beta",), {"type": float, "default": 1.0, "help": "RTB beta"}),
+        (("--exploration_factor",), {"type": float, "default": 0.5, "help": "Step-wise std expansion"}),
+        (("--exploration_warm_down_start",), {"type": float, "default": 500, "help": "Warmdown start iter"}),
+        (("--exploration_warm_down_end",), {"type": float, "default": 4500, "help": "Warmdown end iter"}),
+    ]
 
-    # Logging / eval
-    parser.add_argument("--log_interval", type=int, default=100)
-    parser.add_argument("--eval_n", type=int, default=500)
-    parser.add_argument(
-        "--vis_n", type=int, default=2000, help="Number of samples for final plot"
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="output",
-        help="Base output dir (resolved relative to this script)",
-    )
+    log_args = [
+        (("--log_interval",), {"type": int, "default": 100}),
+        (("--eval_n",), {"type": int, "default": 500}),
+        (("--vis_n",), {"type": int, "default": 2000, "help": "Samples for final plot"}),
+        (("--output_dir",), {"type": str, "default": "output", "help": "relative output dir"}),
+    ]
 
-    # Prior pretraining / loading
-    parser.add_argument(
-        "--clobber_pretrained_prior",
-        action="store_true",
-        default=False,
-        help="Overwrite existing prior checkpoint and re-run pretraining",
-    )
-    parser.add_argument(
-        "--pretrain_learn_pb",
-        action="store_true",
-        default=False,
-        help="Enable learned backward policy corrections (pb) during pretrain",
-    )
-    parser.add_argument(
-        "--pb_scale_range",
-        type=float,
-        default=0.1,
-        help="Tanh scaling for backward mean/var corrections (reference: 0.1)",
-    )
-    parser.add_argument(
-        "--pretrain_target",
-        type=str,
-        default="gmm25_prior",
-        help="Target used for prior pretraining (matches reference prior)",
-    )
-    parser.add_argument(
-        "--pretrain_num_steps",
-        type=int,
-        default=100,
-        help="Discretization steps for prior pretraining (reference=100)",
-    )
-    parser.add_argument(
-        "--pretrain_sigma",
-        type=float,
-        default=2.0,
-        help="Diffusion coefficient for prior pretraining",
-    )
-    parser.add_argument(
-        "--pretrain_exploration_factor",
-        type=float,
-        default=0.0,
-        help="Exploration std for pretrain backward MLE (reference: off by default)",
-    )
-    parser.add_argument(
-        "--pretrain_steps",
-        type=int,
-        default=10000,
-        help="Training steps for prior pretraining",
-    )
-
-    # Optimizer extras
-    parser.add_argument(
-        "--weight_decay",
-        type=float,
-        default=0.0,
-        help="Weight decay for the RTB optimizer (policy/logZ)",
-    )
+    add_arg_group(parser, system_args)
+    add_arg_group(parser, finetune_args)
+    add_arg_group(parser, pretrain_args)
+    add_arg_group(parser, train_args)
+    add_arg_group(parser, log_args)
 
     args = parser.parse_args()
     main(args)
