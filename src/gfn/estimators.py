@@ -1481,10 +1481,13 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
 
         is_s0 = (t_curr - self.dt) < self.dt * 1e-2  # s0 case; when t_curr - dt is 0.0
         # Analytic Brownian bridge base
+        # Brownian bridge mean toward 0 at t=0:
+        # E[s_{t-dt} | s_t] = s_t * (1 - dt / t) and collapses to 0 at the start.
+        # Shapes: s_curr (batch, s_dim), t_curr (batch, 1), dt is scalar.
         base_mean = torch.where(
             is_s0,
-            s_curr,
-            s_curr * self.dt / t_curr,
+            torch.zeros_like(s_curr),
+            s_curr * (1.0 - self.dt / t_curr),
         )
         base_std = torch.where(
             is_s0,
