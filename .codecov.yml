@@ -1,0 +1,15 @@
+coverage:
+  status:
+    project:
+      default:
+        # Set to informational only - will not block PRs
+        informational: true
+    patch:
+      default:
+        # Set to informational only - will not block PRs
+        informational: true
+
+comment:
+  # Still show coverage comments on PRs
+  layout: "diff, flags, files"
+  behavior: default

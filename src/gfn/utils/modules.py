@@ -1667,6 +1667,11 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
         hidden_dim: int = 64,
         joint_layers: int = 2,
         zero_init: bool = False,
+        clipping: bool = False,
+        gfn_clip: float = 1e4,
+        t_scale: float = 1.0,
+        log_var_range: float = 4.0,  # kept for parity with learned-var subclass
+        learn_variance: bool = False,
         # predict_flow: bool,  # TODO: support predict flow for db or subtb
         # share_embeddings: bool = False,
         # flow_harmonics_dim: int = 64,
@@ -1680,7 +1685,6 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
         # clipping: bool = False,  # TODO: support clipping
         # out_clip: float = 1e4,
         # lp_clip: float = 1e2,
-        # learn_variance: bool = True,  # TODO: support learnable variance
         # log_var_range: float = 4.0,
     ):
         """Initialize the PISGradNetForward.
@@ -1703,7 +1707,12 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
         self.hidden_dim = hidden_dim
         self.joint_layers = joint_layers
         self.zero_init = zero_init
-        self.out_dim = s_dim  # 2 * out_dim if learn_variance is True
+        self.learn_variance = learn_variance
+        self.out_dim = s_dim + 1 if self.learn_variance else s_dim
+        self.clipping = clipping
+        self.gfn_clip = gfn_clip
+        self.t_scale = t_scale
+        self.log_var_range = log_var_range
 
         assert (
             self.s_emb_dim == self.t_emb_dim
@@ -1740,10 +1749,18 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
         t_emb = self.t_model(t)
         out = self.joint_model(s_emb, t_emb)
 
-        # TODO: learn variance, lp, clipping, ...
+        if self.learn_variance:
+            drift, raw_log_std = out[..., :-1], out[..., [-1]]
+            if self.clipping:
+                drift = torch.clamp(drift, -self.gfn_clip, self.gfn_clip)
+            log_std = torch.tanh(raw_log_std) * self.log_var_range
+            out = torch.cat([drift, log_std], dim=-1)
+        else:
+            if self.clipping:
+                out = torch.clamp(out, -self.gfn_clip, self.gfn_clip)
+
         if torch.isnan(out).any():
-            print("+ out has {} nans".format(torch.isnan(out).sum()))
-            out = torch.nan_to_num(out)
+            raise ValueError("DiffusionPISGradNetForward produced NaNs")
 
         return out
 
@@ -1774,3 +1791,83 @@ class DiffusionFixedBackwardModule(nn.Module):
             The output of the module (shape: (*batch_shape, s_dim)).
         """
         return torch.zeros_like(preprocessed_states[..., :-1])
+
+
+class DiffusionPISGradNetBackward(nn.Module):
+    """Learnable backward correction module (PIS-style) for diffusion.
+
+    Produces mean and optional log-std corrections that are tanh-scaled by
+    `pb_scale_range` to stay close to the analytic Brownian bridge.
+    """
+
+    def __init__(
+        self,
+        s_dim: int,
+        harmonics_dim: int = 64,
+        t_emb_dim: int = 64,
+        s_emb_dim: int = 64,
+        hidden_dim: int = 64,
+        joint_layers: int = 2,
+        zero_init: bool = False,
+        clipping: bool = False,
+        gfn_clip: float = 1e4,
+        pb_scale_range: float = 0.1,
+        log_var_range: float = 4.0,
+        learn_variance: bool = True,
+    ) -> None:
+        super().__init__()
+        self.s_dim = s_dim
+        self.out_dim = s_dim + (1 if learn_variance else 0)
+        self.harmonics_dim = harmonics_dim
+        self.t_emb_dim = t_emb_dim
+        self.s_emb_dim = s_emb_dim
+        self.hidden_dim = hidden_dim
+        self.joint_layers = joint_layers
+        self.zero_init = zero_init
+        self.clipping = clipping
+        self.gfn_clip = gfn_clip
+        self.pb_scale_range = pb_scale_range
+        self.log_var_range = log_var_range
+        self.learn_variance = learn_variance
+
+        assert (
+            self.s_emb_dim == self.t_emb_dim
+        ), "Dimensionality of state embedding and time embedding should be the same!"
+
+        self.t_model = DiffusionPISTimeEncoding(
+            self.harmonics_dim, self.t_emb_dim, self.hidden_dim
+        )
+        self.s_model = DiffusionPISStateEncoding(self.s_dim, self.s_emb_dim)
+        self.joint_model = DiffusionPISJointPolicy(
+            self.s_emb_dim,
+            self.hidden_dim,
+            self.out_dim,
+            self.joint_layers,
+            self.zero_init,
+        )
+
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
+        s = preprocessed_states[..., :-1]
+        t = preprocessed_states[..., -1]
+        s_emb = self.s_model(s)
+        t_emb = self.t_model(t)
+        out = self.joint_model(s_emb, t_emb)
+
+        if self.clipping:
+            out = torch.clamp(out, -self.gfn_clip, self.gfn_clip)
+
+        # Tanh-scale to stay near Brownian bridge; last dim (if present) is log-std corr.
+        drift_corr = torch.tanh(out[..., : self.s_dim]) * self.pb_scale_range
+        if self.learn_variance and out.shape[-1] == self.s_dim + 1:
+            log_std_corr = torch.tanh(out[..., [-1]]) * self.pb_scale_range
+            log_std_corr = torch.clamp(
+                log_std_corr, -self.log_var_range, self.log_var_range
+            )
+            out = torch.cat([drift_corr, log_std_corr], dim=-1)
+        else:
+            out = drift_corr
+
+        if torch.isnan(out).any():
+            raise ValueError("DiffusionPISGradNetBackward produced NaNs")
+
+        return out

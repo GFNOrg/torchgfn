@@ -322,7 +322,7 @@ class Env(ABC):
         # We only step on states that are not sink states.
         # Note that exit actions directly set the states to the sink state, so they
         # are not included in the valid_states_idx.
-        new_valid_states_idx = valid_states_idx & ~actions.is_exit
+        new_valid_states_idx = valid_states_idx & ~actions.is_exit  # boolean mask.
 
         # IMPORTANT: .clone() is used to ensure that the new states are a
         # distinct object from the old states. This is important for the sampler to
@@ -330,7 +330,9 @@ class Env(ABC):
         # method in your custom environment, you must ensure that the `new_states`
         # returned is a distinct object from the submitted states.
         not_done_states = states[new_valid_states_idx].clone()
-        not_done_actions = actions[new_valid_states_idx]
+        not_done_actions = actions[
+            new_valid_states_idx
+        ]  # NOTE: boolean indexing creates a copy!
 
         not_done_states = self.step(not_done_states, not_done_actions)
         assert isinstance(
