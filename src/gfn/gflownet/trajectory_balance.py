@@ -181,7 +181,7 @@ class RelativeTrajectoryBalanceGFlowNet(TrajectoryBasedGFlowNet):
             log_reward_clip_min=log_reward_clip_min,
         )
         self.prior_pf = prior_pf
-        self.beta = torch.tensor(beta)
+        self.register_buffer("beta", torch.tensor(beta))
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
         self.debug = debug  # TODO: to be passed to base classes.
 
