@@ -175,7 +175,10 @@ def get_trajectory_pfs(
         else:
             state_mask = ~trajectories.states.is_sink_state
             action_mask = ~trajectories.actions.is_dummy
-            assert (state_mask[:-1] == action_mask).all()  # state_mask[-1] is all False
+            # state_mask[-1] is all False
+            assert (
+                state_mask[:-1] == action_mask
+            ).all(), "Something wrong happening with log_pf evaluations"
 
             valid_states = trajectories.states[state_mask]
             valid_actions = trajectories.actions[action_mask]
