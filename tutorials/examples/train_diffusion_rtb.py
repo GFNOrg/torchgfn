@@ -408,7 +408,7 @@ def main(args: argparse.Namespace) -> None:
             f"pretrained weights not found at {args.prior_ckpt_path}, pretraining failed"
         )
 
-    # During finetuning, the prior is fixed, no grad,
+    # During finetuning, the prior is fixed, no grad.
     pf_prior.eval()
     for p in pf_prior.parameters():
         p.requires_grad_(False)
