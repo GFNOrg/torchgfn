@@ -1,0 +1,3 @@
+[submodule "benchmark/gflownet"]
+	path = benchmark/gflownet
+	url = https://github.com/alexhernandezgarcia/gflownet.git
