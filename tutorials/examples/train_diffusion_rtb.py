@@ -7,7 +7,7 @@ diffusion models.
   finetuning starts from a learned prior.
 - Posterior is fine-tuned from this prior (pf).
 
-By default, uses the 25→9 GMM posterior target (`gmm25_posterior9`) by default with a
+By default, uses the 25→9 GMM posterior target (`gmm25_posterior9`) with a
 learnable posterior forward policy and a fixed prior forward policy. Loss is RTB (no
 backward policy). This script outputs the prior weights alongside plots of samples
 from both the prior and posterior distributions.
