@@ -65,6 +65,7 @@ class Box(Env):
     def make_random_states(
         self,
         batch_shape: Tuple[int, ...],
+        conditions: torch.Tensor | None = None,
         device: torch.device | None = None,
         debug: bool = False,
     ) -> States:
@@ -72,13 +73,20 @@ class Box(Env):
 
         Args:
             batch_shape: The shape of the batch.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
+            debug: If True, emit States with debug guards (not compile-friendly).
 
         Returns:
             A States object with random states.
         """
         device = self.device if device is None else device
-        return self.States(torch.rand(batch_shape + (2,), device=device), debug=debug)
+        return self.States(
+            torch.rand(batch_shape + (2,), device=device),
+            conditions=conditions,
+            debug=debug,
+        )
 
     def step(self, states: States, actions: Actions) -> States:
         """Step function for the Box environment.
@@ -182,7 +190,6 @@ class Box(Env):
         assert reward.shape == final_states.batch_shape
         return reward
 
-    @property
-    def log_partition(self) -> float:
+    def log_partition(self, condition=None) -> float:  # condition is ignored
         """Returns the log partition of the reward function."""
         return log(self.R0 + (2 * 0.25) ** 2 * self.R1 + (2 * 0.1) ** 2 * self.R2)

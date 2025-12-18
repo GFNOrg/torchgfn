@@ -92,6 +92,10 @@ def states_actions_tns_to_traj(
     log_rewards = env.log_reward(states[-2])
     states = states[0].stack(states)
     terminating_idx = torch.tensor([len(states_tns) - 1])
+    if conditions is not None:
+        states.conditions = conditions.unsqueeze(1)  # dim 1 for batch dimension
+    else:
+        states.conditions = None
 
     log_probs = None
     estimator_outputs = None
@@ -99,7 +103,6 @@ def states_actions_tns_to_traj(
     trajectory = Trajectories(
         env,
         states,
-        conditions,
         actions,
         log_rewards=log_rewards,
         terminating_idx=terminating_idx,

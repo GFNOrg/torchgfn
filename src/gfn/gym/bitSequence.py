@@ -36,6 +36,7 @@ class BitSequenceStates(DiscreteStates):
         length: Optional[torch.Tensor] = None,
         forward_masks: Optional[torch.Tensor] = None,
         backward_masks: Optional[torch.Tensor] = None,
+        conditions: Optional[torch.Tensor] = None,
         debug: bool = False,
     ) -> None:
         """Initializes the BitSequencesStates object.
@@ -45,12 +46,14 @@ class BitSequenceStates(DiscreteStates):
             length: The tensor representing the length of each bit sequence.
             forward_masks: The tensor representing the forward masks.
             backward_masks: The tensor representing the backward masks.
+            conditions: The tensor representing the conditions.
             debug: If True, enable runtime guards in the parent class (not compile-friendly).
         """
         super().__init__(
             tensor,
             forward_masks=forward_masks,
             backward_masks=backward_masks,
+            conditions=conditions,
             debug=debug,
         )
         if length is None:
@@ -72,6 +75,7 @@ class BitSequenceStates(DiscreteStates):
             self.length.detach().clone(),
             self.forward_masks.detach().clone(),
             self.backward_masks.detach().clone(),
+            self.conditions.detach().clone() if self.conditions is not None else None,
             debug=self.debug,
         )
 
@@ -95,6 +99,7 @@ class BitSequenceStates(DiscreteStates):
             self.length[index],
             self.forward_masks[index],
             self.backward_masks[index],
+            self.conditions[index] if self.conditions is not None else None,
             debug=self.debug,
         )
 
@@ -121,8 +126,12 @@ class BitSequenceStates(DiscreteStates):
         self._check_both_forward_backward_masks_exist()
         forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
         backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
+        if self.conditions is not None:
+            conditions = self.conditions.view(-1, self.conditions.shape[-1])
+        else:
+            conditions = None
         return self.__class__(
-            states, length, forward_masks, backward_masks, debug=self.debug
+            states, length, forward_masks, backward_masks, conditions, debug=self.debug
         )
 
     def extend(self, other: BitSequenceStates) -> None:
@@ -716,8 +725,7 @@ class BitSequence(DiscreteEnv):
         """Returns the total number of states in the environment."""
         return 2 ** (self.seq_size + 1) - 1
 
-    @property
-    def true_dist(self) -> torch.Tensor:
+    def true_dist(self, condition=None) -> torch.Tensor:  # condition is ignored
         """Returns the true probability mass function of the reward distribution."""
         states = self.terminating_states
         rewards = self.reward(states)

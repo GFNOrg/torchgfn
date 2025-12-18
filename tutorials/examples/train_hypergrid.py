@@ -563,7 +563,7 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
                 )
 
 
-def plot_results(env, gflownet, l1_distances, validation_steps):
+def plot_results(env, gflownet, l1_distances, args):
     # Create figure with 3 subplots with proper spacing
     fig = plt.figure(figsize=(15, 5))
     gs = GridSpec(1, 4, width_ratios=[1, 1, 0.1, 1.2])
@@ -574,8 +574,12 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     ax3 = fig.add_subplot(gs[3])
 
     # Get distributions and find global min/max for consistent color scaling
-    true_dist = env.true_dist.reshape(args.height, args.height).cpu().numpy()
-    learned_dist = get_exact_P_T(env, gflownet).reshape(args.height, args.height).numpy()
+    true_dist = env.true_dist()
+    assert isinstance(true_dist, torch.Tensor)
+    true_dist = true_dist.reshape(args.height, args.height).cpu().numpy()
+    learned_dist = (
+        get_exact_P_T(env, gflownet).reshape(args.height, args.height).cpu().numpy()
+    )
 
     # Ensure consistent orientation by transposing
     true_dist = true_dist.T

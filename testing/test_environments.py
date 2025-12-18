@@ -7,7 +7,7 @@ from tensordict import TensorDict
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import Env, NonValidActionsError
-from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym import Box, ConditionalHyperGrid, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.perfect_tree import PerfectBinaryTree
 from gfn.gym.set_addition import SetAddition
@@ -133,6 +133,30 @@ def test_HyperGrid_bwd_step():
         states = env._backward_step(states, failing_actions)
 
 
+def test_ConditionalHyperGrid():
+    NDIM = 2
+    ENV_HEIGHT = 3
+    BATCH_SIZE = 5
+
+    env = ConditionalHyperGrid(ndim=NDIM, height=ENV_HEIGHT, store_all_states=True)
+
+    # Condition Sampling
+    conditions = env.sample_conditions(BATCH_SIZE)
+    assert conditions.shape == (BATCH_SIZE, 1)
+    assert (conditions >= 0).all() and (conditions <= 1).all()
+
+    # Reset with automatic condition sampling
+    states = env.reset(batch_shape=BATCH_SIZE)
+    assert states.conditions is not None
+    assert states.conditions.shape == (BATCH_SIZE, 1)
+
+    # Reset with provided conditions
+    fixed_cond = torch.rand((BATCH_SIZE, 1))
+    states = env.reset(batch_shape=BATCH_SIZE, conditions=fixed_cond)
+    assert states.conditions is not None
+    assert torch.equal(states.conditions, fixed_cond)
+
+
 def test_DiscreteEBM_fwd_step():
     NDIM = 2
     BATCH_SIZE = 4
@@ -256,12 +280,16 @@ def test_box_fwd_step(delta: float):
 
 
 @pytest.mark.parametrize("ndim", [2, 3, 4])
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "ConditionalHyperGrid"]
+)
 def test_states_getitem(ndim: int, env_name: str):
     ND_BATCH_SHAPE = (2, 3)
 
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=ndim, height=8, debug=True)
+    elif env_name == "ConditionalHyperGrid":
+        env = ConditionalHyperGrid(ndim=ndim, height=8, debug=True)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=ndim, debug=True)
     elif env_name == "Box":
@@ -318,8 +346,9 @@ def test_get_grid():
 
     # log(Z) should equal the environment log_partition.
     Z = rewards.sum()
-    assert env.log_partition is not None
-    assert np.isclose(Z.log().item(), env.log_partition)
+    true_logZ = env.log_partition()
+    assert true_logZ is not None
+    assert np.isclose(Z.log().item(), true_logZ)
 
     # State indices of the grid are ordered from 0:HEIGHT**2.
     assert (env.get_states_indices(all_states).ravel() == torch.arange(HEIGHT**2)).all()

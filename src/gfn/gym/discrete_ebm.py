@@ -133,20 +133,27 @@ class DiscreteEBM(DiscreteEnv):
         states.backward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == 1
 
     def make_random_states(
-        self, batch_shape: Tuple, device: torch.device | None = None, debug: bool = False
+        self,
+        batch_shape: Tuple,
+        conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> DiscreteStates:
         """Generates random states tensor of shape `(*batch_shape, ndim)`.
 
         Args:
             batch_shape: The shape of the batch.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
+            debug: If True, emit States with debug guards (not compile-friendly).
 
         Returns:
             A `DiscreteStates` object with random states.
         """
         device = self.device if device is None else device
         tensor = torch.randint(-1, 2, batch_shape + (self.ndim,), device=device)
-        return self.States(tensor, debug=debug)
+        return self.States(tensor, conditions=conditions, debug=debug)
 
     def is_exit_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """Determines if the actions are exit actions.
@@ -299,14 +306,12 @@ class DiscreteEBM(DiscreteEnv):
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
         return self.states_from_tensor(all_states)
 
-    @property
-    def true_dist(self) -> torch.Tensor:
+    def true_dist(self, condition=None) -> torch.Tensor:  # condition is ignored
         """Returns the true probability mass function of the reward distribution."""
         true_dist = self.reward(self.terminating_states)
         return true_dist / true_dist.sum()
 
-    @property
-    def log_partition(self) -> float:
+    def log_partition(self, condition=None) -> float:  # condition is ignored
         """Returns the log partition of the reward function."""
         log_rewards = self.log_reward(self.terminating_states)
         return torch.logsumexp(log_rewards, -1).item()

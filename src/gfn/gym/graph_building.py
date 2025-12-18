@@ -292,6 +292,7 @@ class GraphBuilding(GraphEnv):
     def make_random_states(
         self,
         batch_shape: Tuple,
+        conditions: torch.Tensor | None = None,
         device: torch.device | None = None,
         debug: bool = False,
     ) -> GraphStates:
@@ -299,6 +300,8 @@ class GraphBuilding(GraphEnv):
 
         Args:
             batch_shape: The shape of the batch.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
             debug: If True, emit States with debug guards (not compile-friendly).
 
@@ -342,7 +345,7 @@ class GraphBuilding(GraphEnv):
             )
             data_array.flat[i] = data
 
-        return self.States(data_array, device=device, debug=debug)
+        return self.States(data_array, conditions=conditions, device=device, debug=debug)
 
     def make_states_class(self) -> type[GraphStates]:
         """Creates a `GraphStates` class for this environment."""
@@ -586,6 +589,7 @@ class GraphBuildingOnEdges(GraphBuilding):
     def make_random_states(
         self,
         batch_shape: Tuple,
+        conditions: torch.Tensor | None = None,
         device: torch.device | None = None,
         debug: bool = False,
     ) -> GraphStates:
@@ -593,6 +597,8 @@ class GraphBuildingOnEdges(GraphBuilding):
 
         Args:
             batch_shape: Shape of the batch dimensions.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
             debug: If True, emit States with debug guards (not compile-friendly).
 
@@ -628,7 +634,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
             data_array.flat[i] = data
 
-        return self.States(data_array, device=device, debug=debug)
+        return self.States(data_array, conditions=conditions, device=device, debug=debug)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False
