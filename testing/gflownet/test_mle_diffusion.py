@@ -4,7 +4,16 @@ import torch
 
 from gfn.estimators import PinnedBrownianMotionBackward, PinnedBrownianMotionForward
 from gfn.gflownet.mle import MLEDiffusion
+from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.utils.modules import DiffusionFixedBackwardModule
+
+ENV = DiffusionSampling(
+    target_str="gmm2",
+    target_kwargs=None,
+    num_discretization_steps=100,
+    device=torch.device("cpu"),
+    debug=True,
+)
 
 
 class ZeroDriftModule(torch.nn.Module):
@@ -64,7 +73,7 @@ def test_mle_loss_fixed_variance_zero_terminal():
     )
 
     batch = torch.zeros(4, s_dim)  # terminal states near (0,0)
-    loss = trainer.loss(batch, exploration_std=0.0)
+    loss = trainer.loss(ENV, batch, exploration_std=0.0)
 
     expected_logp = -0.5 * s_dim * math.log(2 * math.pi)  # log p for zero increment
     expected_loss = -expected_logp  # num_steps=1, loss = -logpf_sum.mean()
@@ -89,9 +98,8 @@ def test_mle_loss_learned_variance_zero_terminal():
         pb_scale_range=0.1,
         learn_variance=True,
     )
-
     batch = torch.zeros(3, s_dim)
-    loss = trainer.loss(batch, exploration_std=0.0)
+    loss = trainer.loss(ENV, batch, exploration_std=0.0)
 
     expected_logp = -0.5 * s_dim * math.log(2 * math.pi)
     expected_loss = -expected_logp
@@ -159,6 +167,6 @@ def test_forward_logprob_zero_increment_matches_formula():
     # std = exp(0) * sqrt(dt) * sqrt(t_scale) = 1; logp = -0.5 * s_dim * log(2π)
     expected_logp = -0.5 * s_dim * math.log(2 * math.pi)
     expected_loss = -expected_logp
-    loss = trainer.loss(batch, exploration_std=0.0)
+    loss = trainer.loss(ENV, batch, exploration_std=0.0)
     assert torch.isfinite(loss)
     assert torch.allclose(loss, torch.tensor(expected_loss), atol=1e-6)

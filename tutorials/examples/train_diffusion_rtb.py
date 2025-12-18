@@ -108,9 +108,7 @@ def get_exploration_std(
     # Tensor ops only (torch.compile-friendly): no Python branching on iteration.
     iter_t = torch.tensor(iteration, device=device, dtype=dtype)
     # Clamp negatives to zero to avoid Python-side checks/overhead.
-    factor_t = torch.clamp(
-        torch.tensor(exploration_factor, device=device, dtype=dtype), min=0.0
-    )
+    factor_t = torch.clamp(torch.tensor(exploration_factor, device=device, dtype=dtype), min=0.0)
     start_t = torch.tensor(warm_down_start, device=device, dtype=dtype)
     end_t = torch.tensor(warm_down_end, device=device, dtype=dtype)
 
@@ -271,7 +269,7 @@ def pretrain_prior(args: argparse.Namespace, device: torch.device, s_dim: int) -
         with torch.no_grad():
             batch = env_prior.target.sample(args.batch_size)
         optimizer.zero_grad()
-        loss = mle_trainer.loss(batch, exploration_std=args.pretrain_exploration_factor)
+        loss = mle_trainer.loss(env_prior, batch, exploration_std=args.pretrain_exploration_factor)
         loss.backward()
         if __debug__:
             total_norm, has_nan = get_debug_metrics(pf_prior)
@@ -424,9 +422,7 @@ def main(args: argparse.Namespace) -> None:
         {"params": gflownet.pf.parameters(), "lr": args.lr},
         {"params": gflownet.logz_parameters(), "lr": args.lr_logz},
     ]
-    optimizer = torch.optim.Adam(
-        param_groups, lr=args.lr, weight_decay=args.weight_decay
-    )
+    optimizer = torch.optim.Adam(param_groups, lr=args.lr, weight_decay=args.weight_decay)
 
     for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
         trajectories = sampler.sample_trajectories(

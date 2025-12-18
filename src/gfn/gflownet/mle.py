@@ -44,6 +44,14 @@ from typing import Any, Optional
 
 import torch
 
+try:  # torch._dynamo may be absent or flagged private by linters
+    from torch._dynamo import disable as dynamo_disable
+except Exception:  # pragma: no cover
+
+    def dynamo_disable(fn):  # type: ignore[return-type]
+        return fn
+
+
 from gfn.env import Env
 from gfn.estimators import (
     PinnedBrownianMotionBackward,
@@ -53,6 +61,11 @@ from gfn.gflownet.base import GFlowNet
 from gfn.samplers import Sampler
 from gfn.states import States
 from gfn.utils.modules import DiffusionFixedBackwardModule
+
+# Relative tolerance for detecting initial/terminal states in diffusion trajectories.
+# Must be synchronized with TERMINAL_TIME_EPS in gfn.gym.diffusion_sampling and
+# _DIFFUSION_TERMINAL_TIME_EPS in gfn.estimators.
+_DIFFUSION_TERMINAL_TIME_EPS = 1e-2
 
 
 class MLEDiffusion(GFlowNet):
@@ -126,7 +139,9 @@ class MLEDiffusion(GFlowNet):
 
     def loss(
         self,
+        env: Env,
         terminal_states: Any,
+        recalculate_all_logprobs: bool = True,
         *,
         exploration_std: float | torch.Tensor = 0.0,
     ) -> torch.Tensor:
@@ -139,44 +154,52 @@ class MLEDiffusion(GFlowNet):
         Returns:
             Scalar loss (mean reduction).
         """
+        del env  # unused
+        del recalculate_all_logprobs  # unused
         device, dtype, s_curr = self._extract_samples(terminal_states)
 
         bsz, dim = s_curr.shape
         assert dim == self.s_dim, f"Expected s_dim={self.s_dim}, got {dim}"
         dt = self.dt
-        base_std_fixed = self.sigma * math.sqrt(dt) * math.sqrt(self.t_scale)
+
+        # Tolerance for detecting initial state (t ≈ 0). Uses the module-level constant
+        # which must stay synchronized with TERMINAL_TIME_EPS in diffusion_sampling.py
+        # and _DIFFUSION_TERMINAL_TIME_EPS in estimators.py.
+        eps_s0 = dt * _DIFFUSION_TERMINAL_TIME_EPS
+
+        sqrt_dt_t_scale = math.sqrt(dt * self.t_scale)
+        base_std_fixed = self.sigma * sqrt_dt_t_scale
         log_2pi = math.log(2 * math.pi)
 
         logpf_sum = torch.zeros(bsz, device=device, dtype=dtype)
-        exploration_std_t = torch.as_tensor(
-            exploration_std, device=device, dtype=dtype
-        ).clamp(min=0.0)
+        exploration_std_t = torch.as_tensor(exploration_std, device=device, dtype=dtype).clamp(
+            min=0.0
+        )
+        exploration_var = exploration_std_t**2
+
+        # Precompute time grids to avoid per-step allocations.
+        all_t_fwd = torch.linspace(1.0 - dt, 0.0, self.num_steps, device=device, dtype=dtype)
+        all_t_curr = torch.linspace(1.0, dt, self.num_steps, device=device, dtype=dtype)
 
         for i in range(self.num_steps):
             # Times: forward transition index t_fwd corresponds to s_prev -> s_curr.
-            t_fwd = torch.full((bsz, 1), 1.0 - (i + 1) * dt, device=device, dtype=dtype)
-            t_curr = torch.full((bsz, 1), 1.0 - i * dt, device=device, dtype=dtype)
+            t_fwd = all_t_fwd[i].expand(bsz, 1)
+            t_curr = all_t_curr[i].expand(bsz, 1)
 
             # Backward sampler: Brownian bridge base + optional PB corrections.
             pb_inp = torch.cat([s_curr, t_curr], dim=1)
             pb_out = self.pb.module(pb_inp)
 
-            is_s0 = (t_curr - dt) < dt * 1e-2
             # Base Brownian bridge mean/std toward 0 at t=0.
-            base_mean = torch.where(
-                is_s0,
-                torch.zeros_like(s_curr),
-                s_curr * (1.0 - dt / t_curr),
-            )
-            base_std = torch.where(
-                is_s0,
-                torch.zeros_like(t_curr),
-                self.sigma * (dt * (t_curr - dt) / t_curr).sqrt(),
-            )
+            is_s0 = (t_curr - dt) < eps_s0
+            not_s0 = (~is_s0).float()
+
+            base_mean = s_curr * (1.0 - dt / t_curr) * not_s0
+            base_std = self.sigma * (dt * (t_curr - dt) / t_curr).sqrt() * not_s0
 
             # Learned corrections (PB): mean_corr, optional log-std corr.
             mean_corr = pb_out[..., :dim] * self.pb.pb_scale_range
-            if pb_out.shape[-1] == dim + 1:
+            if self.pb.n_variance_outputs > 0:
                 log_std_corr = pb_out[..., [-1]] * self.pb.pb_scale_range
                 corr_std = torch.exp(log_std_corr)
             else:
@@ -192,27 +215,20 @@ class MLEDiffusion(GFlowNet):
             increment = s_curr - s_prev
 
             # Case where module outputs learned variance.
-            if module_out.shape[-1] == dim + 1:
+            if self.pf.n_variance_outputs > 0:
                 drift = module_out[..., :dim]
                 log_std = module_out[..., [-1]]
-                std = torch.exp(log_std) * math.sqrt(dt) * math.sqrt(self.t_scale)
-                if exploration_std_t.item() > 0:
-                    std = torch.sqrt(std**2 + exploration_std_t**2)
+                std = torch.exp(log_std) * sqrt_dt_t_scale
+                std = torch.sqrt(std**2 + exploration_var)
                 diff = increment - dt * drift
-                logpf_step = -0.5 * ((diff / std) ** 2 + 2 * std.log() + log_2pi).sum(
-                    dim=1
-                )
+                logpf_step = -0.5 * ((diff / std) ** 2 + 2 * std.log() + log_2pi).sum(dim=1)
             # Fixed variance case.
             else:
                 drift = module_out
-                std = base_std_fixed
-                if exploration_std_t.item() > 0:
-                    std = math.sqrt(
-                        base_std_fixed**2 + float(exploration_std_t.item()) ** 2
-                    )
+                std = torch.sqrt(base_std_fixed**2 + exploration_var)
                 diff = increment - dt * drift
                 logpf_step = -0.5 * ((diff / std) ** 2).sum(dim=1) - 0.5 * dim * (
-                    log_2pi + 2 * math.log(std)
+                    log_2pi + 2 * torch.log(std)
                 )
 
             logpf_sum += logpf_step
@@ -223,8 +239,16 @@ class MLEDiffusion(GFlowNet):
 
         # TODO: Use included loss reduction helpers.
         loss = -(logpf_sum.mean() if self.reduction == "mean" else logpf_sum.sum())
+        if self.debug:
+            self._assert_no_nan(logpf_sum)
         return loss
 
+    @dynamo_disable
+    def _assert_no_nan(self, logpf_sum: torch.Tensor) -> None:
+        if torch.isnan(logpf_sum).any():
+            raise ValueError("NaNs in logpf_sum during MLE loss.")
+
+    @dynamo_disable
     def _extract_samples(
         self, terminal_states: Any
     ) -> tuple[torch.device, torch.dtype, torch.Tensor]:

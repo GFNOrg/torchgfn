@@ -19,6 +19,14 @@ from gfn.utils.common import filter_kwargs_for_callable, temporarily_set_seed
 # Lightweight typing alias for the target registry entries.
 TargetEntry = tuple[type["BaseTarget"], dict[str, Any]]
 
+# Relative tolerance (scaled by dt) for detecting initial/terminal states in diffusion
+# trajectories. This ensures consistent boundary detection across the environment,
+# estimators, and probability calculations. The tolerance is applied as:
+#   - Initial state: t < dt * TERMINAL_TIME_EPS
+#   - Terminal state: t >= 1.0 - dt * TERMINAL_TIME_EPS
+#   - Exit action trigger: t + dt >= 1.0 - dt * TERMINAL_TIME_EPS (next step reaches terminal)
+TERMINAL_TIME_EPS = 1e-2
+
 
 ###############################
 ### Target energy functions ###
@@ -195,9 +203,7 @@ class SimpleGaussianMixture(BaseTarget):
 
         rng = np.random.default_rng(seed)
         if locs is None:
-            locs = rng.uniform(
-                mean_val_range[0], mean_val_range[1], size=(num_components, dim)
-            )
+            locs = rng.uniform(mean_val_range[0], mean_val_range[1], size=(num_components, dim))
         elif isinstance(locs, np.ndarray):
             assert locs.shape == (num_components, dim)
             assert (locs >= mean_val_range[0]).all() and (
@@ -219,12 +225,8 @@ class SimpleGaussianMixture(BaseTarget):
         print("+ num_components: ", num_components)
         print("+ mixture_weights: ", mixture_weights)
         for i, (loc, cov) in enumerate(zip(locs, covariances)):
-            loc_str = np.array2string(loc, precision=2, separator=", ").replace(
-                "\n", " "
-            )
-            cov_str = np.array2string(cov, precision=2, separator=", ").replace(
-                "\n", " "
-            )
+            loc_str = np.array2string(loc, precision=2, separator=", ").replace("\n", " ")
+            cov_str = np.array2string(cov, precision=2, separator=", ").replace("\n", " ")
             print(f"\tComponent {i+1}: loc={loc_str}, cov={cov_str}")
 
         # Convert to torch tensors
@@ -316,9 +318,7 @@ class SimpleGaussianMixture(BaseTarget):
         assert self.plot_border is not None, "Visualization requires a plot border."
 
         if self.dim != 2:
-            raise ValueError(
-                f"Visualization is only supported for 2D, but got {self.dim}D"
-            )
+            raise ValueError(f"Visualization is only supported for 2D, but got {self.dim}D")
 
         fig = plt.figure()
         ax = fig.add_subplot()
@@ -343,24 +343,16 @@ class SimpleGaussianMixture(BaseTarget):
         ax.contourf(x, y, pdf_values, levels=20)  # , cmap='viridis')
         if samples is not None:
             plt.scatter(
-                samples[:max_n_samples, 0].clamp(
-                    self.plot_border[0], self.plot_border[1]
-                ),
-                samples[:max_n_samples, 1].clamp(
-                    self.plot_border[2], self.plot_border[3]
-                ),
+                samples[:max_n_samples, 0].clamp(self.plot_border[0], self.plot_border[1]),
+                samples[:max_n_samples, 1].clamp(self.plot_border[2], self.plot_border[3]),
                 c="r",
                 alpha=0.5,
                 marker="x",
             )
 
         # Add dashed lines at 0
-        ax.axhline(
-            y=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="y=0"
-        )
-        ax.axvline(
-            x=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="x=0"
-        )
+        ax.axhline(y=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="y=0")
+        ax.axvline(x=0, color="white", linestyle="--", linewidth=1, alpha=0.7, label="x=0")
 
         # Add dashed lines at each mode
         modes = self.distribution.component_distribution.loc
@@ -399,8 +391,8 @@ class SimpleGaussianMixture(BaseTarget):
         if show:
             plt.show()
         else:
-            os.makedirs("viz", exist_ok=True)
-            plt.savefig(f"viz/{prefix}simple_gmm.png")
+            os.makedirs("output", exist_ok=True)
+            plt.savefig(f"output/{prefix}simple_gmm.png")
 
         plt.close()
 
@@ -423,16 +415,12 @@ class Grid25GaussianMixture(BaseTarget):
             dtype=torch.get_default_dtype(),
         )
         mix = D.Categorical(
-            probs=torch.full(
-                (self.locs.shape[0],), 1.0 / self.locs.shape[0], device=device
-            )
+            probs=torch.full((self.locs.shape[0],), 1.0 / self.locs.shape[0], device=device)
         )
         comp = D.Independent(D.Normal(self.locs, scale * torch.ones_like(self.locs)), 1)
         self.gmm = D.MixtureSameFamily(mix, comp)
 
-        super().__init__(
-            device=device, dim=dim, n_gt_xs=2048, seed=seed, plot_border=plot_border
-        )
+        super().__init__(device=device, dim=dim, n_gt_xs=2048, seed=seed, plot_border=plot_border)
 
     def log_reward(self, x: torch.Tensor) -> torch.Tensor:
         return self.gmm.log_prob(x).flatten()
@@ -471,8 +459,8 @@ class Grid25GaussianMixture(BaseTarget):
         if show:
             plt.show()
         else:
-            os.makedirs("viz", exist_ok=True)
-            fig.savefig(f"viz/{prefix}gmm25.png")
+            os.makedirs("output", exist_ok=True)
+            fig.savefig(f"output/{prefix}gmm25.png")
         plt.close()
 
 
@@ -515,9 +503,7 @@ class Posterior9of25GaussianMixture(BaseTarget):
         comp = D.Independent(D.Normal(locs, scale * torch.ones_like(locs)), 1)
         self.posterior = D.MixtureSameFamily(mix, comp)
 
-        super().__init__(
-            device=device, dim=dim, n_gt_xs=2048, seed=seed, plot_border=plot_border
-        )
+        super().__init__(device=device, dim=dim, n_gt_xs=2048, seed=seed, plot_border=plot_border)
 
     def log_reward(self, x: torch.Tensor) -> torch.Tensor:
         # r(x) = p_post(x) / p_prior(x)
@@ -557,8 +543,8 @@ class Posterior9of25GaussianMixture(BaseTarget):
         if show:
             plt.show()
         else:
-            os.makedirs("viz", exist_ok=True)
-            fig.savefig(f"viz/{prefix}posterior9of25.png")
+            os.makedirs("output", exist_ok=True)
+            fig.savefig(f"output/{prefix}posterior9of25.png")
         plt.close()
 
 
@@ -586,9 +572,7 @@ class Funnel(BaseTarget):
             torch.tensor([0.0], device=device, dtype=dtype),
             torch.tensor([std], device=device, dtype=dtype),
         )
-        super().__init__(
-            device=device, dim=dim, n_gt_xs=10_000, plot_border=10.0, seed=seed
-        )
+        super().__init__(device=device, dim=dim, n_gt_xs=10_000, plot_border=10.0, seed=seed)
 
     def log_reward(self, x: torch.Tensor) -> torch.Tensor:
         """Log-density of Neal's funnel distribution.
@@ -604,9 +588,7 @@ class Funnel(BaseTarget):
 
         log_sigma = 0.5 * x[:, 0:1]
         sigma2 = torch.exp(x[:, 0:1])
-        neg_log_prob_other = (
-            0.5 * np.log(2 * np.pi) + log_sigma + 0.5 * x[:, 1:] ** 2 / sigma2
-        )
+        neg_log_prob_other = 0.5 * np.log(2 * np.pi) + log_sigma + 0.5 * x[:, 1:] ** 2 / sigma2
         log_prob_other = torch.sum(-neg_log_prob_other, dim=-1)
 
         log_prob = log_prob_x0 + log_prob_other
@@ -662,8 +644,8 @@ class Funnel(BaseTarget):
         if show:
             plt.show()
         else:
-            os.makedirs("viz", exist_ok=True)
-            fig.savefig(f"viz/{prefix}funnel.png")
+            os.makedirs("output", exist_ok=True)
+            fig.savefig(f"output/{prefix}funnel.png")
 
         plt.close()
 
@@ -686,9 +668,7 @@ class ManyWell(BaseTarget):
         device: torch.device = torch.device("cpu"),
         seed: int = 0,
     ) -> None:
-        assert (
-            dim % 2 == 0
-        ), "ManyWellTarget requires an even dimension (pairs of coordinates)."
+        assert dim % 2 == 0, "ManyWellTarget requires an even dimension (pairs of coordinates)."
 
         # Simple mixture proposal for x1: 3 equally weighted Normals
         self.component_mix = torch.tensor([1 / 3, 1 / 3, 1 / 3], device=device)
@@ -749,9 +729,7 @@ class ManyWell(BaseTarget):
         return float(1.2 * k)  # small safety margin
 
     @staticmethod
-    def _rejection_sampling_x1(
-        n_samples: int, proposal: D.Distribution, k: float
-    ) -> torch.Tensor:
+    def _rejection_sampling_x1(n_samples: int, proposal: D.Distribution, k: float) -> torch.Tensor:
         # Basic rejection sampler with vectorized batches and refill loop
         collected: list[torch.Tensor] = []
         remaining = n_samples
@@ -822,8 +800,8 @@ class ManyWell(BaseTarget):
         if show:
             plt.show()
         else:
-            os.makedirs("viz", exist_ok=True)
-            fig.savefig(f"viz/{prefix}manywell.png")
+            os.makedirs("output", exist_ok=True)
+            fig.savefig(f"output/{prefix}manywell.png")
 
         plt.close()
 
@@ -932,7 +910,24 @@ class DiffusionSampling(Env):
                 When time is close enought to 0.0 (considering floating point errors),
                 the state is s0.
                 """
-                return (self.tensor[..., -1] - 0.0) < env.dt * 1e-2
+                eps = env.dt * TERMINAL_TIME_EPS
+                return self.tensor[..., -1] < eps
+
+            @property
+            def is_sink_state(self) -> torch.Tensor:
+                """Return True when time is effectively 1.0 or the sink padding.
+
+                We treat two cases as sink:
+                - Physical terminal time: t >= 1.0 - eps.
+                - Padding/exit sink states produced by `make_sink_states`, which use
+                  non-finite sentinel values (e.g., -inf). Using non-finite check keeps
+                  masks aligned for padded rows.
+                """
+                time = self.tensor[..., -1]
+                eps = env.dt * TERMINAL_TIME_EPS
+                is_terminal_time = time >= (1.0 - eps)
+                is_padding_sink = ~torch.isfinite(time)
+                return is_terminal_time | is_padding_sink
 
         return DiffusionSamplingStates
 
@@ -962,6 +957,19 @@ class DiffusionSampling(Env):
         Returns:
             The next states.
         """
+        if self.debug:
+
+            eps = self.dt * TERMINAL_TIME_EPS
+            # Force exit when the next step would reach/exceed terminal time.
+            terminal_mask = (states.tensor[..., -1] + self.dt) >= (1.0 - eps)
+            if terminal_mask.any():
+                raise AssertionError(
+                    f"Estimator failed to output exit actions for {terminal_mask.sum().item()} "
+                    f"states at terminal time. This will cause mask misalignment in "
+                    f"get_trajectory_pbs(). Fix the estimator's exit condition to match "
+                    f"TERMINAL_TIME_EPS={TERMINAL_TIME_EPS}."
+                )
+
         next_states_tensor = states.tensor.clone()
         next_states_tensor[..., :-1] = next_states_tensor[..., :-1] + actions.tensor
         next_states_tensor[..., -1] = next_states_tensor[..., -1] + self.dt
@@ -998,15 +1006,16 @@ class DiffusionSampling(Env):
             True if the actions are valid, False otherwise.
         """
         time = states.tensor[..., -1].flatten()[0].item()
-        # TODO: support randomized discretization
+        eps = self.dt * TERMINAL_TIME_EPS
+        # TODO: support randomized discretization.
         assert (
             states.tensor[..., -1] == time
         ).all(), "Time must be the same for all states in the batch"
 
-        if not backward and time == 1.0:  # Terminate if time == 1.0 for forward steps
+        if not backward and time >= (1.0 - eps):  # Terminate if near 1.0 for forward steps
             sf = cast(torch.Tensor, self.sf)
             return bool((actions.tensor == sf[:-1]).all().item())
-        elif backward and time == 0.0:  # Return to s0 if time == 0.0 for backward steps
+        elif backward and time <= eps:  # Return to s0 when near 0.0 for backward steps
             s0 = cast(torch.Tensor, self.s0)
             return bool((actions.tensor == s0[:-1]).all().item())
         else:
@@ -1044,17 +1053,11 @@ class DiffusionSampling(Env):
         elbo = log_weights.mean().item()
 
         # EUBO, if the ground truth samples are available
-        if (
-            bwd_log_rewards is not None
-            and bwd_log_pfs is not None
-            and bwd_log_pbs is not None
-        ):
+        if bwd_log_rewards is not None and bwd_log_pfs is not None and bwd_log_pbs is not None:
             gt_bsz = bwd_log_pfs.shape[1]
             assert gt_bsz == bwd_log_pbs.shape[1] == bwd_log_rewards.shape[0]
             assert bwd_log_pfs.ndim == bwd_log_pbs.ndim == 2
-            eubo = (
-                (bwd_log_rewards + bwd_log_pbs.sum(0) - bwd_log_pfs.sum(0)).mean().item()
-            )
+            eubo = (bwd_log_rewards + bwd_log_pbs.sum(0) - bwd_log_pfs.sum(0)).mean().item()
         else:
             eubo = float("nan")
 

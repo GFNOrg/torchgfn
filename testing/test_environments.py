@@ -7,12 +7,16 @@ from tensordict import TensorDict
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import Env, NonValidActionsError
+from gfn.estimators import PinnedBrownianMotionBackward, PinnedBrownianMotionForward
 from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.perfect_tree import PerfectBinaryTree
 from gfn.gym.set_addition import SetAddition
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
+from gfn.samplers import Sampler
 from gfn.states import GraphStates
+from gfn.utils.modules import DiffusionFixedBackwardModule, DiffusionPISGradNetForward
 
 
 # Utilities.
@@ -138,9 +142,7 @@ def test_DiscreteEBM_fwd_step():
     BATCH_SIZE = 4
 
     env = DiscreteEBM(ndim=NDIM, debug=True)
-    states = env.reset(
-        batch_shape=BATCH_SIZE, seed=1234
-    )  # Instantiate a batch of initial states
+    states = env.reset(batch_shape=BATCH_SIZE, seed=1234)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, NDIM)
 
     # Trying the step function starting from 3 instances of s_0
@@ -208,9 +210,7 @@ def test_box_fwd_step(delta: float):
     ]
 
     for failing_actions_list in failing_actions_lists_at_s0:
-        actions = env.actions_from_tensor(
-            format_tensor(failing_actions_list, discrete=False)
-        )
+        actions = env.actions_from_tensor(format_tensor(failing_actions_list, discrete=False))
         with pytest.raises(NonValidActionsError):
             states = env._step(states, actions)
 
@@ -230,9 +230,7 @@ def test_box_fwd_step(delta: float):
             actions_tensor = torch.tensor([0.2, 0.3, 0.4]) * (B - A) + A
             actions_tensor *= np.pi / 2
             actions_tensor = (
-                torch.stack(
-                    [torch.cos(actions_tensor), torch.sin(actions_tensor)], dim=1
-                )
+                torch.stack([torch.cos(actions_tensor), torch.sin(actions_tensor)], dim=1)
                 * env.delta
             )
             actions_tensor[B - A < 0] = torch.tensor([-float("inf"), -float("inf")])
@@ -350,9 +348,7 @@ def test_graph_env():
                     GraphActions.NODE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
-                    GraphActions.NODE_INDEX_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
+                    GraphActions.NODE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
@@ -402,9 +398,7 @@ def test_graph_env():
                     GraphActions.NODE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
-                    GraphActions.NODE_INDEX_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
+                    GraphActions.NODE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
                     GraphActions.EDGE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
@@ -418,21 +412,11 @@ def test_graph_env():
     actions = action_cls.from_tensor_dict(
         TensorDict(
             {
-                GraphActions.ACTION_TYPE_KEY: torch.full(
-                    (BATCH_SIZE,), GraphActionType.EXIT
-                ),
-                GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
-                GraphActions.NODE_INDEX_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
-                GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
-                GraphActions.EDGE_INDEX_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
+                GraphActions.ACTION_TYPE_KEY: torch.full((BATCH_SIZE,), GraphActionType.EXIT),
+                GraphActions.NODE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.NODE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.EDGE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.EDGE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
             },
             batch_size=BATCH_SIZE,
         )
@@ -451,12 +435,8 @@ def test_graph_env():
                     GraphActions.ACTION_TYPE_KEY: torch.full(
                         (BATCH_SIZE,), GraphActionType.ADD_EDGE
                     ),
-                    GraphActions.NODE_CLASS_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
-                    GraphActions.NODE_INDEX_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.NODE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
@@ -475,12 +455,8 @@ def test_graph_env():
                     GraphActions.ACTION_TYPE_KEY: torch.full(
                         (BATCH_SIZE,), GraphActionType.ADD_EDGE
                     ),
-                    GraphActions.NODE_CLASS_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
-                    GraphActions.NODE_INDEX_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.NODE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
@@ -501,16 +477,10 @@ def test_graph_env():
                     GraphActions.ACTION_TYPE_KEY: torch.full(
                         (BATCH_SIZE,), GraphActionType.ADD_NODE
                     ),
-                    GraphActions.NODE_CLASS_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
+                    GraphActions.NODE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
                     GraphActions.NODE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
-                    GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
-                    GraphActions.EDGE_INDEX_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
+                    GraphActions.EDGE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.EDGE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -523,21 +493,11 @@ def test_graph_env():
     actions = action_cls.from_tensor_dict(
         TensorDict(
             {
-                GraphActions.ACTION_TYPE_KEY: torch.full(
-                    (BATCH_SIZE,), GraphActionType.ADD_NODE
-                ),
-                GraphActions.NODE_CLASS_KEY: torch.randint(
-                    0, 10, (BATCH_SIZE,), dtype=torch.long
-                ),
-                GraphActions.NODE_INDEX_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
-                GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
-                GraphActions.EDGE_INDEX_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
+                GraphActions.ACTION_TYPE_KEY: torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
+                GraphActions.NODE_CLASS_KEY: torch.randint(0, 10, (BATCH_SIZE,), dtype=torch.long),
+                GraphActions.NODE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.EDGE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.EDGE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
             },
             batch_size=BATCH_SIZE,
         )
@@ -555,15 +515,9 @@ def test_graph_env():
                     GraphActions.NODE_CLASS_KEY: torch.randint(
                         0, 10, (BATCH_SIZE,), dtype=torch.long
                     ),
-                    GraphActions.NODE_INDEX_KEY: torch.ones(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
-                    GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
-                    GraphActions.EDGE_INDEX_KEY: torch.zeros(
-                        (BATCH_SIZE,), dtype=torch.long
-                    ),
+                    GraphActions.NODE_INDEX_KEY: torch.ones((BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.EDGE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                    GraphActions.EDGE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
                 },
                 batch_size=BATCH_SIZE,
             )
@@ -574,21 +528,11 @@ def test_graph_env():
     actions = action_cls.from_tensor_dict(
         TensorDict(
             {
-                GraphActions.ACTION_TYPE_KEY: torch.full(
-                    (BATCH_SIZE,), GraphActionType.ADD_NODE
-                ),
-                GraphActions.NODE_CLASS_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
-                GraphActions.NODE_INDEX_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
-                GraphActions.EDGE_CLASS_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
-                GraphActions.EDGE_INDEX_KEY: torch.zeros(
-                    (BATCH_SIZE,), dtype=torch.long
-                ),
+                GraphActions.ACTION_TYPE_KEY: torch.full((BATCH_SIZE,), GraphActionType.ADD_NODE),
+                GraphActions.NODE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.NODE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.EDGE_CLASS_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
+                GraphActions.EDGE_INDEX_KEY: torch.zeros((BATCH_SIZE,), dtype=torch.long),
             },
             batch_size=BATCH_SIZE,
         )
@@ -611,17 +555,13 @@ def test_set_addition_fwd_step():
     # Add item 0 and 1
     actions = env.actions_from_tensor(format_tensor([0, 1]))
     states = env._step(states, actions)
-    expected_states = torch.tensor(
-        [[1, 0, 0, 0], [0, 1, 0, 0]], dtype=torch.get_default_dtype()
-    )
+    expected_states = torch.tensor([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=torch.get_default_dtype())
     assert torch.equal(states.tensor, expected_states)
 
     # Add item 2 and 3
     actions = env.actions_from_tensor(format_tensor([2, 3]))
     states = env._step(states, actions)
-    expected_states = torch.tensor(
-        [[1, 0, 1, 0], [0, 1, 0, 1]], dtype=torch.get_default_dtype()
-    )
+    expected_states = torch.tensor([[1, 0, 1, 0], [0, 1, 0, 1]], dtype=torch.get_default_dtype())
     assert torch.equal(states.tensor, expected_states)
 
     # Try adding existing items (invalid)
@@ -632,9 +572,7 @@ def test_set_addition_fwd_step():
     # Add item 3 and 0
     actions = env.actions_from_tensor(format_tensor([3, 0]))
     states = env._step(states, actions)
-    expected_states = torch.tensor(
-        [[1, 0, 1, 1], [1, 1, 0, 1]], dtype=torch.get_default_dtype()
-    )
+    expected_states = torch.tensor([[1, 0, 1, 1], [1, 1, 0, 1]], dtype=torch.get_default_dtype())
     assert torch.equal(states.tensor, expected_states)  # Now has 3 items
 
     # Try adding another item (invalid, max_items reached)
@@ -799,9 +737,7 @@ class _DummyEnv(Env):
     def backward_step(self, states, actions):  # pragma: no cover - not used
         return states
 
-    def is_action_valid(
-        self, states, actions, backward: bool = False
-    ) -> bool:  # noqa: ARG002
+    def is_action_valid(self, states, actions, backward: bool = False) -> bool:  # noqa: ARG002
         return True
 
 
@@ -893,3 +829,95 @@ def test_env_default_sf_bool_dtype():
     assert env.sf.dtype == torch.bool
     assert isinstance(env.sf, torch.Tensor)
     assert torch.equal(env.sf, torch.zeros(state_shape, dtype=torch.bool))
+
+
+def test_diffusion_trajectory_mask_alignment():
+    """Test that diffusion trajectory masks align correctly for PB calculation.
+
+    This verifies that the estimator's exit action detection matches the environment's
+    terminal state detection, ensuring valid_states and valid_actions have the same
+    count in get_trajectory_pbs. A mismatch would cause an AssertionError.
+
+    The key invariant is: for each trajectory step where we compute PB, we need
+    exactly one valid state (at t+1) and one valid action (at t). Exit actions
+    must be properly marked so they're excluded from the action mask.
+    """
+    # Use small config for fast testing.
+    num_steps = 8
+    batch_size = 16
+    s_dim = 2
+
+    env = DiffusionSampling(
+        target_str="gmm2",
+        target_kwargs={"seed": 42},
+        num_discretization_steps=num_steps,
+        device=torch.device("cpu"),
+    )
+
+    pf_module = DiffusionPISGradNetForward(
+        s_dim=s_dim,
+        harmonics_dim=16,
+        t_emb_dim=16,
+        s_emb_dim=16,
+        hidden_dim=32,
+        joint_layers=1,
+    )
+    pb_module = DiffusionFixedBackwardModule(s_dim=s_dim)
+
+    pf_estimator = PinnedBrownianMotionForward(
+        s_dim=s_dim,
+        pf_module=pf_module,
+        sigma=5.0,
+        num_discretization_steps=num_steps,
+    )
+    pb_estimator = PinnedBrownianMotionBackward(
+        s_dim=s_dim,
+        pb_module=pb_module,
+        sigma=5.0,
+        num_discretization_steps=num_steps,
+    )
+
+    sampler = Sampler(estimator=pf_estimator)
+
+    # Sample trajectories.
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=batch_size,
+        save_logprobs=True,
+        save_estimator_outputs=False,
+    )
+
+    # Compute masks the same way get_trajectory_pbs does.
+    state_mask = ~trajectories.states.is_sink_state & ~trajectories.states.is_initial_state
+    state_mask[0, :] = False  # Can't compute PB for first state row.
+    action_mask = ~trajectories.actions.is_dummy & ~trajectories.actions.is_exit
+
+    valid_states_count = int(state_mask.sum())
+    valid_actions_count = int(action_mask.sum())
+    exit_count = int(trajectories.actions.is_exit.sum())
+
+    # Key assertions:
+    # 1. Exit actions should be detected (one per trajectory for fixed-length diffusion).
+    assert exit_count == batch_size, (
+        f"Expected {batch_size} exit actions (one per trajectory), got {exit_count}. "
+        "The estimator may not be marking exit actions correctly."
+    )
+
+    # 2. Valid states and actions must match for PB calculation.
+    assert valid_states_count == valid_actions_count, (
+        f"Mask mismatch: {valid_states_count} valid states vs {valid_actions_count} valid actions. "
+        f"Exit count: {exit_count}. This would cause get_trajectory_pbs to fail."
+    )
+
+    # 3. Verify get_trajectory_pbs runs without error (the actual alignment check).
+    from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
+
+    log_pfs, log_pbs = get_trajectory_pfs_and_pbs(
+        pf_estimator,
+        pb_estimator,
+        trajectories,
+        recalculate_all_logprobs=False,
+    )
+    # Shape is (T, N) = (num_steps, batch_size) - per-step log probs for each trajectory.
+    assert log_pfs.shape == (num_steps, batch_size)
+    assert log_pbs.shape == (num_steps, batch_size)
