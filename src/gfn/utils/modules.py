@@ -1759,7 +1759,6 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
             if self.clipping:
                 out = torch.clamp(out, -self.gfn_clip, self.gfn_clip)
 
-        # TODO: learn variance, lp, clipping, ...
         if torch.isnan(out).any():
             raise ValueError("DiffusionPISGradNetForward produced NaNs")
 
