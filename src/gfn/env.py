@@ -69,7 +69,9 @@ class Env(ABC):
 
         if sf is None:
             assert isinstance(s0, torch.Tensor), "When sf is None, s0 must be a Tensor"
-            sf = torch.full(s0.shape, default_fill_value_for_dtype(s0.dtype), dtype=s0.dtype)
+            sf = torch.full(
+                s0.shape, default_fill_value_for_dtype(s0.dtype), dtype=s0.dtype
+            )
         self.sf = sf.to(s0.device)  # pyright: ignore - torch_geometric type hint fix
 
         assert self.s0.shape == self.sf.shape == state_shape
@@ -142,7 +144,9 @@ class Env(ABC):
         Returns:
             A batch of dummy actions.
         """
-        return self.Actions.make_dummy_actions(batch_shape, device=self.device, debug=self.debug)
+        return self.Actions.make_dummy_actions(
+            batch_shape, device=self.device, debug=self.debug
+        )
 
     @abstractmethod
     def step(self, states: States, actions: Actions) -> States:
@@ -194,7 +198,9 @@ class Env(ABC):
             True if all actions are valid in the given states, False otherwise.
         """
 
-    def make_random_states(self, batch_shape: Tuple, device: torch.device | None = None) -> States:
+    def make_random_states(
+        self, batch_shape: Tuple, device: torch.device | None = None
+    ) -> States:
         """Optional method to return a batch of random states.
 
         Args:
@@ -274,7 +280,9 @@ class Env(ABC):
             batch_shape = (batch_shape,)
         elif isinstance(batch_shape, list):
             batch_shape = tuple(batch_shape)
-        return self.states_from_batch_shape(batch_shape=batch_shape, random=random, sink=sink)
+        return self.states_from_batch_shape(
+            batch_shape=batch_shape, random=random, sink=sink
+        )
 
     def _step(self, states: States, actions: Actions) -> States:
         """Wrapper for the user-defined `step` function.
@@ -293,7 +301,9 @@ class Env(ABC):
         if self.debug:
             # Debug-only guards to avoid graph breaks in compiled runs.
             assert states.batch_shape == actions.batch_shape
-            assert len(states.batch_shape) == 1, "Batch shape must be 1 for the step method."
+            assert (
+                len(states.batch_shape) == 1
+            ), "Batch shape must be 1 for the step method."
 
         valid_states_idx: torch.Tensor = ~states.is_sink_state
         if self.debug:
@@ -320,7 +330,9 @@ class Env(ABC):
         # method in your custom environment, you must ensure that the `new_states`
         # returned is a distinct object from the submitted states.
         not_done_states = states[new_valid_states_idx].clone()
-        not_done_actions = actions[new_valid_states_idx]  # NOTE: boolean indexing creates a copy!
+        not_done_actions = actions[
+            new_valid_states_idx
+        ]  # NOTE: boolean indexing creates a copy!
 
         not_done_states = self.step(not_done_states, not_done_actions)
         assert isinstance(
@@ -331,7 +343,9 @@ class Env(ABC):
         # For the indices where the new states are not sink states (i.e., where the
         # state is not already a sink and the action is not exit), update those
         # positions with the result of the environment's step function.
-        new_states = self.States.make_sink_states(states.batch_shape, device=states.device)
+        new_states = self.States.make_sink_states(
+            states.batch_shape, device=states.device
+        )
         new_states[new_valid_states_idx] = not_done_states
         return new_states
 
@@ -366,7 +380,9 @@ class Env(ABC):
         valid_actions = actions[valid_states_idx]
         valid_states = new_states[valid_states_idx]
 
-        if self.debug and not self.is_action_valid(valid_states, valid_actions, backward=True):
+        if self.debug and not self.is_action_valid(
+            valid_states, valid_actions, backward=True
+        ):
             raise NonValidActionsError(
                 "Some actions are not valid in the given states. See `is_action_valid`."
             )
@@ -409,7 +425,9 @@ class Env(ABC):
         Returns:
             The log partition function.
         """
-        raise NotImplementedError("The environment does not support enumeration of states")
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
     @property
     def true_dist(self) -> torch.Tensor:
@@ -418,7 +436,9 @@ class Env(ABC):
         Returns:
             The true distribution as a 1-dimensional tensor.
         """
-        raise NotImplementedError("The environment does not support enumeration of states")
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
 
 class DiscreteEnv(Env, ABC):
@@ -688,7 +708,9 @@ class DiscreteEnv(Env, ABC):
             A 1D tensor of shape `(n_terminating_states,)` with empirical frequencies.
         """
         try:
-            states_indices = self.get_terminating_states_indices(states).cpu().numpy().tolist()
+            states_indices = (
+                self.get_terminating_states_indices(states).cpu().numpy().tolist()
+            )
         except NotImplementedError as e:
             warnings.warn(
                 "Environment does not implement state enumeration required for\n"
@@ -717,7 +739,9 @@ class DiscreteEnv(Env, ABC):
                 "No terminating states provided to compute empirical distribution.",
                 UserWarning,
             )
-            return torch.zeros((self.n_terminating_states,), dtype=torch.get_default_dtype())
+            return torch.zeros(
+                (self.n_terminating_states,), dtype=torch.get_default_dtype()
+            )
 
         return torch.tensor(counter_list, dtype=torch.get_default_dtype()) / denom
 
@@ -776,17 +800,23 @@ class DiscreteEnv(Env, ABC):
             )
             assert isinstance(sampled_terminating_states, DiscreteStates)
         else:
-            sampled_terminating_states = visited_terminating_states[-n_validation_samples:]
+            sampled_terminating_states = visited_terminating_states[
+                -n_validation_samples:
+            ]
 
         # Compute empirical distribution; may require enumeration support.
         try:
-            final_states_dist = self.get_terminating_state_dist(sampled_terminating_states)
+            final_states_dist = self.get_terminating_state_dist(
+                sampled_terminating_states
+            )
         except NotImplementedError:
             # Already warned in helper; return gracefully.
             return {}, sampled_terminating_states
 
         if final_states_dist.numel() == 0:
-            warnings.warn("Empirical distribution is empty (no terminating samples).", UserWarning)
+            warnings.warn(
+                "Empirical distribution is empty (no terminating samples).", UserWarning
+            )
             return {}, sampled_terminating_states
 
         l1_dist = (final_states_dist - true_dist).abs().mean().item()
@@ -794,7 +824,9 @@ class DiscreteEnv(Env, ABC):
 
         # Report logZ difference if both sides are available.
         learned_logZ: float | None = None
-        if hasattr(gflownet, "logZ") and isinstance(getattr(gflownet, "logZ"), torch.Tensor):
+        if hasattr(gflownet, "logZ") and isinstance(
+            getattr(gflownet, "logZ"), torch.Tensor
+        ):
             learned_logZ = float(getattr(gflownet, "logZ").item())
         if learned_logZ is not None and true_logZ is not None:
             validation_info["logZ_diff"] = abs(learned_logZ - true_logZ)
@@ -810,7 +842,9 @@ class DiscreteEnv(Env, ABC):
         Returns:
             Tensor of shape (*batch_shape) containing the indices of the states.
         """
-        raise NotImplementedError("The environment does not support enumeration of states")
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
         """Optional method to return the indices of the terminating states in the
@@ -823,7 +857,9 @@ class DiscreteEnv(Env, ABC):
             Tensor of shape (*batch_shape) containing the indices of the terminating
             states.
         """
-        raise NotImplementedError("The environment does not support enumeration of states")
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
     @property
     def n_states(self) -> int:
@@ -832,7 +868,9 @@ class DiscreteEnv(Env, ABC):
         Returns:
             The number of states.
         """
-        raise NotImplementedError("The environment does not support enumeration of states")
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
     @property
     def n_terminating_states(self) -> int:
@@ -841,7 +879,9 @@ class DiscreteEnv(Env, ABC):
         Returns:
             The number of terminating states.
         """
-        raise NotImplementedError("The environment does not support enumeration of states")
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
     @property
     def all_states(self) -> DiscreteStates:
@@ -854,7 +894,9 @@ class DiscreteEnv(Env, ABC):
             self.get_states_indices(self.all_states) and torch.arange(self.n_states)
             should be equivalent.
         """
-        raise NotImplementedError("The environment does not support enumeration of states")
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
     @property
     def terminating_states(self) -> DiscreteStates:
@@ -867,7 +909,9 @@ class DiscreteEnv(Env, ABC):
             self.get_terminating_states_indices(self.terminating_states) and
             torch.arange(self.n_terminating_states) should be equivalent.
         """
-        raise NotImplementedError("The environment does not support enumeration of states")
+        raise NotImplementedError(
+            "The environment does not support enumeration of states"
+        )
 
 
 class GraphEnv(Env):
@@ -929,8 +973,12 @@ class GraphEnv(Env):
 
         self.States = self.make_states_class()
         self.Actions = self.make_actions_class()
-        self.dummy_action = self.Actions.make_dummy_actions((1,), device=self.device).tensor
-        self.exit_action = self.Actions.make_exit_actions((1,), device=self.device).tensor
+        self.dummy_action = self.Actions.make_dummy_actions(
+            (1,), device=self.device
+        ).tensor
+        self.exit_action = self.Actions.make_exit_actions(
+            (1,), device=self.device
+        ).tensor
 
     @property
     def device(self) -> torch.device:

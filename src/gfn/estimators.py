@@ -130,7 +130,9 @@ class PolicyMixin:
         initializes empty buffers for per-step artifacts.
 
         """
-        return RolloutContext(batch_size=batch_size, device=device, conditions=conditions)
+        return RolloutContext(
+            batch_size=batch_size, device=device, conditions=conditions
+        )
 
     def compute_dist(
         self,
@@ -188,7 +190,9 @@ class PolicyMixin:
                     estimator_outputs = self(states_active)  # type: ignore[misc]
 
         # Build the distribution.
-        dist = self.to_probability_distribution(states_active, estimator_outputs, **policy_kwargs)
+        dist = self.to_probability_distribution(
+            states_active, estimator_outputs, **policy_kwargs
+        )
 
         # Save current estimator output only when requested.
         if save_estimator_outputs:
@@ -628,20 +632,26 @@ class LogitBasedEstimator(Estimator):
         assert not torch.isnan(logits).any(), "Module output logits contain NaNs"
 
         # Prepare logits first (masking, bias, temperature) in the existing dtype
-        x = LogitBasedEstimator._prepare_logits(logits, masks, sf_index, sf_bias, temperature)
+        x = LogitBasedEstimator._prepare_logits(
+            logits, masks, sf_index, sf_bias, temperature
+        )
 
         assert not torch.isnan(x).any(), "Prepared logits contain NaNs"
 
         # Perform numerically sensitive ops in float32 when inputs are low-precision
         orig_dtype = x.dtype
         compute_dtype = (
-            torch.float32 if orig_dtype in (torch.float16, torch.bfloat16) else orig_dtype
+            torch.float32
+            if orig_dtype in (torch.float16, torch.bfloat16)
+            else orig_dtype
         )
 
         assert torch.isfinite(x).any(dim=-1).all(), "All -inf row before log-softmax"
 
         lsm = torch.log_softmax(x.to(compute_dtype), dim=-1)
-        assert torch.isfinite(lsm).any(dim=-1).all(), "Invalid log-probs after log_softmax"
+        assert (
+            torch.isfinite(lsm).any(dim=-1).all()
+        ), "Invalid log-probs after log_softmax"
 
         if epsilon == 0.0:
             return lsm.to(orig_dtype) if lsm.dtype != orig_dtype else lsm
@@ -899,9 +909,9 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
             preprocessor=preprocessor,
             is_backward=False,
         )
-        assert reduction in REDUCTION_FUNCTIONS, "reduction function not one of {}".format(
-            REDUCTION_FUNCTIONS.keys()
-        )
+        assert (
+            reduction in REDUCTION_FUNCTIONS
+        ), "reduction function not one of {}".format(REDUCTION_FUNCTIONS.keys())
         self.reduction_function = REDUCTION_FUNCTIONS[reduction]
 
     def forward(self, states: States, conditions: torch.Tensor) -> torch.Tensor:
@@ -1068,14 +1078,16 @@ class DiscreteGraphPolicyEstimator(PolicyMixin, LogitBasedEstimator):
                 )
 
             # Logit transformations allow for off-policy exploration.
-            transformed_logits[key] = LogitBasedEstimator._compute_logits_for_distribution(
-                logits=local_logits,
-                masks=local_masks,
-                # ACTION_TYPE_KEY contains the exit action logit.
-                sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
-                sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
-                temperature=temperature[key],
-                epsilon=epsilon[key],
+            transformed_logits[key] = (
+                LogitBasedEstimator._compute_logits_for_distribution(
+                    logits=local_logits,
+                    masks=local_masks,
+                    # ACTION_TYPE_KEY contains the exit action logit.
+                    sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
+                    sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
+                    temperature=temperature[key],
+                    epsilon=epsilon[key],
+                )
             )
 
         return GraphActionDistribution(
@@ -1176,7 +1188,9 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         # Replace padding (-1) with BOS index expected by the sequence model.
         # RecurrentDiscreteSequenceModel reserves index == vocab_size for BOS.
         bos_index = getattr(self.module, "vocab_size", self.n_actions - 1)
-        tokens = torch.where(tokens < 0, torch.as_tensor(bos_index, device=tokens.device), tokens)
+        tokens = torch.where(
+            tokens < 0, torch.as_tensor(bos_index, device=tokens.device), tokens
+        )
 
         # Determine a common prefix length across the (active) batch.
         # Active rows in a rollout step share the same length; use max for safety.
@@ -1212,7 +1226,9 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
     ) -> dict[str, torch.Tensor]:
         init_carry = getattr(self.module, "init_carry", None)
         if not callable(init_carry):
-            raise NotImplementedError("Module does not implement init_carry(batch_size, device).")
+            raise NotImplementedError(
+                "Module does not implement init_carry(batch_size, device)."
+            )
         init_carry_fn = cast(Callable[[int, torch.device], Any], init_carry)
 
         return init_carry_fn(batch_size, device)
@@ -1487,7 +1503,9 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         base_mean = torch.where(
             is_s0,
             torch.zeros_like(s_curr),
-            s_curr * self.dt / t_curr,  # s_curr (batch, s_dim), t_curr (batch, 1), dt is scalar.
+            s_curr
+            * self.dt
+            / t_curr,  # s_curr (batch, s_dim), t_curr (batch, 1), dt is scalar.
         )
         base_std = torch.where(
             is_s0,

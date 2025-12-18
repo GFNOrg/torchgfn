@@ -172,13 +172,15 @@ class MLEDiffusion(GFlowNet):
         log_2pi = math.log(2 * math.pi)
 
         logpf_sum = torch.zeros(bsz, device=device, dtype=dtype)
-        exploration_std_t = torch.as_tensor(exploration_std, device=device, dtype=dtype).clamp(
-            min=0.0
-        )
+        exploration_std_t = torch.as_tensor(
+            exploration_std, device=device, dtype=dtype
+        ).clamp(min=0.0)
         exploration_var = exploration_std_t**2
 
         # Precompute time grids to avoid per-step allocations.
-        all_t_fwd = torch.linspace(1.0 - dt, 0.0, self.num_steps, device=device, dtype=dtype)
+        all_t_fwd = torch.linspace(
+            1.0 - dt, 0.0, self.num_steps, device=device, dtype=dtype
+        )
         all_t_curr = torch.linspace(1.0, dt, self.num_steps, device=device, dtype=dtype)
 
         for i in range(self.num_steps):
@@ -221,7 +223,9 @@ class MLEDiffusion(GFlowNet):
                 std = torch.exp(log_std) * sqrt_dt_t_scale
                 std = torch.sqrt(std**2 + exploration_var)
                 diff = increment - dt * drift
-                logpf_step = -0.5 * ((diff / std) ** 2 + 2 * std.log() + log_2pi).sum(dim=1)
+                logpf_step = -0.5 * ((diff / std) ** 2 + 2 * std.log() + log_2pi).sum(
+                    dim=1
+                )
             # Fixed variance case.
             else:
                 drift = module_out

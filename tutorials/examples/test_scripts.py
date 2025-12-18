@@ -22,12 +22,18 @@ if str(_repo_root) not in sys.path:
 # Ensure we run with Python debug mode enabled (no -O) so envs use debug guards.
 assert __debug__, "Tests must run without -O so __debug__ stays True."
 
-from tutorials.examples.train_bayesian_structure import main as train_bayesian_structure_main
+from tutorials.examples.train_bayesian_structure import (
+    main as train_bayesian_structure_main,
+)
 from tutorials.examples.train_bit_sequences import main as train_bitsequence_main
-from tutorials.examples.train_bitsequence_recurrent import main as train_bitsequence_recurrent_main
+from tutorials.examples.train_bitsequence_recurrent import (
+    main as train_bitsequence_recurrent_main,
+)
 from tutorials.examples.train_box import main as train_box_main
 from tutorials.examples.train_conditional import main as train_conditional_main
-from tutorials.examples.train_diffusion_sampler import main as train_diffusion_sampler_main
+from tutorials.examples.train_diffusion_sampler import (
+    main as train_diffusion_sampler_main,
+)
 from tutorials.examples.train_discreteebm import main as train_discreteebm_main
 from tutorials.examples.train_graph_ring import main as train_graph_ring_main
 from tutorials.examples.train_graph_triangle import main as train_graph_triangle_main
@@ -43,7 +49,9 @@ from tutorials.examples.train_hypergrid_local_search import (
 from tutorials.examples.train_hypergrid_simple import main as train_hypergrid_simple_main
 from tutorials.examples.train_ising import main as train_ising_main
 from tutorials.examples.train_line import main as train_line_main
-from tutorials.examples.train_with_example_modes import main as train_with_example_modes_main
+from tutorials.examples.train_with_example_modes import (
+    main as train_with_example_modes_main,
+)
 
 
 @dataclass
@@ -329,7 +337,9 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
         # TODO: Why is this skipped?
         if replay_buffer_size != 0:
             pytest.skip("Skipping test for replay buffer size != 0")
-        assert np.isclose(final_l1_dist, tgt, atol=atol), f"final_l1_dist: {final_l1_dist} vs {tgt}"
+        assert np.isclose(
+            final_l1_dist, tgt, atol=atol
+        ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and height == 8:
         tgt = 1.6e-4
         atol = 1e-4
@@ -349,7 +359,9 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
             pytest.skip("Skipping test for replay buffer size != 0")
         tgt = 2.224e-05  # 6.89e-6
         atol = 1e-5
-        assert np.isclose(final_l1_dist, tgt, atol=atol), f"final_l1_dist: {final_l1_dist} vs {tgt}"
+        assert np.isclose(
+            final_l1_dist, tgt, atol=atol
+        ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
 
 
 @pytest.mark.parametrize("ndim", [2, 4])
@@ -419,15 +431,21 @@ def test_discreteebm(ndim: int, alpha: float):
     if ndim == 2 and alpha == 0.1:
         tgt = 2.6972e-2  # 2.97e-3
         atol = 1e-1  # TODO: this tolerance is very suspicious.
-        assert np.isclose(final_l1_dist, tgt, atol=atol), f"final_l1_dist: {final_l1_dist} vs {tgt}"
+        assert np.isclose(
+            final_l1_dist, tgt, atol=atol
+        ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 2 and alpha == 1.0:
         tgt = 1.3159e-1  # 0.017
         atol = 1e-1
-        assert np.isclose(final_l1_dist, tgt, atol=atol), f"final_l1_dist: {final_l1_dist} vs {tgt}"
+        assert np.isclose(
+            final_l1_dist, tgt, atol=atol
+        ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and alpha == 0.1:
         tgt = 2.46e-2  # 0.009
         atol = 1e-2
-        assert np.isclose(final_l1_dist, tgt, atol=atol), f"final_l1_dist: {final_l1_dist} vs {tgt}"
+        assert np.isclose(
+            final_l1_dist, tgt, atol=atol
+        ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and alpha == 1.0:
         tgt1 = 8.675e-2  # 0.062
         tgt2 = 6.2e-2
@@ -435,7 +453,9 @@ def test_discreteebm(ndim: int, alpha: float):
         test_1 = np.isclose(final_l1_dist, tgt1, atol=atol)
         test_2 = np.isclose(final_l1_dist, tgt2, atol=atol)
 
-        assert test_1 or test_2, f"final_l1_dist: {final_l1_dist} not close to [{tgt1}, {tgt2}]"
+        assert (
+            test_1 or test_2
+        ), f"final_l1_dist: {final_l1_dist} not close to [{tgt1}, {tgt2}]"
 
 
 @pytest.mark.parametrize("delta", [0.1, 0.25])
@@ -574,7 +594,9 @@ def test_hypergrid_simple_ls_smoke():
     )
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
-    train_hypergrid_local_search_main(namespace_args)  # Just ensure it runs without errors.
+    train_hypergrid_local_search_main(
+        namespace_args
+    )  # Just ensure it runs without errors.
 
 
 def test_ising_smoke():
