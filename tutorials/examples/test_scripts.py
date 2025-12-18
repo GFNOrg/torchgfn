@@ -661,7 +661,7 @@ def test_bitsequence(seq_size: int, n_modes: int):
     if seq_size == 4 and n_modes == 2:
         assert final_l1_dist <= 9e-5
     if seq_size == 4 and n_modes == 4:
-        assert final_l1_dist <= 1e4
+        assert final_l1_dist <= 1e-4
     if seq_size == 8 and n_modes == 2:
         assert final_l1_dist <= 1e-3
     if seq_size == 8 and n_modes == 4:
