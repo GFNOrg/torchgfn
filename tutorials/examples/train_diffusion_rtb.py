@@ -434,7 +434,7 @@ def main(args: argparse.Namespace) -> None:
         trajectories = sampler.sample_trajectories(
             env,
             n=args.batch_size,
-            save_logprobs=False,  # if args.exploration_factor > 0 else True,
+            save_logprobs=False,
             save_estimator_outputs=False,
             # Extra exploration noise (combined with base PF variance in estimator).
             exploration_std=get_exploration_std(
