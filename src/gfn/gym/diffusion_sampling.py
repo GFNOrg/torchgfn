@@ -937,7 +937,7 @@ class DiffusionSampling(Env):
             def is_initial_state(self) -> torch.Tensor:
                 """Returns a tensor that is True for states that are s0
 
-                When time is close enought to 0.0 (considering floating point errors),
+                When time is close enough to 0.0 (considering floating point errors),
                 the state is s0.
                 """
                 eps = env.dt * TERMINAL_TIME_EPS
