@@ -1503,9 +1503,7 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         base_mean = torch.where(
             is_s0,
             torch.zeros_like(s_curr),
-            s_curr
-            * self.dt
-            / t_curr,  # s_curr (batch, s_dim), t_curr (batch, 1), dt is scalar.
+            s_curr * self.dt / t_curr,  # s_curr (B, s_dim), t_curr (B, 1), dt scalar.
         )
         base_std = torch.where(
             is_s0,
