@@ -206,7 +206,7 @@ reportOptionalContextManager = true
 reportOptionalOperand = true
 
 [tool.coverage.run]
-source = ["src/gfn"]
+source = ["gfn"]
 branch = true
 omit = [
     "testing/*",

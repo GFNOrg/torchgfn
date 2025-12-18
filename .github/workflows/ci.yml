@@ -31,19 +31,18 @@ jobs:
       - name: Run pre-commit
         run: pre-commit run --all-files
 
-      - name: Test with pytest (coverage)
-        run: pytest --cov=src/gfn --cov-report=xml --cov-report=term-missing -x
+      - name: Test with pytest (coverage, py3.10 only)
+        if: matrix.python-version == '3.10'
+        run: pytest --cov=gfn --cov-report=xml --cov-report=term-missing --junitxml=junit.xml -o junit_family=legacy -x
 
-      - name: Upload coverage.xml
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml-${{ matrix.python-version }}
-          path: coverage.xml
+      - name: Test with pytest (no coverage)
+        if: matrix.python-version != '3.10'
+        run: pytest -x
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.10'
+        uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
-          flags: unittests
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
