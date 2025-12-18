@@ -1498,7 +1498,7 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         # Analytic Brownian bridge base
         # Brownian bridge mean toward 0 at t=0:
         # E[s_{t-dt} | s_t] = s_t * (1 - dt / t) and collapses to 0 at the start.
-        # Here, we calculcate the *action* which moves the state in expectation toward 0
+        # Here, we calculate the *action* which moves the state in expectation toward 0
         # at t=0, so we scale s_curr by our distance to t=0.
         base_mean = torch.where(
             is_s0,
