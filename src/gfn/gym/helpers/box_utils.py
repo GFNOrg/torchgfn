@@ -204,42 +204,37 @@ class QuarterCircle(Distribution):
         assert sampled_actions.shape[-1] == 2
         batch_shape = sampled_actions.shape[:-1]
 
-        sampled_actions = sampled_actions.to(
-            torch.double
-        )  # Arccos is very brittle, so we use double precision
-        sampled_actions.clamp_(
-            min=0.0, max=self.delta
-        )  # Should be the case already - just to avoid numerical issues
-        sampled_angles = torch.arccos(sampled_actions[..., 0] / self.delta) / (PI_2)
+        # Clamp actions to valid range (no double precision needed with atan2)
+        sampled_actions = sampled_actions.clamp(min=0.0, max=self.delta)
+
+        # Use atan2 instead of arccos - numerically stable without double precision
+        sampled_angles = (
+            torch.atan2(sampled_actions[..., 1], sampled_actions[..., 0]) / PI_2
+        )
 
         base_01_samples = (sampled_angles - self.min_angles) / (
             self.max_angles - self.min_angles
-        ).clamp_(min=CLAMP, max=1 - CLAMP)
+        ).clamp(min=CLAMP, max=1 - CLAMP)
 
         if not self.northeastern:
-            # Ideally, we shouldn't need this
-            # But it is used in the original implementation, so we keep it. It helps with numerical issues.
+            # Clamp to avoid numerical issues at boundaries
             base_01_samples = base_01_samples.clamp(1e-4, 1 - 1e-4)
 
-        # Ugly hack: when some of the sampled actions are -infinity (exit action), the corresponding value is nan
-        # And we don't really care about the log prob of the exit action
-        # So we first need to replace nans by anything between 0 and 1, say 0.5
+        # Handle exit actions (marked as -inf) which produce nan angles
         base_01_samples = torch.where(
             torch.isnan(base_01_samples),
             torch.ones_like(base_01_samples) * 0.5,
             base_01_samples,
-        ).clamp_(min=CLAMP, max=1 - CLAMP)
+        ).clamp(min=CLAMP, max=1 - CLAMP)
 
-        # Another hack: when backward (northeastern=False), sometimes the sampled_actions are equal to the centers
-        # In this case, the base_01_samples are close to 0 because of approximations errors. But they do not count
-        # when evaluating the logpros, so we just bump them to CLAMP so that Beta.log_prob does not throw an error
+        # Handle backward case where sampled_actions equal centers (Dirac distribution)
         if not self.northeastern:
             base_01_samples = torch.where(
                 torch.norm(self.centers.tensor, dim=-1) <= self.delta,
                 torch.ones_like(base_01_samples) * CLAMP,
                 base_01_samples,
-            ).clamp_(min=CLAMP, max=1 - CLAMP)
-        base_01_samples = base_01_samples.to(torch.get_default_dtype())
+            ).clamp(min=CLAMP, max=1 - CLAMP)
+
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
 
         if not self.northeastern:
@@ -372,21 +367,16 @@ class QuarterDisk(Distribution):
         assert sampled_actions.shape[-1] == 2
         batch_shape = sampled_actions.shape[:-1]
 
-        sampled_actions = sampled_actions.to(
-            torch.double
-        )  # Arccos is very brittle, so we use double precision
+        # Compute radius (no double precision needed with atan2)
         base_r_01_samples = (
-            torch.sqrt(torch.sum(sampled_actions**2, dim=-1))
-            / self.delta  # changes from 0 to 1.
-        )
-        # Debugging, I changed from -1 to 0 in the following line
-        base_theta_01_samples = (
-            torch.arccos(sampled_actions[..., 0] / (base_r_01_samples * self.delta))
-            / PI_2
-        ).clamp_(CLAMP, 1 - CLAMP)
+            torch.sqrt(torch.sum(sampled_actions**2, dim=-1)) / self.delta
+        ).clamp(CLAMP, 1.0)
 
-        base_r_01_samples = base_r_01_samples.to(torch.get_default_dtype())
-        base_theta_01_samples = base_theta_01_samples.to(torch.get_default_dtype())
+        # Use atan2 instead of arccos - numerically stable without double precision
+        base_theta_01_samples = (
+            torch.atan2(sampled_actions[..., 1], sampled_actions[..., 0]) / PI_2
+        ).clamp(CLAMP, 1 - CLAMP)
+
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
             + self.base_theta_dist.log_prob(base_theta_01_samples)
@@ -714,58 +704,65 @@ class BoxPFMLP(MLP):
             raise ValueError(
                 f"preprocessed_states should be of shape [B, 2], got {preprocessed_states.shape}"
             )
-        B, _ = preprocessed_states.shape
-        # The desired output shape is [B, 1 + 5 * n_components_max], let's create the tensor
-        desired_out = torch.zeros(B, 1 + 5 * self._n_comp_max).to(
-            preprocessed_states.device
-        )
+        B = preprocessed_states.shape[0]
+        device = preprocessed_states.device
+        output_dim = 1 + 5 * self._n_comp_max
 
-        # First calculate network outputs for all states
-        out = super().forward(
-            preprocessed_states
-        )  # This should be of shape [B, 1 + 3 * n_components]
+        # Run network for all states (needed for non-s0 states)
+        net_out = super().forward(preprocessed_states)  # [B, 1 + 3 * n_components]
 
-        # Now let's find which of the B indices correspond to s_0
-        idx_s0 = torch.all(preprocessed_states == 0.0, 1)
+        # Detect s0 states
+        is_s0 = torch.all(preprocessed_states == 0.0, dim=1, keepdim=True)  # [B, 1]
 
-        # Now we can fill the desired output tensor
-        # 1st, for the s_0 states, we use the PFs0 parameters
-        # Remember, PFs0 is of shape [1, 5 * n_components_s0]
-        indices_to_override = (
-            torch.arange(5 * self._n_comp_max).fmod(self._n_comp_max)
-            < self.n_components_s0
-        )
-        indices_to_override = torch.cat(
-            (torch.zeros(1).bool(), indices_to_override), dim=0
-        )
-        desired_out_slice = desired_out[idx_s0]
-        desired_out_slice[:, indices_to_override] = self.PFs0
-        desired_out[idx_s0] = desired_out_slice
+        # Build output tensor for non-s0 case (most common path)
+        # Map network output [exit, weights, alpha, beta] to full output format
+        desired_out = torch.zeros(B, output_dim, device=device)
 
-        # 2nd, for the states s, t>0, we use the network outputs
-        # Remember, out is of shape [B, 1 + 3 * n_components]
-        indices_to_override2 = (
-            torch.arange(3 * self._n_comp_max).fmod(self._n_comp_max) < self.n_components
-        )
-        indices_to_override2 = torch.cat(
-            (
-                torch.ones(1).bool(),
-                indices_to_override2,
-                torch.zeros(2 * self._n_comp_max).bool(),
-            ),
-            dim=0,
-        )
-        desired_out_slice2 = desired_out[~idx_s0]
-        desired_out_slice2[:, indices_to_override2] = out[~idx_s0]
-        desired_out[~idx_s0] = desired_out_slice2
+        # For non-s0: copy network output to appropriate positions
+        # Network outputs: [exit_logit, mixture_logits..., alpha..., beta...]
+        # Format: 1 exit + n_comp mixture + n_comp alpha + n_comp beta = 1 + 3*n_comp
+        n_comp = self.n_components
+        desired_out[:, 0] = net_out[:, 0]  # exit logit
+        desired_out[:, 1 : 1 + n_comp] = net_out[:, 1 : 1 + n_comp]  # mixture logits
+        desired_out[:, 1 + self._n_comp_max : 1 + self._n_comp_max + n_comp] = net_out[
+            :, 1 + n_comp : 1 + 2 * n_comp
+        ]  # alpha
+        desired_out[:, 1 + 2 * self._n_comp_max : 1 + 2 * self._n_comp_max + n_comp] = (
+            net_out[:, 1 + 2 * n_comp :]
+        )  # beta
 
-        # Apply sigmoid to all except the dimensions between 1 and 1 + self._n_comp_max
-        # These are the components that represent the concentration parameters of the
-        # Betas, before normalizing, and should thus be between 0 and 1 (along with
-        # the exit probability).
-        desired_out[..., 0] = torch.sigmoid(desired_out[..., 0])
-        desired_out[..., 1 + self._n_comp_max :] = torch.sigmoid(
-            desired_out[..., 1 + self._n_comp_max :]
+        # For s0 states: override with PFs0 parameters using torch.where
+        # PFs0 has shape [1, 5 * n_components_s0] containing [weights, alpha_r, beta_r, alpha_theta, beta_theta]
+        if is_s0.any():
+            # Expand PFs0 to batch size and use where to select
+            pfs0_expanded = self.PFs0.expand(B, -1)  # [B, 5 * n_components_s0]
+            n_s0 = self.n_components_s0
+
+            # Map PFs0 to output positions (s0 doesn't have exit logit in PFs0)
+            s0_out = torch.zeros(B, output_dim, device=device)
+            s0_out[:, 1 : 1 + n_s0] = pfs0_expanded[:, :n_s0]  # mixture logits
+            s0_out[:, 1 + self._n_comp_max : 1 + self._n_comp_max + n_s0] = (
+                pfs0_expanded[:, n_s0 : 2 * n_s0]
+            )  # alpha_r
+            s0_out[:, 1 + 2 * self._n_comp_max : 1 + 2 * self._n_comp_max + n_s0] = (
+                pfs0_expanded[:, 2 * n_s0 : 3 * n_s0]
+            )  # beta_r
+            s0_out[:, 1 + 3 * self._n_comp_max : 1 + 3 * self._n_comp_max + n_s0] = (
+                pfs0_expanded[:, 3 * n_s0 : 4 * n_s0]
+            )  # alpha_theta
+            s0_out[:, 1 + 4 * self._n_comp_max : 1 + 4 * self._n_comp_max + n_s0] = (
+                pfs0_expanded[:, 4 * n_s0 :]
+            )  # beta_theta
+
+            # Use torch.where to select between s0 and non-s0 outputs
+            desired_out = torch.where(is_s0.expand(-1, output_dim), s0_out, desired_out)
+
+        # Apply sigmoid to exit probability and concentration parameters
+        # Exit probability at position 0
+        desired_out[:, 0] = torch.sigmoid(desired_out[:, 0])
+        # Concentration params are at positions [1+n_comp_max, end]
+        desired_out[:, 1 + self._n_comp_max :] = torch.sigmoid(
+            desired_out[:, 1 + self._n_comp_max :]
         )
 
         assert desired_out.shape == batch_shape + (1 + 5 * self._n_comp_max,)
