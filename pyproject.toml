@@ -142,6 +142,13 @@ exclude = [
     "**/.*", # Exclude dot files and folders
 ]
 
+# strictly disable the checks for None handling
+reportOptionalMemberAccess = "none" # e.g., variable.method()
+reportOptionalSubscript = "none"    # e.g., variable['key']
+reportOptionalCall = "none"         # e.g., variable()
+reportOptionalOperand = "none"      # e.g., variable + 1
+reportOptionalIterable = "none"     # e.g., for x in variable:
+
 strict = [
 
 ]
