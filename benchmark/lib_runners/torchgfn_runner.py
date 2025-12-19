@@ -321,7 +321,7 @@ class TorchGFNRunner(LibraryRunner):
                 n=self.config.batch_size,
                 save_logprobs=self._env_type == "box",  # Box saves logprobs
                 save_estimator_outputs=False,
-                epsilon=0.0,
+                # epsilon=0.0,  # TODO - add?
             )
 
             self.optimizer.zero_grad()
