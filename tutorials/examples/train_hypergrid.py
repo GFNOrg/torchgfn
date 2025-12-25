@@ -60,6 +60,7 @@ from gfn.utils.distributed import DistributedContext, initialize_distributed_com
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
+    AsyncSelectiveAveragingPolicympi4py,
     AverageAllPolicy,
 )
 
@@ -435,8 +436,8 @@ def set_up_pb_pf_estimators(
     for v in ["pf_module", "pb_module"]:
         assert locals()[v] is not None, f"{v} is None, Args: {args}"
 
-    assert pf_module is not None
     assert pb_module is not None
+    assert pf_module is not None
     pf_estimator = DiscretePolicyEstimator(
         module=pf_module,
         n_actions=env.n_actions,
@@ -653,6 +654,7 @@ def main(args):  # noqa: C901
             my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
         )
 
+    print("at setting seeds.......", flush=True)
     set_seed(args.seed + distributed_context.my_rank)
 
     # Initialize the environment.
@@ -669,8 +671,11 @@ def main(args):  # noqa: C901
         calculate_partition=args.calculate_partition,
         store_all_states=args.store_all_states,
     )
+    print("env: ", env, "buffer_rank: ", distributed_context.is_buffer_rank(), flush=True)
+    #dist.barrier()
 
     if args.distributed and distributed_context.is_buffer_rank():
+        print("Entered......................................", flush=True)
         if distributed_context.assigned_training_ranks is None:
             num_training_ranks = 0
         else:
@@ -684,7 +689,11 @@ def main(args):  # noqa: C901
             capacity=args.global_replay_buffer_size,
         )  # TODO: If the remote_manager_rank is set, does this produce an infinite loop?
         replay_buffer_manager.run()
+        print("Returning......................................", flush=True)
         return 0.0
+
+    print("at buffer setup done.......", flush=True)    
+    ##dist.barrier()    
 
     # Initialize WandB.
     use_wandb = args.wandb_project != ""
@@ -749,6 +758,7 @@ def main(args):  # noqa: C901
 
     # Build the initial model and optimizer
     gflownet, optimizer = _model_builder()
+    print("at model builder done.......", flush=True)
 
     # Create replay buffer if needed
     replay_buffer = None
@@ -807,6 +817,7 @@ def main(args):  # noqa: C901
 
     # Initialize some variables before the training loop.
     timing = {}
+    oldcode = False
     time_start = time.time()
     l1_distances, validation_steps = [], []
 
@@ -824,15 +835,29 @@ def main(args):  # noqa: C901
     averaging_policy = None
     if args.distributed:
         if args.use_selective_averaging:
-            averaging_policy = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
-                model_builder=_model_builder,
-                average_every=args.average_every,
-                replacement_ratio=args.replacement_ratio,
-                averaging_strategy=args.averaging_strategy,
-                momentum=args.momentum,
-                threshold=args.performance_tracker_threshold,
-                cooldown=args.performance_tracker_cooldown,
-            )
+            print("+ Using selective averaging policy", flush=True)
+            if oldcode:
+                averaging_policy = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
+                    model_builder=_model_builder,
+                    average_every=args.average_every,
+                    replacement_ratio=args.replacement_ratio,
+                    averaging_strategy=args.averaging_strategy,
+                    momentum=args.momentum,
+                    threshold=args.performance_tracker_threshold,
+                    cooldown=args.performance_tracker_cooldown,
+                )
+            else:
+                #print("my rank: ", distributed_context.my_rank, flush=True)
+                averaging_policy = AsyncSelectiveAveragingPolicympi4py(  # type: ignore[abstract]
+                    model_builder=_model_builder,
+                    model=gflownet,
+                    average_every=args.average_every,                
+                    threshold_metric=10000.0,
+                    replacement_ratio=args.replacement_ratio,
+                    averaging_strategy=args.averaging_strategy,
+                    momentum=args.momentum,      
+                    group=distributed_context.dc_mpi4py.train_global_group,          
+                )
         else:
             averaging_policy = AverageAllPolicy(average_every=args.average_every)
 
@@ -939,14 +964,20 @@ def main(args):  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
             if averaging_policy is not None:
+                #print("+ Performing model averaging start...", flush=True)
                 assert score_dict is not None
                 gflownet, optimizer, averaging_info = averaging_policy(
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
                     local_metric=score_dict["score"],
-                    group=distributed_context.train_global_group,
+                    group=distributed_context.dc_mpi4py.train_global_group,
                 )
+                #print("+ Performing model averaging done end...", flush=True)
+
+        #put mpi4py barrier here
+        #tcomm = distributed_context.dc_mpi4py.train_global_group
+        #tcomm.Barrier()
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
@@ -992,7 +1023,7 @@ def main(args):  # noqa: C901
                 f"rest_time": rest_time,
                 f"l1_dist": None,  # only logged if calculate_partition.
             }
-            to_log.update(averaging_info)
+            ##to_log.update(averaging_info)
             to_log.update(score_dict)
 
             if log_this_iter:
@@ -1028,7 +1059,10 @@ def main(args):  # noqa: C901
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
             if args.distributed and args.timing:
-                dist.barrier(group=distributed_context.train_global_group)
+                #dist.barrier(group=distributed_context.train_global_group)
+                t_comm = distributed_context.dc_mpi4py.train_global_group
+                t_comm.Barrier()
+
 
     print("+ Finished all iterations")
     total_time = time.time() - time_start
@@ -1062,6 +1096,12 @@ def main(args):  # noqa: C901
             for k, v in timing.items():
                 print(f"{k:<25} {sum(v):>10.4f}s")
 
+            try:
+                averaging_policy.print_time()
+                averaging_policy.print_stats()
+            except Exception:
+                pass
+
     # Stop the profiler if it's active.
     if args.profile:
         prof.stop()
@@ -1073,13 +1113,21 @@ def main(args):  # noqa: C901
         # Create figure with 3 subplots with proper spacing.
         plot_results(env, gflownet, l1_distances, validation_steps)
 
+
+    ##### validation_info issue site
     try:
         result = validation_info["l1_dist"]
     except KeyError:
-        result = validation_info["n_modes_found"]
+        try:
+            result = validation_info["n_modes_found"]
+        except KeyError:  ## update by vasim
+            result = None   
 
     if distributed_context.my_rank == 0:
-        print("+ Training complete - final_score={:.6f}".format(result))
+        if result is not None:
+            print("+ Training complete - final_score={:.6f}".format(result))
+        else:
+            print("+ Training complete - result = None")
 
     if (
         args.distributed
