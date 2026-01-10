@@ -517,7 +517,7 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
             agent_group_list,
             my_agent_group_id,
         )
-        return gflownet, init_cfg
+        return gflownet, cfg
     else:
         # We need a DiscretePFEstimator and a DiscretePBEstimator.
         pf_estimator, pb_estimator = set_up_pb_pf_estimators(
@@ -761,7 +761,7 @@ def main(args) -> dict:  # noqa: C901
             import wandb
             wandb.log({"model_builder_count": model_builder_count, **cfg})
         else:
-            logger.info(f"Model builder count: {model_builder_count}")
+            print(f"Model builder count: {model_builder_count}")
         assert model is not None
         model = model.to(device)
         optim = _make_optimizer_for(model, args)
