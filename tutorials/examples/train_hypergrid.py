@@ -60,8 +60,10 @@ from gfn.utils.distributed import DistributedContext, initialize_distributed_com
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
+    AsyncSelectiveAveragingPolicympi4pyV2,
     AsyncSelectiveAveragingPolicympi4py,
     AverageAllPolicy,
+    AverageAllPolicympi4py,
 )
 
 
@@ -817,7 +819,8 @@ def main(args):  # noqa: C901
 
     # Initialize some variables before the training loop.
     timing = {}
-    oldcode = False
+    oldcode = args.oldcode
+    print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> oldcode: ", oldcode, flush=True)
     time_start = time.time()
     l1_distances, validation_steps = [], []
 
@@ -848,18 +851,22 @@ def main(args):  # noqa: C901
                 )
             else:
                 #print("my rank: ", distributed_context.my_rank, flush=True)
-                averaging_policy = AsyncSelectiveAveragingPolicympi4py(  # type: ignore[abstract]
+                averaging_policy = AsyncSelectiveAveragingPolicympi4pyV2(  # type: ignore[abstract]
                     model_builder=_model_builder,
                     model=gflownet,
                     average_every=args.average_every,                
-                    threshold_metric=10000.0,
+                    threshold_metric=10000, ##args.performance_tracker_threshold,
                     replacement_ratio=args.replacement_ratio,
                     averaging_strategy=args.averaging_strategy,
                     momentum=args.momentum,      
-                    group=distributed_context.dc_mpi4py.train_global_group,          
+                    group=distributed_context.dc_mpi4py.train_global_group,                              
                 )
         else:
-            averaging_policy = AverageAllPolicy(average_every=args.average_every)
+            if oldcode:
+                averaging_policy = AverageAllPolicy(average_every=args.average_every)
+            else:
+                print("+ Using AverageAllPolicympi4py", flush=True)
+                averaging_policy = AverageAllPolicympi4py(average_every=args.average_every)
 
     # Training loop.
     pbar = trange(n_iterations)
@@ -966,7 +973,16 @@ def main(args):  # noqa: C901
             if averaging_policy is not None:
                 #print("+ Performing model averaging start...", flush=True)
                 assert score_dict is not None
-                gflownet, optimizer, averaging_info = averaging_policy(
+                if oldcode:
+                    gflownet, optimizer, averaging_info = averaging_policy(
+                        iteration=iteration,
+                        model=gflownet,
+                        optimizer=optimizer,
+                        local_metric=score_dict["score"],
+                        group=distributed_context.train_global_group,
+                    )   
+                else:
+                    gflownet, optimizer, averaging_info = averaging_policy(
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
@@ -1457,6 +1473,13 @@ if __name__ == "__main__":
         type=int,
         default=200,
         help="Cooldown period for the performance tracker.",
+    )
+
+    ## for mpi-3 code of selective averaging debug
+    parser.add_argument(
+        "--oldcode",
+        action="store_true",        
+        help="Temp switch between old and new selective averaging code (dist mpi or mpi4py)",
     )
 
     args = parser.parse_args()
