@@ -498,7 +498,7 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
             "n_noisy_layers": 0,
             "noisy_std_init": 0.5,
         }
-    
+
     args.agent_epsilon = float(cfg.get("epsilon", 0.0))
     args.agent_temperature = float(cfg.get("temperature", 1.0))
     args.agent_n_noisy_layers = int(cfg.get("n_noisy_layers", 0))
@@ -739,12 +739,13 @@ def main(args) -> dict:  # noqa: C901
             project=args.wandb_project,
             group=group_name,
             entity=args.wandb_entity,
-            config=vars(args)
+            config=vars(args),
         )
 
     # Initialize the preprocessor.
     preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
     model_builder_count = 0
+
     # Builder closure to create a fresh model + optimizer (used by spawn policy as well)
     def _model_builder() -> Tuple[GFlowNet, torch.optim.Optimizer]:
         nonlocal model_builder_count, use_wandb
@@ -759,6 +760,7 @@ def main(args) -> dict:  # noqa: C901
         )
         if use_wandb:
             import wandb
+
             wandb.log({"model_builder_count": model_builder_count, **cfg})
         else:
             print(f"Model builder count: {model_builder_count}")
@@ -962,7 +964,9 @@ def main(args) -> dict:  # noqa: C901
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
-                    local_metric=score_dict["score"] if score_dict is not None else -loss.item(),
+                    local_metric=(
+                        score_dict["score"] if score_dict is not None else -loss.item()
+                    ),
                     group=distributed_context.train_global_group,
                 )
 
