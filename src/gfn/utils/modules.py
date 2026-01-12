@@ -1,5 +1,6 @@
 """This file contains some examples of modules that can be used with GFN."""
 
+import logging
 import math
 from abc import ABC, abstractmethod
 from typing import Literal, Optional
@@ -15,6 +16,8 @@ from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.common import is_int_dtype
 from gfn.utils.graphs import GeometricBatch, get_edge_indices
+
+logger = logging.getLogger(__name__)
 
 ACTIVATION_FNS = {
     "relu": nn.ReLU,
@@ -1742,7 +1745,7 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
 
         # TODO: learn variance, lp, clipping, ...
         if torch.isnan(out).any():
-            print("+ out has {} nans".format(torch.isnan(out).sum()))
+            logger.warning("out has %d nans", torch.isnan(out).sum())
             out = torch.nan_to_num(out)
 
         return out

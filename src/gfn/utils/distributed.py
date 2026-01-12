@@ -1,10 +1,13 @@
 import datetime
+import logging
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, cast
 
 import torch
 import torch.distributed as dist
+
+logger = logging.getLogger(__name__)
 
 
 def report_load_imbalance(
@@ -20,8 +23,8 @@ def report_load_imbalance(
         param world_size: The total number of ranks in the distributed setup.
     """
     # Header
-    print(f"{'Step Name':<25} {'Useful Work':>12} {'Waiting':>12}")
-    print("-" * 80)
+    logger.info("%-25s %12s %12s", "Step Name", "Useful Work", "Waiting")
+    logger.info("-" * 80)
 
     for step, times in all_timing_dict[0].items():
         if type(times) is not list:
@@ -37,7 +40,9 @@ def report_load_imbalance(
                 is_valid_key = False
                 break
         if not is_valid_key:
-            print(f"Time for Step - '{step}' not found in all ranks, skipping...")
+            logger.warning(
+                "Time for Step - '%s' not found in all ranks, skipping...", step
+            )
             continue
 
         # Calculate the timing profile for the step.
@@ -56,7 +61,7 @@ def report_load_imbalance(
         total_useful = sum(useful_work)
         total_waiting = sum(waiting_times)
 
-        print(f"{step:<25} {total_useful:>10.4f}s {total_waiting:>10.4f}s")
+        logger.info("%-25s %10.4fs %10.4fs", step, total_useful, total_waiting)
 
 
 def report_time_info(
@@ -72,9 +77,9 @@ def report_time_info(
         param world_size: The total number of ranks in the distributed setup.
     """
     overall_timing = {}
-    print("Timing information for each rank:")
+    logger.info("Timing information for each rank:")
     for rank in range(world_size):
-        print(f"Rank {rank} timing information:")
+        logger.info("Rank %d timing information:", rank)
         for step, times in all_timing_dict[rank].items():
             if type(times) is not list:
                 times = [times]  # Ensure times is a list
@@ -82,20 +87,22 @@ def report_time_info(
             times_tensor = torch.tensor(times)
             avg_time = torch.sum(times_tensor).item() / len(times)
             sum_time = torch.sum(times_tensor).item()
-            print(f"  {step}: {avg_time:.4f} seconds (total: {sum_time:.4f} seconds)")
+            logger.info(
+                "  %s: %.4f seconds (total: %.4f seconds)", step, avg_time, sum_time
+            )
 
             if overall_timing.get(step) is None:
                 overall_timing[step] = [sum_time]
             else:
                 overall_timing[step].append(sum_time)
 
-    print("\nMaximum timing information:")
+    logger.info("\nMaximum timing information:")
     for step, times in overall_timing.items():
-        print(f"  {step}: {max(times):.4f} seconds")
+        logger.info("  %s: %.4f seconds", step, max(times))
 
-    print("\nAverage timing information:")
+    logger.info("\nAverage timing information:")
     for step, times in overall_timing.items():
-        print(f"  {step}: {sum(times) / len(times):.4f} seconds")
+        logger.info("  %s: %.4f seconds", step, sum(times) / len(times))
 
 
 def average_gradients(model):
@@ -159,16 +166,16 @@ def initialize_distributed_compute(
     ], f"Invalid backend requested: {dist_backend}"
 
     pmi_size = int(os.environ.get("PMI_SIZE", "0"))  # 0 or 1 default value?
-    print("+ Initalizing distributed compute, PMI_SIZE={}".format(pmi_size))
+    logger.info("Initializing distributed compute, PMI_SIZE=%d", pmi_size)
 
     if pmi_size <= 1:
-        print("+ PMI_SIZE <= 1, running in single process mode.")
+        logger.info("PMI_SIZE <= 1, running in single process mode.")
         return DistributedContext(
             my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
         )
 
     if dist_backend == "ccl":
-        print("+ CCL backend requested...")
+        logger.info("CCL backend requested...")
         try:
             # Note - intel must be imported before oneccl!
             import oneccl_bindings_for_pytorch  # noqa: F401
@@ -176,7 +183,7 @@ def initialize_distributed_compute(
             raise Exception("import oneccl_bindings_for_pytorch failed, {}".format(e))
 
     elif dist_backend == "mpi":
-        print("+ MPI backend requested...")
+        logger.info("MPI backend requested...")
         assert torch.distributed.is_mpi_available()
         try:
             import torch_mpi  # noqa: F401
@@ -184,7 +191,7 @@ def initialize_distributed_compute(
             raise Exception("import torch_mpi failed, {}".format(e))
 
     elif dist_backend == "gloo":
-        print("+ Gloo backend requested...")
+        logger.info("Gloo backend requested...")
         assert torch.distributed.is_gloo_available()
 
     else:
@@ -193,7 +200,7 @@ def initialize_distributed_compute(
     os.environ["RANK"] = os.environ.get("PMI_RANK", "0")
     os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
 
-    print("+ OMP_NUM_THREADS = ", os.getenv("OMP_NUM_THREADS"))
+    logger.info("OMP_NUM_THREADS = %s", os.getenv("OMP_NUM_THREADS"))
 
     world_size = os.environ.get("WORLD_SIZE")
     if world_size is None:
@@ -211,7 +218,7 @@ def initialize_distributed_compute(
     )
 
     dist.barrier()
-    print("+ Distributed compute initialized, backend = {}".format(dist_backend))
+    logger.info("Distributed compute initialized, backend = %s", dist_backend)
 
     my_rank = dist.get_rank()  # Global!
     world_size = dist.get_world_size()  # Global!
@@ -220,8 +227,8 @@ def initialize_distributed_compute(
 
     # make sure that we have atmost 1 remote buffer per training rank.
     assert num_training_ranks >= num_remote_buffers
-    print("num_train = ", num_training_ranks)
-    print("num_remote_buffers = ", num_remote_buffers)
+    logger.info("num_train = %d", num_training_ranks)
+    logger.info("num_remote_buffers = %d", num_remote_buffers)
 
     # for now, let us enforce that each agent gets equal number of ranks.
     # TODO: later, we can relax this condition.
@@ -231,7 +238,7 @@ def initialize_distributed_compute(
         list(range(i * agent_group_size, (i + 1) * agent_group_size))
         for i in range(num_agent_groups)
     ]
-    print(f"Agent group ranks: {agent_group_rank_list}")
+    logger.info("Agent group ranks: %s", agent_group_rank_list)
     agent_group_list = [
         cast(
             dist.ProcessGroup,
@@ -266,7 +273,7 @@ def initialize_distributed_compute(
             backend=dist_backend,
             timeout=datetime.timedelta(minutes=5),
         )
-        print(f"Buffer group ranks: {buffer_ranks}")
+        logger.info("Buffer group ranks: %s", buffer_ranks)
 
         # Each training rank gets assigned to a buffer rank
         if my_rank < (num_training_ranks):
@@ -278,14 +285,16 @@ def initialize_distributed_compute(
                 if (ranks % num_remote_buffers) == (my_rank - num_training_ranks)
             ]
 
-        print(f"+ My rank: {my_rank} size: {world_size}")
+        logger.info("My rank: %d size: %d", my_rank, world_size)
         if my_rank < (num_training_ranks):
-            print(f"  -> Training group, assigned buffer rank = {assigned_buffer}")
+            logger.info(
+                "  -> Training group, assigned buffer rank = %s", assigned_buffer
+            )
         else:
-            print("  -> Buffer group")
+            logger.info("  -> Buffer group")
 
     dist.barrier()
-    print("+ Distributed compute initialized, rank = ", my_rank)
+    logger.info("Distributed compute initialized, rank = %d", my_rank)
 
     return DistributedContext(
         my_rank=my_rank,
@@ -305,7 +314,6 @@ def gather_distributed_data(
     local_tensor: torch.Tensor,
     world_size: int | None = None,
     rank: int | None = None,
-    verbose: bool = False,
     training_group=None,
 ) -> torch.Tensor | None:
     """
@@ -320,8 +328,7 @@ def gather_distributed_data(
         On rank 0: Concatenated tensor from all processes
         On other ranks: None
     """
-    if verbose:
-        print("syncing distributed data")
+    logger.debug("Gathering distributed data")
 
     if world_size is None:
         world_size = dist.get_world_size()
@@ -345,19 +352,15 @@ def gather_distributed_data(
     else:
         batch_size_list = None
 
-    if verbose:
-        print("rank={}, batch_size_list={}".format(rank, batch_size_list))
-        print(
-            "+ gather of local_batch_size={} to batch_size_list".format(local_batch_size)
-        )
+    logger.debug("rank=%d, batch_size_list=%s", rank, batch_size_list)
+    logger.debug("gather of local_batch_size=%s to batch_size_list", local_batch_size)
     dist.gather(
         local_batch_size, gather_list=batch_size_list, dst=0, group=training_group
     )
     dist.barrier(group=training_group)  # Add synchronization
 
     # Pad local tensor to maximum size.
-    if verbose:
-        print("+ padding local tensor")
+    logger.debug("padding local tensor")
 
     if rank == 0:
         assert batch_size_list is not None
@@ -393,9 +396,8 @@ def gather_distributed_data(
     else:
         tensor_list = None
 
-    if verbose:
-        print("+ gathering all tensors from world_size={}".format(world_size))
-        print("rank={}, tensor_list={}".format(rank, tensor_list))
+    logger.debug("gathering all tensors from world_size=%d", world_size)
+    logger.debug("rank=%d, tensor_list=%s", rank, tensor_list)
     dist.gather(local_tensor, gather_list=tensor_list, dst=0, group=training_group)
     dist.barrier(group=training_group)  # Add synchronization
 
@@ -408,11 +410,9 @@ def gather_distributed_data(
             trimmed_tensor = tensor[: batch_size.item(), ...]
             results.append(trimmed_tensor)
 
-        if verbose:
-            print("distributed n_results={}".format(len(results)))
-
+        logger.debug("distributed n_results=%d", len(results))
         for r in results:
-            print("    {}".format(r.shape))
+            logger.debug("    %s", r.shape)
 
         return torch.cat(results, dim=0)  # Concatenates along the batch dimension.
 
