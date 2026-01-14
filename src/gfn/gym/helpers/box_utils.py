@@ -76,16 +76,16 @@ class BoxCartesianDistribution(Distribution):
         self.increment_dist = MixtureSameFamily(mix, components)
 
         # Compute valid ranges for each state
-        # s0: can go anywhere in [0, delta], so min_incr=0, max_range=delta
+        # s0: can go anywhere in [0, 1] (like gflownet's first step from source)
         # non-s0: must step at least delta, max is 1-state
         is_s0 = torch.all(states.tensor == 0, dim=-1, keepdim=True)
         self.is_s0 = is_s0.squeeze(-1)
         self.min_incr = torch.where(is_s0, 0.0, delta)
-        # For s0: max_range = delta (action in [0, delta])
+        # For s0: max_range = 1.0 (action in [0, 1], full coverage of state space)
         # For non-s0: max_range = 1 - state - delta (action in [delta, 1-state])
         self.max_range = torch.where(
             is_s0,
-            torch.full_like(states.tensor, delta),
+            torch.ones_like(states.tensor),
             (1.0 - states.tensor - delta),
         ).clamp(min=epsilon)
 
@@ -110,11 +110,11 @@ class BoxCartesianDistribution(Distribution):
         actions = self.min_incr + r * self.max_range
 
         # Clamp to ensure actions stay in valid range
-        # For s0: action in [0, delta], for non-s0: action in [delta, 1-state]
+        # For s0: action in [0, 1] (full space coverage), for non-s0: action in [delta, 1-state]
         is_s0_expanded = self.is_s0.unsqueeze(-1)
         max_action = torch.where(
             is_s0_expanded,
-            torch.full_like(actions, self.delta),
+            torch.ones_like(actions),  # s0 can reach anywhere in [0, 1]
             1.0 - self.states.tensor,
         )
         actions = torch.clamp(actions, min=0.0)
@@ -132,7 +132,7 @@ class BoxCartesianDistribution(Distribution):
         # Identify exit actions
         is_exit = torch.all(actions == float("-inf"), dim=-1)
 
-        # At boundary, exit is forced (log_prob = 0)
+        # At boundary, exit is forced (log_prob = 0 for exit, -inf for non-exit)
         at_boundary = torch.any(
             self.states.tensor >= 1 - self.delta - self.epsilon, dim=-1
         )
@@ -145,17 +145,24 @@ class BoxCartesianDistribution(Distribution):
         )
 
         # Convert absolute to relative: r = (action - min_incr) / max_range
-        r = (safe_actions - self.min_incr) / self.max_range
+        safe_max_range = self.max_range.clamp(min=self.epsilon)
+        r = (safe_actions - self.min_incr) / safe_max_range
         r = r.clamp(self.epsilon, 1 - self.epsilon)
 
         # Get log prob from Beta mixture (sum over dimensions)
-        log_p_beta = self.increment_dist.log_prob(r).sum(dim=-1)
+        log_p_beta_per_dim = self.increment_dist.log_prob(r)
+        log_p_beta = log_p_beta_per_dim.sum(dim=-1)
 
-        # Jacobian: dr/da = 1/max_range, so log|da/dr| = log(max_range)
-        log_jacobian = torch.log(self.max_range).sum(dim=-1)
+        # Jacobian correction for change of variables:
+        # action = min_incr + r * max_range, so dr/daction = 1/max_range
+        # log p(action) = log p(r) + log|dr/daction| = log p(r) - log(max_range)
+        log_jacobian_per_dim = -torch.log(safe_max_range)
+        log_jacobian = log_jacobian_per_dim.sum(dim=-1)
 
         # Add log(1 - exit_prob) for choosing not to exit
-        log_no_exit = torch.log1p(-self.exit_dist.probs)
+        # Clamp exit probability to avoid log(0) when exit_prob = 1
+        exit_probs_clamped = self.exit_dist.probs.clamp(min=self.epsilon, max=1 - self.epsilon)
+        log_no_exit = torch.log1p(-exit_probs_clamped)
 
         # Non-exit log prob
         log_probs = log_p_beta + log_jacobian + log_no_exit
@@ -164,9 +171,14 @@ class BoxCartesianDistribution(Distribution):
         log_p_exit = self.exit_dist.log_prob(torch.ones(1, device=device))
         log_probs = torch.where(is_exit, log_p_exit.expand_as(log_probs), log_probs)
 
-        # Forced exits at boundary have log_prob = 0
+        # Handle boundary states specially:
+        # - If at boundary and exiting: log_prob = 0 (forced exit)
+        # - If at boundary and not exiting: log_prob = -inf (impossible)
         log_probs = torch.where(
             at_boundary & is_exit, torch.zeros_like(log_probs), log_probs
+        )
+        log_probs = torch.where(
+            at_boundary & ~is_exit, torch.full_like(log_probs, float("-inf")), log_probs
         )
 
         # Exit from s0 is not allowed
@@ -269,8 +281,12 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
 class BoxCartesianPBDistribution(Distribution):
     """Backward Cartesian distribution for Box environment.
 
-    Similar to forward but ranges are [min_incr, state] to go backwards.
-    States near origin (norm < delta) must go directly to s0.
+    In torchgfn's design, the source state is the origin [0, 0]. The BTS
+    (back-to-source) action is deterministic: when action = state, we go
+    directly to the origin. This is always the case for the s1 -> s0 transition.
+
+    Unlike gflownet's ContinuousCube (where source is abstract and BTS is
+    stochastic), here BTS is always forced/deterministic with log_prob = 0.
     """
 
     arg_constraints = {}  # No constraints for custom distribution
@@ -284,19 +300,26 @@ class BoxCartesianPBDistribution(Distribution):
         delta: float,
         epsilon: float = 1e-6,
     ) -> None:
-        """Initialize the backward distribution."""
+        """Initialize the backward distribution.
+
+        Args:
+            states: Current states.
+            mixture_logits: Mixture weights, shape (batch, n_dim, n_components).
+            alpha: Beta alpha params, shape (batch, n_dim, n_components).
+            beta: Beta beta params, shape (batch, n_dim, n_components).
+            delta: Minimum step size.
+            epsilon: Numerical stability constant.
+        """
         super().__init__()
         self.delta = delta
         self.epsilon = epsilon
         self.states = states
         self.n_dim = states.tensor.shape[-1]
 
-        # Per-dimension: if state[d] < delta, must go directly to 0 in that dim
-        # (batch, n_dim) boolean mask
-        self.dim_near_origin = states.tensor < delta
-
-        # States where ALL dimensions are near origin (fully deterministic)
-        self.fully_near_origin = torch.all(self.dim_near_origin, dim=-1)
+        # Per-dimension: if state[d] <= delta, BTS is forced for that trajectory
+        # (when state = delta, the only valid backward action is BTS since action range is empty)
+        self.dim_near_origin = states.tensor <= delta
+        self.any_dim_near_origin = torch.any(self.dim_near_origin, dim=-1)
 
         # Increment distribution per dimension
         mix = Categorical(logits=mixture_logits)
@@ -304,88 +327,90 @@ class BoxCartesianPBDistribution(Distribution):
         self.increment_dist = MixtureSameFamily(mix, components)
 
         # For backward: action in [delta, state] for dims where state >= delta
-        # For dims where state < delta: action = state (deterministic)
         self.min_incr = delta
-        # max_range = state - delta, but only meaningful where state >= delta
         self.max_range = (states.tensor - self.min_incr).clamp(min=epsilon)
 
     def sample(self, sample_shape: Size = Size()) -> Tensor:
-        """Sample backward actions."""
-        # Start with action = state for all (handles near-origin dims correctly)
+        """Sample backward actions.
+
+        BTS (action = state) only happens when forced (near origin).
+        Otherwise, sample decrements from Beta mixture.
+        """
+        # BTS is only taken when forced (near origin) - no stochastic BTS
+        is_bts = self.any_dim_near_origin
+
+        # Start with BTS actions (action = state, goes to origin)
         actions = self.states.tensor.clone()
 
-        # For dimensions where state >= delta, sample from [delta, state]
-        if not self.fully_near_origin.all():
+        # For non-BTS, sample decrements from Beta mixture
+        if not is_bts.all():
             r = self.increment_dist.sample().clamp(0.0, 1.0)
             sampled_actions = self.min_incr + r * self.max_range
             # Clamp to ensure action <= state
             sampled_actions = torch.min(sampled_actions, self.states.tensor)
 
-            # Only use sampled actions for dims where state >= delta
-            actions = torch.where(self.dim_near_origin, actions, sampled_actions)
+            # Use sampled actions only for non-BTS trajectories
+            is_bts_expanded = is_bts.unsqueeze(-1)
+            actions = torch.where(is_bts_expanded, actions, sampled_actions)
 
         return actions
 
     def log_prob(self, actions: Tensor) -> Tensor:
         """Compute log probability of backward actions.
 
-        For each dimension:
-        - If state[d] < delta: action[d] must equal state[d] (deterministic, log_prob = 0)
-        - If state[d] >= delta: action[d] sampled from Beta mixture in [delta, state[d]]
+        BTS actions (action = state) always have log_prob = 0 (deterministic).
+        Non-BTS actions have log_prob = log p_beta(r) + log_jacobian.
+
+        When near origin (any dim <= delta), BTS is forced and log_prob = 0.
         """
-        actions.device
-
-        # Check deterministic constraints: for near-origin dims, action must equal state.
-        # A deterministic constraint violation (resulting in -inf log_prob) can occur when:
-        #   1. Trajectory mismatch: The action was sampled by a different policy (e.g., forward)
-        #      that doesn't respect backward semantics for near-origin states.
-        #   2. Manual trajectory construction: Actions were manually specified without
-        #      ensuring action[d] = state[d] for dimensions where state[d] < delta.
-        #   3. Numerical precision: Floating-point differences between action and state
-        #      exceed self.epsilon. Consider increasing epsilon if this occurs frequently.
-        #   4. Policy bug: The forward policy sampled actions that are inconsistent with
-        #      the environment's state transition rules.
-        action_matches_state = torch.abs(actions - self.states.tensor) < self.epsilon
-        deterministic_ok = torch.where(
-            self.dim_near_origin,
-            action_matches_state,
-            torch.ones_like(
-                action_matches_state
-            ),  # non-deterministic dims always OK here
+        # Check if action is BTS (action equals state)
+        # Use a tolerance based on delta for numerical robustness
+        bts_tolerance = self.delta * 0.1  # 10% of delta
+        is_bts = torch.all(
+            torch.abs(actions - self.states.tensor) < bts_tolerance, dim=-1
         )
-        # If any deterministic constraint is violated, log_prob = -inf
-        all_deterministic_ok = torch.all(deterministic_ok, dim=-1)
 
-        # For non-deterministic dimensions, compute Beta log_prob
-        # Convert absolute to relative: r = (action - delta) / max_range
-        r = (actions - self.min_incr) / self.max_range
+        # When near origin, BTS is forced - treat any action as BTS
+        # (the only valid action from near-origin states is BTS anyway)
+        is_bts = is_bts | self.any_dim_near_origin
+
+        # For non-BTS actions, compute Beta mixture log_prob
+        # Use safe placeholders for BTS actions to avoid NaN
+        safe_actions = torch.where(
+            is_bts.unsqueeze(-1),
+            self.min_incr + 0.5 * self.max_range.clamp(min=self.epsilon),  # placeholder
+            actions,
+        )
+
+        # Convert to relative: r = (action - delta) / max_range
+        # Use a reasonable minimum for max_range to avoid extreme Jacobians
+        safe_max_range = self.max_range.clamp(min=self.epsilon)
+        r = (safe_actions - self.min_incr) / safe_max_range
         r = r.clamp(self.epsilon, 1 - self.epsilon)
 
         # Get log prob from Beta mixture per dimension
         log_p_per_dim = self.increment_dist.log_prob(r)
 
-        # Jacobian per dimension: log(max_range)
-        log_jacobian_per_dim = torch.log(self.max_range)
+        # Jacobian: dr/daction = 1/max_range
+        log_jacobian_per_dim = -torch.log(safe_max_range)
 
-        # Only sum over non-deterministic dimensions
-        log_p_stochastic = torch.where(
-            self.dim_near_origin,
-            torch.zeros_like(log_p_per_dim),  # deterministic dims contribute 0
-            log_p_per_dim + log_jacobian_per_dim,
-        ).sum(dim=-1)
+        # Sum over dimensions and replace NaN with large negative (invalid)
+        log_p_beta = (log_p_per_dim + log_jacobian_per_dim).sum(dim=-1)
+        log_p_beta = torch.nan_to_num(log_p_beta, nan=-1e6, posinf=1e6, neginf=-1e6)
 
-        # Combine: if deterministic constraints violated, -inf; otherwise, sum of stochastic
+        # BTS actions have log_prob = 0 (deterministic)
+        # Non-BTS actions have log_prob from Beta + Jacobian
         log_probs = torch.where(
-            all_deterministic_ok,
-            log_p_stochastic,
-            torch.full_like(log_p_stochastic, float("-inf")),
+            is_bts,
+            torch.zeros_like(log_p_beta),  # BTS: always 0
+            log_p_beta,  # Non-BTS: Beta + Jacobian
         )
 
         return log_probs
 
 
 class BoxCartesianPBEstimator(Estimator, PolicyMixin):
-    """Simplified PB estimator using Cartesian increments."""
+    """Simplified PB estimator using Cartesian increments with back-to-source."""
 
     def __init__(
         self,
@@ -417,7 +442,7 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
         n_comp = self.n_components
         n_dim = self.n_dim
 
-        # Parse module output (no exit logit for backward)
+        # Parse module output: [mixture_logits..., alpha..., beta...]
         offset = 0
         mixture_logits = module_output[:, offset : offset + n_dim * n_comp].reshape(
             batch_size, n_dim, n_comp
@@ -491,7 +516,11 @@ class BoxCartesianPFMLP(MLP):
 
 
 class BoxCartesianPBMLP(MLP):
-    """Simplified MLP for Box backward policy using Cartesian increments."""
+    """Simplified MLP for Box backward policy using Cartesian increments.
+
+    Output format: [mixture_logits..., alpha..., beta...]
+    where mixture_logits, alpha, beta each have shape n_dim * n_components.
+    """
 
     def __init__(
         self,
@@ -513,7 +542,7 @@ class BoxCartesianPBMLP(MLP):
         self.n_components = n_components
         self.n_dim = n_dim
 
-        # Output: (weights + alpha + beta) * n_dim * n_comp (no exit for backward)
+        # Output: (weights + alpha + beta) * n_dim * n_comp
         output_dim = 3 * n_dim * n_components
 
         super().__init__(
