@@ -195,16 +195,25 @@ def test_DiscreteEBM_bwd_step():
 
 @pytest.mark.parametrize("delta", [0.1, 0.5, 1.0])
 def test_box_fwd_step(delta: float):
+    """Test Box environment forward step with Cartesian semantics.
+
+    Cartesian semantics:
+    - From s0: actions should be in [0, delta] per dimension
+    - From non-s0: actions should be in [delta, 1-state] per dimension
+    """
     env = Box(delta=delta, debug=True)
     BATCH_SIZE = 3
 
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, 2)
 
+    # Test invalid actions from s0 (Cartesian: any component > delta is invalid)
     failing_actions_lists_at_s0 = [
-        [[delta, delta], [0.01, 0.01], [0.01, 0.01]],
-        [[0.01, 0.01], [0.01, 0.01], [1.0, delta]],
-        [[0.01, 0.01], [delta, 1.0], [0.01, 0.01]],
+        # One action has component > delta
+        [[0.01, 0.01], [0.01, 0.01], [delta + 0.1, 0.01]],
+        [[0.01, 0.01], [0.01, delta + 0.1], [0.01, 0.01]],
+        # Negative actions are invalid
+        [[-0.01, 0.01], [0.01, 0.01], [0.01, 0.01]],
     ]
 
     for failing_actions_list in failing_actions_lists_at_s0:
@@ -212,47 +221,38 @@ def test_box_fwd_step(delta: float):
             format_tensor(failing_actions_list, discrete=False)
         )
         with pytest.raises(NonValidActionsError):
-            states = env._step(states, actions)
+            env._step(states, actions)
 
-    # Trying the step function starting from 3 instances of s_0
-    A, B = None, None
-    for i in range(3):
-        if i == 0:
-            # The following element contains 3 actions within the quarter disk that could be taken from s0
-            actions_list = [
-                [delta / 2 * np.cos(np.pi / 4), delta / 2 * np.sin(np.pi / 4)],
-                [delta / 3 * np.cos(np.pi / 3), delta / 3 * np.sin(np.pi / 3)],
-                [delta / np.sqrt(2), delta / np.sqrt(2)],
-            ]
-        else:
-            assert A is not None and B is not None
-            # The following contains 3 actions within the corresponding quarter circles
-            actions_tensor = torch.tensor([0.2, 0.3, 0.4]) * (B - A) + A
-            actions_tensor *= np.pi / 2
-            actions_tensor = (
-                torch.stack(
-                    [torch.cos(actions_tensor), torch.sin(actions_tensor)], dim=1
-                )
-                * env.delta
-            )
-            actions_tensor[B - A < 0] = torch.tensor([-float("inf"), -float("inf")])
-            actions_list = actions_tensor.tolist()
+    # Test valid actions from s0 (Cartesian: all components in [0, delta])
+    valid_actions_at_s0 = [
+        [delta * 0.5, delta * 0.5],
+        [delta * 0.3, delta * 0.7],
+        [delta, delta],  # Maximum valid action per dimension
+    ]
+    actions = env.actions_from_tensor(format_tensor(valid_actions_at_s0, discrete=False))
+    next_states = env._step(states, actions)
 
-        actions = env.actions_from_tensor(format_tensor(actions_list, discrete=False))
-        states = env._step(states, actions)
-        states_tensor = states.tensor
+    # Verify next states are in valid range
+    assert (next_states.tensor >= 0).all()
+    assert (next_states.tensor <= delta + 1e-6).all()
 
-        # The following evaluate the maximum angles of the possible actions
-        A = torch.where(
-            states_tensor[:, 0] <= 1 - env.delta,
-            0.0,
-            2.0 / torch.pi * torch.arccos((1 - states_tensor[:, 0]) / env.delta),
-        )
-        B = torch.where(
-            states_tensor[:, 1] <= 1 - env.delta,
-            1.0,
-            2.0 / torch.pi * torch.arcsin((1 - states_tensor[:, 1]) / env.delta),
-        )
+    # Test from non-s0 states: actions must be >= delta and not exceed boundary
+    non_s0_states = env.States(torch.tensor([[0.3, 0.3], [0.4, 0.5], [0.2, 0.6]]))
+
+    # Valid actions: in [delta, 1-state] per dimension
+    valid_non_s0_actions = [
+        [delta, delta],  # Minimum valid action
+        [delta, 0.4],  # Within range
+        [delta, 0.3],  # Within range
+    ]
+    actions = env.actions_from_tensor(
+        format_tensor(valid_non_s0_actions, discrete=False)
+    )
+    final_states = env._step(non_s0_states, actions)
+
+    # Verify final states don't exceed boundary
+    assert (final_states.tensor <= 1 + 1e-6).all()
+    assert (final_states.tensor >= 0).all()
 
 
 @pytest.mark.parametrize("ndim", [2, 3, 4])

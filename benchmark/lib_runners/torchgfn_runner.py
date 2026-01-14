@@ -184,18 +184,19 @@ class TorchGFNRunner(LibraryRunner):
         return coupling_constant * J
 
     def _setup_box(self, config: BenchmarkConfig) -> None:
-        """Setup continuous Box environment with TB loss."""
+        """Setup continuous Box environment with TB loss using Cartesian increments."""
         from gfn.gflownet import TBGFlowNet
         from gfn.gym import Box
         from gfn.gym.helpers.box_utils import (
-            BoxPBEstimator,
-            BoxPBMLP,
-            BoxPFEstimator,
-            BoxPFMLP,
+            BoxCartesianPBEstimator,
+            BoxCartesianPBMLP,
+            BoxCartesianPFEstimator,
+            BoxCartesianPFMLP,
         )
         from gfn.samplers import Sampler
 
         delta = config.env_kwargs.get("delta", 0.25)
+        n_components = config.env_kwargs.get("n_components", 5)
 
         self.env = Box(
             delta=delta,
@@ -204,32 +205,30 @@ class TorchGFNRunner(LibraryRunner):
             debug=False,
         )
 
-        # Box environment uses specialized policy modules
-        pf_module = BoxPFMLP(
+        # Simplified Cartesian policy modules
+        pf_module = BoxCartesianPFMLP(
             hidden_dim=config.hidden_dim,
             n_hidden_layers=config.n_layers,
-            n_components=2,
-            n_components_s0=4,
+            n_components=n_components,
         )
-        pb_module = BoxPBMLP(
+        pb_module = BoxCartesianPBMLP(
             hidden_dim=config.hidden_dim,
             n_hidden_layers=config.n_layers,
-            n_components=2,
+            n_components=n_components,
             trunk=pf_module.trunk,  # Tied weights
         )
 
-        pf_estimator = BoxPFEstimator(
+        pf_estimator = BoxCartesianPFEstimator(
             self.env,
             pf_module,
-            n_components_s0=4,
-            n_components=2,
+            n_components=n_components,
             min_concentration=0.1,
             max_concentration=5.1,
         )
-        pb_estimator = BoxPBEstimator(
+        pb_estimator = BoxCartesianPBEstimator(
             self.env,
             pb_module,
-            n_components=2,
+            n_components=n_components,
             min_concentration=0.1,
             max_concentration=5.1,
         )

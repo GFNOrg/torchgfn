@@ -27,11 +27,10 @@ from gfn.gflownet import (
 )
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
-    BoxPBEstimator,
-    BoxPBMLP,
-    BoxPBUniform,
-    BoxPFEstimator,
-    BoxPFMLP,
+    BoxCartesianPBEstimator,
+    BoxCartesianPBMLP,
+    BoxCartesianPFEstimator,
+    BoxCartesianPFMLP,
     BoxStateFlowModule,
 )
 from gfn.preprocessors import IdentityPreprocessor
@@ -111,34 +110,30 @@ def main(args: Namespace) -> float:  # noqa: C901
     # 2. Create the gflownet.
     #    For this we need modules and estimators.
     #    Depending on the loss, we may need several estimators:
-    pf_module = BoxPFMLP(
+    #    Using Cartesian estimators (per-dimension increments, simpler and faster)
+    pf_module = BoxCartesianPFMLP(
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
         n_components=args.n_components,
-        n_components_s0=args.n_components_s0,
     )
-    if args.uniform_pb:
-        pb_module = BoxPBUniform()
-    else:
-        pb_module = BoxPBMLP(
-            hidden_dim=args.hidden_dim,
-            n_hidden_layers=args.n_hidden,
-            n_components=args.n_components,
-            trunk=pf_module.trunk if args.tied else None,
-        )
+    pb_module = BoxCartesianPBMLP(
+        hidden_dim=args.hidden_dim,
+        n_hidden_layers=args.n_hidden,
+        n_components=args.n_components,
+        trunk=pf_module.trunk if args.tied else None,
+    )
 
-    pf_estimator = BoxPFEstimator(
+    pf_estimator = BoxCartesianPFEstimator(
         env,
         pf_module,
-        n_components_s0=args.n_components_s0,
         n_components=args.n_components,
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
-    pb_estimator = BoxPBEstimator(
+    pb_estimator = BoxCartesianPBEstimator(
         env,
         pb_module,
-        n_components=args.n_components if not args.uniform_pb else 1,
+        n_components=args.n_components,
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
@@ -209,18 +204,17 @@ def main(args: Namespace) -> float:  # noqa: C901
     # 3. Create the optimizer and scheduler
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
-    if not args.uniform_pb:
-        assert isinstance(pb_module.last_layer, torch.nn.Module)
-        optimizer.add_param_group(
-            {
-                "params": (
-                    pb_module.last_layer.parameters()
-                    if args.tied
-                    else pb_module.parameters()
-                ),
-                "lr": args.lr,
-            }
-        )
+    assert isinstance(pb_module.last_layer, torch.nn.Module)
+    optimizer.add_param_group(
+        {
+            "params": (
+                pb_module.last_layer.parameters()
+                if args.tied
+                else pb_module.parameters()
+            ),
+            "lr": args.lr,
+        }
+    )
     if args.loss in ("DB", "SubTB"):
         assert module is not None
         optimizer.add_param_group(
@@ -366,17 +360,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_components",
         type=int,
-        default=2,
-        help="Number of Beta distributions for P_F(s'|s)",
+        default=5,
+        help="Number of mixture components for Beta distributions",
     )
-    parser.add_argument(
-        "--n_components_s0",
-        type=int,
-        default=4,
-        help="Number of Beta distributions for P_F(s'|s_0)",
-    )
-
-    parser.add_argument("--uniform_pb", action="store_true", help="Use a uniform PB")
     parser.add_argument(
         "--tied",
         action="store_true",
