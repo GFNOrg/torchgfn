@@ -198,7 +198,7 @@ def test_box_fwd_step(delta: float):
     """Test Box environment forward step with Cartesian semantics.
 
     Cartesian semantics:
-    - From s0: actions should be in [0, delta] per dimension
+    - From s0: actions should be in [0, 1] per dimension (full space coverage)
     - From non-s0: actions should be in [delta, 1-state] per dimension
     """
     env = Box(delta=delta, debug=True)
@@ -207,11 +207,11 @@ def test_box_fwd_step(delta: float):
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, 2)
 
-    # Test invalid actions from s0 (Cartesian: any component > delta is invalid)
+    # Test invalid actions from s0 (Cartesian: any component > 1 is invalid)
     failing_actions_lists_at_s0 = [
-        # One action has component > delta
-        [[0.01, 0.01], [0.01, 0.01], [delta + 0.1, 0.01]],
-        [[0.01, 0.01], [0.01, delta + 0.1], [0.01, 0.01]],
+        # One action has component > 1
+        [[0.01, 0.01], [0.01, 0.01], [1.1, 0.01]],
+        [[0.01, 0.01], [0.01, 1.1], [0.01, 0.01]],
         # Negative actions are invalid
         [[-0.01, 0.01], [0.01, 0.01], [0.01, 0.01]],
     ]
@@ -223,36 +223,49 @@ def test_box_fwd_step(delta: float):
         with pytest.raises(NonValidActionsError):
             env._step(states, actions)
 
-    # Test valid actions from s0 (Cartesian: all components in [0, delta])
+    # Test valid actions from s0 (Cartesian: all components in [0, 1])
     valid_actions_at_s0 = [
-        [delta * 0.5, delta * 0.5],
-        [delta * 0.3, delta * 0.7],
-        [delta, delta],  # Maximum valid action per dimension
+        [0.3, 0.4],
+        [0.7, 0.2],
+        [0.99, 0.99],  # Near maximum valid action per dimension
     ]
     actions = env.actions_from_tensor(format_tensor(valid_actions_at_s0, discrete=False))
     next_states = env._step(states, actions)
 
     # Verify next states are in valid range
     assert (next_states.tensor >= 0).all()
-    assert (next_states.tensor <= delta + 1e-6).all()
+    assert (next_states.tensor <= 1 + 1e-6).all()
 
     # Test from non-s0 states: actions must be >= delta and not exceed boundary
-    non_s0_states = env.States(torch.tensor([[0.3, 0.3], [0.4, 0.5], [0.2, 0.6]]))
+    # Only test if delta < 0.5 (otherwise non-s0 states can't take valid non-exit actions)
+    if delta < 0.5:
+        # Choose states that have enough room for action of size delta
+        # state + delta <= 1, so state <= 1 - delta
+        max_state = 1.0 - delta - 0.01
+        non_s0_states = env.States(
+            torch.tensor(
+                [
+                    [max_state * 0.3, max_state * 0.3],
+                    [max_state * 0.5, max_state * 0.5],
+                    [max_state * 0.4, max_state * 0.4],
+                ]
+            )
+        )
 
-    # Valid actions: in [delta, 1-state] per dimension
-    valid_non_s0_actions = [
-        [delta, delta],  # Minimum valid action
-        [delta, 0.4],  # Within range
-        [delta, 0.3],  # Within range
-    ]
-    actions = env.actions_from_tensor(
-        format_tensor(valid_non_s0_actions, discrete=False)
-    )
-    final_states = env._step(non_s0_states, actions)
+        # Valid actions: minimum valid is delta
+        valid_non_s0_actions = [
+            [delta, delta],
+            [delta, delta],
+            [delta, delta],
+        ]
+        actions = env.actions_from_tensor(
+            format_tensor(valid_non_s0_actions, discrete=False)
+        )
+        final_states = env._step(non_s0_states, actions)
 
-    # Verify final states don't exceed boundary
-    assert (final_states.tensor <= 1 + 1e-6).all()
-    assert (final_states.tensor >= 0).all()
+        # Verify final states don't exceed boundary
+        assert (final_states.tensor <= 1 + 1e-6).all()
+        assert (final_states.tensor >= 0).all()
 
 
 @pytest.mark.parametrize("ndim", [2, 3, 4])
