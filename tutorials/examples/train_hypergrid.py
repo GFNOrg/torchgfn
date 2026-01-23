@@ -41,7 +41,7 @@ from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
-from gfn.containers.replay_buffer_manager import ReplayBufferManager
+from gfn.containers.replay_buffer_manager import ContainerUnion, ReplayBufferManager
 from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
@@ -78,12 +78,12 @@ class ModesReplayBufferManager(ReplayBufferManager):
         remote_manager_rank: int | None = None,
         # Scoring config
         w_retained: float = 1.0,
-        w_novelty: float = 0.1,
+        w_novelty: float = 1.0,
         w_reward: float = 0.0,
         w_mode_bonus: float = 10.0,
         p_norm_novelty: float = 2.0,
         cdist_max_bytes: int = 268435456,
-        ema_decay: float = 0.98,
+        ema_decay: float = 0.90,
     ):
         super().__init__(
             env,
@@ -106,7 +106,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
         self.p_norm_novelty = p_norm_novelty
         self.cdist_max_bytes = cdist_max_bytes
 
-    def scoring_function(self, obj) -> dict[str, float]:
+    def scoring_function(self, obj: ContainerUnion) -> dict[str, float]:
 
         # print("Score - Computing score for object:", obj)
         # print("Score - Terminating states:", obj.terminating_states)
@@ -202,6 +202,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
         print("Score - Modes discovered before update:", self.discovered_modes)
 
         n_new_modes = 0.0
+        assert isinstance(obj.terminating_states, DiscreteStates)
         modes_found = self.env.modes_found(obj.terminating_states)
         if isinstance(modes_found, set):
             new_modes = modes_found - self.discovered_modes
@@ -222,7 +223,9 @@ class ModesReplayBufferManager(ReplayBufferManager):
         if self._score_ema is None:
             self._score_ema = final_score
         else:
-            self._score_ema = self._ema_decay * self._score_ema + (1.0 - self._ema_decay) * float(final_score)
+            self._score_ema = self._ema_decay * self._score_ema + (
+                1.0 - self._ema_decay
+            ) * float(final_score)
         print("Score - EMA score:", self._score_ema)
         return {
             "score": float(self._score_ema),
@@ -483,7 +486,7 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
     # Default (tests stable): on-policy, no noisy layers.
     # When --use_random_strategies is provided, sample a random initial strategy.
     if getattr(args, "use_random_strategies", False):
-        init_cfg = _sample_new_strategy(
+        cfg = _sample_new_strategy(
             args,
             agent_group_id=my_agent_group_id,
             iteration=0,
@@ -491,16 +494,18 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
             prev_temp=9999.0,
             prev_noisy=9999,
         )
-        args.agent_epsilon = float(init_cfg.get("epsilon", 0.0))
-        args.agent_temperature = float(init_cfg.get("temperature", 1.0))
-        args.agent_n_noisy_layers = int(init_cfg.get("n_noisy_layers", 0))
-        args.agent_noisy_std_init = float(init_cfg.get("noisy_std_init", 0.5))
     else:
-        # Disable off-policy training.
-        args.agent_epsilon = 0.0
-        args.agent_temperature = 1.0
-        args.agent_n_noisy_layers = 0
-        args.agent_noisy_std_init = 0.5
+        cfg = {
+            "epsilon": 0.0,
+            "temperature": 1.0,
+            "n_noisy_layers": 0,
+            "noisy_std_init": 0.5,
+        }
+
+    args.agent_epsilon = float(cfg.get("epsilon", 0.0))
+    args.agent_temperature = float(cfg.get("temperature", 1.0))
+    args.agent_n_noisy_layers = int(cfg.get("n_noisy_layers", 0))
+    args.agent_noisy_std_init = float(cfg.get("noisy_std_init", 0.5))
 
     #    Depending on the loss, we may need several estimators:
     #       one (forward only) for FM loss,
@@ -508,13 +513,14 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
     #       three (forward, backward, logZ/logF) estimators for DB, TB.
 
     if args.loss == "FM":
-        return set_up_fm_gflownet(
+        gflownet = set_up_fm_gflownet(
             args,
             env,
             preprocessor,
             agent_group_list,
             my_agent_group_id,
         )
+        return gflownet, cfg
     else:
         # We need a DiscretePFEstimator and a DiscretePBEstimator.
         pf_estimator, pb_estimator = set_up_pb_pf_estimators(
@@ -528,13 +534,13 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
         assert pb_estimator is not None
 
         if args.loss == "ModifiedDB":
-            return ModifiedDBGFlowNet(pf_estimator, pb_estimator)
+            return ModifiedDBGFlowNet(pf_estimator, pb_estimator), cfg
 
         elif args.loss == "TB":
-            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
+            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0), cfg
 
         elif args.loss == "ZVar":
-            return LogPartitionVarianceGFlowNet(pf=pf_estimator, pb=pb_estimator)
+            return LogPartitionVarianceGFlowNet(pf=pf_estimator, pb=pb_estimator), cfg
 
         elif args.loss in ("DB", "SubTB"):
             # We also need a LogStateFlowEstimator.
@@ -548,22 +554,24 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
             )
 
             if args.loss == "DB":
-                return DBGFlowNet(
+                gflownet = DBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
                 )
+                return gflownet, cfg
             elif args.loss == "SubTB":
-                return SubTBGFlowNet(
+                gflownet = SubTBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
                     weighting=args.subTB_weighting,
                     lamda=args.subTB_lambda,
                 )
+                return gflownet, cfg
 
 
-def plot_results(env, gflownet, l1_distances, validation_steps):
+def plot_results(env, gflownet, l1_distances, args):
     # Create figure with 3 subplots with proper spacing
     fig = plt.figure(figsize=(15, 5))
     gs = GridSpec(1, 4, width_ratios=[1, 1, 0.1, 1.2])
@@ -574,8 +582,12 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     ax3 = fig.add_subplot(gs[3])
 
     # Get distributions and find global min/max for consistent color scaling
-    true_dist = env.true_dist.reshape(args.height, args.height).cpu().numpy()
-    learned_dist = get_exact_P_T(env, gflownet).reshape(args.height, args.height).numpy()
+    true_dist = env.true_dist()
+    assert isinstance(true_dist, torch.Tensor)
+    true_dist = true_dist.reshape(args.height, args.height).cpu().numpy()
+    learned_dist = (
+        get_exact_P_T(env, gflownet).reshape(args.height, args.height).cpu().numpy()
+    )
 
     # Ensure consistent orientation by transposing
     true_dist = true_dist.T
@@ -623,7 +635,7 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     plt.close()
 
 
-def main(args):  # noqa: C901
+def main(args) -> dict:  # noqa: C901
     """Trains a GFlowNet on the Hypergrid Environment, potentially distributed."""
 
     if args.half_precision:
@@ -672,12 +684,12 @@ def main(args):  # noqa: C901
         },
         calculate_partition=args.calculate_partition,
         store_all_states=args.store_all_states,
+        debug=__debug__,
     )
     print("env: ", env, "buffer_rank: ", distributed_context.is_buffer_rank(), flush=True)
     #dist.barrier()
 
     if args.distributed and distributed_context.is_buffer_rank():
-        print("Entered......................................", flush=True)
         if distributed_context.assigned_training_ranks is None:
             num_training_ranks = 0
         else:
@@ -691,8 +703,7 @@ def main(args):  # noqa: C901
             capacity=args.global_replay_buffer_size,
         )  # TODO: If the remote_manager_rank is set, does this produce an infinite loop?
         replay_buffer_manager.run()
-        print("Returning......................................", flush=True)
-        return 0.0
+        return {}
 
     print("at buffer setup done.......", flush=True)    
     ##dist.barrier()    
@@ -738,21 +749,35 @@ def main(args):  # noqa: C901
         else:
             group_name = wandb.util.generate_id()
 
-        wandb.init(project=args.wandb_project, group=group_name)
-        wandb.config.update(args)
+        wandb.init(
+            project=args.wandb_project,
+            group=group_name,
+            entity=args.wandb_entity,
+            config=vars(args),
+        )
 
     # Initialize the preprocessor.
     preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
+    model_builder_count = 0
 
     # Builder closure to create a fresh model + optimizer (used by spawn policy as well)
     def _model_builder() -> Tuple[GFlowNet, torch.optim.Optimizer]:
-        model = set_up_gflownet(
+        nonlocal model_builder_count, use_wandb
+        model_builder_count += 1
+
+        model, cfg = set_up_gflownet(
             args,
             env,
             preprocessor,
             distributed_context.agent_groups,
             distributed_context.agent_group_id,
         )
+        if use_wandb:
+            import wandb
+
+            wandb.log({"model_builder_count": model_builder_count, **cfg})
+        else:
+            print(f"Model builder count: {model_builder_count}")
         assert model is not None
         model = model.to(device)
         optim = _make_optimizer_for(model, args)
@@ -781,14 +806,13 @@ def main(args):  # noqa: C901
                 capacity=args.replay_buffer_size,
                 prioritized_capacity=False,
                 remote_manager_rank=distributed_context.assigned_buffer,
-                remote_buffer_freq=1,
+                remote_buffer_freq=args.remote_buffer_freq,
             )
 
     gflownet = gflownet.to(device)
 
     n_iterations = ceil(args.n_trajectories / args.batch_size)
     per_node_batch_size = args.batch_size // distributed_context.world_size
-    validation_info = {"l1_dist": float("inf")}
     modes_found = set()
     # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
@@ -972,13 +996,12 @@ def main(args):  # noqa: C901
         ) as model_averaging_timer:
             if averaging_policy is not None:
                 #print("+ Performing model averaging start...", flush=True)
-                assert score_dict is not None
                 if oldcode:
                     gflownet, optimizer, averaging_info = averaging_policy(
                         iteration=iteration,
                         model=gflownet,
                         optimizer=optimizer,
-                        local_metric=score_dict["score"],
+                        local_metric=score_dict["score"] if score_dict is not None else -loss.item(),
                         group=distributed_context.train_global_group,
                     )   
                 else:
@@ -986,7 +1009,7 @@ def main(args):  # noqa: C901
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
-                    local_metric=score_dict["score"],
+                    local_metric=score_dict["score"] if score_dict is not None else -loss.item(),
                     group=distributed_context.dc_mpi4py.train_global_group,
                 )
                 #print("+ Performing model averaging done end...", flush=True)
@@ -1029,18 +1052,19 @@ def main(args):  # noqa: C901
             assert visited_terminating_states is not None
             all_visited_terminating_states.extend(visited_terminating_states)
             to_log = {
-                f"loss": loss.item(),
-                f"sample_time": sample_timer.elapsed,
-                f"to_train_samples_time": to_train_samples_timer.elapsed,
-                f"loss_time": loss_timer.elapsed,
-                f"loss_backward_time": loss_backward_timer.elapsed,
-                f"opt_time": opt_timer.elapsed,
-                f"model_averaging_time": model_averaging_timer.elapsed,
-                f"rest_time": rest_time,
-                f"l1_dist": None,  # only logged if calculate_partition.
+                "loss": loss.item(),
+                "sample_time": sample_timer.elapsed,
+                "to_train_samples_time": to_train_samples_timer.elapsed,
+                "loss_time": loss_timer.elapsed,
+                "loss_backward_time": loss_backward_timer.elapsed,
+                "opt_time": opt_timer.elapsed,
+                "model_averaging_time": model_averaging_timer.elapsed,
+                "rest_time": rest_time,
+                "l1_dist": None,  # only logged if calculate_partition.
             }
-            ##to_log.update(averaging_info)
-            to_log.update(score_dict)
+            # to_log.update(averaging_info)
+            if score_dict is not None:
+                to_log.update(score_dict)
 
             if log_this_iter:
                 validation_info, all_visited_terminating_states = env.validate(
@@ -1058,15 +1082,15 @@ def main(args):  # noqa: C901
                         metadata = ReplayBufferManager.get_metadata(manager_rank)
                         to_log.update(metadata)
                     else:
-                        modes_found.update(env.modes_found(visited_terminating_states))
+                        modes_found.update(
+                            env.modes_found(all_visited_terminating_states)
+                        )
                         n_modes_found = len(modes_found)
                         to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
                         loss=to_log["loss"],
-                        l1_dist=to_log[
-                            "l1_dist"
-                        ],  # only logged if calculate_partition.
+                        l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
                         n_modes_found=to_log["n_modes_found"],
                     )
 
@@ -1129,21 +1153,8 @@ def main(args):  # noqa: C901
         # Create figure with 3 subplots with proper spacing.
         plot_results(env, gflownet, l1_distances, validation_steps)
 
-
-    ##### validation_info issue site
-    try:
-        result = validation_info["l1_dist"]
-    except KeyError:
-        try:
-            result = validation_info["n_modes_found"]
-        except KeyError:  ## update by vasim
-            result = None   
-
     if distributed_context.my_rank == 0:
-        if result is not None:
-            print("+ Training complete - final_score={:.6f}".format(result))
-        else:
-            print("+ Training complete - result = None")
+        print("Training complete, logs:", to_log)
 
     if (
         args.distributed
@@ -1153,7 +1164,7 @@ def main(args):  # noqa: C901
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
 
-    return result
+    return to_log
 
 
 if __name__ == "__main__":
@@ -1194,7 +1205,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--global_replay_buffer_size",
         type=int,
-        default=10000,
+        default=8192,
         help="Global replay buffer size (only if using distributed computation)",
     )
     parser.add_argument(
@@ -1202,6 +1213,13 @@ if __name__ == "__main__":
         type=str,
         default="gloo",
         help="Distributed backend to use: gloo, ccl or mpi",
+    )
+
+    parser.add_argument(
+        "--remote_buffer_freq",
+        type=int,
+        default=1,
+        help="Frequency (in training iterations) at which training ranks sends trajectories to remote replay buffer",
     )
 
     # Selective averaging settings.
@@ -1273,7 +1291,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=1000,
+        default=2048,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
     )
     parser.add_argument(
@@ -1386,6 +1404,12 @@ if __name__ == "__main__":
         help="Name of the wandb project. If empty, don't use wandb",
     )
     parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        default="torchgfn",
+        help="Name of the wandb entity. If empty, don't use wandb",
+    )
+    parser.add_argument(
         "--wandb_local",
         action="store_true",
         help="Stores wandb results locally, to be uploaded later.",
@@ -1465,7 +1489,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--performance_tracker_threshold",
         type=float,
-        default=100,
+        default=None,
         help="Threshold for the performance tracker. If None, the performance tracker is not triggered.",
     )
     parser.add_argument(
@@ -1483,4 +1507,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    result = main(args)
+    main(args)

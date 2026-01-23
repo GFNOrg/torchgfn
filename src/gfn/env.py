@@ -33,9 +33,11 @@ class Env(ABC):
         States: The States class associated with this environment.
         Actions: The Actions class associated with this environment.
         is_discrete: Class variable, whether the environment is discrete.
+        is_conditional: Class variable, whether the environment is conditional.
     """
 
     is_discrete: bool = False
+    is_conditional: bool = False
 
     def __init__(
         self,
@@ -45,7 +47,7 @@ class Env(ABC):
         dummy_action: torch.Tensor,
         exit_action: torch.Tensor,
         sf: Optional[torch.Tensor | GeometricData] = None,
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes an environment.
 
@@ -58,7 +60,8 @@ class Env(ABC):
             exit_action: Tensor of shape (*action_shape) representing the exit action.
             sf: (Optional) Tensor of shape (*state_shape) or GeometricData representing
                 the sink (final) state.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, States/Actions created by this env will run runtime guards
+                (not torch.compile friendly). Keep False in compiled runs.
         """
         if isinstance(s0.device, str):  # This can happen when s0 is a GeometricData.
             s0.device = torch.device(s0.device)
@@ -79,7 +82,7 @@ class Env(ABC):
         self.action_shape = action_shape
         self.dummy_action = dummy_action.to(s0.device)
         self.exit_action = exit_action.to(s0.device)
-        self.check_action_validity = check_action_validity
+        self.debug = debug
 
         # Warning: don't use self.States or self.Actions to initialize an instance of
         # the class. Use self.states_from_tensor or self.actions_from_tensor instead.
@@ -95,19 +98,27 @@ class Env(ABC):
         """
         return self.s0.device
 
-    def states_from_tensor(self, tensor: torch.Tensor) -> States:
+    def states_from_tensor(
+        self, tensor: torch.Tensor, conditions: torch.Tensor | None = None
+    ) -> States:
         """Wraps the supplied tensor in a States instance.
 
         Args:
-            tensor: Tensor of shape (*state_shape) representing the states.
+            tensor: Tensor of shape (*batch_shape, *state_shape) representing the states.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
 
         Returns:
             A States instance.
         """
-        return self.States(tensor)
+        return self.States(tensor=tensor, conditions=conditions, debug=self.debug)
 
     def states_from_batch_shape(
-        self, batch_shape: Tuple, random: bool = False, sink: bool = False
+        self,
+        batch_shape: int | Tuple[int, ...],
+        random: bool = False,
+        sink: bool = False,
+        conditions: torch.Tensor | None = None,
     ) -> States:
         """Returns a batch of random, initial, or sink states with a given batch shape.
 
@@ -115,12 +126,19 @@ class Env(ABC):
             batch_shape: Tuple representing the shape of the batch of states.
             random: If True, initialize states randomly (requires implementation).
             sink: If True, initialize states as sink states ($s_f$).
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
 
         Returns:
             A batch of random, initial, or sink states.
         """
         return self.States.from_batch_shape(
-            batch_shape, random=random, sink=sink, device=self.device
+            batch_shape,
+            random=random,
+            sink=sink,
+            conditions=conditions,
+            device=self.device,
+            debug=self.debug,
         )
 
     def actions_from_tensor(self, tensor: torch.Tensor) -> Actions:
@@ -132,7 +150,7 @@ class Env(ABC):
         Returns:
             An Actions instance.
         """
-        return self.Actions(tensor)
+        return self.Actions(tensor, debug=self.debug)
 
     def actions_from_batch_shape(self, batch_shape: Tuple) -> Actions:
         """Returns a batch of dummy actions with the supplied batch shape.
@@ -143,7 +161,9 @@ class Env(ABC):
         Returns:
             A batch of dummy actions.
         """
-        return self.Actions.make_dummy_actions(batch_shape, device=self.device)
+        return self.Actions.make_dummy_actions(
+            batch_shape, device=self.device, debug=self.debug
+        )
 
     @abstractmethod
     def step(self, states: States, actions: Actions) -> States:
@@ -196,12 +216,17 @@ class Env(ABC):
         """
 
     def make_random_states(
-        self, batch_shape: Tuple, device: torch.device | None = None
+        self,
+        batch_shape: Tuple,
+        conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> States:
         """Optional method to return a batch of random states.
 
         Args:
             batch_shape: Tuple representing the shape of the batch of states.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to create the states on.
 
         Returns:
@@ -252,10 +277,11 @@ class Env(ABC):
 
     def reset(
         self,
-        batch_shape: int | Tuple[int, ...] | list[int],
+        batch_shape: int | Tuple[int, ...],
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
+        conditions: Optional[torch.Tensor] = None,
     ) -> States:
         """Instantiates a batch of random, initial, or sink states.
 
@@ -264,6 +290,8 @@ class Env(ABC):
             random: If True, initialize states randomly.
             sink: If True, initialize states as sink states ($s_f$).
             seed: (Optional) Random seed for reproducibility.
+            conditions: (Optional) Tensor of shape (*batch_shape, condition_dim)
+                containing the conditions.
 
         Returns:
             A batch of initial or sink states.
@@ -271,14 +299,42 @@ class Env(ABC):
         assert not (random and sink)
 
         if random and seed is not None:
-            set_seed(seed, performance_mode=True)
+            set_seed(seed, deterministic_mode=False)  # TODO: configurable?
 
         if isinstance(batch_shape, int):
             batch_shape = (batch_shape,)
-        elif isinstance(batch_shape, list):
-            batch_shape = tuple(batch_shape)
+
+        # If the environment is conditional, we need to sample conditions if not provided.
+        if self.is_conditional:
+            if conditions is None:
+                try:
+                    conditions = self.sample_conditions(batch_shape)
+                except NotImplementedError as e:
+                    raise NotImplementedError(
+                        f"Environment {self.__class__.__name__} is conditional, "
+                        "but `sample_conditions` method is not implemented."
+                    ) from e
+            assert conditions.shape[:-1] == batch_shape, (
+                f"Conditions batch shape {conditions.shape[:-1]} doesn't match "
+                f"expected batch shape {batch_shape}"
+            )
+            ensure_same_device(conditions.device, self.device)
+
         return self.states_from_batch_shape(
-            batch_shape=batch_shape, random=random, sink=sink
+            batch_shape=batch_shape, random=random, sink=sink, conditions=conditions
+        )
+
+    def sample_conditions(self, batch_shape: int | Tuple[int, ...]) -> torch.Tensor:
+        """Sample conditions for the environment. Required for conditional environments.
+
+        Args:
+            batch_shape: The shape of the batch of conditions to sample.
+
+        Returns:
+            A tensor of shape (*batch_shape, condition_dim) containing the conditions.
+        """
+        raise NotImplementedError(
+            "`sample_conditions` method is not implemented for this environment."
         )
 
     def _step(self, states: States, actions: Actions) -> States:
@@ -295,14 +351,19 @@ class Env(ABC):
         Returns:
             A batch of next states.
         """
-        assert states.batch_shape == actions.batch_shape
-        assert len(states.batch_shape) == 1, "Batch shape must be 1 for the step method."
+        if self.debug:
+            # Debug-only guards to avoid graph breaks in compiled runs.
+            assert states.batch_shape == actions.batch_shape
+            assert (
+                len(states.batch_shape) == 1
+            ), "Batch shape must be 1 for the step method."
 
         valid_states_idx: torch.Tensor = ~states.is_sink_state
-        assert valid_states_idx.shape == states.batch_shape
-        assert valid_states_idx.dtype == torch.bool
+        if self.debug:
+            assert valid_states_idx.shape == states.batch_shape
+            assert valid_states_idx.dtype == torch.bool
 
-        if self.check_action_validity:
+            # Action validity checks only when debug is enabled to keep compiled hot paths lean.
             valid_actions = actions[valid_states_idx]
             valid_states = states[valid_states_idx]
 
@@ -337,6 +398,8 @@ class Env(ABC):
             states.batch_shape, device=states.device
         )
         new_states[new_valid_states_idx] = not_done_states
+        if states.conditions is not None:
+            new_states.conditions = states.conditions
         return new_states
 
     def _backward_step(self, states: States, actions: Actions) -> States:
@@ -353,7 +416,8 @@ class Env(ABC):
         Returns:
             A batch of previous states.
         """
-        assert states.batch_shape == actions.batch_shape
+        if self.debug:
+            assert states.batch_shape == actions.batch_shape
 
         # IMPORTANT: states.clone() is used to ensure that the new states are a
         # distinct object from the old states. This is important for the sampler to
@@ -363,12 +427,13 @@ class Env(ABC):
         new_states = states.clone()
 
         valid_states_idx: torch.Tensor = ~new_states.is_initial_state
-        assert valid_states_idx.shape == new_states.batch_shape
-        assert valid_states_idx.dtype == torch.bool
+        if self.debug:
+            assert valid_states_idx.shape == new_states.batch_shape
+            assert valid_states_idx.dtype == torch.bool
         valid_actions = actions[valid_states_idx]
         valid_states = new_states[valid_states_idx]
 
-        if self.check_action_validity and not self.is_action_valid(
+        if self.debug and not self.is_action_valid(
             valid_states, valid_actions, backward=True
         ):
             raise NonValidActionsError(
@@ -377,7 +442,8 @@ class Env(ABC):
 
         # Calculate the backward step, and update only the states which are not Done.
         new_states[valid_states_idx] = self.backward_step(valid_states, valid_actions)
-
+        if states.conditions is not None:
+            new_states.conditions = states.conditions
         return new_states
 
     def reward(self, states: States) -> torch.Tensor:
@@ -406,20 +472,24 @@ class Env(ABC):
         """
         return torch.log(self.reward(states))
 
-    @property
-    def log_partition(self) -> float:
+    def log_partition(self, condition: torch.Tensor | None = None) -> float:
         """Optional method to return the logarithm of the partition function.
+
+        Args:
+            condition: Optional tensor of shape (condition_dim,) containing the condition.
 
         Returns:
             The log partition function.
         """
         raise NotImplementedError(
-            "The environment does not support enumeration of states"
+            "The environment does not support calculating the log partition"
         )
 
-    @property
-    def true_dist(self) -> torch.Tensor:
+    def true_dist(self, condition: torch.Tensor | None = None) -> torch.Tensor:
         """Optional method to return the true distribution.
+
+        Args:
+            condition: Optional tensor of shape (condition_dim,) containing the condition.
 
         Returns:
             The true distribution as a 1-dimensional tensor.
@@ -445,9 +515,8 @@ class DiscreteEnv(Env, ABC):
         sf: Tensor of shape (*state_shape) representing the sink (final) state.
         n_actions: The number of actions in the environment.
         state_shape: Tuple representing the shape of the states.
-        action_shape: Tuple representing the shape of the actions.
-        dummy_action: Tensor of shape (*action_shape) representing the dummy action.
-        exit_action: Tensor of shape (*action_shape) representing the exit action.
+        dummy_action: Tensor of shape (1,) representing the dummy action.
+        exit_action: Tensor of shape (1,) representing the exit action.
         States: The States class associated with this environment.
         Actions: The Actions class associated with this environment.
         is_discrete: Class variable, whether the environment is discrete.
@@ -463,11 +532,10 @@ class DiscreteEnv(Env, ABC):
         s0: torch.Tensor,
         state_shape: Tuple | int,
         # Advanced parameters (optional):
-        action_shape: Tuple | int = (1,),
         dummy_action: Optional[torch.Tensor] = None,
         exit_action: Optional[torch.Tensor] = None,
         sf: Optional[torch.Tensor] = None,
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes a discrete environment.
 
@@ -475,13 +543,13 @@ class DiscreteEnv(Env, ABC):
             n_actions: The number of actions in the environment.
             s0: Tensor of shape (*state_shape) representing the initial state.
             state_shape: Tuple representing the shape of the states.
-            action_shape: Tuple representing the shape of the actions.
-            dummy_action: (Optional) Tensor of shape (*action_shape) representing the
+            dummy_action: (Optional) Tensor of shape (1,) representing the
                 dummy (padding) action.
-            exit_action: (Optional) Tensor of shape (*action_shape) representing the
+            exit_action: (Optional) Tensor of shape (1,) representing the
                 exit action.
             sf: (Optional) Tensor of shape (*state_shape) representing the final state.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, States created by this env will run runtime guards
+                (not torch.compile friendly). Keep False in compiled runs.
         """
         # Add validation/warnings for advanced usage
         if dummy_action is not None or exit_action is not None or sf is not None:
@@ -512,45 +580,52 @@ class DiscreteEnv(Env, ABC):
         if exit_action is None:
             exit_action = torch.tensor([n_actions - 1], device=s0.device)
 
-        # If these shapes are integers, convert them to tuples.
-        if isinstance(action_shape, int):
-            action_shape = (action_shape,)
-
         if isinstance(state_shape, int):
             state_shape = (state_shape,)
 
         assert dummy_action is not None
         assert exit_action is not None
         assert s0.shape == state_shape
-        assert dummy_action.shape == action_shape
-        assert exit_action.shape == action_shape
+        assert dummy_action.shape == (1,)
+        assert exit_action.shape == (1,)
 
         self.n_actions = n_actions  # Before init, for compatibility with States.
         super().__init__(
             s0,
             state_shape,
-            action_shape,
+            (1,),  # action shape is always (1,) for discrete environments
             dummy_action,
             exit_action,
             sf,
-            check_action_validity,
+            debug=debug,
         )
 
-    def states_from_tensor(self, tensor: torch.Tensor) -> DiscreteStates:
+    def states_from_tensor(
+        self, tensor: torch.Tensor, conditions: torch.Tensor | None = None
+    ) -> DiscreteStates:
         """Wraps the supplied tensor in a DiscreteStates instance and updates masks.
 
         Args:
-            tensor: Tensor of shape (*state_shape) representing the states.
+            tensor: Tensor of shape (*batch_shape, *state_shape) representing the states.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
 
         Returns:
             An instance of DiscreteStates.
         """
-        states_instance = self.make_states_class()(tensor)
+        states_instance = cast(
+            DiscreteStates,
+            self.States(tensor=tensor, conditions=conditions, debug=self.debug),
+        )
         self.update_masks(states_instance)
         return states_instance
 
     def states_from_batch_shape(
-        self, batch_shape: Tuple, random: bool = False, sink: bool = False
+        self,
+        batch_shape: int | Tuple[int, ...],
+        random: bool = False,
+        sink: bool = False,
+        conditions: torch.Tensor | None = None,
     ) -> DiscreteStates:
         r"""Returns a batch of random, initial, or sink states with a given batch shape.
 
@@ -562,7 +637,7 @@ class DiscreteEnv(Env, ABC):
         Returns:
             DiscreteStates: A batch of random, initial, or sink states.
         """
-        out = super().states_from_batch_shape(batch_shape, random, sink)
+        out = super().states_from_batch_shape(batch_shape, random, sink, conditions)
         assert isinstance(out, DiscreteStates)
         return out
 
@@ -572,6 +647,7 @@ class DiscreteEnv(Env, ABC):
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
+        conditions: Optional[torch.Tensor] = None,
     ) -> DiscreteStates:
         """Instantiates a batch of random, initial, or sink states and updates masks.
 
@@ -580,11 +656,13 @@ class DiscreteEnv(Env, ABC):
             random: If True, initialize states randomly.
             sink: If True, initialize states as sink states ($s_f$).
             seed: (Optional) Random seed for reproducibility.
+            conditions: (Optional) Tensor of shape (*batch_shape, condition_dim)
+                containing the conditions.
 
         Returns:
             A batch of initial or sink states.
         """
-        states = super().reset(batch_shape, random, sink, seed)
+        states = super().reset(batch_shape, random, sink, seed, conditions=conditions)
         states = cast(DiscreteStates, states)
         self.update_masks(states)
         return states
@@ -643,8 +721,14 @@ class DiscreteEnv(Env, ABC):
             backward: If True, checks validity for backward actions.
 
         Returns:
-            True if all actions are valid in the given states, False otherwise.
+            True if all actions are valid in the given states, False otherwise. When
+            `debug` is False, returns True without checking to keep hot paths
+            compile-friendly.
         """
+        if not self.debug:
+            # Skip costly validity checks in production/compiled runs.
+            return True
+
         assert states.forward_masks is not None and states.backward_masks is not None
         masks_tensor = states.backward_masks if backward else states.forward_masks
         return bool(torch.gather(masks_tensor, 1, actions.tensor).all().item())
@@ -738,6 +822,7 @@ class DiscreteEnv(Env, ABC):
         gflownet: "GFlowNet",
         n_validation_samples: int = 1000,
         visited_terminating_states: Optional[DiscreteStates] = None,
+        validate_condition: torch.Tensor | None = None,
     ) -> Tuple[Dict[str, float], DiscreteStates | None]:
         """Evaluate a GFlowNet against this environment's true distribution.
 
@@ -752,7 +837,7 @@ class DiscreteEnv(Env, ABC):
         """
         # Check availability of true distribution.
         try:
-            true_dist = self.true_dist
+            true_dist = self.true_dist(validate_condition)
             if isinstance(true_dist, torch.Tensor):
                 true_dist = true_dist.cpu()
             else:
@@ -771,7 +856,7 @@ class DiscreteEnv(Env, ABC):
         # Attempt to retrieve true logZ if available.
         true_logZ: float | None = None
         try:
-            true_logZ = self.log_partition
+            true_logZ = self.log_partition(validate_condition)
         except NotImplementedError:
             true_logZ = None
 
@@ -812,10 +897,21 @@ class DiscreteEnv(Env, ABC):
 
         # Report logZ difference if both sides are available.
         learned_logZ: float | None = None
-        if hasattr(gflownet, "logZ") and isinstance(
-            getattr(gflownet, "logZ"), torch.Tensor
-        ):
-            learned_logZ = float(getattr(gflownet, "logZ").item())
+        if hasattr(gflownet, "logZ"):
+            if isinstance(gflownet.logZ, torch.Tensor):
+                learned_logZ = float(gflownet.logZ.item())
+            else:
+                # Lazy import avoids circular dependency with gfn.estimators.
+                from gfn.estimators import ScalarEstimator
+
+                if isinstance(gflownet.logZ, ScalarEstimator):
+                    assert validate_condition is not None
+                    learned_logZ = gflownet.logZ(validate_condition).item()
+                else:
+                    warnings.warn(
+                        f"Unsupported logZ type: {type(gflownet.logZ)}", UserWarning
+                    )
+                    learned_logZ = None
         if learned_logZ is not None and true_logZ is not None:
             validation_info["logZ_diff"] = abs(learned_logZ - true_logZ)
 
@@ -928,7 +1024,7 @@ class GraphEnv(Env):
         num_node_classes: int,
         num_edge_classes: int,
         is_directed: bool,
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes a graph-based environment.
 
@@ -938,7 +1034,8 @@ class GraphEnv(Env):
             num_node_classes: Number of node classes.
             num_edge_classes: Number of edge classes.
             is_directed: Whether the graph is directed.
-            check_action_validity: Whether to check the action validity.
+            debug: Kept for consistency with the other environments. Currently does not
+                optimize runtime.
         """
         assert s0.x is not None and sf.x is not None
         assert s0.edge_attr is not None and sf.edge_attr is not None
@@ -952,7 +1049,7 @@ class GraphEnv(Env):
         self.num_node_classes = num_node_classes
         self.num_edge_classes = num_edge_classes
         self.is_directed = is_directed
-        self.check_action_validity = check_action_validity
+        self.debug = debug
 
         assert s0.x is not None
         assert sf.x is not None
@@ -1014,6 +1111,7 @@ class GraphEnv(Env):
         random: bool = False,
         sink: bool = False,
         seed: Optional[int] = None,
+        conditions: Optional[torch.Tensor] = None,
     ) -> GraphStates:
         """Instantiates a batch of random, initial, or sink graph states.
 
@@ -1022,11 +1120,13 @@ class GraphEnv(Env):
             random: If True, initialize states randomly.
             sink: If True, initialize states as sink states ($s_f$).
             seed: (Optional) Random seed for reproducibility.
+            conditions: (Optional) Tensor of shape (*batch_shape, condition_dim)
+                containing the conditions.
 
         Returns:
             A batch of random, initial, or sink graph states.
         """
-        states = super().reset(batch_shape, random, sink, seed)
+        states = super().reset(batch_shape, random, sink, seed, conditions=conditions)
         states = cast(GraphStates, states)
         return states
 
@@ -1061,12 +1161,17 @@ class GraphEnv(Env):
         """
 
     def make_random_states(
-        self, batch_shape: int | Tuple, device: torch.device | None = None
+        self,
+        batch_shape: int | Tuple,
+        conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> GraphStates:
         """Optional method to return a batch of random graph states.
 
         Args:
             batch_shape: Shape of the batch (int or tuple).
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to create the graph states on.
 
         Returns:

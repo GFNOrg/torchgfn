@@ -20,7 +20,7 @@ class ReplayBufferManager:
         env: Env,
         rank: int,
         num_training_ranks: int,
-        scoring_function: Optional[Callable[[ContainerUnion], float]] = None,
+        scoring_function: Optional[Callable[[ContainerUnion], dict[str, float]]] = None,
         diverse_replay_buffer: bool = False,
         capacity: int = 10000,
         remote_manager_rank: int | None = None,

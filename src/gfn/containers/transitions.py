@@ -22,8 +22,6 @@ class Transitions(Container):
     Attributes:
         env: The environment where the states and actions are defined.
         states: States with batch_shape (n_transitions,).
-        conditioning: (Optional) Tensor of shape (n_transitions,) containing the
-            conditioning for the transitions.
         actions: Actions with batch_shape (n_transitions,). The actions make the
             transitions from the `states` to the `next_states`.
         is_terminating: Boolean tensor of shape (n_transitions,) indicating whether the
@@ -43,7 +41,6 @@ class Transitions(Container):
         self,
         env: Env,
         states: States | None = None,
-        conditioning: torch.Tensor | None = None,
         actions: Actions | None = None,
         is_terminating: torch.Tensor | None = None,
         next_states: States | None = None,
@@ -57,8 +54,6 @@ class Transitions(Container):
             env: The environment where the states and actions are defined.
             states: States with batch_shape (n_transitions,). If None, an empty States
                 object is created.
-            conditioning: Optional tensor of shape (n_transitions,) containing the
-                conditioning for the transitions.
             actions: Actions with batch_shape (n_transitions,). If None, an empty Actions
                 object is created.
             is_terminating: Boolean tensor of shape (n_transitions,) indicating whether
@@ -83,17 +78,12 @@ class Transitions(Container):
         device = self.env.device
         for obj in [states, actions, next_states]:
             ensure_same_device(obj.device, device) if obj is not None else True
-        for tensor in [conditioning, is_terminating, log_rewards, log_probs]:
+        for tensor in [is_terminating, log_rewards, log_probs]:
             ensure_same_device(tensor.device, device) if tensor is not None else True
 
         self.states = states if states is not None else env.states_from_batch_shape((0,))
         assert len(self.states.batch_shape) == 1
         batch_shape = self.states.batch_shape
-
-        self.conditioning = conditioning
-        assert self.conditioning is None or (
-            self.conditioning.shape[: len(batch_shape)] == batch_shape
-        )
 
         self.actions = (
             actions if actions is not None else env.actions_from_batch_shape((0,))
@@ -162,6 +152,7 @@ class Transitions(Container):
         states_tensor = self.states.tensor
         next_states_tensor = self.next_states.tensor
 
+        # FIXME: This is not working for GraphStates.
         states_repr = ",\t".join(
             [
                 f"{str(state.numpy())} -> {str(next_state.numpy())}"
@@ -194,7 +185,7 @@ class Transitions(Container):
             If not provided at initialization, log rewards are computed on demand for
             terminating transitions.
         """
-        if self.is_backward:
+        if self.is_backward:  # TODO: Why can't backward trajectories have log_rewards?
             return None
 
         if self._log_rewards is None:
@@ -256,9 +247,6 @@ class Transitions(Container):
             index = [index]
 
         states = self.states[index]
-        conditioning = (
-            self.conditioning[index] if self.conditioning is not None else None
-        )
         actions = self.actions[index]
         is_terminating = self.is_terminating[index]
         next_states = self.next_states[index]
@@ -268,7 +256,6 @@ class Transitions(Container):
         return Transitions(
             env=self.env,
             states=states,
-            conditioning=conditioning,
             actions=actions,
             is_terminating=is_terminating,
             next_states=next_states,
@@ -283,12 +270,6 @@ class Transitions(Container):
         Args:
             Another Transitions object to append.
         """
-        if self.conditioning is not None:
-            # TODO: Support the case
-            raise NotImplementedError(
-                "`extend` is not implemented for conditional Transitions."
-            )
-
         if len(other) == 0:
             return
 

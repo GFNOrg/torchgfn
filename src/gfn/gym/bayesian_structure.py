@@ -31,7 +31,7 @@ class BayesianStructure(GraphBuilding):
         n_nodes: int,
         state_evaluator: Callable[[GraphStates], torch.Tensor],
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         if isinstance(device, str):
             device = torch.device(device)
@@ -68,7 +68,7 @@ class BayesianStructure(GraphBuilding):
             device=device,
             s0=s0,
             sf=sf,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
 
     def make_states_class(self) -> type[GraphStates]:
@@ -262,12 +262,18 @@ class BayesianStructure(GraphBuilding):
         return GraphBuildingActions
 
     def make_random_states_tensor(
-        self, batch_shape: int | Tuple, device: torch.device
+        self,
+        batch_shape: int | Tuple,
+        conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
     ) -> GraphStates:
         """Makes a batch of random DAG states with fixed number of nodes.
 
         Args:
             batch_shape: Shape of the batch dimensions.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
+            device: The device to create the graph states on.
 
         Returns:
             A PyG Batch object containing random DAG states.
@@ -327,7 +333,7 @@ class BayesianStructure(GraphBuilding):
             data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
             data_array.flat[i] = data
 
-        return self.States(data_array, device=device)
+        return self.States(data_array, conditions=conditions, device=device)
 
     def step(self, states: GraphStates, actions: GraphActions) -> GraphStates:
         if torch.any(actions.action_type == GraphActionType.ADD_NODE):

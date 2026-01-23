@@ -20,8 +20,8 @@ from typing import cast
 import torch
 from tqdm import tqdm
 
-from gfn.estimators import DiscretePolicyEstimator
-from gfn.gflownet import TBGFlowNet
+from gfn.estimators import DiscretePolicyEstimator, ScalarEstimator
+from gfn.gflownet import DBGFlowNet, FMGFlowNet, TBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.preprocessors import KHotPreprocessor
 from gfn.samplers import Sampler
@@ -50,7 +50,7 @@ def main(args):
         device=device,
         calculate_partition=True,
         store_all_states=True,
-        check_action_validity=__debug__,
+        debug=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
@@ -67,24 +67,53 @@ def main(args):
         )
     else:
         module_PB = DiscreteUniform(output_dim=env.n_actions - 1)
-    pf_estimator = DiscretePolicyEstimator(
-        module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
-    )
-    pb_estimator = DiscretePolicyEstimator(
-        module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
-    )
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
-    # Feed pf to the sampler.
-    sampler = Sampler(estimator=pf_estimator)
+    # Initialize the key components
+    # 1. Estimator(s)
+    # 2. GFlowNet
+    # 3. Optimizer
+    # 4. Sampler
+    if args.loss == "FM":
+        logF_estimator = DiscretePolicyEstimator(
+            module=module_PF,
+            n_actions=env.n_actions,
+            preprocessor=preprocessor,
+        )
+        gflownet = FMGFlowNet(logF_estimator).to(device)
+        optimizer = torch.optim.Adam(gflownet.logF.parameters(), lr=args.lr)
+        sampler = Sampler(estimator=logF_estimator)
 
-    # Move the gflownet to the GPU.
-    gflownet = gflownet.to(device)
+    else:
+        pf_estimator = DiscretePolicyEstimator(
+            module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
+        )
+        pb_estimator = DiscretePolicyEstimator(
+            module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
+        )
+        if args.loss == "DB":
+            logF_module = MLP(
+                input_dim=preprocessor.output_dim,
+                output_dim=1,
+                # trunk=module_PF.trunk,  # FIXME: This raises an Error
+            )
+            logF_estimator = ScalarEstimator(
+                module=logF_module, preprocessor=preprocessor
+            )
+            gflownet = DBGFlowNet(pf=pf_estimator, pb=pb_estimator, logF=logF_estimator)
+        else:
+            gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
-    # Policy parameters have their own LR. Log Z gets dedicated learning rate
-    # (typically higher).
-    optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=args.lr)
-    optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": args.lr_logz})
+        gflownet = gflownet.to(device)
+        optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=args.lr)
+        if isinstance(gflownet, DBGFlowNet):
+            optimizer.add_param_group(
+                {"params": gflownet.logF.parameters(), "lr": args.lr}
+            )
+        else:  # TBGFlowNet
+            optimizer.add_param_group(
+                {"params": gflownet.logz_parameters(), "lr": args.lr_logz}
+            )
+        sampler = Sampler(estimator=pf_estimator)
 
     validation_info = {"l1_dist": float("inf")}
     visited_terminating_states = env.states_from_batch_shape((0,))
@@ -94,7 +123,7 @@ def main(args):
         trajectories = sampler.sample_trajectories(
             env,
             n=args.batch_size,
-            save_logprobs=True,
+            save_logprobs=False,
             save_estimator_outputs=False,
             epsilon=args.epsilon,
         )
@@ -103,7 +132,9 @@ def main(args):
         )
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
+        loss = gflownet.loss_from_trajectories(
+            env, trajectories, recalculate_all_logprobs=False
+        )
         loss.backward()
 
         gflownet.assert_finite_gradients()
@@ -139,10 +170,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
     parser.add_argument(
+        "--loss",
+        type=str,
+        choices=["FM", "TB", "DB"],
+        default="TB",
+        help="Loss function to use",
+    )
+    parser.add_argument(
         "--ndim", type=int, default=2, help="Number of dimensions in the environment"
     )
     parser.add_argument(
-        "--height", type=int, default=64, help="Height of the environment"
+        "--height", type=int, default=32, help="Height of the environment"
     )
     parser.add_argument(
         "--R0",

@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Literal
 
 import torch
 
@@ -42,29 +42,34 @@ class PerfectBinaryTree(DiscreteEnv):
         self,
         reward_fn: Callable,
         depth: int = 4,
-        check_action_validity: bool = True,
+        device: Literal["cpu", "cuda"] | torch.device | None = None,
+        debug: bool = False,
     ):
         """Initializes the PerfectBinaryTree environment.
 
         Args:
             reward_fn: A function that computes the reward for a given state.
             depth: The depth of the tree.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
+        if device is None:
+            device = torch.get_default_device()
+
+        device = torch.device(device)
         self.reward_fn = reward_fn
         self.depth = depth
         self.branching_factor = 2
         self.n_actions = self.branching_factor + 1
         self.n_nodes = 2 ** (self.depth + 1) - 1
 
-        self.s0 = torch.zeros((1,), dtype=torch.long)
-        self.sf = torch.full((1,), fill_value=-1)
+        self.s0 = torch.zeros((1,), dtype=torch.long, device=device)
+        self.sf = torch.full((1,), fill_value=-1, device=device)
         super().__init__(
             self.n_actions,
             self.s0,
             (1,),
             sf=self.sf,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.States: type[DiscreteStates] = self.States
 
@@ -97,8 +102,14 @@ class PerfectBinaryTree(DiscreteEnv):
                     queue.append((node_index, d + 1))
             else:
                 terminating_states_id.add(node)
-        terminating_states_id = torch.tensor(list(terminating_states_id)).reshape(-1, 1)
-        terminating_states = self.states_from_tensor(terminating_states_id)
+        terminating_states_id = torch.tensor(
+            list(terminating_states_id), device=self.device
+        ).reshape(-1, 1)
+
+        # Create the terminating states object. Don't use `self.states_from_tensor`
+        # because it will internally trigger update_masks, which would fail because
+        # `term_states` isn't yet defined.
+        terminating_states = self.States(terminating_states_id)
 
         return transition_table, inverse_transition_table, terminating_states
 
@@ -117,7 +128,9 @@ class PerfectBinaryTree(DiscreteEnv):
         next_states_tns = [
             self.inverse_transition_table.get(tuple(tuple_)) for tuple_ in tuples
         ]
-        next_states_tns = torch.tensor(next_states_tns).reshape(-1, 1).long()
+        next_states_tns = torch.tensor(
+            next_states_tns, device=states.tensor.device, dtype=torch.int64
+        ).reshape(-1, 1)
         return self.States(next_states_tns)
 
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
@@ -133,7 +146,9 @@ class PerfectBinaryTree(DiscreteEnv):
         tuples = torch.hstack((states.tensor, actions.tensor)).tolist()
         tuples = tuple(tuple(tuple_) for tuple_ in tuples)
         next_states_tns = [self.transition_table.get(tuple_) for tuple_ in tuples]
-        next_states_tns = torch.tensor(next_states_tns).reshape(-1, 1).long()
+        next_states_tns = torch.tensor(
+            next_states_tns, device=states.tensor.device, dtype=torch.int64
+        ).reshape(-1, 1)
         return self.States(next_states_tns)
 
     def update_masks(self, states: DiscreteStates) -> None:
@@ -142,11 +157,12 @@ class PerfectBinaryTree(DiscreteEnv):
         Args:
             states: The states to update the masks of.
         """
-        terminating_states_mask = torch.isin(
-            states.tensor, self.terminating_states.tensor
-        ).squeeze()
-        initial_state_mask = (states.tensor == self.s0).squeeze()
-        even_states = (states.tensor % 2 == 0).squeeze()
+        # Flatten the states and terminating states tensors for efficient comparison.
+        states_flat = states.tensor.view(-1, 1)
+        term_tensor = self.term_states.tensor.view(1, -1)
+        terminating_states_mask = (states_flat == term_tensor).any(dim=1)
+        initial_state_mask = (states.tensor == self.s0).view(-1)
+        even_states = (states.tensor % 2 == 0).view(-1)
 
         # Going from any node, we can choose action 0 or 1
         # Except terminating states where we must end the trajectory
@@ -173,7 +189,6 @@ class PerfectBinaryTree(DiscreteEnv):
         states.backward_masks[~even_states] = odd_mask
 
         # Initial state has no available backward action
-        states.backward_masks[initial_state_mask] = False
         states.backward_masks[initial_state_mask] = False
 
     def get_states_indices(self, states: States):

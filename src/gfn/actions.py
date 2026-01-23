@@ -39,18 +39,22 @@ class Actions(ABC):
     # The following class variable corresponds to $s \rightarrow s_f$ transitions.
     exit_action: ClassVar[torch.Tensor]  # Action to exit the environment.
 
-    def __init__(self, tensor: torch.Tensor):
+    def __init__(self, tensor: torch.Tensor, debug: bool = False):
         """Initializes an Actions object with a batch of actions.
 
         Args:
             tensor: Tensor of shape (*batch_shape, *action_shape) representing a batch of
                 actions.
         """
-        assert (
-            tensor.shape[-len(self.action_shape) :] == self.action_shape
-        ), f"Batched actions tensor has shape {tensor.shape}, but the expected action shape is {self.action_shape}."
+        # Debug-only validation keeps hot paths tensor-only when debug is False.
+        if debug:
+            if tensor.shape[-len(self.action_shape) :] != self.action_shape:
+                raise ValueError(
+                    f"Batched actions tensor has shape {tensor.shape}, expected {self.action_shape}."
+                )
 
         self.tensor = tensor
+        self.debug = debug
 
     @property
     def device(self) -> torch.device:
@@ -72,13 +76,17 @@ class Actions(ABC):
 
     @classmethod
     def make_dummy_actions(
-        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
+        cls,
+        batch_shape: tuple[int, ...],
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> Actions:
         """Creates an Actions object filled with dummy actions.
 
         Args:
             batch_shape: Shape of the batch dimensions.
             device: The device to create the actions on.
+            debug: Whether to run debug validations on the constructed Actions.
 
         Returns:
             An Actions object with the specified batch shape filled with dummy actions.
@@ -87,17 +95,21 @@ class Actions(ABC):
         tensor = cls.dummy_action.repeat(*batch_shape, *((1,) * action_ndim))
         if device is not None:
             tensor = tensor.to(device)
-        return cls(tensor)
+        return cls(tensor, debug=debug)
 
     @classmethod
     def make_exit_actions(
-        cls, batch_shape: tuple[int, ...], device: torch.device | None = None
+        cls,
+        batch_shape: tuple[int, ...],
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> Actions:
         """Creates an Actions object filled with exit actions.
 
         Args:
             batch_shape: Shape of the batch dimensions.
             device: The device to create the actions on.
+            debug: Whether to run debug validations on the constructed Actions.
 
         Returns:
             An Actions object with the specified batch shape filled with exit actions.
@@ -106,7 +118,7 @@ class Actions(ABC):
         tensor = cls.exit_action.repeat(*batch_shape, *((1,) * action_ndim))
         if device is not None:
             tensor = tensor.to(device)
-        return cls(tensor)
+        return cls(tensor, debug=debug)
 
     def __len__(self) -> int:
         """Returns the number of actions in the batch.
@@ -142,7 +154,7 @@ class Actions(ABC):
             A new Actions object with the selected actions.
         """
         actions = self.tensor[index]
-        return self.__class__(actions)
+        return self.__class__(actions, debug=self.debug)
 
     def __setitem__(
         self,
@@ -158,7 +170,7 @@ class Actions(ABC):
         self.tensor[index] = actions.tensor
 
     @classmethod
-    def stack(cls, actions_list: List[Actions]) -> Actions:
+    def stack(cls, actions_list: List[Actions], debug: bool | None = None) -> Actions:
         """Stacks a list of Actions objects along a new dimension (0).
 
         The individual actions need to have the same batch shape. An example application
@@ -173,8 +185,13 @@ class Actions(ABC):
         Returns:
             A new Actions object with the stacked actions.
         """
+        if debug is None:
+            # Reuse caller-provided debug setting when available to keep behavior consistent.
+            debug = getattr(actions_list[0], "debug", False) if actions_list else False
+        debug = bool(debug)
+
         actions_tensor = torch.stack([actions.tensor for actions in actions_list], dim=0)
-        return cls(actions_tensor)
+        return cls(actions_tensor, debug=debug)
 
     def extend(self, other: Actions) -> None:
         """Concatenates another Actions object along the final batch dimension.
@@ -188,6 +205,7 @@ class Actions(ABC):
         if len(self.batch_shape) == len(other.batch_shape) == 1:
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
         elif len(self.batch_shape) == len(other.batch_shape) == 2:
+            other = other.clone()  # TODO: Is there a more efficient way?
             self.extend_with_dummy_actions(
                 required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
             )
@@ -214,7 +232,7 @@ class Actions(ABC):
                 return
             n = required_first_dim - self.batch_shape[0]
             dummy_actions = self.__class__.make_dummy_actions(
-                (n, self.batch_shape[1]), device=self.device
+                (n, self.batch_shape[1]), device=self.device, debug=self.debug
             )
             self.tensor = torch.cat((self.tensor, dummy_actions.tensor), dim=0)
         else:
@@ -233,21 +251,41 @@ class Actions(ABC):
             equal.
         """
         n_batch_dims = len(self.batch_shape)
-        if n_batch_dims == 1:
-            assert (other.shape == self.action_shape) or (
-                other.shape == self.batch_shape + self.action_shape
-            ), f"Expected shape {self.action_shape} or {self.batch_shape + self.action_shape}, got {other.shape}."
-        else:
-            assert (
-                other.shape == self.batch_shape + self.action_shape
-            ), f"Expected shape {self.batch_shape + self.action_shape}, got {other.shape}."
+        if self.debug:
+            if n_batch_dims == 1:
+                # other.shape can either have only the action shape, or the
+                # flattened batch_shape + action_shape.
+                if other.shape not in (
+                    self.action_shape,
+                    self.batch_shape + self.action_shape,
+                ):
+                    raise ValueError(
+                        (
+                            f"Expected shape {self.action_shape} or "
+                            f"{self.batch_shape + self.action_shape}, got {other.shape}."
+                        )
+                    )
+            else:
+                # other.shape must have the full batch and action shape.
+                if other.shape != self.batch_shape + self.action_shape:
+                    raise ValueError(
+                        (
+                            f"Expected shape {self.batch_shape + self.action_shape}, "
+                            f"got {other.shape}."
+                        )
+                    )
 
         out = self.tensor == other
         if len(self.action_shape) > 1:
             out = out.flatten(start_dim=n_batch_dims)
         out = out.all(dim=-1)
 
-        assert out.shape == self.batch_shape
+        if self.debug:
+            if out.shape != self.batch_shape:
+                raise ValueError(
+                    f"Comparison output has shape {out.shape}, expected {self.batch_shape}."
+                )
+
         return out
 
     @property
@@ -279,6 +317,14 @@ class Actions(ABC):
                 *self.batch_shape, *((1,) * len(self.__class__.action_shape))
             )
         return self._compare(exit_actions_tensor)
+
+    def clone(self) -> Actions:
+        """Returns a clone of the Actions object.
+
+        Returns:
+            A new Actions object with the same tensor.
+        """
+        return self.__class__(self.tensor.clone(), debug=self.debug)
 
 
 class GraphActionType(enum.IntEnum):
@@ -320,19 +366,28 @@ class GraphActions(Actions):
         EDGE_INDEX_KEY: 4,
     }
 
-    def __init__(self, tensor: torch.Tensor):
+    # Required by the Actions base class for DB/SubTB style algorithms.
+    action_shape = (5,)
+    dummy_action = torch.tensor(
+        [GraphActionType.DUMMY, -2, -2, -2, -2], dtype=torch.long
+    )
+    exit_action = torch.tensor([GraphActionType.EXIT, -1, -1, -1, -1], dtype=torch.long)
+
+    def __init__(self, tensor: torch.Tensor, debug: bool = False):
         """Initializes a GraphActions object.
 
         Args:
             tensor: A tensor of shape (*batch_shape, 5) containing the action type,
                 node class, edge class, and edge index components.
         """
-        if tensor.shape[-1] != 5:
-            raise ValueError(
-                f"Expected tensor of shape (*batch_shape, 5), got {tensor.shape}.\n"
-                "The last dimension should contain the action type, node class, node index, edge class, and edge index."
-            )
+        if debug:
+            if tensor.shape[-1] != 5:
+                raise ValueError(
+                    f"Expected tensor of shape (*batch_shape, 5), got {tensor.shape}.\n"
+                    "The last dimension should contain the action type, node class, node index, edge class, and edge index."
+                )
         self.tensor = tensor
+        self.debug = debug
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
@@ -341,11 +396,14 @@ class GraphActions(Actions):
         Returns:
             The batch shape as a tuple.
         """
-        assert self.tensor.shape[-1] == 5
+        if self.debug:
+            assert self.tensor.shape[-1] == 5
         return self.tensor.shape[:-1]
 
     @classmethod
-    def from_tensor_dict(cls, tensor_dict: TensorDict) -> GraphActions:
+    def from_tensor_dict(
+        cls, tensor_dict: TensorDict, debug: bool = False
+    ) -> GraphActions:
         """Creates a GraphActions object from a tensor dict.
 
         Args:
@@ -365,7 +423,8 @@ class GraphActions(Actions):
         return cls(
             torch.cat(
                 [action_type, node_class, node_index, edge_class, edge_index], dim=-1
-            )
+            ),
+            debug=debug,
         )
 
     def __repr__(self):
@@ -441,7 +500,10 @@ class GraphActions(Actions):
 
     @classmethod
     def make_dummy_actions(
-        cls, batch_shape: tuple[int], device: torch.device
+        cls,
+        batch_shape: tuple[int],
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> GraphActions:
         """Creates a GraphActions object filled with dummy actions.
 
@@ -453,13 +515,20 @@ class GraphActions(Actions):
             A GraphActions object with the specified batch shape filled with dummy
             actions.
         """
-        tensor = torch.zeros(batch_shape + (5,), dtype=torch.long, device=device)
+        tensor = torch.zeros(
+            batch_shape + (5,),
+            dtype=torch.long,
+            device=device,
+        )
         tensor[..., cls.ACTION_INDICES[cls.ACTION_TYPE_KEY]] = GraphActionType.DUMMY
-        return cls(tensor)
+        return cls(tensor, debug=debug)
 
     @classmethod
     def make_exit_actions(
-        cls, batch_shape: tuple[int], device: torch.device
+        cls,
+        batch_shape: tuple[int],
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> GraphActions:
         """Creates a GraphActions object filled with exit actions.
 
@@ -470,9 +539,13 @@ class GraphActions(Actions):
         Returns:
             A GraphActions object with the specified batch shape filled with exit actions.
         """
-        tensor = torch.zeros(batch_shape + (5,), dtype=torch.long, device=device)
+        tensor = torch.zeros(
+            batch_shape + (5,),
+            dtype=torch.long,
+            device=device,
+        )
         tensor[..., cls.ACTION_INDICES[cls.ACTION_TYPE_KEY]] = GraphActionType.EXIT
-        return cls(tensor)
+        return cls(tensor, debug=debug)
 
     @classmethod
     def edge_index_action_to_src_dst(

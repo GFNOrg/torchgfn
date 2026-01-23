@@ -476,7 +476,7 @@ def test_uniform_log_probs_method():
 def test_mix_with_uniform_in_log_space():
     """Test the _mix_with_uniform_in_log_space static method."""
     batch_size, n_actions = 3, 4
-    set_seed(123)
+    set_seed(123, deterministic_mode=True)
 
     # Create log-softmax values
     logits = torch.randn(batch_size, n_actions)

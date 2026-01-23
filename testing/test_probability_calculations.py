@@ -6,8 +6,8 @@ from gfn.gym import HyperGrid
 from gfn.preprocessors import IdentityPreprocessor
 from gfn.samplers import Sampler
 from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
+    has_conditions_exception_handler,
+    no_conditions_exception_handler,
 )
 from gfn.utils.prob_calculations import (
     get_trajectory_pbs,
@@ -51,19 +51,15 @@ def _legacy_get_trajectory_pfs(
         estimator_outputs = trajectories.estimator_outputs[action_mask]
     else:
         masked_cond = None
-        if trajectories.conditioning is not None:
-            cond_dim = (-1,) * len(trajectories.conditioning.shape)
-            traj_len = trajectories.states.tensor.shape[0]
-            masked_cond = trajectories.conditioning.unsqueeze(0).expand(
-                (traj_len,) + cond_dim
-            )[state_mask]
+        if trajectories.states.conditions is not None:
+            masked_cond = trajectories.states.conditions[state_mask]
 
-        # Call estimator with or without conditioning.
+        # Call estimator with or without conditions.
         if masked_cond is not None:
-            with has_conditioning_exception_handler("pf", pf):
+            with has_conditions_exception_handler("pf", pf):
                 estimator_outputs = pf(valid_states, masked_cond)
         else:
-            with no_conditioning_exception_handler("pf", pf):
+            with no_conditions_exception_handler("pf", pf):
                 estimator_outputs = pf(valid_states)
 
     valid_log_pf_actions = pf.to_probability_distribution(
@@ -165,17 +161,17 @@ def _legacy_get_trajectory_pbs(
         return log_pb_trajectories
 
     masked_cond = None
-    if trajectories.conditioning is not None:
-        masked_cond = trajectories.conditioning[state_mask]
+    if trajectories.states.conditions is not None:
+        masked_cond = trajectories.states.conditions[state_mask]
 
     if pb is not None:
 
-        # Call estimator with or without conditioning.
+        # Call estimator with or without conditions.
         if masked_cond is not None:
-            with has_conditioning_exception_handler("pb", pb):
+            with has_conditions_exception_handler("pb", pb):
                 estimator_outputs = pb(valid_states, masked_cond)
         else:
-            with no_conditioning_exception_handler("pb", pb):
+            with no_conditions_exception_handler("pb", pb):
                 estimator_outputs = pb(valid_states)
 
         valid_log_pb_actions = pb.to_probability_distribution(
@@ -290,8 +286,8 @@ def test_adapter_log_probs_precomputed_matches_forward():
     env, pf_estimator, _ = _build_env_and_pf()
     states = env.reset(batch_shape=(5,))
 
-    # Compute estimator outputs once (precomputed path) - no conditioning.
-    with no_conditioning_exception_handler("pf", pf_estimator):
+    # Compute estimator outputs once (precomputed path) - no conditions.
+    with no_conditions_exception_handler("pf", pf_estimator):
         estimator_outputs = pf_estimator(states)
 
     dist = pf_estimator.to_probability_distribution(states, estimator_outputs)
@@ -299,12 +295,8 @@ def test_adapter_log_probs_precomputed_matches_forward():
         actions_tensor = dist.sample()
 
     # Adapted: exercise PolicyMixin caching via `ctx.current_estimator_output`
-    ctx1 = pf_estimator.init_context(
-        batch_size=5, device=states.device, conditioning=None
-    )
-    ctx2 = pf_estimator.init_context(
-        batch_size=5, device=states.device, conditioning=None
-    )
+    ctx1 = pf_estimator.init_context(batch_size=5, device=states.device, conditions=None)
+    ctx2 = pf_estimator.init_context(batch_size=5, device=states.device, conditions=None)
     step_mask = torch.ones(5, dtype=torch.bool, device=states.device)
 
     # Baseline: recompute estimator outputs internally on masked (non-vectorized) path
@@ -337,12 +329,13 @@ def _legacy_get_transition_pfs(
         assert log_pf_actions is not None
         return log_pf_actions
 
-    # Call estimator with or without conditioning.
-    if transitions.conditioning is not None:
-        with has_conditioning_exception_handler("pf", pf):
-            estimator_outputs = pf(states, transitions.conditioning)
+    # Call estimator with or without conditions.
+    if transitions.states.conditions is not None:
+        masked_cond = transitions.states.conditions
+        with has_conditions_exception_handler("pf", pf):
+            estimator_outputs = pf(states, masked_cond)
     else:
-        with no_conditioning_exception_handler("pf", pf):
+        with no_conditions_exception_handler("pf", pf):
             estimator_outputs = pf(states)
 
     log_pf_actions = pf.to_probability_distribution(states, estimator_outputs).log_prob(
@@ -354,23 +347,22 @@ def _legacy_get_transition_pfs(
 def _legacy_get_transition_pbs(pb: DiscretePolicyEstimator | None, transitions):
     valid_next_states = transitions.next_states[~transitions.is_terminating]
     non_exit_actions = transitions.actions[~transitions.actions.is_exit]
-    masked_cond = (
-        transitions.conditioning[~transitions.is_terminating]
-        if transitions.conditioning is not None
-        else None
-    )
+    if transitions.states.conditions is not None:
+        masked_cond = transitions.states.conditions[~transitions.is_terminating]
+    else:
+        masked_cond = None
 
     log_pb_actions = torch.zeros(
         (transitions.n_transitions,), device=transitions.states.device
     )
 
     if pb is not None:
-        # Call estimator with or without conditioning.
+        # Call estimator with or without conditions.
         if masked_cond is not None:
-            with has_conditioning_exception_handler("pb", pb):
+            with has_conditions_exception_handler("pb", pb):
                 estimator_outputs = pb(valid_next_states, masked_cond)
         else:
-            with no_conditioning_exception_handler("pb", pb):
+            with no_conditions_exception_handler("pb", pb):
                 estimator_outputs = pb(valid_next_states)
 
         valid_log_pb_actions = pb.to_probability_distribution(
@@ -417,3 +409,25 @@ def test_get_transition_pbs_matches_legacy_with_default_adapter():
         transitions,
     )
     torch.testing.assert_close(modern, legacy)
+
+
+def test_trajectory_states_sink_consistency():
+    """Test that sink states and dummy actions are consistent in trajectories.
+
+    This test verifies that for valid trajectories, sink states (excluding the last one)
+    should correspond to dummy actions. This was previously an assertion in
+    get_trajectory_pfs_and_pbs function.
+    """
+    env, pf_estimator, _, pf_sampler = _build_env_pf_pb()
+    trajectories = pf_sampler.sample_trajectories(
+        env,
+        n=5,
+        save_estimator_outputs=False,
+        save_logprobs=False,
+    )
+
+    # Test the consistency between sink states and dummy actions
+    # sink states (excluding the last one) should equal dummy actions
+    assert trajectories.states.is_sink_state[:-1].equal(
+        trajectories.actions.is_dummy
+    ), "Sink states (excluding last) should correspond to dummy actions"

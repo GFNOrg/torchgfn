@@ -142,7 +142,9 @@ class TBGAFN(TBGFlowNet):
             flow_estimator: The flow estimator, required if use_edge_ri is True.
             log_reward_clip_min: If finite, clips log rewards to this value.
         """
-        super().__init__(pf, pb, logZ, init_logZ, log_reward_clip_min)
+        super().__init__(
+            pf, pb, logZ, init_logZ, log_reward_clip_min=log_reward_clip_min
+        )
         self.rnd = rnd
         self.use_edge_ri = use_edge_ri
         if use_edge_ri and flow_estimator is None:
@@ -259,6 +261,7 @@ def main(args):
         device=device,
         calculate_partition=True,
         store_all_states=True,
+        debug=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 

@@ -13,8 +13,8 @@ from gfn.gflownet.base import GFlowNet, loss_reduce
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
 from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
+    has_conditions_exception_handler,
+    no_conditions_exception_handler,
 )
 
 warnings.filterwarnings("once", message="recalculate_all_logprobs is not used for FM.*")
@@ -61,7 +61,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         self,
         env: DiscreteEnv,
         n: int,
-        conditioning: torch.Tensor | None = None,
+        conditions: torch.Tensor | None = None,
         save_logprobs: bool = False,
         save_estimator_outputs: bool = False,
         **policy_kwargs: Any,
@@ -71,7 +71,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         Args:
             env: The discrete environment to sample trajectories from.
             n: Number of trajectories to sample.
-            conditioning: Optional conditioning tensor for conditional environments.
+            conditions: Optional conditions tensor for conditional environments.
             save_logprobs: Whether to save the log-probabilities of the actions.
             save_estimator_outputs: Whether to save the estimator outputs.
             **policy_kwargs: Additional keyword arguments for the sampler.
@@ -87,7 +87,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         trajectories = sampler.sample_trajectories(
             env,
             n=n,
-            conditioning=conditioning,
+            conditions=conditions,
             save_logprobs=save_logprobs,
             save_estimator_outputs=save_estimator_outputs,
             **policy_kwargs,
@@ -98,7 +98,6 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         self,
         env: DiscreteEnv,
         states: DiscreteStates,
-        conditioning: torch.Tensor | None,
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Computes the flow matching loss for the (non-initial) states.
@@ -110,7 +109,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         Args:
             env: The discrete environment where the states are sampled from.
             states: The DiscreteStates object to evaluate (should not include $s_0$).
-            conditioning: Optional conditioning tensor for conditional environments.
+            conditions: Optional conditions tensor for conditional environments.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
 
         Returns:
@@ -146,24 +145,24 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
                 valid_backward_states, backward_actions
             )
 
-            if conditioning is not None:
-                # Mask out only valid conditioning elements.
-                valid_backward_conditioning = conditioning[valid_backward_mask]
-                valid_forward_conditioning = conditioning[valid_forward_mask]
+            if states.conditions is not None:
+                # Mask out only valid conditions elements.
+                valid_backward_conditions = states.conditions[valid_backward_mask]
+                valid_forward_conditions = states.conditions[valid_forward_mask]
 
-                with has_conditioning_exception_handler("logF", self.logF):
+                with has_conditions_exception_handler("logF", self.logF):
                     incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
                         valid_backward_states_parents,
-                        valid_backward_conditioning,
+                        valid_backward_conditions,
                     )[:, action_idx]
 
                     outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
                         valid_forward_states,
-                        valid_forward_conditioning,
+                        valid_forward_conditions,
                     )[:, action_idx]
 
             else:
-                with no_conditioning_exception_handler("logF", self.logF):
+                with no_conditions_exception_handler("logF", self.logF):
                     incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
                         valid_backward_states_parents,
                     )[:, action_idx]
@@ -174,14 +173,14 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         # Now the exit action.
         valid_forward_mask = states.forward_masks[:, -1]
-        if conditioning is not None:
-            with has_conditioning_exception_handler("logF", self.logF):
+        if states.conditions is not None:
+            with has_conditions_exception_handler("logF", self.logF):
                 outgoing_log_flows[valid_forward_mask, -1] = self.logF(
                     states[valid_forward_mask],
-                    conditioning[valid_forward_mask],
+                    states.conditions[valid_forward_mask],
                 )[:, -1]
         else:
-            with no_conditioning_exception_handler("logF", self.logF):
+            with no_conditions_exception_handler("logF", self.logF):
                 outgoing_log_flows[valid_forward_mask, -1] = self.logF(
                     states[valid_forward_mask],
                 )[:, -1]
@@ -196,7 +195,6 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         self,
         env: DiscreteEnv,
         terminating_states: DiscreteStates,
-        conditioning: torch.Tensor | None,
         log_rewards: torch.Tensor | None,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -205,7 +203,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         Args:
             env: The discrete environment where the states are sampled from (unused).
             terminating_states: The DiscreteStates object containing terminating states.
-            conditioning: Optional conditioning tensor for conditional environments.
+            conditions: Optional conditions tensor for conditional environments.
             log_rewards: The log rewards for the terminating states.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
 
@@ -216,11 +214,13 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         if len(terminating_states) == 0:
             return torch.tensor(0.0, device=terminating_states.device)
         del env  # Unused
-        if conditioning is not None:
-            with has_conditioning_exception_handler("logF", self.logF):
-                log_edge_flows = self.logF(terminating_states, conditioning)
+        if terminating_states.conditions is not None:
+            with has_conditions_exception_handler("logF", self.logF):
+                log_edge_flows = self.logF(
+                    terminating_states, terminating_states.conditions
+                )
         else:
-            with no_conditioning_exception_handler("logF", self.logF):
+            with no_conditions_exception_handler("logF", self.logF):
                 log_edge_flows = self.logF(terminating_states)
 
         # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
@@ -254,6 +254,10 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             The computed flow matching loss as a tensor. The shape depends on the
             reduction method.
         """
+        if not env.is_discrete:
+            raise NotImplementedError(
+                "Flow Matching GFlowNet only supports discrete environments for now."
+            )
         assert isinstance(states_container.intermediary_states, DiscreteStates)
         assert isinstance(states_container.terminating_states, DiscreteStates)
         if recalculate_all_logprobs:
@@ -264,13 +268,11 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         fm_loss = self.flow_matching_loss(
             env,
             states_container.intermediary_states,
-            states_container.intermediary_conditioning,
             reduction=reduction,
         )
         rm_loss = self.reward_matching_loss(
             env,
             states_container.terminating_states,
-            states_container.terminating_conditioning,
             states_container.terminating_log_rewards,
             reduction=reduction,
         )

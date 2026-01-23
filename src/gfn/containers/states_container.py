@@ -23,8 +23,6 @@ class StatesContainer(Container, Generic[StateType]):
     Attributes:
         env: The environment where the states are defined.
         states: States with batch_shape (n_states,).
-        conditioning: (Optional) Tensor of shape (n_states,) containing the conditioning
-            for the states.
         is_terminating: Boolean tensor of shape (n_states,) indicating which states
             are terminating.
         _log_rewards: (Optional) Tensor of shape (n_states,) containing the log rewards
@@ -35,7 +33,6 @@ class StatesContainer(Container, Generic[StateType]):
         self,
         env: Env,
         states: StateType | None = None,
-        conditioning: torch.Tensor | None = None,
         is_terminating: torch.Tensor | None = None,
         log_rewards: torch.Tensor | None = None,
     ):
@@ -45,8 +42,6 @@ class StatesContainer(Container, Generic[StateType]):
             env: The environment where the states are defined.
             states: States with batch_shape (n_states,). If None, an empty batch is
                 created.
-            conditioning: Optional tensor of shape (n_states,) containing the conditioning
-                for the states.
             is_terminating: Boolean tensor of shape (n_states,) indicating which states
                 are terminating. If None, all are set to False.
             log_rewards: Optional tensor of shape (n_states,) containing the log rewards
@@ -58,7 +53,7 @@ class StatesContainer(Container, Generic[StateType]):
         device = self.env.device
         if states is not None:
             ensure_same_device(states.device, device)
-        for tensor in [is_terminating, conditioning, log_rewards]:
+        for tensor in [is_terminating, log_rewards]:
             ensure_same_device(tensor.device, device) if tensor is not None else True
 
         self.states = (
@@ -68,11 +63,6 @@ class StatesContainer(Container, Generic[StateType]):
         )
         assert len(self.states.batch_shape) == 1
         batch_shape = self.states.batch_shape
-
-        self.conditioning = conditioning
-        assert self.conditioning is None or (
-            self.conditioning.shape[: len(batch_shape)] == batch_shape
-        )
 
         self.is_terminating = (
             is_terminating
@@ -118,28 +108,6 @@ class StatesContainer(Container, Generic[StateType]):
             The terminating states.
         """
         return cast(StateType, self.states[self.is_terminating])
-
-    @property
-    def intermediary_conditioning(self) -> torch.Tensor | None:
-        """Conditioning for intermediary states.
-
-        Returns:
-            The conditioning tensor for intermediary states, or None if not set.
-        """
-        if self.conditioning is None:
-            return None
-        return self.conditioning[~self.states.is_initial_state]
-
-    @property
-    def terminating_conditioning(self) -> torch.Tensor | None:
-        """Conditioning for terminating states.
-
-        Returns:
-            The conditioning tensor for terminating states, or None if not set.
-        """
-        if self.conditioning is None:
-            return None
-        return self.conditioning[self.is_terminating]
 
     def __len__(self) -> int:
         """Returns the number of states in the container.
@@ -219,12 +187,6 @@ class StatesContainer(Container, Generic[StateType]):
             (self.is_terminating, other.is_terminating), dim=0
         )
 
-        # Concatenate conditioning tensors if they exist.
-        if self.conditioning is not None and other.conditioning is not None:
-            self.conditioning = torch.cat((self.conditioning, other.conditioning), dim=0)
-        else:
-            self.conditioning = None
-
         # Concatenate log_rewards of the trajectories if they exist.
         if self._log_rewards is not None and other._log_rewards is not None:
             self._log_rewards = torch.cat((self._log_rewards, other._log_rewards), dim=0)
@@ -248,16 +210,12 @@ class StatesContainer(Container, Generic[StateType]):
         # Cast the indexed states to maintain their type
         states = cast(StateType, self.states[index])
         is_terminating = self.is_terminating[index]
-        conditioning = (
-            self.conditioning[index] if self.conditioning is not None else None
-        )
         log_rewards = self._log_rewards[index] if self._log_rewards is not None else None
 
         # We can construct a new StatesContainer with the same StateType
         return StatesContainer[StateType](
             env=self.env,
             states=states,
-            conditioning=conditioning,
             is_terminating=is_terminating,
             log_rewards=log_rewards,
         )

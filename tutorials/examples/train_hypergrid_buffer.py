@@ -40,6 +40,7 @@ def main(args):
         device=device,
         calculate_partition=True,
         store_all_states=True,
+        debug=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
@@ -131,7 +132,7 @@ def main(args):
                 states=terminating_states,
                 save_logprobs=False,  # TODO: enable this
                 save_estimator_outputs=False,
-                # TODO: log rewards, conditioning, ...
+                # TODO: log rewards, conditions, ...
             )
             buffer_trajectories = bwd_trajectories.reverse_backward_trajectories()
             buffer_trajectories._log_rewards = terminating_states_container.log_rewards

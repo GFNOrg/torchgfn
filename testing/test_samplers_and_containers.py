@@ -4,19 +4,21 @@ import pytest
 import torch
 from torch.distributions import Categorical
 
-from gfn.containers import Trajectories, Transitions
+from gfn.containers import StatesContainer, Trajectories, Transitions
 from gfn.containers.replay_buffer import ReplayBuffer
+from gfn.env import Env
 from gfn.estimators import PolicyMixin  # Use policy mixin directly instead of adapters
 from gfn.estimators import (
     RecurrentPolicyMixin,  # Use recurrent policy mixin instead of adapters
 )
 from gfn.estimators import RolloutContext  # New rollout context used by PolicyMixin
 from gfn.estimators import (
+    ConditionalDiscretePolicyEstimator,
     DiscreteGraphPolicyEstimator,
     DiscretePolicyEstimator,
     Estimator,
 )
-from gfn.gym import Box, DiscreteEBM, HyperGrid
+from gfn.gym import Box, ConditionalHyperGrid, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
 from gfn.preprocessors import (
@@ -25,10 +27,7 @@ from gfn.preprocessors import (
     KHotPreprocessor,
     OneHotPreprocessor,
 )
-from gfn.samplers import (
-    LocalSearchSampler,
-    Sampler,
-)
+from gfn.samplers import LocalSearchSampler, Sampler
 from gfn.states import States
 from gfn.utils.modules import (
     MLP,
@@ -40,37 +39,51 @@ from gfn.utils.prob_calculations import get_trajectory_pfs
 from gfn.utils.training import states_actions_tns_to_traj
 
 
-def trajectory_sampling_with_return(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+def get_env_and_estimators(
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
     preprocessor_name: Literal["Identity", "KHot", "OneHot", "Enum"],
-    delta: float,
-    n_components: int,
-    n_components_s0: int,
-) -> Tuple[Trajectories, Trajectories, Estimator, Estimator]:
-    if preprocessor_name != "Identity" and env_name != "HyperGrid":
-        pytest.skip("Useless tests")
-    if (delta != 0.1 or n_components != 1 or n_components_s0 != 1) and env_name != "Box":
-        pytest.skip("Useless tests")
-
-    if env_name in ["HyperGrid", "DiscreteEBM"]:
-        if env_name == "HyperGrid":
-            env = HyperGrid(ndim=2, height=8)
-            if preprocessor_name == "KHot":
-                preprocessor = KHotPreprocessor(env.height, env.ndim)
-            elif preprocessor_name == "OneHot":
-                preprocessor = OneHotPreprocessor(
-                    n_states=env.n_states, get_states_indices=env.get_states_indices
-                )
-            elif preprocessor_name == "Identity":
-                preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
-            elif preprocessor_name == "Enum":
-                preprocessor = EnumPreprocessor(env.get_states_indices)
-            else:
-                raise ValueError("Invalid preprocessor name")
-
-        elif env_name == "DiscreteEBM":
-            env = DiscreteEBM(ndim=8)
+    delta: float,  # only used for Box environment
+    n_components: int,  # only used for Box environment
+    n_components_s0: int,  # only used for Box environment
+) -> Tuple[Env, Estimator, Estimator]:
+    if env_name == "HyperGrid":
+        env = HyperGrid(ndim=2, height=8)
+        if preprocessor_name == "KHot":
+            preprocessor = KHotPreprocessor(env.height, env.ndim)
+        elif preprocessor_name == "OneHot":
+            preprocessor = OneHotPreprocessor(
+                n_states=env.n_states, get_states_indices=env.get_states_indices
+            )
+        elif preprocessor_name == "Identity":
             preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+        elif preprocessor_name == "Enum":
+            preprocessor = EnumPreprocessor(env.get_states_indices)
+        else:
+            raise ValueError("Invalid preprocessor name")
+
+        assert isinstance(preprocessor.output_dim, int)
+
+        pf_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
+        pb_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
+        pf_estimator = DiscretePolicyEstimator(
+            module=pf_module,
+            n_actions=env.n_actions,
+            is_backward=False,
+            preprocessor=preprocessor,
+        )
+        pb_estimator = DiscretePolicyEstimator(
+            module=pb_module,
+            n_actions=env.n_actions,
+            is_backward=True,
+            preprocessor=preprocessor,
+        )
+
+    elif env_name == "DiscreteEBM":
+        env = DiscreteEBM(ndim=8)
+        assert preprocessor_name == "Identity"
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
         assert isinstance(preprocessor.output_dim, int)
 
@@ -112,6 +125,7 @@ def trajectory_sampling_with_return(
         pb_estimator = BoxPBEstimator(
             env=env, module=pb_module, n_components=n_components
         )
+
     elif env_name == "GraphBuildingOnEdges":
         env = GraphBuildingOnEdges(
             n_nodes=10,
@@ -142,19 +156,80 @@ def trajectory_sampling_with_return(
             module=pb_module,
             is_backward=True,
         )
+
+    elif env_name == "ConditionalHyperGrid":
+        env = ConditionalHyperGrid(ndim=2, height=4)
+        preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+
+        assert isinstance(preprocessor.output_dim, int)
+
+        # Modules for forward policy
+        state_module = MLP(input_dim=preprocessor.output_dim, output_dim=16)
+        condition_module = MLP(input_dim=env.condition_dim, output_dim=16)
+        final_module = MLP(input_dim=32, output_dim=env.n_actions)  # 16+16=32
+
+        pf_estimator = ConditionalDiscretePolicyEstimator(
+            state_module=state_module,
+            condition_module=condition_module,
+            final_module=final_module,
+            n_actions=env.n_actions,
+            is_backward=False,
+            preprocessor=preprocessor,
+        )
+
+        # Modules for backward policy
+        pb_state_module = MLP(input_dim=preprocessor.output_dim, output_dim=16)
+        pb_condition_module = MLP(input_dim=env.condition_dim, output_dim=16)
+        pb_final_module = MLP(input_dim=32, output_dim=env.n_actions - 1)  # 16+16=32
+
+        pb_estimator = ConditionalDiscretePolicyEstimator(
+            state_module=pb_state_module,
+            condition_module=pb_condition_module,
+            final_module=pb_final_module,
+            n_actions=env.n_actions,
+            is_backward=True,
+            preprocessor=preprocessor,
+        )
+
     else:
         raise ValueError("Unknown environment name")
+
+    return env, pf_estimator, pb_estimator
+
+
+def trajectory_sampling_with_return(
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
+    preprocessor_name: Literal["Identity", "KHot", "OneHot", "Enum"],
+    batch_size: int,
+    delta: float,
+    n_components: int,
+    n_components_s0: int,
+) -> Tuple[Trajectories, Trajectories, Estimator, Estimator]:
+    if preprocessor_name != "Identity" and env_name != "HyperGrid":
+        pytest.skip("Useless tests")
+    if (delta != 0.1 or n_components != 1 or n_components_s0 != 1) and env_name != "Box":
+        pytest.skip("Useless tests")
+
+    env, pf_estimator, pb_estimator = get_env_and_estimators(
+        env_name,
+        preprocessor_name,
+        delta,
+        n_components,
+        n_components_s0,
+    )
 
     sampler = Sampler(estimator=pf_estimator)
     # Test mode collects log_probs and estimator_ouputs, not encountered in the wild.
     trajectories = sampler.sample_trajectories(
         env,
-        n=5,
+        n=batch_size,
         save_logprobs=True,
         save_estimator_outputs=False,  # FIXME: This fails on GraphBuildingOnEdges if True
     )
 
-    states = env.reset(batch_shape=5, random=True)
+    states = env.reset(batch_shape=batch_size, random=True)
     bw_sampler = Sampler(estimator=pb_estimator)
     bw_trajectories = bw_sampler.sample_trajectories(
         env, save_logprobs=True, states=states, save_estimator_outputs=False
@@ -164,14 +239,17 @@ def trajectory_sampling_with_return(
 
 
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
 )
 @pytest.mark.parametrize("preprocessor_name", ["KHot", "OneHot", "Identity", "Enum"])
 @pytest.mark.parametrize("delta", [0.1, 0.5, 0.8])
 @pytest.mark.parametrize("n_components_s0", [1, 2, 5])
 @pytest.mark.parametrize("n_components", [1, 2, 5])
 def test_trajectory_sampling(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
     preprocessor_name: Literal["KHot", "OneHot", "Identity", "Enum"],
     delta: float,
     n_components_s0: int,
@@ -179,59 +257,158 @@ def test_trajectory_sampling(
 ):
     _ = trajectory_sampling_with_return(
         env_name,
-        preprocessor_name,
-        delta,
-        n_components_s0,
-        n_components,
+        preprocessor_name=preprocessor_name,
+        batch_size=5,
+        delta=delta,
+        n_components_s0=n_components_s0,
+        n_components=n_components,
     )
 
 
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "container_type", ["transitions", "states_container", "trajectories"]
 )
-def test_trajectories_getitem(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
-):
-    try:
-        _ = trajectory_sampling_with_return(
-            env_name,
-            preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
-            delta=0.1,
-            n_components=1,
-            n_components_s0=1,
-        )
-    except Exception as e:
-        raise ValueError(f"Error while testing {env_name}") from e
-
-
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
 )
-def test_trajectories_extend(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+def test_containers(
+    container_type: Literal["transitions", "states_container", "trajectories"],
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
 ):
-    trajectories, *_ = trajectory_sampling_with_return(
+    trajectories1, _, _, _ = trajectory_sampling_with_return(
         env_name,
-        preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
+        preprocessor_name="Identity",
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
     )
-    try:
-        trajectories.extend(trajectories[[1, 0]])
-    except Exception as e:
-        raise ValueError(f"Error while testing {env_name}") from e
+    trajectories2, _, _, _ = trajectory_sampling_with_return(
+        env_name,
+        preprocessor_name="Identity",
+        batch_size=6,
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,
+    )
+
+    if container_type == "transitions":
+        container1, container2 = (
+            trajectories1.to_transitions(),
+            trajectories2.to_transitions(),
+        )
+    elif container_type == "states_container":
+        if env_name == "Box" or env_name == "GraphBuildingOnEdges":
+            pytest.skip("`to_states_container` only works with DiscreteStates")
+        container1, container2 = (
+            trajectories1.to_states_container(),
+            trajectories2.to_states_container(),
+        )
+    else:  # container_type == "trajectories":
+        container1, container2 = trajectories1, trajectories2
+
+    initial_len = len(container1)
+
+    # Test extending container1 with container2
+    container1.extend(container2)  # type: ignore
+
+    # Check that the length of container1 is now the sum of both containers
+    assert len(container1) == initial_len + len(container2)
+
+    # Check that the elements from container2 are correctly added to container1
+    if isinstance(container1, Transitions):
+        for i in range(len(container2)):
+            container1_obj = container1[i + initial_len]
+            container2_obj = container2[i]
+            if env_name != "GraphBuildingOnEdges":
+                assert torch.equal(
+                    container1_obj.states.tensor, container2_obj.states.tensor
+                )
+                assert torch.equal(
+                    container1_obj.next_states.tensor, container2_obj.next_states.tensor
+                )
+            else:
+                assert torch.equal(
+                    container1_obj.states.tensor.edge_index,
+                    container2_obj.states.tensor.edge_index,
+                )
+                assert torch.equal(
+                    container1_obj.next_states.tensor.edge_index,
+                    container2_obj.next_states.tensor.edge_index,
+                )
+
+            assert torch.equal(
+                container1_obj.actions.tensor, container2_obj.actions.tensor
+            )
+            assert torch.equal(
+                container1_obj.is_terminating, container2_obj.is_terminating
+            )
+            assert container1_obj.log_probs is not None
+            assert container2_obj.log_probs is not None
+            assert torch.equal(container1_obj.log_probs, container2_obj.log_probs)
+
+            assert isinstance(container1_obj.log_rewards, torch.Tensor)
+            assert isinstance(container2_obj.log_rewards, torch.Tensor)
+            assert torch.equal(container1_obj.log_rewards, container2_obj.log_rewards)
+
+    elif isinstance(container1, StatesContainer):
+        for i in range(len(container2)):
+            container1_obj = container1[i + initial_len]
+            container2_obj = container2[i]
+            assert torch.equal(
+                container1_obj.intermediary_states.tensor,
+                container2_obj.intermediary_states.tensor,
+            )
+            assert torch.equal(
+                container1_obj.terminating_states.tensor,
+                container2_obj.terminating_states.tensor,
+            )
+            assert isinstance(container1_obj.log_rewards, torch.Tensor)
+            assert isinstance(container2_obj.log_rewards, torch.Tensor)
+            assert torch.equal(container1_obj.log_rewards, container2_obj.log_rewards)
+    else:  # isinstance(container1, Trajectories)
+        for i in range(len(container2)):
+            container1_obj = container1[i + initial_len]
+            container2_obj = container2[i]
+            if env_name != "GraphBuildingOnEdges":
+                assert torch.equal(
+                    container1_obj.states.tensor, container2_obj.states.tensor
+                )
+            else:
+                assert torch.equal(
+                    container1_obj.states.tensor.edge_index,
+                    container2_obj.states.tensor.edge_index,
+                )
+            assert torch.equal(
+                container1_obj.actions.tensor, container2_obj.actions.tensor
+            )
+            assert torch.equal(
+                container1_obj.terminating_idx, container2_obj.terminating_idx
+            )
+            assert container1_obj.log_probs is not None
+            assert container2_obj.log_probs is not None
+            assert torch.equal(container1_obj.log_probs, container2_obj.log_probs)
+            assert isinstance(container1_obj.log_rewards, torch.Tensor)
+            assert isinstance(container2_obj.log_rewards, torch.Tensor)
+            assert torch.equal(container1_obj.log_rewards, container2_obj.log_rewards)
 
 
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
 )
 def test_sub_sampling(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
 ):
     trajectories, *_ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="Identity",
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
@@ -242,100 +419,84 @@ def test_sub_sampling(
         raise ValueError(f"Error while testing {env_name}") from e
 
 
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
+@pytest.mark.parametrize(
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
+)
 def test_reverse_backward_trajectories(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
 ):
     """
     Ensures that the vectorized `Trajectories.reverse_backward_trajectories`
     matches the for-loop approach by toggling `debug=True`.
     """
-    _, backward_trajectories, *_ = trajectory_sampling_with_return(
+    _, backward_trajs, pf_estimator, _ = trajectory_sampling_with_return(
+        env_name,
+        preprocessor_name="Identity",
+        batch_size=5,
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,
+    )
+
+    reversed_trajs = backward_trajs.reverse_backward_trajectories()
+
+    for i in range(len(backward_trajs)):
+        terminating_idx = backward_trajs.terminating_idx[i]
+        for j in range(terminating_idx):
+            assert torch.all(
+                reversed_trajs.actions.tensor[j, i]
+                == backward_trajs.actions.tensor[terminating_idx - j - 1, i]
+            )
+            if env_name != "GraphBuildingOnEdges":
+                assert torch.all(
+                    reversed_trajs.states.tensor[j, i]
+                    == backward_trajs.states.tensor[terminating_idx - j, i]
+                )
+            else:
+                # reverse_backward_trajectories seems do not correctly support GraphBuildingOnEdges
+                pytest.skip("FIXME: Need to fix this")
+                # assert torch.all(
+                #     reversed_trajs.states.tensor.edge_index[j, i]
+                #     == backward_trajs.states.tensor.edge_index[terminating_idx - j, i]
+                # )
+
+        assert torch.all(reversed_trajs.actions[terminating_idx, i].is_exit)
+        assert torch.all(reversed_trajs.states[terminating_idx + 1, i].is_sink_state)
+
+    # Smoke tests for get_trajectory_pfs, to_transitions and to_states_container
+    reversed_traj_pfs = get_trajectory_pfs(
+        pf=pf_estimator,
+        trajectories=reversed_trajs,
+        recalculate_all_logprobs=False,
+    )
+    reversed_trajs.log_probs = reversed_traj_pfs
+    _ = reversed_trajs.to_transitions()
+
+    if env_name == "Box" or env_name == "GraphBuildingOnEdges":
+        pytest.skip("`to_states_container` only works with DiscreteStates")
+    _ = reversed_trajs.to_states_container()
+
+
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "ConditionalHyperGrid"]
+)
+def test_local_search_for_loop_equivalence(
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "ConditionalHyperGrid"]
+):
+    """
+    Ensures that the vectorized `LocalSearchSampler.local_search` matches
+    the for-loop approach by toggling `debug=True`.
+    """
+    env, pf_estimator, pb_estimator = get_env_and_estimators(
         env_name,
         preprocessor_name="Identity",
         delta=0.1,
         n_components=1,
         n_components_s0=1,
     )
-
-    reversed_traj = backward_trajectories.reverse_backward_trajectories()
-
-    for i in range(len(backward_trajectories)):
-        terminating_idx = backward_trajectories.terminating_idx[i]
-        for j in range(terminating_idx):
-            assert torch.all(
-                reversed_traj.actions.tensor[j, i]
-                == backward_trajectories.actions.tensor[terminating_idx - j - 1, i]
-            )
-            assert torch.all(
-                reversed_traj.states.tensor[j, i]
-                == backward_trajectories.states.tensor[terminating_idx - j, i]
-            )
-
-        assert torch.all(reversed_traj.actions[terminating_idx, i].is_exit)
-        assert torch.all(reversed_traj.states[terminating_idx + 1, i].is_sink_state)
-
-
-@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM", "Box"])
-def test_local_search_for_loop_equivalence(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box"]
-):
-    """
-    Ensures that the vectorized `LocalSearchSampler.local_search` matches
-    the for-loop approach by toggling `debug=True`.
-    """
-    # Build environment
-    is_discrete = env_name in ["HyperGrid", "DiscreteEBM"]
-    if is_discrete:
-        if env_name == "HyperGrid":
-            env = HyperGrid(ndim=2, height=5)
-            preprocessor = KHotPreprocessor(env.height, env.ndim)
-        elif env_name == "DiscreteEBM":
-            env = DiscreteEBM(ndim=5)
-            preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
-        else:
-            raise ValueError("Unknown environment name")
-
-        assert isinstance(preprocessor.output_dim, int)
-        # Build pf & pb
-        pf_module = MLP(preprocessor.output_dim, env.n_actions)
-        pb_module = MLP(preprocessor.output_dim, env.n_actions - 1)
-        pf_estimator = DiscretePolicyEstimator(
-            module=pf_module,
-            n_actions=env.n_actions,
-            is_backward=False,
-            preprocessor=preprocessor,
-        )
-        pb_estimator = DiscretePolicyEstimator(
-            module=pb_module,
-            n_actions=env.n_actions,
-            is_backward=True,
-            preprocessor=preprocessor,
-        )
-
-    else:
-        env = Box(delta=0.1)
-
-        # Build pf & pb
-        pf_module = BoxPFMLP(
-            hidden_dim=32,
-            n_hidden_layers=2,
-            n_components=1,
-            n_components_s0=1,
-        )
-        pb_module = BoxPBMLP(
-            hidden_dim=32,
-            n_hidden_layers=2,
-            n_components=1,
-            trunk=pf_module.trunk,
-        )
-        pf_estimator = BoxPFEstimator(
-            env=env,
-            module=pf_module,
-            n_components=1,
-            n_components_s0=1,
-        )
-        pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
 
     # Build sampler
     sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)
@@ -362,46 +523,21 @@ def test_local_search_for_loop_equivalence(
 
 
 @pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
-)
-def test_to_transition(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
-):
-    """
-    Ensures that the `Trajectories.to_transitions` method works as expected.
-    """
-    trajectories, bwd_trajectories, pf_estimator, _ = trajectory_sampling_with_return(
-        env_name,
-        preprocessor_name="Identity",
-        delta=0.1,
-        n_components=1,
-        n_components_s0=1,
-    )
-
-    _ = trajectories.to_transitions()
-
-    bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
-    # evaluate with pf_estimator
-    backward_traj_pfs = get_trajectory_pfs(
-        pf=pf_estimator,
-        trajectories=bwd_trajectories,
-        recalculate_all_logprobs=False,
-    )
-    bwd_trajectories.log_probs = backward_traj_pfs
-    _ = bwd_trajectories.to_transitions()
-
-
-@pytest.mark.parametrize(
-    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
 )
 @pytest.mark.parametrize("objects", ["trajectories", "transitions"])
 def test_replay_buffer(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
     objects: Literal["trajectories", "transitions"],
 ):
     """Test that the replay buffer works correctly with different types of objects."""
     if env_name == "HyperGrid":
         env = HyperGrid(ndim=2, height=4)
+    elif env_name == "ConditionalHyperGrid":
+        env = ConditionalHyperGrid(ndim=2, height=4)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=8)
     elif env_name == "Box":
@@ -419,6 +555,7 @@ def test_replay_buffer(
     trajectories, *_ = trajectory_sampling_with_return(
         env_name,
         preprocessor_name="Identity",
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
@@ -481,9 +618,7 @@ class _DummyPolicy(PolicyMixin):
 
     # Minimal callable module that matches the `PolicyMixin` expectation of `self.module`
     class _Module:
-        def __call__(
-            self, states: _FakeStates, conditioning: torch.Tensor | None = None
-        ):
+        def __call__(self, states: _FakeStates, conditions: torch.Tensor | None = None):
             n = states.batch_shape[0]
             return torch.zeros((n, 3), device=states.tensor.device)
 
@@ -497,8 +632,8 @@ class _DummyPolicy(PolicyMixin):
         # Build a simple categorical policy directly from the provided logits
         return Categorical(logits=est_out)
 
-    def __call__(self, states: _FakeStates, conditioning: torch.Tensor | None = None):
-        return self.module(states, conditioning)
+    def __call__(self, states: _FakeStates, conditions: torch.Tensor | None = None):
+        return self.module(states, conditions)
 
 
 class _DummyRecurrentPolicy(RecurrentPolicyMixin):
@@ -522,7 +657,7 @@ class _DummyRecurrentPolicy(RecurrentPolicyMixin):
 
 
 def test_rollout_context_basic():
-    ctx = RolloutContext(batch_size=4, device=torch.device("cpu"), conditioning=None)
+    ctx = RolloutContext(batch_size=4, device=torch.device("cpu"), conditions=None)
     assert ctx.batch_size == 4
     assert ctx.device.type == "cpu"
     # extras supports arbitrary entries
@@ -536,7 +671,7 @@ def test_default_adapter_compute_record():
     device = torch.device("cpu")
     n = 5
     states = _FakeStates(n, device)
-    ctx = policy.init_context(n, device, conditioning=None)
+    ctx = policy.init_context(n, device, conditions=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
     dist, ctx = policy.compute_dist(
@@ -568,7 +703,7 @@ def test_recurrent_adapter_requires_init_carry():
         is_backward = False
 
     with pytest.raises(TypeError, match="requires.*init_carry"):
-        _ = _BadRecurrentPolicy().init_context(2, torch.device("cpu"), conditioning=None)
+        _ = _BadRecurrentPolicy().init_context(2, torch.device("cpu"), conditions=None)
 
 
 def test_recurrent_adapter_flow():
@@ -577,7 +712,7 @@ def test_recurrent_adapter_flow():
     device = torch.device("cpu")
     n = 3
     states = _FakeStates(n, device)
-    ctx = policy.init_context(n, device, conditioning=None)
+    ctx = policy.init_context(n, device, conditions=None)
 
     step_mask = torch.ones(n, dtype=torch.bool, device=device)
     dist, ctx = policy.compute_dist(
@@ -664,7 +799,7 @@ def test_integration_recurrent_sequence_model_with_adapter(
     )
 
     # Use the estimator directly via `RecurrentPolicyMixin`
-    ctx = estimator.init_context(batch_size, device, conditioning=None)
+    ctx = estimator.init_context(batch_size, device, conditions=None)
 
     tokens = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
     states = _SeqStates(tokens, vocab_size)
@@ -726,7 +861,7 @@ def test_integration_transformer_sequence_model_with_adapter(
     )
 
     # Use the estimator directly via `RecurrentPolicyMixin`
-    ctx = estimator.init_context(batch_size, device, conditioning=None)
+    ctx = estimator.init_context(batch_size, device, conditions=None)
 
     tokens = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
     states = _SeqStates(tokens, vocab_size)

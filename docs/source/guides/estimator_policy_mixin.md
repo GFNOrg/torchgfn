@@ -12,7 +12,7 @@ This guide explains:
 
 A policy‑capable estimator exposes:
 - `is_vectorized: bool` — whether the estimator can be evaluated in a single vectorized call (no per‑step carry).
-- `init_context(batch_size, device, conditioning)` — allocate a per‑rollout context.
+- `init_context(batch_size, device, conditions)` — allocate a per‑rollout context.
 - `compute_dist(states_active, ctx, step_mask, ...) -> (Distribution, ctx)` — run the model, build a `torch.distributions.Distribution`.
 - `log_probs(actions_active, dist, ctx, step_mask, vectorized, ...) -> (Tensor, ctx)` — evaluate log‑probs, optionally padded to batch.
 - `get_current_estimator_output(ctx)` — access the last raw model output when requested.
@@ -22,7 +22,7 @@ All per‑step artifacts (e.g., log‑probs, raw outputs, recurrent state) are o
 ## RolloutContext
 
 The `RolloutContext` is a lightweight container created once per rollout:
-- `batch_size`, `device`, optional `conditioning`
+- `batch_size`, `device`, optional `conditions`
 - Optional `carry` (for recurrent policies)
 - Per‑step buffers: `trajectory_log_probs`, `trajectory_estimator_outputs`
 - `current_estimator_output` for cached reuse or immediate retrieval
@@ -34,9 +34,9 @@ See `src/gfn/estimators.py` for the full definition.
 
 `PolicyMixin` enables vectorized evaluation by default (`is_vectorized=True`).
 
-- `init_context(batch_size, device, conditioning)` returns a fresh `RolloutContext` with empty buffers.
+- `init_context(batch_size, device, conditions)` returns a fresh `RolloutContext` with empty buffers.
 - `compute_dist(...)`:
-  - Slices `conditioning` by `step_mask` when provided; uses full `conditioning` when `step_mask=None` (vectorized).
+  - Slices `conditions` by `step_mask` when provided; uses full `conditions` when `step_mask=None` (vectorized).
   - Optionally reuses `ctx.current_estimator_output` (e.g., PF with cached `trajectories.estimator_outputs`).
   - Calls the estimator module and builds a `Distribution` via `to_probability_distribution`.
   - When `save_estimator_outputs=True`, sets `ctx.current_estimator_output` and records a padded copy to `ctx.trajectory_estimator_outputs` for non‑vectorized calls.
@@ -87,7 +87,7 @@ See `src/gfn/utils/prob_calculations.py` for full branching.
 - `DiscretePolicyEstimator`: logits → `Categorical` with masking, optional temperature and epsilon‑greedy mixing in log‑space.
 - `DiscreteGraphPolicyEstimator`: multi‑head logits (`TensorDict`) → `GraphActionDistribution` with per‑component masks and transforms.
 - `RecurrentDiscretePolicyEstimator`: sequence models that maintain a `carry`; requires `init_carry` and returns `(logits, carry)` in `forward`.
-- Conditional variants exist for state+conditioning architectures.
+- Conditional variants exist for state+condition architectures.
 
 ## How to write a new policy (or mixin variant)
 

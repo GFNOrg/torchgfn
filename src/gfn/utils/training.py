@@ -49,7 +49,7 @@ def states_actions_tns_to_traj(
     states_tns: torch.Tensor,
     actions_tns: torch.Tensor,
     env: DiscreteEnv,
-    conditioning: torch.Tensor | None = None,
+    conditions: torch.Tensor | None = None,
 ) -> Trajectories:
     """Converts raw state and action tensors into a Trajectories object.
 
@@ -61,8 +61,8 @@ def states_actions_tns_to_traj(
         states_tns: A tensor of shape `[traj_len, *state_shape]` containing states for a single trajectory.
         actions_tns: A tensor of shape `[traj_len]` containing discrete action indices.
         env: The discrete environment that defines the state/action spaces.
-        conditioning: An optional tensor of shape `[traj_len, *conditioning_shape]`
-            containing conditioning information for a single trajectory.
+        conditions: An optional tensor of shape `[traj_len, *conditions_shape]`
+            containing condition information for a single trajectory.
 
     Returns:
         A `Trajectories` object containing the converted states and actions.
@@ -92,6 +92,10 @@ def states_actions_tns_to_traj(
     log_rewards = env.log_reward(states[-2])
     states = states[0].stack(states)
     terminating_idx = torch.tensor([len(states_tns) - 1])
+    if conditions is not None:
+        states.conditions = conditions.unsqueeze(1)  # dim 1 for batch dimension
+    else:
+        states.conditions = None
 
     log_probs = None
     estimator_outputs = None
@@ -99,7 +103,6 @@ def states_actions_tns_to_traj(
     trajectory = Trajectories(
         env,
         states,
-        conditioning,
         actions,
         log_rewards=log_rewards,
         terminating_idx=terminating_idx,

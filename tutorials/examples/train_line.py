@@ -272,7 +272,7 @@ def train(
                 gflownet.logz_parameters()[
                     0
                 ].item(),  # Assumes only one estimate of logZ.
-                env.log_partition,
+                env.log_partition(),
             )
         )
 
@@ -290,6 +290,7 @@ def main(args):
         n_sd=4.5,
         n_steps_per_trajectory=5,
         device=device,
+        debug=__debug__,
     )
 
     # Hyperparameters.
