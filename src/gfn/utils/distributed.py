@@ -177,8 +177,8 @@ def initialize_distributed_compute_mpi4py(
     dist.barrier()
     print("+ Distributed compute initialized")
 
-    my_rank = dist.get_rank()  # Global!
-    world_size = dist.get_world_size()  # Global!
+    my_rank = rank ##dist.get_rank()  # Global!
+    #world_size = dist.get_world_size()  # Global!
 
     num_training_ranks = world_size - num_remote_buffers
 
@@ -292,6 +292,19 @@ class DistributedContext:
     def is_training_rank(self) -> bool:
         """Check if the current rank is part of the training group."""
         return self.my_rank < self.num_training_ranks
+    
+    def cleanup(self) -> None:
+        """Cleans up the distributed process group."""
+        dist.destroy_process_group()
+        if self.dc_mpi4py is not None:
+            if self.dc_mpi4py.train_global_group is not None:
+                self.dc_mpi4py.train_global_group.Free()
+            if self.dc_mpi4py.buffer_group is not None:
+                self.dc_mpi4py.buffer_group.Free()
+            if self.dc_mpi4py.agent_groups is not None:
+                for ag in self.dc_mpi4py.agent_groups:
+                    ag.Free()
+            MPI.Finalize()
 
 
 def initialize_distributed_compute(

@@ -60,7 +60,7 @@ from gfn.utils.distributed import DistributedContext, initialize_distributed_com
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
-    AsyncSelectiveAveragingPolicympi4pyV2,
+    AsyncSelectiveAveragingPolicympi4pyFast,
     AsyncSelectiveAveragingPolicympi4py,
     AverageAllPolicy,
     AverageAllPolicympi4py,
@@ -839,7 +839,7 @@ def main(args):  # noqa: C901
     if args.distributed:
         if args.use_selective_averaging:
             print("+ Using selective averaging policy", flush=True)
-            if oldcode:
+            if oldcode:     ## base one written by Omar with torch.distributed
                 averaging_policy = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
                     model_builder=_model_builder,
                     average_every=args.average_every,
@@ -851,16 +851,31 @@ def main(args):  # noqa: C901
                 )
             else:
                 #print("my rank: ", distributed_context.my_rank, flush=True)
-                averaging_policy = AsyncSelectiveAveragingPolicympi4pyV2(  # type: ignore[abstract]
-                    model_builder=_model_builder,
-                    model=gflownet,
-                    average_every=args.average_every,                
-                    threshold_metric=10000, ##args.performance_tracker_threshold,
-                    replacement_ratio=args.replacement_ratio,
-                    averaging_strategy=args.averaging_strategy,
-                    momentum=args.momentum,      
-                    group=distributed_context.dc_mpi4py.train_global_group,                              
-                )
+                if args.fast_sa:   ## v2 code -- assumes all the params are of same precision
+                    averaging_policy = AsyncSelectiveAveragingPolicympi4pyFast(  # type: ignore[abstract]
+                        model_builder=_model_builder,
+                        model=gflownet,
+                        average_every=args.average_every,                
+                        threshold_metric=args.performance_tracker_threshold,
+                        replacement_ratio=args.replacement_ratio,
+                        averaging_strategy=args.averaging_strategy,
+                        momentum=args.momentum,    
+                        age_range=args.age_range,  
+                        group=distributed_context.dc_mpi4py.train_global_group,                              
+                    ) 
+                else: 
+                    # v1 -- more general where diffeernt params can be of different precision
+                    averaging_policy = AsyncSelectiveAveragingPolicympi4py(  # type: ignore[abstract]
+                        model_builder=_model_builder,
+                        model=gflownet,
+                        average_every=args.average_every,                
+                        threshold_metric=args.performance_tracker_threshold,
+                        replacement_ratio=args.replacement_ratio,
+                        averaging_strategy=args.averaging_strategy,
+                        momentum=args.momentum,    
+                        age_range=args.age_range,                          
+                        group=distributed_context.dc_mpi4py.train_global_group,                              
+                    )
         else:
             if oldcode:
                 averaging_policy = AverageAllPolicy(average_every=args.average_every)
@@ -1092,6 +1107,7 @@ def main(args):  # noqa: C901
         assert averaging_policy is not None
         try:
             averaging_policy.shutdown()
+            #distributed_context.cleanup()
         except Exception:
             pass
 
@@ -1152,6 +1168,14 @@ def main(args):  # noqa: C901
     ):
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
+
+    if args.distributed:
+        dist.barrier(group=distributed_context.train_global_group)
+        assert averaging_policy is not None
+        try:    
+            distributed_context.cleanup()
+        except Exception:
+            pass
 
     return result
 
@@ -1481,6 +1505,18 @@ if __name__ == "__main__":
         action="store_true",        
         help="Temp switch between old and new selective averaging code (dist mpi or mpi4py)",
     )
-
+    parser.add_argument(
+        "--fast_sa",
+        action="store_true",        
+        help="Use fast (comms) selective averaging mpi4py code assuming all params are of same precision (e.g., float32)",
+    )
+    parser.add_argument(
+        "--age_range",
+        type=lambda s: tuple(map(int, s.split(','))),
+        default=(5, 15),
+        help="Age range (iterations) for selective averaging policy as tuple (min_age, max_age), e.g., '5,15'",
+    )
     args = parser.parse_args()
+    print(args.age_range)
+    assert args.age_range[1] >= args.age_range[0], "Invalid age_range: max_age must be ge min_age"
     result = main(args)
