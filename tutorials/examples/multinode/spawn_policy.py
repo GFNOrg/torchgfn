@@ -494,9 +494,22 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
 
 
+###########################################################################################3
+## Selective averaging based on async mpi-3 comms
+#  Version 1 (fast-general): One buffer with all the params, hence utilizes the network BW much better than general version.
+#  Hence different model param dtypes can be handled. 
+#  Comments:
+#       - Need a fix where there is one buffer for all params but in byte format, 
+#       after comms, the buffer can be converted to appropriate dtypes for corr params dtypes. 
+#       - Right now each param has its own buffer and window, which may produce incorrect output.
+#  Notes: 
+#       - Only mean averaging strategy is implemented here for now.
+#       - Neighbors are randomly selected from all ranks except self.    
+#       - Agents are killed based on age only for now.
+###########################################################################################3
 
-class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
-    """
+class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
+    r"""
     Asynchronous selective averaging version 2, uses mpi one-sided comms to get the
     selectively averaged parameters from a random set of ranks.
     """
@@ -766,7 +779,7 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
             with Timer(
                 self.timing, "sa new_agent_model_rebuild"
             ):
-                #tic = self.get_time()
+                tic = self.get_time()
                 model, optimizer = self._model_builder()
                 for name, param in model.named_parameters():
                     if name in new_avg_params:
@@ -809,18 +822,6 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
             ##self.capture_comm("pper_param_tensors_received", np.prod(param_shape))
 
             for i, src in enumerate(donors):
-                #print("check 0 ", i, flush=True)
-                # Get shape of parameter from donor
-                #shape_win, shape_buf = self._mpi_shape_wins[name]
-                #shape_win.Lock(rank=src, lock_type=MPI.LOCK_SHARED)
-                #donor_shape = tuple(shape_buf.tolist())
-                #shape_win.Unlock(rank=src, lock_type=MPI.LOCK_SHARED)
-
-                # Get parameter tensor from donor   
-                #print("????????????????? src: ", src, flush=True)             
-                #world_size = self.train_comm_group.Get_size()   
-                #print("<<<<<<<<<<<,,world_size: ", world_size, flush=True)             
-
                 #print("i:", i, " src:", src, " Locking win to get param: ", name, flush=True)
                 tensor_win, tensor_buf = self._mpi_tensor_wins[name]
                 tensor_win.Lock(rank=src, lock_type=MPI.LOCK_SHARED)
@@ -924,12 +925,17 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
 
 
 
-
 ###########################################################################################3
-## Version 2: One buffer with all the params, it assumes all the params are of same dtype (float32)
+## Selective averaging based on async mpi-3 comms
+#  Version 2 (fast): One buffer with all the params, hence utilizes the network BW much better than general version.
+#  It assumes all the params are of same dtype (float32)
+# Notes:
+#       - Only mean averaging strategy is implemented here for now.
+#       - Neighbors are randomly selected from all ranks except self.
+#       - Agents are killed based on age only for now.
 ###########################################################################################3
 class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
-    """
+    r"""
     Asynchronous selective averaging version 2, uses mpi one-sided comms to get the
     selectively averaged parameters from a random set of ranks.
     """
@@ -1347,8 +1353,6 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
                 avg_state[name] = acc
 
         return avg_state
-
-
 
 
 class AverageAllPolicympi4py(SpawnPolicy):

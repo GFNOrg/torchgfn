@@ -851,7 +851,8 @@ def main(args):  # noqa: C901
                 )
             else:
                 #print("my rank: ", distributed_context.my_rank, flush=True)
-                if args.fast_sa:   ## v2 code -- assumes all the params are of same precision
+                if args.fast_sa:   
+                    ## fast -- assumes all the params are of same precision
                     averaging_policy = AsyncSelectiveAveragingPolicympi4pyFast(  # type: ignore[abstract]
                         model_builder=_model_builder,
                         model=gflownet,
@@ -864,7 +865,7 @@ def main(args):  # noqa: C901
                         group=distributed_context.dc_mpi4py.train_global_group,                              
                     ) 
                 else: 
-                    # v1 -- more general where diffeernt params can be of different precision
+                    # general -- more general where diffeernt params can be of different precision
                     averaging_policy = AsyncSelectiveAveragingPolicympi4py(  # type: ignore[abstract]
                         model_builder=_model_builder,
                         model=gflownet,
