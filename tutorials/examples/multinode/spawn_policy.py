@@ -532,8 +532,7 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         
         self.replacement_ratio = float(replacement_ratio)
         self.averaging_strategy = str(averaging_strategy)
-        self.momentum = float(momentum)
-        #self.poll_interval_s = float(poll_interval_s)
+        self.momentum = float(momentum)        
         self._model_builder = model_builder
         
         self._model: Optional[GFlowNet] = None
@@ -543,8 +542,7 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         self.stats = {}
         
         self._model = model
-        self.train_comm_group = group
-        #self._expose_model_parameters(model)        
+        self.train_comm_group = group        
         self._expose = False
 
         ###### new agents' stats ####
@@ -564,38 +562,12 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
                 f.write("=" * 50 + "\n")
         
 
+    ###############################
     def shutdown(self) -> None:
         for _,v in self._mpi_tensor_wins.items():
             v[0].Free()
             
     ##############################
-    '''
-    ## figure out a way to increment these stats from outside
-    def increment_agents_killed(self) -> None:
-        self.agents_killed += 1
-
-    def increment_averaging_ranks(self, count: int) -> None:
-        self.averaging_ranks += count
-
-    def get_agents_killed(self) -> int:
-        return self.agents_killed
-
-    def get_averaging_ranks(self) -> int:
-        return self.averaging_ranks
-
-    ################################    
-    def print_comm_stats(self) -> None:        
-        for k, v in self.comm_stats.items():
-            avg = v[0] / v[1] if v[1] > 0 else 0
-            print(f"Rank {self.myrank} - Comm {k}: Total={v[0]} elements, Count={v[1]}, Avg={avg:.2f}")
-
-    def capture_time(self, name: str, start: float, end: float) -> None:
-        self.timers[name] = end - start
-
-    def get_time(self) -> float:
-        return time.time()
-    '''
-
     def print_time(self) -> None:        
         print("Selective Averaging timings:", flush=True)
         for k, v in self.timing.items():
@@ -644,13 +616,12 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
 
     ################################
     def is_agent_dying(self, local_metric: float, threshold_metric: float, check_agent = 0) -> bool:
-        #print(" >>>>>>>>>>>>>>>>>>>>>>>>>>>> Dying agent: ", local_metric, threshold_metric)
         if check_agent == 0:    ##  static theshold
             return local_metric < threshold_metric
 
         elif check_agent == 1:   ## dynamic threshold based on age            
             if self.age >= self.max_age:
-                print('Agent killed due to age: ', self.age, ' max_age: ', self.max_age, flush=True)
+                print('+ Agent killed due to age: ', self.age, ' max_age: ', self.max_age, flush=True)
                 self.reset_age()                
                 return True
 
@@ -668,34 +639,22 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         self,
         model: GFlowNet,
     ) -> None:
-        print("_copy_model_params_to_buf called...", flush=True)
-        #print(model.named_parameters(), flush=True)
         for name, param in model.named_parameters():
-            #print(f"Copying parameter: {name}", flush=True)
-            #print(f"Parameter ", param.data.shape, flush=True)
-            ## print(f"Copying parameter: {name}", flush=True)
             win = self._mpi_tensor_wins[name][0]
             win.Lock(rank=self.myrank, lock_type=MPI.LOCK_EXCLUSIVE)
-            #param_tensors[name][:] = param.data.cpu().numpy().flatten()
             self._mpi_tensor_wins[name][1][:] = param.data.cpu().numpy().flatten()
-            #param_shapes[name][:] = np.array(param.data.shape, dtype=np.int64)
             win.Unlock(rank=self.myrank)
         
 
     ################################
-    def _expose_model_parameters(self, model: GFlowNet) -> None:     
-        print("<<<<<<<<<<<<<<<<<< exposing model parameters via MPI windows...", flush=True)   
+    def _expose_model_parameters(self, model: GFlowNet) -> None:             
         rank = self.myrank
         size = self.comm_size
 
         # Serialize model parameters to a contiguous numpy array
         param_tensors = {}
-        #self.param_shapes = {}
         for name, param in model.named_parameters():
             param_tensors[name] = np.zeros_like(param.data.cpu().numpy().flatten())
-            ##self.param_shapes[name] = np.zeros(len(param.data.shape), dtype=np.int64)
-
-        #self._copy_model_params_to_buf(model)
 
         # Create MPI windows for each parameter and its shape (2 separate windows set)
         self._mpi_tensor_wins = {}
@@ -706,8 +665,6 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
             self._mpi_tensor_wins[name] = (win, buf)
                 
         self._copy_model_params_to_buf(model)
-        print("pb.module.last_layer.bias: ", self._mpi_tensor_wins["pb.module.last_layer.bias"][1], 
-              (self._mpi_tensor_wins["pb.module.last_layer.bias"][1]).size, flush=True)
 
     ################################
     def _get_donors(self, n, k, d) -> List[int]:
@@ -730,8 +687,6 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
             group: MPI.Comm = MPI.COMM_WORLD,
         ) -> Tuple[GFlowNet, torch.optim.Optimizer, dict]:    
 
-        #return model, optimizer, True
-    
         if self._expose == False:
             self._expose_model_parameters(model)
             self._expose = True
@@ -739,41 +694,27 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         self._count += 1
         self._model = model
         
-        #return model, optimizer, True
-    
-        print(" >>>>>>>>>>>>> In call for V1.....", self.is_agent_dying(local_metric, self.threshold_metric), flush=True)
-        named_params = list(model.named_parameters())
-        for name, param in named_params:
-            param_shape = param.data.shape
-            ## print("model >>>>>>>>>>>>>><< param name: ", name, " shape: ", param_shape, flush=True)
-
-
         check_agent = 1   ## version of dying agent check
         ## validation info
         layer_name = None
         if self.debug_mode:
             layer_name = "pb.module.last_layer.bias"        
 
-        ## self._ensure_initialized(model)        
         if self.is_agent_dying(local_metric, self.threshold_metric, check_agent):
-            #tic = self.get_time()
             with Timer(
                 self.timing, "sa get_params_from_donors"
             ):
-                ## append self._mpi_tensor_wins to get params from donors 
                 if self.debug_mode:
                     with open(self.logfile, 'a') as f:
                         # kill this model and rebuild model with fresh weights
                         num_donors = max(1, int(self.comm_size * 0.5)) ## * self.replacement_ratio))
-                        donors = self._get_donors(self.comm_size, num_donors, self.myrank, self.averaging_strategy)   
-                        #print('>>>>>>>>>>>>>> donors: ', donors, flush=True)         
+                        donors = self._get_donors(self.comm_size, num_donors, self.myrank, self.averaging_strategy)                 
                         new_avg_params = self._get_model_params_from_donors(donors, layer_name, f)
                         json.dump({self._count: [self._mpi_tensor_wins[layer_name][1].tolist(), donors, new_avg_params[layer_name].tolist()]}, f)
                         f.write("\n")
                 else:
                     num_donors = max(1, int(self.comm_size * 0.5))   # self.replacement_ratio))
                     donors = self._get_donors(self.comm_size, num_donors, self.myrank)   
-                    #print('>>>>>>>>>>>>>> V1 donors: ', donors, flush=True)         
                     new_avg_params = self._get_model_params_from_donors(donors, layer_name, None)
 
             with Timer(
@@ -785,19 +726,11 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
                     if name in new_avg_params:
                         param.data.copy_(new_avg_params[name])
             
-            #toc = self.get_time()
-            #self.capture_time("selective_averaging", tic, toc)
-            #print(">>>>>>>>>>>> call done selective averaging...", flush=True)
-
         if expose_params == True:
             with Timer(
                 self.timing, "sa copy_params_to_buf"
             ):
-                #tic = self.get_time()
-                #self._expose_model_parameters(model)
                 self._copy_model_params_to_buf(model)
-                #toc = self.get_time()
-                #self.capture_time("expose_model_params", tic, toc)
 
         return model, optimizer, True
     
@@ -806,27 +739,19 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
     def _get_model_params_from_donors(self, donors: List[int], layer_name, f) -> Dict[str, torch.Tensor]:
         avg_state: Dict[str, torch.Tensor] = {}
         _named_params = list(self._model.named_parameters())   
-        #print(" >>>>>> _named_params: ", _named_params, flush=True)
         named_params = [(name, param) for name, param in _named_params if param.dim() != 0]
-        #print(" >>>>>> Getting params from donors - named_params : ", named_params, flush=True)
-        #print(" >>>>>> Getting params from donors: ", donors, flush=True)
         tot_comm_ele = 0
 
         self.capture_comm("donors", len(donors))
         for name, param in named_params:
             device = param.device
-            param_shape = param.data.shape
-            #print(">>>>>>>>>>>>>>>>>>>><< param name: ", name, " shape: ", param_shape, flush=True)
+            param_shape = param.data.shape            
             acc = torch.zeros_like(param.data)
             all_donors = []
-            ##self.capture_comm("pper_param_tensors_received", np.prod(param_shape))
 
             for i, src in enumerate(donors):
-                #print("i:", i, " src:", src, " Locking win to get param: ", name, flush=True)
                 tensor_win, tensor_buf = self._mpi_tensor_wins[name]
                 tensor_win.Lock(rank=src, lock_type=MPI.LOCK_SHARED)
-                #print(">>>>>>>>>>>>>>>>>>>>> params shape: ", param_shape, flush=True)
-                ## print i and start of win comms             
                 flat_size = np.prod(param_shape)
                 assert flat_size > 0
                 tot_comm_ele += flat_size
@@ -834,7 +759,6 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
                 tensor_win.Get([donor_tensor_flat, MPI.FLOAT], target_rank=src)
                 tensor_win.Unlock(rank=src)
 
-                #print("i:", i, " src:", src, " Locking win to get param done: ", name, flush=True)
                 donor_tensor = torch.tensor(donor_tensor_flat.reshape(param_shape), device=device)
                 ## Adding all the donor tensors/params
                 acc.add_(donor_tensor)                
@@ -847,15 +771,11 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
                 json.dump({self._count: all_donors}, f)     
                 f.write("\n")                   
 
-            #print("check 1", flush=True)
-            #if self.averaging_strategy == "mean" and len(donors) > 0:
             # default to mean averaging
             acc = acc / len(donors)
             avg_state[name] = acc
-            #print("check 2", flush=True)
 
         self.capture_comm("num_param_tensors_received", tot_comm_ele)
-
         return avg_state
 
 
@@ -958,7 +878,6 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         self.replacement_ratio = float(replacement_ratio)
         self.averaging_strategy = str(averaging_strategy)
         self.momentum = float(momentum)
-        #self.poll_interval_s = float(poll_interval_s)
         self._model_builder = model_builder
         
         self._model: Optional[GFlowNet] = None
@@ -992,7 +911,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
                 f.write(f"Selective Averaging Log for Rank {self.myrank}\n")
                 f.write("=" * 50 + "\n")
 
-
+    ###############################
     def shutdown(self) -> None:
         self._mpi_tensor_wins[0].Free()
 
@@ -1000,8 +919,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
     def print_time(self) -> None:        
         print("Selective Averaging timings:", flush=True)
         for k, v in self.timing.items():
-            ## here v is a list, avg over the list
-            #avg = sum(v) / len(v) if len(v) > 0 else 0
+            ## here v is a list, avg over the list            
             print(f"{k:<35}: {sum(v):>10.4f} seconds")
 
     def print_stats(self) -> None:
@@ -1045,14 +963,13 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         self.age = 0
 
     ################################
-    def is_agent_dying(self, local_metric: float, threshold_metric: float, check_policy = 0) -> bool:
-        #print(" >>>>>>>>>>>>>>>>>>>>>>>>>>>> Dying agent: ", local_metric, threshold_metric)
+    def is_agent_dying(self, local_metric: float, threshold_metric: float, check_policy = 0) -> bool:        
         if check_policy == 0:    ##  static theshold
             return local_metric < threshold_metric
 
         elif check_policy == 1:   ## dynamic threshold based on age            
             if self.age >= self.max_age:
-                print('[Info] Agent killed due to age: ', self.age, ' max_age: ', self.max_age, flush=True)
+                print('+ Agent killed due to age: ', self.age, ' max_age: ', self.max_age, flush=True)
                 self.reset_age()                
                 return True
 
@@ -1070,69 +987,43 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         self,
         model: GFlowNet,
     ) -> None:
-        #print("_copy_model_params_to_buf called...", flush=True)
-        #print(model.named_parameters(), flush=True)
         offset = 0
         for name, param in model.named_parameters():
-            #print(f"Copying parameter: {name}", flush=True)
-            #print(f"Parameter ", param.data.shape, flush=True)
-            ## print(f"Copying parameter: {name}", flush=True)
             win = self._mpi_tensor_wins[0]
             win.Lock(rank=self.myrank, lock_type=MPI.LOCK_EXCLUSIVE)
-            #param_tensors[name][:] = param.data.cpu().numpy().flatten()
             size = param.data.numel()
             self._mpi_tensor_wins[1][offset:offset+size] = param.data.cpu().numpy().flatten()
             offset += size
-            #param_shapes[name][:] = np.array(param.data.shape, dtype=np.int64)
             win.Unlock(rank=self.myrank)
-            #print('original params: ', name, param.data.flatten()[:5], flush=True)
-            #print('buffered params: ', name, self._mpi_tensor_wins[1][offset-size:offset][:5], flush=True)
         
 
     ################################
     def _expose_model_parameters(self, model: GFlowNet) -> None:     
-        print("<<<<<<<<<<<<<<<<<< exposing model parameters via MPI windows...", flush=True)   
-        rank = self.myrank
-        size = self.comm_size
-
+        print("+ Exposing model parameters via MPI windows...", flush=True)   
         # Serialize model parameters to a contiguous numpy array
-        param_tensors = {}
         param_size = 0
-
         dtypes = {param.dtype for param in model.parameters()}
-        print('model dtypes: ', dtypes)
-
+        ## todo: enable this to work with any dtypes for the model
+        # print('model dtypes: ', dtypes)
         param_dtype = np.float32
         th_param_dtype = torch.float32
 
         #self.param_shapes = {}
-        for name, param in model.named_parameters():
+        for _, param in model.named_parameters():
             param_size += param.data.numel()
             param_dtype = param.data.cpu().numpy().dtype
-            #param_tensors[name] = np.zeros_like(param.data.cpu().numpy().flatten())
-            ##self.param_shapes[name] = np.zeros(len(param.data.shape), dtype=np.int64)
 
         param_tensors_flat = np.zeros(param_size, dtype=param_dtype)
         self.donor_tensor_flat = torch.zeros(param_size, dtype=th_param_dtype)
-        self.acc = torch.zeros(param_size, dtype=th_param_dtype)
-        #self._copy_model_params_to_buf(model)
+        self.acc = torch.zeros(param_size, dtype=th_param_dtype)        
 
-        # Create MPI windows for each parameter and its shape (2 separate windows set)
-        #self._mpi_tensor_wins = {}
-        #self._mpi_shape_wins = {}
-        #for name, tensor in param_tensors.items():
+        # Create MPI windows for the flat parameter tensor
         buf = param_tensors_flat
         win = MPI.Win.Create(buf, comm=self.train_comm_group)
+        ## buffer attached to the win, used to copy data in/out of the win
         self._mpi_tensor_wins = (win, buf)
                 
-        #for name, shape in param_shapes.items():
-        #    buf = shape
-        #    win = MPI.Win.Create(buf, comm=MPI.COMM_WORLD)
-        #    self._mpi_shape_wins[name] = (win, buf)
-
         self._copy_model_params_to_buf(model)
-        #print("pb.module.last_layer.bias: ", self._mpi_tensor_wins["pb.module.last_layer.bias"][1], 
-        #      (self._mpi_tensor_wins["pb.module.last_layer.bias"][1]).size, flush=True)
 
     ################################
     def _get_donors(self, n, k, d) -> List[int]:
@@ -1143,7 +1034,6 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         candidates = [x for x in range(n) if x != d]
         # Random policy Pick k distinct random values                
         return random.sample(candidates, k)    
-        #return candidates[:k]  ## for testing purpose, remove it later
 
     ################################
     def __call__(self, 
@@ -1154,8 +1044,6 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
             expose_params: bool = True,
             group: MPI.Comm = MPI.COMM_WORLD,
         ) -> Tuple[GFlowNet, torch.optim.Optimizer, dict]:    
-
-        #return model, optimizer, True
     
         if self._expose == False:
             self._expose_model_parameters(model)
@@ -1163,35 +1051,25 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
 
         self._count += 1
         self._model = model
-        print(" >>>>>>>>>>>>> In call V2.....", \
-              self.is_agent_dying(local_metric, self.threshold_metric), local_metric, self.threshold_metric, flush=True)
         named_params = list(model.named_parameters())
         for name, param in named_params:
             param_shape = param.data.shape
-            #print("model >>>>>>>>>>>>>><< param name: ", name, " shape: ", param_shape, flush=True)
 
-        #print('buffered params 2: ', name, self._mpi_tensor_wins[1], flush=True)
         ## validation info
         layer_name = None
         if self.debug_mode:
             layer_name = "pb.module.last_layer.bias"
 
-        ## self._ensure_initialized(model)
-        #if  local_metric < self.threshold_metric:
         self.total_iterations += 1
-        #avg_policy = 'random'   ## <<<< parameterize this one
         check_agent = 1   ## 0: static thresholding, 1: dynamic based on age
         if self.is_agent_dying(local_metric, self.threshold_metric, check_agent):
             self.num_replacements += 1
-            #tic = self.get_time()
             with Timer(
                 self.timing, "sa get_params_from_donors"
             ):
-                ## append self._mpi_tensor_wins to get params from donors 
                 # kill this model and rebuild model with fresh weights
                 num_donors = max(1, int(self.comm_size * 0.5))     ## <<<<< parameterize this one
-                donors = self._get_donors(self.comm_size, num_donors, self.myrank)          
-                #print('>>>>>>>>>>>>>> V2 donors: ', donors, flush=True)           
+                donors = self._get_donors(self.comm_size, num_donors, self.myrank)                        
                 _new_avg_params = self._get_model_params_from_donors(donors, layer_name, None)
 
             
@@ -1203,13 +1081,10 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
                 win_buf: Dict[str, torch.Tensor] = {}
                 
                 offset = 0
-                #print('new avg param: ', _new_avg_params)
-                #print('buffered params: ', self._mpi_tensor_wins[1])                
                 for name, param in model.named_parameters():
                     device = param.device
                     flat_size = param.data.numel()
-                    assert flat_size == np.prod(param.data.shape)
-                    #print("name: ", name, " flat_size: ", flat_size, flush=True)
+                    assert flat_size == np.prod(param.data.shape)                        
                     donor_tensor_flat = _new_avg_params[offset:offset + flat_size]                    
                     donor_tensor = torch.tensor(donor_tensor_flat.reshape(param.data.shape), device=device)
                     if self.debug_mode:
@@ -1228,16 +1103,11 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
             with Timer(
                 self.timing, "sa new_agent_model_rebuild"
             ):
-                #tic = self.get_time()
-                print(">>>>>>>>>>>>>>>>>>> In model params copy", flush=True)
                 model, optimizer = self._model_builder()
                 for name, param in model.named_parameters():
                     if name in new_avg_params:
                         param.data.copy_(new_avg_params[name])
             
-            #toc = self.get_time()
-            #self.capture_time("selective_averaging", tic, toc)
-            #print(">>>>>>>>>>>> call done selective averaging...", flush=True)
 
         if expose_params == True:
             with Timer(
@@ -1250,20 +1120,14 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
 
     ################################
     def _get_model_params_from_donors(self, donors: List[int], layer_name, f) -> Dict[str, torch.Tensor]:
-        avg_state: Dict[str, torch.Tensor] = {}
-        _named_params = list(self._model.named_parameters())   
-        #print(" >>>>>> _named_params: ", _named_params, flush=True)
-        named_params = [(name, param) for name, param in _named_params if param.dim() != 0]
-        #print(" >>>>>> Getting params from donors - named_params : ", named_params, flush=True)
-        #print(" >>>>>> Getting params from donors: ", donors, flush=True)
+        #avg_state: Dict[str, torch.Tensor] = {}
+        #_named_params = list(self._model.named_parameters())   
+        #named_params = [(name, param) for name, param in _named_params if param.dim() != 0]                
         tot_comm_ele = 0
 
         self.capture_comm("donors", len(donors))        
         tensor_win, tensor_buf = self._mpi_tensor_wins
         flat_size = tensor_buf.size
-        #donor_tensor_flat = np.zeros(flat_size, dtype=tensor_buf.dtype)  ## push it to init
-        #donor_tensor_flat = torch.from_numpy(tensor_buf)  ## push it to init
-        #acc = torch.from_numpy(tensor_buf)
         self.donor_tensor_flat.zero_()
         self.acc.zero_()
 
@@ -1273,86 +1137,16 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
                 tensor_win.Get([self.donor_tensor_flat, MPI.FLOAT], target_rank=src)
                 tensor_win.Unlock(rank=src)
 
-                #print("i:", i, " src:", src, " Locking win to get param done: ", name, flush=True)
-                #donor_tensor = torch.tensor(donor_tensor_flat.reshape(param_shape), device=device)
                 ## Adding all the donor tensors/params
                 self.acc.add_(self.donor_tensor_flat)                
                 tot_comm_ele = tot_comm_ele + flat_size
-                #if False and name == layer_name:
-                #    all_donors.append(donor_tensor.tolist()) 
-                ## Additions: Other averaging strategies can be implemented here
         
             self.acc = self.acc / len(donors)
         else:
             raise ValueError(f"Unknown averaging strategy: {self.averaging_strategy}")
 
         self.capture_comm("num_param_tensors_received", tot_comm_ele)
-
-        #return avg_state
         return self.acc
-
-    ################################
-    def _get_model_params_from_donors_general(self, donors: List[int]) -> Dict[str, torch.Tensor]:
-        self.avg_state: Dict[str, torch.Tensor] = {}
-        named_params = list(self._model.named_parameters())
-
-        for name, param in named_params:
-            device = param.device
-            param_shape = param.data.shape
-            #acc = torch.zeros_like(param.data)
-            acc = []
-
-            for i, src in enumerate(donors):                
-                # Get shape of parameter from donor
-                #shape_win, shape_buf = self._mpi_shape_wins[name]
-                #shape_win.Lock(rank=src, lock_type=MPI.LOCK_SHARED)
-                #donor_shape = tuple(shape_buf.tolist())
-                #shape_win.Unlock(rank=src, lock_type=MPI.LOCK_SHARED)
-
-                # Get parameter tensor from donor                
-                tensor_win, tensor_buf = self._mpi_tensor_wins[name]
-                tensor_win.Lock(rank=src, lock_type=MPI.LOCK_SHARED)
-                flat_size = np.prod(param_shape)
-                donor_tensor_flat = np.zeros(flat_size, dtype=param.data.cpu().numpy().dtype)
-                tensor_win.Get([donor_tensor_flat, MPI.FLOAT], target_rank=src)
-                tensor_win.Unlock(rank=src)
-
-                donor_tensor = torch.tensor(donor_tensor_flat.reshape(param_shape), device=device)
-                ## Adding all the donor tensors/params
-                #acc.add_(donor_tensor)
-                acc.append(donor_tensor)
-                self.capture_comm("num_param_tensors_received", flat_size);
-
-                ## Additions: Other averaging strategies can be implemented here
-                
-            #if self.averaging_strategy == "mean" and len(donors) > 0:
-            # default to mean averaging
-            #acc = acc / len(donors)
-            self.avg_state[name] = acc
-
-        return self.avg_state
-
-
-    ################################
-    def _average_received_params(
-        self,        
-    ) -> Dict[str, torch.Tensor]:        
-        avg_state: Dict[str, torch.Tensor] = {}        
-        for name, param in self.avg_state.items():
-            #device = param.device
-            #param_shape = param.data.shape
-            acc = torch.zeros_like(param[0].data)
-            
-            for i, donor_tensor in enumerate(param):
-                # Adding all the donor tensors/params
-                acc.add_(donor_tensor)
-
-            # default to mean averaging
-            if self.averaging_strategy == "mean":
-                acc = acc / len(param)
-                avg_state[name] = acc
-
-        return avg_state
 
 
 class AverageAllPolicympi4py(SpawnPolicy):
@@ -1375,7 +1169,7 @@ class AverageAllPolicympi4py(SpawnPolicy):
         if iteration % self.average_every != 0:
             return model, optimizer, {"averaged_this_iteration": False}
 
-        print("AverageAll mpi4py model parameters across all ranks ...", flush=True)
+        #print("AverageAll mpi4py model parameters across all ranks ...", flush=True)
         world_size = group.Get_size()
         for param in model.parameters():
             param_tensor = param.detach().cpu().numpy().copy()   ##param.data.clone().numpy()
