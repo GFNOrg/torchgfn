@@ -630,21 +630,24 @@ class States(ABC):
 class DiscreteStates(States, ABC):
     """Base class for states of discrete environments.
 
-    DiscreteStates are endowed with `forward_masks` and `backward_masks`: boolean
-    attributes representing which actions are allowed at each state. This is the mechanism
-    by which all elements of the library verifies the allowed actions at each state.
+    DiscreteStates provide `forward_masks` and `backward_masks` as cached properties
+    that compute which actions are allowed at each state on demand. This approach
+    (similar to GraphStates) makes slicing operations faster since masks don't need
+    to be sliced - they are recomputed only when accessed.
+
+    Subclasses must implement `_compute_forward_masks` and `_compute_backward_masks`
+    to define the mask computation logic for their specific environment.
 
     Attributes:
         n_actions: Number of possible actions.
         device: The device on which the states are stored.
-        forward_masks: Boolean tensor indicating forward actions allowed at each state.
-        backward_masks: Boolean tensor indicating backward actions allowed at each state.
+        forward_masks: Property that returns boolean tensor of allowed forward actions.
+        backward_masks: Property that returns boolean tensor of allowed backward actions.
 
     Compile-related expectations:
-    - Inputs (state tensor and masks) should already be on the target device with
-      correct shapes; debug can be used to validate during development/tests.
-    - Mask helpers reset masks before applying new conditions; rely on this behavior
-      to avoid cross-step leakage.
+    - Inputs (state tensor) should already be on the target device with correct shapes;
+      debug can be used to validate during development/tests.
+    - Masks are computed on-demand and cached; cache is invalidated when needed.
     """
 
     n_actions: ClassVar[int]
@@ -652,21 +655,15 @@ class DiscreteStates(States, ABC):
     def __init__(
         self,
         tensor: torch.Tensor,
-        forward_masks: Optional[torch.Tensor] = None,
-        backward_masks: Optional[torch.Tensor] = None,
         conditions: Optional[torch.Tensor] = None,
         device: torch.device | None = None,
         debug: bool = False,
     ) -> None:
-        """Initializes a DiscreteStates container with a batch of states and masks.
+        """Initializes a DiscreteStates container with a batch of states.
 
         Args:
             tensor: Tensor of shape (*batch_shape, *state_shape) representing a batch of
                 states.
-            forward_masks: Optional boolean tensor of shape (*batch_shape, n_actions)
-                indicating forward actions allowed at each state.
-            backward_masks: Optional boolean tensor of shape (*batch_shape, n_actions - 1)
-                indicating backward actions allowed at each state.
             conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
                 condition vectors for conditional GFlowNets.
             device: The device to store the states on.
@@ -677,53 +674,104 @@ class DiscreteStates(States, ABC):
             # Keep shape validation in debug to avoid graph breaks in compiled regions.
             assert tensor.shape == self.batch_shape + self.state_shape
 
-        # In the usual case, no masks are provided and we produce these defaults.
-        # Note: this **must** be updated externally by the env.
-        if forward_masks is None:
-            forward_masks = torch.ones(
-                (*self.batch_shape, self.__class__.n_actions),
-                dtype=torch.bool,
-                device=self.device,
-            )
-        else:
-            forward_masks = forward_masks.to(self.device)
-        if backward_masks is None:
-            backward_masks = torch.ones(
-                (*self.batch_shape, self.__class__.n_actions - 1),
-                dtype=torch.bool,
-                device=self.device,
-            )
-        else:
-            backward_masks = backward_masks.to(self.device)
+        # Masks are computed on-demand and cached
+        self._forward_masks_cache: Optional[torch.Tensor] = None
+        self._backward_masks_cache: Optional[torch.Tensor] = None
 
-        self.forward_masks: torch.Tensor = forward_masks
-        self.backward_masks: torch.Tensor = backward_masks
+    def _invalidate_masks_cache(self) -> None:
+        """Invalidates the cached masks, forcing recomputation on next access."""
+        self._forward_masks_cache = None
+        self._backward_masks_cache = None
 
-        assert self.forward_masks.shape == (*self.batch_shape, self.n_actions)
-        assert self.backward_masks.shape == (*self.batch_shape, self.n_actions - 1)
+    @property
+    def forward_masks(self) -> torch.Tensor:
+        """Returns forward action masks, computing and caching if needed.
+
+        Returns:
+            Boolean tensor of shape (*batch_shape, n_actions) indicating which
+            forward actions are allowed at each state.
+        """
+        if self._forward_masks_cache is None:
+            self._forward_masks_cache = self._compute_forward_masks()
+            if self.debug:
+                assert self._forward_masks_cache.shape == (
+                    *self.batch_shape,
+                    self.n_actions,
+                )
+        return self._forward_masks_cache
+
+    @forward_masks.setter
+    def forward_masks(self, value: torch.Tensor) -> None:
+        """Sets the forward masks cache directly.
+
+        Args:
+            value: Boolean tensor of shape (*batch_shape, n_actions).
+        """
+        self._forward_masks_cache = value
+
+    @property
+    def backward_masks(self) -> torch.Tensor:
+        """Returns backward action masks, computing and caching if needed.
+
+        Returns:
+            Boolean tensor of shape (*batch_shape, n_actions - 1) indicating which
+            backward actions are allowed at each state.
+        """
+        if self._backward_masks_cache is None:
+            self._backward_masks_cache = self._compute_backward_masks()
+            if self.debug:
+                assert self._backward_masks_cache.shape == (
+                    *self.batch_shape,
+                    self.n_actions - 1,
+                )
+        return self._backward_masks_cache
+
+    @backward_masks.setter
+    def backward_masks(self, value: torch.Tensor) -> None:
+        """Sets the backward masks cache directly.
+
+        Args:
+            value: Boolean tensor of shape (*batch_shape, n_actions - 1).
+        """
+        self._backward_masks_cache = value
+
+    def _compute_forward_masks(self) -> torch.Tensor:
+        """Computes forward action masks for the current states.
+
+        Must be implemented by subclasses to define environment-specific mask logic.
+
+        Returns:
+            Boolean tensor of shape (*batch_shape, n_actions).
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement _compute_forward_masks"
+        )
+
+    def _compute_backward_masks(self) -> torch.Tensor:
+        """Computes backward action masks for the current states.
+
+        Must be implemented by subclasses to define environment-specific mask logic.
+
+        Returns:
+            Boolean tensor of shape (*batch_shape, n_actions - 1).
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement _compute_backward_masks"
+        )
 
     def clone(self) -> DiscreteStates:
         """Returns a clone of the current instance.
 
         Returns:
-            A new DiscreteStates object with the same data, masks, and conditions.
+            A new DiscreteStates object with the same data and conditions.
+            Masks are recomputed on demand for the cloned states.
         """
         cloned = self.__class__(
             tensor=self.tensor.clone(),
-            forward_masks=self.forward_masks.clone(),
-            backward_masks=self.backward_masks.clone(),
             conditions=self.conditions.clone() if self.conditions is not None else None,
             debug=self.debug,
         )
         return cloned
-
-    def _check_both_forward_backward_masks_exist(self):
-        # Only validate in debug to avoid graph breaks in compiled regions.
-        if self.debug:
-            if not torch.is_tensor(self.forward_masks):
-                raise TypeError("forward_masks must be tensors")
-            if not torch.is_tensor(self.backward_masks):
-                raise TypeError("backward_masks must be tensors")
 
     def __repr__(self) -> str:
         """Returns a detailed string representation of the DiscreteStates object.
@@ -736,7 +784,6 @@ class DiscreteStates(States, ABC):
             f"batch={self.batch_shape},",
             f"state={self.state_shape},",
             f"actions={self.n_actions},",
-            f"masks={tuple(self.forward_masks.shape)},",
         ]
         if self.conditions is not None:
             parts.append(f"conditions={self.conditions.shape},")
@@ -746,56 +793,50 @@ class DiscreteStates(States, ABC):
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> DiscreteStates:
-        """Returns a subset of the discrete states and their masks.
+        """Returns a subset of the discrete states.
+
+        Masks are computed on demand for the new states rather than being sliced,
+        which makes this operation faster.
 
         Args:
             index: Indices to select states.
 
         Returns:
-            A new DiscreteStates object with the selected states, masks, and conditions.
+            A new DiscreteStates object with the selected states and conditions.
         """
         states = self.tensor[index]
-        self._check_both_forward_backward_masks_exist()
-        forward_masks = self.forward_masks[index]
-        backward_masks = self.backward_masks[index]
         conditions = self.conditions[index] if self.conditions is not None else None
-        out = self.__class__(
-            states, forward_masks, backward_masks, conditions, debug=self.debug
-        )
+        out = self.__class__(states, conditions, debug=self.debug)
         return out
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: DiscreteStates
     ) -> None:
-        """Sets particular discrete states and their masks.
+        """Sets particular discrete states.
 
         Args:
             index: Indices to set.
-            states: DiscreteStates object containing the new states and masks.
+            states: DiscreteStates object containing the new states.
         """
         super().__setitem__(index, states)
-        self._check_both_forward_backward_masks_exist()
-        self.forward_masks[index] = states.forward_masks
-        self.backward_masks[index] = states.backward_masks
+        # Invalidate masks cache since underlying tensor has changed
+        self._invalidate_masks_cache()
 
     def flatten(self) -> DiscreteStates:
-        """Flattens the batch dimension of the discrete states and their masks.
+        """Flattens the batch dimension of the discrete states.
+
+        Masks are computed on demand for the flattened states.
 
         Returns:
             A new DiscreteStates object with the batch dimension flattened.
         """
         states = self.tensor.view(-1, *self.state_shape)
-        self._check_both_forward_backward_masks_exist()
-        forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
-        backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
         conditions = (
             self.conditions.view(-1, self.conditions.shape[-1])
             if self.conditions is not None
             else None
         )
-        return self.__class__(
-            states, forward_masks, backward_masks, conditions, debug=self.debug
-        )
+        return self.__class__(states, conditions, debug=self.debug)
 
     def extend(self, other: DiscreteStates) -> None:
         """Concatenates another DiscreteStates object along the batch dimension.
@@ -818,13 +859,6 @@ class DiscreteStates(States, ABC):
             )
             self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
 
-        self.forward_masks = torch.cat(
-            (self.forward_masks, other.forward_masks), dim=len(self.batch_shape) - 1
-        )
-        self.backward_masks = torch.cat(
-            (self.backward_masks, other.backward_masks), dim=len(self.batch_shape) - 1
-        )
-
         if self.conditions is not None and other.conditions is not None:
             self.conditions = torch.cat(
                 (self.conditions, other.conditions), dim=len(self.batch_shape) - 1
@@ -837,34 +871,23 @@ class DiscreteStates(States, ABC):
                 )
             self.conditions = None
 
-    def pad_dim0_with_sf(self, required_first_dim: int) -> None:
-        r"""Extends forward and backward masks along the first batch dimension.
+        # Invalidate masks cache since underlying tensor has changed
+        self._invalidate_masks_cache()
 
-        After extending the state along the first batch dimensions with $s_f$ by
-        `required_first_dim`, also extends both forward and backward masks with ones
-        along the first dimension by `required_first_dim`.
+    def pad_dim0_with_sf(self, required_first_dim: int) -> None:
+        r"""Extends states along the first batch dimension with sink states.
+
+        Given a batch of states (i.e. of `batch_shape=(a, b)`), extends `a` to a
+        DiscreteStates object of `batch_shape = (required_first_dim, b)`, by adding the
+        required number of $s_f$ tensors. This is useful to extend trajectories of
+        different lengths.
 
         Args:
             required_first_dim: The size of the first batch dimension post-expansion.
         """
         super().pad_dim0_with_sf(required_first_dim)
-
-        def _extend(masks, first_dim):
-            return torch.cat(
-                (
-                    masks,
-                    torch.ones(
-                        first_dim - masks.shape[0],
-                        *masks.shape[1:],
-                        dtype=torch.bool,
-                        device=self.device,
-                    ),
-                ),
-                dim=0,
-            )
-
-        self.forward_masks = _extend(self.forward_masks, required_first_dim)
-        self.backward_masks = _extend(self.backward_masks, required_first_dim)
+        # Invalidate masks cache since underlying tensor has changed
+        self._invalidate_masks_cache()
 
     @classmethod
     def stack(cls, states: Sequence[DiscreteStates]) -> DiscreteStates:
@@ -874,112 +897,18 @@ class DiscreteStates(States, ABC):
             states: List of DiscreteStates objects to stack.
 
         Returns:
-            A new DiscreteStates object with the stacked states, masks, and conditions.
+            A new DiscreteStates object with the stacked states and conditions.
+            Masks are computed on demand for the stacked states.
         """
         out = super().stack(states)
         # Note: conditions are already stacked by parent class
         assert isinstance(out, DiscreteStates)
-        out.forward_masks = torch.stack([s.forward_masks for s in states], dim=0).to(
-            out.device
-        )
-        out.backward_masks = torch.stack([s.backward_masks for s in states], dim=0).to(
-            out.device
-        )
         return out
 
-    # The helper methods are convenience functions for common mask operations.
-    def set_nonexit_action_masks(
-        self,
-        cond: torch.Tensor,
-        allow_exit: bool,
-    ) -> None:
-        """Masks denoting disallowed actions according to cond, appending the exit mask.
-
-        A convenience function for common mask operations.
-
-        Args:
-            cond: a boolean of shape (*batch_shape,) + (n_actions - 1,), which
-                denotes which actions are *not* allowed. For example, if a state element
-                represents action count, and no action can be repeated more than 5
-                times, cond might be state.tensor > 5 (assuming count starts at 0).
-            allow_exit: sets whether exiting can happen at any point in the
-                trajectory - if so, it should be set to True.
-
-        Notes:
-            - Always resets `forward_masks` to all True before applying the new mask
-              so updates do not leak across steps.
-            - Works for 1D or 2D batch shapes; cond must match `batch_shape`.
-            - Debug guards validate shape/dtype but should be off in compiled regions.
-        """
-        if self.debug:
-            # Validate mask shape/dtype to catch silent misalignment during testing.
-            expected_shape = self.batch_shape + (self.n_actions - 1,)
-            if cond.shape != expected_shape:
-                raise ValueError(
-                    f"cond must have shape {expected_shape}; got {cond.shape}"
-                )
-            if cond.dtype is not torch.bool:
-                raise ValueError(f"cond must be boolean; got {cond.dtype}")
-
-        # Resets masks in place to prevent side-effects across steps.
-        self.forward_masks[:] = True
-        exit_mask = torch.zeros(
-            self.batch_shape + (1,), device=cond.device, dtype=cond.dtype
-        )
-
-        if not allow_exit:
-            exit_mask.fill_(True)
-
-        # Concatenate and mask in a single tensor op to stay torch.compile friendly.
-        # Sets the forward mask to be False where this concatenated mask is True.
-        self.forward_masks[torch.cat([cond, exit_mask], dim=-1)] = False
-
-    def set_exit_masks(self, batch_idx: torch.Tensor) -> None:
-        """Sets forward masks such that the only allowable next action is to exit.
-
-        A convenience function for common mask operations.
-
-        Args:
-            batch_idx: A boolean index along the batch dimension, along which to
-                enforce exits.
-
-        Notes:
-            - Works for 1D or 2D batch shapes; `batch_idx` must match `batch_shape`.
-            - Clears all actions for the selected batch entries, then sets only the
-              exit action True via masked_fill to stay torch.compile friendly.
-            - Does not move devices; expects masks/tensors already on the target device.
-        """
-        if self.debug:
-            if batch_idx.shape != self.batch_shape:
-                raise ValueError(
-                    f"batch_idx must have shape {self.batch_shape}; got {batch_idx.shape}"
-                )
-            if batch_idx.dtype is not torch.bool:
-                raise ValueError(f"batch_idx must be boolean; got {batch_idx.dtype}")
-
-        # Avoid Python .item() to stay torch.compile friendly. For any True entry in
-        # batch_idx (1D or 2D), zero all actions then set only the exit action True.
-        self.forward_masks[batch_idx] = False
-        # Use masked_fill on the last action slice to avoid advanced indexing graph breaks.
-        self.forward_masks[..., -1].masked_fill_(batch_idx, True)
-
-    def init_forward_masks(self, set_ones: bool = True) -> None:
-        """Initalizes forward masks.
-
-        A convienience function for common mask operations.
-
-        Args:
-            set_ones: if True, forward masks are initalized to all ones. Otherwise,
-                they are initalized to all zeros.
-        """
-        shape = self.batch_shape + (self.n_actions,)
-        if set_ones:
-            self.forward_masks = torch.ones(shape).to(self.device).bool()
-        else:
-            self.forward_masks = torch.zeros(shape).to(self.device).bool()
-
     def to(self, device: torch.device) -> DiscreteStates:
-        """Moves the tensor and masks to the specified device in-place.
+        """Moves the tensor to the specified device in-place.
+
+        Masks will be recomputed on the new device when accessed.
 
         Args:
             device: The device to move to.
@@ -988,10 +917,10 @@ class DiscreteStates(States, ABC):
             The DiscreteStates object on the specified device.
         """
         self.tensor = self.tensor.to(device)
-        self.forward_masks = self.forward_masks.to(device)
-        self.backward_masks = self.backward_masks.to(device)
         if self.conditions is not None:
             self.conditions = self.conditions.to(device)
+        # Invalidate masks cache; they will be recomputed on the new device when accessed
+        self._invalidate_masks_cache()
         return self
 
 

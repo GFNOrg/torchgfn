@@ -146,20 +146,45 @@ class HyperGrid(DiscreteEnv):
         )
         self.States: type[DiscreteStates] = self.States  # for type checking
 
-    def update_masks(self, states: DiscreteStates) -> None:
-        """Updates the masks of the states.
+    def make_states_class(self) -> type[DiscreteStates]:
+        """Returns the DiscreteStates class for the HyperGrid environment."""
+        env = self
 
-        Args:
-            states: The states to update the masks of.
-        """
-        # Not allowed to take any action beyond the environment height, but
-        # allow early termination.
-        # TODO: do we need to handle the conditional case here?
-        states.set_nonexit_action_masks(
-            states.tensor == self.height - 1,
-            allow_exit=True,
-        )
-        states.backward_masks = states.tensor != 0
+        class HyperGridStates(DiscreteStates):
+            state_shape = env.state_shape
+            s0 = env.s0
+            sf = env.sf
+            make_random_states = env.make_random_states
+            n_actions = env.n_actions
+
+            def _compute_forward_masks(self) -> torch.Tensor:
+                """Computes forward masks for HyperGrid states.
+
+                Not allowed to take any action beyond the environment height,
+                but allow early termination.
+                """
+                # Create mask: True where action would go beyond height
+                at_height_limit = self.tensor == env.height - 1
+                # Forward masks: all True except where at height limit
+                forward_masks = torch.ones(
+                    (*self.batch_shape, self.n_actions),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                # Set non-exit actions to False where at height limit
+                # Exit action (last action) remains True
+                exit_mask = torch.zeros(
+                    self.batch_shape + (1,), device=self.device, dtype=torch.bool
+                )
+                full_mask = torch.cat([at_height_limit, exit_mask], dim=-1)
+                forward_masks[full_mask] = False
+                return forward_masks
+
+            def _compute_backward_masks(self) -> torch.Tensor:
+                """Computes backward masks for HyperGrid states."""
+                return self.tensor != 0
+
+        return HyperGridStates
 
     def make_random_states(
         self,

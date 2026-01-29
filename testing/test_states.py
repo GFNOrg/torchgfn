@@ -34,6 +34,22 @@ class SimpleDiscreteStates(DiscreteStates):
     s0 = torch.tensor([0.0, 0.0])
     sf = torch.tensor([1.0, 1.0])
 
+    def _compute_forward_masks(self) -> torch.Tensor:
+        """All forward actions allowed."""
+        return torch.ones(
+            (*self.batch_shape, self.n_actions),
+            dtype=torch.bool,
+            device=self.device,
+        )
+
+    def _compute_backward_masks(self) -> torch.Tensor:
+        """All backward actions allowed."""
+        return torch.ones(
+            (*self.batch_shape, self.n_actions - 1),
+            dtype=torch.bool,
+            device=self.device,
+        )
+
 
 class SimpleTensorStates(States):
     state_shape = (2,)  # 2-dimensional state
@@ -79,10 +95,7 @@ def simple_discrete_state():
     """Creates a simple discrete state with 3 possible actions"""
     # Create a single state tensor
     tensor = torch.tensor([[0.5, 0.5]])
-    forward_masks = torch.tensor([[True, True, True]])  # All actions allowed
-    backward_masks = torch.tensor([[True, True]])  # All backward actions allowed
-
-    return SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+    return SimpleDiscreteStates(tensor)
 
 
 @pytest.fixture
@@ -90,10 +103,7 @@ def empty_discrete_state():
     """Creates an empty discrete state"""
     # Create an empty state tensor
     tensor = torch.zeros((0, 2))
-    forward_masks = torch.zeros((0, 3), dtype=torch.bool)
-    backward_masks = torch.zeros((0, 2), dtype=torch.bool)
-
-    return SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+    return SimpleDiscreteStates(tensor)
 
 
 @pytest.fixture
