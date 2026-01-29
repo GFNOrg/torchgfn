@@ -830,7 +830,7 @@ class DiscreteStates(States, ABC):
         else:
             # Inconsistent, raise a warning and set to None
             if self.conditions is not None or other.conditions is not None:
-                warnings.warn(
+                logger.warning(
                     "Inconsistent conditions when extending states. Setting to None."
                 )
             self.conditions = None

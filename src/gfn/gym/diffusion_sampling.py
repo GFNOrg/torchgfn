@@ -1,6 +1,6 @@
+import logging
 import math
 import os
-import logging
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
 from typing import Any, cast
@@ -723,7 +723,9 @@ class DiffusionSampling(Env):
             {**default_kwargs, **(target_kwargs or {})},
         )
         logger.info("DiffusionSampling:")
-        logger.info(f"+ Initalizing target {target_cls.__name__} with kwargs: {merged_kwargs}")
+        logger.info(
+            f"+ Initalizing target {target_cls.__name__} with kwargs: {merged_kwargs}"
+        )
         self.target = target_cls(device=device, **merged_kwargs)
 
         self.dim = self.target.dim

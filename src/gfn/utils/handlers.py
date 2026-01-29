@@ -59,7 +59,9 @@ def is_callable_exception_handler(
     try:
         yield
     except:  # noqa
-        logger.error(f"conditions was passed but {target_name} is not callable: {type(target)}")
+        logger.error(
+            f"conditions was passed but {target_name} is not callable: {type(target)}"
+        )
         raise
 
 
