@@ -1,5 +1,6 @@
 import math
 import os
+import logging
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
 from typing import Any, cast
@@ -15,6 +16,8 @@ from gfn.env import Env
 from gfn.gym.helpers.diffusion_utils import viz_2d_slice
 from gfn.states import States
 from gfn.utils.common import filter_kwargs_for_callable, temporarily_set_seed
+
+logger = logging.getLogger(__name__)
 
 # Lightweight typing alias for the target registry entries.
 TargetEntry = tuple[type["BaseTarget"], dict[str, Any]]
@@ -215,9 +218,9 @@ class SimpleGaussianMixture(BaseTarget):
         )
         mixture_weights = mixture_weights / mixture_weights.sum()
 
-        print("+ Gaussian Mixture Target initialization:")
-        print("+ num_components: ", num_components)
-        print("+ mixture_weights: ", mixture_weights)
+        logger.info("+ Gaussian Mixture Target initialization:")
+        logger.info(f"+ num_components: {num_components}")
+        logger.info(f"+ mixture_weights: {mixture_weights}")
         for i, (loc, cov) in enumerate(zip(locs, covariances)):
             loc_str = np.array2string(loc, precision=2, separator=", ").replace(
                 "\n", " "
@@ -225,7 +228,7 @@ class SimpleGaussianMixture(BaseTarget):
             cov_str = np.array2string(cov, precision=2, separator=", ").replace(
                 "\n", " "
             )
-            print(f"\tComponent {i+1}: loc={loc_str}, cov={cov_str}")
+            logger.info(f"\tComponent {i+1}: loc={loc_str}, cov={cov_str}")
 
         # Convert to torch tensors
         dtype = torch.get_default_dtype()
@@ -719,8 +722,8 @@ class DiffusionSampling(Env):
             target_cls.__init__,
             {**default_kwargs, **(target_kwargs or {})},
         )
-        print("DiffusionSampling:")
-        print(f"+ Initalizing target {target_cls.__name__} with kwargs: {merged_kwargs}")
+        logger.info("DiffusionSampling:")
+        logger.info(f"+ Initalizing target {target_cls.__name__} with kwargs: {merged_kwargs}")
         self.target = target_cls(device=device, **merged_kwargs)
 
         self.dim = self.target.dim
@@ -779,9 +782,9 @@ class DiffusionSampling(Env):
         target class's constructor signature.
         """
         out = {}
-        print("Available DiffusionSampling targets:")
+        logger.info("Available DiffusionSampling targets:")
         for alias, (cls, defaults) in cls.DIFFUSION_TARGETS.items():
-            print(f"+ {alias}: {cls.__name__} with kwargs: {defaults}")
+            logger.info(f"+ {alias}: {cls.__name__} with kwargs: {defaults}")
             out[alias] = {"class": cls.__name__, "defaults": dict(defaults)}
 
         return out
