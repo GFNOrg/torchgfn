@@ -1745,7 +1745,7 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
 
         # TODO: learn variance, lp, clipping, ...
         if torch.isnan(out).any():
-            logger.warning("+ out has {} nans".format(torch.isnan(out).sum()))
+            logger.warning("out has %d nans", torch.isnan(out).sum())
             out = torch.nan_to_num(out)
 
         return out

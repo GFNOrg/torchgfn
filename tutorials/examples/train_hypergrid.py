@@ -27,6 +27,7 @@ This script also provides a function `get_exact_P_T` that computes the exact ter
 distribution for the HyperGrid environment, which is useful for evaluation and visualization.
 """
 
+import logging
 import os
 import time
 from argparse import ArgumentParser
@@ -62,6 +63,8 @@ from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
     AverageAllPolicy,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ModesReplayBufferManager(ReplayBufferManager):
@@ -137,7 +140,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
             retained_new_log_rewards = new_log_rewards[new_log_rewards >= threshold]
             retained_count = len(retained_new_log_rewards)
 
-        print("Score - Retained count:", retained_count)
+        logger.debug("Score - Retained count: %s", retained_count)
 
         # B) Novelty (sum of min-distances vs pre-add buffer). Higher min-distances are better.
         if (
@@ -184,19 +187,19 @@ class ModesReplayBufferManager(ReplayBufferManager):
 
             # Sum the minimum batch x buffer distances for each batch element.
             novelty_sum = float(min_dist.sum().item())
-            print("Score - Min distances:", min_dist)
+            logger.info("Score - Min distances: %s", min_dist)
 
-        print("Score - Novelty sum:", novelty_sum)
+        logger.info("Score - Novelty sum: %s", novelty_sum)
 
         # C) High reward term (sum over batch)
         assert (
             obj.log_rewards is not None
         ), "log_rewards is None in submitted trajectories!"
         reward_sum = float(obj.log_rewards.exp().sum().item())
-        print("Score - Reward sum:", reward_sum)
+        logger.info("Score - Reward sum: %s", reward_sum)
 
         # D) Mode bonus
-        print("Score - Modes discovered before update:", self.discovered_modes)
+        logger.info("Score - Modes discovered before update: %s", self.discovered_modes)
 
         n_new_modes = 0.0
         assert isinstance(obj.terminating_states, DiscreteStates)
@@ -207,15 +210,15 @@ class ModesReplayBufferManager(ReplayBufferManager):
                 n_new_modes = float(len(new_modes))
                 self.discovered_modes.update(new_modes)
 
-        print("Score - New modes found:", n_new_modes)
-        print("Score - Modes discovered after update:", self.discovered_modes)
+        logger.info("Score - New modes found: %s", n_new_modes)
+        logger.info("Score - Modes discovered after update: %s", self.discovered_modes)
 
         # Compute the final score.
         final_score = self.w_retained * float(retained_count)
         final_score += self.w_novelty * novelty_sum
         final_score += self.w_reward * reward_sum
         final_score += self.w_mode_bonus * n_new_modes
-        print("Score - Final score:", final_score)
+        logger.info("Score - Final score: %s", final_score)
         # Update and return EMA of the score
         if self._score_ema is None:
             self._score_ema = final_score
@@ -223,7 +226,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
             self._score_ema = self._ema_decay * self._score_ema + (
                 1.0 - self._ema_decay
             ) * float(final_score)
-        print("Score - EMA score:", self._score_ema)
+        logger.info("Score - EMA score: %s", self._score_ema)
         return {
             "score": float(self._score_ema),
             "score_before_ema": final_score,
@@ -638,7 +641,7 @@ def main(args) -> dict:  # noqa: C901
     if args.half_precision:
         torch.set_default_dtype(torch.bfloat16)
 
-    print("+ Using default dtype: ", torch.get_default_dtype())
+    logger.info("Using default dtype: %s", torch.get_default_dtype())
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
@@ -659,7 +662,9 @@ def main(args) -> dict:  # noqa: C901
             num_agent_groups=args.num_agent_groups,
         )
 
-        print(f"Running distributed with following settings: {distributed_context}")
+        logger.info(
+            "Running distributed with following settings: %s", distributed_context
+        )
     else:
         distributed_context = DistributedContext(
             my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
@@ -768,7 +773,7 @@ def main(args) -> dict:  # noqa: C901
 
             wandb.log({"model_builder_count": model_builder_count, **cfg})
         else:
-            print(f"Model builder count: {model_builder_count}")
+            logger.info("Model builder count: %d", model_builder_count)
         assert model is not None
         model = model.to(device)
         optim = _make_optimizer_for(model, args)
@@ -807,8 +812,8 @@ def main(args) -> dict:  # noqa: C901
     # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
 
-    print("+ n_iterations = ", n_iterations)
-    print("+ per_node_batch_size = ", per_node_batch_size)
+    logger.info("n_iterations = %d", n_iterations)
+    logger.info("per_node_batch_size = %d", per_node_batch_size)
 
     # Initialize the profiler.
     if args.profile:
@@ -826,7 +831,7 @@ def main(args) -> dict:  # noqa: C901
     if args.distributed:
         # Create and start error handler.
         def cleanup():
-            print(f"Process {rank}: Cleaning up...")
+            logger.info("Process %d: Cleaning up...", rank)
 
         rank = torch.distributed.get_rank()
         torch.distributed.get_world_size()
@@ -1058,7 +1063,7 @@ def main(args) -> dict:  # noqa: C901
             if args.distributed and args.timing:
                 dist.barrier(group=distributed_context.train_global_group)
 
-    print("+ Finished all iterations")
+    logger.info("Finished all iterations")
     total_time = time.time() - time_start
     if args.timing:
         timing["total_rest_time"] = [total_time - sum(sum(v) for k, v in timing.items())]
@@ -1076,19 +1081,19 @@ def main(args) -> dict:  # noqa: C901
     # Log the final timing results.
     if args.timing:
         if distributed_context.my_rank == 0:
-            print("\n" + "=" * 80)
-            print("\n Timing information:")
+            logger.info("\n" + "=" * 80)
+            logger.info("\n Timing information:")
             if args.distributed:
-                print("-" * 80)
-                print("Distributed run: showing local timings for rank 0 only.")
-            print("=" * 80)
+                logger.info("-" * 80)
+                logger.info("Distributed run: showing local timings for rank 0 only.")
+            logger.info("=" * 80)
 
-        # Print local timings only (avoid collective communication)
+        # Log local timings only (avoid collective communication)
         if (not args.distributed) or (distributed_context.my_rank == 0):
-            print(f"{'Step Name':<25} {'Time (s)':>12}")
-            print("-" * 80)
+            logger.info("%-25s %12s", "Step Name", "Time (s)")
+            logger.info("-" * 80)
             for k, v in timing.items():
-                print(f"{k:<25} {sum(v):>10.4f}s")
+                logger.info("%-25s %10.4fs", k, sum(v))
 
     # Stop the profiler if it's active.
     if args.profile:
@@ -1116,6 +1121,10 @@ def main(args) -> dict:  # noqa: C901
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
     parser = ArgumentParser()
 
     # Machine setting.
