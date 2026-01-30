@@ -96,7 +96,9 @@ class BitSequenceStates(DiscreteStates):
                 last_actions = flat_tensor[valid_indices, valid_lengths - 1]
                 # Set the backward mask for each state
                 flat_backward_masks[valid_indices, last_actions] = True
-            backward_masks = flat_backward_masks.view(*self.batch_shape, self.n_actions - 1)
+            backward_masks = flat_backward_masks.view(
+                *self.batch_shape, self.n_actions - 1
+            )
         return backward_masks
 
     def clone(self) -> BitSequenceStates:
@@ -827,15 +829,14 @@ class BitSequencePlus(BitSequence):
                         # Last action (remove from end)
                         last_actions = valid_tensors[
                             torch.arange(len(valid_lengths), device=self.device),
-                            valid_lengths - 1
+                            valid_lengths - 1,
                         ]
                         flat_backward_masks[valid_indices, last_actions] = True
 
                         # First action (remove from front) - shifted by (n_actions-1)//2
                         first_actions = valid_tensors[:, 0]
                         flat_backward_masks[
-                            valid_indices,
-                            first_actions + (env.n_actions - 1) // 2
+                            valid_indices, first_actions + (env.n_actions - 1) // 2
                         ] = True
 
                     backward_masks = flat_backward_masks.view(

@@ -738,25 +738,29 @@ class DiscreteStates(States, ABC):
     def _compute_forward_masks(self) -> torch.Tensor:
         """Computes forward action masks for the current states.
 
-        Must be implemented by subclasses to define environment-specific mask logic.
+        By default, all forward actions are allowed.
+        Typically, this method should be overridden by subclasses to define environment-specific mask logic.
 
         Returns:
             Boolean tensor of shape (*batch_shape, n_actions).
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement _compute_forward_masks"
+        return torch.ones(
+            self.batch_shape + (self.n_actions,), dtype=torch.bool, device=self.device
         )
 
     def _compute_backward_masks(self) -> torch.Tensor:
         """Computes backward action masks for the current states.
 
-        Must be implemented by subclasses to define environment-specific mask logic.
+        By default, all backward actions are allowed.
+        Typically, this method should be overridden by subclasses to define environment-specific mask logic.
 
         Returns:
             Boolean tensor of shape (*batch_shape, n_actions - 1).
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement _compute_backward_masks"
+        return torch.ones(
+            self.batch_shape + (self.n_actions - 1,),
+            dtype=torch.bool,
+            device=self.device,
         )
 
     def clone(self) -> DiscreteStates:
@@ -904,6 +908,98 @@ class DiscreteStates(States, ABC):
         # Note: conditions are already stacked by parent class
         assert isinstance(out, DiscreteStates)
         return out
+
+        # The helper methods are convenience functions for common mask operations.
+
+    def set_nonexit_action_masks(
+        self,
+        cond: torch.Tensor,
+        allow_exit: bool,
+    ) -> None:
+        """Masks denoting disallowed actions according to cond, appending the exit mask.
+
+        A convenience function for common mask operations.
+
+        Args:
+            cond: a boolean of shape (*batch_shape,) + (n_actions - 1,), which
+                denotes which actions are *not* allowed. For example, if a state element
+                represents action count, and no action can be repeated more than 5
+                times, cond might be state.tensor > 5 (assuming count starts at 0).
+            allow_exit: sets whether exiting can happen at any point in the
+                trajectory - if so, it should be set to True.
+
+        Notes:
+            - Always resets `forward_masks` to all True before applying the new mask
+              so updates do not leak across steps.
+            - Works for 1D or 2D batch shapes; cond must match `batch_shape`.
+            - Debug guards validate shape/dtype but should be off in compiled regions.
+        """
+        if self.debug:
+            # Validate mask shape/dtype to catch silent misalignment during testing.
+            expected_shape = self.batch_shape + (self.n_actions - 1,)
+            if cond.shape != expected_shape:
+                raise ValueError(
+                    f"cond must have shape {expected_shape}; got {cond.shape}"
+                )
+            if cond.dtype is not torch.bool:
+                raise ValueError(f"cond must be boolean; got {cond.dtype}")
+
+        # Resets masks in place to prevent side-effects across steps.
+        self.forward_masks[:] = True
+        exit_mask = torch.zeros(
+            self.batch_shape + (1,), device=cond.device, dtype=cond.dtype
+        )
+
+        if not allow_exit:
+            exit_mask.fill_(True)
+
+        # Concatenate and mask in a single tensor op to stay torch.compile friendly.
+        # Sets the forward mask to be False where this concatenated mask is True.
+        self.forward_masks[torch.cat([cond, exit_mask], dim=-1)] = False
+
+    def set_exit_masks(self, batch_idx: torch.Tensor) -> None:
+        """Sets forward masks such that the only allowable next action is to exit.
+
+        A convenience function for common mask operations.
+
+        Args:
+            batch_idx: A boolean index along the batch dimension, along which to
+                enforce exits.
+
+        Notes:
+            - Works for 1D or 2D batch shapes; `batch_idx` must match `batch_shape`.
+            - Clears all actions for the selected batch entries, then sets only the
+              exit action True via masked_fill to stay torch.compile friendly.
+            - Does not move devices; expects masks/tensors already on the target device.
+        """
+        if self.debug:
+            if batch_idx.shape != self.batch_shape:
+                raise ValueError(
+                    f"batch_idx must have shape {self.batch_shape}; got {batch_idx.shape}"
+                )
+            if batch_idx.dtype is not torch.bool:
+                raise ValueError(f"batch_idx must be boolean; got {batch_idx.dtype}")
+
+        # Avoid Python .item() to stay torch.compile friendly. For any True entry in
+        # batch_idx (1D or 2D), zero all actions then set only the exit action True.
+        self.forward_masks[batch_idx] = False
+        # Use masked_fill on the last action slice to avoid advanced indexing graph breaks.
+        self.forward_masks[..., -1].masked_fill_(batch_idx, True)
+
+    def init_forward_masks(self, set_ones: bool = True) -> None:
+        """Initalizes forward masks.
+
+        A convienience function for common mask operations.
+
+        Args:
+            set_ones: if True, forward masks are initalized to all ones. Otherwise,
+                they are initalized to all zeros.
+        """
+        shape = self.batch_shape + (self.n_actions,)
+        if set_ones:
+            self.forward_masks = torch.ones(shape).to(self.device).bool()
+        else:
+            self.forward_masks = torch.zeros(shape).to(self.device).bool()
 
     def to(self, device: torch.device) -> DiscreteStates:
         """Moves the tensor to the specified device in-place.

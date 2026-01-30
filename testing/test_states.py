@@ -755,11 +755,7 @@ def _make_discrete(batch_shape: tuple[int, ...]) -> DiscreteStates:
         sf = torch.ones(2)
 
     tensor = torch.zeros(batch_shape + SimpleDiscreteStates.state_shape)
-    fm = torch.ones(batch_shape + (SimpleDiscreteStates.n_actions,), dtype=torch.bool)
-    bm = torch.ones(
-        batch_shape + (SimpleDiscreteStates.n_actions - 1,), dtype=torch.bool
-    )
-    return SimpleDiscreteStates(tensor, fm, bm, debug=True)
+    return SimpleDiscreteStates(tensor, debug=True)
 
 
 def test_set_nonexit_action_masks_resets_each_call_1d():
