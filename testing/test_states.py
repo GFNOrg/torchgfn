@@ -1207,11 +1207,7 @@ def test_discrete_states_two_instances_different_devices_cuda():
         sf = torch.tensor([1.0, 1.0])
 
     A = SimpleDiscreteStates(torch.tensor([[0.5, 0.5]], device=cpu))
-    B = SimpleDiscreteStates(
-        torch.tensor([[0.1, 0.2]], device=cuda),
-        torch.ones((1, 3), dtype=torch.bool, device=cuda),
-        torch.ones((1, 2), dtype=torch.bool, device=cuda),
-    )
+    B = SimpleDiscreteStates(torch.tensor([[0.1, 0.2]], device=cuda))
     assert A.device.type == "cpu"
     assert B.device.type == "cuda"
     # Mask devices are consistent with instance devices
