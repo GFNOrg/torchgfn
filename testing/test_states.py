@@ -901,13 +901,7 @@ def test_discrete_states_factory_requires_debug():
         @classmethod
         def make_random_states(cls, batch_shape, device=None):
             t = torch.zeros(batch_shape + cls.state_shape, device=device)
-            fm = torch.ones(
-                batch_shape + (cls.n_actions,), dtype=torch.bool, device=device
-            )
-            bm = torch.ones(
-                batch_shape + (cls.n_actions - 1,), dtype=torch.bool, device=device
-            )
-            return cls(t, fm, bm)
+            return cls(t)
 
     with pytest.raises(TypeError, match="must accept a `debug`"):
         NoDebugDiscreteStates.from_batch_shape((2,), random=True, debug=True)
@@ -1004,11 +998,8 @@ def test_discrete_masks_device_on_cuda():
         sf = torch.tensor([1.0, 1.0])
 
     tensor = torch.tensor([[0.5, 0.5]], device=torch.device("cuda"))
-    # Provide masks on CUDA as well
-    forward_masks = torch.tensor([[True, True, True]], device=torch.device("cuda"))
-    backward_masks = torch.tensor([[True, True]], device=torch.device("cuda"))
 
-    state = SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+    state = SimpleDiscreteStates(tensor)
     assert state.device.type == "cuda"
     assert state.forward_masks.device.type == "cuda"
     assert state.backward_masks.device.type == "cuda"
