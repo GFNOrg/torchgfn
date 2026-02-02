@@ -683,8 +683,8 @@ def main(args) -> dict:  # noqa: C901
             "R1": args.R1,
             "R2": args.R2,
         },
-        calculate_partition=args.calculate_partition,
-        store_all_states=args.store_all_states,
+        calculate_partition=args.validate_environment,
+        store_all_states=args.validate_environment,
         debug=__debug__,
     )
 
@@ -1377,20 +1377,6 @@ if __name__ == "__main__":
         "--wandb_local",
         action="store_true",
         help="Stores wandb results locally, to be uploaded later.",
-    )
-
-    # Settings relevant to the problem size -- toggle off for larger problems.
-    parser.add_argument(
-        "--store_all_states",
-        action="store_true",
-        default=False,
-        help="Whether to store all states.",
-    )
-    parser.add_argument(
-        "--calculate_partition",
-        action="store_true",
-        default=False,
-        help="Whether to calculate the true partition function.",
     )
     parser.add_argument(
         "--profile",

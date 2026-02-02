@@ -88,8 +88,6 @@ class DiscreteEBMArgs(CommonArgs):
 @dataclass
 class HypergridArgs(CommonArgs):
     back_ratio: float = 0.5
-    store_all_states: bool = True
-    calculate_partition: bool = True
     distributed: bool = False
     diverse_replay_buffer: bool = False
     epsilon: float = 0.1
