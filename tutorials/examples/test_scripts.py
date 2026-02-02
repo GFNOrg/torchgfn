@@ -108,6 +108,7 @@ class HypergridArgs(CommonArgs):
     timing: bool = True
     half_precision: bool = False
     remote_buffer_freq = 1
+    validate_environment: bool = True
 
 
 @dataclass
