@@ -807,7 +807,7 @@ def main(args) -> dict:  # noqa: C901
     gflownet = gflownet.to(device)
 
     n_iterations = ceil(args.n_trajectories / args.batch_size)
-    per_node_batch_size = args.batch_size // distributed_context.world_size
+    per_node_batch_size = args.batch_size // distributed_context.num_training_ranks
     modes_found = set()
     # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
@@ -827,14 +827,6 @@ def main(args) -> dict:  # noqa: C901
             with_stack=True,
         )
         prof.start()
-
-    if args.distributed:
-        # Create and start error handler.
-        def cleanup():
-            logger.info("Process %d: Cleaning up...", rank)
-
-        rank = torch.distributed.get_rank()
-        torch.distributed.get_world_size()
 
     # Initialize some variables before the training loop.
     timing = {}
