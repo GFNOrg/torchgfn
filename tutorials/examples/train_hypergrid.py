@@ -1426,7 +1426,7 @@ if __name__ == "__main__":
         "--temperature",
         type=float,
         default=1.0,
-        help="Mean temperature for strategy sampling (default: 1.5).",
+        help="Mean temperature for strategy sampling (default: 1.0).",
     )
     parser.add_argument(
         "--n_noisy_layers",
