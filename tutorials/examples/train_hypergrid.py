@@ -62,7 +62,10 @@ from gfn.utils.distributed import DistributedContext, initialize_distributed_com
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
+    AsyncSelectiveAveragingPolicympi4pyFast,
+    AsyncSelectiveAveragingPolicympi4py,
     AverageAllPolicy,
+    AverageAllPolicympi4py,
 )
 
 logger = logging.getLogger(__name__)
@@ -822,6 +825,7 @@ def main(args) -> dict:  # noqa: C901
 
     # Initialize some variables before the training loop.
     timing = {}
+    oldcode = args.oldcode
     time_start = time.time()
     l1_distances, validation_steps = [], []
 
@@ -839,17 +843,49 @@ def main(args) -> dict:  # noqa: C901
     averaging_policy = None
     if args.distributed:
         if args.use_selective_averaging:
-            averaging_policy = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
-                model_builder=_model_builder,
-                average_every=args.average_every,
-                replacement_ratio=args.replacement_ratio,
-                averaging_strategy=args.averaging_strategy,
-                momentum=args.momentum,
-                threshold=args.performance_tracker_threshold,
-                cooldown=args.performance_tracker_cooldown,
-            )
+            if oldcode:
+                averaging_policy = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
+                    model_builder=_model_builder,
+                    average_every=args.average_every,
+                    replacement_ratio=args.replacement_ratio,
+                    averaging_strategy=args.averaging_strategy,
+                    momentum=args.momentum,
+                    threshold=args.performance_tracker_threshold,
+                    cooldown=args.performance_tracker_cooldown,
+                )
+            else:
+                if args.fast_sa:
+                     ## fast -- assumes all the params are of same precision
+                    averaging_policy = AsyncSelectiveAveragingPolicympi4pyFast(  # type: ignore[abstract]
+                        model_builder=_model_builder,
+                        model=gflownet,
+                        average_every=args.average_every,
+                        threshold_metric=args.performance_tracker_threshold,
+                        replacement_ratio=args.replacement_ratio,
+                        averaging_strategy=args.averaging_strategy,
+                        momentum=args.momentum,
+                        age_range=args.age_range,
+                        group=distributed_context.dc_mpi4py.train_global_group,
+                    )
+                else:
+                    # general -- more general where diffeernt params can be of different precision
+                    averaging_policy = AsyncSelectiveAveragingPolicympi4py(  # type: ignore[abstract]
+                        model_builder=_model_builder,
+                        model=gflownet,
+                        average_every=args.average_every,
+                        threshold_metric=args.performance_tracker_threshold,
+                        replacement_ratio=args.replacement_ratio,
+                        averaging_strategy=args.averaging_strategy,
+                        momentum=args.momentum,
+                        age_range=args.age_range,
+                        group=distributed_context.dc_mpi4py.train_global_group,
+                    )
         else:
-            averaging_policy = AverageAllPolicy(average_every=args.average_every)
+            if oldcode:
+                averaging_policy = AverageAllPolicy(average_every=args.average_every)
+            else:
+                print("+ Using AverageAllPolicympi4py", flush=True)
+                averaging_policy = AverageAllPolicympi4py(average_every=args.average_every)
 
     # Accumulators for averaging score_dict between log intervals.
     score_dict_accum: dict[str, float] = {}
@@ -963,16 +999,25 @@ def main(args) -> dict:  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
             if averaging_policy is not None:
-                gflownet, optimizer, averaging_info = averaging_policy(
-                    iteration=iteration,
-                    model=gflownet,
-                    optimizer=optimizer,
-                    local_metric=(
-                        score_dict["score"] if score_dict is not None else -loss.item()
-                    ),
-                    group=distributed_context.train_global_group,
-                )
-
+                if oldcode:
+                    gflownet, optimizer, averaging_info = averaging_policy(
+                        iteration=iteration,
+                        model=gflownet,
+                        optimizer=optimizer,
+                        local_metric=(
+                            score_dict["score"] if score_dict is not None else -loss.item()
+                        ),
+                        group=distributed_context.train_global_group,
+                    )
+                else:
+                    gflownet, optimizer, averaging_info = averaging_policy(
+                        iteration=iteration,
+                        model=gflownet,
+                        optimizer=optimizer,
+                        local_metric=(score_dict["score"] if score_dict is not None else -loss.item()
+                        ),
+                        group=distributed_context.dc_mpi4py.train_global_group,
+                    )
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
         rest_time = iteration_time - sum(
@@ -1063,7 +1108,8 @@ def main(args) -> dict:  # noqa: C901
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
             if args.distributed and args.timing:
-                dist.barrier(group=distributed_context.train_global_group)
+                t_comm = distributed_context.dc_mpi4py.train_global_group
+                t_comm.Barrier()
 
     logger.info("Finished all iterations")
     total_time = time.time() - time_start
@@ -1096,6 +1142,11 @@ def main(args) -> dict:  # noqa: C901
             logger.info("-" * 80)
             for k, v in timing.items():
                 logger.info("%-25s %10.4fs", k, sum(v))
+            try:
+                averaging_policy.print_time()
+                averaging_policy.print_stats()
+            except Exception:
+                pass
 
     # Stop the profiler if it's active.
     if args.profile:
@@ -1118,6 +1169,14 @@ def main(args) -> dict:  # noqa: C901
     ):
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
+
+    if args.distributed:
+        dist.barrier(group=distributed_context.train_global_group)
+        assert averaging_policy is not None
+        try:
+            distributed_context.cleanup()
+        except Exception:
+            pass
 
     return to_log
 
@@ -1206,6 +1265,23 @@ if __name__ == "__main__":
         type=float,
         default=0.01,
         help="Momentum factor for combining with previous weights (0.0 = no momentum, 1.0 = keep old weights)",
+    )
+    ## for mpi-3 code of selective averaging debug
+    parser.add_argument(
+        "--oldcode",
+        action="store_true",
+        help="Temp switch between old and new selective averaging code (dist mpi or mpi4py)",
+    )
+    parser.add_argument(
+        "--fast_sa",
+        action="store_true",
+        help="Use fast (comms) selective averaging mpi4py code assuming all params are of same precision (e.g., float32)",
+    )
+    parser.add_argument(
+        "--age_range",
+        type=lambda s: tuple(map(int, s.split(','))),
+        default=(5, 15),
+        help="Age range (iterations) for selective averaging policy as tuple (min_age, max_age), e.g., '5,15'",
     )
 
     # Environment settings.
@@ -1480,4 +1556,5 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    assert args.age_range[1] >= args.age_range[0], "Invalid age_range: max_age must be ge min_age"
     main(args)
