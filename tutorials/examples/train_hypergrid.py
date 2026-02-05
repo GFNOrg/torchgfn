@@ -334,7 +334,7 @@ def _sample_new_strategy(args, rng: random.Random) -> dict:
         A dict with keys: name, epsilon, temperature, n_noisy_layers, noisy_std_init.
     """
     # Get mean/std from args with sensible defaults.
-    eps_mean = float(getattr(args, "epsilon_mean", 0.1))
+    eps_mean = float(getattr(args, "epsilon", 0.1))
     eps_std = float(getattr(args, "strategy_epsilon_std", 0.05))
     temp_mean = float(getattr(args, "temperature", 1.5))
     temp_std = float(getattr(args, "strategy_temperature_std", 0.5))
