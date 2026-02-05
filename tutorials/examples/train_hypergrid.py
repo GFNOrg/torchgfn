@@ -29,11 +29,11 @@ distribution for the HyperGrid environment, which is useful for evaluation and v
 
 import logging
 import os
+import random
 import time
 from argparse import ArgumentParser
 from math import ceil
 from typing import Optional, Tuple, cast
-import random
 
 import matplotlib.pyplot as plt
 import torch
@@ -472,7 +472,9 @@ def set_up_logF_estimator(
     return ScalarEstimator(module=module, preprocessor=preprocessor)
 
 
-def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id, strategy_rng):
+def set_up_gflownet(
+    args, env, preprocessor, agent_group_list, my_agent_group_id, strategy_rng
+):
     """Returns a GFlowNet complete with the required estimators."""
     # Initialize per-agent exploration strategy.
     # Default (tests stable): on-policy, no noisy layers.
