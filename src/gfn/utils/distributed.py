@@ -255,10 +255,13 @@ def initialize_distributed_compute(
     training_ranks = [
         r for r in range(num_training_ranks)
     ]  # e.g., 0..num_training_ranks-1
-    train_global_group = dist.new_group(
-        ranks=training_ranks,
-        backend=dist_backend,
-        timeout=datetime.timedelta(minutes=5),
+    train_global_group = cast(
+        Optional[dist.ProcessGroup],
+        dist.new_group(
+            ranks=training_ranks,
+            backend=dist_backend,
+            timeout=datetime.timedelta(minutes=5),
+        ),
     )
 
     buffer_group = None
@@ -268,10 +271,13 @@ def initialize_distributed_compute(
         buffer_ranks = list(
             range(num_training_ranks, num_training_ranks + num_remote_buffers)
         )
-        buffer_group = dist.new_group(
-            buffer_ranks,
-            backend=dist_backend,
-            timeout=datetime.timedelta(minutes=5),
+        buffer_group = cast(
+            Optional[dist.ProcessGroup],
+            dist.new_group(
+                buffer_ranks,
+                backend=dist_backend,
+                timeout=datetime.timedelta(minutes=5),
+            ),
         )
         logger.info("Buffer group ranks: %s", buffer_ranks)
 

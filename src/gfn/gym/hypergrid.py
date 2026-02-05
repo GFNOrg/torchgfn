@@ -1,9 +1,9 @@
 """Adapted from https://github.com/Tikquuss/GflowNets_Tutorial"""
 
 import itertools
+import logging
 import multiprocessing
 import platform
-import warnings
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from functools import reduce
@@ -16,6 +16,8 @@ import torch
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
 from gfn.states import DiscreteStates
+
+logger = logging.getLogger(__name__)
 
 if platform.system() == "Windows":
     multiprocessing.set_start_method("spawn", force=True)
@@ -86,7 +88,7 @@ class HyperGrid(DiscreteEnv):
             debug: If True, emit States with debug guards (not compile-friendly).
         """
         if height <= 4:
-            warnings.warn("+ Warning: height <= 4 can lead to unsolvable environments.")
+            logger.warning("+ Warning: height <= 4 can lead to unsolvable environments.")
 
         reward_functions = {
             "original": OriginalReward,
@@ -123,10 +125,10 @@ class HyperGrid(DiscreteEnv):
 
         if self.store_all_states:
             assert self._all_states_tensor is not None
-            print(f"+ Environment has {len(self._all_states_tensor)} states")
+            logger.info(f"+ Environment has {len(self._all_states_tensor)} states")
         if self.calculate_partition:
             assert self._log_partition is not None
-            print(f"+ Environment log partition is {self._log_partition}")
+            logger.info(f"+ Environment log partition is {self._log_partition}")
 
         if isinstance(device, str):
             device = torch.device(device)
@@ -414,7 +416,7 @@ class HyperGrid(DiscreteEnv):
                     total_rewards += self.reward_fn(batch_tensor).sum().item()
             end_time = time()
 
-            print(
+            logger.info(
                 "Enumerated all states in {} minutes".format(
                     (end_time - start_time) / 60.0,
                 )
