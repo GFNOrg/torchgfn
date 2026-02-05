@@ -1420,7 +1420,7 @@ if __name__ == "__main__":
         "--epsilon",
         type=float,
         default=0.0,
-        help="Mean epsilon for strategy sampling (default: 0.1).",
+        help="Mean epsilon for strategy sampling (default: 0.0).",
     )
     parser.add_argument(
         "--temperature",
