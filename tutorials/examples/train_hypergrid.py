@@ -1432,7 +1432,7 @@ if __name__ == "__main__":
         "--n_noisy_layers",
         type=float,
         default=0,
-        help="Mean number of noisy layers for strategy sampling (default: 1.0).",
+        help="Mean number of noisy layers for strategy sampling (default: 0).",
     )
     parser.add_argument(
         "--noisy_std_init",
