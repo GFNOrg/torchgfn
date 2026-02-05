@@ -889,7 +889,7 @@ def main(args) -> dict:  # noqa: C901
             )
             trajectories = gflownet.sample_trajectories(
                 env,
-                n=args.batch_size,
+                n=per_node_batch_size,
                 save_logprobs=is_on_policy_iter,  # Reuse on-policy log-probs.
                 save_estimator_outputs=not is_on_policy_iter,  # Off-policy caches estimator outputs.
                 epsilon=float(getattr(args, "agent_epsilon", 0.0)),
