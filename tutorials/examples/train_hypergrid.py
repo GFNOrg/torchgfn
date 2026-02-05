@@ -683,8 +683,8 @@ def main(args) -> dict:  # noqa: C901
             "R1": args.R1,
             "R2": args.R2,
         },
-        calculate_partition=args.calculate_partition,
-        store_all_states=args.store_all_states,
+        calculate_partition=args.validate_environment,
+        store_all_states=args.validate_environment,
         debug=__debug__,
     )
 
@@ -1010,33 +1010,35 @@ def main(args) -> dict:  # noqa: C901
         )
 
         # If we are on the master node, calculate the validation metrics.
-        with Timer(timing, "validation", enabled=args.timing):
-            assert visited_terminating_states is not None
-            all_visited_terminating_states.extend(visited_terminating_states)
-            to_log = {
-                "loss": loss.item(),
-                "sample_time": sample_timer.elapsed,
-                "to_train_samples_time": to_train_samples_timer.elapsed,
-                "loss_time": loss_timer.elapsed,
-                "loss_backward_time": loss_backward_timer.elapsed,
-                "opt_time": opt_timer.elapsed,
-                "model_averaging_time": model_averaging_timer.elapsed,
-                "rest_time": rest_time,
-                "l1_dist": None,  # only logged if calculate_partition.
-            }
-            to_log.update(averaging_info)
-            if score_dict is not None:
-                to_log.update(score_dict)
+        assert visited_terminating_states is not None
+        all_visited_terminating_states.extend(visited_terminating_states)
+        to_log = {
+            "loss": loss.item(),
+            "sample_time": sample_timer.elapsed,
+            "to_train_samples_time": to_train_samples_timer.elapsed,
+            "loss_time": loss_timer.elapsed,
+            "loss_backward_time": loss_backward_timer.elapsed,
+            "opt_time": opt_timer.elapsed,
+            "model_averaging_time": model_averaging_timer.elapsed,
+            "rest_time": rest_time,
+            "l1_dist": None,  # only logged if calculate_partition.
+        }
+        to_log.update(averaging_info)
+        if score_dict is not None:
+            to_log.update(score_dict)
 
-            if log_this_iter:
-                validation_info, all_visited_terminating_states = env.validate(
-                    gflownet,
-                    args.validation_samples,
-                    all_visited_terminating_states,
-                )
-                assert all_visited_terminating_states is not None
-                to_log.update(validation_info)
+        if log_this_iter:
+            if args.validate_environment:
+                with Timer(timing, "validation", enabled=args.timing):
+                    validation_info, all_visited_terminating_states = env.validate(
+                        gflownet,
+                        args.validation_samples,
+                        all_visited_terminating_states,
+                    )
+                    assert all_visited_terminating_states is not None
+                    to_log.update(validation_info)
 
+            with Timer(timing, "log", enabled=args.timing):
                 if distributed_context.my_rank == 0:
                     if args.distributed:
                         manager_rank = distributed_context.assigned_buffer
@@ -1341,6 +1343,11 @@ if __name__ == "__main__":
 
     # Validation settings.
     parser.add_argument(
+        "--validate_environment",
+        action="store_true",
+        help="Validate the environment at the end of training",
+    )
+    parser.add_argument(
         "--validation_interval",
         type=int,
         default=100,
@@ -1370,20 +1377,6 @@ if __name__ == "__main__":
         "--wandb_local",
         action="store_true",
         help="Stores wandb results locally, to be uploaded later.",
-    )
-
-    # Settings relevant to the problem size -- toggle off for larger problems.
-    parser.add_argument(
-        "--store_all_states",
-        action="store_true",
-        default=False,
-        help="Whether to store all states.",
-    )
-    parser.add_argument(
-        "--calculate_partition",
-        action="store_true",
-        default=False,
-        help="Whether to calculate the true partition function.",
     )
     parser.add_argument(
         "--profile",
