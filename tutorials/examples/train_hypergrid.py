@@ -1444,7 +1444,7 @@ if __name__ == "__main__":
         "--strategy_epsilon_std",
         type=float,
         default=0.1,
-        help="Std of epsilon for strategy sampling (default: 0.05).",
+        help="Std of epsilon for strategy sampling (default: 0.1).",
     )
     parser.add_argument(
         "--strategy_temperature_std",
