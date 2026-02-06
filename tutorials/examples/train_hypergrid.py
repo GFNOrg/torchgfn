@@ -79,12 +79,12 @@ class ModesReplayBufferManager(ReplayBufferManager):
         remote_manager_rank: int | None = None,
         # Scoring config
         w_retained: float = 1.0,
-        w_novelty: float = 1.0,
-        w_reward: float = 0.0,
+        w_novelty: float = 0.1,
+        w_reward: float = 1.0,
         w_mode_bonus: float = 10.0,
         p_norm_novelty: float = 2.0,
         cdist_max_bytes: int = 268435456,
-        ema_decay: float = 0.90,
+        ema_decay: float = 0.5,
     ):
         super().__init__(
             env,
@@ -851,6 +851,10 @@ def main(args) -> dict:  # noqa: C901
         else:
             averaging_policy = AverageAllPolicy(average_every=args.average_every)
 
+    # Accumulators for averaging score_dict between log intervals.
+    score_dict_accum: dict[str, float] = {}
+    score_dict_count = 0
+
     # Training loop.
     pbar = trange(n_iterations)
     for iteration in pbar:
@@ -901,6 +905,11 @@ def main(args) -> dict:  # noqa: C901
                     training_objects = replay_buffer.sample(
                         n_samples=per_node_batch_size
                     )
+                # Accumulate score_dict values for averaging.
+                if score_dict is not None:
+                    for key, value in score_dict.items():
+                        score_dict_accum[key] = score_dict_accum.get(key, 0.0) + value
+                    score_dict_count += 1
             else:
                 training_objects = training_samples
 
@@ -1008,10 +1017,17 @@ def main(args) -> dict:  # noqa: C901
             "l1_dist": None,  # only logged if calculate_partition.
         }
         to_log.update(averaging_info)
-        if score_dict is not None:
-            to_log.update(score_dict)
 
         if log_this_iter:
+            if score_dict_count > 0:
+                score_dict_avg = {
+                    key: value / score_dict_count
+                    for key, value in score_dict_accum.items()
+                }
+                to_log.update(score_dict_avg)
+                score_dict_accum.clear()
+                score_dict_count = 0
+
             if args.validate_environment:
                 with Timer(timing, "validation", enabled=args.timing):
                     validation_info, all_visited_terminating_states = env.validate(
@@ -1450,18 +1466,6 @@ if __name__ == "__main__":
     )
 
     # Performance tracker settings.
-    parser.add_argument(
-        "--performance_tracker_decay",
-        type=float,
-        default=0.98,
-        help="Decay factor for the performance tracker.",
-    )
-    parser.add_argument(
-        "--performance_tracker_warmup",
-        type=int,
-        default=100,
-        help="Warmup period for the performance tracker.",
-    )
     parser.add_argument(
         "--performance_tracker_threshold",
         type=float,
