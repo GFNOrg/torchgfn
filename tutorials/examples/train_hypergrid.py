@@ -41,7 +41,6 @@ import torch.distributed as dist
 from matplotlib.gridspec import GridSpec
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
-import numpy as np
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.containers.replay_buffer_manager import ContainerUnion, ReplayBufferManager
