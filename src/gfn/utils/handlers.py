@@ -1,8 +1,10 @@
-import warnings
+import logging
 from contextlib import contextmanager
 from typing import Any
 
 from gfn.containers import Container
+
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -19,8 +21,8 @@ def has_conditions_exception_handler(
     try:
         yield
     except TypeError as e:
-        print(f"conditions was passed but {target_name} is {type(target)}")
-        print(f"error: {str(e)}")
+        logger.error(f"conditions was passed but {target_name} is {type(target)}")
+        logger.error(f"error: {str(e)}")
         raise
 
 
@@ -38,8 +40,8 @@ def no_conditions_exception_handler(
     try:
         yield
     except TypeError as e:
-        print(f"conditions was not passed but {target_name} is {type(target)}")
-        print(f"error: {str(e)}")
+        logger.error(f"conditions was not passed but {target_name} is {type(target)}")
+        logger.error(f"error: {str(e)}")
         raise
 
 
@@ -57,7 +59,9 @@ def is_callable_exception_handler(
     try:
         yield
     except:  # noqa
-        print(f"conditions was passed but {target_name} is not callable: {type(target)}")
+        logger.error(
+            f"conditions was passed but {target_name} is not callable: {type(target)}"
+        )
         raise
 
 
@@ -72,7 +76,7 @@ def warn_about_recalculating_logprobs(
         recalculate_all_logprobs: Whether to recalculate all logprobs.
     """
     if recalculate_all_logprobs and obj.has_log_probs:
-        warnings.warn(
+        logger.warning(
             "Recalculating logprobs for a container that already has them. "
             "This might be intended, if the log_probs were calculated off-policy. "
             "However, this is inefficient when training on-policy. In this case, "

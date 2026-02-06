@@ -1,4 +1,4 @@
-import warnings
+import logging
 from typing import Dict, Iterable, Optional, Tuple
 
 import torch
@@ -11,17 +11,17 @@ from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
 from gfn.states import DiscreteStates
 
+logger = logging.getLogger(__name__)
+
 
 def get_terminating_state_dist(
     env: DiscreteEnv,
     states: DiscreteStates,
 ) -> torch.Tensor:
     """[DEPRECATED] Use `env.get_terminating_state_dist(states)` instead."""
-    warnings.warn(
+    logger.warning(
         "gfn.utils.training.get_terminating_state_dist is deprecated; "
-        "use DiscreteEnv.get_terminating_state_dist(states) instead.",
-        DeprecationWarning,
-        stacklevel=2,
+        "use DiscreteEnv.get_terminating_state_dist(states) instead."
     )
     return env.get_terminating_state_dist(states)
 
@@ -33,10 +33,8 @@ def validate(
     visited_terminating_states: Optional[DiscreteStates] = None,
 ) -> Tuple[Dict[str, float], DiscreteStates | None]:
     """[DEPRECATED] Use `env.validate(gflownet, ...)` instead."""
-    warnings.warn(
-        "gfn.utils.training.validate is deprecated; use DiscreteEnv.validate(...) instead.",
-        DeprecationWarning,
-        stacklevel=2,
+    logger.warning(
+        "gfn.utils.training.validate is deprecated; use DiscreteEnv.validate(...) instead."
     )
     return env.validate(
         gflownet=gflownet,

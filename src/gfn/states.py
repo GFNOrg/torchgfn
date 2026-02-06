@@ -1,7 +1,7 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
 import inspect
-import warnings
+import logging
 from abc import ABC
 from math import prod
 from typing import (
@@ -25,9 +25,7 @@ from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import GeometricBatch, get_edge_indices
 
-warnings.filterwarnings(
-    "once", message="Inconsistent conditions when extending states. Setting to None."
-)
+logger = logging.getLogger(__name__)
 
 
 def _assert_factory_accepts_debug(factory: Callable, factory_name: str) -> None:
@@ -373,7 +371,7 @@ class States(ABC):
             self.conditions[index] = states.conditions
         else:
             if self.conditions is not None or states.conditions is not None:
-                warnings.warn(
+                logger.warning(
                     "Inconsistent conditions when setting states. Setting to None."
                 )
             self.conditions = None
@@ -439,7 +437,7 @@ class States(ABC):
             )
         else:
             if self.conditions is not None or other.conditions is not None:
-                warnings.warn(
+                logger.warning(
                     "Inconsistent conditions when extending states. Setting to None."
                 )
             self.conditions = None
@@ -870,7 +868,7 @@ class DiscreteStates(States, ABC):
         else:
             # Inconsistent, raise a warning and set to None
             if self.conditions is not None or other.conditions is not None:
-                warnings.warn(
+                logger.warning(
                     "Inconsistent conditions when extending states. Setting to None."
                 )
             self.conditions = None
@@ -1520,7 +1518,7 @@ class GraphStates(States):
             self.conditions[index] = graph.conditions
         else:
             if self.conditions is not None or graph.conditions is not None:
-                warnings.warn(
+                logger.warning(
                     "Inconsistent conditions when setting states. Setting to None."
                 )
             self.conditions = None
@@ -1625,7 +1623,7 @@ class GraphStates(States):
             )
         else:
             if self.conditions is not None or other.conditions is not None:
-                warnings.warn(
+                logger.warning(
                     "Inconsistent conditions when extending states. Setting to None."
                 )
             self.conditions = None

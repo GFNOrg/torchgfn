@@ -1,10 +1,10 @@
-import warnings
+import logging
 
-warnings.warn(
+logger = logging.getLogger(__name__)
+
+logger.warning(
     "'modules.py' is deprecated and will be removed in a future release. Please import "
-    "from 'estimators.py' instead.",
-    DeprecationWarning,
-    stacklevel=2,
+    "from 'estimators.py' instead."
 )
 
 from gfn.estimators import (  # noqa: F401, E402
