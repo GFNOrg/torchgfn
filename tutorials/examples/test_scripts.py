@@ -90,7 +90,10 @@ class HypergridArgs(CommonArgs):
     back_ratio: float = 0.5
     distributed: bool = False
     diverse_replay_buffer: bool = False
-    epsilon: float = 0.1
+    epsilon: float = 0.0
+    temperature: float = 1.0
+    n_noisy_layers: int = 0
+    noisy_std_init: float = 0.5
     height: int = 8
     loss: str = "TB"
     lr_logz: float = 1e-3
