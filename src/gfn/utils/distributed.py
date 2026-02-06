@@ -4,11 +4,9 @@ import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, cast
 
+import mpi4py.MPI as MPI
 import torch
 import torch.distributed as dist
-
-import mpi4py
-import mpi4py.MPI as MPI
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +122,7 @@ def average_models(model, training_group=None):
         dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=training_group)
         param.data = param_tensor / world_size
 
+
 @dataclass
 class DistributedContextmpi4py:
     """Holds all distributed training/replay buffer groups and ranks."""
@@ -132,11 +131,11 @@ class DistributedContextmpi4py:
     world_size: int
     num_training_ranks: int
     agent_group_size: int
-    agent_groups: Optional[List[dist.ProcessGroup]] = None
+    agent_groups: Optional[List[MPI.Comm]] = None
     agent_group_id: Optional[int] = None
-    train_global_group: Optional[dist.ProcessGroup] = None
+    train_global_group: MPI.Comm = MPI.COMM_WORLD
     assigned_buffer: Optional[int] = None
-    buffer_group: Optional[dist.ProcessGroup] = None
+    buffer_group: Optional[MPI.Comm] = None
     assigned_training_ranks: Optional[List[int]] = None
 
     def is_buffer_rank(self) -> bool:
@@ -146,6 +145,7 @@ class DistributedContextmpi4py:
     def is_training_rank(self) -> bool:
         """Check if the current rank is part of the training group."""
         return self.my_rank < self.num_training_ranks
+
 
 def initialize_distributed_compute_mpi4py(
     num_remote_buffers: int,
@@ -164,11 +164,11 @@ def initialize_distributed_compute_mpi4py(
 
     if pmi_size <= 1:
         print("+ PMI_SIZE <= 1, running in single process mode.")
-        return DistributedContext(
+        return DistributedContextmpi4py(
             my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
         )
 
-    os.environ["RANK"] = str(MPI.COMM_WORLD.Get_rank()   )
+    os.environ["RANK"] = str(MPI.COMM_WORLD.Get_rank())
     os.environ["WORLD_SIZE"] = str(pmi_size)
 
     print("+ OMP_NUM_THREADS = ", os.getenv("OMP_NUM_THREADS"))
@@ -183,8 +183,8 @@ def initialize_distributed_compute_mpi4py(
     dist.barrier()
     print("+ Distributed compute initialized")
 
-    my_rank = rank ##dist.get_rank()  # Global!
-    #world_size = dist.get_world_size()  # Global!
+    my_rank = rank  # dist.get_rank()  # Global!
+    # world_size = dist.get_world_size()  # Global!
 
     num_training_ranks = world_size - num_remote_buffers
 
@@ -203,25 +203,25 @@ def initialize_distributed_compute_mpi4py(
     ]
     print(f"Agent group ranks: {agent_group_rank_list}")
     world_group = MPI.COMM_WORLD.Get_group()
-    agent_group_list = [ ]
+    agent_group_list = []
     for i in range(num_agent_groups):
         grp = world_group.Incl(agent_group_rank_list[i])
-        agent_group_list.append( MPI.COMM_WORLD.Create(grp))
+        agent_group_list.append(MPI.COMM_WORLD.Create(grp))
 
     # all training ranks in one global group
     training_ranks = [
         r for r in range(num_training_ranks)
     ]  # e.g., 0..num_training_ranks-1
 
-    #train_global_group = dist.new_group(
+    # train_global_group = dist.new_group(
     #    ranks=training_ranks,
     #    backend=dist_backend,
     #    timeout=datetime.timedelta(minutes=5),
-    #)
+    # )
     grp = world_group.Incl(training_ranks)
     train_global_group = MPI.COMM_WORLD.Create(grp)
-    #print(f"Training global group ranks: {training_ranks},  {train_global_group}")
-    #assert train_global_group != MPI.COMM_NULL
+    # print(f"Training global group ranks: {training_ranks},  {train_global_group}")
+    # assert train_global_group != MPI.COMM_NULL
 
     buffer_group = None
     assigned_buffer = None
@@ -230,15 +230,15 @@ def initialize_distributed_compute_mpi4py(
         buffer_ranks = list(
             range(num_training_ranks, num_training_ranks + num_remote_buffers)
         )
-        #buffer_group = dist.new_group(
+        # buffer_group = dist.new_group(
         #    buffer_ranks,
         #    backend=dist_backend,
         #    timeout=datetime.timedelta(minutes=5),
-        #)
+        # )
         grp = world_group.Incl(buffer_ranks)
         buffer_group = MPI.COMM_WORLD.Create(grp)
         print(f" >>>>>>>>>>>>>>>>. Buffer group ranks: {buffer_ranks}, {buffer_group}")
-        #assert buffer_group != MPI.COMM_NULL
+        # assert buffer_group != MPI.COMM_NULL
 
         print(f"Buffer group ranks: {buffer_ranks}")
 
@@ -258,7 +258,7 @@ def initialize_distributed_compute_mpi4py(
         else:
             print("  -> Buffer group")
 
-    #dist.barrier()
+    # dist.barrier()
     print("+ Distributed compute initialized, rank = ", my_rank)
 
     return DistributedContextmpi4py(
@@ -485,7 +485,7 @@ def initialize_distributed_compute(
         assigned_buffer=assigned_buffer,
         buffer_group=buffer_group,
         assigned_training_ranks=assigned_training_ranks.get(my_rank, None),
-        dc_mpi4py=dc
+        dc_mpi4py=dc,
     )
 
 
