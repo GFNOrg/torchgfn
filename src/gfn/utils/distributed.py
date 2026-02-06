@@ -256,7 +256,7 @@ def initialize_distributed_compute(
         r for r in range(num_training_ranks)
     ]  # e.g., 0..num_training_ranks-1
     train_global_group = cast(
-        Optional[dist.ProcessGroup],
+        dist.ProcessGroup,
         dist.new_group(
             ranks=training_ranks,
             backend=dist_backend,
@@ -272,7 +272,7 @@ def initialize_distributed_compute(
             range(num_training_ranks, num_training_ranks + num_remote_buffers)
         )
         buffer_group = cast(
-            Optional[dist.ProcessGroup],
+            dist.ProcessGroup,
             dist.new_group(
                 buffer_ranks,
                 backend=dist_backend,

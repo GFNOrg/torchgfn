@@ -19,23 +19,19 @@ class BitSequenceStates(DiscreteStates):
 
     Attributes:
         word_size (ClassVar[int]): The size of each word in the bit sequence.
+        words_per_seq (ClassVar[int]): The number of words per sequence.
         tensor (torch.Tensor): The tensor representing the states.
         length (torch.Tensor): The tensor representing the length of each bit sequence.
-        forward_masks (torch.Tensor): The tensor representing the forward masks.
-        backward_masks (torch.Tensor): The tensor representing the backward masks.
     """
 
     word_size: ClassVar[int]
+    words_per_seq: ClassVar[int]
     length: torch.Tensor
-    forward_masks: torch.Tensor
-    backward_masks: torch.Tensor
 
     def __init__(
         self,
         tensor: torch.Tensor,
         length: Optional[torch.Tensor] = None,
-        forward_masks: Optional[torch.Tensor] = None,
-        backward_masks: Optional[torch.Tensor] = None,
         conditions: Optional[torch.Tensor] = None,
         debug: bool = False,
     ) -> None:
@@ -44,25 +40,66 @@ class BitSequenceStates(DiscreteStates):
         Args:
             tensor: The tensor representing the states.
             length: The tensor representing the length of each bit sequence.
-            forward_masks: The tensor representing the forward masks.
-            backward_masks: The tensor representing the backward masks.
             conditions: The tensor representing the conditions.
             debug: If True, enable runtime guards in the parent class (not compile-friendly).
         """
         super().__init__(
             tensor,
-            forward_masks=forward_masks,
-            backward_masks=backward_masks,
             conditions=conditions,
             debug=debug,
         )
         if length is None:
-            length = torch.zeros(self.batch_shape, dtype=torch.long, device=self.device)
+            # Compute length from tensor: count non -1 values
+            length = (tensor != -1).sum(dim=-1).long()
         assert is_int_dtype(length)
         self.length = length
-        assert self.length is not None
-        assert self.forward_masks is not None
-        assert self.backward_masks is not None
+
+    def _compute_forward_masks(self) -> torch.Tensor:
+        """Computes forward masks for BitSequence states."""
+        forward_masks = torch.ones(
+            (*self.batch_shape, self.n_actions),
+            dtype=torch.bool,
+            device=self.device,
+        )
+        is_done = self.length == self.words_per_seq
+        # When done, only exit action is allowed
+        forward_masks[is_done, :-1] = False
+        # When not done, exit action is not allowed
+        forward_masks[~is_done, -1] = False
+        return forward_masks
+
+    def _compute_backward_masks(self) -> torch.Tensor:
+        """Computes backward masks for BitSequence states."""
+        backward_masks = torch.zeros(
+            (*self.batch_shape, self.n_actions - 1),
+            dtype=torch.bool,
+            device=self.device,
+        )
+        is_sink = self.is_sink_state
+        # For non-sink states, the valid backward action is the last action taken
+        non_sink_flat = ~is_sink.flatten()
+        if non_sink_flat.any():
+            flat_tensor = self.tensor.view(-1, *self.state_shape)
+            flat_length = self.length.view(-1)
+            flat_backward_masks = backward_masks.view(-1, self.n_actions - 1)
+
+            # Get indices of non-sink states with valid length
+            non_sink_indices = torch.where(non_sink_flat)[0]
+            non_sink_lengths = flat_length[non_sink_indices]
+
+            # Only process states with length > 0
+            valid_mask = non_sink_lengths > 0
+            if valid_mask.any():
+                valid_indices = non_sink_indices[valid_mask]
+                valid_lengths = non_sink_lengths[valid_mask]
+                # Get the last action for each valid state
+                last_actions = flat_tensor[valid_indices, valid_lengths - 1]
+                # Set the backward mask for each state
+                flat_backward_masks[valid_indices, last_actions] = True
+            backward_masks = flat_backward_masks.view(
+                *self.batch_shape, self.n_actions - 1
+            )
+        return backward_masks
 
     def clone(self) -> BitSequenceStates:
         """Returns a clone of the current BitSequencesStates object.
@@ -73,14 +110,9 @@ class BitSequenceStates(DiscreteStates):
         return self.__class__(
             self.tensor.detach().clone(),
             self.length.detach().clone(),
-            self.forward_masks.detach().clone(),
-            self.backward_masks.detach().clone(),
             self.conditions.detach().clone() if self.conditions is not None else None,
             debug=self.debug,
         )
-
-    def _check_both_forward_backward_masks_exist(self):
-        assert self.forward_masks is not None and self.backward_masks is not None
 
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
@@ -93,12 +125,9 @@ class BitSequenceStates(DiscreteStates):
         Returns:
             A subset of the BitSequencesStates object.
         """
-        self._check_both_forward_backward_masks_exist()
         return self.__class__(
             self.tensor[index],
             self.length[index],
-            self.forward_masks[index],
-            self.backward_masks[index],
             self.conditions[index] if self.conditions is not None else None,
             debug=self.debug,
         )
@@ -123,16 +152,11 @@ class BitSequenceStates(DiscreteStates):
         """
         states = self.tensor.view(-1, *self.state_shape)
         length = self.length.view(-1)
-        self._check_both_forward_backward_masks_exist()
-        forward_masks = self.forward_masks.view(-1, self.forward_masks.shape[-1])
-        backward_masks = self.backward_masks.view(-1, self.backward_masks.shape[-1])
         if self.conditions is not None:
             conditions = self.conditions.view(-1, self.conditions.shape[-1])
         else:
             conditions = None
-        return self.__class__(
-            states, length, forward_masks, backward_masks, conditions, debug=self.debug
-        )
+        return self.__class__(states, length, conditions, debug=self.debug)
 
     def extend(self, other: BitSequenceStates) -> None:
         """Extends the current BitSequencesStates object with another BitSequencesStates object.
@@ -149,25 +173,22 @@ class BitSequenceStates(DiscreteStates):
         """Extends the current BitSequencesStates object with sink states.
 
         Args:
-            required_first_dim: The required first dimension of the extended masks.
+            required_first_dim: The required first dimension of the extended states.
         """
+        if self.batch_shape[0] >= required_first_dim:
+            return
+
+        pad_count = required_first_dim - self.batch_shape[0]
         super().pad_dim0_with_sf(required_first_dim)
 
-        def _extend(masks, first_dim):
-            return torch.cat(
-                (
-                    masks,
-                    torch.ones(
-                        first_dim - masks.shape[0],
-                        *masks.shape[1:],
-                        dtype=torch.bool,
-                        device=self.device,
-                    ),
-                ),
-                dim=0,
-            )
-
-        self.length = _extend(self.length, required_first_dim)
+        # Extend length with zeros for the sink states
+        length_pad = torch.zeros(
+            pad_count,
+            *self.length.shape[1:],
+            dtype=self.length.dtype,
+            device=self.device,
+        )
+        self.length = torch.cat((self.length, length_pad), dim=0)
 
     @classmethod
     def stack(cls, states: Sequence[BitSequenceStates]) -> BitSequenceStates:
@@ -290,13 +311,14 @@ class BitSequence(DiscreteEnv):
             make_random_states = env.make_random_states
             n_actions = env.n_actions
             word_size = env.word_size
+            words_per_seq = env.words_per_seq
 
         return BitSequenceStatesImplementation
 
     def states_from_tensor(
         self, tensor: torch.Tensor, length: Optional[torch.Tensor] = None
     ) -> BitSequenceStates:
-        """Wraps the supplied Tensor in a States instance & updates masks.
+        """Wraps the supplied Tensor in a States instance.
 
         Args:
             tensor: The tensor of shape `state_shape` representing the states.
@@ -311,7 +333,6 @@ class BitSequence(DiscreteEnv):
         states_instance = self.make_states_class()(
             tensor, length=length, debug=self.debug
         )
-        self.update_masks(states_instance)
         return states_instance
 
     # In some cases overwritten by the user to support specific use-cases.
@@ -339,33 +360,7 @@ class BitSequence(DiscreteEnv):
             batch_shape=batch_shape, random=False, sink=sink
         )
         assert isinstance(states, BitSequenceStates)
-        self.update_masks(states)
-
         return states
-
-    def update_masks(self, states: BitSequenceStates) -> None:
-        """Updates the forward and backward masks.
-
-        Called automatically after each step.
-
-        Args:
-            states: The states for which to update the masks.
-        """
-
-        is_done = states.length == self.words_per_seq
-        states.forward_masks = torch.ones_like(
-            states.forward_masks, dtype=torch.bool, device=states.device
-        )
-        states.forward_masks[is_done, :-1] = False
-        states.forward_masks[~is_done, -1] = False
-
-        is_sink = states.is_sink_state
-
-        last_actions = states.tensor[~is_sink, states[~is_sink].length - 1]
-        states.backward_masks = torch.zeros_like(
-            states.backward_masks, dtype=torch.bool, device=states.device
-        )
-        states.backward_masks[~is_sink, last_actions] = True
 
     def step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
         """Performs a step in the environment.
@@ -425,7 +420,6 @@ class BitSequence(DiscreteEnv):
         new_states = super(DiscreteEnv, self)._step(states, actions)
         assert isinstance(new_states, BitSequenceStates)
         new_states.length = length + 1
-        self.update_masks(new_states)
         return new_states
 
     def _backward_step(self, states: BitSequenceStates, actions: Actions):
@@ -442,7 +436,6 @@ class BitSequence(DiscreteEnv):
         new_states = super(DiscreteEnv, self)._backward_step(states, actions)
         assert isinstance(new_states, BitSequenceStates)
         new_states.length = length - 1
-        self.update_masks(new_states)
         return new_states
 
     def make_modes_set(self, seed) -> torch.Tensor:
@@ -789,29 +782,69 @@ class BitSequencePlus(BitSequence):
         self.modes = self.make_modes_set(seed)  # set of modes written as binary
         self.temperature = temperature
 
-    def update_masks(self, states: BitSequenceStates) -> None:
-        """Updates the forward and backward masks.
+    def make_states_class(self) -> type[BitSequenceStates]:
+        """Creates a BitSequenceStates class implementation for BitSequencePlus.
 
-        Args:
-            states: The states for which to update the masks.
+        Returns:
+            A BitSequenceStates class implementation with prepend-append mask logic.
         """
+        env = self
 
-        is_done = states.length == self.words_per_seq
-        states.forward_masks = torch.ones_like(
-            states.forward_masks, dtype=torch.bool, device=states.device
-        )
-        states.forward_masks[is_done, :-1] = False
-        states.forward_masks[~is_done, -1] = False
+        class BitSequencePlusStates(BitSequenceStates):
+            state_shape = (env.words_per_seq,)
+            s0 = env.s0
+            sf = env.sf
+            make_random_states = env.make_random_states
+            n_actions = env.n_actions
+            word_size = env.word_size
+            words_per_seq = env.words_per_seq
 
-        is_sink = states.is_sink_state
+            def _compute_backward_masks(self) -> torch.Tensor:
+                """Computes backward masks for BitSequencePlus states.
 
-        last_actions = states.tensor[~is_sink, states[~is_sink].length - 1]
-        first_actions = states.tensor[~is_sink, 0]
-        states.backward_masks = torch.zeros_like(
-            states.backward_masks, dtype=torch.bool, device=states.device
-        )
-        states.backward_masks[~is_sink, last_actions] = True
-        states.backward_masks[~is_sink, first_actions + (self.n_actions - 1) // 2] = True
+                Allows removing from either end (prepend or append).
+                """
+                backward_masks = torch.zeros(
+                    (*self.batch_shape, self.n_actions - 1),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                is_sink = self.is_sink_state
+                non_sink_flat = ~is_sink.flatten()
+                if non_sink_flat.any():
+                    flat_tensor = self.tensor.view(-1, *self.state_shape)
+                    flat_length = self.length.view(-1)
+                    flat_backward_masks = backward_masks.view(-1, self.n_actions - 1)
+
+                    non_sink_indices = torch.where(non_sink_flat)[0]
+                    non_sink_lengths = flat_length[non_sink_indices]
+
+                    # Only process states with length > 0
+                    valid_mask = non_sink_lengths > 0
+                    if valid_mask.any():
+                        valid_indices = non_sink_indices[valid_mask]
+                        valid_lengths = non_sink_lengths[valid_mask]
+                        valid_tensors = flat_tensor[valid_indices]
+
+                        # Last action (remove from end)
+                        last_actions = valid_tensors[
+                            torch.arange(len(valid_lengths), device=self.device),
+                            valid_lengths - 1,
+                        ]
+                        flat_backward_masks[valid_indices, last_actions] = True
+
+                        # First action (remove from front) - shifted by (n_actions-1)//2
+                        first_actions = valid_tensors[:, 0]
+                        flat_backward_masks[
+                            valid_indices, first_actions + (env.n_actions - 1) // 2
+                        ] = True
+
+                    backward_masks = flat_backward_masks.view(
+                        *self.batch_shape, self.n_actions - 1
+                    )
+                return backward_masks
+
+        return BitSequencePlusStates
 
     def step(self, states: BitSequenceStates, actions: Actions) -> BitSequenceStates:
         """Performs a step in the environment.

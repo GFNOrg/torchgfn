@@ -120,17 +120,46 @@ class DiscreteEBM(DiscreteEnv):
         )
         self.States: type[DiscreteStates] = self.States
 
-    def update_masks(self, states: DiscreteStates) -> None:
-        """Updates the masks of the states.
+    def make_states_class(self) -> type[DiscreteStates]:
+        """Returns the DiscreteStates class for the DiscreteEBM environment."""
+        env = self
 
-        Args:
-            states: The states to update the masks of.
-        """
-        states.forward_masks[..., : self.ndim] = states.tensor == -1
-        states.forward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == -1
-        states.forward_masks[..., -1] = torch.all(states.tensor != -1, dim=-1)
-        states.backward_masks[..., : self.ndim] = states.tensor == 0
-        states.backward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == 1
+        class DiscreteEBMStates(DiscreteStates):
+            state_shape = (env.ndim,)
+            s0 = env.s0
+            sf = env.sf
+            make_random_states = env.make_random_states
+            n_actions = env.n_actions
+
+            def _compute_forward_masks(self) -> torch.Tensor:
+                """Computes forward masks for DiscreteEBM states."""
+                forward_masks = torch.zeros(
+                    (*self.batch_shape, self.n_actions),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                # Action i in [0, ndim-1] replaces s[i] with 0 (only if s[i] == -1)
+                forward_masks[..., : env.ndim] = self.tensor == -1
+                # Action i in [ndim, 2*ndim-1] replaces s[i-ndim] with 1 (only if s[i-ndim] == -1)
+                forward_masks[..., env.ndim : 2 * env.ndim] = self.tensor == -1
+                # Exit action is only valid when state is complete (no -1s)
+                forward_masks[..., -1] = torch.all(self.tensor != -1, dim=-1)
+                return forward_masks
+
+            def _compute_backward_masks(self) -> torch.Tensor:
+                """Computes backward masks for DiscreteEBM states."""
+                backward_masks = torch.zeros(
+                    (*self.batch_shape, self.n_actions - 1),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                # Backward action i in [0, ndim-1] sets s[i] back to -1 (only if s[i] == 0)
+                backward_masks[..., : env.ndim] = self.tensor == 0
+                # Backward action i in [ndim, 2*ndim-1] sets s[i-ndim] back to -1 (only if s[i-ndim] == 1)
+                backward_masks[..., env.ndim : 2 * env.ndim] = self.tensor == 1
+                return backward_masks
+
+        return DiscreteEBMStates
 
     def make_random_states(
         self,
