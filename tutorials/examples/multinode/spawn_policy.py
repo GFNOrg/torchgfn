@@ -873,7 +873,7 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
                 #toc = self.get_time()
                 #self.capture_time("expose_model_params", tic, toc)
 
-        return model, optimizer, True
+        return model, optimizer, {"averaged_this_iteration": self.is_agent_dying(local_metric, self.threshold_metric)}
     
 
     ################################
@@ -1281,7 +1281,7 @@ class AsyncSelectiveAveragingPolicympi4pyV2(SpawnPolicy):
             ):
                 self._copy_model_params_to_buf(model)
 
-        return model, optimizer, True
+        return model, optimizer, {"averaged_this_iteration": self.is_agent_dying(local_metric, self.threshold_metric)}
     
 
     ################################
