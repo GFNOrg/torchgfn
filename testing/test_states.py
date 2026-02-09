@@ -34,6 +34,22 @@ class SimpleDiscreteStates(DiscreteStates):
     s0 = torch.tensor([0.0, 0.0])
     sf = torch.tensor([1.0, 1.0])
 
+    def _compute_forward_masks(self) -> torch.Tensor:
+        """All forward actions allowed."""
+        return torch.ones(
+            (*self.batch_shape, self.n_actions),
+            dtype=torch.bool,
+            device=self.device,
+        )
+
+    def _compute_backward_masks(self) -> torch.Tensor:
+        """All backward actions allowed."""
+        return torch.ones(
+            (*self.batch_shape, self.n_actions - 1),
+            dtype=torch.bool,
+            device=self.device,
+        )
+
 
 class SimpleTensorStates(States):
     state_shape = (2,)  # 2-dimensional state
@@ -79,10 +95,7 @@ def simple_discrete_state():
     """Creates a simple discrete state with 3 possible actions"""
     # Create a single state tensor
     tensor = torch.tensor([[0.5, 0.5]])
-    forward_masks = torch.tensor([[True, True, True]])  # All actions allowed
-    backward_masks = torch.tensor([[True, True]])  # All backward actions allowed
-
-    return SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+    return SimpleDiscreteStates(tensor)
 
 
 @pytest.fixture
@@ -90,10 +103,7 @@ def empty_discrete_state():
     """Creates an empty discrete state"""
     # Create an empty state tensor
     tensor = torch.zeros((0, 2))
-    forward_masks = torch.zeros((0, 3), dtype=torch.bool)
-    backward_masks = torch.zeros((0, 2), dtype=torch.bool)
-
-    return SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+    return SimpleDiscreteStates(tensor)
 
 
 @pytest.fixture
@@ -745,11 +755,7 @@ def _make_discrete(batch_shape: tuple[int, ...]) -> DiscreteStates:
         sf = torch.ones(2)
 
     tensor = torch.zeros(batch_shape + SimpleDiscreteStates.state_shape)
-    fm = torch.ones(batch_shape + (SimpleDiscreteStates.n_actions,), dtype=torch.bool)
-    bm = torch.ones(
-        batch_shape + (SimpleDiscreteStates.n_actions - 1,), dtype=torch.bool
-    )
-    return SimpleDiscreteStates(tensor, fm, bm, debug=True)
+    return SimpleDiscreteStates(tensor, debug=True)
 
 
 def test_set_nonexit_action_masks_resets_each_call_1d():
@@ -895,13 +901,7 @@ def test_discrete_states_factory_requires_debug():
         @classmethod
         def make_random_states(cls, batch_shape, device=None):
             t = torch.zeros(batch_shape + cls.state_shape, device=device)
-            fm = torch.ones(
-                batch_shape + (cls.n_actions,), dtype=torch.bool, device=device
-            )
-            bm = torch.ones(
-                batch_shape + (cls.n_actions - 1,), dtype=torch.bool, device=device
-            )
-            return cls(t, fm, bm)
+            return cls(t)
 
     with pytest.raises(TypeError, match="must accept a `debug`"):
         NoDebugDiscreteStates.from_batch_shape((2,), random=True, debug=True)
@@ -998,11 +998,8 @@ def test_discrete_masks_device_on_cuda():
         sf = torch.tensor([1.0, 1.0])
 
     tensor = torch.tensor([[0.5, 0.5]], device=torch.device("cuda"))
-    # Provide masks on CUDA as well
-    forward_masks = torch.tensor([[True, True, True]], device=torch.device("cuda"))
-    backward_masks = torch.tensor([[True, True]], device=torch.device("cuda"))
 
-    state = SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+    state = SimpleDiscreteStates(tensor)
     assert state.device.type == "cuda"
     assert state.forward_masks.device.type == "cuda"
     assert state.backward_masks.device.type == "cuda"
@@ -1210,11 +1207,7 @@ def test_discrete_states_two_instances_different_devices_cuda():
         sf = torch.tensor([1.0, 1.0])
 
     A = SimpleDiscreteStates(torch.tensor([[0.5, 0.5]], device=cpu))
-    B = SimpleDiscreteStates(
-        torch.tensor([[0.1, 0.2]], device=cuda),
-        torch.ones((1, 3), dtype=torch.bool, device=cuda),
-        torch.ones((1, 2), dtype=torch.bool, device=cuda),
-    )
+    B = SimpleDiscreteStates(torch.tensor([[0.1, 0.2]], device=cuda))
     assert A.device.type == "cpu"
     assert B.device.type == "cuda"
     # Mask devices are consistent with instance devices

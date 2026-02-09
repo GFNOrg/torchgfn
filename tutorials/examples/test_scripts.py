@@ -88,11 +88,12 @@ class DiscreteEBMArgs(CommonArgs):
 @dataclass
 class HypergridArgs(CommonArgs):
     back_ratio: float = 0.5
-    store_all_states: bool = True
-    calculate_partition: bool = True
     distributed: bool = False
     diverse_replay_buffer: bool = False
-    epsilon: float = 0.1
+    epsilon: float = 0.0
+    temperature: float = 1.0
+    n_noisy_layers: int = 0
+    noisy_std_init: float = 0.5
     height: int = 8
     loss: str = "TB"
     lr_logz: float = 1e-3
@@ -108,6 +109,7 @@ class HypergridArgs(CommonArgs):
     timing: bool = True
     half_precision: bool = False
     remote_buffer_freq = 1
+    validate_environment: bool = True
 
 
 @dataclass

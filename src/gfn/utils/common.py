@@ -1,15 +1,17 @@
 import inspect
+import logging
 import os
 import random
 import threading
 import time
-import warnings
 from contextlib import contextmanager
 from typing import Any, Callable, Tuple
 
 import numpy as np
 import torch
 import torch.distributed as dist
+
+logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
 # Utility helpers
@@ -249,9 +251,8 @@ def set_seed(seed: int, deterministic_mode: bool = False) -> None:
             torch.use_deterministic_algorithms(True)
         except AttributeError:
             # Older PyTorch (<1.8) fallback: do nothing.
-            warnings.warn(
-                "PyTorch is older than 1.8, deterministic algorithms are not supported.",
-                UserWarning,
+            logger.warning(
+                "PyTorch is older than 1.8, deterministic algorithms are not supported."
             )
 
         # CPU-specific settings for non-distributed case
