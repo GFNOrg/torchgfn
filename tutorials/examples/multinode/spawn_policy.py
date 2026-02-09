@@ -55,7 +55,7 @@ class AverageAllPolicy(SpawnPolicy):
         if iteration % self.average_every != 0:
             return model, optimizer, {"averaged_this_iteration": False}
 
-        print("AverageAll model parameters across all ranks ...", flush=True)
+        logger.info("AverageAll model parameters across all ranks ...")
         world_size = float(dist.get_world_size())
         logger.info(
             "Iteration %d: Averaging model across %d ranks", iteration, int(world_size)
@@ -683,7 +683,7 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
     def print_comm_stats(self) -> None:        
         for k, v in self.comm_stats.items():
             avg = v[0] / v[1] if v[1] > 0 else 0
-            print(f"Rank {self.myrank} - Comm {k}: Total={v[0]} elements, Count={v[1]}, Avg={avg:.2f}")
+            logger.info("Rank %s - Comm %s: Total=%s elements, Count=%s, Avg=%.2f", self.myrank, k, v[0], v[1], avg)
 
     def capture_time(self, name: str, start: float, end: float) -> None:
         self.timers[name] = end - start
@@ -693,14 +693,14 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
     '''
 
     def print_time(self) -> None:        
-        print("Selective Averaging timings:", flush=True)
+        logger.info("Selective Averaging timings:")
         for k, v in self.timing.items():
             ## here v is a list, avg over the list
             #avg = sum(v) / len(v) if len(v) > 0 else 0
-            print(f"{k:<35}: {sum(v):>10.4f} seconds")
+            logger.info("%s: %10.4f seconds", k.ljust(35), sum(v))
 
     def print_stats(self) -> None:
-        print("Selective Averaging comms stats:", flush=True)
+        logger.info("Selective Averaging comms stats:")
         avg_donors, num_calls = 0.0, 0
         for k, v in self.stats.items():
             # v is a list, print min, max ,avg, and len of it
@@ -708,18 +708,18 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
             maximum = max(v) if len(v) > 0 else 0
             avg = sum(v) / len(v) if len(v) > 0 else 0
             length = len(v)
-            print(f"Rank {self.myrank} - Stat {k:30}: min={minimum}, max={maximum}, avg={avg:.6f}, count={length}")
+            logger.info("Rank %s - Stat %s: min=%s, max=%s, avg=%.6f, count=%s", self.myrank, k.ljust(30), minimum, maximum, avg, length)
             if k == "donors":
                 avg_donors = avg
                 num_calls = length
 
         _named_params = list(self._model.named_parameters())   
         named_params = [(name, param) for name, param in _named_params if param.dim() != 0]
-        print(f"Rank {self.myrank:<10} -  {'param elements':<15} {'iter':<10} {'total params elements commd':<25}")
+        logger.info("Rank %-10s -  %-15s %-10s %-25s", str(self.myrank), "param elements", "iter", "total params elements commd")
         for name, param in named_params:
             device = param.device
             param_shape = param.data.shape
-            print(f"Rank {self.myrank:<10} -  {np.prod(param_shape):<15} {avg_donors*num_calls:<10} {np.prod(param_shape)*avg_donors*num_calls:<15}")
+            logger.info("Rank %-10s -  %-15s %-10s %-15s", str(self.myrank), np.prod(param_shape), int(avg_donors * num_calls), np.prod(param_shape) * avg_donors * num_calls)
         
     def capture_comm(self, name: str, size: int) -> None:
         if name not in self.stats:
@@ -745,7 +745,7 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
         self,
         model: GFlowNet,
     ) -> None:
-        print("_copy_model_params_to_buf called...", flush=True)
+        logger.info("_copy_model_params_to_buf called...")
         #print(model.named_parameters(), flush=True)
         for name, param in model.named_parameters():
             #print(f"Copying parameter: {name}", flush=True)
@@ -761,7 +761,7 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
 
     ################################
     def _expose_model_parameters(self, model: GFlowNet) -> None:     
-        print("<<<<<<<<<<<<<<<<<< exposing model parameters via MPI windows...", flush=True)   
+        logger.info("<<<<<<<<<<<<<<<<<< exposing model parameters via MPI windows...")
         rank = self.myrank
         size = self.comm_size
 
@@ -788,8 +788,8 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
         #    self._mpi_shape_wins[name] = (win, buf)
 
         self._copy_model_params_to_buf(model)
-        print("pb.module.last_layer.bias: ", self._mpi_tensor_wins["pb.module.last_layer.bias"][1], 
-              (self._mpi_tensor_wins["pb.module.last_layer.bias"][1]).size, flush=True)
+        logger.info("pb.module.last_layer.bias: %s size=%s", self._mpi_tensor_wins["pb.module.last_layer.bias"][1],
+                    (self._mpi_tensor_wins["pb.module.last_layer.bias"][1]).size)
 
     ################################
     def _get_donors(self, n, k, d) -> List[int]:
@@ -817,7 +817,7 @@ class AsyncSelectiveAveragingPolicympi4py(SpawnPolicy):
 
         self._count += 1
         self._model = model
-        print(" >>>>>>>>>>>>> In call.....", self.is_agent_dying(local_metric, self.threshold_metric), flush=True)
+        logger.info(" >>>>>>>>>>>>> In call..... %s", self.is_agent_dying(local_metric, self.threshold_metric))
         named_params = list(model.named_parameters())
         for name, param in named_params:
             param_shape = param.data.shape
@@ -1073,15 +1073,15 @@ class AsyncSelectiveAveragingPolicympi4pyV2(SpawnPolicy):
 
     ##############################
     def print_time(self) -> None:        
-        print("Selective Averaging timings:", flush=True)
+        logger.info("Selective Averaging timings:")
         for k, v in self.timing.items():
             ## here v is a list, avg over the list
             #avg = sum(v) / len(v) if len(v) > 0 else 0
-            print(f"{k:<35}: {sum(v):>10.4f} seconds")
+            logger.info("%s: %10.4f seconds", k.ljust(35), sum(v))
 
     def print_stats(self) -> None:
-        print("Selective Averaging comms stats:", flush=True)
-        print(f"Rank {self.myrank} - Agent replaced for {self.num_replacements} out of {self.total_iterations} iterations.")
+        logger.info("Selective Averaging comms stats:")
+        logger.info("Rank %s - Agent replaced for %s out of %s iterations.", self.myrank, self.num_replacements, self.total_iterations)
         avg_donors, num_calls = 0.0, 0
         for k, v in self.stats.items():
             # v is a list, print min, max ,avg, and len of it
@@ -1089,18 +1089,18 @@ class AsyncSelectiveAveragingPolicympi4pyV2(SpawnPolicy):
             maximum = max(v) if len(v) > 0 else 0
             avg = sum(v) / len(v) if len(v) > 0 else 0
             length = len(v)
-            print(f"Rank {self.myrank:<10} - Stat {k:30}: min={minimum}, max={maximum}, avg={avg:.6f}, across {length} iters")
+            logger.info("Rank %-10s - Stat %s: min=%s, max=%s, avg=%.6f, across %s iters", str(self.myrank), k.ljust(30), minimum, maximum, avg, length)
             if k == "donors":
                 avg_donors = avg
                 num_calls = length
 
         _named_params = list(self._model.named_parameters())   
         named_params = [(name, param) for name, param in _named_params if param.dim() != 0]
-        print(f"Rank {self.myrank:<10} -  {'param elements':<15} {'#comm_iters':<10} {'total params elements communicated':<25}")
+        logger.info("Rank %-10s -  %-15s %-10s %-25s", str(self.myrank), "param elements", "#comm_iters", "total params elements communicated")
         for name, param in named_params:
             device = param.device
             param_shape = param.data.shape
-            print(f"Rank {self.myrank:<10} -  {np.prod(param_shape):<15} {avg_donors*num_calls:<10} {np.prod(param_shape)*avg_donors*num_calls:<15}")
+            logger.info("Rank %-10s -  %-15s %-10s %-15s", str(self.myrank), np.prod(param_shape), int(avg_donors * num_calls), np.prod(param_shape) * avg_donors * num_calls)
         
     def capture_comm(self, name: str, size: int) -> None:
         if name not in self.stats:
@@ -1145,7 +1145,7 @@ class AsyncSelectiveAveragingPolicympi4pyV2(SpawnPolicy):
 
     ################################
     def _expose_model_parameters(self, model: GFlowNet) -> None:     
-        print("<<<<<<<<<<<<<<<<<< exposing model parameters via MPI windows...", flush=True)   
+        logger.info("<<<<<<<<<<<<<<<<<< exposing model parameters via MPI windows...")
         rank = self.myrank
         size = self.comm_size
 
@@ -1207,8 +1207,8 @@ class AsyncSelectiveAveragingPolicympi4pyV2(SpawnPolicy):
 
         self._count += 1
         self._model = model
-        print(" >>>>>>>>>>>>> In call V2.....", \
-              self.is_agent_dying(local_metric, self.threshold_metric), local_metric, self.threshold_metric, flush=True)
+        logger.info(" >>>>>>>>>>>>> In call V2..... %s local_metric=%s threshold_metric=%s",
+                    self.is_agent_dying(local_metric, self.threshold_metric), local_metric, self.threshold_metric)
         named_params = list(model.named_parameters())
         for name, param in named_params:
             param_shape = param.data.shape
@@ -1265,7 +1265,7 @@ class AsyncSelectiveAveragingPolicympi4pyV2(SpawnPolicy):
                 self.timing, "sa new_agent_model_rebuild"
             ):
                 #tic = self.get_time()
-                print(">>>>>>>>>>>>>>>>>>> No model params copy", flush=True)
+                logger.info(">>>>>>>>>>>>>>>>>>> No model params copy")
                 #model, optimizer = self._model_builder()
                 #for name, param in model.named_parameters():
                 #    if name in new_avg_params:
@@ -1409,7 +1409,7 @@ class AverageAllPolicympi4py(SpawnPolicy):
         if iteration % self.average_every != 0:
             return model, optimizer, {"averaged_this_iteration": False}
 
-        print("AverageAll mpi4py model parameters across all ranks ...", flush=True)
+        logger.info("AverageAll mpi4py model parameters across all ranks ...")
         world_size = group.Get_size()
         for param in model.parameters():
             param_tensor = param.detach().cpu().numpy().copy()   ##param.data.clone().numpy()
