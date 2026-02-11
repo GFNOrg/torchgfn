@@ -1162,7 +1162,7 @@ def main(args) -> dict:  # noqa: C901
                 logger.info("%-25s %10.4fs", k, sum(v))
             try:
                 if (
-                    args.spawn_backend == "mpi"
+                    args.spawn_backend == "mpi4py"
                     and args.use_selective_averaging
                     and averaging_policy_mpi4py is not None
                 ):
@@ -1292,8 +1292,8 @@ if __name__ == "__main__":
     ## for mpi-3 code of selective averaging debug
     parser.add_argument(
         "--spawn_backend",
-        choices=["dist", "mpi"],
-        default="mpi",
+        choices=["dist", "mpi4py"],
+        default="mpi4py",
         help="Backend for spawn policy implementation: torch.distributed or mpi4py",
     )
     parser.add_argument(
