@@ -826,7 +826,6 @@ def main(args) -> dict:  # noqa: C901
 
     # Initialize some variables before the training loop.
     timing = {}
-    oldcode = args.oldcode
     time_start = time.time()
     l1_distances, validation_steps = [], []
 
@@ -877,7 +876,7 @@ def main(args) -> dict:  # noqa: C901
                 age_range=args.age_range,
                 group=mpi4py_train_group,
             )
-            if args.fast_sa:
+            if args.mpi_sa_mode == "fast":
                 averaging_policy_mpi4py = AsyncSelectiveAveragingPolicympi4pyFast(  # type: ignore[abstract]
                     model_builder=_model_builder,
                     model=gflownet,
@@ -1002,7 +1001,7 @@ def main(args) -> dict:  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
 
-            if oldcode:
+            if args.spawn_backend == "dist":
                 if averaging_policy_torch is not None:
                     gflownet, optimizer, averaging_info = averaging_policy_torch(
                         iteration=iteration,
@@ -1163,7 +1162,7 @@ def main(args) -> dict:  # noqa: C901
                 logger.info("%-25s %10.4fs", k, sum(v))
             try:
                 if (
-                    not oldcode
+                    args.spawn_backend == "mpi"
                     and args.use_selective_averaging
                     and averaging_policy_mpi4py is not None
                 ):
@@ -1292,14 +1291,20 @@ if __name__ == "__main__":
     )
     ## for mpi-3 code of selective averaging debug
     parser.add_argument(
-        "--oldcode",
-        action="store_true",
-        help="Temp switch between old and new selective averaging code (dist mpi or mpi4py)",
+        "--spawn_backend",
+        choices=["dist", "mpi"],
+        default="mpi",
+        help="Backend for spawn policy implementation: torch.distributed or mpi4py",
     )
     parser.add_argument(
-        "--fast_sa",
-        action="store_true",
-        help="Use fast (comms) selective averaging mpi4py code assuming all params are of same precision (e.g., float32)",
+        "--mpi_sa_mode",
+        choices=["general", "fast"],
+        default="general",
+        help=(
+            "MPI selective averaging implementation to use. "
+            "'fast' uses an optimized communication path assuming all parameters "
+            "have the same dtype (e.g., float32)."
+        ),
     )
     parser.add_argument(
         "--age_range",
