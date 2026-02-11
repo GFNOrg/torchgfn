@@ -1299,7 +1299,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mpi_sa_mode",
         choices=["general", "fast"],
-        default="general",
+        default="fast",
         help=(
             "MPI selective averaging implementation to use. "
             "'fast' uses an optimized communication path assuming all parameters "
