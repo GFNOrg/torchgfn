@@ -658,10 +658,7 @@ def main(args) -> dict:  # noqa: C901
         )
 
     set_seed(args.seed + distributed_context.my_rank)
-
-    # Create RNG for strategy sampling (seeded deterministically per agent group).
-    agent_group_id = distributed_context.agent_group_id or 0
-    strategy_rng = random.Random(args.seed + agent_group_id)
+    strategy_rng = random.Random(args.seed + distributed_context.my_rank)
 
     # Initialize the environment.
     env = HyperGrid(
