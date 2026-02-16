@@ -69,7 +69,6 @@ from gfn.utils.common import Timer, set_seed
 from gfn.utils.distributed import DistributedContext, initialize_distributed_compute
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 
-
 logger = logging.getLogger(__name__)
 
 
