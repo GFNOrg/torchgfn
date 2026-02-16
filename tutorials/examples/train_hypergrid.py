@@ -1004,9 +1004,7 @@ def main(args) -> dict:  # noqa: C901
                     model=gflownet,
                     optimizer=optimizer,
                     local_metric=(
-                        score_dict["score"]
-                        if score_dict is not None
-                        else -loss.item()
+                        score_dict["score"] if score_dict is not None else -loss.item()
                     ),
                     group=distributed_context.train_global_group,
                 )
