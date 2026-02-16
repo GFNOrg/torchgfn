@@ -1,7 +1,7 @@
 import datetime
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, cast
 
 import mpi4py.MPI as MPI
@@ -133,7 +133,7 @@ class DistributedContextmpi4py:
     agent_group_size: int
     agent_groups: Optional[List[MPI.Comm]] = None
     agent_group_id: Optional[int] = None
-    train_global_group: MPI.Comm = MPI.COMM_WORLD
+    train_global_group: MPI.Comm = field(default_factory=lambda: MPI.COMM_WORLD)
     assigned_buffer: Optional[int] = None
     buffer_group: Optional[MPI.Comm] = None
     assigned_training_ranks: Optional[List[int]] = None

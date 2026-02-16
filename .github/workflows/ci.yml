@@ -26,13 +26,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install .[all]  # Install all dependencies, including dev
-      
-      - name: Install MPI4PY
-        run: |
-          pip install mpi4py
-    
-      - name: Print MPI4PY Version
-        run: python -c "import mpi4py; print(mpi4py.__version__)"
 
       - name: Print PyTorch Version (Temporary)
         run: python -c "import torch; print(torch.__version__)"
