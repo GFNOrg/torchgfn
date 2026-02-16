@@ -42,6 +42,13 @@ import torch.distributed as dist
 from matplotlib.gridspec import GridSpec
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
+from tutorials.examples.multinode.spawn_policy import (
+    AsyncSelectiveAveragingPolicy,
+    AsyncSelectiveAveragingPolicympi4pyFast,
+    AsyncSelectiveAveragingPolicympi4pyGeneral,
+    AverageAllPolicy,
+    AverageAllPolicympi4py,
+)
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.containers.replay_buffer_manager import ContainerUnion, ReplayBufferManager
@@ -61,13 +68,6 @@ from gfn.states import DiscreteStates
 from gfn.utils.common import Timer, set_seed
 from gfn.utils.distributed import DistributedContext, initialize_distributed_compute
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
-from tutorials.examples.multinode.spawn_policy import (
-    AsyncSelectiveAveragingPolicy,
-    AsyncSelectiveAveragingPolicympi4pyFast,
-    AsyncSelectiveAveragingPolicympi4pyGeneral,
-    AverageAllPolicy,
-    AverageAllPolicympi4py,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -994,19 +994,16 @@ def main(args) -> dict:  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
 
-            if args.spawn_backend == "dist":
-                if averaging_policy_torch is not None:
-                    gflownet, optimizer, averaging_info = averaging_policy_torch(
-                        iteration=iteration,
-                        model=gflownet,
-                        optimizer=optimizer,
-                        local_metric=(
-                            score_dict["score"]
-                            if score_dict is not None
-                            else -loss.item()
-                        ),
-                        group=distributed_context.train_global_group,
-                    )
+            if averaging_policy_torch is not None and args.spawn_backend == "dist":
+                gflownet, optimizer, averaging_info = averaging_policy_torch(
+                    iteration=iteration,
+                    model=gflownet,
+                    optimizer=optimizer,
+                    local_metric=(
+                        score_dict["score"] if score_dict is not None else -loss.item()
+                    ),
+                    group=distributed_context.train_global_group,
+                )
             else:
                 if (
                     averaging_policy_mpi4py is not None

@@ -35,6 +35,12 @@ import torch
 from tensordict import TensorDict
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import trange
+from tutorials.examples.train_graph_ring import (
+    RingReward,
+    init_env,
+    init_gflownet,
+    render_states,
+)
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.containers.replay_buffer import ReplayBuffer
@@ -45,12 +51,6 @@ from gfn.states import GraphStates
 from gfn.utils.common import set_seed
 from gfn.utils.graphs import from_edge_indices, hash_graph
 from gfn.utils.training import lr_grad_ratio
-from tutorials.examples.train_graph_ring import (
-    RingReward,
-    init_env,
-    init_gflownet,
-    render_states,
-)
 
 
 def per_step_decay(num_steps: int, total_drop: float) -> float:
