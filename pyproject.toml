@@ -92,6 +92,7 @@ scripts = [
     "seaborn",
     "tqdm",
     "wandb",
+    "mpi4py",
 ]
 
 all = [
@@ -121,6 +122,7 @@ all = [
     "tox",
     "tqdm",
     "wandb",
+    "mpi4py",
 ]
 
 [tool.poetry.urls]
@@ -186,6 +188,7 @@ include_trailing_comma = true
 force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
+src_paths = ["src"]
 
 [tool.pytest]
 pythonpath = [

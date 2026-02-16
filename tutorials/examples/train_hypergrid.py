@@ -41,6 +41,10 @@ import torch.distributed as dist
 from matplotlib.gridspec import GridSpec
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
+from tutorials.examples.multinode.spawn_policy import (
+    AsyncSelectiveAveragingPolicy,
+    AverageAllPolicy,
+)
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.containers.replay_buffer_manager import ContainerUnion, ReplayBufferManager
@@ -60,10 +64,6 @@ from gfn.states import DiscreteStates
 from gfn.utils.common import Timer, set_seed
 from gfn.utils.distributed import DistributedContext, initialize_distributed_compute
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
-from tutorials.examples.multinode.spawn_policy import (
-    AsyncSelectiveAveragingPolicy,
-    AverageAllPolicy,
-)
 
 logger = logging.getLogger(__name__)
 

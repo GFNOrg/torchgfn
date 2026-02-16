@@ -1,9 +1,9 @@
 from argparse import ArgumentParser
 
 import torch
+import wandb
 from tqdm import tqdm
 
-import wandb
 from gfn.estimators import DiscretePolicyEstimator
 from gfn.gflownet import FMGFlowNet
 from gfn.gym import DiscreteEBM
