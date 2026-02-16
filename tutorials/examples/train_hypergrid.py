@@ -963,12 +963,8 @@ def main(args) -> dict:  # noqa: C901
                 env,
                 training_objects,  # type: ignore
                 recalculate_all_logprobs=(not is_on_policy_iter),
-                reduction="sum" if args.distributed or args.loss == "SubTB" else "mean",  # type: ignore
+                reduction="sum" if args.loss == "SubTB" else "mean",  # type: ignore
             )
-
-            # Normalize the loss by the local batch size if distributed.
-            if args.distributed:
-                loss = loss / (per_node_batch_size)
 
         # Barrier.
         with Timer(
