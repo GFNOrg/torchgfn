@@ -11,14 +11,16 @@ jobs:
     strategy:
       matrix:
         python-version: ['3.11', '3.12']
+    container:
+      image: python:${{ matrix.python-version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Install System Dependencies
+        run: |
+          apt-get update
+          apt-get install -y libopenmpi-dev git
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
+      - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
