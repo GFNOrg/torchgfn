@@ -60,6 +60,7 @@ scikit-learn = {version = "*", optional = true }
 scipy = { version = "<=1.15.3", optional = true }
 tqdm = { version = "*", optional = true }
 wandb = { version = "*", optional = true }
+mpi4py = { version = "*", optional = true }
 
 [tool.poetry.extras]
 dev = [

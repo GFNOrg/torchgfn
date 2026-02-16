@@ -998,19 +998,18 @@ def main(args) -> dict:  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
 
-            if args.spawn_backend == "dist":
-                if averaging_policy_torch is not None:
-                    gflownet, optimizer, averaging_info = averaging_policy_torch(
-                        iteration=iteration,
-                        model=gflownet,
-                        optimizer=optimizer,
-                        local_metric=(
-                            score_dict["score"]
-                            if score_dict is not None
-                            else -loss.item()
-                        ),
-                        group=distributed_context.train_global_group,
-                    )
+            if averaging_policy_torch is not None and args.spawn_backend == "dist":
+                gflownet, optimizer, averaging_info = averaging_policy_torch(
+                    iteration=iteration,
+                    model=gflownet,
+                    optimizer=optimizer,
+                    local_metric=(
+                        score_dict["score"]
+                        if score_dict is not None
+                        else -loss.item()
+                    ),
+                    group=distributed_context.train_global_group,
+                )
             else:
                 if (
                     averaging_policy_mpi4py is not None
