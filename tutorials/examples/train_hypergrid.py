@@ -1366,6 +1366,18 @@ if __name__ == "__main__":
         help="Use a diverse replay buffer",
     )
     parser.add_argument(
+        "--cutoff_distance",
+        type=float,
+        default=0.1,
+        help="Cutoff distance for diverse replay buffer",
+    )
+    parser.add_argument(
+        "--p_norm_distance",
+        type=int,
+        default=2,
+        help="p-norm distance metric for diverse replay buffer",
+    )
+    parser.add_argument(
         "--loss",
         type=str,
         choices=["FM", "TB", "DB", "SubTB", "ZVar", "ModifiedDB"],
