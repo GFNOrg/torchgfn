@@ -260,7 +260,9 @@ def main(args) -> dict:  # noqa: C901
 
     # Process group containing only training ranks (used for gradient all-reduce).
     training_ranks_ddp = list(range(num_training_ranks_ddp))
-    ddp_train_group = dist.new_group(ranks=training_ranks_ddp)
+    ddp_train_group = cast(
+        dist.ProcessGroup | None, dist.new_group(ranks=training_ranks_ddp)
+    )
 
     # Assign each training rank to a buffer rank.
     assigned_buffer_ddp = None
