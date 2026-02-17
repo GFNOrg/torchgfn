@@ -28,6 +28,10 @@ import torch
 import torch.distributed as dist
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
+from tutorials.examples.train_hypergrid import (
+    ModesReplayBufferManager,
+    plot_results,
+)
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.containers.replay_buffer_manager import ReplayBufferManager
@@ -46,10 +50,6 @@ from gfn.states import DiscreteStates
 from gfn.utils.common import Timer, set_seed
 from gfn.utils.distributed import DistributedContext
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
-from tutorials.examples.train_hypergrid import (
-    ModesReplayBufferManager,
-    plot_results,
-)
 
 logger = logging.getLogger(__name__)
 
