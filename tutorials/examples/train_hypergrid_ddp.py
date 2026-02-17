@@ -55,13 +55,16 @@ logger = logging.getLogger(__name__)
 
 
 def _make_optimizer_for(gflownet, args) -> torch.optim.Optimizer:
-    """Build a fresh Adam optimizer for a (re)built GFlowNet with logZ group."""
+    """Build a fresh AdamW optimizer for a (re)built GFlowNet with logZ group."""
     named = dict(gflownet.named_parameters())
     non_logz = [v for k, v in named.items() if k != "logZ"]
     logz = [named["logZ"]] if "logZ" in named else []
 
-    return torch.optim.Adam(
-        [{"params": non_logz, "lr": args.lr}, {"params": logz, "lr": args.lr_Z}]
+    return torch.optim.AdamW(
+        [
+            {"params": non_logz, "lr": args.lr, "weight_decay": args.weight_decay},
+            {"params": logz, "lr": args.lr_Z, "weight_decay": 0.0},
+        ]
     )
 
 
@@ -338,7 +341,7 @@ def main(args) -> dict:  # noqa: C901
         is_root = distributed_context.my_rank == 0
 
         if is_root:
-            group_name = wandb.util.generate_id()
+            group_name = f"{wandb.util.generate_id()}_{distributed_context.num_training_ranks}"
             group_name_bytes = group_name.encode("utf-8")
             group_name_len_tensor = torch.tensor(
                 [len(group_name_bytes)], dtype=torch.long
@@ -756,6 +759,12 @@ if __name__ == "__main__":
         type=float,
         default=0.1,
         help="Specific learning rate for Z (only used for TB loss)",
+    )
+    parser.add_argument(
+        "--weight_decay",
+        type=float,
+        default=1e-4,
+        help="Weight decay for the optimizer",
     )
     parser.add_argument(
         "--n_trajectories",
