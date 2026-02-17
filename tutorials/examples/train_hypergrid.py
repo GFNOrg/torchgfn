@@ -36,6 +36,7 @@ from math import ceil
 from typing import Optional, Tuple, cast
 
 import matplotlib.pyplot as plt
+import mpi4py.MPI as MPI
 import torch
 import torch.distributed as dist
 from matplotlib.gridspec import GridSpec
@@ -62,7 +63,10 @@ from gfn.utils.distributed import DistributedContext, initialize_distributed_com
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 from tutorials.examples.multinode.spawn_policy import (
     AsyncSelectiveAveragingPolicy,
+    AsyncSelectiveAveragingPolicympi4pyFast,
+    AsyncSelectiveAveragingPolicympi4pyGeneral,
     AverageAllPolicy,
+    AverageAllPolicympi4py,
 )
 
 logger = logging.getLogger(__name__)
@@ -658,10 +662,7 @@ def main(args) -> dict:  # noqa: C901
         )
 
     set_seed(args.seed + distributed_context.my_rank)
-
-    # Create RNG for strategy sampling (seeded deterministically per agent group).
-    agent_group_id = distributed_context.agent_group_id or 0
-    strategy_rng = random.Random(args.seed + agent_group_id)
+    strategy_rng = random.Random(args.seed + distributed_context.my_rank)
 
     # Initialize the environment.
     env = HyperGrid(
@@ -836,10 +837,23 @@ def main(args) -> dict:  # noqa: C901
             dist.barrier(group=distributed_context.train_global_group)
 
     # Set up averaging policy (called every iteration; internal guard checks cadence/distributed)
-    averaging_policy = None
+    averaging_policy_torch = None
+    averaging_policy_mpi4py = None
+
     if args.distributed:
+        averaging_policy_torch = AverageAllPolicy(average_every=args.average_every)
+        averaging_policy_mpi4py = AverageAllPolicympi4py(
+            average_every=args.average_every
+        )
+
+        mpi4py_train_group = (
+            distributed_context.dc_mpi4py.train_global_group
+            if distributed_context.dc_mpi4py is not None
+            else MPI.COMM_WORLD
+        )
+
         if args.use_selective_averaging:
-            averaging_policy = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
+            averaging_policy_torch = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
                 model_builder=_model_builder,
                 average_every=args.average_every,
                 replacement_ratio=args.replacement_ratio,
@@ -848,8 +862,29 @@ def main(args) -> dict:  # noqa: C901
                 threshold=args.performance_tracker_threshold,
                 cooldown=args.performance_tracker_cooldown,
             )
-        else:
-            averaging_policy = AverageAllPolicy(average_every=args.average_every)
+            averaging_policy_mpi4py = AsyncSelectiveAveragingPolicympi4pyGeneral(  # type: ignore[abstract]
+                model_builder=_model_builder,
+                model=gflownet,
+                average_every=args.average_every,
+                threshold_metric=args.performance_tracker_threshold,
+                replacement_ratio=args.replacement_ratio,
+                averaging_strategy=args.averaging_strategy,
+                momentum=args.momentum,
+                age_range=args.age_range,
+                group=mpi4py_train_group,
+            )
+            if args.mpi_sa_mode == "fast":
+                averaging_policy_mpi4py = AsyncSelectiveAveragingPolicympi4pyFast(  # type: ignore[abstract]
+                    model_builder=_model_builder,
+                    model=gflownet,
+                    average_every=args.average_every,
+                    threshold_metric=args.performance_tracker_threshold,
+                    replacement_ratio=args.replacement_ratio,
+                    averaging_strategy=args.averaging_strategy,
+                    momentum=args.momentum,
+                    age_range=args.age_range,
+                    group=mpi4py_train_group,
+                )
 
     # Accumulators for averaging score_dict between log intervals.
     score_dict_accum: dict[str, float] = {}
@@ -962,17 +997,36 @@ def main(args) -> dict:  # noqa: C901
         with Timer(
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
-            if averaging_policy is not None:
-                gflownet, optimizer, averaging_info = averaging_policy(
-                    iteration=iteration,
-                    model=gflownet,
-                    optimizer=optimizer,
-                    local_metric=(
-                        score_dict["score"] if score_dict is not None else -loss.item()
-                    ),
-                    group=distributed_context.train_global_group,
-                )
 
+            if args.spawn_backend == "dist":
+                if averaging_policy_torch is not None:
+                    gflownet, optimizer, averaging_info = averaging_policy_torch(
+                        iteration=iteration,
+                        model=gflownet,
+                        optimizer=optimizer,
+                        local_metric=(
+                            score_dict["score"]
+                            if score_dict is not None
+                            else -loss.item()
+                        ),
+                        group=distributed_context.train_global_group,
+                    )
+            else:
+                if (
+                    averaging_policy_mpi4py is not None
+                    and distributed_context.dc_mpi4py is not None
+                ):
+                    gflownet, optimizer, averaging_info = averaging_policy_mpi4py(
+                        iteration=iteration,
+                        model=gflownet,
+                        optimizer=optimizer,
+                        local_metric=(
+                            score_dict["score"]
+                            if score_dict is not None
+                            else -loss.item()
+                        ),
+                        group=distributed_context.dc_mpi4py.train_global_group,
+                    )
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
         rest_time = iteration_time - sum(
@@ -1062,8 +1116,13 @@ def main(args) -> dict:  # noqa: C901
                     wandb.log(to_log, step=iteration)
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
-            if args.distributed and args.timing:
-                dist.barrier(group=distributed_context.train_global_group)
+            if (
+                args.distributed
+                and args.timing
+                and distributed_context.dc_mpi4py is not None
+            ):
+                t_comm = distributed_context.dc_mpi4py.train_global_group
+                t_comm.Barrier()
 
     logger.info("Finished all iterations")
     total_time = time.time() - time_start
@@ -1074,9 +1133,11 @@ def main(args) -> dict:  # noqa: C901
 
     if args.distributed:
         dist.barrier(group=distributed_context.train_global_group)
-        assert averaging_policy is not None
+        assert averaging_policy_torch is not None
+        assert averaging_policy_mpi4py is not None
         try:
-            averaging_policy.shutdown()
+            averaging_policy_torch.shutdown()
+            averaging_policy_mpi4py.shutdown()
         except Exception:
             pass
 
@@ -1096,6 +1157,16 @@ def main(args) -> dict:  # noqa: C901
             logger.info("-" * 80)
             for k, v in timing.items():
                 logger.info("%-25s %10.4fs", k, sum(v))
+            try:
+                if (
+                    args.spawn_backend == "mpi4py"
+                    and args.use_selective_averaging
+                    and averaging_policy_mpi4py is not None
+                ):
+                    averaging_policy_mpi4py.print_time()
+                    averaging_policy_mpi4py.print_stats()
+            except Exception:
+                pass
 
     # Stop the profiler if it's active.
     if args.profile:
@@ -1118,6 +1189,14 @@ def main(args) -> dict:  # noqa: C901
     ):
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
+
+    if args.distributed:
+        dist.barrier(group=distributed_context.train_global_group)
+        assert distributed_context is not None
+        try:
+            distributed_context.cleanup()
+        except Exception:
+            pass
 
     return to_log
 
@@ -1206,6 +1285,29 @@ if __name__ == "__main__":
         type=float,
         default=0.01,
         help="Momentum factor for combining with previous weights (0.0 = no momentum, 1.0 = keep old weights)",
+    )
+    ## for mpi-3 code of selective averaging debug
+    parser.add_argument(
+        "--spawn_backend",
+        choices=["dist", "mpi4py"],
+        default="mpi4py",
+        help="Backend for spawn policy implementation: torch.distributed or mpi4py",
+    )
+    parser.add_argument(
+        "--mpi_sa_mode",
+        choices=["general", "fast"],
+        default="fast",
+        help=(
+            "MPI selective averaging implementation to use. "
+            "'fast' uses an optimized communication path assuming all parameters "
+            "have the same dtype (e.g., float32)."
+        ),
+    )
+    parser.add_argument(
+        "--age_range",
+        type=lambda s: tuple(map(int, s.split(","))),
+        default=(5, 15),
+        help="Age range (iterations) for selective averaging policy as tuple (min_age, max_age), e.g., '5,15'",
     )
 
     # Environment settings.
@@ -1481,7 +1583,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--performance_tracker_threshold",
         type=float,
-        default=None,
+        default=0.0,
         help="Threshold for the performance tracker. If None, the performance tracker is not triggered.",
     )
     parser.add_argument(
@@ -1492,4 +1594,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    assert (
+        args.age_range[1] >= args.age_range[0]
+    ), "Invalid age_range: max_age must be ge min_age"
     main(args)
