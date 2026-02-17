@@ -22,9 +22,8 @@ import os
 import time
 from argparse import ArgumentParser
 from math import ceil
-from typing import Optional, Tuple, cast
+from typing import cast
 
-import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
 from torch.profiler import ProfilerActivity, profile
@@ -32,11 +31,10 @@ from tqdm import trange
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
 from gfn.containers.replay_buffer_manager import ReplayBufferManager
-from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
+from gfn.estimators import DiscretePolicyEstimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
     FMGFlowNet,
-    GFlowNet,
     LogPartitionVarianceGFlowNet,
     ModifiedDBGFlowNet,
     SubTBGFlowNet,
@@ -178,7 +176,10 @@ def set_up_gflownet(args, env, preprocessor):
     elif args.loss in ("DB", "SubTB"):
         # We also need a LogStateFlowEstimator.
         logF_estimator = set_up_logF_estimator(
-            args, env, preprocessor, pf_estimator,
+            args,
+            env,
+            preprocessor,
+            pf_estimator,
         )
 
         if args.loss == "DB":
@@ -195,7 +196,6 @@ def set_up_gflownet(args, env, preprocessor):
                 weighting=args.subTB_weighting,
                 lamda=args.subTB_lambda,
             )
-
 
 
 def main(args) -> dict:  # noqa: C901
@@ -244,7 +244,10 @@ def main(args) -> dict:  # noqa: C901
         device = torch.device(f"cuda:{local_rank}")
     logger.info(
         "DDP initialized: rank=%d, world_size=%d, local_rank=%d, device=%s",
-        ddp_rank, ddp_world_size, local_rank, device,
+        ddp_rank,
+        ddp_world_size,
+        local_rank,
+        device,
     )
 
     # Set up the DistributedContext.
@@ -271,8 +274,7 @@ def main(args) -> dict:  # noqa: C901
             assigned_training_ranks_ddp = [
                 r
                 for r in range(num_training_ranks_ddp)
-                if (r % args.num_remote_buffers)
-                == (ddp_rank - num_training_ranks_ddp)
+                if (r % args.num_remote_buffers) == (ddp_rank - num_training_ranks_ddp)
             ]
 
     distributed_context = DistributedContext(
@@ -492,9 +494,7 @@ def main(args) -> dict:  # noqa: C901
             loss.backward()
 
         # DDP gradient synchronization: all-reduce gradients across training ranks.
-        with Timer(
-            timing, "ddp_grad_sync", enabled=args.timing
-        ) as ddp_sync_timer:
+        with Timer(timing, "ddp_grad_sync", enabled=args.timing) as ddp_sync_timer:
             for param in gflownet.parameters():
                 if param.grad is not None:
                     dist.all_reduce(
@@ -562,9 +562,7 @@ def main(args) -> dict:  # noqa: C901
 
             with Timer(timing, "log", enabled=args.timing):
                 # Track local modes found on every rank.
-                modes_found.update(
-                    env.modes_found(all_visited_terminating_states)
-                )
+                modes_found.update(env.modes_found(all_visited_terminating_states))
                 to_log["n_modes_found_local"] = len(modes_found)
 
                 if distributed_context.my_rank == 0:
@@ -619,9 +617,8 @@ def main(args) -> dict:  # noqa: C901
         print("Training complete, logs:", to_log)
 
     # Send termination signal to remote replay buffer manager(s) if used.
-    if (
-        distributed_context.is_training_rank()
-        and (distributed_context.assigned_buffer is not None)
+    if distributed_context.is_training_rank() and (
+        distributed_context.assigned_buffer is not None
     ):
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
 
