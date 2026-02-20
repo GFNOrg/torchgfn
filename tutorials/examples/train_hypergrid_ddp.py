@@ -341,7 +341,9 @@ def main(args) -> dict:  # noqa: C901
         is_root = distributed_context.my_rank == 0
 
         if is_root:
-            group_name = f"{wandb.util.generate_id()}_{distributed_context.num_training_ranks}"
+            group_name = (
+                f"{wandb.util.generate_id()}_{distributed_context.num_training_ranks}"
+            )
             group_name_bytes = group_name.encode("utf-8")
             group_name_len_tensor = torch.tensor(
                 [len(group_name_bytes)], dtype=torch.long

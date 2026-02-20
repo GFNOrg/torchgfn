@@ -110,6 +110,7 @@ class HypergridArgs(CommonArgs):
     half_precision: bool = False
     remote_buffer_freq = 1
     validate_environment: bool = True
+    weight_decay: float = 0.0
 
 
 @dataclass
