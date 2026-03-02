@@ -803,6 +803,10 @@ def main(args) -> dict:  # noqa: C901
     gflownet = gflownet.to(device)
 
     n_iterations = ceil(args.n_trajectories / args.batch_size)
+    assert args.batch_size % distributed_context.num_training_ranks == 0, (
+        f"batch_size ({args.batch_size}) must be divisible by "
+        f"num_training_ranks ({distributed_context.num_training_ranks})"
+    )
     per_node_batch_size = args.batch_size // distributed_context.num_training_ranks
     modes_found = set()
     # n_pixels_per_mode = round(env.height / 10) ** env.ndim
@@ -892,6 +896,7 @@ def main(args) -> dict:  # noqa: C901
     # Accumulators for averaging score_dict between log intervals.
     score_dict_accum: dict[str, float] = {}
     score_dict_count = 0
+    to_log = {}
 
     # Training loop.
     pbar = trange(n_iterations)

@@ -408,6 +408,10 @@ def main(args) -> dict:  # noqa: C901
     gflownet = gflownet.to(device)
 
     n_iterations = ceil(args.n_trajectories / args.batch_size)
+    assert args.batch_size % distributed_context.num_training_ranks == 0, (
+        f"batch_size ({args.batch_size}) must be divisible by "
+        f"num_training_ranks ({distributed_context.num_training_ranks})"
+    )
     per_node_batch_size = args.batch_size // distributed_context.num_training_ranks
     modes_found = set()
 
@@ -438,6 +442,7 @@ def main(args) -> dict:  # noqa: C901
     timing = {}
     time_start = time.time()
     l1_distances, validation_steps = [], []
+    to_log = {}
 
     # Used for calculating the L1 distance across all nodes.
     all_visited_terminating_states = env.states_from_batch_shape((0,))
