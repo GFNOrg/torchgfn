@@ -24,13 +24,17 @@ from argparse import ArgumentParser
 from math import ceil
 from typing import cast
 
+import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 from tutorials.examples.train_hypergrid import (
     ModesReplayBufferManager,
+    build_mode_heatmap_figure,
+    mode_heatmap_side,
     plot_results,
+    update_mode_heatmap,
 )
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
@@ -409,7 +413,12 @@ def main(args) -> dict:  # noqa: C901
 
     n_iterations = ceil(args.n_trajectories / args.batch_size)
     per_node_batch_size = args.batch_size // distributed_context.num_training_ranks
-    modes_found = set()
+    local_modes_found = set()
+    local_n_modes_total = env.n_modes
+    local_mode_heatmap_side = mode_heatmap_side(local_n_modes_total)
+    local_mode_heatmap = torch.zeros(
+        (local_mode_heatmap_side, local_mode_heatmap_side), dtype=torch.float32
+    )
 
     is_on_policy = (
         (args.replay_buffer_size == 0)
@@ -539,6 +548,13 @@ def main(args) -> dict:  # noqa: C901
         visited_terminating_states.extend(
             cast(DiscreteStates, trajectories.terminating_states)
         )
+        iter_modes_found = env.modes_found(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
+        new_local_modes = iter_modes_found - local_modes_found
+        if new_local_modes:
+            local_modes_found.update(new_local_modes)
+            update_mode_heatmap(local_mode_heatmap, new_local_modes)
 
         assert visited_terminating_states is not None
         all_visited_terminating_states.extend(visited_terminating_states)
@@ -555,6 +571,8 @@ def main(args) -> dict:  # noqa: C901
         }
         if score_dict is not None:
             to_log.update(score_dict)
+        local_n_modes_found = len(local_modes_found)
+        to_log["local_n_modes_found"] = local_n_modes_found
 
         if log_this_iter:
             if args.validate_environment:
@@ -569,8 +587,7 @@ def main(args) -> dict:  # noqa: C901
 
             with Timer(timing, "log", enabled=args.timing):
                 # Track local modes found on every rank.
-                modes_found.update(env.modes_found(all_visited_terminating_states))
-                to_log["n_modes_found_local"] = len(modes_found)
+                to_log["n_modes_found_local"] = len(local_modes_found)
 
                 if distributed_context.my_rank == 0:
                     if distributed_context.assigned_buffer is not None:
@@ -588,6 +605,9 @@ def main(args) -> dict:  # noqa: C901
                     )
 
                 if use_wandb:
+                    heatmap_figure = build_mode_heatmap_figure(local_mode_heatmap)
+                    to_log["local_modes_heatmap"] = wandb.Image(heatmap_figure)
+                    plt.close(heatmap_figure)
                     wandb.log(to_log, step=iteration)
 
     logger.info("Finished all iterations")
