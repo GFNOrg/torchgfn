@@ -405,8 +405,6 @@ def main(args) -> dict:  # noqa: C901
                 remote_buffer_freq=args.remote_buffer_freq,
             )
 
-    gflownet = gflownet.to(device)
-
     n_iterations = ceil(args.n_trajectories / args.batch_size)
     assert args.batch_size % distributed_context.num_training_ranks == 0, (
         f"batch_size ({args.batch_size}) must be divisible by "
