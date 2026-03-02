@@ -1,21 +1,4 @@
-r"""
-The goal of this script is to reproduce some of the published results on the HyperGrid
-environment. Run one of the following commands to reproduce some of the results in
-[Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259)
-
-python train_hypergrid_ddp.py --ndim 4 --height 8 --R0 {0.1, 0.01, 0.001} --tied {--uniform_pb} --loss {TB, DB}
-python train_hypergrid_ddp.py --ndim 2 --height 64 --R0 {0.1, 0.01, 0.001} --tied {--uniform_pb} --loss {TB, DB}
-
-And run one of the following to reproduce some of the results in
-[Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
-python train_hypergrid_ddp.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
-
-This script uses DDP (DistributedDataParallel) for multi-GPU gradient-parallel training.
-Launch with torchrun:
-  torchrun --nproc_per_node=4 train_hypergrid_ddp.py --loss TB --batch_size 64
-Each GPU processes a portion of the batch, and gradients are synchronized via all-reduce
-after every backward pass.
-"""
+"""Experimental: train a mixture of GFlowNets on the HyperGrid environment."""
 
 import logging
 import os
