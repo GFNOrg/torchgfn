@@ -1290,7 +1290,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--spawn_backend",
         choices=["none", "dist", "mpi4py"],
-        default="none",
+        default="dist",
         help="Backend for spawn policy implementation: torch.distributed or mpi4py",
     )
     parser.add_argument(
