@@ -881,7 +881,9 @@ def main(args) -> dict:  # noqa: C901
                 )
         else:
             if args.spawn_backend == "dist":
-                averaging_policy_torch = AverageAllPolicy(average_every=args.average_every)
+                averaging_policy_torch = AverageAllPolicy(
+                    average_every=args.average_every
+                )
             elif args.spawn_backend == "mpi4py":
                 averaging_policy_mpi4py = AverageAllPolicympi4py(
                     average_every=args.average_every
@@ -1000,8 +1002,8 @@ def main(args) -> dict:  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
 
-            if args.spawn_backend == "dist":
-                assert averaging_policy_torch is not None
+            if averaging_policy_torch is not None:
+                assert args.spawn_backend == "dist"
                 gflownet, optimizer, averaging_info = averaging_policy_torch(
                     iteration=iteration,
                     model=gflownet,
@@ -1011,17 +1013,15 @@ def main(args) -> dict:  # noqa: C901
                     ),
                     group=distributed_context.train_global_group,
                 )
-            elif args.spawn_backend == "mpi4py":
-                assert averaging_policy_mpi4py is not None
+            elif averaging_policy_mpi4py is not None:
+                assert args.spawn_backend == "mpi4py"
                 assert distributed_context.dc_mpi4py is not None
                 gflownet, optimizer, averaging_info = averaging_policy_mpi4py(
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
                     local_metric=(
-                        score_dict["score"]
-                        if score_dict is not None
-                        else -loss.item()
+                        score_dict["score"] if score_dict is not None else -loss.item()
                     ),
                     group=distributed_context.dc_mpi4py.train_global_group,
                 )
