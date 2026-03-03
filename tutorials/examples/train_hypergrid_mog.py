@@ -24,7 +24,6 @@ from argparse import ArgumentParser
 from math import ceil
 from typing import cast
 
-import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -32,7 +31,8 @@ from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 from tutorials.examples.train_hypergrid import (
     ModesReplayBufferManager,
-    build_mode_heatmap_figure,
+    build_mode_heatmap_plot,
+    build_mode_heatmap_table,
     mode_heatmap_side,
     plot_results,
     update_mode_heatmap,
@@ -665,9 +665,11 @@ def main(args) -> dict:  # noqa: C901
                     )
 
                 if use_wandb:
-                    heatmap_figure = build_mode_heatmap_figure(local_mode_heatmap)
-                    to_log["local_modes_heatmap"] = wandb.Image(heatmap_figure)
-                    plt.close(heatmap_figure)
+                    heatmap_table = build_mode_heatmap_table(local_mode_heatmap, wandb)
+                    to_log["local_modes_heatmap_table"] = heatmap_table
+                    heatmap_plot = build_mode_heatmap_plot(heatmap_table, wandb)
+                    if heatmap_plot is not None:
+                        to_log["local_modes_heatmap"] = heatmap_plot
                     wandb.log(to_log, step=iteration)
 
     logger.info("Finished all iterations")

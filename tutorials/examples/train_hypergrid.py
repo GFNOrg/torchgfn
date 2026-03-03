@@ -107,6 +107,38 @@ def build_mode_heatmap_figure(mode_heatmap: torch.Tensor):
     return fig
 
 
+def build_mode_heatmap_table(mode_heatmap: torch.Tensor, wandb):
+    """Create a wandb table for heatmap logging with custom chart support."""
+    mode_heatmap_np = mode_heatmap.detach().cpu().numpy()
+    table = wandb.Table(columns=["x", "y", "value"])
+    for y, row in enumerate(mode_heatmap_np):
+        for x, value in enumerate(row):
+            table.add_data(x, y, float(value))
+    return table
+
+
+def build_mode_heatmap_plot(heatmap_table, wandb):
+    """Create a wandb heatmap plot with compatibility across wandb versions."""
+    if hasattr(wandb, "plot") and hasattr(wandb.plot, "heatmap"):
+        return wandb.plot.heatmap(
+            heatmap_table,
+            "x",
+            "y",
+            "value",
+            title="Local Modes Heatmap",
+        )
+
+    if hasattr(wandb, "plot_table"):
+        return wandb.plot_table(
+            "wandb/heatmap/v0",
+            heatmap_table,
+            {"x": "x", "y": "y", "value": "value"},
+            {"title": "Local Modes Heatmap"},
+        )
+
+    return None
+
+
 class ModesReplayBufferManager(ReplayBufferManager):
     def __init__(
         self,
@@ -1157,9 +1189,11 @@ def main(args) -> dict:  # noqa: C901
                     )
 
                 if use_wandb:
-                    heatmap_figure = build_mode_heatmap_figure(local_mode_heatmap)
-                    to_log["local_modes_heatmap"] = wandb.Image(heatmap_figure)
-                    plt.close(heatmap_figure)
+                    heatmap_table = build_mode_heatmap_table(local_mode_heatmap, wandb)
+                    to_log["local_modes_heatmap_table"] = heatmap_table
+                    heatmap_plot = build_mode_heatmap_plot(heatmap_table, wandb)
+                    if heatmap_plot is not None:
+                        to_log["local_modes_heatmap"] = heatmap_plot
                     wandb.log(to_log, step=iteration)
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
