@@ -1136,7 +1136,7 @@ def main(args) -> dict:  # noqa: C901
                 assert averaging_policy_torch is not None
                 averaging_policy_torch.shutdown()
             elif args.spawn_backend == "mpi4py":
-                assert distributed_context.dc_mpi4py is not None
+                assert averaging_policy_mpi4py is not None
                 averaging_policy_mpi4py.shutdown()
         except Exception:
             pass
