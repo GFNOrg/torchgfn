@@ -84,7 +84,9 @@ def update_mode_heatmap(mode_heatmap: torch.Tensor, mode_ids: set[int]) -> None:
 
     side = mode_heatmap.shape[0]
 
-    ids_tensor = torch.tensor(list(mode_ids), dtype=torch.long, device=mode_heatmap.device)
+    ids_tensor = torch.tensor(
+        list(mode_ids), dtype=torch.long, device=mode_heatmap.device
+    )
     rows = ids_tensor // side
     cols = ids_tensor % side
     mode_heatmap[rows, cols] = 1.0
@@ -93,7 +95,6 @@ def update_mode_heatmap(mode_heatmap: torch.Tensor, mode_ids: set[int]) -> None:
 def build_mode_heatmap_figure(mode_heatmap: torch.Tensor):
     """Create a matplotlib heatmap figure for wandb image logging."""
     mode_heatmap_np = mode_heatmap.detach().cpu().numpy()
-    discovered = int(mode_heatmap.sum().item())
     fig, ax = plt.subplots(figsize=(4, 4))
     image = ax.imshow(
         mode_heatmap_np, cmap="viridis", vmin=0.0, vmax=1.0, interpolation="nearest"
