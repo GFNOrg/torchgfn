@@ -84,7 +84,7 @@ def update_mode_heatmap(mode_heatmap: torch.Tensor, mode_ids: set[int]) -> None:
 
     side = mode_heatmap.shape[0]
 
-    ids_tensor = torch.tensor(mode_ids, dtype=torch.long, device=mode_heatmap.device)
+    ids_tensor = torch.tensor(list(mode_ids), dtype=torch.long, device=mode_heatmap.device)
     rows = ids_tensor // side
     cols = ids_tensor % side
     mode_heatmap[rows, cols] = 1.0
