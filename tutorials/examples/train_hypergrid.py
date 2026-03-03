@@ -77,9 +77,7 @@ def mode_heatmap_side(n_modes: int) -> int:
     return ceil(n_modes**0.5)
 
 
-def update_mode_heatmap(
-    mode_heatmap: torch.Tensor, mode_ids: set[int]
-) -> None:
+def update_mode_heatmap(mode_heatmap: torch.Tensor, mode_ids: set[int]) -> None:
     """Mark discovered mode IDs in a square occupancy heatmap."""
     if not mode_ids:
         return
@@ -1124,7 +1122,9 @@ def main(args) -> dict:  # noqa: C901
         visited_terminating_states.extend(
             cast(DiscreteStates, trajectories.terminating_states)
         )
-        iter_modes_found = env.modes_found(cast(DiscreteStates, trajectories.terminating_states))
+        iter_modes_found = env.modes_found(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
         new_local_modes = iter_modes_found - local_modes_found
         if new_local_modes:
             local_modes_found.update(new_local_modes)

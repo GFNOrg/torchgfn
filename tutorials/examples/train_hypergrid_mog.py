@@ -512,7 +512,9 @@ def main(args) -> dict:  # noqa: C901
             # Mixture reward shaping for the local component:
             # log \tilde{R}_i(x) = log R(x) + log f_theta(x)_i.
             with torch.no_grad():
-                terminating_states = cast(DiscreteStates, trajectories.terminating_states)
+                terminating_states = cast(
+                    DiscreteStates, trajectories.terminating_states
+                )
                 log_rewards = trajectories.log_rewards
                 assert log_rewards is not None
                 f_theta_logits = f_theta(preprocessor(terminating_states))
