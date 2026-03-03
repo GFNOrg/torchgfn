@@ -48,6 +48,13 @@ STRATEGY_MAPPING = {
 }
 
 
+def format_run_ids_display(run_ids: list, max_display: int = 3) -> str:
+    """Format a list of run IDs for display, truncating if longer than max_display."""
+    if len(run_ids) <= max_display:
+        return str(run_ids)
+    return f"{run_ids[:max_display]}... ({len(run_ids)} total)"
+
+
 def fetch_wandb_runs(project_name="torchgfn/torchgfn"):
     """Fetch all runs from the specified wandb project."""
     print(f"Fetching runs from project: {project_name}")
@@ -97,11 +104,7 @@ def analyze_environment_configurations(runs_list):
     print(f"Found {len(env_config_runs)} unique environment configurations:")
     for env_config_id, run_ids in sorted(env_config_runs.items()):
         print(f"- {env_config_id}: {len(run_ids)} runs")
-        # Show first few run IDs for this config
-        if len(run_ids) <= 3:
-            print(f"  Run IDs: {run_ids}")
-        else:
-            print(f"  Run IDs: {run_ids[:3]}... ({len(run_ids)} total)")
+        print(f"  Run IDs: {format_run_ids_display(run_ids)}")
 
     # Check environment configuration status distribution
     print("\nEnvironment configuration status analysis:")
@@ -191,11 +194,7 @@ def analyze_groups(runs_list):
     print(f"Found {len(group_runs)} unique wandb groups:")
     for group_id, run_ids in sorted(group_runs.items()):
         print(f"- Group {group_id}: {len(run_ids)} runs")
-        # Show first few run IDs for this group
-        if len(run_ids) <= 3:
-            print(f"  Run IDs: {run_ids}")
-        else:
-            print(f"  Run IDs: {run_ids[:3]}... ({len(run_ids)} total)")
+        print(f"  Run IDs: {format_run_ids_display(run_ids)}")
 
     # Check group status distribution
     if group_runs:
