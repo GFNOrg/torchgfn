@@ -117,6 +117,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         # When rebuilding a fresh model + optimizer is desired, we store the
         # averaged parameters and construct the new model at the next safe call.
         self._new_weights: Optional[Dict[str, torch.Tensor]] = None
+        self._pending_spawn_avg_state: Optional[Dict[str, torch.Tensor]] = None
 
         # Rank-0 state for metric aggregation
         self._rank0_metric_handles: Dict[int, dist.Work] = {}
@@ -175,6 +176,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self._ensure_initialized(model)
         if not dist.is_available() or not dist.is_initialized():
             return model, optimizer, {}
+        rank = dist.get_rank()
 
         # Non-blocking metric send on cadence
         if local_metric is not None and iteration % self.average_every == 0:
@@ -184,7 +186,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 payload = torch.tensor(
                     [float(iteration), float(local_metric)], dtype=torch.float32
                 )
-                logger.debug(
+                logger.info(
                     "Rank %d: Sending metric %.4f for iteration %d",
                     rank,
                     local_metric,
@@ -211,7 +213,6 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 new_weights = self._new_weights
                 self._new_weights = None
             if new_weights is not None:
-                rank = dist.get_rank() if dist.is_initialized() else 0
                 logger.info(
                     "Rank %d: Rebuilding model with averaged weights (%d params)",
                     rank,
@@ -223,6 +224,25 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                     if name in new_weights:
                         param.data.copy_(new_weights[name])
                 averaged_this_iteration = True
+            else:
+                logger.debug(
+                    "Rank %d: Rebuild gate opened but _new_weights became None under lock",
+                    rank,
+                )
+        else:
+            pending_avg_count = None
+            with self._pending_lock:
+                if self._pending_spawn_avg_state is not None:
+                    pending_avg_count = len(self._pending_spawn_avg_state)
+            logger.debug(
+                "Rank %d: Skipping rebuild at iter=%d (_new_weights=%s, "
+                "_model_builder=%s, _pending_spawn_avg_state_count=%s)",
+                rank,
+                iteration,
+                self._new_weights is not None,
+                self._model_builder is not None,
+                pending_avg_count,
+            )
 
         return model, optimizer, {"averaged_this_iteration": averaged_this_iteration}
 
@@ -459,6 +479,13 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         )
         with self._pending_lock:
             self._pending_spawn_avg_state = avg_state
+            logger.debug(
+                "Rank %d: Stored averaged params in _pending_spawn_avg_state (%d params); "
+                "_new_weights currently %s",
+                rank,
+                len(avg_state),
+                "set" if self._new_weights is not None else "unset",
+            )
 
     # ---------------- Background thread loop ----------------
     def _background_loop(self) -> None:
