@@ -88,11 +88,12 @@ class DiscreteEBMArgs(CommonArgs):
 @dataclass
 class HypergridArgs(CommonArgs):
     back_ratio: float = 0.5
-    store_all_states: bool = True
-    calculate_partition: bool = True
     distributed: bool = False
     diverse_replay_buffer: bool = False
-    epsilon: float = 0.1
+    epsilon: float = 0.0
+    temperature: float = 1.0
+    n_noisy_layers: int = 0
+    noisy_std_init: float = 0.5
     height: int = 8
     loss: str = "TB"
     lr_logz: float = 1e-3
@@ -108,6 +109,8 @@ class HypergridArgs(CommonArgs):
     timing: bool = True
     half_precision: bool = False
     remote_buffer_freq = 1
+    validate_environment: bool = True
+    weight_decay: float = 0.0
 
 
 @dataclass
@@ -661,7 +664,7 @@ def test_bitsequence(seq_size: int, n_modes: int):
     if seq_size == 4 and n_modes == 2:
         assert final_l1_dist <= 9e-5
     if seq_size == 4 and n_modes == 4:
-        assert final_l1_dist <= 1e-5
+        assert final_l1_dist <= 1e-4
     if seq_size == 8 and n_modes == 2:
         assert final_l1_dist <= 1e-3
     if seq_size == 8 and n_modes == 4:

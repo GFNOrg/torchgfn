@@ -263,23 +263,26 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         mask = ~states.is_sink_state
         valid_states = states[mask]
 
-        if trajectories.conditions is not None:
+        if trajectories.states.conditions is not None:
             # Compute the condition matrix broadcast to match valid_states.
-            # The conditions tensor has shape (max_length, n_trajectories, 1)
-            # We need to index it to match the valid states
-            conditions = trajectories.conditions[mask]
-
+            # The conditions tensor has shape (n_trajectories, condition_dim)
+            # The states have batch shape (max_length, n_trajectories)
+            # We need to repeat the conditions to match the batch shape of the states.
+            conditions = trajectories.states.conditions
+            # (max_length, n_trajectories, condition_dim)
+            assert conditions.shape[:2] == states.batch_shape
+            conditions = conditions[mask]
             with has_conditions_exception_handler("logF", self.logF):
-                log_F = self.logF(valid_states, conditions)
+                log_F = self.logF(valid_states, conditions).squeeze(-1)
+
         else:
             with no_conditions_exception_handler("logF", self.logF):
                 log_F = self.logF(valid_states).squeeze(-1)
 
         if self.forward_looking:
-            log_rewards = env.log_reward(states).unsqueeze(-1)
-            log_F = log_F + log_rewards
+            log_F = log_F + env.log_reward(valid_states)
 
-        log_state_flows[mask[:-1]] = log_F.squeeze()
+        log_state_flows[mask[:-1]] = log_F
         return log_state_flows
 
     def calculate_masks(

@@ -99,7 +99,7 @@ def main(args):
 
     try:
         gflownet = cast(PFBasedGFlowNet, gflownet)
-        return torch.abs(estimated_dist(gflownet, env) - env.true_dist).mean().item()
+        return torch.abs(estimated_dist(gflownet, env) - env.true_dist()).mean().item()
     except AttributeError:
         print(
             "Training was completed succesfully. However computing the L1 distance is only implemented for TB for now."

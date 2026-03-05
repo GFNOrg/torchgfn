@@ -7,7 +7,6 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator, PolicyEstimatorProtocol
 from gfn.states import GraphStates, States
-from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import graph_states_share_storage
 from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 
@@ -145,7 +144,7 @@ class Sampler:
             n: Number of trajectories if ``states`` is None.
             states: Starting states (batch shape length 1) or ``None``.
             conditions: Optional condition tensor for conditional environments,
-                with shape (n_trajectories, condition_vector_dim); each row is the
+                with shape (n_trajectories, condition_dim); each row is the
                 condition vector for each trajectory.
             save_estimator_outputs: If True, store per‑step estimator outputs. Useful
                 for off-policy training with tempered policies.
@@ -187,12 +186,14 @@ class Sampler:
                     len(states.batch_shape) == 1
                 ), "States should have a batch_shape of length 1, w/ no trajectory dim!"
 
+        if conditions is not None:  # Explicitly set conditions if provided.
+            assert (
+                conditions.shape[:-1] == states.batch_shape
+            ), "Conditions must match states batch shape"
+            states.conditions = conditions
+
         n_trajectories = states.batch_shape[0]
         device = states.device
-
-        if conditions is not None:
-            assert states.batch_shape == conditions.shape[: len(states.batch_shape)]
-            ensure_same_device(states.device, conditions.device)
 
         if policy_estimator.is_backward:
             dones = states.is_initial_state
@@ -213,7 +214,7 @@ class Sampler:
         step = 0
         if not hasattr(policy_estimator, "init_context"):
             raise TypeError("Estimator is not policy-capable (missing PolicyMixin)")
-        ctx = policy_estimator.init_context(n_trajectories, device, conditions)
+        ctx = policy_estimator.init_context(n_trajectories, device, states.conditions)
 
         while not all(dones):
             actions = env.actions_from_batch_shape((n_trajectories,))
@@ -251,6 +252,10 @@ class Sampler:
                 new_states = env._backward_step(states, actions)  # type: ignore[attr-defined]
             else:
                 new_states = env._step(states, actions)  # type: ignore[attr-defined]
+
+            # Propagate conditions to new states
+            if states.conditions is not None:
+                new_states.conditions = states.conditions
 
             # Ensure that the new state is a distinct object from the old state.
             assert new_states is not states
@@ -310,29 +315,9 @@ class Sampler:
             if len(stacked_estimator_outputs) == 0:
                 stacked_estimator_outputs = None
 
-        # Broadcast condition tensor to match states batch shape if needed
-        if conditions is not None:
-            # The states have batch shape (max_length, n_trajectories). The
-            # conditions tensor should have shape (n_trajectories,) or
-            # (n_trajectories, 1). We need to broadcast it to (max_length,
-            # n_trajectories, 1) for the estimator
-            if len(conditions.shape) == 1:
-                # conditions has shape (n_trajectories,)
-                conditions = (
-                    conditions.unsqueeze(0)
-                    .unsqueeze(-1)
-                    .expand(stacked_states.batch_shape[0], -1, 1)
-                )
-            elif len(conditions.shape) == 2 and conditions.shape[1] == 1:
-                # conditions has shape (n_trajectories, 1)
-                conditions = conditions.unsqueeze(0).expand(
-                    stacked_states.batch_shape[0], -1, -1
-                )
-
         trajectories = Trajectories(
             env=env,
             states=stacked_states,
-            conditions=conditions,
             actions=stacked_actions,
             terminating_idx=trajectories_terminating_idx,
             is_backward=policy_estimator.is_backward,
@@ -381,7 +366,6 @@ class LocalSearchSampler(Sampler):
         self,
         env: Env,
         trajectories: Trajectories,
-        conditions: torch.Tensor | None = None,
         save_estimator_outputs: bool = False,
         save_logprobs: bool = False,
         back_steps: torch.Tensor | None = None,
@@ -401,8 +385,6 @@ class LocalSearchSampler(Sampler):
         Args:
             env: The environment to sample trajectories from.
             trajectories: The batch of trajectories to perform local search on.
-            conditions: Optional tensor of conditions information for conditional
-                policies. Must match the batch shape of states.
             save_estimator_outputs: If True, saves the estimator outputs for each
                 step. Useful for off-policy training with tempered policies.
             save_logprobs: If True, calculates and saves the log probabilities of
@@ -446,7 +428,6 @@ class LocalSearchSampler(Sampler):
         prev_trajectories = self.backward_sampler.sample_trajectories(
             env,
             states=trajectories.terminating_states,
-            conditions=conditions,
             save_estimator_outputs=save_estimator_outputs,
             save_logprobs=save_logprobs,
             **policy_kwargs,
@@ -466,10 +447,17 @@ class LocalSearchSampler(Sampler):
             0,
             (n_prevs).view(1, -1, 1).expand(-1, -1, *trajectories.states.state_shape),
         ).squeeze(0)
+        if prev_trajectories.states.conditions is not None:
+            # assumption: conditions are not changing within a trajectory
+            junction_conditions = prev_trajectories.states.conditions[0]
+        else:
+            junction_conditions = None
+
         recon_trajectories = super().sample_trajectories(
             env,
-            states=env.states_from_tensor(junction_states_tsr),
-            conditions=conditions,
+            states=env.states_from_tensor(
+                junction_states_tsr, conditions=junction_conditions
+            ),
             save_estimator_outputs=save_estimator_outputs,
             save_logprobs=save_logprobs,
             **policy_kwargs,
@@ -623,7 +611,6 @@ class LocalSearchSampler(Sampler):
             ls_trajectories, is_updated = self.local_search(
                 env,
                 trajectories[search_indices],
-                conditions,
                 save_estimator_outputs,
                 save_logprobs,
                 back_steps,
@@ -881,7 +868,6 @@ class LocalSearchSampler(Sampler):
         new_trajectories = Trajectories(
             env=env,
             states=env.states_from_tensor(new_trajectories_states_tsr),
-            conditions=prev_trajectories.conditions,
             actions=env.actions_from_tensor(new_trajectories_actions_tsr),
             terminating_idx=new_trajectories_dones,
             is_backward=False,

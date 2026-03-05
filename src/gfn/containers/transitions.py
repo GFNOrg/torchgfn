@@ -22,8 +22,6 @@ class Transitions(Container):
     Attributes:
         env: The environment where the states and actions are defined.
         states: States with batch_shape (n_transitions,).
-        conditions: (Optional) Tensor of shape (n_transitions, condition_vector_dim)
-            containing the condition vectors for the transitions.
         actions: Actions with batch_shape (n_transitions,). The actions make the
             transitions from the `states` to the `next_states`.
         is_terminating: Boolean tensor of shape (n_transitions,) indicating whether the
@@ -43,7 +41,6 @@ class Transitions(Container):
         self,
         env: Env,
         states: States | None = None,
-        conditions: torch.Tensor | None = None,
         actions: Actions | None = None,
         is_terminating: torch.Tensor | None = None,
         next_states: States | None = None,
@@ -57,8 +54,6 @@ class Transitions(Container):
             env: The environment where the states and actions are defined.
             states: States with batch_shape (n_transitions,). If None, an empty States
                 object is created.
-            conditions: Optional tensor of shape (n_transitions, condition_vector_dim)
-                containing the condition vectors for the transitions.
             actions: Actions with batch_shape (n_transitions,). If None, an empty Actions
                 object is created.
             is_terminating: Boolean tensor of shape (n_transitions,) indicating whether
@@ -83,17 +78,12 @@ class Transitions(Container):
         device = self.env.device
         for obj in [states, actions, next_states]:
             ensure_same_device(obj.device, device) if obj is not None else True
-        for tensor in [conditions, is_terminating, log_rewards, log_probs]:
+        for tensor in [is_terminating, log_rewards, log_probs]:
             ensure_same_device(tensor.device, device) if tensor is not None else True
 
         self.states = states if states is not None else env.states_from_batch_shape((0,))
         assert len(self.states.batch_shape) == 1
         batch_shape = self.states.batch_shape
-
-        self.conditions = conditions
-        assert self.conditions is None or (
-            self.conditions.shape[: len(batch_shape)] == batch_shape
-        )
 
         self.actions = (
             actions if actions is not None else env.actions_from_batch_shape((0,))
@@ -257,7 +247,6 @@ class Transitions(Container):
             index = [index]
 
         states = self.states[index]
-        conditions = self.conditions[index] if self.conditions is not None else None
         actions = self.actions[index]
         is_terminating = self.is_terminating[index]
         next_states = self.next_states[index]
@@ -267,7 +256,6 @@ class Transitions(Container):
         return Transitions(
             env=self.env,
             states=states,
-            conditions=conditions,
             actions=actions,
             is_terminating=is_terminating,
             next_states=next_states,
@@ -282,12 +270,6 @@ class Transitions(Container):
         Args:
             Another Transitions object to append.
         """
-        if self.conditions is not None:
-            # TODO: Support the case
-            raise NotImplementedError(
-                "`extend` is not implemented for conditional Transitions."
-            )
-
         if len(other) == 0:
             return
 

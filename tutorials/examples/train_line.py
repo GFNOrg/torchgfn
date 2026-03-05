@@ -272,7 +272,7 @@ def train(
                 gflownet.logz_parameters()[
                     0
                 ].item(),  # Assumes only one estimate of logZ.
-                env.log_partition,
+                env.log_partition(),
             )
         )
 

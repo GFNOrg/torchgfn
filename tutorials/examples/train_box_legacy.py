@@ -279,7 +279,7 @@ def main(args: Namespace) -> float:  # noqa: C901
         logZ_info = ""
         if args.loss != "ZVar":
             assert logZ is not None
-            to_log.update({"logZdiff": env.log_partition - logZ.item()})
+            to_log.update({"logZdiff": env.log_partition() - logZ.item()})
             logZ_info = f"logZ: {logZ.item():.2f}, "
         if use_wandb:
             wandb.log(to_log, step=iteration)
@@ -287,7 +287,7 @@ def main(args: Namespace) -> float:  # noqa: C901
             tqdm.write(
                 f"States: {states_visited}, "
                 f"Loss: {loss.item():.3f}, {logZ_info}"
-                f"true logZ: {env.log_partition:.2f}, JSD: {jsd:.4f}"
+                f"true logZ: {env.log_partition():.2f}, JSD: {jsd:.4f}"
             )
 
         if iteration % args.validation_interval == 0:
