@@ -1,21 +1,4 @@
-r"""
-The goal of this script is to reproduce some of the published results on the HyperGrid
-environment. Run one of the following commands to reproduce some of the results in
-[Trajectory balance: Improved credit assignment in GFlowNets](https://arxiv.org/abs/2201.13259)
-
-python train_hypergrid_ddp.py --ndim 4 --height 8 --R0 {0.1, 0.01, 0.001} --tied {--uniform_pb} --loss {TB, DB}
-python train_hypergrid_ddp.py --ndim 2 --height 64 --R0 {0.1, 0.01, 0.001} --tied {--uniform_pb} --loss {TB, DB}
-
-And run one of the following to reproduce some of the results in
-[Learning GFlowNets from partial episodes for improved convergence and stability](https://arxiv.org/abs/2209.12782)
-python train_hypergrid_ddp.py --ndim {2, 4} --height 12 --R0 {1e-3, 1e-4} --tied --loss {TB, DB, SubTB}
-
-This script uses DDP (DistributedDataParallel) for multi-GPU gradient-parallel training.
-Launch with torchrun:
-  torchrun --nproc_per_node=4 train_hypergrid_ddp.py --loss TB --batch_size 64
-Each GPU processes a portion of the batch, and gradients are synchronized via all-reduce
-after every backward pass.
-"""
+"""Experimental: train a mixture of GFlowNets on the HyperGrid environment."""
 
 import logging
 import os
@@ -26,6 +9,7 @@ from typing import cast
 
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 from tutorials.examples.train_hypergrid import (
@@ -199,6 +183,20 @@ def set_up_gflownet(args, env, preprocessor):
                 weighting=args.subTB_weighting,
                 lamda=args.subTB_lambda,
             )
+
+
+def set_up_f_theta_classifier(args, env, preprocessor, n_components):
+    """Returns the f_theta classifier mapping states to mixture-component logits."""
+    if args.tabular:
+        module = Tabular(n_states=env.n_states, output_dim=n_components)
+    else:
+        module = MLP(
+            input_dim=preprocessor.output_dim,
+            output_dim=n_components,
+            hidden_dim=args.hidden_dim,
+            n_hidden_layers=args.n_hidden,
+        )
+    return module
 
 
 def main(args) -> dict:  # noqa: C901
@@ -382,6 +380,17 @@ def main(args) -> dict:  # noqa: C901
     assert gflownet is not None
     gflownet = gflownet.to(device)
     optimizer = _make_optimizer_for(gflownet, args)
+    component_index = distributed_context.my_rank
+
+    # Shared partitioner f_theta trained as a classifier over component IDs.
+    f_theta = set_up_f_theta_classifier(
+        args, env, preprocessor, num_training_ranks_ddp
+    ).to(device)
+    f_theta_optimizer = torch.optim.AdamW(
+        f_theta.parameters(),
+        lr=args.lr_f_theta,
+        weight_decay=args.weight_decay,
+    )
 
     # Create replay buffer if needed.
     replay_buffer = None
@@ -477,6 +486,19 @@ def main(args) -> dict:  # noqa: C901
         with Timer(
             timing, "to_training_samples", enabled=args.timing
         ) as to_train_samples_timer:
+            # Mixture reward shaping for the local component:
+            # log \tilde{R}_i(x) = log R(x) + log f_theta(x)_i.
+            with torch.no_grad():
+                terminating_states = cast(
+                    DiscreteStates, trajectories.terminating_states
+                )
+                log_rewards = trajectories.log_rewards
+                assert log_rewards is not None
+                f_theta_logits = f_theta(preprocessor(terminating_states))
+                f_theta_probs = torch.softmax(f_theta_logits, dim=-1)
+                local_component_probs = f_theta_probs[:, component_index].clamp_min(1e-8)
+                trajectories._log_rewards = log_rewards + torch.log(local_component_probs)  # type: ignore
+
             training_samples = gflownet.to_training_samples(trajectories)
 
             score_dict = None
@@ -503,9 +525,27 @@ def main(args) -> dict:  # noqa: C901
         with Timer(timing, "loss_backward", enabled=args.timing) as loss_backward_timer:
             loss.backward()
 
-        # DDP gradient synchronization: all-reduce gradients across training ranks.
+        # Optimization.
+        with Timer(timing, "optimizer", enabled=args.timing) as opt_timer:
+            optimizer.step()
+
+        # Train f_theta to predict the component/rank that generated each terminal state.
+        with Timer(timing, "f_theta_step", enabled=args.timing) as f_theta_timer:
+            f_theta_optimizer.zero_grad()
+            terminating_states = cast(DiscreteStates, trajectories.terminating_states)
+            f_theta_logits = f_theta(preprocessor(terminating_states))
+            targets = torch.full(
+                (f_theta_logits.shape[0],),
+                component_index,
+                dtype=torch.long,
+                device=device,
+            )
+            f_theta_loss = F.cross_entropy(f_theta_logits, targets)
+            f_theta_loss.backward()
+
+        # DDP gradient synchronization: all-reduce only f_theta gradients.
         with Timer(timing, "ddp_grad_sync", enabled=args.timing) as ddp_sync_timer:
-            for param in gflownet.parameters():
+            for param in f_theta.parameters():
                 if param.grad is not None:
                     dist.all_reduce(
                         param.grad,
@@ -513,10 +553,7 @@ def main(args) -> dict:  # noqa: C901
                         group=distributed_context.train_global_group,
                     )
                     param.grad /= distributed_context.num_training_ranks
-
-        # Optimization.
-        with Timer(timing, "optimizer", enabled=args.timing) as opt_timer:
-            optimizer.step()
+        f_theta_optimizer.step()
 
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
@@ -530,6 +567,7 @@ def main(args) -> dict:  # noqa: C901
                 loss_backward_timer.elapsed,
                 ddp_sync_timer.elapsed,
                 opt_timer.elapsed,
+                f_theta_timer.elapsed,
             ]
             if t is not None
         )
@@ -547,12 +585,14 @@ def main(args) -> dict:  # noqa: C901
         all_visited_terminating_states.extend(visited_terminating_states)
         to_log = {
             "loss": loss.item(),
+            "f_theta_loss": f_theta_loss.item(),
             "sample_time": sample_timer.elapsed,
             "to_train_samples_time": to_train_samples_timer.elapsed,
             "loss_time": loss_timer.elapsed,
             "loss_backward_time": loss_backward_timer.elapsed,
             "ddp_sync_time": ddp_sync_timer.elapsed,
             "opt_time": opt_timer.elapsed,
+            "f_theta_time": f_theta_timer.elapsed,
             "rest_time": rest_time,
             "l1_dist": None,  # only logged if validate_environment.
         }
@@ -560,6 +600,11 @@ def main(args) -> dict:  # noqa: C901
             to_log.update(score_dict)
 
         if log_this_iter:
+            local_logz_param = getattr(gflownet, "logZ", None)
+            if local_logz_param is not None:
+                local_logz = local_logz_param.detach().reshape(1)
+                to_log["logZ_component"] = local_logz.item()
+
             if args.validate_environment:
                 with Timer(timing, "validation", enabled=args.timing):
                     validation_info, all_visited_terminating_states = env.validate(
@@ -764,6 +809,12 @@ if __name__ == "__main__":
         type=float,
         default=0.1,
         help="Specific learning rate for Z (only used for TB loss)",
+    )
+    parser.add_argument(
+        "--lr_f_theta",
+        type=float,
+        default=1e-3,
+        help="Learning rate for the shared f_theta classifier.",
     )
     parser.add_argument(
         "--weight_decay",
