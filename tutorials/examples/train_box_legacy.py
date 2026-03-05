@@ -1,20 +1,15 @@
 r"""
-The goal of this script is to train a GFlowNet on the Box environment using
-Cartesian per-dimension increments.
-
-Example usage:
-    python train_box.py --delta 0.25 --tied --loss TB
-    python train_box.py --delta 0.1 --loss DB --n_components 5
-
-Based on results from:
+The goal of this script is to reproduce some of the published results on the Box
+environment. Run one of the following commands to reproduce some of the results in
 [A theory of continuous generative flow networks](https://arxiv.org/abs/2301.12594)
+
+
+python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
 
 from argparse import ArgumentParser, Namespace
-from pathlib import Path
 from typing import Optional
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import wandb
@@ -32,10 +27,11 @@ from gfn.gflownet import (
 )
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
-    BoxCartesianPBEstimator,
-    BoxCartesianPBMLP,
-    BoxCartesianPFEstimator,
-    BoxCartesianPFMLP,
+    BoxPBEstimator,
+    BoxPBMLP,
+    BoxPBUniform,
+    BoxPFEstimator,
+    BoxPFMLP,
     BoxStateFlowModule,
 )
 from gfn.preprocessors import IdentityPreprocessor
@@ -93,104 +89,6 @@ def estimate_jsd(kde1: KernelDensity, kde2: KernelDensity) -> float:
     return jsd / 2.0
 
 
-def plot_trajectories(
-    env: Box,
-    sampler: Sampler,
-    n_trajectories: int = 100,
-    output_path: Optional[str] = None,
-    alpha: float = 0.1,
-) -> None:
-    """Plot sampled trajectories on the Box environment.
-
-    Each trajectory is plotted as a line from s0 to the terminal state,
-    with transparency to visualize overlapping paths.
-
-    Args:
-        env: The Box environment.
-        sampler: The sampler to use for generating trajectories.
-        n_trajectories: Number of trajectories to sample and plot.
-        output_path: Path to save the output plot. If None, defaults to
-            'output/train_box_trajectories.png' relative to this script.
-        alpha: Transparency for each trajectory line.
-    """
-    # Default output path relative to script location
-    if output_path is None:
-        script_dir = Path(__file__).parent
-        output_path = str(script_dir / "output" / "train_box_trajectories.png")
-
-    # Sample trajectories
-    trajectories = sampler.sample_trajectories(env, n=n_trajectories)
-
-    fig, ax = plt.subplots(figsize=(8, 8))
-
-    # Get all states: shape is (max_length+1, n_trajectories, state_dim)
-    all_states = trajectories.states.tensor.cpu().numpy()
-    terminating_idx = trajectories.terminating_idx.cpu().numpy()
-
-    # Plot reward contours (corners at (0,0), (0,1), (1,0), (1,1))
-    # Create a grid for the reward landscape
-    x = np.linspace(0, 1, 100)
-    y = np.linspace(0, 1, 100)
-    X, Y = np.meshgrid(x, y)
-    grid_states = torch.tensor(
-        np.stack([X.flatten(), Y.flatten()], axis=1), dtype=torch.float32
-    )
-    rewards = env.reward(env.States(grid_states.to(env.device)))
-    Z = rewards.cpu().numpy().reshape(X.shape)
-
-    # Plot reward contours
-    contour = ax.contourf(X, Y, Z, levels=20, alpha=0.3, cmap="Blues")
-    plt.colorbar(contour, ax=ax, label="Reward")
-
-    # Plot each trajectory
-    for i in range(n_trajectories):
-        # Get the states for this trajectory up to its terminating index
-        term_idx = terminating_idx[i]
-        traj_states = all_states[: term_idx + 1, i, :]  # (length, state_dim)
-
-        # Plot the trajectory path (black lines, low alpha)
-        ax.plot(
-            traj_states[:, 0],
-            traj_states[:, 1],
-            "k-",
-            alpha=alpha,
-            linewidth=0.5,
-        )
-
-        # Mark the terminal state (red dots, full alpha, larger than lines)
-        ax.scatter(
-            traj_states[-2, 0],
-            traj_states[-2, 1],
-            c="red",
-            s=2,
-            alpha=0.2,
-            zorder=5,
-            marker="D",
-            edgecolors="darkred",
-            linewidths=1,
-        )
-
-    # Mark the source state
-    ax.scatter([0], [0], c="green", s=100, marker="*", zorder=10, label="s0")
-
-    ax.set_xlim(-0.05, 1.05)
-    ax.set_ylim(-0.05, 1.05)
-    ax.set_xlabel("Dimension 1")
-    ax.set_ylabel("Dimension 2")
-    ax.set_title(f"Sampled Trajectories (n={n_trajectories})")
-    ax.set_aspect("equal")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    # Ensure output directory exists
-    output_dir = Path(output_path).parent
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"Trajectory plot saved to: {output_path}")
-
-
 def main(args: Namespace) -> float:  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
@@ -213,30 +111,34 @@ def main(args: Namespace) -> float:  # noqa: C901
     # 2. Create the gflownet.
     #    For this we need modules and estimators.
     #    Depending on the loss, we may need several estimators:
-    #    Using Cartesian estimators (per-dimension increments, simpler and faster)
-    pf_module = BoxCartesianPFMLP(
+    pf_module = BoxPFMLP(
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
         n_components=args.n_components,
+        n_components_s0=args.n_components_s0,
     )
-    pb_module = BoxCartesianPBMLP(
-        hidden_dim=args.hidden_dim,
-        n_hidden_layers=args.n_hidden,
-        n_components=args.n_components,
-        trunk=pf_module.trunk if args.tied else None,
-    )
+    if args.uniform_pb:
+        pb_module = BoxPBUniform()
+    else:
+        pb_module = BoxPBMLP(
+            hidden_dim=args.hidden_dim,
+            n_hidden_layers=args.n_hidden,
+            n_components=args.n_components,
+            trunk=pf_module.trunk if args.tied else None,
+        )
 
-    pf_estimator = BoxCartesianPFEstimator(
+    pf_estimator = BoxPFEstimator(
         env,
         pf_module,
+        n_components_s0=args.n_components_s0,
         n_components=args.n_components,
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
-    pb_estimator = BoxCartesianPBEstimator(
+    pb_estimator = BoxPBEstimator(
         env,
         pb_module,
-        n_components=args.n_components,
+        n_components=args.n_components if not args.uniform_pb else 1,
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
@@ -307,17 +209,18 @@ def main(args: Namespace) -> float:  # noqa: C901
     # 3. Create the optimizer and scheduler
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
-    assert isinstance(pb_module.last_layer, torch.nn.Module)
-    optimizer.add_param_group(
-        {
-            "params": (
-                pb_module.last_layer.parameters()
-                if args.tied
-                else pb_module.parameters()
-            ),
-            "lr": args.lr,
-        }
-    )
+    if not args.uniform_pb:
+        assert isinstance(pb_module.last_layer, torch.nn.Module)
+        optimizer.add_param_group(
+            {
+                "params": (
+                    pb_module.last_layer.parameters()
+                    if args.tied
+                    else pb_module.parameters()
+                ),
+                "lr": args.lr,
+            }
+        )
     if args.loss in ("DB", "SubTB"):
         assert module is not None
         optimizer.add_param_group(
@@ -401,14 +304,6 @@ def main(args: Namespace) -> float:  # noqa: C901
 
             to_log.update({"JSD": jsd})
 
-    # Plot trajectories at the end of training
-    print("\nGenerating trajectory visualization...")
-    plot_trajectories(
-        env=env,
-        sampler=sampler,
-        n_trajectories=1000,
-    )
-
     return jsd
 
 
@@ -420,8 +315,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--delta",
         type=float,
-        default=0.1,
-        help="maximum distance between two successive states (min_incr in gflownet)",
+        default=0.25,
+        help="maximum distance between two successive states",
     )
 
     parser.add_argument(
@@ -464,16 +359,24 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max_concentration",
         type=float,
-        default=100.0,
+        default=5.1,
         help="maximal value for the Beta concentration parameters",
     )
 
     parser.add_argument(
         "--n_components",
         type=int,
-        default=5,
-        help="Number of mixture components for Beta distributions",
+        default=2,
+        help="Number of Beta distributions for P_F(s'|s)",
     )
+    parser.add_argument(
+        "--n_components_s0",
+        type=int,
+        default=4,
+        help="Number of Beta distributions for P_F(s'|s_0)",
+    )
+
+    parser.add_argument("--uniform_pb", action="store_true", help="Use a uniform PB")
     parser.add_argument(
         "--tied",
         action="store_true",
@@ -488,7 +391,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_hidden",
         type=int,
-        default=2,
+        default=4,
         help="Number of hidden layers (of size `hidden_dim`) in the estimators'"
         + " neural network modules",
     )
@@ -496,14 +399,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--lr",
         type=float,
-        default=1e-4,
+        default=1e-3,
         help="Learning rate for the estimators' modules",
     )
     parser.add_argument(
         "--lr_Z",
         type=float,
-        default=1e-2,
-        help="Specific learning rate for logZ (should be higher than base lr)",
+        default=1e-3,
+        help="Specific learning rate for logZ",
     )
     parser.add_argument(
         "--lr_F",

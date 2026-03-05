@@ -3,26 +3,37 @@ from gfn.containers.base import Container
 from gfn.estimators import DiscretePolicyEstimator
 from gfn.gflownet import FMGFlowNet, TBGFlowNet
 from gfn.gym import Box, HyperGrid
-from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
+from gfn.gym.helpers.box_utils import (
+    BoxCartesianPBEstimator,
+    BoxCartesianPBMLP,
+    BoxCartesianPFEstimator,
+    BoxCartesianPFMLP,
+)
 from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.modules import MLP
 
 
 def test_trajectory_based_gflownet_generic():
-    pf_module = BoxPFMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
+    n_components = 3
+    pf_module = BoxCartesianPFMLP(
+        hidden_dim=32, n_hidden_layers=2, n_components=n_components
     )
-    pb_module = BoxPBMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, trunk=pf_module.trunk
+    pb_module = BoxCartesianPBMLP(
+        hidden_dim=32,
+        n_hidden_layers=2,
+        n_components=n_components,
+        trunk=pf_module.trunk,
     )
 
     env = Box()
 
-    pf_estimator = BoxPFEstimator(
-        env=env, module=pf_module, n_components=1, n_components_s0=1
+    pf_estimator = BoxCartesianPFEstimator(
+        env=env, module=pf_module, n_components=n_components
     )
-    pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
+    pb_estimator = BoxCartesianPBEstimator(
+        env=env, module=pb_module, n_components=n_components
+    )
 
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     mock_trajectories = Trajectories(env)
@@ -56,19 +67,25 @@ def test_flow_matching_gflownet_generic():
 
 
 def test_pytorch_inheritance():
-    pf_module = BoxPFMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
+    n_components = 3
+    pf_module = BoxCartesianPFMLP(
+        hidden_dim=32, n_hidden_layers=2, n_components=n_components
     )
-    pb_module = BoxPBMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, trunk=pf_module.trunk
+    pb_module = BoxCartesianPBMLP(
+        hidden_dim=32,
+        n_hidden_layers=2,
+        n_components=n_components,
+        trunk=pf_module.trunk,
     )
 
     env = Box()
 
-    pf_estimator = BoxPFEstimator(
-        env=env, module=pf_module, n_components=1, n_components_s0=1
+    pf_estimator = BoxCartesianPFEstimator(
+        env=env, module=pf_module, n_components=n_components
     )
-    pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
+    pb_estimator = BoxCartesianPBEstimator(
+        env=env, module=pb_module, n_components=n_components
+    )
 
     tbgflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     assert hasattr(

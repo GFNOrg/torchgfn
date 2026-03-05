@@ -18,7 +18,12 @@ from gfn.estimators import (
 )
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
-from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
+from gfn.gym.helpers.box_utils import (
+    BoxCartesianPBEstimator,
+    BoxCartesianPBMLP,
+    BoxCartesianPFEstimator,
+    BoxCartesianPFMLP,
+)
 from gfn.preprocessors import (
     EnumPreprocessor,
     IdentityPreprocessor,
@@ -92,25 +97,23 @@ def trajectory_sampling_with_return(
 
     elif env_name == "Box":
         env = Box(delta=delta)
-        pf_module = BoxPFMLP(
+        pf_module = BoxCartesianPFMLP(
             hidden_dim=32,
             n_hidden_layers=2,
             n_components=n_components,
-            n_components_s0=n_components_s0,
         )
-        pb_module = BoxPBMLP(
+        pb_module = BoxCartesianPBMLP(
             hidden_dim=32,
             n_hidden_layers=2,
             n_components=n_components,
             trunk=pf_module.trunk,
         )
-        pf_estimator = BoxPFEstimator(
+        pf_estimator = BoxCartesianPFEstimator(
             env=env,
             module=pf_module,
             n_components=n_components,
-            n_components_s0=n_components_s0,
         )
-        pb_estimator = BoxPBEstimator(
+        pb_estimator = BoxCartesianPBEstimator(
             env=env, module=pb_module, n_components=n_components
         )
     elif env_name == "GraphBuildingOnEdges":
@@ -434,26 +437,27 @@ def test_local_search_for_loop_equivalence(
     else:
         env = Box(delta=0.1)
 
-        # Build pf & pb
-        pf_module = BoxPFMLP(
+        # Build pf & pb using Cartesian estimators
+        n_components = 3
+        pf_module = BoxCartesianPFMLP(
             hidden_dim=32,
             n_hidden_layers=2,
-            n_components=1,
-            n_components_s0=1,
+            n_components=n_components,
         )
-        pb_module = BoxPBMLP(
+        pb_module = BoxCartesianPBMLP(
             hidden_dim=32,
             n_hidden_layers=2,
-            n_components=1,
+            n_components=n_components,
             trunk=pf_module.trunk,
         )
-        pf_estimator = BoxPFEstimator(
+        pf_estimator = BoxCartesianPFEstimator(
             env=env,
             module=pf_module,
-            n_components=1,
-            n_components_s0=1,
+            n_components=n_components,
         )
-        pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
+        pb_estimator = BoxCartesianPBEstimator(
+            env=env, module=pb_module, n_components=n_components
+        )
 
     # Build sampler
     sampler = LocalSearchSampler(pf_estimator=pf_estimator, pb_estimator=pb_estimator)

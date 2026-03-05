@@ -18,6 +18,554 @@ PI_2: float = torch.pi / 2.0
 CLAMP: float = torch.finfo(torch.get_default_dtype()).eps
 
 
+# =============================================================================
+# Cartesian Increment Approach (simplified, faster)
+# Inspired by gflownet's ContinuousCube implementation.
+# =============================================================================
+
+
+class BoxCartesianDistribution(Distribution):
+    """Cartesian increment distribution for Box environment.
+
+    Uses MixtureSameFamily(Categorical, Beta) per dimension for sampling increments.
+    Much simpler than polar coordinates - samples relative increments per dimension
+    and converts to absolute using: action = min_incr + r * (max_range).
+
+    Attributes:
+        delta: Minimum step size.
+        epsilon: Small value for numerical stability.
+    """
+
+    arg_constraints: dict = {}  # No constraints for custom distribution
+
+    def __init__(
+        self,
+        states: States,
+        exit_logits: Tensor,
+        mixture_logits: Tensor,
+        alpha: Tensor,
+        beta: Tensor,
+        delta: float,
+        epsilon: float = 1e-6,
+    ) -> None:
+        """Initialize the distribution.
+
+        Args:
+            states: Current states, shape (batch, n_dim).
+            exit_logits: Logits for exit probability, shape (batch,).
+            mixture_logits: Mixture weights, shape (batch, n_dim, n_components).
+            alpha: Beta alpha params, shape (batch, n_dim, n_components).
+            beta: Beta beta params, shape (batch, n_dim, n_components).
+            delta: Minimum step size.
+            epsilon: Numerical stability constant.
+        """
+        super().__init__()
+        self.delta = delta
+        self.epsilon = epsilon
+        self.states = states
+        self.n_dim = states.tensor.shape[-1]
+
+        # Exit distribution
+        from torch.distributions import Bernoulli
+
+        self.exit_dist = Bernoulli(logits=exit_logits)
+
+        # Increment distribution per dimension
+        mix = Categorical(logits=mixture_logits)
+        components = Beta(alpha, beta)
+        self.increment_dist = MixtureSameFamily(mix, components)
+
+        # Compute valid ranges for each state
+        # s0: can go anywhere in [0, 1] (like gflownet's first step from source)
+        # non-s0: must step at least delta, max is 1-state
+        is_s0 = torch.all(states.tensor == 0, dim=-1, keepdim=True)
+        self.is_s0 = is_s0.squeeze(-1)
+        self.min_incr = torch.where(is_s0, 0.0, delta)
+        # For s0: max_range = 1.0 (action in [0, 1], full coverage of state space)
+        # For non-s0: max_range = 1 - state - delta (action in [delta, 1-state])
+        self.max_range = torch.where(
+            is_s0,
+            torch.ones_like(states.tensor),
+            (1.0 - states.tensor - delta),
+        ).clamp(min=epsilon)
+
+    def sample(self, sample_shape: Size = Size()) -> Tensor:
+        """Sample actions using Cartesian per-dimension increments."""
+        # Sample exit decisions
+        exit_mask = self.exit_dist.sample().bool()
+
+        # Force exit if at boundary (any dim >= 1 - delta)
+        at_boundary = torch.any(
+            self.states.tensor >= 1 - self.delta - self.epsilon, dim=-1
+        )
+        exit_mask = exit_mask | at_boundary
+
+        # Can't exit from s0
+        exit_mask = exit_mask & ~self.is_s0
+
+        # Sample relative increments r ∈ [0, 1] per dimension
+        r = self.increment_dist.sample().clamp(0.0, 1.0)  # (batch, n_dim)
+
+        # Convert relative to absolute: action = min_incr + r * max_range
+        actions = self.min_incr + r * self.max_range
+
+        # Clamp to ensure actions stay in valid range
+        # For s0: action in [0, 1] (full space coverage), for non-s0: action in [delta, 1-state]
+        is_s0_expanded = self.is_s0.unsqueeze(-1)
+        max_action = torch.where(
+            is_s0_expanded,
+            torch.ones_like(actions),  # s0 can reach anywhere in [0, 1]
+            1.0 - self.states.tensor,
+        )
+        actions = torch.clamp(actions, min=0.0)
+        actions = torch.minimum(actions, max_action)
+
+        # Set exit actions
+        actions[exit_mask] = float("-inf")
+
+        return actions
+
+    def log_prob(self, actions: Tensor) -> Tensor:
+        """Compute log probability using Cartesian per-dimension approach."""
+        device = actions.device
+
+        # Identify exit actions
+        is_exit = torch.all(actions == float("-inf"), dim=-1)
+
+        # At boundary, exit is forced (log_prob = 0 for exit, -inf for non-exit)
+        at_boundary = torch.any(
+            self.states.tensor >= 1 - self.delta - self.epsilon, dim=-1
+        )
+
+        # For non-exit: replace -inf with valid placeholder to avoid NaN in computation
+        safe_actions = torch.where(
+            is_exit.unsqueeze(-1),
+            self.min_incr + 0.5 * self.max_range,  # placeholder for exit actions
+            actions,
+        )
+
+        # Convert absolute to relative: r = (action - min_incr) / max_range
+        safe_max_range = self.max_range.clamp(min=self.epsilon)
+        r = (safe_actions - self.min_incr) / safe_max_range
+        r = r.clamp(self.epsilon, 1 - self.epsilon)
+
+        # Get log prob from Beta mixture (sum over dimensions)
+        log_p_beta_per_dim = self.increment_dist.log_prob(r)
+        log_p_beta = log_p_beta_per_dim.sum(dim=-1)
+
+        # Jacobian correction for change of variables:
+        # action = min_incr + r * max_range, so dr/daction = 1/max_range
+        # log p(action) = log p(r) + log|dr/daction| = log p(r) - log(max_range)
+        log_jacobian_per_dim = -torch.log(safe_max_range)
+        log_jacobian = log_jacobian_per_dim.sum(dim=-1)
+
+        # Add log(1 - exit_prob) for choosing not to exit
+        # Clamp exit probability to avoid log(0) when exit_prob = 1
+        exit_probs_clamped = self.exit_dist.probs.clamp(
+            min=self.epsilon, max=1 - self.epsilon
+        )
+        log_no_exit = torch.log1p(-exit_probs_clamped)
+
+        # Non-exit log prob
+        log_probs = log_p_beta + log_jacobian + log_no_exit
+
+        # For exit actions: log P(exit)
+        log_p_exit = self.exit_dist.log_prob(torch.ones(1, device=device))
+        log_probs = torch.where(is_exit, log_p_exit.expand_as(log_probs), log_probs)
+
+        # Handle boundary states specially:
+        # - If at boundary and exiting: log_prob = 0 (forced exit)
+        # - If at boundary and not exiting: log_prob = -inf (impossible)
+        log_probs = torch.where(
+            at_boundary & is_exit, torch.zeros_like(log_probs), log_probs
+        )
+        log_probs = torch.where(
+            at_boundary & ~is_exit, torch.full_like(log_probs, float("-inf")), log_probs
+        )
+
+        # Exit from s0 is not allowed
+        log_probs = torch.where(
+            self.is_s0 & is_exit, torch.full_like(log_probs, float("-inf")), log_probs
+        )
+
+        return log_probs
+
+
+class BoxCartesianPFEstimator(Estimator, PolicyMixin):
+    """Simplified PF estimator using Cartesian increments.
+
+    Much simpler than BoxPFEstimator - uses a single MLP and BoxCartesianDistribution.
+    """
+
+    def __init__(
+        self,
+        env: Box,
+        module: nn.Module,
+        n_components: int,
+        min_concentration: float = 0.1,
+        max_concentration: float = 5.0,
+    ) -> None:
+        """Initialize the estimator.
+
+        Args:
+            env: The Box environment.
+            module: The neural network module.
+            n_components: Number of mixture components.
+            min_concentration: Minimum Beta concentration parameter.
+            max_concentration: Maximum Beta concentration parameter.
+        """
+        super().__init__(module)
+        self.n_components = n_components
+        self.min_concentration = min_concentration
+        self.max_concentration = max_concentration
+        self.delta = env.delta
+        self.epsilon = env.epsilon
+        self.n_dim = 2
+
+    @property
+    def expected_output_dim(self) -> int:
+        """Expected output dimension: exit_logit + (weights + alpha + beta) * n_dim * n_comp."""
+        return 1 + 3 * self.n_dim * self.n_components
+
+    def to_probability_distribution(
+        self, states: States, module_output: Tensor
+    ) -> Distribution:
+        """Convert module output to a probability distribution.
+
+        Args:
+            states: The states.
+            module_output: Output from the module, shape (batch, expected_output_dim).
+
+        Returns:
+            BoxCartesianDistribution instance.
+        """
+        batch_size = states.tensor.shape[0]
+        n_comp = self.n_components
+        n_dim = self.n_dim
+
+        # Parse module output
+        # Format: [exit_logit, weights..., alpha..., beta...]
+        exit_logits = module_output[:, 0]
+
+        # Reshape parameters to (batch, n_dim, n_comp)
+        offset = 1
+        mixture_logits = module_output[:, offset : offset + n_dim * n_comp].reshape(
+            batch_size, n_dim, n_comp
+        )
+        offset += n_dim * n_comp
+        alpha_raw = module_output[:, offset : offset + n_dim * n_comp].reshape(
+            batch_size, n_dim, n_comp
+        )
+        offset += n_dim * n_comp
+        beta_raw = module_output[:, offset : offset + n_dim * n_comp].reshape(
+            batch_size, n_dim, n_comp
+        )
+
+        # Normalize concentration parameters
+        alpha = self.min_concentration + (
+            self.max_concentration - self.min_concentration
+        ) * torch.sigmoid(alpha_raw)
+        beta = self.min_concentration + (
+            self.max_concentration - self.min_concentration
+        ) * torch.sigmoid(beta_raw)
+
+        return BoxCartesianDistribution(
+            states=states,
+            exit_logits=exit_logits,
+            mixture_logits=mixture_logits,
+            alpha=alpha,
+            beta=beta,
+            delta=self.delta,
+            epsilon=self.epsilon,
+        )
+
+
+class BoxCartesianPBDistribution(Distribution):
+    """Backward Cartesian distribution for Box environment.
+
+    In torchgfn's design, the source state is the origin [0, 0]. The BTS
+    (back-to-source) action is deterministic: when action = state, we go
+    directly to the origin. This is always the case for the s1 -> s0 transition.
+
+    Unlike gflownet's ContinuousCube (where source is abstract and BTS is
+    stochastic), here BTS is always forced/deterministic with log_prob = 0.
+    """
+
+    arg_constraints: dict = {}  # No constraints for custom distribution
+
+    def __init__(
+        self,
+        states: States,
+        mixture_logits: Tensor,
+        alpha: Tensor,
+        beta: Tensor,
+        delta: float,
+        epsilon: float = 1e-6,
+    ) -> None:
+        """Initialize the backward distribution.
+
+        Args:
+            states: Current states.
+            mixture_logits: Mixture weights, shape (batch, n_dim, n_components).
+            alpha: Beta alpha params, shape (batch, n_dim, n_components).
+            beta: Beta beta params, shape (batch, n_dim, n_components).
+            delta: Minimum step size.
+            epsilon: Numerical stability constant.
+        """
+        super().__init__()
+        self.delta = delta
+        self.epsilon = epsilon
+        self.states = states
+        self.n_dim = states.tensor.shape[-1]
+
+        # Per-dimension: if state[d] <= delta, BTS is forced for that trajectory
+        # (when state = delta, the only valid backward action is BTS since action range is empty)
+        self.dim_near_origin = states.tensor <= delta
+        self.any_dim_near_origin = torch.any(self.dim_near_origin, dim=-1)
+
+        # Increment distribution per dimension
+        mix = Categorical(logits=mixture_logits)
+        components = Beta(alpha, beta)
+        self.increment_dist = MixtureSameFamily(mix, components)
+
+        # For backward: action in [delta, state] for dims where state >= delta
+        self.min_incr = delta
+        self.max_range = (states.tensor - self.min_incr).clamp(min=epsilon)
+
+    def sample(self, sample_shape: Size = Size()) -> Tensor:
+        """Sample backward actions.
+
+        BTS (action = state) only happens when forced (near origin).
+        Otherwise, sample decrements from Beta mixture.
+        """
+        # BTS is only taken when forced (near origin) - no stochastic BTS
+        is_bts = self.any_dim_near_origin
+
+        # Start with BTS actions (action = state, goes to origin)
+        actions = self.states.tensor.clone()
+
+        # For non-BTS, sample decrements from Beta mixture
+        if not is_bts.all():
+            r = self.increment_dist.sample().clamp(0.0, 1.0)
+            sampled_actions = self.min_incr + r * self.max_range
+            # Clamp to ensure action <= state
+            sampled_actions = torch.min(sampled_actions, self.states.tensor)
+
+            # Use sampled actions only for non-BTS trajectories
+            is_bts_expanded = is_bts.unsqueeze(-1)
+            actions = torch.where(is_bts_expanded, actions, sampled_actions)
+
+        return actions
+
+    def log_prob(self, actions: Tensor) -> Tensor:
+        """Compute log probability of backward actions.
+
+        BTS actions (action = state) always have log_prob = 0 (deterministic).
+        Non-BTS actions have log_prob = log p_beta(r) + log_jacobian.
+
+        When near origin (any dim <= delta), BTS is forced and log_prob = 0.
+        """
+        # Check if action is BTS (action equals state)
+        # Use a tolerance based on delta for numerical robustness
+        bts_tolerance = self.delta * 0.1  # 10% of delta
+        is_bts = torch.all(
+            torch.abs(actions - self.states.tensor) < bts_tolerance, dim=-1
+        )
+
+        # When near origin, BTS is forced - treat any action as BTS
+        # (the only valid action from near-origin states is BTS anyway)
+        is_bts = is_bts | self.any_dim_near_origin
+
+        # For non-BTS actions, compute Beta mixture log_prob
+        # Use safe placeholders for BTS actions to avoid NaN
+        safe_actions = torch.where(
+            is_bts.unsqueeze(-1),
+            self.min_incr + 0.5 * self.max_range.clamp(min=self.epsilon),  # placeholder
+            actions,
+        )
+
+        # Convert to relative: r = (action - delta) / max_range
+        # Use a reasonable minimum for max_range to avoid extreme Jacobians
+        safe_max_range = self.max_range.clamp(min=self.epsilon)
+        r = (safe_actions - self.min_incr) / safe_max_range
+        r = r.clamp(self.epsilon, 1 - self.epsilon)
+
+        # Get log prob from Beta mixture per dimension
+        log_p_per_dim = self.increment_dist.log_prob(r)
+
+        # Jacobian: dr/daction = 1/max_range
+        log_jacobian_per_dim = -torch.log(safe_max_range)
+
+        # Sum over dimensions and replace NaN with large negative (invalid)
+        log_p_beta = (log_p_per_dim + log_jacobian_per_dim).sum(dim=-1)
+        log_p_beta = torch.nan_to_num(log_p_beta, nan=-1e6, posinf=1e6, neginf=-1e6)
+
+        # BTS actions have log_prob = 0 (deterministic)
+        # Non-BTS actions have log_prob from Beta + Jacobian
+        log_probs = torch.where(
+            is_bts,
+            torch.zeros_like(log_p_beta),  # BTS: always 0
+            log_p_beta,  # Non-BTS: Beta + Jacobian
+        )
+
+        return log_probs
+
+
+class BoxCartesianPBEstimator(Estimator, PolicyMixin):
+    """Simplified PB estimator using Cartesian increments with back-to-source."""
+
+    def __init__(
+        self,
+        env: Box,
+        module: nn.Module,
+        n_components: int,
+        min_concentration: float = 0.1,
+        max_concentration: float = 5.0,
+    ) -> None:
+        """Initialize the estimator."""
+        super().__init__(module, is_backward=True)
+        self.n_components = n_components
+        self.min_concentration = min_concentration
+        self.max_concentration = max_concentration
+        self.delta = env.delta
+        self.epsilon = env.epsilon
+        self.n_dim = 2
+
+    @property
+    def expected_output_dim(self) -> int:
+        """Expected output dimension: (weights + alpha + beta) * n_dim * n_comp."""
+        return 3 * self.n_dim * self.n_components
+
+    def to_probability_distribution(
+        self, states: States, module_output: Tensor
+    ) -> Distribution:
+        """Convert module output to backward probability distribution."""
+        batch_size = states.tensor.shape[0]
+        n_comp = self.n_components
+        n_dim = self.n_dim
+
+        # Parse module output: [mixture_logits..., alpha..., beta...]
+        offset = 0
+        mixture_logits = module_output[:, offset : offset + n_dim * n_comp].reshape(
+            batch_size, n_dim, n_comp
+        )
+        offset += n_dim * n_comp
+        alpha_raw = module_output[:, offset : offset + n_dim * n_comp].reshape(
+            batch_size, n_dim, n_comp
+        )
+        offset += n_dim * n_comp
+        beta_raw = module_output[:, offset : offset + n_dim * n_comp].reshape(
+            batch_size, n_dim, n_comp
+        )
+
+        # Normalize concentration parameters
+        conc_range = self.max_concentration - self.min_concentration
+        alpha = self.min_concentration + conc_range * torch.sigmoid(alpha_raw)
+        beta = self.min_concentration + conc_range * torch.sigmoid(beta_raw)
+
+        return BoxCartesianPBDistribution(
+            states=states,
+            mixture_logits=mixture_logits,
+            alpha=alpha,
+            beta=beta,
+            delta=self.delta,
+            epsilon=self.epsilon,
+        )
+
+
+class BoxCartesianPFMLP(MLP):
+    """Simplified MLP for Box forward policy using Cartesian increments.
+
+    Output format: [exit_logit, mixture_logits..., alpha..., beta...]
+    where mixture_logits, alpha, beta each have shape n_dim * n_components.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        n_hidden_layers: int,
+        n_components: int,
+        n_dim: int = 2,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the MLP.
+
+        Args:
+            hidden_dim: Hidden layer dimension.
+            n_hidden_layers: Number of hidden layers.
+            n_components: Number of mixture components.
+            n_dim: Number of dimensions (default 2 for Box).
+            **kwargs: Additional arguments for MLP.
+        """
+        self.n_components = n_components
+        self.n_dim = n_dim
+
+        # Output: exit_logit + (weights + alpha + beta) * n_dim * n_comp
+        output_dim = 1 + 3 * n_dim * n_components
+
+        super().__init__(
+            input_dim=n_dim,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            output_dim=output_dim,
+            activation_fn="elu",
+            **kwargs,
+        )
+
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
+        """Forward pass."""
+        return super().forward(preprocessed_states)
+
+
+class BoxCartesianPBMLP(MLP):
+    """Simplified MLP for Box backward policy using Cartesian increments.
+
+    Output format: [mixture_logits..., alpha..., beta...]
+    where mixture_logits, alpha, beta each have shape n_dim * n_components.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        n_hidden_layers: int,
+        n_components: int,
+        n_dim: int = 2,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the MLP.
+
+        Args:
+            hidden_dim: Hidden layer dimension.
+            n_hidden_layers: Number of hidden layers.
+            n_components: Number of mixture components.
+            n_dim: Number of dimensions (default 2 for Box).
+            **kwargs: Additional arguments for MLP.
+        """
+        self.n_components = n_components
+        self.n_dim = n_dim
+
+        # Output: (weights + alpha + beta) * n_dim * n_comp
+        output_dim = 3 * n_dim * n_components
+
+        super().__init__(
+            input_dim=n_dim,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            output_dim=output_dim,
+            activation_fn="elu",
+            **kwargs,
+        )
+
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
+        """Forward pass."""
+        return super().forward(preprocessed_states)
+
+
+# =============================================================================
+# Legacy Polar Coordinate Approach (original implementation)
+# =============================================================================
+
+
 class QuarterCircle(Distribution):
     """Represents distributions on quarter circles.
 
@@ -204,42 +752,37 @@ class QuarterCircle(Distribution):
         assert sampled_actions.shape[-1] == 2
         batch_shape = sampled_actions.shape[:-1]
 
-        sampled_actions = sampled_actions.to(
-            torch.double
-        )  # Arccos is very brittle, so we use double precision
-        sampled_actions.clamp_(
-            min=0.0, max=self.delta
-        )  # Should be the case already - just to avoid numerical issues
-        sampled_angles = torch.arccos(sampled_actions[..., 0] / self.delta) / (PI_2)
+        # Clamp actions to valid range (no double precision needed with atan2)
+        sampled_actions = sampled_actions.clamp(min=0.0, max=self.delta)
+
+        # Use atan2 instead of arccos - numerically stable without double precision
+        sampled_angles = (
+            torch.atan2(sampled_actions[..., 1], sampled_actions[..., 0]) / PI_2
+        )
 
         base_01_samples = (sampled_angles - self.min_angles) / (
             self.max_angles - self.min_angles
-        ).clamp_(min=CLAMP, max=1 - CLAMP)
+        ).clamp(min=CLAMP, max=1 - CLAMP)
 
         if not self.northeastern:
-            # Ideally, we shouldn't need this
-            # But it is used in the original implementation, so we keep it. It helps with numerical issues.
+            # Clamp to avoid numerical issues at boundaries
             base_01_samples = base_01_samples.clamp(1e-4, 1 - 1e-4)
 
-        # Ugly hack: when some of the sampled actions are -infinity (exit action), the corresponding value is nan
-        # And we don't really care about the log prob of the exit action
-        # So we first need to replace nans by anything between 0 and 1, say 0.5
+        # Handle exit actions (marked as -inf) which produce nan angles
         base_01_samples = torch.where(
             torch.isnan(base_01_samples),
             torch.ones_like(base_01_samples) * 0.5,
             base_01_samples,
-        ).clamp_(min=CLAMP, max=1 - CLAMP)
+        ).clamp(min=CLAMP, max=1 - CLAMP)
 
-        # Another hack: when backward (northeastern=False), sometimes the sampled_actions are equal to the centers
-        # In this case, the base_01_samples are close to 0 because of approximations errors. But they do not count
-        # when evaluating the logpros, so we just bump them to CLAMP so that Beta.log_prob does not throw an error
+        # Handle backward case where sampled_actions equal centers (Dirac distribution)
         if not self.northeastern:
             base_01_samples = torch.where(
                 torch.norm(self.centers.tensor, dim=-1) <= self.delta,
                 torch.ones_like(base_01_samples) * CLAMP,
                 base_01_samples,
-            ).clamp_(min=CLAMP, max=1 - CLAMP)
-        base_01_samples = base_01_samples.to(torch.get_default_dtype())
+            ).clamp(min=CLAMP, max=1 - CLAMP)
+
         base_01_logprobs = self.base_dist.log_prob(base_01_samples)
 
         if not self.northeastern:
@@ -372,21 +915,16 @@ class QuarterDisk(Distribution):
         assert sampled_actions.shape[-1] == 2
         batch_shape = sampled_actions.shape[:-1]
 
-        sampled_actions = sampled_actions.to(
-            torch.double
-        )  # Arccos is very brittle, so we use double precision
+        # Compute radius (no double precision needed with atan2)
         base_r_01_samples = (
-            torch.sqrt(torch.sum(sampled_actions**2, dim=-1))
-            / self.delta  # changes from 0 to 1.
-        )
-        # Debugging, I changed from -1 to 0 in the following line
-        base_theta_01_samples = (
-            torch.arccos(sampled_actions[..., 0] / (base_r_01_samples * self.delta))
-            / PI_2
-        ).clamp_(CLAMP, 1 - CLAMP)
+            torch.sqrt(torch.sum(sampled_actions**2, dim=-1)) / self.delta
+        ).clamp(CLAMP, 1.0)
 
-        base_r_01_samples = base_r_01_samples.to(torch.get_default_dtype())
-        base_theta_01_samples = base_theta_01_samples.to(torch.get_default_dtype())
+        # Use atan2 instead of arccos - numerically stable without double precision
+        base_theta_01_samples = (
+            torch.atan2(sampled_actions[..., 1], sampled_actions[..., 0]) / PI_2
+        ).clamp(CLAMP, 1 - CLAMP)
+
         logprobs = (
             self.base_r_dist.log_prob(base_r_01_samples)
             + self.base_theta_dist.log_prob(base_theta_01_samples)
@@ -714,58 +1252,65 @@ class BoxPFMLP(MLP):
             raise ValueError(
                 f"preprocessed_states should be of shape [B, 2], got {preprocessed_states.shape}"
             )
-        B, _ = preprocessed_states.shape
-        # The desired output shape is [B, 1 + 5 * n_components_max], let's create the tensor
-        desired_out = torch.zeros(B, 1 + 5 * self._n_comp_max).to(
-            preprocessed_states.device
-        )
+        B = preprocessed_states.shape[0]
+        device = preprocessed_states.device
+        output_dim = 1 + 5 * self._n_comp_max
 
-        # First calculate network outputs for all states
-        out = super().forward(
-            preprocessed_states
-        )  # This should be of shape [B, 1 + 3 * n_components]
+        # Run network for all states (needed for non-s0 states)
+        net_out = super().forward(preprocessed_states)  # [B, 1 + 3 * n_components]
 
-        # Now let's find which of the B indices correspond to s_0
-        idx_s0 = torch.all(preprocessed_states == 0.0, 1)
+        # Detect s0 states
+        is_s0 = torch.all(preprocessed_states == 0.0, dim=1, keepdim=True)  # [B, 1]
 
-        # Now we can fill the desired output tensor
-        # 1st, for the s_0 states, we use the PFs0 parameters
-        # Remember, PFs0 is of shape [1, 5 * n_components_s0]
-        indices_to_override = (
-            torch.arange(5 * self._n_comp_max).fmod(self._n_comp_max)
-            < self.n_components_s0
-        )
-        indices_to_override = torch.cat(
-            (torch.zeros(1).bool(), indices_to_override), dim=0
-        )
-        desired_out_slice = desired_out[idx_s0]
-        desired_out_slice[:, indices_to_override] = self.PFs0
-        desired_out[idx_s0] = desired_out_slice
+        # Build output tensor for non-s0 case (most common path)
+        # Map network output [exit, weights, alpha, beta] to full output format
+        desired_out = torch.zeros(B, output_dim, device=device)
 
-        # 2nd, for the states s, t>0, we use the network outputs
-        # Remember, out is of shape [B, 1 + 3 * n_components]
-        indices_to_override2 = (
-            torch.arange(3 * self._n_comp_max).fmod(self._n_comp_max) < self.n_components
-        )
-        indices_to_override2 = torch.cat(
-            (
-                torch.ones(1).bool(),
-                indices_to_override2,
-                torch.zeros(2 * self._n_comp_max).bool(),
-            ),
-            dim=0,
-        )
-        desired_out_slice2 = desired_out[~idx_s0]
-        desired_out_slice2[:, indices_to_override2] = out[~idx_s0]
-        desired_out[~idx_s0] = desired_out_slice2
+        # For non-s0: copy network output to appropriate positions
+        # Network outputs: [exit_logit, mixture_logits..., alpha..., beta...]
+        # Format: 1 exit + n_comp mixture + n_comp alpha + n_comp beta = 1 + 3*n_comp
+        n_comp = self.n_components
+        desired_out[:, 0] = net_out[:, 0]  # exit logit
+        desired_out[:, 1 : 1 + n_comp] = net_out[:, 1 : 1 + n_comp]  # mixture logits
+        desired_out[:, 1 + self._n_comp_max : 1 + self._n_comp_max + n_comp] = net_out[
+            :, 1 + n_comp : 1 + 2 * n_comp
+        ]  # alpha
+        desired_out[:, 1 + 2 * self._n_comp_max : 1 + 2 * self._n_comp_max + n_comp] = (
+            net_out[:, 1 + 2 * n_comp :]
+        )  # beta
 
-        # Apply sigmoid to all except the dimensions between 1 and 1 + self._n_comp_max
-        # These are the components that represent the concentration parameters of the
-        # Betas, before normalizing, and should thus be between 0 and 1 (along with
-        # the exit probability).
-        desired_out[..., 0] = torch.sigmoid(desired_out[..., 0])
-        desired_out[..., 1 + self._n_comp_max :] = torch.sigmoid(
-            desired_out[..., 1 + self._n_comp_max :]
+        # For s0 states: override with PFs0 parameters using torch.where
+        # PFs0 has shape [1, 5 * n_components_s0] containing [weights, alpha_r, beta_r, alpha_theta, beta_theta]
+        if is_s0.any():
+            # Expand PFs0 to batch size and use where to select
+            pfs0_expanded = self.PFs0.expand(B, -1)  # [B, 5 * n_components_s0]
+            n_s0 = self.n_components_s0
+
+            # Map PFs0 to output positions (s0 doesn't have exit logit in PFs0)
+            s0_out = torch.zeros(B, output_dim, device=device)
+            s0_out[:, 1 : 1 + n_s0] = pfs0_expanded[:, :n_s0]  # mixture logits
+            s0_out[:, 1 + self._n_comp_max : 1 + self._n_comp_max + n_s0] = (
+                pfs0_expanded[:, n_s0 : 2 * n_s0]
+            )  # alpha_r
+            s0_out[:, 1 + 2 * self._n_comp_max : 1 + 2 * self._n_comp_max + n_s0] = (
+                pfs0_expanded[:, 2 * n_s0 : 3 * n_s0]
+            )  # beta_r
+            s0_out[:, 1 + 3 * self._n_comp_max : 1 + 3 * self._n_comp_max + n_s0] = (
+                pfs0_expanded[:, 3 * n_s0 : 4 * n_s0]
+            )  # alpha_theta
+            s0_out[:, 1 + 4 * self._n_comp_max : 1 + 4 * self._n_comp_max + n_s0] = (
+                pfs0_expanded[:, 4 * n_s0 :]
+            )  # beta_theta
+
+            # Use torch.where to select between s0 and non-s0 outputs
+            desired_out = torch.where(is_s0.expand(-1, output_dim), s0_out, desired_out)
+
+        # Apply sigmoid to exit probability and concentration parameters
+        # Exit probability at position 0
+        desired_out[:, 0] = torch.sigmoid(desired_out[:, 0])
+        # Concentration params are at positions [1+n_comp_max, end]
+        desired_out[:, 1 + self._n_comp_max :] = torch.sigmoid(
+            desired_out[:, 1 + self._n_comp_max :]
         )
 
         assert desired_out.shape == batch_shape + (1 + 5 * self._n_comp_max,)
