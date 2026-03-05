@@ -149,9 +149,6 @@ class BoxPolar(Env):
         non_exit_actions = actions[~actions.is_exit]
         non_terminal_states = states[~actions.is_exit]
 
-        if len(non_exit_actions) == 0:
-            return True
-
         s0_states_idx = non_terminal_states.is_initial_state
         if torch.any(s0_states_idx) and backward:
             return False
@@ -164,9 +161,6 @@ class BoxPolar(Env):
 
         non_s0_states = non_terminal_states[~s0_states_idx].tensor
         non_s0_actions = non_exit_actions[~s0_states_idx].tensor
-
-        if len(non_s0_actions) == 0:
-            return True
 
         if (
             not backward
