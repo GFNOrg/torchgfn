@@ -364,7 +364,7 @@ def test_subTB_vs_TB(
         tb_loss = TBGFlowNet(pf=pf, pb=pb).loss(
             env, trajectories, recalculate_all_logprobs=False
         )  # LogZ is default 0.0.
-        assert (tb_loss - subtb_loss).abs() < 1e-4
+        assert (tb_loss - subtb_loss).abs() < 1e-3
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])

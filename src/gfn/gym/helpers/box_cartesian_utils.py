@@ -194,7 +194,7 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
         module: nn.Module,
         n_components: int,
         min_concentration: float = 0.1,
-        max_concentration: float = 5.0,
+        max_concentration: float = 100.0,
         numerical_epsilon: float = 1e-6,
     ) -> None:
         """Initialize the estimator.
@@ -280,11 +280,38 @@ class BoxCartesianPBDistribution(Distribution):
     """Backward Cartesian distribution for Box environment.
 
     In torchgfn's design, the source state is the origin [0, 0]. The BTS
-    (back-to-source) action is deterministic: when action = state, we go
-    directly to the origin. This is always the case for the s1 -> s0 transition.
+    (back-to-source) action moves directly to s0 by setting action = state.
 
-    Unlike gflownet's ContinuousCube (where source is abstract and BTS is
-    stochastic), here BTS is always forced/deterministic with log_prob = 0.
+    WHY THE LEARNED BTS BERNOULLI IS CRITICAL
+    ------------------------------------------
+    The Trajectory Balance (TB) loss is:
+
+        L = (log P_F(τ) + log Z - log P_B(τ) - log R(x_T))^2
+
+    The BTS step (x_1 → s0) is the *last* step of every backward trajectory.
+    Before this fix, BTS was always deterministic (forced): log P_B(BTS | x_1) = 0.
+    A constant zero drops out of the gradient, so P_B received no gradient
+    from the BTS step — regardless of trajectory length.
+
+    For 1-step trajectories (s0 → x_T, then immediately BTS back to s0), P_B
+    was *entirely* gradient-free: log P_B(τ) = 0 for every such trajectory,
+    making P_B invisible to the TB loss. This is particularly harmful because
+    the reward landscape is dominated by states reachable from s0 in one step
+    (the high-reward ring at |x - 0.5| ∈ (0.3, 0.4)).
+
+    With a learned Bernoulli P(BTS | x):
+    - log P_B(BTS | x_1)  = log P(BTS=1 | x_1)  — gradient flows into P_B
+    - log P_B(~BTS | x_1) = log P(BTS=0 | x_1)  — also receives gradient
+    This closes the TB loop fully: P_B now has an incentive to assign higher
+    probability to BTS from states that are indeed close to the reward modes,
+    and lower probability from states that are far away.
+
+    FORCED vs. STOCHASTIC BTS
+    -------------------------
+    When any dimension of the state is <= delta, the valid backward increment
+    range [delta, state[d]] is empty for that dimension. BTS is the *only*
+    valid action, so it is forced (log_prob = 0, deterministic). For all other
+    states, BTS is an optional choice sampled from the learned Bernoulli.
     """
 
     arg_constraints: dict = {}  # No constraints for custom distribution
@@ -292,6 +319,7 @@ class BoxCartesianPBDistribution(Distribution):
     def __init__(
         self,
         states: States,
+        bts_logits: Tensor,
         mixture_logits: Tensor,
         alpha: Tensor,
         beta: Tensor,
@@ -302,6 +330,7 @@ class BoxCartesianPBDistribution(Distribution):
 
         Args:
             states: Current states.
+            bts_logits: Logits for the BTS Bernoulli, shape (batch,).
             mixture_logits: Mixture weights, shape (batch, n_dim, n_components).
             alpha: Beta alpha params, shape (batch, n_dim, n_components).
             beta: Beta beta params, shape (batch, n_dim, n_components).
@@ -314,8 +343,12 @@ class BoxCartesianPBDistribution(Distribution):
         self.states = states
         self.n_dim = states.tensor.shape[-1]
 
-        # Per-dimension: if state[d] <= delta, BTS is forced for that trajectory
-        # (when state = delta, the only valid backward action is BTS since action range is empty)
+        # BTS Bernoulli: learned probability of going back to source
+        from torch.distributions import Bernoulli
+
+        self.bts_dist = Bernoulli(logits=bts_logits)
+
+        # BTS is forced when any dimension is within delta of origin
         self.dim_near_origin = states.tensor <= delta
         self.any_dim_near_origin = torch.any(self.dim_near_origin, dim=-1)
 
@@ -331,23 +364,26 @@ class BoxCartesianPBDistribution(Distribution):
     def sample(self, sample_shape: Size = Size()) -> Tensor:
         """Sample backward actions.
 
-        BTS (action = state) only happens when forced (near origin).
-        Otherwise, sample decrements from Beta mixture.
+        BTS (action = state) is forced when near origin; otherwise sampled
+        from the learned Bernoulli. Non-BTS samples come from Beta mixture.
         """
-        # BTS is only taken when forced (near origin) - no stochastic BTS
-        is_bts = self.any_dim_near_origin
+        # Forced BTS for states with any dim <= delta
+        is_bts = self.any_dim_near_origin.clone()
 
-        # Start with BTS actions (action = state, goes to origin)
+        # Stochastic BTS for non-forced states via learned Bernoulli
+        can_choose_bts = ~self.any_dim_near_origin
+        if can_choose_bts.any():
+            sampled_bts = self.bts_dist.sample().bool() & can_choose_bts
+            is_bts = is_bts | sampled_bts
+
+        # Start with BTS actions (action = state → next state = s0)
         actions = self.states.tensor.clone()
 
         # For non-BTS, sample decrements from Beta mixture
         if not is_bts.all():
             r = self.increment_dist.sample().clamp(0.0, 1.0)
             sampled_actions = self.min_incr + r * self.max_range
-            # Clamp to ensure action <= state
             sampled_actions = torch.min(sampled_actions, self.states.tensor)
-
-            # Use sampled actions only for non-BTS trajectories
             is_bts_expanded = is_bts.unsqueeze(-1)
             actions = torch.where(is_bts_expanded, actions, sampled_actions)
 
@@ -356,52 +392,45 @@ class BoxCartesianPBDistribution(Distribution):
     def log_prob(self, actions: Tensor) -> Tensor:
         """Compute log probability of backward actions.
 
-        BTS actions (action = state) always have log_prob = 0 (deterministic).
-        Non-BTS actions have log_prob = log p_beta(r) + log_jacobian.
-
-        When near origin (any dim <= delta), BTS is forced and log_prob = 0.
+        - Forced BTS (any_dim_near_origin): log_prob = 0 (deterministic).
+        - Stochastic BTS: log_prob = log P(BTS=1 | s) from Bernoulli.
+        - Non-BTS: log_prob = log P(BTS=0 | s) + log_p_beta + log_jacobian.
         """
-        # Check if action is BTS (action equals state)
-        # Use a tolerance based on delta for numerical robustness
-        bts_tolerance = self.delta * 0.1  # 10% of delta
+        # Detect BTS: action ≈ state within delta/2 tolerance
+        bts_tolerance = self.delta * 0.5
         is_bts = torch.all(
             torch.abs(actions - self.states.tensor) < bts_tolerance, dim=-1
         )
 
-        # When near origin, BTS is forced - treat any action as BTS
-        # (the only valid action from near-origin states is BTS anyway)
-        is_bts = is_bts | self.any_dim_near_origin
-
-        # For non-BTS actions, compute Beta mixture log_prob
-        # Use safe placeholders for BTS actions to avoid NaN
+        # Safe placeholder for BTS slots to avoid NaN in Beta log_prob
         safe_actions = torch.where(
             is_bts.unsqueeze(-1),
-            self.min_incr + 0.5 * self.max_range.clamp(min=self.epsilon),  # placeholder
+            self.min_incr + 0.5 * self.max_range.clamp(min=self.epsilon),
             actions,
         )
 
-        # Convert to relative: r = (action - delta) / max_range
-        # Use a reasonable minimum for max_range to avoid extreme Jacobians
+        # Convert absolute to relative: r = (action - delta) / max_range
         safe_max_range = self.max_range.clamp(min=self.epsilon)
         r = (safe_actions - self.min_incr) / safe_max_range
         r = r.clamp(self.epsilon, 1 - self.epsilon)
 
-        # Get log prob from Beta mixture per dimension
         log_p_per_dim = self.increment_dist.log_prob(r)
-
-        # Jacobian: dr/daction = 1/max_range
         log_jacobian_per_dim = -torch.log(safe_max_range)
-
-        # Sum over dimensions and replace NaN with large negative (invalid)
         log_p_beta = (log_p_per_dim + log_jacobian_per_dim).sum(dim=-1)
         log_p_beta = torch.nan_to_num(log_p_beta, nan=-1e6, posinf=1e6, neginf=-1e6)
 
-        # BTS actions have log_prob = 0 (deterministic)
-        # Non-BTS actions have log_prob from Beta + Jacobian
+        # Bernoulli log_prob for each element choosing BTS vs. not
+        log_p_bts = self.bts_dist.log_prob(torch.ones_like(log_p_beta))
+        log_p_no_bts = self.bts_dist.log_prob(torch.zeros_like(log_p_beta))
+
         log_probs = torch.where(
-            is_bts,
-            torch.zeros_like(log_p_beta),  # BTS: always 0
-            log_p_beta,  # Non-BTS: Beta + Jacobian
+            self.any_dim_near_origin,
+            torch.zeros_like(log_p_beta),  # forced BTS: deterministic
+            torch.where(
+                is_bts,
+                log_p_bts,  # stochastic BTS: Bernoulli log P(BTS=1)
+                log_p_no_bts + log_p_beta,  # non-BTS: Bernoulli + Beta
+            ),
         )
 
         return log_probs
@@ -416,7 +445,7 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
         module: nn.Module,
         n_components: int,
         min_concentration: float = 0.1,
-        max_concentration: float = 5.0,
+        max_concentration: float = 100.0,
         numerical_epsilon: float = 1e-6,
     ) -> None:
         """Initialize the estimator."""
@@ -431,8 +460,8 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
 
     @property
     def expected_output_dim(self) -> int:
-        """Expected output dimension: (weights + alpha + beta) * n_dim * n_comp."""
-        return 3 * self.n_dim * self.n_components
+        """Expected output dimension: bts_logit + (weights + alpha + beta) * n_dim * n_comp."""
+        return 1 + 3 * self.n_dim * self.n_components
 
     def to_probability_distribution(
         self, states: States, module_output: Tensor
@@ -442,8 +471,10 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
         n_comp = self.n_components
         n_dim = self.n_dim
 
-        # Parse module output: [mixture_logits..., alpha..., beta...]
-        offset = 0
+        # Parse module output: [bts_logit, mixture_logits..., alpha..., beta...]
+        bts_logits = module_output[:, 0]
+
+        offset = 1
         mixture_logits = module_output[:, offset : offset + n_dim * n_comp].reshape(
             batch_size, n_dim, n_comp
         )
@@ -463,6 +494,7 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
 
         return BoxCartesianPBDistribution(
             states=states,
+            bts_logits=bts_logits,
             mixture_logits=mixture_logits,
             alpha=alpha,
             beta=beta,
@@ -549,8 +581,8 @@ class BoxCartesianPBMLP(MLP):
         self.n_components = n_components
         self.n_dim = n_dim
 
-        # Output: (weights + alpha + beta) * n_dim * n_comp
-        output_dim = 3 * n_dim * n_components
+        # Output: bts_logit + (weights + alpha + beta) * n_dim * n_comp
+        output_dim = 1 + 3 * n_dim * n_components
 
         super().__init__(
             input_dim=n_dim,
