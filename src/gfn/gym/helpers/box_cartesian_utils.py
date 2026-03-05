@@ -148,12 +148,15 @@ class BoxCartesianDistribution(Distribution):
         log_jacobian_per_dim = -torch.log(safe_max_range)
         log_jacobian = log_jacobian_per_dim.sum(dim=-1)
 
-        # Add log(1 - exit_prob) for choosing not to exit
-        # Clamp exit probability to avoid log(0) when exit_prob = 1
+        # Add log(1 - exit_prob) for choosing not to exit.
+        # Clamp exit probability to avoid log(0) when exit_prob = 1.
+        # From s0, exit is forbidden during sampling so the exit logit is meaningless;
+        # zero out log_no_exit there so log P_F(a | s0) = log_p_beta + log_jacobian only.
         exit_probs_clamped = self.exit_dist.probs.clamp(
             min=self.epsilon, max=1 - self.epsilon
         )
         log_no_exit = torch.log1p(-exit_probs_clamped)
+        log_no_exit = torch.where(self.is_s0, torch.zeros_like(log_no_exit), log_no_exit)
 
         # Non-exit log prob
         log_probs = log_p_beta + log_jacobian + log_no_exit
@@ -163,11 +166,10 @@ class BoxCartesianDistribution(Distribution):
         log_probs = torch.where(is_exit, log_p_exit.expand_as(log_probs), log_probs)
 
         # Handle boundary states specially:
-        # - If at boundary and exiting: log_prob = 0 (forced exit)
+        # - If at boundary and exiting: use learned exit log_prob (same as non-boundary).
+        #   Do NOT force log_prob = 0; the exit Bernoulli still contributes to the TB loss
+        #   so the policy learns to exit at the right place (reward ring vs hard boundary).
         # - If at boundary and not exiting: log_prob = -inf (impossible)
-        log_probs = torch.where(
-            at_boundary & is_exit, torch.zeros_like(log_probs), log_probs
-        )
         log_probs = torch.where(
             at_boundary & ~is_exit, torch.full_like(log_probs, float("-inf")), log_probs
         )
@@ -193,6 +195,7 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
         n_components: int,
         min_concentration: float = 0.1,
         max_concentration: float = 5.0,
+        numerical_epsilon: float = 1e-6,
     ) -> None:
         """Initialize the estimator.
 
@@ -202,6 +205,9 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
             n_components: Number of mixture components.
             min_concentration: Minimum Beta concentration parameter.
             max_concentration: Maximum Beta concentration parameter.
+            numerical_epsilon: Small constant for clamping max_range before log (Jacobian
+                stability). Kept separate from env.epsilon (geometric tolerance) to avoid
+                log-Jacobian explosions when env.epsilon is very small (e.g. 1e-10).
         """
         super().__init__(module)
         self.n_components = n_components
@@ -209,6 +215,7 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
         self.max_concentration = max_concentration
         self.delta = env.delta
         self.epsilon = env.epsilon
+        self.numerical_epsilon = numerical_epsilon
         self.n_dim = 2
 
     @property
@@ -265,7 +272,7 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
             alpha=alpha,
             beta=beta,
             delta=self.delta,
-            epsilon=self.epsilon,
+            epsilon=self.numerical_epsilon,
         )
 
 
@@ -410,6 +417,7 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
         n_components: int,
         min_concentration: float = 0.1,
         max_concentration: float = 5.0,
+        numerical_epsilon: float = 1e-6,
     ) -> None:
         """Initialize the estimator."""
         super().__init__(module, is_backward=True)
@@ -418,6 +426,7 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
         self.max_concentration = max_concentration
         self.delta = env.delta
         self.epsilon = env.epsilon
+        self.numerical_epsilon = numerical_epsilon
         self.n_dim = 2
 
     @property
@@ -458,7 +467,7 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
             alpha=alpha,
             beta=beta,
             delta=self.delta,
-            epsilon=self.epsilon,
+            epsilon=self.numerical_epsilon,
         )
 
 
@@ -467,6 +476,10 @@ class BoxCartesianPFMLP(MLP):
 
     Output format: [exit_logit, mixture_logits..., alpha..., beta...]
     where mixture_logits, alpha, beta each have shape n_dim * n_components.
+
+    States are normalized from [0, 1] to [-1, 1] before the forward pass to
+    match the gflownet reference (states2policy normalization) and to provide
+    symmetric, zero-centred inputs to the network.
     """
 
     def __init__(
@@ -502,8 +515,8 @@ class BoxCartesianPFMLP(MLP):
         )
 
     def forward(self, preprocessed_states: Tensor) -> Tensor:
-        """Forward pass."""
-        return super().forward(preprocessed_states)
+        """Forward pass. Normalizes [0, 1] states to [-1, 1] before the MLP."""
+        return super().forward(2.0 * preprocessed_states - 1.0)
 
 
 class BoxCartesianPBMLP(MLP):
@@ -511,6 +524,9 @@ class BoxCartesianPBMLP(MLP):
 
     Output format: [mixture_logits..., alpha..., beta...]
     where mixture_logits, alpha, beta each have shape n_dim * n_components.
+
+    States are normalized from [0, 1] to [-1, 1] before the forward pass,
+    matching the gflownet reference normalization.
     """
 
     def __init__(
@@ -546,5 +562,5 @@ class BoxCartesianPBMLP(MLP):
         )
 
     def forward(self, preprocessed_states: Tensor) -> Tensor:
-        """Forward pass."""
-        return super().forward(preprocessed_states)
+        """Forward pass. Normalizes [0, 1] states to [-1, 1] before the MLP."""
+        return super().forward(2.0 * preprocessed_states - 1.0)

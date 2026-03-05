@@ -162,7 +162,13 @@ class TestBoxCartesianDistribution:
         assert torch.isfinite(log_probs).all()
 
     def test_log_prob_exit_at_boundary(self, env, pf_estimator):
-        """Exit at boundary should have log_prob = 0."""
+        """Exit at boundary should use learned Bernoulli log_prob (finite, <= 0).
+
+        Previously exit was forced to log_prob=0, making boundary exits invisible to
+        the TB loss. Now the learned exit probability contributes so the policy gets
+        gradient to prefer exiting at the reward ring vs. the hard boundary.
+        Non-exit at boundary must remain -inf (impossible).
+        """
         # States at boundary (any dim >= 1 - delta)
         states = env.States(torch.tensor([[0.8, 0.5], [0.5, 0.8]]))
         module_output = pf_estimator.module(states.tensor)
@@ -171,8 +177,14 @@ class TestBoxCartesianDistribution:
         exit_actions = torch.full((2, 2), float("-inf"))
         log_probs = dist.log_prob(exit_actions)
 
-        # Forced exits at boundary should have log_prob = 0
-        assert torch.allclose(log_probs, torch.zeros(2))
+        # Boundary exits: log_prob is from learned Bernoulli (finite and <= 0)
+        assert log_probs.shape == (2,)
+        assert torch.isfinite(log_probs).all()
+        assert (log_probs <= 0).all()
+        # Non-exit at boundary is still impossible
+        non_exit_actions = torch.rand(2, 2) * 0.1 + env.delta
+        log_probs_non_exit = dist.log_prob(non_exit_actions)
+        assert torch.all(log_probs_non_exit == float("-inf"))
 
     def test_no_exit_from_s0(self, env, pf_estimator):
         """Exit from s0 should have log_prob = -inf."""
