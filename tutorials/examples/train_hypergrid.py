@@ -72,6 +72,72 @@ from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 logger = logging.getLogger(__name__)
 
 
+def mode_heatmap_side(n_modes: int) -> int:
+    """Compute side length of the square heatmap covering all mode IDs."""
+    return ceil(n_modes**0.5)
+
+
+def update_mode_heatmap(mode_heatmap: torch.Tensor, mode_ids: set[int]) -> None:
+    """Mark discovered mode IDs in a square occupancy heatmap."""
+    if not mode_ids:
+        return
+
+    side = mode_heatmap.shape[0]
+
+    ids_tensor = torch.tensor(
+        list(mode_ids), dtype=torch.long, device=mode_heatmap.device
+    )
+    rows = ids_tensor // side
+    cols = ids_tensor % side
+    mode_heatmap[rows, cols] = 1.0
+
+
+def build_mode_heatmap_figure(mode_heatmap: torch.Tensor):
+    """Create a matplotlib heatmap figure for wandb image logging."""
+    mode_heatmap_np = mode_heatmap.detach().cpu().numpy()
+    fig, ax = plt.subplots(figsize=(4, 4))
+    image = ax.imshow(
+        mode_heatmap_np, cmap="viridis", vmin=0.0, vmax=1.0, interpolation="nearest"
+    )
+    ax.set_xlabel("mode_id % side")
+    ax.set_ylabel("mode_id // side")
+    fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    return fig
+
+
+def build_mode_heatmap_table(mode_heatmap: torch.Tensor, wandb):
+    """Create a wandb table for heatmap logging with custom chart support."""
+    mode_heatmap_np = mode_heatmap.detach().cpu().numpy()
+    table = wandb.Table(columns=["x", "y", "value"])
+    for y, row in enumerate(mode_heatmap_np):
+        for x, value in enumerate(row):
+            table.add_data(x, y, float(value))
+    return table
+
+
+def build_mode_heatmap_plot(heatmap_table, wandb):
+    """Create a wandb heatmap plot with compatibility across wandb versions."""
+    if hasattr(wandb, "plot") and hasattr(wandb.plot, "heatmap"):
+        return wandb.plot.heatmap(
+            heatmap_table,
+            "x",
+            "y",
+            "value",
+            title="Local Modes Heatmap",
+        )
+
+    if hasattr(wandb, "plot_table"):
+        return wandb.plot_table(
+            "wandb/heatmap/v0",
+            heatmap_table,
+            {"x": "x", "y": "y", "value": "value"},
+            {"title": "Local Modes Heatmap"},
+        )
+
+    return None
+
+
 class ModesReplayBufferManager(ReplayBufferManager):
     def __init__(
         self,
@@ -809,6 +875,12 @@ def main(args) -> dict:  # noqa: C901
     )
     per_node_batch_size = args.batch_size // distributed_context.num_training_ranks
     modes_found = set()
+    local_modes_found = set()
+    local_n_modes_total = env.n_modes
+    local_mode_heatmap_side = mode_heatmap_side(local_n_modes_total)
+    local_mode_heatmap = torch.zeros(
+        (local_mode_heatmap_side, local_mode_heatmap_side), dtype=torch.float32
+    )
     # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
 
@@ -1056,6 +1128,13 @@ def main(args) -> dict:  # noqa: C901
         visited_terminating_states.extend(
             cast(DiscreteStates, trajectories.terminating_states)
         )
+        iter_modes_found = env.modes_found(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
+        new_local_modes = iter_modes_found - local_modes_found
+        if new_local_modes:
+            local_modes_found.update(new_local_modes)
+            update_mode_heatmap(local_mode_heatmap, new_local_modes)
 
         # If we are on the master node, calculate the validation metrics.
         assert visited_terminating_states is not None
@@ -1072,6 +1151,8 @@ def main(args) -> dict:  # noqa: C901
             "l1_dist": None,  # only logged if calculate_partition.
         }
         to_log.update(averaging_info)
+        local_n_modes_found = len(local_modes_found)
+        to_log["local_n_modes_found"] = local_n_modes_found
 
         if log_this_iter:
             if score_dict_count > 0:
@@ -1114,6 +1195,11 @@ def main(args) -> dict:  # noqa: C901
                     )
 
                 if use_wandb:
+                    heatmap_table = build_mode_heatmap_table(local_mode_heatmap, wandb)
+                    to_log["local_modes_heatmap_table"] = heatmap_table
+                    heatmap_plot = build_mode_heatmap_plot(heatmap_table, wandb)
+                    if heatmap_plot is not None:
+                        to_log["local_modes_heatmap"] = heatmap_plot
                     wandb.log(to_log, step=iteration)
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
