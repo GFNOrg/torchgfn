@@ -8,8 +8,19 @@ from gfn.env import Env
 from gfn.states import States
 
 
-class Box(Env):
-    """Box environment, corresponding to the one in Section 4.1 of https://arxiv.org/abs/2301.12594
+class BoxPolar(Env):
+    """Box environment with polar (norm-based) action validation.
+
+    Corresponds to the environment in Section 4.1 of
+    https://arxiv.org/abs/2301.12594
+
+    Actions are 2D vectors whose L2 norm must equal delta (for non-s0 forward
+    steps) or be at most delta (for the initial s0 step). Use with the polar
+    estimators/distributions in ``box_polar_utils.py``.
+
+    See Also:
+        :class:`~gfn.gym.box_cartesian.BoxCartesian` for a simpler
+        per-dimension Cartesian variant.
 
     Attributes:
         delta: The step size.
@@ -119,13 +130,13 @@ class Box(Env):
     def is_action_valid(
         self, states: States, actions: Actions, backward: bool = False
     ) -> bool:
-        """Checks if the actions are valid (Cartesian per-dimension semantics).
+        """Checks if the actions are valid (polar norm-based semantics).
 
-        For Cartesian actions:
-        - Forward: action[i] >= delta (min step) and state[i] + action[i] <= 1
-        - Forward from s0: action[i] >= 0 and action[i] <= delta (sample in [0, delta])
-        - Backward: action[i] >= delta and state[i] - action[i] >= 0
-        - Backward to s0: action = state (go directly to origin)
+        For polar actions:
+        - Forward from s0: norm(action) <= delta
+        - Forward from non-s0: norm(action) == delta (within tolerance)
+        - Backward: state - action >= 0 component-wise
+        - Backward to s0: if norm(state) < delta, action must equal state
 
         Args:
             states: The current states.
@@ -142,17 +153,13 @@ class Box(Env):
             return True
 
         s0_states_idx = non_terminal_states.is_initial_state
-
-        # Can't go backward from s0
         if torch.any(s0_states_idx) and backward:
             return False
 
-        # Forward from s0: actions must be in [0, 1] per dimension (full space coverage)
-        if not backward and torch.any(s0_states_idx):
+        if not backward:
             actions_at_s0 = non_exit_actions[s0_states_idx].tensor
-            if torch.any(actions_at_s0 < 0) or torch.any(
-                actions_at_s0 > 1.0 + self.epsilon
-            ):
+
+            if torch.any(self.norm(actions_at_s0) > self.delta):
                 return False
 
         non_s0_states = non_terminal_states[~s0_states_idx].tensor
@@ -161,27 +168,24 @@ class Box(Env):
         if len(non_s0_actions) == 0:
             return True
 
-        # All actions must be non-negative
-        if torch.any(non_s0_actions < -self.epsilon):
+        if (
+            not backward
+            and torch.any(torch.abs(self.norm(non_s0_actions) - self.delta) > 1e-5)
+        ) or torch.any(non_s0_actions < 0):
             return False
 
-        if not backward:
-            # Forward from non-s0: actions >= delta and state + action <= 1
-            if torch.any(non_s0_actions < self.delta - self.epsilon):
+        if not backward and torch.any(non_s0_states + non_s0_actions > 1):
+            return False
+
+        if backward and torch.any(non_s0_states - non_s0_actions < 0):
+            return False
+
+        if backward:
+            states_within_delta_radius_idx = self.norm(non_s0_states) < self.delta
+            corresponding_actions = non_s0_actions[states_within_delta_radius_idx]
+            corresponding_states = non_s0_states[states_within_delta_radius_idx]
+            if torch.any(corresponding_actions != corresponding_states):
                 return False
-            if torch.any(non_s0_states + non_s0_actions > 1 + self.epsilon):
-                return False
-        else:
-            # Backward: state - action >= 0
-            if torch.any(non_s0_states - non_s0_actions < -self.epsilon):
-                return False
-            # Backward to s0: if resulting state would be in [0, delta), action must equal state
-            resulting_states = non_s0_states - non_s0_actions
-            near_origin = torch.all(resulting_states < self.delta, dim=-1)
-            if torch.any(near_origin):
-                # These should go directly to s0
-                if torch.any(torch.abs(resulting_states[near_origin]) > self.epsilon):
-                    return False
 
         return True
 

@@ -25,7 +25,7 @@ from gfn.gflownet import (
     SubTBGFlowNet,
     TBGFlowNet,
 )
-from gfn.gym import Box
+from gfn.gym import BoxPolar
 from gfn.gym.helpers.box_utils import (
     BoxPBEstimator,
     BoxPBMLP,
@@ -41,7 +41,7 @@ from gfn.utils.common import set_seed
 DEFAULT_SEED: int = 4444
 
 
-def sample_from_reward(env: Box, n_samples: int) -> NDArray[np.float64]:
+def sample_from_reward(env: BoxPolar, n_samples: int) -> NDArray[np.float64]:
     """Samples states from the true reward distribution
 
     Implement rejection sampling, with proposal being uniform distribution in [0, 1]^2
@@ -105,7 +105,7 @@ def main(args: Namespace) -> float:  # noqa: C901
     n_iterations = args.n_trajectories // args.batch_size
 
     # 1. Create the environment
-    env = Box(delta=args.delta, epsilon=1e-10, device=device, debug=__debug__)
+    env = BoxPolar(delta=args.delta, epsilon=1e-10, device=device, debug=__debug__)
     preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
     # 2. Create the gflownet.
