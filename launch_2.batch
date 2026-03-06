@@ -1,0 +1,34 @@
+#!/bin/bash
+
+#SBATCH -N 1                   # Number of nodes to request.
+#SBATCH --ntasks-per-node=3    # If you use ntasks-per-node you can scale.
+#SBATCH --cpus-per-task=1      # Number of CPUs to run per task.
+#SBATCH --time=47:59:59
+
+# Initalize the conda environment on the target node, which should automatically set all
+# oneapi variables for the user.
+module load anaconda/3
+conda activate torchgfn
+
+# Sets the needed environment variables.
+export I_MPI_HYDRA_BOOTSTRAP=slurm
+export KMP_AFFINITY=none
+export MASTER_ADDR=$(hostname  | head -n 1)
+export MASTER_PORT=$(shuf -i 29300-29399 -n 1) # take a free port from the range 29300-29399
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}  # Default 1 CPU per task.
+
+echo "***Running run_dist_ht.sh with: ***"
+echo " + Master Addr: ${MASTER_ADDR}"
+echo " + Slurm Job Num Nodes: ${SLURM_JOB_NUM_NODES}"
+echo " + Slurm NodeList: ${SLURM_NODELIST}"
+
+
+# DDP Training
+# mpiexec.hydra -np 3 -ppn 3 -l python -u -m tutorials.examples.train_hypergrid_ddp --ndim 10 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 131072000 --batch_size 2048 #--use_random_strategies --strategy_epsilon_std 0.0 --temperature 3.0 --strategy_temperature_std 2.0 --strategy_n_noisy_layers_std 0.0
+# mpiexec.hydra -np 3 -ppn 3 -l python -u -m tutorials.examples.train_hypergrid --ndim 10 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 131072000 --batch_size 2048 --distributed #--use_random_strategies --strategy_epsilon_std 0.0 --temperature 3.0 --strategy_temperature_std 2.0 --strategy_n_noisy_layers_std 0.0
+mpiexec.hydra -np 3 -ppn 3 -l python -u -m tutorials.examples.train_hypergrid --ndim 10 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 8192 --batch_size 32 --distributed --lr 0.002936251872614903 --temperature 1.2 --strategy_temperature_std 0.2  --use_random_strategies --use_selective_averaging --average_every 4 --spawn_backend dist
+#wandb agent torchgfn/torchgfn/fs37ro63
+#mpiexec.hydra -np 3 -ppn 3 -l python -u -m tutorials.examples.train_hypergrid --ndim 10 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 1048576000 --batch_size 2048 --distributed --lr 0.0015904281467039175 #--use_random_strategies --strategy_epsilon_std 0.0 --temperature 3.0 --strategy_temperature_std 2.0 --strategy_n_noisy_layers_std 0.0
+#mpiexec.hydra -np 3 -ppn 3 -l python -u -m tutorials.examples.train_hypergrid --ndim 10 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 16384000 --batch_size 1024 --distributed --dist_backend gloo  --average_every 16384000 --replay_buffer_size 0
+#mpiexec.hydra -np 3 -ppn 3 -l python -u -m tutorials.examples.train_hypergrid --ndim 8 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 16384000 --batch_size 2048 --distributed --dist_backend gloo  --use_selective_averaging
+#python -u -m tutorials.examples.train_hypergrid --ndim 8 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 8192000 --batch_size 1024

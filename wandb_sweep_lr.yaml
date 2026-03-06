@@ -1,0 +1,20 @@
+name: lr_sweep_16
+project: torchgfn
+entity: torchgfn
+method: bayes
+metric:
+  name: n_modes_found
+  goal: maximize
+run_cap: 20
+
+parameters:
+  lr:
+    distribution: log_uniform_values
+    min: 1e-5
+    max: 1e-2
+
+command:
+  - ${env}
+  - bash
+  - sweep_cmd_16.batch
+  - ${args}

@@ -120,6 +120,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self._shutdown = threading.Event()
         self._bg_thread: Optional[threading.Thread] = None
         self._pending_lock = threading.Lock()
+        self._group = dist.group.WORLD
         self._last_iter_sent: int = -1
         self._last_trigger_iter: int = -self.cooldown
 
@@ -130,13 +131,14 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         # Rank-0 state for metric aggregation
         self._rank0_metric_handles: Dict[int, dist.Work] = {}
         self._rank0_metric_buffers: Dict[int, torch.Tensor] = {}
+        self._rank0_metric_poll_counts: Dict[int, int] = {}
         self._rank0_buckets: Dict[int, Dict[int, float]] = {}
 
         # Non-zero ranks control receive state
         self._control_work: Optional[dist.Work] = None
         self._control_role_buf: Optional[torch.Tensor] = None
 
-    def _ensure_initialized(self, model: GFlowNet) -> None:
+    def _ensure_initialized(self, model: GFlowNet, group=dist.group.WORLD) -> None:
         if self._initialized:
             return
         if not dist.is_available() or not dist.is_initialized():
@@ -150,8 +152,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             self.cooldown,
         )
         self._model = model
+        self._group = group
         self._initialized = True
-        rank = dist.get_rank()
+        rank = dist.get_rank(group=self._group)
         logger.info(
             "Rank %d: Initializing AsyncSelectiveAveragingPolicy "
             "(replacement_ratio=%.2f, strategy=%s, threshold=%s, cooldown=%d)",
@@ -181,18 +184,15 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         local_metric: Optional[float] = None,
         group=dist.group.WORLD,
     ) -> Tuple[GFlowNet, torch.optim.Optimizer, dict]:
-        self._ensure_initialized(model)
+        self._ensure_initialized(model, group=group)
         if not dist.is_available() or not dist.is_initialized():
             return model, optimizer, {}
 
         # Non-blocking metric send on cadence
         if local_metric is not None and iteration % self.average_every == 0:
-            rank = dist.get_rank()
+            rank = dist.get_rank(group=self._group)
             if iteration != self._last_iter_sent:
                 self._last_iter_sent = iteration
-                payload = torch.tensor(
-                    [float(iteration), float(local_metric)], dtype=torch.float32
-                )
                 logger.info(
                     "Rank %d: Sending metric %.4f for iteration %d",
                     rank,
@@ -200,15 +200,15 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                     iteration,
                 )
                 try:
-                    if rank != 0:
-                        dist.isend(payload, dst=0, tag=self._TAG_METRIC)
-                    else:
-                        # Rank 0 includes its own metric directly
-                        self._rank0_record_metric(iteration, rank, float(local_metric))
-                        logger.info(
-                            "Rank 0: Metric handles: %s",
-                            {k: v.is_completed() for k, v in self._rank0_metric_handles.items()},
-                        )
+                    metric_t = torch.tensor([float(local_metric)], dtype=torch.float32)
+                    gathered = [
+                        torch.zeros(1, dtype=torch.float32)
+                        for _ in range(self.num_training_ranks)
+                    ]
+                    dist.all_gather(gathered, metric_t, group=self._group)
+                    if rank == 0:
+                        for r, g in enumerate(gathered):
+                            self._rank0_record_metric(iteration, int(r), float(g.item()))
                 except Exception as e:
                     logger.warning("Rank %d: Failed to send metric: %s", rank, e)
 
@@ -221,7 +221,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 new_weights = self._new_weights
                 self._new_weights = None
             if new_weights is not None:
-                rank = dist.get_rank() if dist.is_initialized() else 0
+                rank = dist.get_rank(group=self._group) if dist.is_initialized() else 0
                 logger.info(
                     "Rank %d: Rebuilding model with averaged weights (%d params)",
                     rank,
@@ -241,10 +241,11 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         for r in range(1, self.num_training_ranks):
             if r not in self._rank0_metric_handles:
                 buf = torch.zeros(2, dtype=torch.float32)
-                work = dist.irecv(buf, src=r, tag=self._TAG_METRIC)
+                work = dist.irecv(buf, src=r, tag=self._TAG_METRIC, group=self._group)
                 assert work is not None
                 self._rank0_metric_handles[r] = work
                 self._rank0_metric_buffers[r] = buf
+                self._rank0_metric_poll_counts[r] = 0
 
     def _rank0_poll_metrics(self) -> None:
         completed = []
@@ -255,9 +256,14 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 metric = float(buf[1].item())
                 self._rank0_record_metric(iteration, r, metric)
                 completed.append(r)
+            else:
+                polls = int(self._rank0_metric_poll_counts.get(r, 0)) + 1
+                self._rank0_metric_poll_counts[r] = polls
         for r in completed:
             del self._rank0_metric_handles[r]
             del self._rank0_metric_buffers[r]
+            if r in self._rank0_metric_poll_counts:
+                del self._rank0_metric_poll_counts[r]
 
     def _rank0_record_metric(
         self, iteration: int, rank: int, metric: float
@@ -359,12 +365,19 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         for donor in donors:
             try:
                 role = torch.tensor([self._OP_ROLE_DONOR], dtype=torch.int64)
-                dist.send(role, dst=donor, tag=self._TAG_CONTROL)
-                dist.send(header_common, dst=donor, tag=self._TAG_CONTROL)
+                dist.send(role, dst=donor, tag=self._TAG_CONTROL, group=self._group)
+                dist.send(
+                    header_common, dst=donor, tag=self._TAG_CONTROL, group=self._group
+                )
                 size_t = torch.tensor([len(replacers)], dtype=torch.int64)
-                dist.send(size_t, dst=donor, tag=self._TAG_CONTROL)
+                dist.send(size_t, dst=donor, tag=self._TAG_CONTROL, group=self._group)
                 if len(replacers) > 0:
-                    dist.send(replacers_tensor, dst=donor, tag=self._TAG_CONTROL)
+                    dist.send(
+                        replacers_tensor,
+                        dst=donor,
+                        tag=self._TAG_CONTROL,
+                        group=self._group,
+                    )
             except Exception:
                 pass
 
@@ -372,23 +385,30 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         for repl in replacers:
             try:
                 role = torch.tensor([self._OP_ROLE_REPLACER], dtype=torch.int64)
-                dist.send(role, dst=repl, tag=self._TAG_CONTROL)
-                dist.send(header_common, dst=repl, tag=self._TAG_CONTROL)
+                dist.send(role, dst=repl, tag=self._TAG_CONTROL, group=self._group)
+                dist.send(
+                    header_common, dst=repl, tag=self._TAG_CONTROL, group=self._group
+                )
                 size_t = torch.tensor([len(donors)], dtype=torch.int64)
-                dist.send(size_t, dst=repl, tag=self._TAG_CONTROL)
+                dist.send(size_t, dst=repl, tag=self._TAG_CONTROL, group=self._group)
                 if len(donors) > 0:
-                    dist.send(donors_tensor, dst=repl, tag=self._TAG_CONTROL)
+                    dist.send(
+                        donors_tensor,
+                        dst=repl,
+                        tag=self._TAG_CONTROL,
+                        group=self._group,
+                    )
                 if self.averaging_strategy == "weighted_mean" and len(donors) > 0:
                     assert weights is not None
                     wt = weights.to(dtype=torch.float32)
-                    dist.send(wt, dst=repl, tag=self._TAG_CONTROL)
+                    dist.send(wt, dst=repl, tag=self._TAG_CONTROL, group=self._group)
             except Exception:
                 pass
 
     # ---------------- Donor / Replacer roles on non-zero ranks ----------------
     def _handle_donor(self, iteration: int, replacers: List[int]) -> None:
         assert self._model is not None
-        rank = dist.get_rank()
+        rank = dist.get_rank(group=self._group)
         logger.info(
             "Rank %d: Acting as DONOR for iteration %d, sending to %s",
             rank,
@@ -400,7 +420,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             tensor = param.data.detach().clone()
             for dst in replacers:
                 try:
-                    dist.isend(tensor, dst=dst, tag=self._TAG_PARAM_BASE)
+                    dist.isend(
+                        tensor, dst=dst, tag=self._TAG_PARAM_BASE, group=self._group
+                    )
                 except Exception as e:
                     logger.warning(
                         "Rank %d: Failed to send param %s to rank %d: %s",
@@ -416,7 +438,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self, iteration: int, donors: List[int], weights: Optional[torch.Tensor]
     ) -> None:
         assert self._model is not None
-        rank = dist.get_rank()
+        rank = dist.get_rank(group=self._group)
         logger.info(
             "Rank %d: Acting as REPLACER for iteration %d, receiving from %s (strategy=%s)",
             rank,
@@ -436,7 +458,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             for i, src in enumerate(donors):
                 buf = torch.zeros(param_shape, dtype=param.data.dtype, device=device)
                 try:
-                    dist.recv(buf, src=src, tag=self._TAG_PARAM_BASE)
+                    dist.recv(buf, src=src, tag=self._TAG_PARAM_BASE, group=self._group)
                 except Exception as e:
                     logger.warning(
                         "Rank %d: Failed to receive param %s from rank %d: %s",
@@ -472,14 +494,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
     def _background_loop(self) -> None:
         if not dist.is_available() or not dist.is_initialized():
             return
-        rank = dist.get_rank()
+        rank = dist.get_rank(group=self._group)
         logger.info("Rank %d: Background loop started", rank)
         if rank == 0:
-            self._rank0_post_metric_recvs()
             while not self._shutdown.is_set():
                 try:
-                    self._rank0_poll_metrics()
-                    self._rank0_post_metric_recvs()
+                    pass
                 except Exception as e:
                     logger.warning("Rank 0: Error in background loop: %s", e)
                 time.sleep(self.poll_interval_s)
@@ -493,7 +513,10 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                     # Post a single persistent irecv for control role
                     self._control_role_buf = torch.zeros(1, dtype=torch.int64)
                     self._control_work = dist.irecv(
-                        self._control_role_buf, src=0, tag=self._TAG_CONTROL
+                        self._control_role_buf,
+                        src=0,
+                        tag=self._TAG_CONTROL,
+                        group=self._group,
                     )  # TODO: this can be recv and merged with below?
                 else:
                     # Poll completion
@@ -508,7 +531,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                         self._control_role_buf = None
 
                         header = torch.zeros(2, dtype=torch.int64)
-                        dist.recv(header, src=0, tag=self._TAG_CONTROL)
+                        dist.recv(header, src=0, tag=self._TAG_CONTROL, group=self._group)
                         iteration = int(header[0].item())
                         strategy_code = int(header[1].item())
 
@@ -522,19 +545,25 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
                         # list length
                         size_t = torch.zeros(1, dtype=torch.int64)
-                        dist.recv(size_t, src=0, tag=self._TAG_CONTROL)
+                        dist.recv(size_t, src=0, tag=self._TAG_CONTROL, group=self._group)
                         list_len = int(size_t.item())
                         ids = []
                         if list_len > 0:
                             ids_buf = torch.zeros(list_len, dtype=torch.int64)
-                            dist.recv(ids_buf, src=0, tag=self._TAG_CONTROL)
+                            dist.recv(
+                                ids_buf, src=0, tag=self._TAG_CONTROL, group=self._group
+                            )
                             ids = [int(x) for x in ids_buf.tolist()]
 
                         if role == self._OP_ROLE_DONOR:
-                            replacers = [r for r in ids if r != dist.get_rank()]
+                            replacers = [
+                                r for r in ids if r != dist.get_rank(group=self._group)
+                            ]
                             self._handle_donor(iteration, replacers)
                         elif role == self._OP_ROLE_REPLACER:
-                            donors = [d for d in ids if d != dist.get_rank()]
+                            donors = [
+                                d for d in ids if d != dist.get_rank(group=self._group)
+                            ]
                             if strategy_code == 3:  # reset_weights
                                 logger.info(
                                     "Rank %d: Reset weights requested for iteration %d",
@@ -550,7 +579,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                                     strategy_code == 1 and len(donors) > 0
                                 ):  # weighted_mean
                                     wbuf = torch.zeros(len(donors), dtype=torch.float32)
-                                    dist.recv(wbuf, src=0, tag=self._TAG_CONTROL)
+                                    dist.recv(
+                                        wbuf,
+                                        src=0,
+                                        tag=self._TAG_CONTROL,
+                                        group=self._group,
+                                    )
                                 self._handle_replacer(iteration, donors, wbuf)
                         else:
                             logger.info(

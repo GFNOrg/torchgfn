@@ -1,0 +1,28 @@
+#!/bin/bash
+
+#SBATCH -N 1                   # Number of nodes to request.
+#SBATCH --ntasks-per-node=1    # If you use ntasks-per-node you can scale.
+#SBATCH --cpus-per-task=1      # Number of CPUs to run per task.
+#SBATCH --time=23:59:59
+
+# Initalize the conda environment on the target node, which should automatically set all
+# oneapi variables for the user.
+module unload miniconda
+module load anaconda/3
+conda activate torchgfn
+
+# Sets the needed environment variables.
+export I_MPI_HYDRA_BOOTSTRAP=slurm
+export KMP_AFFINITY=none
+export MASTER_ADDR=$(hostname  | head -n 1)
+export MASTER_PORT=29505
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}  # Default 1 CPU per task.
+
+echo "***Running run_dist_ht.sh with: ***"
+echo " + Master Addr: ${MASTER_ADDR}"
+echo " + Slurm Job Num Nodes: ${SLURM_JOB_NUM_NODES}"
+echo " + Slurm NodeList: ${SLURM_NODELIST}"
+
+python -u -m tutorials.examples.train_hypergrid --ndim 10 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 32768000 --batch_size 32 --lr 0.0001
+#python -u -m tutorials.examples.train_hypergrid --ndim 8 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 16384000 --batch_size 2048
+#python -u -m tutorials.examples.train_hypergrid --ndim 8 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 32768000 --batch_size 4096

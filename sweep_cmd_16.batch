@@ -1,0 +1,1 @@
+mpiexec.hydra -np 17 -ppn 17 -l python -u -m tutorials.examples.train_hypergrid --ndim 10 --height 10 --R0 0.01 --tied --loss TB --n_trajectories 16384000 --batch_size 2048 --distributed "$@" 
