@@ -332,12 +332,18 @@ def main(args: Namespace) -> float:  # noqa: C901
         assert logZ is not None
         optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
 
+    # Compute milestone dynamically if not set explicitly.
+    # Default: fire 3 times evenly spaced over the run (at 33%, 67%, 100%).
+    # This avoids the original hardcoded 2500 which fires ~9 times for a 3M run,
+    # decimating the LR before 10% of training is done.
+    milestone = (
+        args.scheduler_milestone
+        if args.scheduler_milestone > 0
+        else max(1, n_iterations // 3)
+    )
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        milestones=[
-            i * args.scheduler_milestone
-            for i in range(1, 1 + int(n_iterations / args.scheduler_milestone))
-        ],
+        milestones=[i * milestone for i in range(1, 1 + int(n_iterations / milestone))],
         gamma=args.gamma_scheduler,
     )
 
@@ -353,6 +359,17 @@ def main(args: Namespace) -> float:  # noqa: C901
     for iteration in trange(n_iterations, dynamic_ncols=True):
         if iteration % 1000 == 0:
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
+
+        # Temperature annealing: linearly decay from temperature_start to 1.0
+        # over the first half of training, then hold at 1.0.
+        # T > 1 makes discrete choices (exit, BTS, mixture weights) more uniform,
+        # providing exploration early on (similar to random_action_prob in gflownet).
+        anneal_fraction = min(1.0, 2.0 * iteration / max(1, n_iterations))
+        temperature = args.temperature_start + anneal_fraction * (
+            1.0 - args.temperature_start
+        )
+        pf_estimator.temperature = temperature
+        pb_estimator.temperature = temperature
 
         # Sampling on-policy, so we save logprobs for faster computation.
         trajectories = sampler.sample_trajectories(
@@ -520,8 +537,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--scheduler_milestone",
         type=int,
-        default=2500,
-        help="Every scheduler_milestone steps, multiply the learning rate by gamma_scheduler",
+        default=0,
+        help="Steps between LR halvings. 0 (default) = n_iterations//3 (3 halvings total).",
+    )
+
+    parser.add_argument(
+        "--temperature_start",
+        type=float,
+        default=2.0,
+        help="Initial temperature for discrete logit annealing (>1 = more exploration). "
+        "Linearly annealed to 1.0 over the first half of training.",
     )
 
     parser.add_argument(

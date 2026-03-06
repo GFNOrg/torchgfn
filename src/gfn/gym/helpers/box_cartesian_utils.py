@@ -36,6 +36,7 @@ class BoxCartesianDistribution(Distribution):
         beta: Tensor,
         delta: float,
         epsilon: float = 1e-6,
+        temperature: float = 1.0,
     ) -> None:
         """Initialize the distribution.
 
@@ -47,6 +48,10 @@ class BoxCartesianDistribution(Distribution):
             beta: Beta beta params, shape (batch, n_dim, n_components).
             delta: Minimum step size.
             epsilon: Numerical stability constant.
+            temperature: Softmax temperature > 1 increases entropy of discrete
+                choices (exit Bernoulli, mixture component selection), providing
+                exploration. T=1 is the default (no smoothing). Applied only to
+                logits; Beta alpha/beta parameters are left unchanged.
         """
         super().__init__()
         self.delta = delta
@@ -54,13 +59,13 @@ class BoxCartesianDistribution(Distribution):
         self.states = states
         self.n_dim = states.tensor.shape[-1]
 
-        # Exit distribution
+        # Exit distribution — divided by temperature for entropy control
         from torch.distributions import Bernoulli
 
-        self.exit_dist = Bernoulli(logits=exit_logits)
+        self.exit_dist = Bernoulli(logits=exit_logits / temperature)
 
-        # Increment distribution per dimension
-        mix = Categorical(logits=mixture_logits)
+        # Increment distribution per dimension — mixture logits divided by temperature
+        mix = Categorical(logits=mixture_logits / temperature)
         components = Beta(alpha, beta)
         self.increment_dist = MixtureSameFamily(mix, components)
 
@@ -217,6 +222,7 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
         self.epsilon = env.epsilon
         self.numerical_epsilon = numerical_epsilon
         self.n_dim = 2
+        self.temperature: float = 1.0  # set externally to anneal exploration
 
     @property
     def expected_output_dim(self) -> int:
@@ -273,6 +279,7 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
             beta=beta,
             delta=self.delta,
             epsilon=self.numerical_epsilon,
+            temperature=self.temperature,
         )
 
 
@@ -325,6 +332,7 @@ class BoxCartesianPBDistribution(Distribution):
         beta: Tensor,
         delta: float,
         epsilon: float = 1e-6,
+        temperature: float = 1.0,
     ) -> None:
         """Initialize the backward distribution.
 
@@ -336,6 +344,7 @@ class BoxCartesianPBDistribution(Distribution):
             beta: Beta beta params, shape (batch, n_dim, n_components).
             delta: Minimum step size.
             epsilon: Numerical stability constant.
+            temperature: Softmax temperature; see BoxCartesianDistribution.
         """
         super().__init__()
         self.delta = delta
@@ -346,14 +355,14 @@ class BoxCartesianPBDistribution(Distribution):
         # BTS Bernoulli: learned probability of going back to source
         from torch.distributions import Bernoulli
 
-        self.bts_dist = Bernoulli(logits=bts_logits)
+        self.bts_dist = Bernoulli(logits=bts_logits / temperature)
 
         # BTS is forced when any dimension is within delta of origin
         self.dim_near_origin = states.tensor <= delta
         self.any_dim_near_origin = torch.any(self.dim_near_origin, dim=-1)
 
         # Increment distribution per dimension
-        mix = Categorical(logits=mixture_logits)
+        mix = Categorical(logits=mixture_logits / temperature)
         components = Beta(alpha, beta)
         self.increment_dist = MixtureSameFamily(mix, components)
 
@@ -457,6 +466,7 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
         self.epsilon = env.epsilon
         self.numerical_epsilon = numerical_epsilon
         self.n_dim = 2
+        self.temperature: float = 1.0  # set externally to anneal exploration
 
     @property
     def expected_output_dim(self) -> int:
@@ -500,6 +510,7 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
             beta=beta,
             delta=self.delta,
             epsilon=self.numerical_epsilon,
+            temperature=self.temperature,
         )
 
 
