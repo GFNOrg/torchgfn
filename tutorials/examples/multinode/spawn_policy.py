@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+
 import random
 import threading
 import time
@@ -15,6 +16,12 @@ import torch.distributed as dist
 
 from gfn.gflownet.base import GFlowNet
 from gfn.utils.common import Timer
+
+
+logging.basicConfig(
+    level=logging.info,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +96,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self,
         model_builder: Callable[[], Tuple[GFlowNet, torch.optim.Optimizer]],
         average_every: int,
+        num_training_ranks: int,
         replacement_ratio: float = 0.2,
         averaging_strategy: str = "mean",
         momentum: float = 0.0,
@@ -98,6 +106,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         timing: Optional[dict] = None,  # timing is a dict to capture timing info
     ) -> None:
         super().__init__(average_every)
+        self.num_training_ranks = int(num_training_ranks)
         self.replacement_ratio = float(replacement_ratio)
         self.averaging_strategy = str(averaging_strategy)
         self.momentum = float(momentum)
@@ -126,6 +135,8 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         # Non-zero ranks control receive state
         self._control_work: Optional[dist.Work] = None
         self._control_role_buf: Optional[torch.Tensor] = None
+        # Keep async metric send payloads alive until completion.
+        self._metric_send_pending: List[Tuple[dist.Work, torch.Tensor, int]] = []
 
     def _ensure_initialized(self, model: GFlowNet) -> None:
         if self._initialized:
@@ -154,14 +165,24 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         )
         self._bg_thread = threading.Thread(target=self._background_loop, daemon=True)
         self._bg_thread.start()
-        logger.debug("Rank %d: Background thread started", rank)
+        logger.info("Rank %d: Background thread started", rank)
 
     def shutdown(self) -> None:
-        logger.debug("Shutting down AsyncSelectiveAveragingPolicy")
+        logger.info("Shutting down AsyncSelectiveAveragingPolicy")
         self._shutdown.set()
         if self._bg_thread is not None and self._bg_thread.is_alive():
             self._bg_thread.join(timeout=1.0)
-        logger.debug("AsyncSelectiveAveragingPolicy shutdown complete")
+        self._poll_metric_send_completions()
+        logger.info("AsyncSelectiveAveragingPolicy shutdown complete")
+
+    def _poll_metric_send_completions(self) -> None:
+        if not self._metric_send_pending:
+            return
+        still_pending: List[Tuple[dist.Work, torch.Tensor, int]] = []
+        for work, payload, iteration in self._metric_send_pending:
+            if not work.is_completed():
+                still_pending.append((work, payload, iteration))
+        self._metric_send_pending = still_pending
 
     @torch.no_grad()
     def __call__(
@@ -179,12 +200,14 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         # Non-blocking metric send on cadence
         if local_metric is not None and iteration % self.average_every == 0:
             rank = dist.get_rank()
+            if rank != 0:
+                self._poll_metric_send_completions()
             if iteration != self._last_iter_sent:
                 self._last_iter_sent = iteration
                 payload = torch.tensor(
                     [float(iteration), float(local_metric)], dtype=torch.float32
                 )
-                logger.debug(
+                logger.info(
                     "Rank %d: Sending metric %.4f for iteration %d",
                     rank,
                     local_metric,
@@ -192,12 +215,15 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 )
                 try:
                     if rank != 0:
-                        dist.isend(payload, dst=0, tag=self._TAG_METRIC)
+                        work = dist.isend(payload, dst=0, tag=self._TAG_METRIC)
+                        if work is not None:
+                            self._metric_send_pending.append((work, payload, iteration))
                     else:
                         # Rank 0 includes its own metric directly
-                        world_size = dist.get_world_size()
-                        self._rank0_record_metric(
-                            iteration, rank, float(local_metric), world_size
+                        self._rank0_record_metric(iteration, rank, float(local_metric))
+                        logger.info(
+                            "Rank 0: Metric handles: %s",
+                            {k: v.is_completed() for k, v in self._rank0_metric_handles.items()},
                         )
                 except Exception as e:
                     logger.warning("Rank %d: Failed to send metric: %s", rank, e)
@@ -228,8 +254,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
 
     # ---------------- Rank 0 metric aggregation and dispatch ----------------
     def _rank0_post_metric_recvs(self) -> None:
-        world_size = dist.get_world_size()
-        for r in range(1, world_size):
+        for r in range(1, self.num_training_ranks):
             if r not in self._rank0_metric_handles:
                 buf = torch.zeros(2, dtype=torch.float32)
                 work = dist.irecv(buf, src=r, tag=self._TAG_METRIC)
@@ -244,34 +269,33 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 buf = self._rank0_metric_buffers[r]
                 iteration = int(buf[0].item())
                 metric = float(buf[1].item())
-                world_size = dist.get_world_size()
-                self._rank0_record_metric(iteration, r, metric, world_size)
+                self._rank0_record_metric(iteration, r, metric)
                 completed.append(r)
         for r in completed:
             del self._rank0_metric_handles[r]
             del self._rank0_metric_buffers[r]
 
     def _rank0_record_metric(
-        self, iteration: int, rank: int, metric: float, world_size: int
+        self, iteration: int, rank: int, metric: float
     ) -> None:
         bucket = self._rank0_buckets.get(iteration)
         if bucket is None:
             bucket = {}
             self._rank0_buckets[iteration] = bucket
         bucket[rank] = metric
-        logger.debug(
+        logger.info(
             "Rank 0: Received metric %.4f from rank %d for iteration %d (%d/%d)",
             metric,
             rank,
             iteration,
             len(bucket),
-            world_size,
+            self.num_training_ranks,
         )
-        if len(bucket) == world_size:
-            all_metrics = torch.zeros(world_size, dtype=torch.float32)
+        if len(bucket) == self.num_training_ranks:
+            all_metrics = torch.zeros(self.num_training_ranks, dtype=torch.float32)
             for r, m in bucket.items():
                 all_metrics[r] = m
-            logger.debug(
+            logger.info(
                 "Rank 0: All metrics collected for iteration %d: %s",
                 iteration,
                 all_metrics.tolist(),
@@ -281,7 +305,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             if self.threshold is not None:
                 # Cooldown window
                 if iteration - self._last_trigger_iter < self.cooldown:
-                    logger.debug(
+                    logger.info(
                         "Rank 0: Skipping dispatch (cooldown: %d iters remaining)",
                         self.cooldown - (iteration - self._last_trigger_iter),
                     )
@@ -289,7 +313,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 else:
                     # Trigger only if any metric falls below threshold
                     if torch.min(all_metrics).item() >= float(self.threshold):
-                        logger.debug(
+                        logger.info(
                             "Rank 0: Skipping dispatch (min metric %.4f >= threshold %.4f)",
                             torch.min(all_metrics).item(),
                             self.threshold,
@@ -299,7 +323,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             if should_dispatch:
                 ranks_to_replace, ranks_to_average = self._determine_ranks_for_averaging(
                     all_metrics,
-                    world_size,
+                    self.num_training_ranks,
                     self.replacement_ratio,
                     self.averaging_strategy,
                 )
@@ -402,7 +426,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                         e,
                     )
             param_count += 1
-        logger.debug("Rank %d: Sent %d parameters to replacers", rank, param_count)
+        logger.info("Rank %d: Sent %d parameters to replacers", rank, param_count)
 
     def _handle_replacer(
         self, iteration: int, donors: List[int], weights: Optional[torch.Tensor]
@@ -454,7 +478,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 acc = acc / len(donors)
             avg_state[name] = acc
 
-        logger.debug(
+        logger.info(
             "Rank %d: Received and averaged %d parameters", rank, len(avg_state)
         )
         with self._pending_lock:
@@ -465,7 +489,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         if not dist.is_available() or not dist.is_initialized():
             return
         rank = dist.get_rank()
-        logger.debug("Rank %d: Background loop started", rank)
+        logger.info("Rank %d: Background loop started", rank)
         if rank == 0:
             self._rank0_post_metric_recvs()
             while not self._shutdown.is_set():
@@ -475,7 +499,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 except Exception as e:
                     logger.warning("Rank 0: Error in background loop: %s", e)
                 time.sleep(self.poll_interval_s)
-            logger.debug("Rank 0: Background loop exiting")
+            logger.info("Rank 0: Background loop exiting")
             return
 
         # Other ranks: poll for control messages
@@ -504,7 +528,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                         iteration = int(header[0].item())
                         strategy_code = int(header[1].item())
 
-                        logger.debug(
+                        logger.info(
                             "Rank %d: Received control message - role=%d, iteration=%d, strategy=%d",
                             rank,
                             role,
@@ -545,14 +569,14 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                                     dist.recv(wbuf, src=0, tag=self._TAG_CONTROL)
                                 self._handle_replacer(iteration, donors, wbuf)
                         else:
-                            logger.debug(
+                            logger.info(
                                 "Rank %d: Unknown role %d, ignoring", rank, role
                             )
                 time.sleep(self.poll_interval_s)
             except Exception as e:
                 logger.warning("Rank %d: Error in background loop: %s", rank, e)
                 time.sleep(self.poll_interval_s)
-        logger.debug("Rank %d: Background loop exiting", rank)
+        logger.info("Rank %d: Background loop exiting", rank)
 
     # ---------------- Local helpers (copied from selective policy to avoid lints) ----------------
     @staticmethod
