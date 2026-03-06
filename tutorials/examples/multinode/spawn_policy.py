@@ -135,8 +135,6 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         # Non-zero ranks control receive state
         self._control_work: Optional[dist.Work] = None
         self._control_role_buf: Optional[torch.Tensor] = None
-        # Keep async metric send payloads alive until completion.
-        self._metric_send_pending: List[Tuple[dist.Work, torch.Tensor, int]] = []
 
     def _ensure_initialized(self, model: GFlowNet) -> None:
         if self._initialized:
@@ -172,17 +170,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         self._shutdown.set()
         if self._bg_thread is not None and self._bg_thread.is_alive():
             self._bg_thread.join(timeout=1.0)
-        self._poll_metric_send_completions()
         logger.info("AsyncSelectiveAveragingPolicy shutdown complete")
-
-    def _poll_metric_send_completions(self) -> None:
-        if not self._metric_send_pending:
-            return
-        still_pending: List[Tuple[dist.Work, torch.Tensor, int]] = []
-        for work, payload, iteration in self._metric_send_pending:
-            if not work.is_completed():
-                still_pending.append((work, payload, iteration))
-        self._metric_send_pending = still_pending
 
     @torch.no_grad()
     def __call__(
@@ -200,8 +188,6 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         # Non-blocking metric send on cadence
         if local_metric is not None and iteration % self.average_every == 0:
             rank = dist.get_rank()
-            if rank != 0:
-                self._poll_metric_send_completions()
             if iteration != self._last_iter_sent:
                 self._last_iter_sent = iteration
                 payload = torch.tensor(
@@ -215,9 +201,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 )
                 try:
                     if rank != 0:
-                        work = dist.isend(payload, dst=0, tag=self._TAG_METRIC)
-                        if work is not None:
-                            self._metric_send_pending.append((work, payload, iteration))
+                        dist.isend(payload, dst=0, tag=self._TAG_METRIC)
                     else:
                         # Rank 0 includes its own metric directly
                         self._rank0_record_metric(iteration, rank, float(local_metric))
@@ -694,12 +678,12 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         self.averaging_ranks = 0
         self._count = 0
 
-        self.debug_mode = False
+        self.info_mode = False
         self.age = 0
         self.age_range = age_range
         self.max_age = random.randint(self.age_range[0], self.age_range[1])
 
-        if self.debug_mode:
+        if self.info_mode:
             self.logfile = f"debug/selective_averaging_rank_{self.myrank}.log"
             with open(self.logfile, "w") as f:
                 f.write(f"Selective Averaging Log for Rank {self.myrank}\n")
@@ -847,12 +831,12 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         check_agent = 1  # version of dying agent check
         # validation info
         layer_name = None
-        if self.debug_mode:
+        if self.info_mode:
             layer_name = "pb.module.last_layer.bias"
 
         if self.is_agent_dying(local_metric, self.threshold_metric, check_agent):
             with Timer(self.timing, "sa get_params_from_donors"):
-                if self.debug_mode:
+                if self.info_mode:
                     with open(self.logfile, "a") as f:
                         # kill this model and rebuild model with fresh weights
                         num_donors = max(
@@ -935,11 +919,11 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
                 # Adding all the donor tensors/params
                 acc.add_(donor_tensor)
 
-                if self.debug_mode and name == layer_name:
+                if self.info_mode and name == layer_name:
                     all_donors.append(donor_tensor.tolist())
                 # Additions: Other averaging strategies can be implemented here
 
-            if self.debug_mode and name == layer_name:
+            if self.info_mode and name == layer_name:
                 json.dump({self._count: all_donors}, f)
                 f.write("\n")
 
@@ -1027,14 +1011,14 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
 
         self.total_iterations = 0
         self.num_replacements = 0
-        self.debug_mode = False
+        self.info_mode = False
 
         self.age = 0
         self.age_range = age_range
         self.max_age = random.randint(self.age_range[0], self.age_range[1])
 
         # test code, remove it later
-        if self.debug_mode:
+        if self.info_mode:
             self.logfile = f"debug/selective_averaging_rank_{self.myrank}.log"
             with open(self.logfile, "w") as f:
                 f.write(f"Selective Averaging Log for Rank {self.myrank}\n")
@@ -1200,7 +1184,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
 
         # validation info
         layer_name = None
-        if self.debug_mode:
+        if self.info_mode:
             layer_name = "pb.module.last_layer.bias"
 
         self.total_iterations += 1
@@ -1231,7 +1215,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
                     donor_tensor = torch.tensor(
                         donor_tensor_flat.reshape(param.data.shape), device=device
                     )
-                    if self.debug_mode:
+                    if self.info_mode:
                         buf_tensor_flat = self._mpi_tensor_wins[1][
                             offset : offset + flat_size
                         ]
@@ -1243,7 +1227,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
                     new_avg_params[name] = donor_tensor
                     offset += flat_size
 
-            if self.debug_mode:
+            if self.info_mode:
                 with open(self.logfile, "a") as f:
                     if layer_name is not None:
                         json.dump(
