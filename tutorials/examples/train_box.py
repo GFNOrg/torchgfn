@@ -243,7 +243,7 @@ def main(args: Namespace) -> float:  # noqa: C901
     module: Optional[BoxStateFlowModule] = None
     logZ: Optional[torch.Tensor] = None
 
-    assert args.loss in ("DB", "SubTB", "TB", "ZVar"), f"Invalid loss: {args.loss}"
+    assert args.loss in ("DB", "SubTB", "TB", "VarGrad"), f"Invalid loss: {args.loss}"
     assert args.subTB_weighting in (
         "geometric_within",
         "geometric_between",
@@ -283,7 +283,7 @@ def main(args: Namespace) -> float:  # noqa: C901
             pf=pf_estimator,
             pb=pb_estimator,
         )
-    elif args.loss == "ZVar":
+    elif args.loss == "VarGrad":
         gflownet = LogPartitionVarianceGFlowNet(
             pf=pf_estimator,
             pb=pb_estimator,
@@ -328,7 +328,7 @@ def main(args: Namespace) -> float:  # noqa: C901
         )
     if "logZ" in dict(gflownet.named_parameters()):
         logZ = dict(gflownet.named_parameters())["logZ"]
-    if args.loss != "ZVar":
+    if args.loss != "VarGrad":
         assert logZ is not None
         optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
 
@@ -382,7 +382,7 @@ def main(args: Namespace) -> float:  # noqa: C901
         )
         loss.backward()
         for p in gflownet.parameters():
-            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
+            if p.grad is not None:
                 p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
@@ -391,7 +391,7 @@ def main(args: Namespace) -> float:  # noqa: C901
 
         to_log = {"loss": loss.item(), "states_visited": states_visited}
         tqdm_info = f"States: {states_visited}, Loss: {loss.item():.3f}"
-        if args.loss != "ZVar":
+        if args.loss != "VarGrad":
             assert logZ is not None
             true_logZ = env.log_partition()
             assert true_logZ is not None
@@ -457,7 +457,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--loss",
         type=str,
-        choices=["TB", "DB", "SubTB", "ZVar"],
+        choices=["TB", "DB", "SubTB", "VarGrad"],
         default="TB",
         help="Loss function to use",
     )
@@ -488,7 +488,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_components",
         type=int,
-        default=5,
+        default=2,
         help="Number of mixture components for Beta distributions",
     )
     parser.add_argument(

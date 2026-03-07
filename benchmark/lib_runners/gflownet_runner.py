@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import List, Optional
 
 import torch
-
 from benchmark.lib_runners.base import BenchmarkConfig, LibraryRunner
 
 # Add gflownet to path

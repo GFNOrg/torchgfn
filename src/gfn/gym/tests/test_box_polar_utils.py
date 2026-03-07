@@ -264,7 +264,7 @@ class TestBoxCartesianDistribution:
         assert torch.isfinite(log_probs).all()
 
     def test_log_prob_exit_at_boundary(self, env, pf_estimator):
-        """Exit at boundary should have log_prob = 0."""
+        """Exit at boundary should have finite log_prob (learned Bernoulli)."""
         # States at boundary (any dim >= 1 - delta)
         states = env.States(torch.tensor([[0.8, 0.5], [0.5, 0.8]]))
         module_output = pf_estimator.module(states.tensor)
@@ -273,8 +273,10 @@ class TestBoxCartesianDistribution:
         exit_actions = torch.full((2, 2), float("-inf"))
         log_probs = dist.log_prob(exit_actions)
 
-        # Forced exits at boundary should have log_prob = 0
-        assert torch.allclose(log_probs, torch.zeros(2))
+        # Boundary exits use learned Bernoulli exit probability (not forced to 0)
+        # They should be finite and <= 0 (valid log probabilities)
+        assert torch.all(torch.isfinite(log_probs))
+        assert torch.all(log_probs <= 0)
 
     def test_no_exit_from_s0(self, env, pf_estimator):
         """Exit from s0 should have log_prob = -inf."""

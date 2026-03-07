@@ -6,8 +6,8 @@ Supports multiple environments: hypergrid, ising, box, bitseq.
 from typing import Optional
 
 import torch
-
 from benchmark.lib_runners.base import BenchmarkConfig, LibraryRunner
+
 from gfn.utils.common import set_seed
 
 

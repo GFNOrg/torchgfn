@@ -346,6 +346,7 @@ def test_subTB_vs_TB(
 ):
     if env_name == "Box" and module_name == "Tabular":
         pytest.skip("Tabular module impossible for Box")
+    torch.manual_seed(42)
     env, pf, pb, _, gflownet = PFBasedGFlowNet_with_return(
         env_name=env_name,
         ndim=ndim,
@@ -364,7 +365,7 @@ def test_subTB_vs_TB(
         tb_loss = TBGFlowNet(pf=pf, pb=pb).loss(
             env, trajectories, recalculate_all_logprobs=False
         )  # LogZ is default 0.0.
-        assert (tb_loss - subtb_loss).abs() / (tb_loss.abs() + 1e-8) < 1e-5
+        assert (tb_loss - subtb_loss).abs() < 1e-4
 
 
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])

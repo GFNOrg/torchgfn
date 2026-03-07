@@ -544,6 +544,32 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             the reduction method.
         """
         warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
+
+        if self.weighting == "TB":
+            # TB weighting is mathematically equivalent to TBGFlowNet (with logZ
+            # replaced by logF(s0)).  Computing via cumsum (used in get_scores) can
+            # give different float32 results than TBGFlowNet's direct sum(dim=0),
+            # because cumsum is strictly sequential while sum(dim=0) may use SIMD
+            # vector reduction. For continuous environments with large log-prob
+            # magnitudes (e.g. Box), this difference can exceed typical tolerances.
+            # Bypass get_scores entirely and mirror TBGFlowNet's exact computation.
+            log_pf_traj, log_pb_traj = self.get_pfs_and_pbs(
+                trajectories, recalculate_all_logprobs=recalculate_all_logprobs
+            )
+            log_state_flows = self.calculate_log_state_flows(
+                env, trajectories, log_pf_traj
+            )
+            # logF of the source state (row 0); -inf means sink — treat as 0
+            logF_s0 = log_state_flows[0].masked_fill(log_state_flows[0].isinf(), 0.0)
+            total_log_pf = log_pf_traj.sum(dim=0)
+            total_log_pb = log_pb_traj.sum(dim=0)
+            assert trajectories.log_rewards is not None
+            log_rewards = trajectories.log_rewards
+            if math.isfinite(self.log_reward_clip_min):
+                log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
+            tb_scores = logF_s0 + total_log_pf - total_log_pb - log_rewards
+            return loss_reduce(tb_scores.pow(2), reduction)
+
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
             env, trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -599,6 +625,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         assert (
             flat_contributions.sum() - 1.0
         ).abs() < 1e-5, f"{flat_contributions.sum()}"
+
         final_scores = flat_contributions * all_scores[~flattening_mask].pow(2)
 
         # TODO: default was sum, should we allow mean?
