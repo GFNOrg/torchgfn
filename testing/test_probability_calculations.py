@@ -356,7 +356,7 @@ def _legacy_get_transition_pbs(pb: DiscretePolicyEstimator | None, transitions):
         (transitions.n_transitions,), device=transitions.states.device
     )
 
-    if pb is not None:
+    if pb is not None and len(valid_next_states) != 0:
         # Call estimator with or without conditions.
         if masked_cond is not None:
             with has_conditions_exception_handler("pb", pb):
@@ -368,8 +368,7 @@ def _legacy_get_transition_pbs(pb: DiscretePolicyEstimator | None, transitions):
         valid_log_pb_actions = pb.to_probability_distribution(
             valid_next_states, estimator_outputs
         ).log_prob(non_exit_actions.tensor)
-        if len(valid_next_states) != 0:
-            log_pb_actions[~transitions.is_terminating] = valid_log_pb_actions
+        log_pb_actions[~transitions.is_terminating] = valid_log_pb_actions
 
     return log_pb_actions
 

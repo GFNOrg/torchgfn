@@ -4,8 +4,9 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Size, Tensor
-from torch.distributions import Beta, Categorical, Distribution, MixtureSameFamily
+from torch.distributions import Beta, Categorical, Distribution
 
 from gfn.estimators import Estimator, PolicyMixin
 from gfn.gym.box import BoxPolar
@@ -59,15 +60,11 @@ class BoxCartesianDistribution(Distribution):
         self.states = states
         self.n_dim = states.tensor.shape[-1]
 
-        # Exit distribution — divided by temperature for entropy control
-        from torch.distributions import Bernoulli
-
-        self.exit_dist = Bernoulli(logits=exit_logits / temperature)
-
-        # Increment distribution per dimension — mixture logits divided by temperature
-        mix = Categorical(logits=mixture_logits / temperature)
-        components = Beta(alpha, beta)
-        self.increment_dist = MixtureSameFamily(mix, components)
+        # Store raw parameters for inline computation (avoids Distribution overhead)
+        self.exit_logits_scaled = exit_logits / temperature
+        self.log_weights = F.log_softmax(mixture_logits / temperature, dim=-1)
+        self.alpha = alpha
+        self.beta = beta
 
         # Compute valid ranges for each state
         # s0: can go anywhere in [0, 1] (like gflownet's first step from source)
@@ -77,40 +74,45 @@ class BoxCartesianDistribution(Distribution):
         self.min_incr = torch.where(is_s0, 0.0, delta)
         # For s0: max_range = 1.0 (action in [0, 1], full coverage of state space)
         # For non-s0: max_range = 1 - state - delta (action in [delta, 1-state])
-        self.max_range = torch.where(
-            is_s0,
-            torch.ones_like(states.tensor),
-            (1.0 - states.tensor - delta),
-        ).clamp(min=epsilon)
+        self.max_range = torch.where(is_s0, 1.0, 1.0 - states.tensor - delta).clamp(
+            min=epsilon
+        )
+
+        # Pre-compute boundary mask (used in both sample and log_prob)
+        self.at_boundary = torch.any(states.tensor >= 1 - delta - epsilon, dim=-1)
+
+    def _sample_beta_mixture(self) -> Tensor:
+        """Sample from Beta mixture without MixtureSameFamily overhead."""
+        comp_idx = Categorical(logits=self.log_weights).sample()  # (batch, n_dim)
+        sel_alpha = self.alpha.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
+        sel_beta = self.beta.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
+        return Beta(sel_alpha, sel_beta).sample()
+
+    def _beta_mixture_log_prob(self, r: Tensor) -> Tensor:
+        """Compute Beta mixture log_prob without MixtureSameFamily overhead."""
+        r_expanded = r.unsqueeze(-1)  # (batch, n_dim, 1)
+        comp_log_probs = Beta(self.alpha, self.beta).log_prob(r_expanded)
+        return torch.logsumexp(self.log_weights + comp_log_probs, dim=-1)
 
     def sample(self, sample_shape: Size = Size()) -> Tensor:
         """Sample actions using Cartesian per-dimension increments."""
-        # Sample exit decisions
-        exit_mask = self.exit_dist.sample().bool()
-
-        # Force exit if at boundary (any dim >= 1 - delta)
-        at_boundary = torch.any(
-            self.states.tensor >= 1 - self.delta - self.epsilon, dim=-1
+        # Sample exit decisions using raw logits
+        exit_mask = torch.rand_like(self.exit_logits_scaled) < torch.sigmoid(
+            self.exit_logits_scaled
         )
-        exit_mask = exit_mask | at_boundary
 
-        # Can't exit from s0
-        exit_mask = exit_mask & ~self.is_s0
+        # Force exit if at boundary; can't exit from s0
+        exit_mask = (exit_mask | self.at_boundary) & ~self.is_s0
 
         # Sample relative increments r ∈ [0, 1] per dimension
-        r = self.increment_dist.sample().clamp(0.0, 1.0)  # (batch, n_dim)
+        r = self._sample_beta_mixture().clamp(0.0, 1.0)
 
         # Convert relative to absolute: action = min_incr + r * max_range
         actions = self.min_incr + r * self.max_range
 
-        # Clamp to ensure actions stay in valid range
-        # For s0: action in [0, 1] (full space coverage), for non-s0: action in [delta, 1-state]
+        # Clamp to valid range
         is_s0_expanded = self.is_s0.unsqueeze(-1)
-        max_action = torch.where(
-            is_s0_expanded,
-            torch.ones_like(actions),  # s0 can reach anywhere in [0, 1]
-            1.0 - self.states.tensor,
-        )
+        max_action = torch.where(is_s0_expanded, 1.0, 1.0 - self.states.tensor)
         actions = torch.clamp(actions, min=0.0)
         actions = torch.minimum(actions, max_action)
 
@@ -121,22 +123,18 @@ class BoxCartesianDistribution(Distribution):
 
     def log_prob(self, actions: Tensor) -> Tensor:
         """Compute log probability using Cartesian per-dimension approach."""
-        device = actions.device
-
         # Identify exit actions
         is_exit = torch.all(actions == float("-inf"), dim=-1)
 
-        # At boundary, exit is forced (log_prob = 0 for exit, -inf for non-exit)
-        at_boundary = torch.any(
-            self.states.tensor >= 1 - self.delta - self.epsilon, dim=-1
-        )
-
         # For non-exit: replace -inf with valid placeholder to avoid NaN in computation
-        safe_actions = torch.where(
-            is_exit.unsqueeze(-1),
-            self.min_incr + 0.5 * self.max_range,  # placeholder for exit actions
-            actions,
-        )
+        if is_exit.any():
+            safe_actions = torch.where(
+                is_exit.unsqueeze(-1),
+                self.min_incr + 0.5 * self.max_range,
+                actions,
+            )
+        else:
+            safe_actions = actions
 
         # Convert absolute to relative: r = (action - min_incr) / max_range
         safe_max_range = self.max_range.clamp(min=self.epsilon)
@@ -144,45 +142,28 @@ class BoxCartesianDistribution(Distribution):
         r = r.clamp(self.epsilon, 1 - self.epsilon)
 
         # Get log prob from Beta mixture (sum over dimensions)
-        log_p_beta_per_dim = self.increment_dist.log_prob(r)
-        log_p_beta = log_p_beta_per_dim.sum(dim=-1)
+        log_p_beta = self._beta_mixture_log_prob(r).sum(dim=-1)
 
-        # Jacobian correction for change of variables:
-        # action = min_incr + r * max_range, so dr/daction = 1/max_range
-        # log p(action) = log p(r) + log|dr/daction| = log p(r) - log(max_range)
-        log_jacobian_per_dim = -torch.log(safe_max_range)
-        log_jacobian = log_jacobian_per_dim.sum(dim=-1)
+        # Jacobian correction: dr/daction = 1/max_range
+        log_jacobian = -torch.log(safe_max_range).sum(dim=-1)
 
-        # Add log(1 - exit_prob) for choosing not to exit.
-        # Clamp exit probability to avoid log(0) when exit_prob = 1.
-        # From s0, exit is forbidden during sampling so the exit logit is meaningless;
-        # zero out log_no_exit there so log P_F(a | s0) = log_p_beta + log_jacobian only.
-        exit_probs_clamped = self.exit_dist.probs.clamp(
-            min=self.epsilon, max=1 - self.epsilon
-        )
-        log_no_exit = torch.log1p(-exit_probs_clamped)
-        log_no_exit = torch.where(self.is_s0, torch.zeros_like(log_no_exit), log_no_exit)
+        # log(1 - exit_prob) for choosing not to exit, using F.logsigmoid.
+        # From s0, exit is forbidden so zero out log_no_exit.
+        log_no_exit = F.logsigmoid(-self.exit_logits_scaled)
+        log_no_exit = torch.where(self.is_s0, 0.0, log_no_exit)
 
         # Non-exit log prob
         log_probs = log_p_beta + log_jacobian + log_no_exit
 
-        # For exit actions: log P(exit)
-        log_p_exit = self.exit_dist.log_prob(torch.ones(1, device=device))
-        log_probs = torch.where(is_exit, log_p_exit.expand_as(log_probs), log_probs)
+        # For exit actions: log P(exit) = logsigmoid(exit_logits)
+        log_p_exit = F.logsigmoid(self.exit_logits_scaled)
+        log_probs = torch.where(is_exit, log_p_exit, log_probs)
 
-        # Handle boundary states specially:
-        # - If at boundary and exiting: use learned exit log_prob (same as non-boundary).
-        #   Do NOT force log_prob = 0; the exit Bernoulli still contributes to the TB loss
-        #   so the policy learns to exit at the right place (reward ring vs hard boundary).
-        # - If at boundary and not exiting: log_prob = -inf (impossible)
-        log_probs = torch.where(
-            at_boundary & ~is_exit, torch.full_like(log_probs, float("-inf")), log_probs
-        )
+        # At boundary and not exiting: impossible
+        log_probs = torch.where(self.at_boundary & ~is_exit, float("-inf"), log_probs)
 
         # Exit from s0 is not allowed
-        log_probs = torch.where(
-            self.is_s0 & is_exit, torch.full_like(log_probs, float("-inf")), log_probs
-        )
+        log_probs = torch.where(self.is_s0 & is_exit, float("-inf"), log_probs)
 
         return log_probs
 
@@ -352,23 +333,32 @@ class BoxCartesianPBDistribution(Distribution):
         self.states = states
         self.n_dim = states.tensor.shape[-1]
 
-        # BTS Bernoulli: learned probability of going back to source
-        from torch.distributions import Bernoulli
-
-        self.bts_dist = Bernoulli(logits=bts_logits / temperature)
+        # Store raw parameters for inline computation
+        self.bts_logits_scaled = bts_logits / temperature
+        self.log_weights = F.log_softmax(mixture_logits / temperature, dim=-1)
+        self.alpha = alpha
+        self.beta = beta
 
         # BTS is forced when any dimension is within delta of origin
         self.dim_near_origin = states.tensor <= delta
         self.any_dim_near_origin = torch.any(self.dim_near_origin, dim=-1)
 
-        # Increment distribution per dimension
-        mix = Categorical(logits=mixture_logits / temperature)
-        components = Beta(alpha, beta)
-        self.increment_dist = MixtureSameFamily(mix, components)
-
         # For backward: action in [delta, state] for dims where state >= delta
         self.min_incr = delta
         self.max_range = (states.tensor - self.min_incr).clamp(min=epsilon)
+
+    def _sample_beta_mixture(self) -> Tensor:
+        """Sample from Beta mixture without MixtureSameFamily overhead."""
+        comp_idx = Categorical(logits=self.log_weights).sample()
+        sel_alpha = self.alpha.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
+        sel_beta = self.beta.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
+        return Beta(sel_alpha, sel_beta).sample()
+
+    def _beta_mixture_log_prob(self, r: Tensor) -> Tensor:
+        """Compute Beta mixture log_prob without MixtureSameFamily overhead."""
+        r_expanded = r.unsqueeze(-1)
+        comp_log_probs = Beta(self.alpha, self.beta).log_prob(r_expanded)
+        return torch.logsumexp(self.log_weights + comp_log_probs, dim=-1)
 
     def sample(self, sample_shape: Size = Size()) -> Tensor:
         """Sample backward actions.
@@ -382,7 +372,10 @@ class BoxCartesianPBDistribution(Distribution):
         # Stochastic BTS for non-forced states via learned Bernoulli
         can_choose_bts = ~self.any_dim_near_origin
         if can_choose_bts.any():
-            sampled_bts = self.bts_dist.sample().bool() & can_choose_bts
+            sampled_bts = (
+                torch.rand_like(self.bts_logits_scaled)
+                < torch.sigmoid(self.bts_logits_scaled)
+            ) & can_choose_bts
             is_bts = is_bts | sampled_bts
 
         # Start with BTS actions (action = state → next state = s0)
@@ -390,7 +383,7 @@ class BoxCartesianPBDistribution(Distribution):
 
         # For non-BTS, sample decrements from Beta mixture
         if not is_bts.all():
-            r = self.increment_dist.sample().clamp(0.0, 1.0)
+            r = self._sample_beta_mixture().clamp(0.0, 1.0)
             sampled_actions = self.min_incr + r * self.max_range
             sampled_actions = torch.min(sampled_actions, self.states.tensor)
             is_bts_expanded = is_bts.unsqueeze(-1)
@@ -412,32 +405,35 @@ class BoxCartesianPBDistribution(Distribution):
         )
 
         # Safe placeholder for BTS slots to avoid NaN in Beta log_prob
-        safe_actions = torch.where(
-            is_bts.unsqueeze(-1),
-            self.min_incr + 0.5 * self.max_range.clamp(min=self.epsilon),
-            actions,
-        )
+        if is_bts.any():
+            safe_actions = torch.where(
+                is_bts.unsqueeze(-1),
+                self.min_incr + 0.5 * self.max_range.clamp(min=self.epsilon),
+                actions,
+            )
+        else:
+            safe_actions = actions
 
         # Convert absolute to relative: r = (action - delta) / max_range
         safe_max_range = self.max_range.clamp(min=self.epsilon)
         r = (safe_actions - self.min_incr) / safe_max_range
         r = r.clamp(self.epsilon, 1 - self.epsilon)
 
-        log_p_per_dim = self.increment_dist.log_prob(r)
+        log_p_per_dim = self._beta_mixture_log_prob(r)
         log_jacobian_per_dim = -torch.log(safe_max_range)
         log_p_beta = (log_p_per_dim + log_jacobian_per_dim).sum(dim=-1)
         log_p_beta = torch.nan_to_num(log_p_beta, nan=-1e6, posinf=1e6, neginf=-1e6)
 
-        # Bernoulli log_prob for each element choosing BTS vs. not
-        log_p_bts = self.bts_dist.log_prob(torch.ones_like(log_p_beta))
-        log_p_no_bts = self.bts_dist.log_prob(torch.zeros_like(log_p_beta))
+        # BTS log probs using F.logsigmoid (avoids Bernoulli distribution overhead)
+        log_p_bts = F.logsigmoid(self.bts_logits_scaled)
+        log_p_no_bts = F.logsigmoid(-self.bts_logits_scaled)
 
         log_probs = torch.where(
             self.any_dim_near_origin,
-            torch.zeros_like(log_p_beta),  # forced BTS: deterministic
+            0.0,  # forced BTS: deterministic
             torch.where(
                 is_bts,
-                log_p_bts,  # stochastic BTS: Bernoulli log P(BTS=1)
+                log_p_bts,  # stochastic BTS: log P(BTS=1)
                 log_p_no_bts + log_p_beta,  # non-BTS: Bernoulli + Beta
             ),
         )
@@ -607,3 +603,30 @@ class BoxCartesianPBMLP(MLP):
     def forward(self, preprocessed_states: Tensor) -> Tensor:
         """Forward pass. Normalizes [0, 1] states to [-1, 1] before the MLP."""
         return super().forward(2.0 * preprocessed_states - 1.0)
+
+
+class UniformBoxCartesianPBModule(nn.Module):
+    """Fixed (non-learned) backward policy module for Box.
+
+    Returns uniform policy outputs (all ones), matching gflownet's
+    uniform backward policy for ccube. The existing BoxCartesianPBEstimator
+    maps these through sigmoid to get fixed Beta concentration parameters,
+    so the distribution machinery still computes valid log_probs — just
+    with non-learned parameters.
+
+    Use this for benchmarking against gflownet, which defaults to a
+    uniform backward policy.
+    """
+
+    def __init__(self, n_components: int, n_dim: int = 2) -> None:
+        super().__init__()
+        self.input_dim = n_dim
+        self.output_dim = 1 + 3 * n_dim * n_components
+
+    def forward(self, preprocessed_states: Tensor) -> Tensor:
+        """Return fixed uniform outputs (no learnable parameters)."""
+        return torch.ones(
+            preprocessed_states.shape[0],
+            self.output_dim,
+            device=preprocessed_states.device,
+        )

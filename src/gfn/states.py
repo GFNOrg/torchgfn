@@ -138,6 +138,12 @@ class States(ABC):
 
         # Initialize conditions (for conditional GFlowNets)
         self._conditions: torch.Tensor | None = None
+        # Caches for is_initial_state / is_sink_state. Populated lazily to
+        # avoid repeated _compare() calls (expand + == + flatten + all).
+        # Automatically invalidated because the sampling loop creates new
+        # States objects each step rather than mutating in-place.
+        self._is_initial_cache: torch.Tensor | None = None
+        self._is_sink_cache: torch.Tensor | None = None
         if conditions is not None:
             assert conditions.shape[:-1] == self.batch_shape, (
                 f"Conditions batch shape {conditions.shape[:-1]} doesn't match "
@@ -147,6 +153,28 @@ class States(ABC):
             assert conditions.dtype == torch.get_default_dtype()
             ensure_same_device(self.device, conditions.device)
             self.conditions = conditions
+
+    @classmethod
+    def _make_view(
+        cls,
+        tensor: torch.Tensor,
+        conditions: torch.Tensor | None = None,
+        debug: bool = False,
+    ) -> States:
+        """Fast constructor for internal slicing operations.
+
+        Bypasses __init__'s device resolution, .to() dispatch, and
+        conditions shape/dtype validation — all redundant when the source
+        States object was already validated. Used by __getitem__ to avoid
+        per-step overhead in the sampling loop.
+        """
+        obj = cls.__new__(cls)
+        obj.tensor = tensor
+        obj._conditions = conditions
+        obj.debug = debug
+        obj._is_initial_cache = None
+        obj._is_sink_cache = None
+        return obj
 
     @property
     def device(self) -> torch.device:
@@ -350,8 +378,11 @@ class States(ABC):
         Returns:
             A new States object with the selected states and conditions.
         """
-        conditions = self.conditions[index] if self.conditions is not None else None
-        return self.__class__(
+        conditions = self._conditions[index] if self._conditions is not None else None
+        # Use _make_view instead of __init__ to skip redundant device
+        # resolution, .to() dispatch, and conditions validation — the
+        # source object is already validated.
+        return self.__class__._make_view(
             self.tensor[index], conditions=conditions, debug=self.debug
         )
 
@@ -367,14 +398,17 @@ class States(ABC):
             states: States object containing the new states.
         """
         self.tensor[index] = states.tensor
-        if self.conditions is not None and states.conditions is not None:
-            self.conditions[index] = states.conditions
+        # Invalidate cached is_initial/is_sink results since tensor changed.
+        self._is_initial_cache = None
+        self._is_sink_cache = None
+        if self._conditions is not None and states._conditions is not None:
+            self._conditions[index] = states._conditions
         else:
-            if self.conditions is not None or states.conditions is not None:
+            if self._conditions is not None or states._conditions is not None:
                 logger.warning(
                     "Inconsistent conditions when setting states. Setting to None."
                 )
-            self.conditions = None
+            self._conditions = None
 
     def clone(self) -> States:
         """Returns a clone of the current instance.
@@ -545,7 +579,12 @@ class States(ABC):
                     f"s0 must have shape {self.state_shape}; got {self.__class__.s0.shape}"
                 )
 
-        return self._compare(self.__class__.s0)
+        # Cache the result to avoid repeated _compare() calls (expand + ==
+        # + flatten + all). Safe because States objects are created fresh each
+        # step (not mutated in-place), so the cache never goes stale.
+        if self._is_initial_cache is None:
+            self._is_initial_cache = self._compare(self.__class__.s0)
+        return self._is_initial_cache
 
     @property
     def is_sink_state(self) -> torch.Tensor:
@@ -570,7 +609,10 @@ class States(ABC):
                     f"sf must have shape {self.state_shape}; got {self.__class__.sf.shape}"
                 )
 
-        return self._compare(self.__class__.sf)
+        # Cache the result — same rationale as is_initial_state above.
+        if self._is_sink_cache is None:
+            self._is_sink_cache = self._compare(self.__class__.sf)
+        return self._is_sink_cache
 
     def sample(self, n_samples: int) -> States:
         """Randomly samples a subset of states from the batch.
@@ -675,6 +717,20 @@ class DiscreteStates(States, ABC):
         # Masks are computed on-demand and cached
         self._forward_masks_cache: Optional[torch.Tensor] = None
         self._backward_masks_cache: Optional[torch.Tensor] = None
+
+    @classmethod
+    def _make_view(
+        cls,
+        tensor: torch.Tensor,
+        conditions: torch.Tensor | None = None,
+        debug: bool = False,
+    ) -> DiscreteStates:
+        """Fast constructor for slicing: extends base _make_view with
+        mask cache initialization (left empty for on-demand computation)."""
+        obj = super()._make_view(tensor, conditions=conditions, debug=debug)
+        obj._forward_masks_cache = None
+        obj._backward_masks_cache = None
+        return obj  # type: ignore[return-value]
 
     def _invalidate_masks_cache(self) -> None:
         """Invalidates the cached masks, forcing recomputation on next access."""
@@ -806,10 +862,12 @@ class DiscreteStates(States, ABC):
         Returns:
             A new DiscreteStates object with the selected states and conditions.
         """
-        states = self.tensor[index]
-        conditions = self.conditions[index] if self.conditions is not None else None
-        out = self.__class__(states, conditions, debug=self.debug)
-        return out
+        tensor = self.tensor[index]
+        conditions = self._conditions[index] if self._conditions is not None else None
+        # Use _make_view instead of __init__ to skip redundant device
+        # resolution, .to() dispatch, and conditions validation — the
+        # source object is already validated.
+        return self.__class__._make_view(tensor, conditions=conditions, debug=self.debug)
 
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: DiscreteStates

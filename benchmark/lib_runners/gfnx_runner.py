@@ -14,6 +14,7 @@ Key JAX/Equinox concepts used here:
 """
 
 import sys
+import time
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
@@ -305,13 +306,29 @@ class GFNXRunner(LibraryRunner):
         self._iteration = 0
 
     def run_iteration(self) -> None:
-        """Run a single training iteration.
+        """Run a single training iteration with overall timing.
 
-        The train_step_fn is already JIT-compiled, so this is just
-        a function call that updates the train_state in place.
+        The train_step_fn is JIT-compiled so we cannot instrument internal
+        phases without JAX profiling. We record the total call time instead.
         """
+        t0 = time.perf_counter()
         self.train_state = self.train_step_fn(self._iteration, self.train_state)
+        t1 = time.perf_counter()
+
+        if hasattr(self, "_phase_times"):
+            self._phase_times["total"].append(t1 - t0)
+
         self._iteration += 1
+
+    def get_n_params(self) -> Optional[int]:
+        """Return total number of trainable parameters."""
+        import equinox as eqx
+        import jax
+
+        if self.train_state is not None and hasattr(self.train_state, "model"):
+            params = eqx.filter(self.train_state.model, eqx.is_array)
+            return sum(x.size for x in jax.tree.leaves(params))
+        return None
 
     def synchronize(self) -> None:
         """Ensure all JAX operations are complete.

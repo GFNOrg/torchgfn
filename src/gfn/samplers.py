@@ -216,8 +216,15 @@ class Sampler:
             raise TypeError("Estimator is not policy-capable (missing PolicyMixin)")
         ctx = policy_estimator.init_context(n_trajectories, device, states.conditions)
 
+        # Pre-allocate dummy actions tensor once. Each step clones it instead
+        # of calling actions_from_batch_shape(), which internally does
+        # dummy_action.repeat() (stride computation + copy) and
+        # make_dummy_actions() (shape resolution + .to(device)) — all
+        # redundant when shape and device are constant across steps.
+        _dummy_actions_tensor = env.actions_from_batch_shape((n_trajectories,)).tensor
+
         while not all(dones):
-            actions = env.actions_from_batch_shape((n_trajectories,))
+            actions = env.Actions(_dummy_actions_tensor.clone(), debug=env.debug)
             step_mask = ~dones
 
             # Compute distribution on active rows
@@ -253,21 +260,24 @@ class Sampler:
             else:
                 new_states = env._step(states, actions)  # type: ignore[attr-defined]
 
-            # Propagate conditions to new states
-            if states.conditions is not None:
-                new_states.conditions = states.conditions
+            # Propagate conditions to new states. Bypass the conditions
+            # property setter to avoid redundant shape/dtype/device validation
+            # — conditions are immutable within a trajectory and were already
+            # validated at trajectory start.
+            if states._conditions is not None:
+                new_states._conditions = states._conditions
 
             # Ensure that the new state is a distinct object from the old state.
-            assert new_states is not states
-            assert isinstance(new_states, States)
-            if isinstance(new_states, GraphStates) and isinstance(states, GraphStates):
-                # Asserts that there exists no shared storage between the two
-                # GraphStates.
-                assert not graph_states_share_storage(new_states, states)
-            else:
-                # Asserts that there exists no shared storage between the two
-                # States.
-                assert new_states.tensor.data_ptr() != states.tensor.data_ptr()
+            # Gated behind env.debug to avoid per-step overhead in production.
+            if env.debug:
+                assert new_states is not states
+                assert isinstance(new_states, States)
+                if isinstance(new_states, GraphStates) and isinstance(
+                    states, GraphStates
+                ):
+                    assert not graph_states_share_storage(new_states, states)
+                else:
+                    assert new_states.tensor.data_ptr() != states.tensor.data_ptr()
 
             # Increment the step, determine which trajectories are finished, and eval
             # rewards.

@@ -3,6 +3,7 @@
 Supports multiple environments: hypergrid, ising, box, bitseq.
 """
 
+import time
 from typing import Optional
 
 import torch
@@ -192,11 +193,13 @@ class TorchGFNRunner(LibraryRunner):
             BoxCartesianPBMLP,
             BoxCartesianPFEstimator,
             BoxCartesianPFMLP,
+            UniformBoxCartesianPBModule,
         )
         from gfn.samplers import Sampler
 
         delta = config.env_kwargs.get("delta", 0.25)
         n_components = config.env_kwargs.get("n_components", 5)
+        uniform_pb = config.env_kwargs.get("uniform_pb", False)
 
         self.env = Box(
             delta=delta,
@@ -211,12 +214,20 @@ class TorchGFNRunner(LibraryRunner):
             n_hidden_layers=config.n_layers,
             n_components=n_components,
         )
-        pb_module = BoxCartesianPBMLP(
-            hidden_dim=config.hidden_dim,
-            n_hidden_layers=config.n_layers,
-            n_components=n_components,
-            trunk=pf_module.trunk,  # Tied weights
-        )
+
+        if uniform_pb:
+            # Fixed (non-learned) backward policy, matching gflownet's
+            # uniform backward policy for ccube. No learnable parameters,
+            # so no PB gradients or optimizer step — enables fair timing
+            # comparison against gflownet.
+            pb_module = UniformBoxCartesianPBModule(n_components=n_components)
+        else:
+            pb_module = BoxCartesianPBMLP(
+                hidden_dim=config.hidden_dim,
+                n_hidden_layers=config.n_layers,
+                n_components=n_components,
+                trunk=pf_module.trunk,  # Tied weights
+            )
 
         pf_estimator = BoxCartesianPFEstimator(
             self.env,
@@ -238,9 +249,11 @@ class TorchGFNRunner(LibraryRunner):
 
         # Optimizer with separate learning rates
         self.optimizer = torch.optim.Adam(pf_module.parameters(), lr=config.lr)
-        self.optimizer.add_param_group(
-            {"params": pb_module.last_layer.parameters(), "lr": config.lr}
-        )
+        if not uniform_pb:
+            # Only add PB params when using a learned backward policy.
+            self.optimizer.add_param_group(
+                {"params": pb_module.last_layer.parameters(), "lr": config.lr}
+            )
         if "logZ" in dict(self.gflownet.named_parameters()):
             logZ = dict(self.gflownet.named_parameters())["logZ"]
             self.optimizer.add_param_group({"params": [logZ], "lr": config.lr_logz})
@@ -295,9 +308,10 @@ class TorchGFNRunner(LibraryRunner):
         self.synchronize()
 
     def run_iteration(self) -> None:
-        """Run a single training iteration."""
+        """Run a single training iteration with per-phase timing."""
         if self._env_type == "ising":
             # FMGFlowNet uses direct sampling
+            t0 = time.perf_counter()
             trajectories = self.gflownet.sample_trajectories(
                 self.env,  # type: ignore
                 n=self.config.batch_size,
@@ -305,16 +319,24 @@ class TorchGFNRunner(LibraryRunner):
                 save_logprobs=False,
             )
             training_samples = self.gflownet.to_training_samples(trajectories)
+            t1 = time.perf_counter()
+
             self.optimizer.zero_grad()
             loss = self.gflownet.loss(
                 self.env,  # type: ignore
                 training_samples,  # type: ignore
                 recalculate_all_logprobs=True,
             )
+            t2 = time.perf_counter()
+
             loss.backward()
+            t3 = time.perf_counter()
+
             self.optimizer.step()
+            t4 = time.perf_counter()
         else:
             # TBGFlowNet with Sampler
+            t0 = time.perf_counter()
             trajectories = self.sampler.sample_trajectories(
                 self.env,  # type: ignore
                 n=self.config.batch_size,
@@ -322,6 +344,7 @@ class TorchGFNRunner(LibraryRunner):
                 save_estimator_outputs=False,
                 # epsilon=0.0,  # TODO - add?
             )
+            t1 = time.perf_counter()
 
             self.optimizer.zero_grad()
             loss = self.gflownet.loss_from_trajectories(
@@ -329,14 +352,31 @@ class TorchGFNRunner(LibraryRunner):
                 trajectories,
                 recalculate_all_logprobs=(self._env_type != "box"),
             )
+            t2 = time.perf_counter()
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.gflownet.parameters(), 1.0)
+            t3 = time.perf_counter()
+
             self.optimizer.step()
+            t4 = time.perf_counter()
+
+        if hasattr(self, "_phase_times"):
+            self._phase_times["sample"].append(t1 - t0)
+            self._phase_times["loss"].append(t2 - t1)
+            self._phase_times["backward"].append(t3 - t2)
+            self._phase_times["optimizer"].append(t4 - t3)
 
     def synchronize(self) -> None:
         """Ensure all CUDA operations are complete."""
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
+
+    def get_n_params(self) -> Optional[int]:
+        """Return total number of trainable parameters."""
+        if self.gflownet is not None:
+            return sum(p.numel() for p in self.gflownet.parameters() if p.requires_grad)
+        return None
 
     def get_peak_memory(self) -> Optional[int]:
         """Return peak GPU memory usage in bytes."""

@@ -398,8 +398,10 @@ class Env(ABC):
             states.batch_shape, device=states.device
         )
         new_states[new_valid_states_idx] = not_done_states
-        if states.conditions is not None:
-            new_states.conditions = states.conditions
+        # Bypass conditions setter: avoids redundant shape/dtype/device
+        # validation since conditions are unchanged from the source states.
+        if states._conditions is not None:
+            new_states._conditions = states._conditions
         return new_states
 
     def _backward_step(self, states: States, actions: Actions) -> States:
@@ -442,8 +444,10 @@ class Env(ABC):
 
         # Calculate the backward step, and update only the states which are not Done.
         new_states[valid_states_idx] = self.backward_step(valid_states, valid_actions)
-        if states.conditions is not None:
-            new_states.conditions = states.conditions
+        # Bypass conditions setter: avoids redundant shape/dtype/device
+        # validation since conditions are unchanged from the source states.
+        if states._conditions is not None:
+            new_states._conditions = states._conditions
         return new_states
 
     def reward(self, states: States) -> torch.Tensor:

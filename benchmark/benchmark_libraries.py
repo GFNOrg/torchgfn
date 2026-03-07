@@ -31,7 +31,7 @@ import sys  # noqa: E402
 import time  # noqa: E402
 from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
-from typing import Dict, List, Type  # noqa: E402
+from typing import Dict, List, Optional, Type  # noqa: E402
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -109,6 +109,15 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     "tb_box_2d": BenchmarkConfig(
         env_name="box",
         env_kwargs={"n_dim": 2, "delta": 0.25, "n_components": 5},
+        n_iterations=1000,
+        batch_size=16,
+        n_warmup=50,
+    ),
+    # Same as tb_box_2d but with uniform (non-learned) backward policy,
+    # matching gflownet's default ccube setup for fair timing comparison.
+    "tb_box_2d_uniform_pb": BenchmarkConfig(
+        env_name="box",
+        env_kwargs={"n_dim": 2, "delta": 0.25, "n_components": 5, "uniform_pb": True},
         n_iterations=1000,
         batch_size=16,
         n_warmup=50,
@@ -203,7 +212,12 @@ def run_benchmark(
         BenchmarkResult with timing and memory information.
     """
     print(f"  Setting up {runner.name} with seed {seed}...")
+    runner.init_phase_times()
     runner.setup(config, seed)
+
+    n_params = runner.get_n_params()
+    if n_params is not None:
+        print(f"  Parameters: {n_params:,}")
 
     print(f"  Running {config.n_warmup} warmup iterations...")
     runner.warmup(config.n_warmup)
@@ -238,8 +252,10 @@ def run_benchmark(
     total_end = time.perf_counter()
     total_time = total_end - total_start
 
-    # Get peak memory
+    # Get peak memory, phase times, and param count
     peak_memory = runner.get_peak_memory()
+    phase_times = runner.get_phase_times()
+    n_params = runner.get_n_params()
 
     # Cleanup
     runner.cleanup()
@@ -250,6 +266,8 @@ def run_benchmark(
         total_time=total_time,
         iter_times=iter_times,
         peak_memory=peak_memory,
+        phase_times=phase_times,
+        n_params=n_params,
     )
 
 
@@ -291,6 +309,16 @@ def aggregate_results(results: List[BenchmarkResult]) -> Dict:
         ]
         mean_peak_memory = statistics.mean(peak_memories) if peak_memories else None
 
+        # Aggregate phase times across seeds
+        phase_summary = {}
+        all_phases: dict = defaultdict(list)
+        for r in lib_results:
+            for phase, times in r.phase_times.items():
+                all_phases[phase].extend(times)
+        for phase, times in all_phases.items():
+            mean_t = statistics.mean(times) if times else 0
+            phase_summary[phase] = {"mean_ms": mean_t * 1000, "total_s": sum(times)}
+
         summary[library] = {
             "n_runs": len(lib_results),
             "mean_iter_time_ms": mean_iter_time * 1000,
@@ -298,6 +326,7 @@ def aggregate_results(results: List[BenchmarkResult]) -> Dict:
             "mean_total_time_s": mean_total_time,
             "mean_throughput_iters_per_sec": mean_throughput,
             "mean_peak_memory_mb": mean_peak_memory,
+            "phase_times": phase_summary,
         }
 
     return summary
@@ -343,7 +372,9 @@ def save_results(
     return filepath
 
 
-def print_summary(summary: Dict) -> None:
+def print_summary(
+    summary: Dict, results: Optional[List[BenchmarkResult]] = None
+) -> None:
     """Print a formatted summary of benchmark results."""
     print("\n" + "=" * 70)
     print("BENCHMARK SUMMARY")
@@ -367,6 +398,48 @@ def print_summary(summary: Dict) -> None:
         print(f"{library:<15} {iter_time:<18} {throughput:<20} {memory:<15}")
 
     print("=" * 70)
+
+    # Phase breakdown (if available)
+    if results:
+        print_phase_breakdown(results)
+
+
+def print_phase_breakdown(results: List[BenchmarkResult]) -> None:
+    """Print per-phase timing breakdown grouped by library."""
+    from collections import defaultdict
+
+    # Aggregate phase times across seeds for each library
+    by_library: Dict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for r in results:
+        for phase, times in r.phase_times.items():
+            by_library[r.library][phase].extend(times)
+
+    if not any(phases for phases in by_library.values()):
+        return
+
+    print("\nPHASE BREAKDOWN (mean ms per iteration)")
+    print("-" * 70)
+
+    for library in sorted(by_library.keys()):
+        phases = by_library[library]
+        if not phases:
+            continue
+
+        print(f"\n  {library}:")
+        # Compute mean for each phase
+        phase_means = {}
+        for phase, times in sorted(phases.items()):
+            phase_means[phase] = sum(times) / len(times) * 1000  # to ms
+
+        total = sum(phase_means.values())
+        for phase, mean_ms in sorted(phase_means.items(), key=lambda x: -x[1]):
+            pct = mean_ms / total * 100 if total > 0 else 0
+            print(f"    {phase:<12} {mean_ms:>7.2f}ms  ({pct:>5.1f}%)")
+        print(f"    {'sum':<12} {total:>7.2f}ms")
+
+    print("-" * 70)
 
 
 # ============================================================================
@@ -497,7 +570,7 @@ def main():
         print(f"\nResults saved to: {filepath}")
 
         summary = aggregate_results(results)
-        print_summary(summary)
+        print_summary(summary, results)
 
 
 if __name__ == "__main__":

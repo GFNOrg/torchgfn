@@ -10,6 +10,7 @@ from gfn.gym.helpers.box_cartesian_utils import (  # noqa: F401
     BoxCartesianPBMLP,
     BoxCartesianPFEstimator,
     BoxCartesianPFMLP,
+    UniformBoxCartesianPBModule,
 )
 from gfn.gym.helpers.box_polar_utils import (  # noqa: F401
     BoxPBEstimator,
@@ -33,6 +34,7 @@ __all__ = [
     "BoxCartesianPBMLP",
     "BoxCartesianPFEstimator",
     "BoxCartesianPFMLP",
+    "UniformBoxCartesianPBModule",
     # Polar (legacy)
     "BoxPBEstimator",
     "BoxPBMLP",

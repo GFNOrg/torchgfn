@@ -8,6 +8,7 @@ Supports environments: hypergrid, ising, box (ccube).
 """
 
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -200,12 +201,13 @@ class GFlowNetRunner(LibraryRunner):
         self._iteration = 0  # Reset iteration counter after warmup
 
     def run_iteration(self) -> None:
-        """Run a single training iteration.
+        """Run a single training iteration with per-phase timing.
 
         This method is environment-agnostic. The bugfix for batch.proxy
         applies to all environments automatically.
         """
         # Sample batch
+        t0 = time.perf_counter()
         batch, _ = self.agent.sample_batch(
             n_forward=self.agent.batch_size.forward,
             n_train=0,
@@ -220,9 +222,11 @@ class GFlowNetRunner(LibraryRunner):
         # This fix applies to ALL environments (hypergrid, ising, ccube).
         if batch.proxy is None:
             batch.proxy = self.agent.proxy
+        t1 = time.perf_counter()
 
         # Compute loss
         losses = self.agent.loss.compute(batch, get_sublosses=True)
+        t2 = time.perf_counter()
 
         # Backward and optimize
         if all([torch.isfinite(loss) for loss in losses.values()]):
@@ -231,9 +235,21 @@ class GFlowNetRunner(LibraryRunner):
                 torch.nn.utils.clip_grad_norm_(
                     self.agent.parameters(), self.agent.clip_grad_norm
                 )
+            t3 = time.perf_counter()
+
             self.agent.opt.step()
             self.agent.lr_scheduler.step()
             self.agent.opt.zero_grad()
+            t4 = time.perf_counter()
+        else:
+            t3 = t2
+            t4 = t2
+
+        if hasattr(self, "_phase_times"):
+            self._phase_times["sample"].append(t1 - t0)
+            self._phase_times["loss"].append(t2 - t1)
+            self._phase_times["backward"].append(t3 - t2)
+            self._phase_times["optimizer"].append(t4 - t3)
 
         self._iteration += 1
 
@@ -241,6 +257,12 @@ class GFlowNetRunner(LibraryRunner):
         """Ensure all CUDA operations are complete."""
         if self.device is not None and self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
+
+    def get_n_params(self) -> Optional[int]:
+        """Return total number of trainable parameters."""
+        if self.agent is not None:
+            return sum(p.numel() for p in self.agent.parameters() if p.requires_grad)
+        return None
 
     def get_peak_memory(self) -> Optional[int]:
         """Return peak GPU memory usage in bytes."""

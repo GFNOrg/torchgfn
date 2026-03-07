@@ -1,8 +1,9 @@
 """Base classes and configuration for library benchmarking."""
 
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -49,6 +50,12 @@ class BenchmarkResult:
     # Memory (bytes)
     peak_memory: Optional[int] = None
 
+    # Per-phase timing (seconds per iteration, keyed by phase name)
+    phase_times: Dict[str, List[float]] = field(default_factory=dict)
+
+    # Model info
+    n_params: Optional[int] = None
+
     @property
     def mean_iter_time(self) -> float:
         """Mean iteration time in seconds."""
@@ -81,7 +88,7 @@ class BenchmarkResult:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
-        return {
+        d = {
             "library": self.library,
             "seed": self.seed,
             "total_time": self.total_time,
@@ -90,13 +97,38 @@ class BenchmarkResult:
             "throughput_iters_per_sec": self.throughput,
             "peak_memory_mb": self.peak_memory_mb,
             "n_iterations": len(self.iter_times),
+            "n_params": self.n_params,
         }
+        if self.phase_times:
+            phase_summary = {}
+            for phase, times in self.phase_times.items():
+                mean_t = sum(times) / len(times) if times else 0
+                phase_summary[phase] = {
+                    "mean_ms": mean_t * 1000,
+                    "total_s": sum(times),
+                }
+            d["phase_times"] = phase_summary
+        return d
 
 
 class LibraryRunner(ABC):
     """Abstract base class for library-specific benchmark runners."""
 
     name: str  # e.g., "torchgfn", "gflownet", "gfnx"
+
+    def init_phase_times(self) -> None:
+        """Initialize per-phase timing accumulator."""
+        self._phase_times: Dict[str, List[float]] = defaultdict(list)
+
+    def get_phase_times(self) -> Dict[str, List[float]]:
+        """Return accumulated per-phase times."""
+        if hasattr(self, "_phase_times"):
+            return dict(self._phase_times)
+        return {}
+
+    def get_n_params(self) -> Optional[int]:
+        """Return total number of trainable parameters, or None if unavailable."""
+        return None
 
     @abstractmethod
     def setup(self, config: BenchmarkConfig, seed: int) -> None:

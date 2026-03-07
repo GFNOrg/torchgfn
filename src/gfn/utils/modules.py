@@ -54,7 +54,9 @@ class MLP(nn.Module):
             input_dim: The dimension of the input.
             output_dim: The dimension of the output.
             hidden_dim: The dimension of the hidden layers.
-            n_hidden_layers: The number of hidden layers.
+            n_hidden_layers: The number of hidden layers (including the input
+                projection). With n_hidden_layers=2, the architecture is
+                [input→H1→H2→output] (3 Linear layers total).
             n_noisy_layers: The number of layers which are noisy, including the
                 input and output layers.
             activation_fn: The activation function to use.
@@ -84,7 +86,9 @@ class MLP(nn.Module):
         # to the end of the network.
         else:
             assert n_hidden_layers is not None, "n_hidden_layers must be provided"
-            assert n_hidden_layers >= 0, "n_hidden_layers must be non-negative (>= 0)."
+            assert n_hidden_layers >= 1, "n_hidden_layers must be >= 1."
+            # Total linear layers = n_hidden_layers + 1 (output). Noisy layers
+            # can replace any of them.
             assert (
                 n_noisy_layers <= n_hidden_layers + 1
             ), "n_noisy_layers must be <= n_hidden_layers + the output layer."
@@ -108,9 +112,12 @@ class MLP(nn.Module):
                     activation(),
                 ]
 
-            # Add the hidden layers. Put all noisy layers near the output.
+            # Add hidden-to-hidden layers. The input projection above counts as
+            # the first hidden layer, so we add (n_hidden_layers - 1) more.
+            # Put all noisy layers near the output.
+            n_extra_hidden = max(0, n_hidden_layers - 1)
             n_noisy_hidden_layers = max(0, n_noisy_layers - 1)
-            n_noiseless_hidden_layers = n_hidden_layers - n_noisy_hidden_layers
+            n_noiseless_hidden_layers = n_extra_hidden - n_noisy_hidden_layers
             hidden_layer_types = [nn.Linear] * n_noiseless_hidden_layers + [
                 NoisyLinear
             ] * n_noisy_hidden_layers
@@ -782,7 +789,7 @@ class GraphScalarMLP(nn.Module):
         super().__init__()
         assert n_nodes > 0, "n_nodes must be positive"
         assert embedding_dim > 0, "embedding_dim must be positive"
-        assert n_hidden_layers >= 0, "n_hidden_layers must be non-negative"
+        assert n_hidden_layers >= 1, "n_hidden_layers must be >= 1"
         self.n_nodes = n_nodes
         self.is_directed = directed
         self.input_dim = n_nodes**2
