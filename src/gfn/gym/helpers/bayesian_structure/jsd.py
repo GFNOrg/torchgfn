@@ -97,8 +97,8 @@ def jensen_shannon_divergence(
     for graph in graphs:
         full_posterior_list.append(full_posterior_dict[graph])
         posterior_list.append(posterior_dict[graph])
-    full_posterior_arr = np.array(full_posterior_list, dtype=np.float_)
-    posterior_arr = np.array(posterior_list, dtype=np.float_)
+    full_posterior_arr = np.array(full_posterior_list, dtype=np.float64)
+    posterior_arr = np.array(posterior_list, dtype=np.float64)
 
     # Compute the mean distribution
     mean = np.log(0.5) + np.logaddexp(full_posterior_arr, posterior_arr)
@@ -178,7 +178,7 @@ def get_gfn_exact_posterior(
         markov.append(get_markov_blanket_graph(graph))
 
     # The log-posterior is already normalized
-    log_probas = np.asarray(log_probas, dtype=np.float_)
+    log_probas = np.asarray(log_probas, dtype=np.float64)
 
     return FullPosterior(
         log_probas,
