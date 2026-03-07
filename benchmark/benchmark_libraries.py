@@ -401,6 +401,12 @@ def main():
         help="Libraries to benchmark (default: all supported for the environment)",
     )
     parser.add_argument(
+        "--n-iterations",
+        type=int,
+        default=None,
+        help="Override number of iterations (default: use scenario default)",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -411,6 +417,8 @@ def main():
 
     # Get configuration
     config = SCENARIOS[args.scenario]
+    if args.n_iterations is not None:
+        config = BenchmarkConfig(**{**vars(config), "n_iterations": args.n_iterations})
     output_dir = Path(args.output) if args.output else Path(__file__).parent / "outputs"
 
     # Determine which libraries to run
