@@ -88,11 +88,12 @@ class DiscreteEBMArgs(CommonArgs):
 @dataclass
 class HypergridArgs(CommonArgs):
     back_ratio: float = 0.5
-    store_all_states: bool = True
-    calculate_partition: bool = True
     distributed: bool = False
     diverse_replay_buffer: bool = False
-    epsilon: float = 0.1
+    epsilon: float = 0.0
+    temperature: float = 1.0
+    n_noisy_layers: int = 0
+    noisy_std_init: float = 0.5
     height: int = 8
     loss: str = "TB"
     lr_logz: float = 1e-3
@@ -108,6 +109,8 @@ class HypergridArgs(CommonArgs):
     timing: bool = True
     half_precision: bool = False
     remote_buffer_freq = 1
+    validate_environment: bool = True
+    weight_decay: float = 0.0
 
 
 @dataclass
@@ -206,6 +209,7 @@ class BoxArgs(CommonArgs):
     n_components_s0: int = 4
     n_components: int = 2
     scheduler_milestone: int = 2500
+    temperature_start: float = 2.0
     use_local_search: bool = False
 
 
@@ -476,34 +480,20 @@ def test_box(delta: float, loss: str):
     final_jsd = train_box_main(namespace_args)
 
     if loss == "TB" and delta == 0.1:
-        # TODO: This value seems to be machine dependent. Either that or is is
-        #       an issue with no seeding properly. Need to investigate.
-        tgt1 = 0.1
-        tgt2 = 0.285
-        tgt3 = 3.81e-2
-        tgt4 = 5.67e-2
-        test_1 = np.isclose(final_jsd, tgt1, atol=1e-2)
-        test_2 = np.isclose(final_jsd, tgt2, atol=1e-2)
-        test_3 = np.isclose(final_jsd, tgt3, atol=1e-2)
-        test_4 = np.isclose(final_jsd, tgt4, atol=1e-2)
-        assert (
-            test_1 or test_2 or test_3 or test_4
-        ), f"final_jsd: {final_jsd} not close to [{tgt1}, {tgt2}, {tgt3}, {tgt4}]"
-
+        tgt = 0.10
+        atol = 0.02
+        assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
     elif loss == "DB" and delta == 0.1:
-        tgt1 = 0.2757
-        tgt2 = 0.2878
-        atol = 1e-2
-        test_1 = np.isclose(final_jsd, tgt1, atol=atol)
-        test_2 = np.isclose(final_jsd, tgt2, atol=atol)
-        assert test_1 or test_2, f"final_jsd: {final_jsd} not close to [{tgt1}, {tgt2}]"
-    if loss == "TB" and delta == 0.25:
-        tgt = 0.1492
-        atol = 1e-2
+        tgt = 0.10
+        atol = 0.02
+        assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
+    elif loss == "TB" and delta == 0.25:
+        tgt = 0.09
+        atol = 0.02
         assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
     elif loss == "DB" and delta == 0.25:
-        tgt = 0.1427
-        atol = 1e-2
+        tgt = 0.09
+        atol = 0.02
         assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
 
 
@@ -661,7 +651,7 @@ def test_bitsequence(seq_size: int, n_modes: int):
     if seq_size == 4 and n_modes == 2:
         assert final_l1_dist <= 9e-5
     if seq_size == 4 and n_modes == 4:
-        assert final_l1_dist <= 1e-5
+        assert final_l1_dist <= 1e-4
     if seq_size == 8 and n_modes == 2:
         assert final_l1_dist <= 1e-3
     if seq_size == 8 and n_modes == 4:

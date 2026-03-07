@@ -28,6 +28,35 @@ class MyGraphStates(GraphStates):
     )
 
 
+class SimpleDiscreteStates(DiscreteStates):
+    state_shape = (2,)  # 2-dimensional state
+    n_actions = 3  # 3 possible actions
+    s0 = torch.tensor([0.0, 0.0])
+    sf = torch.tensor([1.0, 1.0])
+
+    def _compute_forward_masks(self) -> torch.Tensor:
+        """All forward actions allowed."""
+        return torch.ones(
+            (*self.batch_shape, self.n_actions),
+            dtype=torch.bool,
+            device=self.device,
+        )
+
+    def _compute_backward_masks(self) -> torch.Tensor:
+        """All backward actions allowed."""
+        return torch.ones(
+            (*self.batch_shape, self.n_actions - 1),
+            dtype=torch.bool,
+            device=self.device,
+        )
+
+
+class SimpleTensorStates(States):
+    state_shape = (2,)  # 2-dimensional state
+    s0 = torch.tensor([0.0, 0.0])
+    sf = torch.tensor([1.0, 1.0])
+
+
 @pytest.fixture
 def datas():
     """Creates a list of 10 GeometricData objects"""
@@ -54,50 +83,40 @@ def empty_graph_state():
 
 
 @pytest.fixture
+def conditional_graph_state(simple_graph_state):
+    """Creates a simple graph state with conditions"""
+    state = simple_graph_state.clone()
+    state.conditions = torch.tensor([[1.0]])
+    return state
+
+
+@pytest.fixture
 def simple_discrete_state():
     """Creates a simple discrete state with 3 possible actions"""
-
-    class SimpleDiscreteStates(DiscreteStates):
-        state_shape = (2,)  # 2-dimensional state
-        n_actions = 3  # 3 possible actions
-        s0 = torch.tensor([0.0, 0.0])
-        sf = torch.tensor([1.0, 1.0])
-
     # Create a single state tensor
     tensor = torch.tensor([[0.5, 0.5]])
-    forward_masks = torch.tensor([[True, True, True]])  # All actions allowed
-    backward_masks = torch.tensor([[True, True]])  # All backward actions allowed
-
-    return SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+    return SimpleDiscreteStates(tensor)
 
 
 @pytest.fixture
 def empty_discrete_state():
     """Creates an empty discrete state"""
-
-    class SimpleDiscreteStates(DiscreteStates):
-        state_shape = (2,)  # 2-dimensional state
-        n_actions = 3  # 3 possible actions
-        s0 = torch.tensor([0.0, 0.0])
-        sf = torch.tensor([1.0, 1.0])
-
     # Create an empty state tensor
     tensor = torch.zeros((0, 2))
-    forward_masks = torch.zeros((0, 3), dtype=torch.bool)
-    backward_masks = torch.zeros((0, 2), dtype=torch.bool)
+    return SimpleDiscreteStates(tensor)
 
-    return SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+
+@pytest.fixture
+def conditional_discrete_state(simple_discrete_state):
+    """Creates a simple discrete state with conditions"""
+    state = simple_discrete_state.clone()
+    state.conditions = torch.tensor([[1.0]])
+    return state
 
 
 @pytest.fixture
 def simple_tensor_state():
     """Creates a simple tensor state"""
-
-    class SimpleTensorStates(States):
-        state_shape = (2,)  # 2-dimensional state
-        s0 = torch.tensor([0.0, 0.0])
-        sf = torch.tensor([1.0, 1.0])
-
     # Create a single state tensor
     tensor = torch.tensor([[0.5, 0.5]])
     return SimpleTensorStates(tensor)
@@ -106,15 +125,17 @@ def simple_tensor_state():
 @pytest.fixture
 def empty_tensor_state():
     """Creates an empty tensor state"""
-
-    class SimpleTensorStates(States):
-        state_shape = (2,)  # 2-dimensional state
-        s0 = torch.tensor([0.0, 0.0])
-        sf = torch.tensor([1.0, 1.0])
-
     # Create an empty state tensor
     tensor = torch.zeros((0, 2))
     return SimpleTensorStates(tensor)
+
+
+@pytest.fixture
+def conditional_tensor_state(simple_tensor_state):
+    """Creates a simple tensor state with conditions"""
+    state = simple_tensor_state.clone()
+    state.conditions = torch.tensor([[1.0]])
+    return state
 
 
 def test_getitem_1d(datas):
@@ -248,7 +269,14 @@ def test_setitem_2d(datas):
 
 @pytest.mark.parametrize(
     "state_fixture",
-    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+    [
+        "simple_graph_state",
+        "simple_discrete_state",
+        "simple_tensor_state",
+        "conditional_graph_state",
+        "conditional_discrete_state",
+        "conditional_tensor_state",
+    ],
 )
 def test_clone(state_fixture, request):
     """Test cloning different types of States objects"""
@@ -257,6 +285,13 @@ def test_clone(state_fixture, request):
 
     # Check that the clone has the same content
     assert cloned.batch_shape == state.batch_shape
+
+    # Check conditions
+    if state.conditions is not None:
+        assert cloned.conditions is not None
+        assert torch.equal(cloned.conditions, state.conditions)
+    else:
+        assert cloned.conditions is None
 
     # For tensor-based states
     if hasattr(state.tensor, "shape"):
@@ -274,7 +309,14 @@ def test_clone(state_fixture, request):
 
 @pytest.mark.parametrize(
     "state_fixture",
-    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+    [
+        "simple_graph_state",
+        "simple_discrete_state",
+        "simple_tensor_state",
+        "conditional_graph_state",
+        "conditional_discrete_state",
+        "conditional_tensor_state",
+    ],
 )
 def test_is_initial_state(state_fixture, request):
     """Test is_initial_state property for different state types"""
@@ -290,13 +332,20 @@ def test_is_initial_state(state_fixture, request):
     assert isinstance(is_initial, torch.Tensor)
     assert is_initial.dtype == torch.bool
 
-    initial_states = state.make_initial_states(state.batch_shape, state.device)
+    initial_states = state.make_initial_states(state.batch_shape, device=state.device)
     assert torch.all(initial_states.is_initial_state)
 
 
 @pytest.mark.parametrize(
     "state_fixture",
-    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+    [
+        "simple_graph_state",
+        "simple_discrete_state",
+        "simple_tensor_state",
+        "conditional_graph_state",
+        "conditional_discrete_state",
+        "conditional_tensor_state",
+    ],
 )
 def test_is_sink_state(state_fixture, request):
     """Test is_sink_state property for different state types"""
@@ -312,7 +361,7 @@ def test_is_sink_state(state_fixture, request):
     assert isinstance(is_sink, torch.Tensor)
     assert is_sink.dtype == torch.bool
 
-    sink_states = state.make_sink_states(state.batch_shape, state.device)
+    sink_states = state.make_sink_states(state.batch_shape, device=state.device)
     assert torch.all(sink_states.is_sink_state)
 
 
@@ -347,7 +396,14 @@ def test_from_batch_shape(state_fixture, request):
 )
 @pytest.mark.parametrize(
     "simple_state_fixture",
-    ["simple_graph_state", "simple_discrete_state", "simple_tensor_state"],
+    [
+        "simple_graph_state",
+        "simple_discrete_state",
+        "simple_tensor_state",
+        "conditional_graph_state",
+        "conditional_discrete_state",
+        "conditional_tensor_state",
+    ],
 )
 def test_extend_empty_state(empty_state_fixture, simple_state_fixture, request):
     """Test extending an empty state with a non-empty state"""
@@ -699,11 +755,7 @@ def _make_discrete(batch_shape: tuple[int, ...]) -> DiscreteStates:
         sf = torch.ones(2)
 
     tensor = torch.zeros(batch_shape + SimpleDiscreteStates.state_shape)
-    fm = torch.ones(batch_shape + (SimpleDiscreteStates.n_actions,), dtype=torch.bool)
-    bm = torch.ones(
-        batch_shape + (SimpleDiscreteStates.n_actions - 1,), dtype=torch.bool
-    )
-    return SimpleDiscreteStates(tensor, fm, bm, debug=True)
+    return SimpleDiscreteStates(tensor, debug=True)
 
 
 def test_set_nonexit_action_masks_resets_each_call_1d():
@@ -849,13 +901,7 @@ def test_discrete_states_factory_requires_debug():
         @classmethod
         def make_random_states(cls, batch_shape, device=None):
             t = torch.zeros(batch_shape + cls.state_shape, device=device)
-            fm = torch.ones(
-                batch_shape + (cls.n_actions,), dtype=torch.bool, device=device
-            )
-            bm = torch.ones(
-                batch_shape + (cls.n_actions - 1,), dtype=torch.bool, device=device
-            )
-            return cls(t, fm, bm)
+            return cls(t)
 
     with pytest.raises(TypeError, match="must accept a `debug`"):
         NoDebugDiscreteStates.from_batch_shape((2,), random=True, debug=True)
@@ -952,11 +998,8 @@ def test_discrete_masks_device_on_cuda():
         sf = torch.tensor([1.0, 1.0])
 
     tensor = torch.tensor([[0.5, 0.5]], device=torch.device("cuda"))
-    # Provide masks on CUDA as well
-    forward_masks = torch.tensor([[True, True, True]], device=torch.device("cuda"))
-    backward_masks = torch.tensor([[True, True]], device=torch.device("cuda"))
 
-    state = SimpleDiscreteStates(tensor, forward_masks, backward_masks)
+    state = SimpleDiscreteStates(tensor)
     assert state.device.type == "cuda"
     assert state.forward_masks.device.type == "cuda"
     assert state.backward_masks.device.type == "cuda"
@@ -1164,11 +1207,7 @@ def test_discrete_states_two_instances_different_devices_cuda():
         sf = torch.tensor([1.0, 1.0])
 
     A = SimpleDiscreteStates(torch.tensor([[0.5, 0.5]], device=cpu))
-    B = SimpleDiscreteStates(
-        torch.tensor([[0.1, 0.2]], device=cuda),
-        torch.ones((1, 3), dtype=torch.bool, device=cuda),
-        torch.ones((1, 2), dtype=torch.bool, device=cuda),
-    )
+    B = SimpleDiscreteStates(torch.tensor([[0.1, 0.2]], device=cuda))
     assert A.device.type == "cpu"
     assert B.device.type == "cuda"
     # Mask devices are consistent with instance devices
