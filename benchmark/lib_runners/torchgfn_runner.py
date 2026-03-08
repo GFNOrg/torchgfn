@@ -114,11 +114,12 @@ class TorchGFNRunner(LibraryRunner):
         self.sampler = Sampler(estimator=pf_estimator)
 
     def _setup_ising(self, config: BenchmarkConfig) -> None:
-        """Setup Ising model environment with FM loss."""
+        """Setup Ising model environment with TB loss."""
         from gfn.estimators import DiscretePolicyEstimator
-        from gfn.gflownet import FMGFlowNet
+        from gfn.gflownet import TBGFlowNet
         from gfn.gym import DiscreteEBM
         from gfn.gym.discrete_ebm import IsingModel
+        from gfn.samplers import Sampler
         from gfn.utils.modules import MLP
 
         L = config.env_kwargs["L"]
@@ -144,15 +145,30 @@ class TorchGFNRunner(LibraryRunner):
             n_hidden_layers=config.n_layers,
             activation_fn="relu",
         )
+        pb_module = MLP(
+            input_dim=self.env.ndim,
+            output_dim=self.env.n_actions - 1,
+            hidden_dim=config.hidden_dim,
+            n_hidden_layers=config.n_layers,
+            trunk=pf_module.trunk,
+        )
 
         pf_estimator = DiscretePolicyEstimator(
             pf_module, self.env.n_actions, is_backward=False
         )
-        self.gflownet = FMGFlowNet(pf_estimator).to(self.device)
-        self.optimizer = torch.optim.Adam(self.gflownet.parameters(), lr=config.lr)
+        pb_estimator = DiscretePolicyEstimator(
+            pb_module, self.env.n_actions, is_backward=True
+        )
 
-        # FMGFlowNet samples trajectories directly
-        self.sampler = None
+        self.gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
+        self.gflownet = self.gflownet.to(self.device)
+
+        self.optimizer = torch.optim.Adam(self.gflownet.pf_pb_parameters(), lr=config.lr)
+        self.optimizer.add_param_group(
+            {"params": self.gflownet.logz_parameters(), "lr": config.lr_logz}
+        )
+
+        self.sampler = Sampler(estimator=pf_estimator)
 
     def _make_ising_J(self, L: int, coupling_constant: float) -> torch.Tensor:
         """Build Ising coupling matrix with periodic boundary conditions."""
@@ -309,57 +325,30 @@ class TorchGFNRunner(LibraryRunner):
 
     def run_iteration(self) -> None:
         """Run a single training iteration with per-phase timing."""
-        if self._env_type == "ising":
-            # FMGFlowNet uses direct sampling
-            t0 = time.perf_counter()
-            trajectories = self.gflownet.sample_trajectories(
-                self.env,  # type: ignore
-                n=self.config.batch_size,
-                save_estimator_outputs=False,
-                save_logprobs=False,
-            )
-            training_samples = self.gflownet.to_training_samples(trajectories)
-            t1 = time.perf_counter()
+        # TBGFlowNet with Sampler
+        t0 = time.perf_counter()
+        trajectories = self.sampler.sample_trajectories(
+            self.env,  # type: ignore
+            n=self.config.batch_size,
+            save_logprobs=self._env_type == "box",  # Box saves logprobs
+            save_estimator_outputs=False,
+        )
+        t1 = time.perf_counter()
 
-            self.optimizer.zero_grad()
-            loss = self.gflownet.loss(
-                self.env,  # type: ignore
-                training_samples,  # type: ignore
-                recalculate_all_logprobs=True,
-            )
-            t2 = time.perf_counter()
+        self.optimizer.zero_grad()
+        loss = self.gflownet.loss_from_trajectories(
+            self.env,  # type: ignore
+            trajectories,
+            recalculate_all_logprobs=(self._env_type != "box"),
+        )
+        t2 = time.perf_counter()
 
-            loss.backward()
-            t3 = time.perf_counter()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.gflownet.parameters(), 1.0)
+        t3 = time.perf_counter()
 
-            self.optimizer.step()
-            t4 = time.perf_counter()
-        else:
-            # TBGFlowNet with Sampler
-            t0 = time.perf_counter()
-            trajectories = self.sampler.sample_trajectories(
-                self.env,  # type: ignore
-                n=self.config.batch_size,
-                save_logprobs=self._env_type == "box",  # Box saves logprobs
-                save_estimator_outputs=False,
-                # epsilon=0.0,  # TODO - add?
-            )
-            t1 = time.perf_counter()
-
-            self.optimizer.zero_grad()
-            loss = self.gflownet.loss_from_trajectories(
-                self.env,  # type: ignore
-                trajectories,
-                recalculate_all_logprobs=(self._env_type != "box"),
-            )
-            t2 = time.perf_counter()
-
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.gflownet.parameters(), 1.0)
-            t3 = time.perf_counter()
-
-            self.optimizer.step()
-            t4 = time.perf_counter()
+        self.optimizer.step()
+        t4 = time.perf_counter()
 
         if hasattr(self, "_phase_times"):
             self._phase_times["sample"].append(t1 - t0)

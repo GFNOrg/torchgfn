@@ -9,6 +9,7 @@ Trajectory Balance training for multiple environments:
 - bitseq: Bit sequence generation (torchgfn, gfnx only)
 
 Example usage:
+    python benchmark/benchmark_libraries.py                          # Run all scenarios
     python benchmark/benchmark_libraries.py --scenario tb_hypergrid_small --seeds 0 1 2
     python benchmark/benchmark_libraries.py --libraries torchgfn gfnx --scenario tb_bitseq_small
     python benchmark/benchmark_libraries.py --scenario tb_ising_6x6 --libraries torchgfn gflownet gfnx
@@ -26,12 +27,13 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import argparse  # noqa: E402
+import csv  # noqa: E402
 import json  # noqa: E402
 import sys  # noqa: E402
 import time  # noqa: E402
 from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
-from typing import Dict, List, Optional, Type  # noqa: E402
+from typing import Dict, List, Optional, Tuple, Type  # noqa: E402
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -79,14 +81,14 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     "tb_hypergrid_medium": BenchmarkConfig(
         env_name="hypergrid",
         env_kwargs={"ndim": 4, "height": 16},
-        n_iterations=2000,
+        n_iterations=1000,
         batch_size=16,
         n_warmup=100,
     ),
     "tb_hypergrid_large": BenchmarkConfig(
         env_name="hypergrid",
         env_kwargs={"ndim": 4, "height": 32},
-        n_iterations=5000,
+        n_iterations=1000,
         batch_size=16,
         n_warmup=100,
     ),
@@ -101,7 +103,7 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     "tb_ising_10x10": BenchmarkConfig(
         env_name="ising",
         env_kwargs={"L": 10, "J": 0.44},
-        n_iterations=2000,
+        n_iterations=1000,
         batch_size=16,
         n_warmup=100,
     ),
@@ -133,7 +135,7 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     "tb_bitseq_medium": BenchmarkConfig(
         env_name="bitseq",
         env_kwargs={"word_size": 2, "seq_size": 8, "n_modes": 4},
-        n_iterations=2000,
+        n_iterations=1000,
         batch_size=16,
         n_warmup=100,
     ),
@@ -404,6 +406,65 @@ def print_summary(
         print_phase_breakdown(results)
 
 
+def save_all_results_csv(
+    all_results: List[Tuple[str, int, BenchmarkConfig, BenchmarkResult]],
+    output_dir: Path,
+) -> Path:
+    """Save all benchmark results to a single CSV file.
+
+    Each row is one (scenario, batch_size, library, seed) run with summary metrics.
+
+    Args:
+        all_results: List of (scenario, batch_size, config, result) tuples.
+        output_dir: Output directory.
+
+    Returns:
+        Path to the saved CSV file.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = output_dir / f"benchmark_all_{timestamp}.csv"
+
+    fieldnames = [
+        "scenario",
+        "env_name",
+        "batch_size",
+        "library",
+        "seed",
+        "n_iterations",
+        "mean_iter_time_ms",
+        "std_iter_time_ms",
+        "total_time_s",
+        "throughput_iters_per_sec",
+        "peak_memory_mb",
+        "n_params",
+    ]
+
+    with open(filepath, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for scenario, batch_size, config, result in all_results:
+            writer.writerow(
+                {
+                    "scenario": scenario,
+                    "env_name": config.env_name,
+                    "batch_size": batch_size,
+                    "library": result.library,
+                    "seed": result.seed,
+                    "n_iterations": len(result.iter_times),
+                    "mean_iter_time_ms": result.mean_iter_time * 1000,
+                    "std_iter_time_ms": result.std_iter_time * 1000,
+                    "total_time_s": result.total_time,
+                    "throughput_iters_per_sec": result.throughput,
+                    "peak_memory_mb": result.peak_memory_mb,
+                    "n_params": result.n_params,
+                }
+            )
+
+    return filepath
+
+
 def print_phase_breakdown(results: List[BenchmarkResult]) -> None:
     """Print per-phase timing breakdown grouped by library."""
     from collections import defaultdict
@@ -454,9 +515,9 @@ def main():
     parser.add_argument(
         "--scenario",
         type=str,
-        default="tb_hypergrid_small",
+        default=None,
         choices=list(SCENARIOS.keys()),
-        help="Benchmark scenario to run",
+        help="Benchmark scenario to run (default: all scenarios)",
     )
     parser.add_argument(
         "--seeds",
@@ -480,6 +541,13 @@ def main():
         help="Override number of iterations (default: use scenario default)",
     )
     parser.add_argument(
+        "--batch-sizes",
+        type=int,
+        nargs="+",
+        default=[32, 256],
+        help="Batch sizes to benchmark (default: 32 256)",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -488,89 +556,119 @@ def main():
 
     args = parser.parse_args()
 
-    # Get configuration
-    config = SCENARIOS[args.scenario]
-    if args.n_iterations is not None:
-        config = BenchmarkConfig(**{**vars(config), "n_iterations": args.n_iterations})
-    output_dir = Path(args.output) if args.output else Path(__file__).parent / "outputs"
+    # Ensure CUDA is being used when available
+    import torch
 
-    # Determine which libraries to run
-    supported_libs = get_supported_libraries(config.env_name)
-    if args.libraries is None:
-        # Use all supported libraries for this environment
-        libraries = supported_libs
+    if torch.cuda.is_available():
+        print(f"CUDA available: {torch.cuda.get_device_name(0)}")
     else:
-        # Validate that requested libraries support this environment
-        libraries = []
-        for lib in args.libraries:
-            if lib in supported_libs:
-                libraries.append(lib)
-            else:
-                print(
-                    f"Warning: {lib} does not support {config.env_name} environment, skipping."
-                )
-        if not libraries:
-            print(
-                f"Error: No valid libraries for {config.env_name}. Supported: {supported_libs}"
-            )
-            sys.exit(1)
-
-    # Note about running multiple libraries on macOS
-    import platform
-
-    if platform.system() == "Darwin" and len(libraries) > 1:
-        print(
-            "\nNote: Running multiple libraries together. KMP_DUPLICATE_LIB_OK is set\n"
-            "to work around macOS OpenMP conflicts. For cleanest results, consider\n"
-            "running each library separately.\n"
+        raise RuntimeError(
+            "CUDA is not available. Benchmarks must run on GPU for meaningful results. "
+            "Please run on a machine with CUDA support or set CUDA_VISIBLE_DEVICES appropriately."
         )
 
-    print("=" * 70)
-    print(f"GFlowNet Library Benchmark: {args.scenario}")
-    print("=" * 70)
-    print("Configuration:")
-    print(f"  env: {config.env_name}, {config.env_kwargs}")
-    print(f"  n_iterations={config.n_iterations}, batch_size={config.batch_size}")
-    print(f"  n_warmup={config.n_warmup}")
-    print(f"  lr={config.lr}, lr_logz={config.lr_logz}")
-    print(f"  hidden_dim={config.hidden_dim}, n_layers={config.n_layers}")
-    print(f"Libraries: {', '.join(libraries)}")
-    print(f"Seeds: {args.seeds}")
-    print("=" * 70)
+    # Determine which scenarios to run
+    scenarios = [args.scenario] if args.scenario else list(SCENARIOS.keys())
 
-    results = []
+    output_dir = Path(args.output) if args.output else Path(__file__).parent / "outputs"
 
-    for library in libraries:
-        print(f"\n[{library.upper()}]")
+    all_results: List[Tuple[str, int, BenchmarkConfig, BenchmarkResult]] = []
 
-        runner_cls = LIBRARY_RUNNERS[library]()  # Call the lazy loader function
+    for scenario in scenarios:
+        for batch_size in args.batch_sizes:
+            # Get configuration with current batch size
+            base_config = SCENARIOS[scenario]
+            overrides = {**vars(base_config), "batch_size": batch_size}
+            if args.n_iterations is not None:
+                overrides["n_iterations"] = args.n_iterations
+            config = BenchmarkConfig(**overrides)
 
-        for seed in args.seeds:
-            print(f"\nSeed {seed}:")
-            try:
-                runner = runner_cls()
-                result = run_benchmark(runner, config, seed)
-                results.append(result)
+            # Determine which libraries to run
+            supported_libs = get_supported_libraries(config.env_name)
+            if args.libraries is None:
+                # Use all supported libraries for this environment
+                libraries = supported_libs
+            else:
+                # Validate that requested libraries support this environment
+                libraries = []
+                for lib in args.libraries:
+                    if lib in supported_libs:
+                        libraries.append(lib)
+                    else:
+                        print(
+                            f"Warning: {lib} does not support {config.env_name} environment, skipping."
+                        )
+                if not libraries:
+                    print(
+                        f"Error: No valid libraries for {config.env_name}. Supported: {supported_libs}"
+                    )
+                    continue
 
-                print(f"  Total time: {result.total_time:.2f}s")
-                print(f"  Mean iter time: {result.mean_iter_time*1000:.2f}ms")
-                print(f"  Throughput: {result.throughput:.1f} iter/s")
-                if result.peak_memory_mb:
-                    print(f"  Peak memory: {result.peak_memory_mb:.1f}MB")
+            # Note about running multiple libraries on macOS
+            import platform
 
-            except Exception as e:
-                print(f"  ERROR: {e}")
-                import traceback
+            if platform.system() == "Darwin" and len(libraries) > 1:
+                print(
+                    "\nNote: Running multiple libraries together. KMP_DUPLICATE_LIB_OK is set\n"
+                    "to work around macOS OpenMP conflicts. For cleanest results, consider\n"
+                    "running each library separately.\n"
+                )
 
-                traceback.print_exc()
+            print("=" * 70)
+            print(f"GFlowNet Library Benchmark: {scenario} (batch_size={batch_size})")
+            print("=" * 70)
+            print("Configuration:")
+            print(f"  env: {config.env_name}, {config.env_kwargs}")
+            print(f"  n_iterations={config.n_iterations}, batch_size={config.batch_size}")
+            print(f"  n_warmup={config.n_warmup}")
+            print(f"  lr={config.lr}, lr_logz={config.lr_logz}")
+            print(f"  hidden_dim={config.hidden_dim}, n_layers={config.n_layers}")
+            print(f"Libraries: {', '.join(libraries)}")
+            print(f"Seeds: {args.seeds}")
+            print("=" * 70)
 
-    # Save and summarize results
-    if results:
-        filepath = save_results(args.scenario, config, results, output_dir)
-        print(f"\nResults saved to: {filepath}")
+            results = []
 
-        summary = aggregate_results(results)
-        print_summary(summary, results)
+            for library in libraries:
+                print(f"\n[{library.upper()}]")
+
+                runner_cls = LIBRARY_RUNNERS[library]()  # Call the lazy loader function
+
+                for seed in args.seeds:
+                    print(f"\nSeed {seed}:")
+                    try:
+                        runner = runner_cls()
+                        result = run_benchmark(runner, config, seed)
+                        results.append(result)
+
+                        print(f"  Total time: {result.total_time:.2f}s")
+                        print(f"  Mean iter time: {result.mean_iter_time*1000:.2f}ms")
+                        print(f"  Throughput: {result.throughput:.1f} iter/s")
+                        if result.peak_memory_mb:
+                            print(f"  Peak memory: {result.peak_memory_mb:.1f}MB")
+
+                    except Exception as e:
+                        print(f"  ERROR: {e}")
+                        import traceback
+
+                        traceback.print_exc()
+
+            # Save and summarize results
+            if results:
+                scenario_label = f"{scenario}_bs{batch_size}"
+                filepath = save_results(scenario_label, config, results, output_dir)
+                print(f"\nResults saved to: {filepath}")
+
+                summary = aggregate_results(results)
+                print_summary(summary, results)
+
+                for result in results:
+                    all_results.append((scenario, batch_size, config, result))
+
+    # Save combined CSV of all results
+    if all_results:
+        csv_path = save_all_results_csv(all_results, output_dir)
+        print(f"\nAll results saved to: {csv_path}")
 
 
 if __name__ == "__main__":

@@ -152,6 +152,34 @@ class GFNXRunner(LibraryRunner):
         # Create the JIT-compiled training step
         self.train_step_fn = create_hypergrid_train_step()
 
+    @staticmethod
+    def _make_ising_J_jax(L: int, coupling_constant: float):
+        """Build Ising coupling matrix with periodic boundary conditions (JAX)."""
+        import jax.numpy as jnp
+
+        N = L**2
+        J = jnp.zeros((N, N))
+
+        for k in range(N):
+            for m in range(k):
+                x1, y1 = k // L, k % L
+                x2, y2 = m // L, m % L
+                if x1 == x2 and abs(y2 - y1) == 1:
+                    J = J.at[k, m].set(1)
+                    J = J.at[m, k].set(1)
+                elif y1 == y2 and abs(x2 - x1) == 1:
+                    J = J.at[k, m].set(1)
+                    J = J.at[m, k].set(1)
+
+        # Periodic boundary conditions
+        for k in range(L):
+            J = J.at[k * L, (k + 1) * L - 1].set(1)
+            J = J.at[(k + 1) * L - 1, k * L].set(1)
+            J = J.at[k, k + N - L].set(1)
+            J = J.at[k + N - L, k].set(1)
+
+        return coupling_constant * J
+
     def _setup_ising(self, config: BenchmarkConfig, seed: int) -> None:
         """Setup Ising environment with Trajectory Balance loss.
 
@@ -163,8 +191,10 @@ class GFNXRunner(LibraryRunner):
         import jax
         import jax.numpy as jnp
         import optax
+        from gfnx.reward.ising import IsingRewardParams
 
         L = config.env_kwargs["L"]  # Lattice side length
+        J_coupling = config.env_kwargs["J"]  # Coupling constant
         N = L**2  # Total number of spins
 
         rng_key = jax.random.PRNGKey(seed)
@@ -174,6 +204,10 @@ class GFNXRunner(LibraryRunner):
         reward_module = gfnx.IsingRewardModule()
         env = gfnx.environment.IsingEnvironment(reward_module, dim=N)
         env_params = env.init(env_init_key)
+
+        # Build and inject the proper coupling matrix with periodic BCs
+        J = self._make_ising_J_jax(L, J_coupling)
+        env_params = env_params.replace(reward_params=IsingRewardParams(J=J))
 
         rng_key, net_init_key = jax.random.split(rng_key)
         model = MLPPolicy(
