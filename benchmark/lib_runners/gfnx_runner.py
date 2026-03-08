@@ -346,9 +346,16 @@ class GFNXRunner(LibraryRunner):
 
         JAX compiles functions on first call. Running warmup iterations
         ensures compilation overhead isn't counted in benchmark timing.
+
+        Note: idx is passed as a JAX array (not a Python int) so that
+        eqx.filter_jit traces it as a dynamic value. A Python int would
+        be treated as static, causing a fresh JIT recompilation for every
+        unique value — turning warmup into N separate compilations.
         """
+        import jax.numpy as jnp
+
         for i in range(n_iters):
-            self.train_state = self.train_step_fn(i, self.train_state)
+            self.train_state = self.train_step_fn(jnp.array(i), self.train_state)
 
         # Block until all async operations complete
         self.synchronize()
@@ -360,8 +367,12 @@ class GFNXRunner(LibraryRunner):
         The train_step_fn is JIT-compiled so we cannot instrument internal
         phases without JAX profiling. We record the total call time instead.
         """
+        import jax.numpy as jnp
+
         t0 = time.perf_counter()
-        self.train_state = self.train_step_fn(self._iteration, self.train_state)
+        self.train_state = self.train_step_fn(
+            jnp.array(self._iteration), self.train_state
+        )
         t1 = time.perf_counter()
 
         if hasattr(self, "_phase_times"):
