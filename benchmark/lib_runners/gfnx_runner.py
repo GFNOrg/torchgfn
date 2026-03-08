@@ -367,12 +367,20 @@ class GFNXRunner(LibraryRunner):
     def synchronize(self) -> None:
         """Ensure all JAX/GPU operations are complete.
 
-        Uses device-level synchronization (equivalent to torch.cuda.synchronize)
-        for accurate and consistent timing measurements across libraries.
+        Uses device-level synchronization when available (equivalent to
+        torch.cuda.synchronize), otherwise falls back to blocking on all
+        arrays in the train state.
         """
         import jax
 
-        jax.devices()[0].synchronize()
+        device = jax.devices()[0]
+        if hasattr(device, "synchronize"):
+            device.synchronize()
+        elif self.train_state is not None:
+            import equinox as eqx
+
+            params, _ = eqx.partition(self.train_state, eqx.is_array)
+            jax.block_until_ready(params)
 
     def get_peak_memory(self) -> Optional[int]:
         """Return peak memory usage in bytes.
