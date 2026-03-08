@@ -173,6 +173,115 @@ Long trajectories (hypergrid, ~14 steps):
 
 torchgfn **scales better with trajectory length** but has higher fixed overhead per iteration. The crossover point is between 3 and 14 steps.
 
+### gflownet batch size scaling issue
+
+The gflownet library exhibits poor batch size scaling. On HyperGrid (2D,
+height=8), iteration times scale super-linearly with batch size:
+
+| Batch Size | torchgfn (ms) | gflownet (ms) | gfnx (ms) |
+|------------|---------------|----------------|-----------|
+| 32         | 31.6          | 51.5           | TBD       |
+| 256        | 41.2          | 300.3          | TBD       |
+| 2048       | 105.7         | 2351.4         | TBD       |
+
+torchgfn scales ~3.3x for a 64x batch increase. gflownet scales **45.7x** for
+the same increase. This is inherent to the library's design, not a benchmark
+configuration issue.
+
+**Root cause: multiple O(batch × action_space) and O(batch) Python-level operations**
+
+The following bottlenecks were identified in the gflownet library source code
+(all paths relative to `benchmark/gflownet/`):
+
+#### 1. `actions2indices` — O(batch × action_space) tensor expansion
+
+**File:** `gflownet/envs/base.py`, lines 191–206
+
+```python
+def actions2indices(self, actions):
+    action_space = torch.unsqueeze(self.action_space_torch, 0).expand(
+        actions.shape[0], -1, -1
+    )
+    actions = torch.unsqueeze(actions, 1).expand(-1, self.action_space_dim, -1)
+    return torch.where(torch.all(actions == action_space, dim=2))[1]
+```
+
+This compares every action in the batch against every entry in the action space
+by expanding both tensors to shape `[batch_size, action_space_dim, action_dim]`
+and doing an element-wise comparison. For batch_size=2048 and
+action_space_dim=33, this creates and compares tensors of shape
+`[2048, 33, 2]`. The `torch.where` call then searches the full product for
+matches.
+
+A vectorized replacement would use a hash map or `torch.searchsorted` to look up
+action indices in O(batch) time instead of O(batch × action_space).
+
+**Called from:** `get_logprobs()` at `gflownet/envs/base.py:684`, which is
+called during every training step to compute the log-probability of sampled
+actions.
+
+#### 2. `get_logprobs` — per-element dictionary lookup fallback
+
+**File:** `gflownet/envs/base.py`, lines 680–695
+
+When actions are passed as a Python list (which happens from `sample_batch`),
+the code falls back to per-element dictionary lookups:
+
+```python
+action_indices = tlong(
+    [self.action2index(action) for action in actions],
+    device=self.device,
+)
+```
+
+This is O(batch_size) in Python with per-element tuple conversion and dictionary
+lookup overhead. At batch_size=2048, this list comprehension dominates.
+
+#### 3. `states2policy` — dense one-hot tensor allocation
+
+**File:** `gflownet/envs/grid.py`, lines 153–187
+
+```python
+states_policy = torch.zeros(
+    (n_states, self.length * self.n_dim), dtype=self.float, device=self.device
+)
+states_policy[rows, cols.flatten()] = 1.0
+```
+
+Creates a dense `(batch_size, length × n_dim)` tensor of zeros and then sets
+scattered indices to 1.0. For batch_size=2048 with a 4D grid of height=32, this
+allocates `2048 × 128 = 262,144` floats per call. This is called from
+`states2proxy` (line 147) during reward computation.
+
+#### 4. Per-sample equality checks in batch construction
+
+**File:** `gflownet/envs/base.py`, lines 800 and 891
+
+```python
+if any([self.equal(state, s) for s in states]):
+    add = False
+```
+
+When building batches with uniqueness constraints, the code iterates over all
+previously collected states and does per-element equality checks. This is
+O(batch_size²) in the worst case when checking each new sample against all
+previously accepted samples.
+
+#### 5. Python-level batch iteration in `sample_batch`
+
+**File:** `gflownet/gflownet.py`, lines 565–750
+
+The trajectory sampling loop operates at the Python level with per-sample
+processing, list appends, and repeated tensor-to-list conversions. This
+prevents PyTorch from batching GPU operations efficiently and adds per-sample
+Python interpreter overhead that scales linearly with batch size.
+
+**Conclusion:** These patterns are fundamental to gflownet's architecture
+(Python-level sample iteration, expand-and-compare action indexing, per-element
+lookups). They would require significant refactoring to fix and are not
+introduced by the benchmark. The benchmark accurately reflects the library's
+real-world performance at different batch sizes.
+
 ## Optimizations Applied
 
 The following optimizations were applied to torchgfn during this benchmarking effort:
