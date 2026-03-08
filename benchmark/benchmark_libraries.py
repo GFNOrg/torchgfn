@@ -553,18 +553,26 @@ def main():
         default=None,
         help="Output directory (default: benchmark/outputs)",
     )
+    parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Run benchmarks on CPU (default: require CUDA)",
+    )
 
     args = parser.parse_args()
 
-    # Ensure CUDA is being used when available
+    # Device check: require CUDA unless --cpu is passed
     import torch
 
-    if torch.cuda.is_available():
+    if args.cpu:
+        print("Running on CPU (--cpu flag set)")
+    elif torch.cuda.is_available():
         print(f"CUDA available: {torch.cuda.get_device_name(0)}")
     else:
         raise RuntimeError(
             "CUDA is not available. Benchmarks must run on GPU for meaningful results. "
-            "Please run on a machine with CUDA support or set CUDA_VISIBLE_DEVICES appropriately."
+            "Please run on a machine with CUDA support, set CUDA_VISIBLE_DEVICES "
+            "appropriately, or pass --cpu to run on CPU."
         )
 
     # Determine which scenarios to run

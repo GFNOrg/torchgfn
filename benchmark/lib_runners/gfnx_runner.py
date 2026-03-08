@@ -60,6 +60,21 @@ class GFNXRunner(LibraryRunner):
         4. The TrainState NamedTuple containing all training state
         5. The JIT-compiled training step function
         """
+        import jax
+        import torch
+
+        # Verify JAX and PyTorch agree on device availability.
+        # If PyTorch sees CUDA, JAX should too — otherwise results
+        # are not comparable across libraries.
+        if torch.cuda.is_available():
+            jax_device = jax.devices()[0]
+            if jax_device.platform != "gpu":
+                raise RuntimeError(
+                    f"JAX is using {jax_device.platform} but PyTorch has CUDA. "
+                    "Install CUDA-enabled JAX: pip install 'jax[cuda12]' or run "
+                    "benchmark/setup_benchmark.sh"
+                )
+
         self.config = config
         self._env_type = config.env_name
 
