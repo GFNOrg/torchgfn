@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
+import equinox as eqx
+
 from benchmark.lib_runners.base import BenchmarkConfig, LibraryRunner
 
 # Add gfnx to path so we can import the library
@@ -492,17 +494,22 @@ class BitseqTrainState(NamedTuple):
 # ============================================================================
 
 
-class MLPPolicy:
+class MLPPolicy(eqx.Module):
     """MLP policy network for forward and backward actions.
+
+    Extends eqx.Module so JAX can traverse the pytree and see internal
+    arrays. This is critical for correct synchronization (block_until_ready),
+    parameter counting, and gradient computation.
 
     Outputs both forward and backward action logits from a shared network.
     The network has a single output head that's split into forward and
     backward parts, encouraging parameter sharing.
-
-    In GFlowNets:
-    - Forward logits: Used to sample actions when building trajectories
-    - Backward logits: Used to compute P_B for the TB loss
     """
+
+    network: eqx.nn.MLP
+    train_backward_policy: bool
+    n_fwd_actions: int
+    n_bwd_actions: int
 
     def __init__(
         self,
@@ -514,8 +521,6 @@ class MLPPolicy:
         depth: int,
         rng_key,
     ):
-        import equinox as eqx
-
         self.train_backward_policy = train_backward_policy
         self.n_fwd_actions = n_fwd_actions
         self.n_bwd_actions = n_bwd_actions
@@ -535,19 +540,11 @@ class MLPPolicy:
         )
 
     def __call__(self, x):
-        """Forward pass returning both forward and backward logits.
-
-        Args:
-            x: Observation tensor of shape (input_size,)
-
-        Returns:
-            Dict with 'forward_logits' and 'backward_logits' tensors
-        """
+        """Forward pass returning both forward and backward logits."""
         import jax.numpy as jnp
 
         x = self.network(x)
         if self.train_backward_policy:
-            # Split output into forward and backward parts
             forward_logits, backward_logits = jnp.split(x, [self.n_fwd_actions], axis=-1)
         else:
             forward_logits = x
