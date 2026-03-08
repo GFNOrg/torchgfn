@@ -1,6 +1,7 @@
 """This module contains all the environments implemented as Gym environments."""
 
 from .bitSequence import BitSequence, BitSequencePlus
+from .bitSequenceNonAutoregressive import NonAutoregressiveBitSequence
 from .box import BoxPolar
 from .box_cartesian import BoxCartesian
 from .discrete_ebm import DiscreteEBM
@@ -23,6 +24,7 @@ __all__ = [
     "Line",
     "BitSequence",
     "BitSequencePlus",
+    "NonAutoregressiveBitSequence",
     "GraphBuilding",
     "GraphBuildingOnEdges",
     "PerfectBinaryTree",

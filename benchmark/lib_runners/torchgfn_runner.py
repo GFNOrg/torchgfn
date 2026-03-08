@@ -277,10 +277,15 @@ class TorchGFNRunner(LibraryRunner):
         self.sampler = Sampler(estimator=pf_estimator)
 
     def _setup_bitseq(self, config: BenchmarkConfig) -> None:
-        """Setup BitSequence environment with TB loss."""
+        """Setup non-autoregressive BitSequence environment with TB loss.
+
+        Uses NonAutoregressiveBitSequence to match the GFNX formulation where
+        actions encode (position, word) pairs and positions can be filled in
+        any order.
+        """
         from gfn.estimators import DiscretePolicyEstimator
         from gfn.gflownet import TBGFlowNet
-        from gfn.gym import BitSequence
+        from gfn.gym import NonAutoregressiveBitSequence
         from gfn.samplers import Sampler
         from gfn.utils.modules import MLP
 
@@ -288,32 +293,41 @@ class TorchGFNRunner(LibraryRunner):
         seq_size = config.env_kwargs.get("seq_size", 4)
         n_modes = config.env_kwargs.get("n_modes", 2)
 
-        # Generate random mode set
-        H = torch.randint(
-            0, 2, (n_modes, seq_size), dtype=torch.long, device=self.device
+        self.env = NonAutoregressiveBitSequence(
+            word_size=word_size,
+            seq_size=seq_size,
+            n_modes=n_modes,
+            reward_exponent=2.0,
+            device_str=str(self.device),
+            debug=False,
         )
-        self.env = BitSequence(word_size, seq_size, n_modes, H=H, debug=False)
 
         pf = MLP(
-            self.env.words_per_seq, self.env.n_actions, hidden_dim=config.hidden_dim
+            self.env.words_per_seq,
+            self.env.n_actions,
+            hidden_dim=config.hidden_dim,
+            n_hidden_layers=config.n_layers,
         )
-        pb = MLP(self.env.words_per_seq, self.env.n_actions - 1, trunk=pf.trunk)
+        pb = MLP(
+            self.env.words_per_seq,
+            self.env.n_actions - 1,
+            hidden_dim=config.hidden_dim,
+            n_hidden_layers=config.n_layers,
+            trunk=pf.trunk,
+        )
 
         pf_estimator = DiscretePolicyEstimator(pf, n_actions=self.env.n_actions)
         pb_estimator = DiscretePolicyEstimator(
             pb, n_actions=self.env.n_actions, is_backward=True
         )
 
-        self.gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0).to(
-            self.device
-        )
+        self.gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
+        self.gflownet = self.gflownet.to(self.device)
 
-        non_logz_params = [
-            v for k, v in dict(self.gflownet.named_parameters()).items() if k != "logZ"
-        ]
-        self.optimizer = torch.optim.Adam(non_logz_params, lr=config.lr)
-        logz_params = [dict(self.gflownet.named_parameters())["logZ"]]
-        self.optimizer.add_param_group({"params": logz_params, "lr": config.lr_logz})
+        self.optimizer = torch.optim.Adam(self.gflownet.pf_pb_parameters(), lr=config.lr)
+        self.optimizer.add_param_group(
+            {"params": self.gflownet.logz_parameters(), "lr": config.lr_logz}
+        )
 
         self.sampler = Sampler(estimator=pf_estimator)
 
