@@ -585,7 +585,7 @@ def create_hypergrid_train_step():
     import optax
 
     @eqx.filter_jit
-    def train_step(idx: int, train_state: HypergridTrainState) -> HypergridTrainState:
+    def train_step(idx, train_state: HypergridTrainState) -> HypergridTrainState:
         """Single training step for Hypergrid environment.
 
         Steps:
@@ -790,7 +790,7 @@ def create_ising_train_step():
     import optax
 
     @eqx.filter_jit
-    def train_step(idx: int, train_state: IsingTrainState) -> IsingTrainState:
+    def train_step(idx, train_state: IsingTrainState) -> IsingTrainState:
         rng_key = train_state.rng_key
         num_envs = train_state.num_envs
         env = train_state.env
@@ -940,7 +940,7 @@ def create_bitseq_train_step():
     import optax
 
     @eqx.filter_jit
-    def train_step(idx: int, train_state: BitseqTrainState) -> BitseqTrainState:
+    def train_step(idx, train_state: BitseqTrainState) -> BitseqTrainState:
         rng_key = train_state.rng_key
         num_envs = train_state.num_envs
         env = train_state.env
