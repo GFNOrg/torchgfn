@@ -213,7 +213,7 @@ class TorchGFNRunner(LibraryRunner):
         )
         from gfn.samplers import Sampler
 
-        delta = config.env_kwargs.get("delta", 0.25)
+        delta = config.env_kwargs.get("delta", 0.1)
         n_components = config.env_kwargs.get("n_components", 5)
         uniform_pb = config.env_kwargs.get("uniform_pb", False)
 
@@ -250,14 +250,14 @@ class TorchGFNRunner(LibraryRunner):
             pf_module,
             n_components=n_components,
             min_concentration=0.1,
-            max_concentration=5.1,
+            max_concentration=100.0,
         )
         pb_estimator = BoxCartesianPBEstimator(
             self.env,
             pb_module,
             n_components=n_components,
             min_concentration=0.1,
-            max_concentration=5.1,
+            max_concentration=100.0,
         )
 
         self.gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
@@ -358,7 +358,6 @@ class TorchGFNRunner(LibraryRunner):
         t2 = time.perf_counter()
 
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.gflownet.parameters(), 1.0)
         t3 = time.perf_counter()
 
         self.optimizer.step()

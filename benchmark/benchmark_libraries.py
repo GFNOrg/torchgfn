@@ -110,7 +110,7 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     # Box/CCube scenarios (torchgfn, gflownet only - gfnx does not have this env)
     "tb_box_2d": BenchmarkConfig(
         env_name="box",
-        env_kwargs={"n_dim": 2, "delta": 0.25, "n_components": 5},
+        env_kwargs={"n_dim": 2, "delta": 0.1, "n_components": 5},
         n_iterations=1000,
         batch_size=16,
         n_warmup=50,
@@ -119,7 +119,7 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     # matching gflownet's default ccube setup for fair timing comparison.
     "tb_box_2d_uniform_pb": BenchmarkConfig(
         env_name="box",
-        env_kwargs={"n_dim": 2, "delta": 0.25, "n_components": 5, "uniform_pb": True},
+        env_kwargs={"n_dim": 2, "delta": 0.1, "n_components": 5, "uniform_pb": True},
         n_iterations=1000,
         batch_size=16,
         n_warmup=50,
