@@ -365,19 +365,14 @@ class GFNXRunner(LibraryRunner):
         return None
 
     def synchronize(self) -> None:
-        """Ensure all JAX operations are complete.
+        """Ensure all JAX/GPU operations are complete.
 
-        JAX operations are asynchronous - they return immediately while
-        computation continues on device. block_until_ready() forces
-        synchronization for accurate timing measurements.
+        Uses device-level synchronization (equivalent to torch.cuda.synchronize)
+        for accurate and consistent timing measurements across libraries.
         """
-        import equinox as eqx
         import jax
 
-        if self.train_state is not None:
-            # Extract all arrays from train_state and wait for them
-            params, _ = eqx.partition(self.train_state, eqx.is_array)
-            jax.block_until_ready(params)
+        jax.devices()[0].synchronize()
 
     def get_peak_memory(self) -> Optional[int]:
         """Return peak memory usage in bytes.
