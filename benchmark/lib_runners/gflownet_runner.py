@@ -107,10 +107,39 @@ class GFlowNetRunner(LibraryRunner):
                 if not hasattr(cfg, "n_samples"):
                     cfg.n_samples = 0
 
+            # Monkeypatch Grid.states2policy to fix CUDA device mismatch:
+            # the upstream code creates torch.arange() on CPU even when
+            # states are on GPU.
+            self._patch_grid_states2policy()
+
             # Create the GFlowNet agent
             self.agent = gflownet_from_config(cfg)
 
         self._iteration = 0
+
+    @staticmethod
+    def _patch_grid_states2policy():
+        """Monkeypatch Grid.states2policy to put torch.arange on the correct device."""
+        from gflownet.envs.grid import Grid
+
+        def _states2policy_fixed(self, states):
+            from gflownet.utils.common import tlong
+
+            states = tlong(states, device=self.device)
+            n_states = states.shape[0]
+            cols = states + torch.arange(self.n_dim, device=self.device) * self.length
+            rows = torch.repeat_interleave(
+                torch.arange(n_states, device=self.device), self.n_dim
+            )
+            states_policy = torch.zeros(
+                (n_states, self.length * self.n_dim),
+                dtype=self.float,
+                device=self.device,
+            )
+            states_policy[rows, cols.flatten()] = 1.0
+            return states_policy
+
+        Grid.states2policy = _states2policy_fixed
 
     def _get_env_overrides(self, config: BenchmarkConfig, seed: int) -> List[str]:
         """Get Hydra overrides for the specified environment."""
