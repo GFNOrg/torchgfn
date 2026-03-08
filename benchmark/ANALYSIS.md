@@ -14,13 +14,13 @@ Environments benchmarked:
 - **Ising** (6x6, 10x10): Discrete Ising model with periodic BCs. Supported by all three libraries.
 - **BitSequence** (non-autoregressive): Binary sequence generation with Hamming-distance reward. Supported by torchgfn and gfnx only.
 
-All benchmarks use **Trajectory Balance (TB) loss** with hidden_dim=256, 2-layer MLPs, lr=1e-3 / lr_logz=0.1, and batch sizes 32, 256, and 2048.
+All benchmarks use **Trajectory Balance (TB) loss** with hidden_dim=256, 2-layer MLPs, lr=1e-3 / lr_logz=0.1, and batch sizes 32, 128, and 512.
 
 ## Configuration Parity
 
 | Parameter | torchgfn | gflownet | gfnx |
 |-----------|----------|----------|------|
-| Batch size | 32/256/2048 | 32/256/2048 | 32/256/2048 |
+| Batch size | 32/128/512 | 32/128/512 | 32/128/512 |
 | Hidden dim | 256 | 256 | 256 |
 | N layers | 2 | 2 | 2 |
 | Parameters (hypergrid) | 71,430 | 70,915 | — |
@@ -304,19 +304,172 @@ The following optimizations were applied to torchgfn during this benchmarking ef
 - Box (uniform PB): 8.2ms → 5.17ms (37% reduction, from 2.1x to 1.13x gap vs gflownet)
 - Hypergrid: 10.98ms → 9.81ms (11% reduction, 1.3x faster than gflownet)
 
+## GPU Benchmark Results (CUDA)
+
+*100 timed iterations, 50 warmup, 3 seeds, batch sizes 32/128/512.*
+
+### Experiment Completion Status
+
+| Scenario | bs=32 | bs=128 | bs=512 | Libraries |
+|----------|:-----:|:------:|:------:|-----------|
+| tb_hypergrid_small | ✓ | ✓ | ✓ | torchgfn, gflownet, gfnx |
+| tb_hypergrid_medium | ✓ | ✓ | ✓ | torchgfn, gflownet, gfnx |
+| tb_hypergrid_large | ✓ | ✓ | ✓ | torchgfn, gflownet, gfnx |
+| tb_ising_6x6 | ✓ | ✓ | ✓ | torchgfn, gflownet, gfnx |
+| tb_ising_10x10 | ✓ | ✓ | — | torchgfn, gflownet, gfnx |
+| tb_box_2d | — | — | — | torchgfn, gflownet |
+| tb_box_2d_uniform_pb | — | — | — | torchgfn, gflownet |
+| tb_bitseq_small | — | — | — | torchgfn, gfnx |
+| tb_bitseq_medium | — | — | — | torchgfn, gfnx |
+
+**Completed:** 42/69 combinations (61%). Missing: ising_10x10 bs=512, all box, all bitseq.
+
+### Hypergrid (GPU, mean iter time in ms)
+
+| Scenario | BS | torchgfn | gflownet | gfnx |
+|----------|----|----------|----------|------|
+| small (2D, h=8) | 32 | 33.0 | 60.2 | 3.2 |
+| small (2D, h=8) | 128 | 37.9 | 161.0 | 3.3 |
+| small (2D, h=8) | 512 | 50.1 | 592.3 | 3.4 |
+| medium (4D, h=16) | 32 | 80.7 | 91.6 | 5.4 |
+| medium (4D, h=16) | 128 | 96.1 | 235.4 | 6.5 |
+| medium (4D, h=16) | 512 | 132.4 | 969.5 | 9.2 |
+| large (4D, h=32) | 32 | 122.0 | 146.9 | 9.6 |
+| large (4D, h=32) | 128 | 140.1 | 402.5 | 11.4 |
+| large (4D, h=32) | 512 | 189.0 | 1485.6 | 18.0 |
+
+**Key observations:**
+- gfnx dominates across all hypergrid scenarios (5-100x faster), benefiting from
+  JAX JIT compilation with `jax.lax.scan`.
+- torchgfn scales ~1.5x for a 16x batch increase; gflownet scales ~10x.
+- gflownet's super-linear scaling worsens with environment complexity.
+
+### Ising (GPU, mean iter time in ms)
+
+| Scenario | BS | torchgfn | gflownet | gfnx |
+|----------|----|----------|----------|------|
+| 6x6 (36 spins) | 32 | 87.5 | 1,040.6 | 4.9 |
+| 6x6 (36 spins) | 128 | 93.6 | 3,691.0 | 4.8 |
+| 6x6 (36 spins) | 512 | 117.9 | 14,538.8 | 6.9 |
+| 10x10 (100 spins) | 32 | 226.2 | 4,340.1 | 9.8 |
+| 10x10 (100 spins) | 128 | 245.8 | 16,067.3 | 10.4 |
+| 10x10 (100 spins) | 512 | ~320* | ~64,000* | ~11* |
+
+*\* Estimated from in-progress run.*
+
+**gflownet is 12–200x slower than torchgfn on Ising**, and the gap grows with
+both grid size and batch size. See detailed analysis below.
+
+### Ising: gflownet Scaling Analysis
+
+The gflownet Ising performance is dominated by a **cubic interaction** between
+trajectory length, action space size, and batch size.
+
+#### Environment structure differences
+
+| Property | gflownet Ising | torchgfn DiscreteEBM |
+|----------|----------------|---------------------|
+| Steps per spin | 3 (toggle → set → toggle) | 1 (direct assign) |
+| Max trajectory (6x6) | 109 steps | 37 steps |
+| Max trajectory (10x10) | 301 steps | 101 steps |
+| State values per spin | 6 ({-1,0,1,-2,2,3}) | 3 ({-1,0,1}) |
+| Action space (6x6) | 39 | 73 |
+| Action space (10x10) | 103 | 201 |
+| Policy input dim (6x6) | 216 (one-hot) | 36 (raw) |
+| Policy input dim (10x10) | 600 (one-hot) | 100 (raw) |
+
+The gflownet Ising env uses a 3-step state machine per spin to satisfy a
+framework constraint: every state must have a **unique parent reachable by a
+unique action** for deterministic backward sampling. The 3 intermediate states
+(toggled=3, transitory=-2/2) enforce this invariant. torchgfn's DiscreteEBM
+achieves the same uniqueness by encoding position and value together in the
+action (action `i` sets site `i` to 0, action `i+N` sets site `i` to 1),
+requiring only 1 step per spin.
+
+#### Why iteration time scales cubically
+
+The dominant bottleneck is `actions2indices()` called at every trajectory step:
+
+```
+Total work ∝ batch_size × action_space_size × trajectory_length
+```
+
+| Grid | batch × actions × steps | Relative work |
+|------|------------------------|---------------|
+| 6x6, bs=32 | 32 × 39 × 109 | 136K (1x) |
+| 6x6, bs=512 | 512 × 39 × 109 | 2.2M (16x) |
+| 10x10, bs=32 | 32 × 103 × 301 | 992K (7.3x) |
+| 10x10, bs=128 | 128 × 103 × 301 | 4.0M (29x) |
+| 10x10, bs=512 | 512 × 103 × 301 | 15.9M (117x) |
+
+Observed timings track this closely:
+
+| Grid | BS | Predicted ratio | Observed ratio | Observed time |
+|------|----|----------------|----------------|---------------|
+| 6x6 | 32 | 1.0x | 1.0x | 1,041ms |
+| 6x6 | 512 | 16x | 14.0x | 14,539ms |
+| 10x10 | 32 | 7.3x | 4.2x | 4,340ms |
+| 10x10 | 128 | 29x | 15.4x | 16,067ms |
+| 10x10 | 512 | 117x | ~61x | ~64,000ms |
+
+The observed ratios are lower than predicted because `actions2indices` is not
+the *only* cost — there is also a fixed per-iteration overhead from loss
+computation, backward pass, and optimizer step. But the trend confirms that
+`actions2indices` dominates at large batch sizes.
+
+#### Additional compounding factors
+
+1. **Python-level sampling loop**: Each of the 301 steps iterates over a Python
+   `while` loop with list filtering (`envs = [e for e in envs if not e.done]`).
+   At bs=512, this is 154K Python loop iterations per training step.
+
+2. **Per-sample mask computation**: `get_mask_invalid_actions_forward()` uses
+   numpy (`np.where`, `np.ravel_multi_index`) on CPU, called per-environment
+   per-step. 154K numpy calls per iteration at bs=512 on 10x10.
+
+3. **One-hot state encoding**: `states2policy()` creates `[batch, 600]` tensors
+   (6 classes × 100 spins) at every policy forward pass. torchgfn passes raw
+   100-float state vectors.
+
+4. **Uniform proxy (correctness issue)**: The gflownet Ising benchmark currently
+   uses `proxy=uniform`, which returns constant 1.0 reward for all states. The J
+   coupling constant from the benchmark config is not passed to the environment.
+   This means gflownet is not training on the actual Ising energy — results are
+   not comparable to torchgfn/gfnx which use proper Ising energy functions.
+
+### gflownet Runtime Estimates for Remaining Experiments
+
+Estimated wall-clock time per experiment (150 iterations × 3 seeds = 450 iters):
+
+| Scenario | BS | Est. iter time | Est. total (3 seeds) |
+|----------|----|---------------|---------------------|
+| **tb_ising_10x10** | 512 | ~64,000ms | **~8 hours** |
+| **tb_box_2d** | 32 | ~30–60ms† | ~1–2 min |
+| **tb_box_2d** | 128 | ~100–200ms† | ~2–4 min |
+| **tb_box_2d** | 512 | ~400–800ms† | ~5–10 min |
+| **tb_box_2d_uniform_pb** | 32–512 | same as box_2d† | ~1–10 min |
+
+*† Box/ccube estimates are rough. The ccube env uses continuous actions, avoiding
+the `actions2indices` bottleneck that dominates Ising/hypergrid. Expected to
+scale similarly to hypergrid_small or better.*
+
+**Note:** gflownet does not support bitseq, so no estimates needed for
+tb_bitseq_small/medium. torchgfn and gfnx bitseq experiments should complete
+quickly based on hypergrid scaling patterns.
+
 ## Reproducing
 
 Run benchmarks with per-phase timing:
 
 ```bash
-# Hypergrid (all libraries)
-python -m benchmark.benchmark_libraries --scenario tb_hypergrid_small --seeds 0 1 2 --n-iterations 5000
+# All scenarios, all batch sizes
+python benchmark/benchmark_libraries.py --seeds 0 1 2
 
-# Box with uniform backward policy (torchgfn vs gflownet)
-python -m benchmark.benchmark_libraries --scenario tb_box_2d_uniform_pb --seeds 0 1 2 --n-iterations 5000
+# Single scenario
+python benchmark/benchmark_libraries.py --scenario tb_hypergrid_small --seeds 0 1 2
 
-# Box with learned backward policy
-python -m benchmark.benchmark_libraries --scenario tb_box_2d --seeds 0 1 2 --n-iterations 5000
+# Specific library and batch sizes
+python benchmark/benchmark_libraries.py --scenario tb_ising_6x6 --libraries torchgfn --batch-sizes 32 128 512
 ```
 
 Results are saved as JSON in `benchmark/outputs/` with full per-phase timing data.

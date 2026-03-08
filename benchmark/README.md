@@ -13,6 +13,21 @@ Initialize the benchmark dependencies:
 git submodule update --init --recursive
 ```
 
+### Pinned Submodule Versions
+
+For reproducibility, the benchmarks use these exact commits:
+
+| Library | Repository | Commit |
+|---------|-----------|--------|
+| gflownet | https://github.com/alexhernandezgarcia/gflownet | `833ec44cdb7906485bf86760fa9df86d4ce865af` |
+| gfnx | https://github.com/d-tiapkin/gfnx | `4235e2b3ddb0c57273ba54e61e8ee6f45740107b` |
+
+`git submodule update --init --recursive` will automatically check out these commits. To verify you have the correct versions:
+
+```bash
+git submodule status
+```
+
 ## Environment Support Matrix
 
 Not all libraries support all environments:

@@ -24,7 +24,7 @@ class TorchGFNRunner(LibraryRunner):
 
     name = "torchgfn"
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         self.env = None
         self.gflownet = None
         self.optimizer = None
@@ -378,6 +378,12 @@ class TorchGFNRunner(LibraryRunner):
         """Return total number of trainable parameters."""
         if self.gflownet is not None:
             return sum(p.numel() for p in self.gflownet.parameters() if p.requires_grad)
+        return None
+
+    def get_logZ(self) -> Optional[float]:
+        """Return current logZ value."""
+        if self.gflownet is not None and hasattr(self.gflownet, "logZ"):
+            return float(self.gflownet.logZ.item())
         return None
 
     def get_peak_memory(self) -> Optional[int]:

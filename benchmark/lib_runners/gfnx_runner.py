@@ -43,7 +43,7 @@ class GFNXRunner(LibraryRunner):
 
     name = "gfnx"
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         # Training state contains all JAX arrays and pytrees needed for training
         self.train_state = None
         # JIT-compiled training step function (created per environment type)
@@ -283,9 +283,8 @@ class GFNXRunner(LibraryRunner):
         import optax
 
         word_size = config.env_kwargs.get("word_size", 1)  # Bits per word
-        seq_size = config.env_kwargs.get("seq_size", 4)  # Words per sequence
+        seq_size = config.env_kwargs.get("seq_size", 4)  # Total bits in sequence
         n_modes = config.env_kwargs.get("n_modes", 2)  # Number of target modes
-
         rng_key = jax.random.PRNGKey(seed)
         env_init_key = jax.random.PRNGKey(seed + 1)
 
@@ -390,6 +389,12 @@ class GFNXRunner(LibraryRunner):
         if self.train_state is not None and hasattr(self.train_state, "model"):
             params = eqx.filter(self.train_state.model, eqx.is_array)
             return sum(x.size for x in jax.tree.leaves(params))
+        return None
+
+    def get_logZ(self) -> Optional[float]:
+        """Return current logZ value."""
+        if self.train_state is not None and hasattr(self.train_state, "logZ"):
+            return float(self.train_state.logZ)
         return None
 
     def synchronize(self) -> None:

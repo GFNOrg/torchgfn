@@ -176,6 +176,13 @@ class LibraryRunner(ABC):
             Peak memory in bytes, or None if not available (e.g., CPU-only).
         """
 
+    def get_logZ(self) -> Optional[float]:
+        """Return current logZ value, or None if unavailable.
+
+        Used as a sanity check to verify training is actually updating parameters.
+        """
+        return None
+
     @abstractmethod
     def cleanup(self) -> None:
         """Release resources and clean up.

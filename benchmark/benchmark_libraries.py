@@ -127,7 +127,7 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     # BitSequence scenarios (torchgfn, gfnx only - gflownet does not have this env)
     "tb_bitseq_small": BenchmarkConfig(
         env_name="bitseq",
-        env_kwargs={"word_size": 1, "seq_size": 4, "n_modes": 2},
+        env_kwargs={"word_size": 1, "seq_size": 8, "n_modes": 2},
         n_iterations=100,
         batch_size=16,
         n_warmup=50,
@@ -224,6 +224,9 @@ def run_benchmark(
     print(f"  Running {config.n_warmup} warmup iterations...")
     runner.warmup(config.n_warmup)
 
+    # Record logZ before timed iterations for sanity check
+    logZ_before = runner.get_logZ()
+
     print(f"  Running {config.n_iterations} timed iterations...")
     iter_times = []
 
@@ -253,6 +256,14 @@ def run_benchmark(
 
     total_end = time.perf_counter()
     total_time = total_end - total_start
+
+    # Sanity check: verify logZ changed (training actually ran)
+    logZ_after = runner.get_logZ()
+    if logZ_before is not None and logZ_after is not None:
+        if logZ_before == logZ_after:
+            print(f"  WARNING: logZ did not change ({logZ_before:.4f} -> {logZ_after:.4f})")
+        else:
+            print(f"  logZ: {logZ_before:.4f} -> {logZ_after:.4f}")
 
     # Get peak memory, phase times, and param count
     peak_memory = runner.get_peak_memory()
@@ -544,8 +555,8 @@ def main():
         "--batch-sizes",
         type=int,
         nargs="+",
-        default=[32, 256, 2048],
-        help="Batch sizes to benchmark (default: 32 256 2048)",
+        default=[32, 128, 512],
+        help="Batch sizes to benchmark (default: 32 128 512)",
     )
     parser.add_argument(
         "--output",
@@ -557,6 +568,12 @@ def main():
         "--cpu",
         action="store_true",
         help="Run benchmarks on CPU (default: require CUDA)",
+    )
+    parser.add_argument(
+        "--patch-gflownet-actions",
+        action="store_true",
+        help="Patch gflownet's O(batch*action_space) action indexing with O(batch) "
+        "dict lookup. Use to measure the impact of this optimization.",
     )
 
     args = parser.parse_args()
@@ -638,13 +655,39 @@ def main():
             results = []
 
             for library in libraries:
+                # Skip gflownet on large Ising grids with large batch sizes:
+                # gflownet's Ising env uses a 3-step state machine (301 steps
+                # for 10x10) combined with O(batch × action_space) action
+                # indexing, resulting in ~64s/iter at bs=512 — making runs
+                # infeasible. See ANALYSIS.md for details.
+                if (
+                    library == "gflownet"
+                    and config.env_name == "ising"
+                    and config.env_kwargs.get("L", 0) >= 10
+                    and batch_size > 128
+                ):
+                    print(
+                        f"\n[{library.upper()}] SKIPPED: gflownet Ising with "
+                        f"L={config.env_kwargs['L']} and batch_size={batch_size} "
+                        f"is prohibitively slow (~64s/iter at bs=512 due to "
+                        f"O(batch × action_space × trajectory_length) scaling "
+                        f"in actions2indices). See ANALYSIS.md for details."
+                    )
+                    continue
+
                 print(f"\n[{library.upper()}]")
 
                 runner_cls = LIBRARY_RUNNERS[library]()  # Call the lazy loader function
 
                 for seed in args.seeds:
                     print(f"\nSeed {seed}:")
-                    runner = runner_cls()
+                    runner = runner_cls(
+                        patch_actions=(
+                            args.patch_gflownet_actions
+                            if library == "gflownet"
+                            else False
+                        ),
+                    )
                     result = run_benchmark(runner, config, seed)
                     results.append(result)
 
