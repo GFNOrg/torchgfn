@@ -74,44 +74,44 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     "tb_hypergrid_small": BenchmarkConfig(
         env_name="hypergrid",
         env_kwargs={"ndim": 2, "height": 8},
-        n_iterations=1000,
+        n_iterations=100,
         batch_size=16,
         n_warmup=50,
     ),
     "tb_hypergrid_medium": BenchmarkConfig(
         env_name="hypergrid",
         env_kwargs={"ndim": 4, "height": 16},
-        n_iterations=1000,
+        n_iterations=100,
         batch_size=16,
-        n_warmup=100,
+        n_warmup=50,
     ),
     "tb_hypergrid_large": BenchmarkConfig(
         env_name="hypergrid",
         env_kwargs={"ndim": 4, "height": 32},
-        n_iterations=1000,
+        n_iterations=100,
         batch_size=16,
-        n_warmup=100,
+        n_warmup=50,
     ),
     # Ising scenarios (all libraries: torchgfn, gflownet, gfnx)
     "tb_ising_6x6": BenchmarkConfig(
         env_name="ising",
         env_kwargs={"L": 6, "J": 0.44},
-        n_iterations=1000,
+        n_iterations=100,
         batch_size=16,
         n_warmup=50,
     ),
     "tb_ising_10x10": BenchmarkConfig(
         env_name="ising",
         env_kwargs={"L": 10, "J": 0.44},
-        n_iterations=1000,
+        n_iterations=100,
         batch_size=16,
-        n_warmup=100,
+        n_warmup=50,
     ),
     # Box/CCube scenarios (torchgfn, gflownet only - gfnx does not have this env)
     "tb_box_2d": BenchmarkConfig(
         env_name="box",
         env_kwargs={"n_dim": 2, "delta": 0.1, "n_components": 5},
-        n_iterations=1000,
+        n_iterations=100,
         batch_size=16,
         n_warmup=50,
     ),
@@ -120,7 +120,7 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     "tb_box_2d_uniform_pb": BenchmarkConfig(
         env_name="box",
         env_kwargs={"n_dim": 2, "delta": 0.1, "n_components": 5, "uniform_pb": True},
-        n_iterations=1000,
+        n_iterations=100,
         batch_size=16,
         n_warmup=50,
     ),
@@ -128,16 +128,16 @@ SCENARIOS: Dict[str, BenchmarkConfig] = {
     "tb_bitseq_small": BenchmarkConfig(
         env_name="bitseq",
         env_kwargs={"word_size": 1, "seq_size": 4, "n_modes": 2},
-        n_iterations=1000,
+        n_iterations=100,
         batch_size=16,
         n_warmup=50,
     ),
     "tb_bitseq_medium": BenchmarkConfig(
         env_name="bitseq",
         env_kwargs={"word_size": 2, "seq_size": 8, "n_modes": 4},
-        n_iterations=1000,
+        n_iterations=100,
         batch_size=16,
-        n_warmup=100,
+        n_warmup=50,
     ),
 }
 
