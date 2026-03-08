@@ -636,22 +636,15 @@ def main():
 
                 for seed in args.seeds:
                     print(f"\nSeed {seed}:")
-                    try:
-                        runner = runner_cls()
-                        result = run_benchmark(runner, config, seed)
-                        results.append(result)
+                    runner = runner_cls()
+                    result = run_benchmark(runner, config, seed)
+                    results.append(result)
 
-                        print(f"  Total time: {result.total_time:.2f}s")
-                        print(f"  Mean iter time: {result.mean_iter_time*1000:.2f}ms")
-                        print(f"  Throughput: {result.throughput:.1f} iter/s")
-                        if result.peak_memory_mb:
-                            print(f"  Peak memory: {result.peak_memory_mb:.1f}MB")
-
-                    except Exception as e:
-                        print(f"  ERROR: {e}")
-                        import traceback
-
-                        traceback.print_exc()
+                    print(f"  Total time: {result.total_time:.2f}s")
+                    print(f"  Mean iter time: {result.mean_iter_time*1000:.2f}ms")
+                    print(f"  Throughput: {result.throughput:.1f} iter/s")
+                    if result.peak_memory_mb:
+                        print(f"  Peak memory: {result.peak_memory_mb:.1f}MB")
 
             # Save and summarize results
             if results:
