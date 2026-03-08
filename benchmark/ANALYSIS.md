@@ -10,23 +10,24 @@ This document compares the per-iteration training performance of three GFlowNet 
 
 Environments benchmarked:
 - **Hypergrid** (2D, height=8): Discrete grid navigation with corner rewards. Supported by all three libraries.
-- **Box/CCube** (2D, delta=0.25): Continuous environment with Beta mixture policies. Supported by torchgfn and gflownet only.
-- **Ising**: TODO
+- **Box/CCube** (2D, delta=0.1): Continuous environment with Beta mixture policies. Supported by torchgfn and gflownet only.
+- **Ising** (6x6, 10x10): Discrete Ising model with periodic BCs. Supported by all three libraries.
+- **BitSequence** (non-autoregressive): Binary sequence generation with Hamming-distance reward. Supported by torchgfn and gfnx only.
 
-All benchmarks use **Trajectory Balance (TB) loss** with batch_size=16, hidden_dim=256, 2-layer MLPs, and lr=1e-3 / lr_logz=0.1.
+All benchmarks use **Trajectory Balance (TB) loss** with hidden_dim=256, 2-layer MLPs, lr=1e-3 / lr_logz=0.1, and batch sizes 32, 256, and 2048.
 
 ## Configuration Parity
 
 | Parameter | torchgfn | gflownet | gfnx |
 |-----------|----------|----------|------|
-| Batch size | 16 | 16 | 16 |
+| Batch size | 32/256/2048 | 32/256/2048 | 32/256/2048 |
 | Hidden dim | 256 | 256 | 256 |
 | N layers | 2 | 2 | 2 |
 | Parameters (hypergrid) | 71,430 | 70,915 | — |
 | Parameters (box) | 74,528 | 74,784 | — |
 | LR (policy) | 1e-3 | 1e-3 | 1e-3 |
 | LR (logZ) | 0.1 | 0.1 | 0.1 |
-| Grad clip | 1.0 | 1.0 | N/A (JAX) |
+| Grad clip | None | None | None |
 | Loss | TB | TB | TB |
 
 ### Known Differences
@@ -41,6 +42,50 @@ All benchmarks use **Trajectory Balance (TB) loss** with batch_size=16, hidden_d
 | **Loss validation** | None | Checks `torch.isfinite` | None |
 | **State representation** | `States` objects | Raw tensors | JAX arrays |
 | **Input normalization (box)** | `2*x - 1` | `2*x - 1` | N/A |
+
+### gfnx Rollout Overhead (JAX)
+
+The gfnx library performs extra computation during trajectory rollout compared to
+torchgfn and gflownet. This is a library design decision, not a benchmark
+configuration issue, but it affects wall-clock comparisons and should be noted.
+
+**Extra work per rollout step (inside `jax.lax.scan`)**:
+
+1. **Entropy computation**: gfnx computes per-step entropy
+   (`-sum(p * log p)` over valid actions) at every environment step during
+   rollout. torchgfn and gflownet do not compute entropy during sampling.
+
+2. **Redundant softmax**: gfnx computes both `softmax` and `log_softmax` on the
+   policy logits at each step (for entropy and action sampling respectively).
+   torchgfn computes only `log_softmax`.
+
+3. **Double forward pass**: After rollout, gfnx recomputes the full policy
+   network output over the entire trajectory in the loss function
+   (`jax.vmap(jax.vmap(model))(traj_data.obs)`). This is the same approach
+   torchgfn uses when `recalculate_all_logprobs=True`, but in gfnx the first
+   forward pass (during rollout) also stores the outputs in `traj_data.info`,
+   meaning the rollout-phase forward pass is wasted compute.
+
+4. **Trajectory transpose**: After `jax.lax.scan` produces trajectories in
+   `(T, B, ...)` layout, gfnx transposes the entire pytree to `(B, T, ...)`
+   via `jax.tree.map(lambda x: jnp.transpose(x, ...))`.
+
+**Impact on batch size scaling**:
+
+The `jax.lax.scan` loop has fixed per-step overhead regardless of batch size.
+For small batches (e.g., 32), this overhead dominates iteration time and makes
+gfnx appear slower than PyTorch-based libraries. At larger batch sizes (256+),
+the per-step compute grows and amortizes the scan overhead, allowing JAX's
+whole-program JIT compilation to potentially close or reverse the gap.
+
+**Quantifying the overhead**:
+
+For HyperGrid (2D, height=8), `max_steps_in_episode = dim * side = 16`, so
+the scan runs 17 steps (16 + 1 padding). Each step involves a full policy
+forward pass, mask computation, softmax, log_softmax, entropy, action sampling,
+and environment step — all of which are executed sequentially within the scan.
+By contrast, torchgfn's eager-mode sampling loop has lower fixed overhead per
+step but cannot benefit from cross-step fusion.
 
 ## Results
 

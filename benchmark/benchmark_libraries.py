@@ -544,8 +544,8 @@ def main():
         "--batch-sizes",
         type=int,
         nargs="+",
-        default=[32, 256],
-        help="Batch sizes to benchmark (default: 32 256)",
+        default=[32, 256, 2048],
+        help="Batch sizes to benchmark (default: 32 256 2048)",
     )
     parser.add_argument(
         "--output",
