@@ -220,8 +220,8 @@ class BitSequenceArgs(CommonArgs):
     seq_size: int = 4
     n_modes: int = 2
     temperature: float = 1.0
-    lr: 1e-4
-    lr_Z: 1e-2
+    lr: float = 1e-4
+    lr_Z: float = 1e-2
     seed: int = 0
     batch_size: int = 32
 
