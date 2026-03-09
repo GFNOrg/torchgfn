@@ -451,9 +451,11 @@ class BitSequence(DiscreteEnv):
             ValueError: If the number of requested modes exceeds the number of
                 possible unique sequences.
         """
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
+        # Use a local Generator to avoid clobbering the global RNG state.
+        # Previously this called torch.manual_seed(seed) which would override
+        # any seed set by the caller (e.g. set_seed in training scripts).
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed(seed)
 
         if self.H is None:
             self.H = torch.tensor(
@@ -478,7 +480,9 @@ class BitSequence(DiscreteEnv):
         unique_sequences = []
 
         while len(unique_sequences) < self.n_modes:
-            candidate = tuple(torch.randint(0, self.H.shape[0], (m,)).tolist())
+            candidate = tuple(
+                torch.randint(0, self.H.shape[0], (m,), generator=gen).tolist()
+            )
             if candidate not in unique_indices:
                 unique_indices.add(candidate)
                 unique_sequences.append(candidate)
