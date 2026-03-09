@@ -138,8 +138,16 @@ class BoxCartesianDistribution(Distribution):
 
         # Convert absolute to relative: r = (action - min_incr) / max_range
         safe_max_range = self.max_range.clamp(min=self.epsilon)
-        r = (safe_actions - self.min_incr) / safe_max_range
-        r = r.clamp(self.epsilon, 1 - self.epsilon)
+        r_raw = (safe_actions - self.min_incr) / safe_max_range
+
+        # Actions outside the valid per-dimension support [min_incr, min_incr + max_range]
+        # must get -inf log_prob. Check before clamping hides the violation.
+        tol = self.epsilon
+        invalid_action = (
+            torch.any((r_raw < -tol) | (r_raw > 1.0 + tol), dim=-1) & ~is_exit
+        )
+
+        r = r_raw.clamp(self.epsilon, 1 - self.epsilon)
 
         # Get log prob from Beta mixture (sum over dimensions)
         log_p_beta = self._beta_mixture_log_prob(r).sum(dim=-1)
@@ -164,6 +172,9 @@ class BoxCartesianDistribution(Distribution):
 
         # Exit from s0 is not allowed
         log_probs = torch.where(self.is_s0 & is_exit, float("-inf"), log_probs)
+
+        # Out-of-support non-exit actions get -inf
+        log_probs = torch.where(invalid_action, float("-inf"), log_probs)
 
         return log_probs
 
@@ -418,8 +429,16 @@ class BoxCartesianPBDistribution(Distribution):
 
         # Convert absolute to relative: r = (action - delta) / max_range
         safe_max_range = self.max_range.clamp(min=self.epsilon)
-        r = (safe_actions - self.min_incr) / safe_max_range
-        r = r.clamp(self.epsilon, 1 - self.epsilon)
+        r_raw = (safe_actions - self.min_incr) / safe_max_range
+
+        # Actions outside the valid per-dimension support [delta, state]
+        # must get -inf log_prob. Check before clamping hides the violation.
+        tol = self.epsilon
+        invalid_action = (
+            torch.any((r_raw < -tol) | (r_raw > 1.0 + tol), dim=-1) & ~is_bts
+        )
+
+        r = r_raw.clamp(self.epsilon, 1 - self.epsilon)
 
         log_p_per_dim = self._beta_mixture_log_prob(r)
         log_jacobian_per_dim = -torch.log(safe_max_range)
@@ -439,6 +458,9 @@ class BoxCartesianPBDistribution(Distribution):
                 log_p_no_bts + log_p_beta,  # non-BTS: Bernoulli + Beta
             ),
         )
+
+        # Out-of-support non-BTS actions get -inf
+        log_probs = torch.where(invalid_action, float("-inf"), log_probs)
 
         return log_probs
 
