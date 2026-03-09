@@ -295,7 +295,7 @@ def main(args):
 
     # Hyperparameters.
     hid_dim = 64
-    n_hidden_layers = 2
+    n_hidden_layers = 3
     policy_std_min = 0.1  # Lower bound of sigma that can be predicted by policy.
     policy_std_max = 1  # Upper bound of sigma that can be predicted by policy.
 

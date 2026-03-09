@@ -164,7 +164,7 @@ def PFBasedGFlowNet_with_return(
             n_components = ndim + 1
             pf_module = BoxCartesianPFMLP(
                 hidden_dim=32,
-                n_hidden_layers=2,
+                n_hidden_layers=3,
                 n_components=n_components,
             )
 
@@ -177,7 +177,7 @@ def PFBasedGFlowNet_with_return(
         if module_name == "MLP" and env_name == "Box":
             pb_module = BoxCartesianPBMLP(
                 hidden_dim=32,
-                n_hidden_layers=2,
+                n_hidden_layers=3,
                 n_components=n_components,
                 trunk=pf_module.trunk if tie_pb_to_pf else None,
             )
@@ -192,7 +192,7 @@ def PFBasedGFlowNet_with_return(
             # Uniform with Box environment - use Cartesian with uniform-like components
             pb_module = BoxCartesianPBMLP(
                 hidden_dim=32,
-                n_hidden_layers=2,
+                n_hidden_layers=3,
                 n_components=1,
             )
         if zero_logF:

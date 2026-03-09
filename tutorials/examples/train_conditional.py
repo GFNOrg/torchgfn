@@ -77,6 +77,7 @@ def build_conditional_pf_pb(
         input_dim=input_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
+        n_hidden_layers=3,
     )
     module_PB = MLP(
         input_dim=input_dim,
@@ -90,12 +91,14 @@ def build_conditional_pf_pb(
         input_dim=1,
         output_dim=CONCAT_SIZE,
         hidden_dim=16,
+        n_hidden_layers=3,
     )
 
     # Modules post-concatenation.
     module_final_PF = MLP(
         input_dim=CONCAT_SIZE * 2,
         output_dim=env.n_actions,
+        n_hidden_layers=3,
     )
     module_final_PB = MLP(
         input_dim=CONCAT_SIZE * 2,
@@ -142,19 +145,19 @@ def build_conditional_logF_scalar_estimator(
         input_dim=preprocessor.output_dim,
         output_dim=CONCAT_SIZE,
         hidden_dim=256,
-        n_hidden_layers=1,
+        n_hidden_layers=2,
     )
     module_condition_logF = MLP(
         input_dim=1,
         output_dim=CONCAT_SIZE,
         hidden_dim=16,
-        n_hidden_layers=1,
+        n_hidden_layers=2,
     )
     module_final_logF = MLP(
         input_dim=CONCAT_SIZE * 2,
         output_dim=1,
         hidden_dim=256,
-        n_hidden_layers=1,
+        n_hidden_layers=2,
     )
 
     logF_estimator = ConditionalScalarEstimator(
@@ -185,7 +188,7 @@ def build_tb_gflownet(env: ConditionalHyperGrid) -> TBGFlowNet:
         input_dim=1,  # Only condition input
         output_dim=1,  # Scalar output
         hidden_dim=64,
-        n_hidden_layers=2,
+        n_hidden_layers=3,
     )
 
     logZ_estimator = ConditionalLogZEstimator(module_logZ, reduction="sum")

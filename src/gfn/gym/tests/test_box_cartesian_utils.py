@@ -100,7 +100,7 @@ class TestBoxCartesianDistribution:
     def pf_module(self):
         return BoxCartesianPFMLP(
             hidden_dim=32,
-            n_hidden_layers=2,
+            n_hidden_layers=3,
             n_components=5,
         )
 
@@ -209,7 +209,7 @@ class TestBoxCartesianPBDistribution:
     def pb_module(self):
         return BoxCartesianPBMLP(
             hidden_dim=32,
-            n_hidden_layers=2,
+            n_hidden_layers=3,
             n_components=5,
         )
 
@@ -305,14 +305,14 @@ class TestBoxCartesianEndToEnd:
 
     @pytest.fixture
     def pf_estimator(self, env):
-        module = BoxCartesianPFMLP(hidden_dim=32, n_hidden_layers=2, n_components=5)
+        module = BoxCartesianPFMLP(hidden_dim=32, n_hidden_layers=3, n_components=5)
         return BoxCartesianPFEstimator(
             env, module, n_components=5, min_concentration=0.1, max_concentration=5.0
         )
 
     @pytest.fixture
     def pb_estimator(self, env):
-        module = BoxCartesianPBMLP(hidden_dim=32, n_hidden_layers=2, n_components=5)
+        module = BoxCartesianPBMLP(hidden_dim=32, n_hidden_layers=3, n_components=5)
         return BoxCartesianPBEstimator(
             env, module, n_components=5, min_concentration=0.1, max_concentration=5.0
         )

@@ -111,13 +111,13 @@ def get_env_and_estimators(
         env = BoxPolar(delta=delta)
         pf_module = BoxPFMLP(
             hidden_dim=32,
-            n_hidden_layers=2,
+            n_hidden_layers=3,
             n_components=n_components,
             n_components_s0=n_components_s0,
         )
         pb_module = BoxPBMLP(
             hidden_dim=32,
-            n_hidden_layers=2,
+            n_hidden_layers=3,
             n_components=n_components,
             trunk=pf_module.trunk,
         )

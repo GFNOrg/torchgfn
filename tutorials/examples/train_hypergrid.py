@@ -1450,10 +1450,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_hidden",
         type=int,
-        default=2,
+        default=3,
         help=(
-            "Number of hidden layers (of size `hidden_dim`) in the estimators'"
-            " neural network modules"
+            "Number of hidden layers incl. input projection (of size `hidden_dim`)"
+            " in the estimators' neural network modules"
         ),
     )
 

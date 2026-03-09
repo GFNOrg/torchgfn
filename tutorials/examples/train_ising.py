@@ -23,7 +23,7 @@ def main(args):
     torch.set_num_threads(args.n_threads)
     hidden_dim = 512
 
-    n_hidden = 2
+    n_hidden = 3
     acc_fn = "relu"
     lr = 0.001
 

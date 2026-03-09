@@ -17,11 +17,11 @@ from gfn.utils.modules import MLP
 def test_trajectory_based_gflownet_generic():
     n_components = 3
     pf_module = BoxCartesianPFMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=n_components
+        hidden_dim=32, n_hidden_layers=3, n_components=n_components
     )
     pb_module = BoxCartesianPBMLP(
         hidden_dim=32,
-        n_hidden_layers=2,
+        n_hidden_layers=3,
         n_components=n_components,
         trunk=pf_module.trunk,
     )
@@ -69,11 +69,11 @@ def test_flow_matching_gflownet_generic():
 def test_pytorch_inheritance():
     n_components = 3
     pf_module = BoxCartesianPFMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=n_components
+        hidden_dim=32, n_hidden_layers=3, n_components=n_components
     )
     pb_module = BoxCartesianPBMLP(
         hidden_dim=32,
-        n_hidden_layers=2,
+        n_hidden_layers=3,
         n_components=n_components,
         trunk=pf_module.trunk,
     )
