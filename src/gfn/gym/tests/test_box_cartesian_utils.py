@@ -79,14 +79,39 @@ class TestBoxCartesianEnvironment:
         # Actually for non-s0, we need action >= delta, so this is invalid
         assert not env.is_action_valid(states, valid_actions, backward=False)
 
-    def test_exit_action_valid(self, env):
+    def test_exit_action_valid_from_non_s0(self, env):
         """Exit actions should be valid for non-s0 states."""
         states = env.States(torch.tensor([[0.5, 0.5]]))
         exit_actions = env.Actions(torch.tensor([[float("-inf"), float("-inf")]]))
-        # Exit actions have is_exit = True, so they're handled specially
-        assert exit_actions.is_exit.all()
-        # Verify that states are non-s0 (exit is valid from non-s0)
-        assert not states.is_initial_state.all()
+        assert env.is_action_valid(states, exit_actions, backward=False)
+
+    def test_exit_from_s0_invalid(self, env):
+        """Exit from s0 should be invalid (must take at least one forward step)."""
+        s0 = env.States(torch.tensor([[0.0, 0.0]]))
+        exit_actions = env.Actions(torch.tensor([[float("-inf"), float("-inf")]]))
+        assert not env.is_action_valid(s0, exit_actions, backward=False)
+
+    def test_exit_from_s0_invalid_all_exits_batch(self, env):
+        """A batch where all actions are exits from s0 should be invalid."""
+        s0_batch = env.States(torch.zeros(3, 2))
+        exit_batch = env.Actions(torch.full((3, 2), float("-inf")))
+        assert not env.is_action_valid(s0_batch, exit_batch, backward=False)
+
+    def test_exit_from_s0_invalid_mixed_batch(self, env):
+        """A mixed batch with one exit-from-s0 should be invalid."""
+        states = env.States(torch.tensor([[0.0, 0.0], [0.5, 0.5]]))
+        actions = env.Actions(
+            torch.tensor([[float("-inf"), float("-inf")], [0.25, 0.25]])
+        )
+        assert not env.is_action_valid(states, actions, backward=False)
+
+    def test_exit_valid_mixed_batch_no_s0(self, env):
+        """A mixed batch with exits only from non-s0 should be valid."""
+        states = env.States(torch.tensor([[0.5, 0.5], [0.3, 0.3]]))
+        actions = env.Actions(
+            torch.tensor([[float("-inf"), float("-inf")], [0.25, 0.25]])
+        )
+        assert env.is_action_valid(states, actions, backward=False)
 
 
 class TestBoxCartesianDistribution:
@@ -186,16 +211,102 @@ class TestBoxCartesianDistribution:
         log_probs_non_exit = dist.log_prob(non_exit_actions)
         assert torch.all(log_probs_non_exit == float("-inf"))
 
-    def test_no_exit_from_s0(self, env, pf_estimator):
-        """Exit from s0 should have log_prob = -inf."""
-        s0 = env.States(torch.zeros(2, 2))
+    # -- Forward log_prob validity tests ----------------------------------------
+    # delta=0.25 for all tests in this class.
+    # s0 support per dim: [0, 1].
+    # non-s0 support per dim: [delta, 1 - state_d].
+    # exit (-inf): forbidden from s0, required at boundary.
+
+    @pytest.mark.parametrize(
+        "state, action, reason",
+        [
+            # === From non-s0: action below delta ===
+            ([0.5, 0.5], [0.1, 0.3], "dim0 below delta"),
+            ([0.5, 0.5], [0.3, 0.1], "dim1 below delta"),
+            ([0.5, 0.5], [0.1, 0.1], "both dims below delta"),
+            ([0.3, 0.3], [0.0, 0.25], "dim0 is zero (below delta)"),
+            # === From non-s0: action exceeds 1 - state ===
+            ([0.5, 0.5], [0.6, 0.3], "dim0 would exceed 1"),
+            ([0.5, 0.5], [0.3, 0.6], "dim1 would exceed 1"),
+            ([0.5, 0.5], [0.6, 0.6], "both dims would exceed 1"),
+            ([0.7, 0.3], [0.35, 0.3], "dim0 tight overshoot"),
+            # === From non-s0: negative action ===
+            ([0.5, 0.5], [-0.1, 0.3], "negative action dim0"),
+            ([0.5, 0.5], [0.3, -0.5], "negative action dim1"),
+            # === From s0: action exceeds 1 ===
+            ([0.0, 0.0], [1.5, 0.5], "from s0, dim0 exceeds 1"),
+            ([0.0, 0.0], [0.5, 1.5], "from s0, dim1 exceeds 1"),
+            ([0.0, 0.0], [2.0, 2.0], "from s0, both dims exceed 1"),
+            # === From s0: negative action ===
+            ([0.0, 0.0], [-0.1, 0.5], "from s0, negative dim0"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_impossible_action_gets_neg_inf(
+        self, env, pf_estimator, state, action, reason
+    ):
+        """Out-of-support forward actions must get -inf log_prob."""
+        states = env.States(torch.tensor([state]))
+        module_output = pf_estimator.module(states.tensor)
+        dist = pf_estimator.to_probability_distribution(states, module_output)
+        lp = dist.log_prob(torch.tensor([action]))
+        assert lp.item() == float("-inf"), f"Expected -inf for: {reason}"
+
+    @pytest.mark.parametrize(
+        "state, action",
+        [
+            ([0.5, 0.5], [0.25, 0.25]),  # non-s0: at lower bound (delta)
+            ([0.5, 0.5], [0.45, 0.45]),  # non-s0: near upper bound (1 - 0.5 = 0.5)
+            ([0.5, 0.5], [0.35, 0.4]),  # non-s0: interior
+            ([0.3, 0.3], [0.3, 0.3]),  # non-s0: action in mid-range
+            ([0.0, 0.0], [0.5, 0.5]),  # s0: interior
+            ([0.0, 0.0], [0.01, 0.99]),  # s0: near extremes of [0, 1]
+        ],
+    )
+    def test_valid_action_gets_finite_log_prob(self, env, pf_estimator, state, action):
+        """In-support forward actions must get finite log_prob."""
+        states = env.States(torch.tensor([state]))
+        module_output = pf_estimator.module(states.tensor)
+        dist = pf_estimator.to_probability_distribution(states, module_output)
+        lp = dist.log_prob(torch.tensor([action]))
+        assert torch.isfinite(
+            lp
+        ).all(), f"Expected finite for state={state}, action={action}"
+
+    def test_exit_from_s0_neg_inf(self, env, pf_estimator):
+        """Exit from s0 is impossible and must get -inf."""
+        s0 = env.States(torch.zeros(1, 2))
         module_output = pf_estimator.module(s0.tensor)
         dist = pf_estimator.to_probability_distribution(s0, module_output)
+        lp = dist.log_prob(torch.full((1, 2), float("-inf")))
+        assert lp.item() == float("-inf")
 
-        exit_actions = torch.full((2, 2), float("-inf"))
-        log_probs = dist.log_prob(exit_actions)
+    def test_non_exit_at_boundary_neg_inf(self, env, pf_estimator):
+        """At the boundary, non-exit actions are impossible and must get -inf."""
+        # 0.8 >= 1 - delta = 0.75, so this is at boundary
+        boundary = env.States(torch.tensor([[0.8, 0.5]]))
+        module_output = pf_estimator.module(boundary.tensor)
+        dist = pf_estimator.to_probability_distribution(boundary, module_output)
+        non_exit = torch.tensor([[0.25, 0.25]])
+        lp = dist.log_prob(non_exit)
+        assert lp.item() == float("-inf")
 
-        assert (log_probs == float("-inf")).all()
+    def test_batch_mixed_valid_invalid(self, env, pf_estimator):
+        """In a batch, valid actions get finite log_prob and invalid get -inf."""
+        states = env.States(torch.tensor([[0.5, 0.5], [0.5, 0.5], [0.5, 0.5]]))
+        module_output = pf_estimator.module(states.tensor)
+        dist = pf_estimator.to_probability_distribution(states, module_output)
+        actions = torch.tensor(
+            [
+                [0.35, 0.35],  # valid (in [0.25, 0.5])
+                [0.1, 0.3],  # invalid (dim0 < delta)
+                [0.6, 0.3],  # invalid (dim0 > 1 - state)
+            ]
+        )
+        lps = dist.log_prob(actions)
+        assert torch.isfinite(lps[0]), "valid action should be finite"
+        assert lps[1].item() == float("-inf"), "below-delta should be -inf"
+        assert lps[2].item() == float("-inf"), "over-boundary should be -inf"
 
 
 class TestBoxCartesianPBDistribution:
@@ -294,6 +405,31 @@ class TestBoxCartesianPBDistribution:
         other_action = torch.tensor([[0.05, 0.05]])
         log_prob_other = dist.log_prob(other_action)
         assert torch.allclose(log_prob_other, torch.zeros(1))
+
+    def test_out_of_range_backward_action_gets_neg_inf(self, env, pb_estimator):
+        """Non-BTS backward actions outside [delta, state] should get -inf log_prob."""
+        states = env.States(torch.tensor([[0.7, 0.8]]))
+        module_output = pb_estimator.module(states.tensor)
+        dist = pb_estimator.to_probability_distribution(states, module_output)
+
+        # Action below delta (0.1 < 0.25) — invalid backward action
+        too_small = torch.tensor([[0.1, 0.3]])
+        assert dist.log_prob(too_small).item() == float("-inf")
+
+        # Action above state (0.9 > 0.8 in dim 1) — would make next state negative
+        too_large = torch.tensor([[0.5, 0.9]])
+        assert dist.log_prob(too_large).item() == float("-inf")
+
+    def test_valid_backward_action_gets_finite_log_prob(self, env, pb_estimator):
+        """Valid backward actions should get finite log_prob."""
+        states = env.States(torch.tensor([[0.7, 0.8]]))
+        module_output = pb_estimator.module(states.tensor)
+        dist = pb_estimator.to_probability_distribution(states, module_output)
+
+        # delta=0.25, state=[0.7, 0.8], so valid range is [0.25, 0.7] x [0.25, 0.8]
+        valid_action = torch.tensor([[0.4, 0.5]])
+        lp = dist.log_prob(valid_action)
+        assert torch.isfinite(lp).all()
 
 
 class TestBoxCartesianEndToEnd:

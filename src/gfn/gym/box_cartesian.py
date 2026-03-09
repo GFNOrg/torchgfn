@@ -39,6 +39,11 @@ class BoxCartesian(BoxPolar):
         Returns:
             True if the actions are valid, False otherwise.
         """
+        # Forward: exiting from s0 is forbidden (must take at least one step).
+        # Check before filtering out exits so mixed batches are caught too.
+        if not backward and torch.any(states.is_initial_state & actions.is_exit):
+            return False
+
         non_exit_actions = actions[~actions.is_exit]
         non_terminal_states = states[~actions.is_exit]
 
