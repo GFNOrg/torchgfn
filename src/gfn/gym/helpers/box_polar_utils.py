@@ -68,6 +68,7 @@ class QuarterCircle(Distribution):
         mixture_logits: Tensor,
         alpha: Tensor,
         beta: Tensor,
+        debug: bool = False,
     ) -> None:
         """Initializes the distribution.
 
@@ -81,9 +82,11 @@ class QuarterCircle(Distribution):
                 parameters of the Beta distributions.
             beta: Tensor of shape `(n_states, n_components)` containing the beta
                 parameters of the Beta distributions.
+            debug: If True, enables expensive validation checks.
         """
         self.delta = delta
         self.northeastern = northeastern
+        self.debug = debug
         self.n_states, self.n_components = mixture_logits.shape
 
         assert centers.tensor.shape == (self.n_states, 2)
@@ -266,10 +269,10 @@ class QuarterCircle(Distribution):
                 logprobs,
             )
 
-        if torch.any(torch.isinf(logprobs)) or torch.any(torch.isnan(logprobs)):
-            raise ValueError("logprobs contains inf or nan")
-
-        assert logprobs.shape == batch_shape
+        if self.debug:
+            if torch.any(torch.isinf(logprobs)) or torch.any(torch.isnan(logprobs)):
+                raise ValueError("logprobs contains inf or nan")
+            assert logprobs.shape == batch_shape
         return logprobs
 
 
@@ -321,6 +324,7 @@ class QuarterDisk(Distribution):
                 parameters of the Beta distributions for the angle.
         """
         self.delta = delta
+        self.debug = False
         self.mixture_logits = mixture_logits
         (self.n_components,) = mixture_logits.shape
 
@@ -395,10 +399,10 @@ class QuarterDisk(Distribution):
             - torch.log(base_r_01_samples * self.delta)
         )
 
-        if torch.any(torch.isinf(logprobs)):
-            raise ValueError("logprobs contains inf")
-
-        assert logprobs.shape == batch_shape
+        if self.debug:
+            if torch.any(torch.isinf(logprobs)):
+                raise ValueError("logprobs contains inf")
+            assert logprobs.shape == batch_shape
         return logprobs
 
 
@@ -549,6 +553,7 @@ class DistributionWrapper(Distribution):
         exit_probability: Tensor,
         n_components: int,
         n_components_s0: int,
+        debug: bool = False,
     ) -> None:
         """Initializes the distribution.
 
@@ -564,7 +569,9 @@ class DistributionWrapper(Distribution):
             exit_probability: The probability of exiting.
             n_components: The number of components in the mixture.
             n_components_s0: The number of components in the mixture for s0.
+            debug: If True, enables expensive validation checks.
         """
+        self.debug = debug
         self.idx_is_initial = torch.where(torch.all(states.tensor == 0, 1))[0]
         self.idx_not_initial = torch.where(torch.any(states.tensor != 0, 1))[0]
         self._output_shape = states.tensor.shape
@@ -640,7 +647,7 @@ class DistributionWrapper(Distribution):
             log_prob[self.idx_not_initial] = self.quarter_circ.log_prob(
                 sampled_actions[self.idx_not_initial]
             )
-        if torch.any(torch.isinf(log_prob)):
+        if self.debug and torch.any(torch.isinf(log_prob)):
             raise ValueError("log_prob contains inf")
         return log_prob
 
@@ -973,6 +980,7 @@ class BoxPFEstimator(Estimator, PolicyMixin):
         n_components: int,
         min_concentration: float = 0.1,
         max_concentration: float = 2.0,
+        debug: bool = False,
     ) -> None:
         """Initializes the estimator.
 
@@ -983,8 +991,9 @@ class BoxPFEstimator(Estimator, PolicyMixin):
             n_components: The number of components for non-s0 states.
             min_concentration: The minimum concentration for the Beta distributions.
             max_concentration: The maximum concentration for the Beta distributions.
+            debug: If True, enables expensive validation checks.
         """
-        super().__init__(module)
+        super().__init__(module, debug=debug)
         self._n_comp_max = max(n_components_s0, n_components)
         self.n_components_s0 = n_components_s0
         self.n_components = n_components
@@ -1064,6 +1073,7 @@ class BoxPFEstimator(Estimator, PolicyMixin):
             exit_probability.squeeze(-1),
             self.n_components,
             self.n_components_s0,
+            debug=self.debug,
         )
 
 
@@ -1091,6 +1101,7 @@ class BoxPBEstimator(Estimator, PolicyMixin):
         n_components: int,
         min_concentration: float = 0.1,
         max_concentration: float = 2.0,
+        debug: bool = False,
     ) -> None:
         """Initializes the estimator.
 
@@ -1100,8 +1111,9 @@ class BoxPBEstimator(Estimator, PolicyMixin):
             n_components: The number of components for the mixture.
             min_concentration: The minimum concentration for the Beta distributions.
             max_concentration: The maximum concentration for the Beta distributions.
+            debug: If True, enables expensive validation checks.
         """
-        super().__init__(module, is_backward=True)
+        super().__init__(module, is_backward=True, debug=debug)
         self.module = module
         self.n_components = n_components
 
@@ -1151,4 +1163,5 @@ class BoxPBEstimator(Estimator, PolicyMixin):
             mixture_logits=mixture_logits,
             alpha=alpha,
             beta=beta,
+            debug=self.debug,
         )

@@ -182,6 +182,7 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
         min_concentration: float = 0.1,
         max_concentration: float = 100.0,
         numerical_epsilon: float = 1e-6,
+        debug: bool = False,
     ) -> None:
         """Initialize the estimator.
 
@@ -194,8 +195,9 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
             numerical_epsilon: Small constant for clamping max_range before log (Jacobian
                 stability). Kept separate from env.epsilon (geometric tolerance) to avoid
                 log-Jacobian explosions when env.epsilon is very small (e.g. 1e-10).
+            debug: If True, enables expensive validation checks.
         """
-        super().__init__(module)
+        super().__init__(module, debug=debug)
         self.n_components = n_components
         self.min_concentration = min_concentration
         self.max_concentration = max_concentration
@@ -452,9 +454,10 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
         min_concentration: float = 0.1,
         max_concentration: float = 100.0,
         numerical_epsilon: float = 1e-6,
+        debug: bool = False,
     ) -> None:
         """Initialize the estimator."""
-        super().__init__(module, is_backward=True)
+        super().__init__(module, is_backward=True, debug=debug)
         self.n_components = n_components
         self.min_concentration = min_concentration
         self.max_concentration = max_concentration

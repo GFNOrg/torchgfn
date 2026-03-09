@@ -177,6 +177,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         pb: Estimator | None,
         constant_pb: bool = False,
         log_reward_clip_min: float = float("-inf"),
+        debug: bool = False,
     ) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
@@ -189,9 +190,13 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
             log_reward_clip_min: If finite, clips log rewards to this value.
+            debug: If True, enables expensive validation checks (NaN/Inf tensor
+                scans, shape assertions) that are useful for debugging but slow
+                down training.
 
         """
         super().__init__()
+        self.debug = debug
         # Technical note: pb may be constant for a variety of edge cases, for example,
         # if all terminal states can be reached with exactly the same number of
         # trajectories, and we assume a uniform backward policy, then we can omit the pb
@@ -217,6 +222,14 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
 
         self.pf = pf
         self.pb = pb
+
+        # Propagate debug flag to estimators so that gflownet.debug
+        # acts as a single entry point for enabling all validation checks.
+        if debug:
+            if hasattr(pf, "debug"):
+                pf.debug = True
+            if pb is not None and hasattr(pb, "debug"):
+                pb.debug = True
         self.constant_pb = constant_pb
         self.log_reward_clip_min = log_reward_clip_min
 
@@ -374,13 +387,13 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
         if math.isfinite(self.log_reward_clip_min):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
-        if torch.any(torch.isinf(total_log_pf_trajectories)):
-            raise ValueError("Infinite pf logprobs found")
-        if torch.any(torch.isinf(total_log_pb_trajectories)):
-            raise ValueError("Infinite pb logprobs found")
-
-        assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
-        assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
+        if self.debug:
+            if torch.any(torch.isinf(total_log_pf_trajectories)):
+                raise ValueError("Infinite pf logprobs found")
+            if torch.any(torch.isinf(total_log_pb_trajectories)):
+                raise ValueError("Infinite pb logprobs found")
+            assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
+            assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
         return total_log_pf_trajectories - total_log_pb_trajectories - log_rewards
 
     def to_training_samples(self, trajectories: Trajectories) -> Trajectories:

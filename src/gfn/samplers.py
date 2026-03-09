@@ -116,9 +116,11 @@ class Sampler:
                     "Estimator does not support get_current_estimator_output and save_estimator_outputs is True!"
                 )
             estimator_output = policy_estimator.get_current_estimator_output(ctx)
-            assert estimator_output is not None
+            if env.debug:
+                assert estimator_output is not None
 
-        assert log_probs is None or log_probs.shape == actions.batch_shape
+        if env.debug:
+            assert log_probs is None or log_probs.shape == actions.batch_shape
 
         return actions, log_probs, estimator_output
 

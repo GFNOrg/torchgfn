@@ -83,6 +83,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
         constant_pb: bool = False,
+        debug: bool = False,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -100,10 +101,15 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+            debug: If True, enables expensive validation checks.
 
         """
         super().__init__(
-            pf, pb, constant_pb=constant_pb, log_reward_clip_min=log_reward_clip_min
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
         )
         assert any(
             isinstance(logF, cls)
@@ -113,6 +119,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self.weighting = weighting
         self.lamda = lamda
         self.forward_looking = forward_looking
+
+        if debug and hasattr(logF, "debug"):
+            logF.debug = True
 
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
         """Returns a dictionary of named parameters containing 'logF' in their name.
@@ -375,11 +384,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             )
 
             flat_preds = preds[~flattening_mask]
-            if torch.any(torch.isnan(flat_preds)):
+            if self.debug and torch.any(torch.isnan(flat_preds)):
                 raise ValueError("NaN in preds")
 
             flat_targets = targets[~flattening_mask]
-            if torch.any(torch.isnan(flat_targets)):
+            if self.debug and torch.any(torch.isnan(flat_targets)):
                 raise ValueError("NaN in targets")
 
             flattening_masks.append(flattening_mask)

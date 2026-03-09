@@ -41,21 +41,31 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
     the default (non-recurrent) PolicyMixin interface.
     """
 
-    def __init__(self, logF: DiscretePolicyEstimator, alpha: float = 1.0):
+    def __init__(
+        self,
+        logF: DiscretePolicyEstimator,
+        alpha: float = 1.0,
+        debug: bool = False,
+    ):
         """Initializes a FMGFlowNet instance.
 
         Args:
             logF: A DiscretePolicyEstimator or ConditionalDiscretePolicyEstimator for
                 estimating the log flow of the edges (states -> next_states).
             alpha: A scalar weight for the reward matching loss.
+            debug: If True, enables expensive validation checks.
         """
         super().__init__()
+        self.debug = debug
         assert isinstance(
             logF, PolicyMixin
         ), "logF must use the default PolicyMixin interface"
 
         self.logF = logF
         self.alpha = alpha
+
+        if debug and hasattr(logF, "debug"):
+            logF.debug = True
 
     def sample_trajectories(
         self,
@@ -119,8 +129,9 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         if len(states) == 0:
             return torch.tensor(0.0, device=states.device)
 
-        assert len(states.batch_shape) == 1
-        assert not torch.any(states.is_initial_state)
+        if self.debug:
+            assert len(states.batch_shape) == 1
+            assert not torch.any(states.is_initial_state)
 
         incoming_log_flows = torch.full_like(
             states.backward_masks, -float("inf"), dtype=torch.get_default_dtype()
@@ -258,8 +269,9 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             raise NotImplementedError(
                 "Flow Matching GFlowNet only supports discrete environments for now."
             )
-        assert isinstance(states_container.intermediary_states, DiscreteStates)
-        assert isinstance(states_container.terminating_states, DiscreteStates)
+        if self.debug:
+            assert isinstance(states_container.intermediary_states, DiscreteStates)
+            assert isinstance(states_container.terminating_states, DiscreteStates)
         if recalculate_all_logprobs:
             warnings.warn(
                 "recalculate_all_logprobs is not used for FM. Ignoring the argument."

@@ -224,7 +224,8 @@ class HyperGrid(DiscreteEnv):
             The next states.
         """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, 1, reduce="add")
-        assert new_states_tensor.shape == states.tensor.shape
+        if self.debug:
+            assert new_states_tensor.shape == states.tensor.shape
         return self.States(new_states_tensor)
 
     def backward_step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
@@ -238,7 +239,8 @@ class HyperGrid(DiscreteEnv):
             The previous states.
         """
         new_states_tensor = states.tensor.scatter(-1, actions.tensor, -1, reduce="add")
-        assert new_states_tensor.shape == states.tensor.shape
+        if self.debug:
+            assert new_states_tensor.shape == states.tensor.shape
         return self.States(new_states_tensor)
 
     def reward(self, states: DiscreteStates) -> torch.Tensor:
@@ -256,9 +258,10 @@ class HyperGrid(DiscreteEnv):
             The reward of the final states.
         """
         reward = self.reward_fn(states.tensor)
-        assert (
-            reward.shape == states.batch_shape
-        ), f"reward.shape is {reward.shape} and states.batch_shape is {states.batch_shape}"
+        if self.debug:
+            assert (
+                reward.shape == states.batch_shape
+            ), f"reward.shape is {reward.shape} and states.batch_shape is {states.batch_shape}"
         return reward
 
     # -------------------------

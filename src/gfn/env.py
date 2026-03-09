@@ -386,9 +386,10 @@ class Env(ABC):
         not_done_actions = actions[new_valid_states_idx]
 
         not_done_states = self.step(not_done_states, not_done_actions)
-        assert isinstance(
-            not_done_states, States
-        ), f"The step function must return a States instance, but got {type(not_done_states)} instead."
+        if self.debug:
+            assert isinstance(
+                not_done_states, States
+            ), f"The step function must return a States instance, but got {type(not_done_states)} instead."
 
         # Create a batch of sink states with the same batch shape as the input states.
         # For the indices where the new states are not sink states (i.e., where the

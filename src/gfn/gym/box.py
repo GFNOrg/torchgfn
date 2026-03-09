@@ -204,7 +204,8 @@ class BoxPolar(Env):
         ax = abs(final_states.tensor - 0.5)
         reward = R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
 
-        assert reward.shape == final_states.batch_shape
+        if self.debug:
+            assert reward.shape == final_states.batch_shape
         return reward
 
     def log_partition(self, condition=None) -> float:  # condition is ignored
