@@ -114,7 +114,7 @@ def build_gflownet(
     preprocessor: KHotPreprocessor,
     env: Env,
     uniform_pb: bool = False,
-    n_hidden_layers: int = 2,
+    n_hidden_layers: int = 3,
     n_noisy_layers: int = 0,
     std_init: float = 0.5,
 ):
@@ -185,7 +185,7 @@ def train(
         preprocessor,
         env,
         uniform_pb=uniform_pb,
-        n_hidden_layers=2,
+        n_hidden_layers=3,
         n_noisy_layers=1 if use_noisy_layers else 0,
         std_init=0.5,  # ignored if n_noisy_layers == 0.
     )

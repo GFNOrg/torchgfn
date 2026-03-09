@@ -167,7 +167,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--hidden_dim", type=int, default=256, help="Hidden layer size")
     parser.add_argument(
-        "--n_layers", type=int, default=2, help="Number of hidden layers"
+        "--n_layers",
+        type=int,
+        default=3,
+        help="Number of hidden layers incl. input projection",
     )
     parser.add_argument("--word_size", type=int, default=1, help="Bits per word")
     parser.add_argument("--seq_size", type=int, default=4, help="Total bits in sequence")
