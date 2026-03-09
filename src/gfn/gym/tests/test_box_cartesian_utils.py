@@ -79,14 +79,39 @@ class TestBoxCartesianEnvironment:
         # Actually for non-s0, we need action >= delta, so this is invalid
         assert not env.is_action_valid(states, valid_actions, backward=False)
 
-    def test_exit_action_valid(self, env):
+    def test_exit_action_valid_from_non_s0(self, env):
         """Exit actions should be valid for non-s0 states."""
         states = env.States(torch.tensor([[0.5, 0.5]]))
         exit_actions = env.Actions(torch.tensor([[float("-inf"), float("-inf")]]))
-        # Exit actions have is_exit = True, so they're handled specially
-        assert exit_actions.is_exit.all()
-        # Verify that states are non-s0 (exit is valid from non-s0)
-        assert not states.is_initial_state.all()
+        assert env.is_action_valid(states, exit_actions, backward=False)
+
+    def test_exit_from_s0_invalid(self, env):
+        """Exit from s0 should be invalid (must take at least one forward step)."""
+        s0 = env.States(torch.tensor([[0.0, 0.0]]))
+        exit_actions = env.Actions(torch.tensor([[float("-inf"), float("-inf")]]))
+        assert not env.is_action_valid(s0, exit_actions, backward=False)
+
+    def test_exit_from_s0_invalid_all_exits_batch(self, env):
+        """A batch where all actions are exits from s0 should be invalid."""
+        s0_batch = env.States(torch.zeros(3, 2))
+        exit_batch = env.Actions(torch.full((3, 2), float("-inf")))
+        assert not env.is_action_valid(s0_batch, exit_batch, backward=False)
+
+    def test_exit_from_s0_invalid_mixed_batch(self, env):
+        """A mixed batch with one exit-from-s0 should be invalid."""
+        states = env.States(torch.tensor([[0.0, 0.0], [0.5, 0.5]]))
+        actions = env.Actions(
+            torch.tensor([[float("-inf"), float("-inf")], [0.25, 0.25]])
+        )
+        assert not env.is_action_valid(states, actions, backward=False)
+
+    def test_exit_valid_mixed_batch_no_s0(self, env):
+        """A mixed batch with exits only from non-s0 should be valid."""
+        states = env.States(torch.tensor([[0.5, 0.5], [0.3, 0.3]]))
+        actions = env.Actions(
+            torch.tensor([[float("-inf"), float("-inf")], [0.25, 0.25]])
+        )
+        assert env.is_action_valid(states, actions, backward=False)
 
 
 class TestBoxCartesianDistribution:
