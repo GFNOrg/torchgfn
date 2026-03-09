@@ -214,38 +214,78 @@ class Tabular(nn.Module):
         return outputs
 
 
-class DiscreteUniform(nn.Module):
-    """Implements a uniform distribution over discrete actions.
+class UniformModule(nn.Module):
+    """Constant-output module for non-learned (uniform/fixed) policies.
 
-    It uses a zero function approximator (a function that always outputs 0) to be used as
-    logits by a DiscretePBEstimator.
+    Outputs a constant tensor for all inputs.  Plug into any ``Estimator`` as the
+    ``module`` argument to get a non-learned policy.
+
+    Typical fill values:
+
+    * ``0.0`` — equal logits → uniform categorical (discrete environments).
+    * ``1.0`` — fixed params for sigmoid-based continuous estimators.
 
     Attributes:
-        output_dim: The size of the output space.
+        output_dim: Output dimension matching the estimator's expected_output_dim.
+        fill_value: Constant value to fill the output tensor.
+        skip_normalization: If True, signals to estimators that outputs should be
+            used directly without normalization transforms (e.g. sigmoid scaling
+            of concentration parameters).
     """
 
-    def __init__(self, output_dim: int) -> None:
-        """Initializes a new DiscreteUniform module.
+    def __init__(
+        self,
+        output_dim: int,
+        input_dim: int | None = None,
+        fill_value: float = 0.0,
+        skip_normalization: bool = False,
+    ) -> None:
+        """Initialize a UniformModule.
 
         Args:
             output_dim: The dimension of the output.
+            input_dim: Input dimension. Set this when no external preprocessor is
+                provided so that ``Estimator`` can create a default
+                ``IdentityPreprocessor``.  May be omitted when a preprocessor is
+                always supplied.
+            fill_value: Constant value for every output element.
+            skip_normalization: If True, downstream estimators should skip
+                normalization of the module output (e.g. don't apply sigmoid
+                scaling to concentration parameters).
         """
         super().__init__()
+        if input_dim is not None:
+            self.input_dim = input_dim
         self.output_dim = output_dim
+        self.fill_value = fill_value
+        self.skip_normalization = skip_normalization
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
-        """Forward method for the uniform distribution.
+        """Return a constant tensor of shape ``(*batch_shape, output_dim)``.
 
         Args:
-            preprocessed_states: a batch of states appropriately preprocessed for
-                ingestion by the uniform distribution. The shape of the tensor should be (*batch_shape, input_dim).
+            preprocessed_states: Tensor of shape ``(*batch_shape, input_dim)``.
 
-        Returns: a tensor of shape (*batch_shape, output_dim).
+        Returns:
+            Tensor of shape ``(*batch_shape, output_dim)`` filled with
+            ``fill_value``.
         """
-        out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
-            preprocessed_states.device
+        return torch.full(
+            (*preprocessed_states.shape[:-1], self.output_dim),
+            self.fill_value,
+            device=preprocessed_states.device,
         )
-        return out
+
+
+class DiscreteUniform(UniformModule):
+    """Uniform distribution over discrete actions.
+
+    Backward-compatible alias for ``UniformModule(output_dim, fill_value=0.0)``.
+    Prefer ``UniformModule`` for new code.
+    """
+
+    def __init__(self, output_dim: int) -> None:
+        super().__init__(output_dim=output_dim, fill_value=0.0)
 
 
 class LinearTransformer(nn.Module):

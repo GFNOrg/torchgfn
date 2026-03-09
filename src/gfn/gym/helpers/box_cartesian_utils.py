@@ -11,7 +11,7 @@ from torch.distributions import Beta, Categorical, Distribution
 from gfn.estimators import Estimator, PolicyMixin
 from gfn.gym.box import BoxPolar
 from gfn.states import States
-from gfn.utils.modules import MLP
+from gfn.utils.modules import MLP, UniformModule
 
 
 class BoxCartesianDistribution(Distribution):
@@ -489,6 +489,31 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
         self.n_dim = 2
         self.temperature: float = 1.0  # set externally to anneal exploration
 
+    @classmethod
+    def uniform(
+        cls,
+        env: BoxPolar,
+        n_components: int,
+        **kwargs,
+    ) -> "BoxCartesianPBEstimator":
+        """Create an estimator with a fixed (non-learned) uniform backward policy.
+
+        Args:
+            env: The Box environment.
+            n_components: Number of mixture components.
+            **kwargs: Extra keyword arguments forwarded to the constructor.
+
+        Returns:
+            A ``BoxCartesianPBEstimator`` whose module has no learnable parameters.
+        """
+        n_dim = 2
+        module = UniformModule(
+            output_dim=1 + 3 * n_dim * n_components,
+            input_dim=n_dim,
+            fill_value=1.0,
+        )
+        return cls(env, module, n_components, **kwargs)
+
     @property
     def expected_output_dim(self) -> int:
         """Expected output dimension: bts_logit + (weights + alpha + beta) * n_dim * n_comp."""
@@ -630,28 +655,16 @@ class BoxCartesianPBMLP(MLP):
         return super().forward(2.0 * preprocessed_states - 1.0)
 
 
-class UniformBoxCartesianPBModule(nn.Module):
-    """Fixed (non-learned) backward policy module for Box.
+class UniformBoxCartesianPBModule(UniformModule):
+    """Fixed (non-learned) backward policy module for Cartesian Box.
 
-    Returns uniform policy outputs (all ones), matching gflownet's
-    uniform backward policy for ccube. The existing BoxCartesianPBEstimator
-    maps these through sigmoid to get fixed Beta concentration parameters,
-    so the distribution machinery still computes valid log_probs — just
-    with non-learned parameters.
-
-    Use this for benchmarking against gflownet, which defaults to a
-    uniform backward policy.
+    Backward-compatible alias for ``UniformModule``.  Prefer
+    ``BoxCartesianPBEstimator.uniform(env, n_components)`` for new code.
     """
 
     def __init__(self, n_components: int, n_dim: int = 2) -> None:
-        super().__init__()
-        self.input_dim = n_dim
-        self.output_dim = 1 + 3 * n_dim * n_components
-
-    def forward(self, preprocessed_states: Tensor) -> Tensor:
-        """Return fixed uniform outputs (no learnable parameters)."""
-        return torch.ones(
-            preprocessed_states.shape[0],
-            self.output_dim,
-            device=preprocessed_states.device,
+        super().__init__(
+            output_dim=1 + 3 * n_dim * n_components,
+            input_dim=n_dim,
+            fill_value=1.0,
         )

@@ -19,6 +19,7 @@ from gfn.utils.handlers import (
     has_conditions_exception_handler,
     no_conditions_exception_handler,
 )
+from gfn.utils.modules import UniformModule
 
 REDUCTION_FUNCTIONS = {
     "mean": torch.mean,
@@ -740,6 +741,29 @@ class DiscretePolicyEstimator(PolicyMixin, LogitBasedEstimator):
         """
         super().__init__(module, preprocessor, is_backward=is_backward, debug=debug)
         self.n_actions = n_actions
+
+    @classmethod
+    def uniform(
+        cls,
+        n_actions: int,
+        preprocessor: Preprocessor | None = None,
+    ) -> "DiscretePolicyEstimator":
+        """Create a uniform backward policy estimator for discrete environments.
+
+        Outputs equal logits for all actions, resulting in a uniform distribution
+        over valid parent actions (masking is still applied).
+
+        Args:
+            n_actions: Total number of actions in the discrete environment.
+            preprocessor: Preprocessor object that transforms states to tensors.
+                Required because the input dimension depends on the environment.
+
+        Returns:
+            A ``DiscretePolicyEstimator`` with ``is_backward=True`` and no
+            learnable parameters.
+        """
+        module = UniformModule(output_dim=n_actions - 1, fill_value=0.0)
+        return cls(module, n_actions, preprocessor=preprocessor, is_backward=True)
 
     @property
     def expected_output_dim(self) -> int:

@@ -21,7 +21,7 @@ from torch.distributions import Beta, Categorical, Distribution, MixtureSameFami
 from gfn.estimators import Estimator, PolicyMixin
 from gfn.gym.box import BoxPolar
 from gfn.states import States
-from gfn.utils.modules import MLP
+from gfn.utils.modules import MLP, UniformModule
 
 PI_2_INV: float = 2.0 / torch.pi
 PI_2: float = torch.pi / 2.0
@@ -882,29 +882,19 @@ class BoxStateFlowModule(MLP):
         return out
 
 
-class BoxPBUniform(nn.Module):
-    """A uniform backward policy for the Box environment.
+class BoxPBUniform(UniformModule):
+    """Uniform backward policy for the polar Box environment.
 
-    This module returns `(1, 1, 1)` for all states. Used with `QuarterCircle`,
-    it leads to a uniform distribution over parents in the south-western part of
-    the circle.
+    Backward-compatible alias for
+    ``UniformModule(output_dim=3, input_dim=2, fill_value=1.0, skip_normalization=True)``.
+    Used with ``QuarterCircle``, it leads to a uniform (alpha=beta=1) Beta
+    distribution over parents.  Prefer ``UniformModule`` for new code.
     """
 
-    input_dim: int = 2
-
-    def forward(self, preprocessed_states: Tensor) -> Tensor:
-        """Computes the forward pass of the neural network.
-
-        Args:
-            preprocessed_states: The tensor states of shape `(*batch_shape, 2)`.
-
-        Returns:
-            A tensor of shape `(*batch_shape, 3)` filled with ones.
-        """
-        # return (1, 1, 1) for all states, thus the "+ (3,)".
-        assert preprocessed_states.shape[-1] == 2
-        batch_shape = preprocessed_states.shape[:-1]
-        return torch.ones(batch_shape + (3,), device=preprocessed_states.device)
+    def __init__(self) -> None:
+        super().__init__(
+            output_dim=3, input_dim=2, fill_value=1.0, skip_normalization=True
+        )
 
 
 def split_PF_module_output(
@@ -1122,6 +1112,34 @@ class BoxPBEstimator(Estimator, PolicyMixin):
 
         self.delta = env.delta
 
+    @classmethod
+    def uniform(
+        cls,
+        env: BoxPolar,
+        n_components: int = 1,
+        **kwargs,
+    ) -> "BoxPBEstimator":
+        """Create an estimator with a fixed (non-learned) uniform backward policy.
+
+        Uses ``alpha=beta=1`` (uniform Beta) by setting ``skip_normalization=True``
+        so the constant module output is used directly as concentration parameters.
+
+        Args:
+            env: The Box environment.
+            n_components: Number of mixture components (default 1).
+            **kwargs: Extra keyword arguments forwarded to the constructor.
+
+        Returns:
+            A ``BoxPBEstimator`` whose module has no learnable parameters.
+        """
+        module = UniformModule(
+            output_dim=3 * n_components,
+            input_dim=2,
+            fill_value=1.0,
+            skip_normalization=True,
+        )
+        return cls(env, module, n_components, **kwargs)
+
     @property
     def expected_output_dim(self) -> int:
         """Returns the expected output dimension of the module."""
@@ -1153,7 +1171,7 @@ class BoxPBEstimator(Estimator, PolicyMixin):
                 + (self.max_concentration - self.min_concentration) * x
             )  # .contiguous().view(-1)
 
-        if not isinstance(self.module, BoxPBUniform):
+        if not getattr(self.module, "skip_normalization", False):
             alpha = _normalize(alpha)
             beta = _normalize(beta)
         return QuarterCircle(
