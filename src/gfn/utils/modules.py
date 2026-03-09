@@ -57,8 +57,8 @@ class MLP(nn.Module):
             n_hidden_layers: The number of hidden layers (including the input
                 projection). With n_hidden_layers=2, the architecture is
                 [input→H1→H2→output] (3 Linear layers total).
-            n_noisy_layers: The number of layers which are noisy, including the
-                input and output layers.
+            n_noisy_layers: The number of noisy layers (from the output end).
+                The input projection is never noisy. Must be <= n_hidden_layers.
             activation_fn: The activation function to use.
             trunk: A custom trunk to use. If None, a new trunk will be created.
             add_layer_norm: Whether to add layer normalization to the hidden layers.
@@ -87,11 +87,12 @@ class MLP(nn.Module):
         else:
             assert n_hidden_layers is not None, "n_hidden_layers must be provided"
             assert n_hidden_layers >= 1, "n_hidden_layers must be >= 1."
-            # Total linear layers = n_hidden_layers + 1 (output). Noisy layers
-            # can replace any of them.
+            # The input projection is always non-noisy. At most (n_hidden_layers - 1)
+            # extra hidden layers plus the output layer can be noisy, giving a maximum
+            # of n_hidden_layers noisy layers.
             assert (
-                n_noisy_layers <= n_hidden_layers + 1
-            ), "n_noisy_layers must be <= n_hidden_layers + the output layer."
+                n_noisy_layers <= n_hidden_layers
+            ), "n_noisy_layers must be <= n_hidden_layers."
             assert hidden_dim is not None, "hidden_dim must be provided"
             assert (
                 activation_fn in ACTIVATION_FNS
