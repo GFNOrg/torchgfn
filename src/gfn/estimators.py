@@ -1088,8 +1088,8 @@ class DiscreteGraphPolicyEstimator(PolicyMixin, LogitBasedEstimator):
 
         transformed_logits = {}
         for key in logits.keys():
-            assert isinstance(key, str)
             if self.debug:
+                assert isinstance(key, str)
                 assert not torch.isnan(logits[key]).any(), f"logits[{key}] contains NaNs"
 
             # Pad zero-length components to length 1 with an invalid mask so downstream
@@ -1118,8 +1118,8 @@ class DiscreteGraphPolicyEstimator(PolicyMixin, LogitBasedEstimator):
                     # ACTION_TYPE_KEY contains the exit action logit.
                     sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
                     sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
-                    temperature=temperature[key],
-                    epsilon=epsilon[key],
+                    temperature=temperature[key],  # pyright: ignore[reportIndexIssue]
+                    epsilon=epsilon[key],  # pyright: ignore[reportIndexIssue]
                     debug=self.debug,
                 )
             )
