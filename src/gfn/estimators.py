@@ -1088,8 +1088,8 @@ class DiscreteGraphPolicyEstimator(PolicyMixin, LogitBasedEstimator):
 
         transformed_logits = {}
         for key in logits.keys():
+            assert isinstance(key, str)
             if self.debug:
-                assert isinstance(key, str)
                 assert not torch.isnan(logits[key]).any(), f"logits[{key}] contains NaNs"
 
             # Pad zero-length components to length 1 with an invalid mask so downstream
