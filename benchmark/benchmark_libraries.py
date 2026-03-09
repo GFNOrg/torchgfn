@@ -261,7 +261,9 @@ def run_benchmark(
     logZ_after = runner.get_logZ()
     if logZ_before is not None and logZ_after is not None:
         if logZ_before == logZ_after:
-            print(f"  WARNING: logZ did not change ({logZ_before:.4f} -> {logZ_after:.4f})")
+            print(
+                f"  WARNING: logZ did not change ({logZ_before:.4f} -> {logZ_after:.4f})"
+            )
         else:
             print(f"  logZ: {logZ_before:.4f} -> {logZ_after:.4f}")
 
@@ -644,7 +646,9 @@ def main():
             print("=" * 70)
             print("Configuration:")
             print(f"  env: {config.env_name}, {config.env_kwargs}")
-            print(f"  n_iterations={config.n_iterations}, batch_size={config.batch_size}")
+            print(
+                f"  n_iterations={config.n_iterations}, batch_size={config.batch_size}"
+            )
             print(f"  n_warmup={config.n_warmup}")
             print(f"  lr={config.lr}, lr_logz={config.lr_logz}")
             print(f"  hidden_dim={config.hidden_dim}, n_layers={config.n_layers}")

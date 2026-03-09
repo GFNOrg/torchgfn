@@ -1118,8 +1118,12 @@ class DiscreteGraphPolicyEstimator(PolicyMixin, LogitBasedEstimator):
                     # ACTION_TYPE_KEY contains the exit action logit.
                     sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
                     sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
-                    temperature=temperature[key],  # pyright: ignore[reportIndexIssue]
-                    epsilon=epsilon[key],  # pyright: ignore[reportIndexIssue]
+                    temperature=temperature[
+                        key
+                    ],  # pyright: ignore[reportArgumentType, reportIndexIssue]
+                    epsilon=epsilon[
+                        key
+                    ],  # pyright: ignore[reportArgumentType, reportIndexIssue]
                     debug=self.debug,
                 )
             )

@@ -40,7 +40,11 @@ def collect_results(output_dir: Path) -> Path:
             if key in seen:
                 # Duplicate — keep the latest file (sorted by timestamp)
                 # Replace the existing row
-                rows = [r for r in rows if (r["scenario"], r["batch_size"], r["library"], r["seed"]) != key]
+                rows = [
+                    r
+                    for r in rows
+                    if (r["scenario"], r["batch_size"], r["library"], r["seed"]) != key
+                ]
 
             seen.add(key)
 
@@ -88,9 +92,7 @@ def collect_results(output_dir: Path) -> Path:
         "peak_memory_mb",
         "n_params",
     ]
-    phase_fields = sorted(
-        {k for row in rows for k in row if k.startswith("phase_")}
-    )
+    phase_fields = sorted({k for row in rows for k in row if k.startswith("phase_")})
     fieldnames = base_fields + phase_fields
 
     csv_path = output_dir / "benchmark_collected.csv"
@@ -116,9 +118,7 @@ def main():
     args = parser.parse_args()
 
     output_dir = (
-        Path(args.output_dir)
-        if args.output_dir
-        else Path(__file__).parent / "outputs"
+        Path(args.output_dir) if args.output_dir else Path(__file__).parent / "outputs"
     )
 
     csv_path = collect_results(output_dir)

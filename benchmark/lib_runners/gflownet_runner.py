@@ -115,7 +115,9 @@ class GFlowNetRunner(LibraryRunner):
 
             if self._patch_actions:
                 self._patch_action_indexing()
-                print("  [patch] Replaced O(batch*action_space) action indexing with O(batch) dict lookup")
+                print(
+                    "  [patch] Replaced O(batch*action_space) action indexing with O(batch) dict lookup"
+                )
 
             # Create the GFlowNet agent
             self.agent = gflownet_from_config(cfg)
@@ -153,13 +155,16 @@ class GFlowNetRunner(LibraryRunner):
         tensors that live on GPU (lines 1130, 1221, 1229 in cube.py)."""
         from gflownet.envs.cube import ContinuousCube as Cube
         from gflownet.utils.common import tbool, tfloat
-
         from torch.distributions import Bernoulli
 
         # --- Forward ---
         def _sample_forward_fixed(
-            self, policy_outputs, mask=None, states_from=None,
-            random_action_prob=0.0, temperature_logits=1.0,
+            self,
+            policy_outputs,
+            mask=None,
+            states_from=None,
+            random_action_prob=0.0,
+            temperature_logits=1.0,
         ):
             n_states = policy_outputs.shape[0]
             states_from_tensor = tfloat(
@@ -192,33 +197,47 @@ class GFlowNetRunner(LibraryRunner):
                 is_relative = ~is_source[do_increments]
                 states_from_rel = tfloat(
                     states_from_tensor[do_increments],
-                    float_type=self.float, device=self.device,
+                    float_type=self.float,
+                    device=self.device,
                 )[is_relative]
                 increments[is_relative] = self.relative_to_absolute_increments(
-                    states_from_rel, increments[is_relative], is_backward=False,
+                    states_from_rel,
+                    increments[is_relative],
+                    is_backward=False,
                 )
 
             actions_tensor = torch.full(
-                (n_states, self.n_dim + 1), torch.inf,
-                dtype=self.float, device=self.device,
+                (n_states, self.n_dim + 1),
+                torch.inf,
+                dtype=self.float,
+                device=self.device,
             )
             if torch.any(do_increments):
                 increments = self._mask_ignored_dimensions(
                     mask[do_increments], increments
                 )
                 actions_tensor[do_increments] = torch.cat(
-                    (increments, torch.zeros(
-                        (increments.shape[0], 1),
-                        dtype=self.float, device=self.device,
-                    )), dim=1,
+                    (
+                        increments,
+                        torch.zeros(
+                            (increments.shape[0], 1),
+                            dtype=self.float,
+                            device=self.device,
+                        ),
+                    ),
+                    dim=1,
                 )
             actions_tensor[is_source, -1] = 1
             return [tuple(a) for a in actions_tensor.tolist()]
 
         # --- Backward ---
         def _sample_backward_fixed(
-            self, policy_outputs, mask=None, states_from=None,
-            random_action_prob=0.0, temperature_logits=1.0,
+            self,
+            policy_outputs,
+            mask=None,
+            states_from=None,
+            random_action_prob=0.0,
+            temperature_logits=1.0,
         ):
             n_states = policy_outputs.shape[0]
             is_bts = torch.zeros(n_states, dtype=torch.bool, device=self.device)
@@ -248,7 +267,9 @@ class GFlowNetRunner(LibraryRunner):
                     states_from, float_type=self.float, device=self.device
                 )[do_increments]
                 increments = self.relative_to_absolute_increments(
-                    states_from_rel, increments, is_backward=True,
+                    states_from_rel,
+                    increments,
+                    is_backward=True,
                 )
 
             actions_tensor = torch.zeros(
@@ -262,20 +283,30 @@ class GFlowNetRunner(LibraryRunner):
                     mask[do_increments], increments
                 )
                 actions_tensor[do_increments] = torch.cat(
-                    (increments, torch.zeros(
-                        (increments.shape[0], 1),
-                        dtype=self.float, device=self.device,
-                    )), dim=1,
+                    (
+                        increments,
+                        torch.zeros(
+                            (increments.shape[0], 1),
+                            dtype=self.float,
+                            device=self.device,
+                        ),
+                    ),
+                    dim=1,
                 )
             if torch.any(is_bts):
                 actions_bts = tfloat(
                     states_from, float_type=self.float, device=self.device
                 )[is_bts]
                 actions_bts = torch.cat(
-                    (actions_bts, torch.ones(
-                        (actions_bts.shape[0], 1),
-                        dtype=self.float, device=self.device,
-                    )), dim=1,
+                    (
+                        actions_bts,
+                        torch.ones(
+                            (actions_bts.shape[0], 1),
+                            dtype=self.float,
+                            device=self.device,
+                        ),
+                    ),
+                    dim=1,
                 )
                 actions_tensor[is_bts] = actions_bts
                 actions_tensor[is_bts, :-1] = self._mask_ignored_dimensions(
@@ -309,13 +340,15 @@ class GFlowNetRunner(LibraryRunner):
             indices = torch.empty(batch_size, dtype=torch.long, device=actions.device)
             for i in range(batch_size):
                 action_tuple = tuple(actions[i].tolist())
-                indices[i] = self._action2index[
-                    self.action2representative(action_tuple)
-                ]
+                indices[i] = self._action2index[self.action2representative(action_tuple)]
             return indices
 
         def _get_logprobs_fast(
-            self, policy_outputs, actions, mask=None, states_from=None,
+            self,
+            policy_outputs,
+            actions,
+            mask=None,
+            states_from=None,
             is_backward=False,
         ):
             """get_logprobs with O(batch) action indexing for both list and tensor paths."""
@@ -326,9 +359,7 @@ class GFlowNetRunner(LibraryRunner):
                 logits[mask] = -torch.inf
 
             if torch.is_tensor(actions):
-                action_indices = tlong(
-                    self.actions2indices(actions), device=self.device
-                )
+                action_indices = tlong(self.actions2indices(actions), device=self.device)
             else:
                 # Vectorized dict lookup — build tensor directly instead of
                 # list comprehension + tlong conversion.

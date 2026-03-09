@@ -31,7 +31,7 @@ Reference:
 
 from __future__ import annotations
 
-from typing import ClassVar, List, Literal, Optional, Sequence, Tuple
+from typing import ClassVar, List, Optional, Tuple
 
 import torch
 
@@ -107,9 +107,7 @@ class NonAutoregressiveBitSequenceStates(DiscreteStates):
             # Actions word, n_words + word, 2*n_words + word, ... correspond
             # to positions 0, 1, 2, ... with this word value.
             # Action index = pos * n_words + word
-            backward_masks[
-                ..., word :: self.n_words
-            ] = (self.tensor == word)
+            backward_masks[..., word :: self.n_words] = self.tensor == word
 
         return backward_masks
 
@@ -304,7 +302,11 @@ class NonAutoregressiveBitSequence(DiscreteEnv):
         if n_blocks == 0:
             # seq_size < block_len: generate random binary modes directly
             return torch.randint(
-                0, 2, (self.n_modes_count, self.seq_size), dtype=torch.long, device=device
+                0,
+                2,
+                (self.n_modes_count, self.seq_size),
+                dtype=torch.long,
+                device=device,
             )
 
         num_possible = block_set.shape[0] ** n_blocks
@@ -317,9 +319,7 @@ class NonAutoregressiveBitSequence(DiscreteEnv):
         unique_indices: set = set()
         unique_sequences = []
         while len(unique_sequences) < self.n_modes_count:
-            candidate = tuple(
-                torch.randint(0, block_set.shape[0], (n_blocks,)).tolist()
-            )
+            candidate = tuple(torch.randint(0, block_set.shape[0], (n_blocks,)).tolist())
             if candidate not in unique_indices:
                 unique_indices.add(candidate)
                 unique_sequences.append(candidate)
@@ -448,9 +448,7 @@ class NonAutoregressiveBitSequence(DiscreteEnv):
         min_dist = self._min_hamming_distance(binary, self.modes)
         return -self.reward_exponent * min_dist.float() / self.seq_size
 
-    def reward(
-        self, final_states: NonAutoregressiveBitSequenceStates
-    ) -> torch.Tensor:
+    def reward(self, final_states: NonAutoregressiveBitSequenceStates) -> torch.Tensor:
         """Compute reward as ``exp(log_reward)``.
 
         Args:

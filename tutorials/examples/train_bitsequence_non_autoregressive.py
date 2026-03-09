@@ -84,7 +84,7 @@ def main(args):
         debug=__debug__,
     )
 
-    print(f"Environment: NonAutoregressiveBitSequence")
+    print("Environment: NonAutoregressiveBitSequence")
     print(f"  seq_size={args.seq_size}, word_size={args.word_size}")
     print(f"  words_per_seq={env.words_per_seq}, n_words={env.n_words}")
     print(f"  n_actions={env.n_actions} ({env.words_per_seq}*{env.n_words} + 1 exit)")
@@ -108,17 +108,13 @@ def main(args):
     )
 
     pf_estimator = DiscretePolicyEstimator(pf, n_actions=env.n_actions)
-    pb_estimator = DiscretePolicyEstimator(
-        pb, n_actions=env.n_actions, is_backward=True
-    )
+    pb_estimator = DiscretePolicyEstimator(pb, n_actions=env.n_actions, is_backward=True)
 
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0).to(device)
 
     # Optimizer with separate learning rates for network params and logZ
     optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=args.lr)
-    optimizer.add_param_group(
-        {"params": gflownet.logz_parameters(), "lr": args.lr_Z}
-    )
+    optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": args.lr_Z})
 
     n_params = sum(p.numel() for p in gflownet.parameters() if p.requires_grad)
     print(f"  n_params={n_params:,}")
@@ -156,20 +152,32 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Train GFlowNet on non-autoregressive BitSequence")
+    parser = ArgumentParser(
+        description="Train GFlowNet on non-autoregressive BitSequence"
+    )
     parser.add_argument("--no_cuda", action="store_true", help="Disable CUDA")
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument("--n_iterations", type=int, default=2000, help="Training iterations")
+    parser.add_argument(
+        "--n_iterations", type=int, default=2000, help="Training iterations"
+    )
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--lr_Z", type=float, default=1e-1, help="Learning rate for logZ")
+    parser.add_argument(
+        "--lr_Z", type=float, default=1e-1, help="Learning rate for logZ"
+    )
     parser.add_argument("--hidden_dim", type=int, default=256, help="Hidden layer size")
-    parser.add_argument("--n_layers", type=int, default=2, help="Number of hidden layers")
+    parser.add_argument(
+        "--n_layers", type=int, default=2, help="Number of hidden layers"
+    )
     parser.add_argument("--word_size", type=int, default=1, help="Bits per word")
     parser.add_argument("--seq_size", type=int, default=4, help="Total bits in sequence")
     parser.add_argument("--n_modes", type=int, default=2, help="Number of target modes")
-    parser.add_argument("--reward_exponent", type=float, default=2.0, help="Reward sharpness")
-    parser.add_argument("--print_every", type=int, default=200, help="Print loss every N steps")
+    parser.add_argument(
+        "--reward_exponent", type=float, default=2.0, help="Reward sharpness"
+    )
+    parser.add_argument(
+        "--print_every", type=int, default=200, help="Print loss every N steps"
+    )
 
     args = parser.parse_args()
     main(args)

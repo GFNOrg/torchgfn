@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
 import equinox as eqx
-
 from benchmark.lib_runners.base import BenchmarkConfig, LibraryRunner
 
 # Add gfnx to path so we can import the library
