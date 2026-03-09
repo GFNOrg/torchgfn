@@ -465,6 +465,10 @@ class States(ABC):
                 f"extend is not implemented for batch shapes {self.batch_shape} and {other.batch_shape}"
             )
 
+        # Invalidate cached comparisons since self.tensor changed.
+        self._is_initial_cache = None
+        self._is_sink_cache = None
+
         if self.conditions is not None and other.conditions is not None:
             self.conditions = torch.cat(
                 (self.conditions, other.conditions), dim=len(self.batch_shape) - 1
@@ -507,6 +511,9 @@ class States(ABC):
             ),
             dim=0,
         )
+        # Invalidate cached comparisons since self.tensor changed.
+        self._is_initial_cache = None
+        self._is_sink_cache = None
         # Pad conditions with -inf for sf states
         if self.conditions is not None:
             cond_pad = torch.full(

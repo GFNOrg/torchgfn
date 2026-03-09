@@ -1236,3 +1236,300 @@ def test_graph_states_two_instances_different_devices_cuda(datas):
     # Move back and ensure consistency
     s_cuda.to(cpu)
     assert s_cuda.device.type == "cpu"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Tests for _make_view: cache safety, memory sharing, and subclass correctness
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class TestMakeViewCacheSafety:
+    """Verify that _make_view never returns objects with stale caches."""
+
+    def test_getitem_returns_fresh_caches(self):
+        """__getitem__ via _make_view must reset caches to None."""
+        tensor = torch.tensor([[0.0, 0.0], [0.5, 0.5], [1.0, 1.0]])
+        states = SimpleTensorStates(tensor)
+        # Populate the parent's caches.
+        _ = states.is_initial_state
+        _ = states.is_sink_state
+        assert states._is_initial_cache is not None
+        assert states._is_sink_cache is not None
+
+        # Slice — child must have fresh (None) caches.
+        child = states[0:2]
+        assert child._is_initial_cache is None
+        assert child._is_sink_cache is None
+
+    def test_setitem_invalidates_caches(self):
+        """__setitem__ must clear both caches on the target."""
+        tensor = torch.tensor([[0.5, 0.5], [0.5, 0.5]])
+        states = SimpleTensorStates(tensor)
+        # Populate caches.
+        assert not states.is_initial_state.any()
+        assert not states.is_sink_state.any()
+
+        # Overwrite first element with s0.
+        s0_states = SimpleTensorStates(SimpleTensorStates.s0.unsqueeze(0))
+        states[0] = s0_states
+        # Cache must have been invalidated — is_initial_state should reflect
+        # the new tensor contents.
+        assert states.is_initial_state[0].item() is True
+        assert states.is_initial_state[1].item() is False
+
+    def test_setitem_invalidates_sink_cache(self):
+        """__setitem__ must invalidate sink cache so is_sink_state is fresh."""
+        tensor = torch.tensor([[0.5, 0.5], [0.5, 0.5]])
+        states = SimpleTensorStates(tensor)
+        assert not states.is_sink_state.any()
+
+        sf_states = SimpleTensorStates(SimpleTensorStates.sf.unsqueeze(0))
+        states[1] = sf_states
+        assert states.is_sink_state[1].item() is True
+        assert states.is_sink_state[0].item() is False
+
+    def test_cache_populated_lazily(self):
+        """Caches should stay None until the property is first accessed."""
+        tensor = torch.tensor([[0.0, 0.0]])
+        states = SimpleTensorStates(tensor)
+        assert states._is_initial_cache is None
+        assert states._is_sink_cache is None
+        _ = states.is_initial_state
+        assert states._is_initial_cache is not None
+        assert states._is_sink_cache is None  # Still None — only accessed one.
+
+    def test_make_view_directly_has_none_caches(self):
+        """Calling _make_view directly must produce None caches."""
+        tensor = torch.tensor([[0.5, 0.5]])
+        obj = SimpleTensorStates._make_view(tensor)
+        assert obj._is_initial_cache is None
+        assert obj._is_sink_cache is None
+
+
+class TestMakeViewMemorySharing:
+    """Verify that _make_view tensor aliasing does not cause stale caches."""
+
+    def test_boolean_index_creates_copy(self):
+        """Boolean indexing returns a copy — modifying child doesn't affect parent."""
+        tensor = torch.tensor([[0.0, 0.0], [0.5, 0.5]])
+        states = SimpleTensorStates(tensor)
+        mask = torch.tensor([True, False])
+        child = states[mask]  # Advanced indexing → copy
+        child.tensor[0] = torch.tensor([9.0, 9.0])
+        assert torch.equal(states.tensor[0], torch.tensor([0.0, 0.0]))
+
+    def test_slice_index_shares_memory(self):
+        """Slice indexing may share storage — verify cache isolation."""
+        tensor = torch.tensor([[0.0, 0.0], [0.5, 0.5]])
+        states = SimpleTensorStates(tensor)
+        # Populate parent cache.
+        assert states.is_initial_state[0].item() is True
+
+        child = states[0:1]  # Slice → may share memory
+        # Child has its own independent cache.
+        assert child._is_initial_cache is None
+        assert child.is_initial_state[0].item() is True
+
+    def test_integer_index_no_cache_leak(self):
+        """Integer indexing reduces dimensions — cache must be independent."""
+        tensor = torch.tensor([[0.0, 0.0], [1.0, 1.0]])
+        states = SimpleTensorStates(tensor)
+        _ = states.is_initial_state
+
+        child = states[1]
+        assert child._is_initial_cache is None
+        assert child.is_sink_state.item() is True
+        # Parent cache is unaffected.
+        assert states.is_initial_state[0].item() is True
+        assert states.is_sink_state[1].item() is True
+
+    def test_setitem_on_parent_after_slice_child(self):
+        """Mutating parent via __setitem__ after taking a slice child.
+
+        The parent's cache is invalidated. The child (if it's a view) might
+        see changed data — but its cache was independently computed, so
+        re-accessing the property gives the correct result.
+        """
+        tensor = torch.tensor([[0.0, 0.0], [0.5, 0.5]])
+        states = SimpleTensorStates(tensor)
+        _ = states.is_initial_state  # Populate parent cache.
+
+        child = states[0:1]
+        _ = child.is_initial_state  # Populate child cache: [True].
+
+        # Overwrite parent's first element.
+        sf_states = SimpleTensorStates(SimpleTensorStates.sf.unsqueeze(0))
+        states[0] = sf_states
+        # Parent cache was invalidated, so fresh recomputation:
+        assert states.is_sink_state[0].item() is True
+        assert not states.is_initial_state[0].item()
+
+
+class TestMakeViewConditions:
+    """Verify conditions are properly handled through _make_view."""
+
+    def test_getitem_propagates_conditions(self):
+        """Slicing must carry conditions to the child."""
+        tensor = torch.tensor([[0.5, 0.5], [0.6, 0.6]])
+        conditions = torch.tensor([[1.0], [2.0]])
+        states = SimpleTensorStates(tensor, conditions=conditions)
+        child = states[1]
+        assert child.conditions is not None
+        assert torch.equal(child.conditions, torch.tensor([2.0]))
+
+    def test_getitem_no_conditions(self):
+        """Slicing without conditions must produce None conditions."""
+        tensor = torch.tensor([[0.5, 0.5], [0.6, 0.6]])
+        states = SimpleTensorStates(tensor)
+        child = states[0:1]
+        assert child.conditions is None
+
+    def test_make_view_preserves_debug_flag(self):
+        """Debug flag must propagate through _make_view."""
+        tensor = torch.tensor([[0.5, 0.5]])
+        states = SimpleTensorStates(tensor, debug=True)
+        child = states[0:1]
+        assert child.debug is True
+
+        states2 = SimpleTensorStates(tensor, debug=False)
+        child2 = states2[0:1]
+        assert child2.debug is False
+
+
+class TestMakeViewDiscreteStates:
+    """Verify DiscreteStates _make_view handles mask caches correctly."""
+
+    def test_getitem_resets_mask_caches(self):
+        """Slicing DiscreteStates must reset mask caches to None."""
+        tensor = torch.tensor([[0.5, 0.5], [0.6, 0.6]])
+        states = SimpleDiscreteStates(tensor)
+        # Populate mask caches.
+        _ = states.forward_masks
+        _ = states.backward_masks
+        assert states._forward_masks_cache is not None
+        assert states._backward_masks_cache is not None
+
+        child = states[0:1]
+        assert child._forward_masks_cache is None
+        assert child._backward_masks_cache is None
+
+    def test_setitem_invalidates_mask_caches(self):
+        """__setitem__ on DiscreteStates must invalidate mask caches."""
+        tensor = torch.tensor([[0.5, 0.5], [0.6, 0.6]])
+        states = SimpleDiscreteStates(tensor)
+        _ = states.forward_masks
+        _ = states.backward_masks
+
+        new_state = SimpleDiscreteStates(torch.tensor([[0.7, 0.7]]))
+        states[0] = new_state
+        assert states._forward_masks_cache is None
+        assert states._backward_masks_cache is None
+
+    def test_discrete_make_view_has_all_attributes(self):
+        """_make_view on DiscreteStates must initialize ALL required attributes."""
+        tensor = torch.tensor([[0.5, 0.5]])
+        obj = SimpleDiscreteStates._make_view(tensor)
+        # Base attributes.
+        assert hasattr(obj, "tensor")
+        assert hasattr(obj, "_conditions")
+        assert hasattr(obj, "debug")
+        assert hasattr(obj, "_is_initial_cache")
+        assert hasattr(obj, "_is_sink_cache")
+        # DiscreteStates-specific attributes.
+        assert hasattr(obj, "_forward_masks_cache")
+        assert hasattr(obj, "_backward_masks_cache")
+        # All caches start as None.
+        assert obj._is_initial_cache is None
+        assert obj._is_sink_cache is None
+        assert obj._forward_masks_cache is None
+        assert obj._backward_masks_cache is None
+
+    def test_discrete_getitem_masks_recomputed_correctly(self):
+        """After slicing, masks are recomputed for the new batch shape."""
+        tensor = torch.tensor([[0.5, 0.5], [0.6, 0.6], [0.7, 0.7]])
+        states = SimpleDiscreteStates(tensor)
+        child = states[0:2]
+        assert child.forward_masks.shape == (2, SimpleDiscreteStates.n_actions)
+        assert child.backward_masks.shape == (2, SimpleDiscreteStates.n_actions - 1)
+
+
+class TestMakeViewEquivalenceWithInit:
+    """Verify _make_view produces objects equivalent to __init__ construction."""
+
+    def test_tensor_states_equivalent(self):
+        """_make_view and __init__ should produce functionally identical objects."""
+        tensor = torch.tensor([[0.5, 0.5], [0.0, 0.0]])
+        via_init = SimpleTensorStates(tensor)
+        via_view = SimpleTensorStates._make_view(tensor)
+        assert torch.equal(via_init.tensor, via_view.tensor)
+        assert torch.equal(via_init.is_initial_state, via_view.is_initial_state)
+        assert torch.equal(via_init.is_sink_state, via_view.is_sink_state)
+
+    def test_discrete_states_equivalent(self):
+        """DiscreteStates via _make_view should match __init__ for properties."""
+        tensor = torch.tensor([[0.5, 0.5], [0.0, 0.0]])
+        via_init = SimpleDiscreteStates(tensor)
+        via_view = SimpleDiscreteStates._make_view(tensor)
+        assert torch.equal(via_init.tensor, via_view.tensor)
+        assert torch.equal(via_init.is_initial_state, via_view.is_initial_state)
+        assert torch.equal(via_init.forward_masks, via_view.forward_masks)
+        assert torch.equal(via_init.backward_masks, via_view.backward_masks)
+
+    def test_with_conditions(self):
+        """_make_view with conditions matches __init__."""
+        tensor = torch.tensor([[0.5, 0.5]])
+        conditions = torch.tensor([[1.0]])
+        via_init = SimpleTensorStates(tensor, conditions=conditions)
+        via_view = SimpleTensorStates._make_view(tensor, conditions=conditions)
+        assert via_init.conditions is not None
+        assert via_view.conditions is not None
+        assert torch.equal(via_init.conditions, via_view.conditions)
+
+    def test_getitem_matches_manual_construction(self):
+        """states[i] via _make_view should match manually constructing from tensor[i]."""
+        tensor = torch.tensor([[0.0, 0.0], [0.5, 0.5], [1.0, 1.0]])
+        states = SimpleTensorStates(tensor)
+        for i in range(3):
+            via_getitem = states[i]
+            via_init = SimpleTensorStates(tensor[i])
+            assert torch.equal(via_getitem.tensor, via_init.tensor)
+            assert torch.equal(via_getitem.is_initial_state, via_init.is_initial_state)
+            assert torch.equal(via_getitem.is_sink_state, via_init.is_sink_state)
+
+
+class TestExtendPadCacheInvalidation:
+    """Verify extend() and pad_dim0_with_sf() don't leave stale caches.
+
+    These methods reassign self.tensor but don't explicitly invalidate
+    caches. This is safe IF caches are None at the time of call — which
+    is the current usage pattern. These tests document that assumption.
+    """
+
+    def test_extend_invalidates_caches(self):
+        """extend() must invalidate caches since self.tensor changes."""
+        a = SimpleTensorStates(torch.tensor([[0.0, 0.0]]))
+        _ = a.is_initial_state  # Populate cache: [True]
+        assert a._is_initial_cache is not None
+
+        b = SimpleTensorStates(torch.tensor([[0.5, 0.5]]))
+        a.extend(b)
+        # Cache must be invalidated after extend.
+        assert a._is_initial_cache is None
+        assert a._is_sink_cache is None
+        assert a.tensor.shape[0] == 2
+        # Fresh recomputation gives correct result.
+        assert a.is_initial_state[0].item() is True
+        assert a.is_initial_state[1].item() is False
+
+    def test_extend_with_fresh_cache_is_safe(self):
+        """extend() on objects with None caches works correctly."""
+        a = SimpleTensorStates(torch.tensor([[0.0, 0.0]]))
+        b = SimpleTensorStates(torch.tensor([[0.5, 0.5]]))
+        # Caches are None (never accessed).
+        assert a._is_initial_cache is None
+        a.extend(b)
+        # Now accessing is_initial_state computes fresh:
+        result = a.is_initial_state
+        assert result.shape == (2,)
+        assert result[0].item() is True
+        assert result[1].item() is False
