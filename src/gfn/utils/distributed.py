@@ -134,22 +134,37 @@ class DistributedContextmpi4py:
     agent_groups: Optional[List[MPI.Comm]] = None
     agent_group_id: Optional[int] = None
     train_global_group: MPI.Comm = field(default_factory=lambda: MPI.COMM_WORLD)
+    averaging_control_group: Optional[MPI.Comm] = None
     assigned_buffer: Optional[int] = None
+    buffer_ranks: Optional[List[int]] = None
     buffer_group: Optional[MPI.Comm] = None
     assigned_training_ranks: Optional[List[int]] = None
+    num_averaging_masters: int = 0
+    averaging_master_ranks: Optional[List[int]] = None
+    assigned_averaging_master: Optional[int] = None
+    assigned_training_ranks_for_averaging: Optional[List[int]] = None
 
     def is_buffer_rank(self) -> bool:
         """Check if the current rank is part of the buffer group."""
-        return self.my_rank >= self.num_training_ranks
+        if self.buffer_ranks is None:
+            return False
+        return self.my_rank in self.buffer_ranks
 
     def is_training_rank(self) -> bool:
         """Check if the current rank is part of the training group."""
         return self.my_rank < self.num_training_ranks
 
+    def is_averaging_master_rank(self) -> bool:
+        """Check if the current rank is an averaging master rank."""
+        if self.averaging_master_ranks is None:
+            return False
+        return self.my_rank in self.averaging_master_ranks
+
 
 def initialize_distributed_compute_mpi4py(
     num_remote_buffers: int,
     num_agent_groups: int,
+    num_averaging_masters: int = 0,
 ) -> DistributedContextmpi4py:
     """Initalizes distributed compute using either ccl or mpi backends."""
     """
@@ -186,10 +201,17 @@ def initialize_distributed_compute_mpi4py(
     my_rank = rank  # dist.get_rank()  # Global!
     # world_size = dist.get_world_size()  # Global!
 
-    num_training_ranks = world_size - num_remote_buffers
+    if num_remote_buffers < 0 or num_averaging_masters < 0:
+        raise ValueError("num_remote_buffers and num_averaging_masters must be >= 0")
+    if world_size < (num_remote_buffers + num_averaging_masters + 1):
+        raise ValueError(
+            "world_size must be >= num_remote_buffers + num_averaging_masters + 1"
+        )
+    num_training_ranks = world_size - num_remote_buffers - num_averaging_masters
 
     # make sure that we have atmost 1 remote buffer per training rank.
     assert num_training_ranks >= num_remote_buffers
+    assert num_training_ranks > 0
     print("num_train = ", num_training_ranks)
     print("num_remote_buffers = ", num_remote_buffers)
 
@@ -223,9 +245,24 @@ def initialize_distributed_compute_mpi4py(
     # print(f"Training global group ranks: {training_ranks},  {train_global_group}")
     # assert train_global_group != MPI.COMM_NULL
 
+    averaging_master_ranks = list(
+        range(
+            num_training_ranks + num_remote_buffers,
+            num_training_ranks + num_remote_buffers + num_averaging_masters,
+        )
+    )
+    averaging_control_group = None
+    if num_averaging_masters > 0:
+        averaging_control_ranks = training_ranks + averaging_master_ranks
+        grp = world_group.Incl(averaging_control_ranks)
+        averaging_control_group = MPI.COMM_WORLD.Create(grp)
+
     buffer_group = None
+    buffer_ranks: List[int] = []
     assigned_buffer = None
     assigned_training_ranks = {}
+    assigned_averaging_master = None
+    assigned_training_ranks_for_averaging = {}
     if num_remote_buffers > 0:
         buffer_ranks = list(
             range(num_training_ranks, num_training_ranks + num_remote_buffers)
@@ -258,6 +295,29 @@ def initialize_distributed_compute_mpi4py(
         else:
             print("  -> Buffer group")
 
+    if num_averaging_masters > 0:
+        if my_rank < num_training_ranks:
+            assigned_averaging_master = averaging_master_ranks[
+                my_rank % num_averaging_masters
+            ]
+        elif my_rank in averaging_master_ranks:
+            local_master_idx = my_rank - (
+                num_training_ranks + num_remote_buffers
+            )
+            assigned_training_ranks_for_averaging[my_rank] = [
+                rank_id
+                for rank_id in range(num_training_ranks)
+                if (rank_id % num_averaging_masters) == local_master_idx
+            ]
+
+    rank_overlap = (
+        set(training_ranks) & set(buffer_ranks),
+        set(training_ranks) & set(averaging_master_ranks),
+        set(buffer_ranks) & set(averaging_master_ranks),
+    )
+    if any(len(s) > 0 for s in rank_overlap):
+        raise RuntimeError("Distributed role rank sets overlap unexpectedly.")
+
     # dist.barrier()
     print("+ Distributed compute initialized, rank = ", my_rank)
 
@@ -269,9 +329,17 @@ def initialize_distributed_compute_mpi4py(
         agent_groups=agent_group_list,
         agent_group_id=my_rank // agent_group_size,
         train_global_group=train_global_group,
+        averaging_control_group=averaging_control_group,
         assigned_buffer=assigned_buffer,
+        buffer_ranks=buffer_ranks,
         buffer_group=buffer_group,
         assigned_training_ranks=assigned_training_ranks.get(my_rank, None),
+        num_averaging_masters=num_averaging_masters,
+        averaging_master_ranks=averaging_master_ranks,
+        assigned_averaging_master=assigned_averaging_master,
+        assigned_training_ranks_for_averaging=assigned_training_ranks_for_averaging.get(
+            my_rank, None
+        ),
     )
 
 
@@ -286,18 +354,34 @@ class DistributedContext:
     agent_groups: Optional[List[dist.ProcessGroup]] = None
     agent_group_id: Optional[int] = None
     train_global_group: Optional[dist.ProcessGroup] = None
+    averaging_control_group: Optional[dist.ProcessGroup] = None
     assigned_buffer: Optional[int] = None
+    buffer_ranks: Optional[List[int]] = None
     buffer_group: Optional[dist.ProcessGroup] = None
     assigned_training_ranks: Optional[List[int]] = None
+    num_averaging_masters: int = 0
+    averaging_master_ranks: Optional[List[int]] = None
+    assigned_averaging_master: Optional[int] = None
+    assigned_training_ranks_for_averaging: Optional[List[int]] = None
+    averaging_coordinator_group_rank: int = 0
+    averaging_participant_group_ranks: Optional[List[int]] = None
     dc_mpi4py: Optional[DistributedContextmpi4py] = None
 
     def is_buffer_rank(self) -> bool:
         """Check if the current rank is part of the buffer group."""
-        return self.my_rank >= self.num_training_ranks
+        if self.buffer_ranks is None:
+            return False
+        return self.my_rank in self.buffer_ranks
 
     def is_training_rank(self) -> bool:
         """Check if the current rank is part of the training group."""
         return self.my_rank < self.num_training_ranks
+
+    def is_averaging_master_rank(self) -> bool:
+        """Check if the current rank is an averaging master rank."""
+        if self.averaging_master_ranks is None:
+            return False
+        return self.my_rank in self.averaging_master_ranks
 
     def cleanup(self) -> None:
         """Cleans up the distributed process group."""
@@ -305,6 +389,8 @@ class DistributedContext:
         if self.dc_mpi4py is not None:
             if self.dc_mpi4py.train_global_group is not None:
                 self.dc_mpi4py.train_global_group.Free()
+            if self.dc_mpi4py.averaging_control_group is not None:
+                self.dc_mpi4py.averaging_control_group.Free()
             if self.dc_mpi4py.buffer_group is not None:
                 self.dc_mpi4py.buffer_group.Free()
             if self.dc_mpi4py.agent_groups is not None:
@@ -317,6 +403,7 @@ def initialize_distributed_compute(
     dist_backend: str,
     num_remote_buffers: int,
     num_agent_groups: int,
+    num_averaging_masters: int = 0,
 ) -> DistributedContext:
     """Initalizes distributed compute using either ccl or mpi backends."""
     """
@@ -390,12 +477,20 @@ def initialize_distributed_compute(
     my_rank = dist.get_rank()  # Global!
     world_size = dist.get_world_size()  # Global!
 
-    num_training_ranks = world_size - num_remote_buffers
+    if num_remote_buffers < 0 or num_averaging_masters < 0:
+        raise ValueError("num_remote_buffers and num_averaging_masters must be >= 0")
+    if world_size < (num_remote_buffers + num_averaging_masters + 1):
+        raise ValueError(
+            "world_size must be >= num_remote_buffers + num_averaging_masters + 1"
+        )
+    num_training_ranks = world_size - num_remote_buffers - num_averaging_masters
 
     # make sure that we have atmost 1 remote buffer per training rank.
     assert num_training_ranks >= num_remote_buffers
+    assert num_training_ranks > 0
     logger.info("num_train = %d", num_training_ranks)
     logger.info("num_remote_buffers = %d", num_remote_buffers)
+    logger.info("num_averaging_masters = %d", num_averaging_masters)
 
     # for now, let us enforce that each agent gets equal number of ranks.
     # TODO: later, we can relax this condition.
@@ -431,9 +526,31 @@ def initialize_distributed_compute(
         ),
     )
 
+    averaging_master_ranks = list(
+        range(
+            num_training_ranks + num_remote_buffers,
+            num_training_ranks + num_remote_buffers + num_averaging_masters,
+        )
+    )
+    if num_averaging_masters > 0:
+        averaging_control_ranks = training_ranks + averaging_master_ranks
+        averaging_control_group = cast(
+            dist.ProcessGroup,
+            dist.new_group(
+                ranks=averaging_control_ranks,
+                backend=dist_backend,
+                timeout=datetime.timedelta(minutes=5),
+            ),
+        )
+    else:
+        averaging_control_group = train_global_group
+
     buffer_group = None
+    buffer_ranks: List[int] = []
     assigned_buffer = None
     assigned_training_ranks = {}
+    assigned_averaging_master = None
+    assigned_training_ranks_for_averaging = {}
     if num_remote_buffers > 0:
         buffer_ranks = list(
             range(num_training_ranks, num_training_ranks + num_remote_buffers)
@@ -466,12 +583,41 @@ def initialize_distributed_compute(
         else:
             logger.info("  -> Buffer group")
 
+    if num_averaging_masters > 0:
+        if my_rank < num_training_ranks:
+            assigned_averaging_master = averaging_master_ranks[
+                my_rank % num_averaging_masters
+            ]
+        elif my_rank in averaging_master_ranks:
+            local_master_idx = my_rank - (
+                num_training_ranks + num_remote_buffers
+            )
+            assigned_training_ranks_for_averaging[my_rank] = [
+                rank_id
+                for rank_id in range(num_training_ranks)
+                if (rank_id % num_averaging_masters) == local_master_idx
+            ]
+
+    rank_overlap = (
+        set(training_ranks) & set(buffer_ranks),
+        set(training_ranks) & set(averaging_master_ranks),
+        set(buffer_ranks) & set(averaging_master_ranks),
+    )
+    if any(len(s) > 0 for s in rank_overlap):
+        raise RuntimeError("Distributed role rank sets overlap unexpectedly.")
+
+    averaging_participant_group_ranks = list(range(num_training_ranks))
+    averaging_coordinator_group_rank = num_training_ranks
+    if num_averaging_masters == 0:
+        averaging_coordinator_group_rank = 0
+
     dist.barrier()
     logger.info("Distributed compute initialized, rank = %d", my_rank)
 
     dc = initialize_distributed_compute_mpi4py(
         num_remote_buffers=num_remote_buffers,
         num_agent_groups=num_agent_groups,
+        num_averaging_masters=num_averaging_masters,
     )
 
     return DistributedContext(
@@ -482,9 +628,19 @@ def initialize_distributed_compute(
         agent_groups=agent_group_list,
         agent_group_id=my_rank // agent_group_size,
         train_global_group=train_global_group,
+        averaging_control_group=averaging_control_group,
         assigned_buffer=assigned_buffer,
+        buffer_ranks=buffer_ranks,
         buffer_group=buffer_group,
         assigned_training_ranks=assigned_training_ranks.get(my_rank, None),
+        num_averaging_masters=num_averaging_masters,
+        averaging_master_ranks=averaging_master_ranks,
+        assigned_averaging_master=assigned_averaging_master,
+        assigned_training_ranks_for_averaging=assigned_training_ranks_for_averaging.get(
+            my_rank, None
+        ),
+        averaging_coordinator_group_rank=averaging_coordinator_group_rank,
+        averaging_participant_group_ranks=averaging_participant_group_ranks,
         dc_mpi4py=dc,
     )
 

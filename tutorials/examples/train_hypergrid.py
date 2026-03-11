@@ -70,6 +70,7 @@ from gfn.utils.distributed import DistributedContext, initialize_distributed_com
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 
 logger = logging.getLogger(__name__)
+AVERAGING_MASTER_TERMINATION_TAG = 9911
 
 
 class ModesReplayBufferManager(ReplayBufferManager):
@@ -654,6 +655,7 @@ def main(args) -> dict:  # noqa: C901
             dist_backend=args.dist_backend,
             num_remote_buffers=args.num_remote_buffers,
             num_agent_groups=args.num_agent_groups,
+            num_averaging_masters=args.num_averaging_masters,
         )
 
         logger.info(
@@ -699,6 +701,41 @@ def main(args) -> dict:  # noqa: C901
         replay_buffer_manager.run()
         return {}
 
+    if (
+        args.distributed
+        and args.use_selective_averaging
+        and args.spawn_backend == "dist"
+        and distributed_context.is_averaging_master_rank()
+    ):
+        def _unused_model_builder() -> Tuple[GFlowNet, torch.optim.Optimizer]:
+            raise RuntimeError(
+                "Averaging master should not build local train models."
+            )
+
+        averaging_policy_master = AsyncSelectiveAveragingPolicy(
+            model_builder=_unused_model_builder,
+            average_every=args.average_every,
+            num_training_ranks=distributed_context.num_training_ranks,
+            replacement_ratio=args.replacement_ratio,
+            averaging_strategy=args.averaging_strategy,
+            momentum=args.momentum,
+            threshold=args.performance_tracker_threshold,
+            cooldown=args.performance_tracker_cooldown,
+            coordinator_group_rank=distributed_context.averaging_coordinator_group_rank,
+            participant_group_ranks=distributed_context.averaging_participant_group_ranks,
+        )
+        averaging_group = distributed_context.averaging_control_group
+        if averaging_group is None:
+            raise RuntimeError("Averaging control group is required for averaging masters.")
+        averaging_policy_master._ensure_initialized(model=None, group=averaging_group)
+        term = torch.zeros(1, dtype=torch.int64)
+        term_work = dist.irecv(term, src=0, tag=AVERAGING_MASTER_TERMINATION_TAG)
+        while not term_work.is_completed():
+            time.sleep(0.2)
+        averaging_policy_master.shutdown()
+        distributed_context.cleanup()
+        return {}
+
     # Initialize WandB.
     use_wandb = args.wandb_project != ""
     if use_wandb:
@@ -709,7 +746,7 @@ def main(args) -> dict:  # noqa: C901
 
         # Generate shared group name for wandb across all processes
         group_name = None
-        if args.distributed:
+        if args.distributed and distributed_context.is_training_rank():
             # Use the training group and perform in-place broadcasts
             pg = distributed_context.train_global_group
             is_root = distributed_context.my_rank == 0
@@ -768,8 +805,7 @@ def main(args) -> dict:  # noqa: C901
             import wandb
 
             wandb.log({"model_builder_count": model_builder_count, **cfg})
-        else:
-            logger.info("Model builder count: %d", model_builder_count)
+        logger.info("Model builder count: %d", model_builder_count)
         assert model is not None
         model = model.to(device)
         optim = _make_optimizer_for(model, args)
@@ -856,6 +892,13 @@ def main(args) -> dict:  # noqa: C901
         )
 
         if args.use_selective_averaging:
+            averaging_group = (
+                distributed_context.averaging_control_group
+                if distributed_context.num_averaging_masters > 0
+                else distributed_context.train_global_group
+            )
+            if averaging_group is None:
+                raise RuntimeError("Averaging group should not be None.")
             averaging_policy_torch = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
                 model_builder=_model_builder,
                 average_every=args.average_every,
@@ -865,6 +908,8 @@ def main(args) -> dict:  # noqa: C901
                 momentum=args.momentum,
                 threshold=args.performance_tracker_threshold,
                 cooldown=args.performance_tracker_cooldown,
+                coordinator_group_rank=distributed_context.averaging_coordinator_group_rank,
+                participant_group_ranks=distributed_context.averaging_participant_group_ranks,
             )
             averaging_policy_mpi4py = AsyncSelectiveAveragingPolicympi4pyGeneral(  # type: ignore[abstract]
                 model_builder=_model_builder,
@@ -999,6 +1044,13 @@ def main(args) -> dict:  # noqa: C901
         ) as model_averaging_timer:
 
             if averaging_policy_torch is not None and args.spawn_backend == "dist":
+                averaging_group = (
+                    distributed_context.averaging_control_group
+                    if args.use_selective_averaging
+                    else distributed_context.train_global_group
+                )
+                if averaging_group is None:
+                    raise RuntimeError("Averaging group should not be None.")
                 gflownet, optimizer, averaging_info = averaging_policy_torch(
                     iteration=iteration,
                     model=gflownet,
@@ -1006,7 +1058,7 @@ def main(args) -> dict:  # noqa: C901
                     local_metric=(
                         score_dict["score"] if score_dict is not None else -loss.item()
                     ),
-                    group=distributed_context.train_global_group,
+                    group=averaging_group,
                 )
             else:
                 if (
@@ -1187,6 +1239,21 @@ def main(args) -> dict:  # noqa: C901
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
 
+    if (
+        args.distributed
+        and distributed_context.is_training_rank()
+        and distributed_context.my_rank == 0
+        and args.use_selective_averaging
+        and args.spawn_backend == "dist"
+        and distributed_context.averaging_master_ranks is not None
+    ):
+        for averaging_master_rank in distributed_context.averaging_master_ranks:
+            dist.send(
+                torch.ones(1, dtype=torch.int64),
+                dst=averaging_master_rank,
+                tag=AVERAGING_MASTER_TERMINATION_TAG,
+            )
+
     if args.distributed:
         dist.barrier(group=distributed_context.train_global_group)
         assert distributed_context is not None
@@ -1236,6 +1303,12 @@ if __name__ == "__main__":
         type=int,
         default=1,
         help="Number of remote replay buffer managers (only if using distributed computation)",
+    )
+    parser.add_argument(
+        "--num_averaging_masters",
+        type=int,
+        default=1,
+        help="Number of dedicated non-training ranks to use as selective-averaging coordinators.",
     )
     parser.add_argument(
         "--global_replay_buffer_size",
@@ -1586,7 +1659,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--performance_tracker_threshold",
         type=float,
-        default=0.0,
+        default=float('inf'),
         help="Threshold for the performance tracker. If None, the performance tracker is not triggered.",
     )
     parser.add_argument(
