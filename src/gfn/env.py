@@ -874,7 +874,7 @@ class DiscreteEnv(Env, ABC):
             )
             return {}, sampled_terminating_states
 
-        l1_dist = (final_states_dist - true_dist).abs().mean().item()
+        l1_dist = (final_states_dist - true_dist).abs().sum().item()
         validation_info: Dict[str, float] = {"l1_dist": l1_dist}
 
         # Report logZ difference if both sides are available.

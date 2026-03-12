@@ -323,20 +323,20 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
 
     if ndim == 2 and height == 8:
         if replay_buffer_size == 0:
-            tgt = 2.975e-3  # 8.78e-4
-            atol = 1e-3
+            tgt = 0.1904  # 2.975e-3 * 64 (n_terminating_states)
+            atol = 0.064
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
-            tgt = 3.1364e-3  # 6.68e-4
-            atol = 1e-3
+            tgt = 0.2007  # 3.1364e-3 * 64 (n_terminating_states)
+            atol = 0.064
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 2 and height == 16:
-        tgt = 1.224e-3  # 2.62e-4
-        atol = 1e-3
+        tgt = 0.3133  # 1.224e-3 * 256 (n_terminating_states)
+        atol = 0.256
         # TODO: Why is this skipped?
         if replay_buffer_size != 0:
             pytest.skip("Skipping test for replay buffer size != 0")
@@ -344,15 +344,15 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and height == 8:
-        tgt = 1.6e-4
-        atol = 1e-4
+        tgt = 0.6554  # 1.6e-4 * 4096 (n_terminating_states)
+        atol = 0.4096
         if replay_buffer_size == 0:
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
-            tgt = 1.7123e-4  # 6.65e-05
-            atol = 1e-4
+            tgt = 0.7014  # 1.7123e-4 * 4096 (n_terminating_states)
+            atol = 0.4096
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
@@ -360,8 +360,8 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
         # TODO: Why is this skipped?
         if replay_buffer_size != 0:
             pytest.skip("Skipping test for replay buffer size != 0")
-        tgt = 2.224e-05  # 6.89e-6
-        atol = 1e-5
+        tgt = 1.4582  # 2.224e-5 * 65536 (n_terminating_states)
+        atol = 0.6554
         assert np.isclose(
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
@@ -381,27 +381,27 @@ def test_hypergrid_fm(ndim: int, replay_buffer_size: int):
     final_l1_dist = logs["l1_dist"]
     if ndim == 2:
         if replay_buffer_size == 0:
-            tgt = 5.024e-3  # 5.1e-4
-            atol = 1e-3
+            tgt = 0.3215  # 5.024e-3 * 64 (n_terminating_states)
+            atol = 0.064
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
-            tgt = 1.376e-2  # 9.85e-4
-            atol = 1e-2
+            tgt = 0.8806  # 1.376e-2 * 64 (n_terminating_states)
+            atol = 0.64
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4:
         if replay_buffer_size == 0:
-            tgt = 2.3227e-4  # 6.28e-5
-            atol = 1e-4
+            tgt = 0.9516  # 2.3227e-4 * 4096 (n_terminating_states)
+            atol = 0.4096
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
-            tgt = 3.2208e-4  # 9.47e-5
-            atol = 1e-4
+            tgt = 1.3196  # 3.2208e-4 * 4096 (n_terminating_states)
+            atol = 0.4096
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
@@ -432,27 +432,27 @@ def test_discreteebm(ndim: int, alpha: float):
     args = DiscreteEBMArgs(ndim=ndim, alpha=alpha, n_trajectories=16000)
     final_l1_dist = train_discreteebm_main(args)
     if ndim == 2 and alpha == 0.1:
-        tgt = 2.6972e-2  # 2.97e-3
-        atol = 1e-1  # TODO: this tolerance is very suspicious.
+        tgt = 0.1079  # 2.6972e-2 * 4 (n_terminating_states)
+        atol = 0.4  # TODO: this tolerance is very suspicious.
         assert np.isclose(
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 2 and alpha == 1.0:
-        tgt = 1.3159e-1  # 0.017
-        atol = 1e-1
+        tgt = 0.5264  # 1.3159e-1 * 4 (n_terminating_states)
+        atol = 0.4
         assert np.isclose(
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and alpha == 0.1:
-        tgt = 2.46e-2  # 0.009
-        atol = 1e-2
+        tgt = 0.3936  # 2.46e-2 * 16 (n_terminating_states)
+        atol = 0.16
         assert np.isclose(
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and alpha == 1.0:
-        tgt1 = 8.675e-2  # 0.062
-        tgt2 = 6.2e-2
-        atol = 1e-2
+        tgt1 = 1.388  # 8.675e-2 * 16 (n_terminating_states)
+        tgt2 = 0.992  # 6.2e-2 * 16 (n_terminating_states)
+        atol = 0.16
         test_1 = np.isclose(final_l1_dist, tgt1, atol=atol)
         test_2 = np.isclose(final_l1_dist, tgt2, atol=atol)
 
@@ -662,13 +662,13 @@ def test_bitsequence(seq_size: int, n_modes: int):
     assert final_l1_dist is not None
     # print(f"[DEBUG] BitSequence seq_size={seq_size}, n_modes={n_modes}, l1={final_l1_dist}")
     if seq_size == 4 and n_modes == 2:
-        assert final_l1_dist <= 9e-5
+        assert final_l1_dist <= 1.44e-3  # 9e-5 * 16 (n_terminating_states)
     if seq_size == 4 and n_modes == 4:
-        assert final_l1_dist <= 1e-4
+        assert final_l1_dist <= 1.6e-3  # 1e-4 * 16 (n_terminating_states)
     if seq_size == 8 and n_modes == 2:
-        assert final_l1_dist <= 1e-3
+        assert final_l1_dist <= 0.256  # 1e-3 * 256 (n_terminating_states)
     if seq_size == 8 and n_modes == 4:
-        assert final_l1_dist <= 2e-4
+        assert final_l1_dist <= 5.12e-2  # 2e-4 * 256 (n_terminating_states)
 
 
 @pytest.mark.parametrize("gflownet", ["tb", "db", "subtb", "fm"])
