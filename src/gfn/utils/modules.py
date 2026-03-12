@@ -54,9 +54,11 @@ class MLP(nn.Module):
             input_dim: The dimension of the input.
             output_dim: The dimension of the output.
             hidden_dim: The dimension of the hidden layers.
-            n_hidden_layers: The number of hidden layers.
-            n_noisy_layers: The number of layers which are noisy, including the
-                input and output layers.
+            n_hidden_layers: The number of hidden layers (including the input
+                projection). With n_hidden_layers=2, the architecture is
+                [input→H1→H2→output] (3 Linear layers total).
+            n_noisy_layers: The number of noisy layers (from the output end).
+                The input projection is never noisy. Must be <= n_hidden_layers.
             activation_fn: The activation function to use.
             trunk: A custom trunk to use. If None, a new trunk will be created.
             add_layer_norm: Whether to add layer normalization to the hidden layers.
@@ -84,10 +86,13 @@ class MLP(nn.Module):
         # to the end of the network.
         else:
             assert n_hidden_layers is not None, "n_hidden_layers must be provided"
-            assert n_hidden_layers >= 0, "n_hidden_layers must be non-negative (>= 0)."
+            assert n_hidden_layers >= 1, "n_hidden_layers must be >= 1."
+            # The input projection is always non-noisy. At most (n_hidden_layers - 1)
+            # extra hidden layers plus the output layer can be noisy, giving a maximum
+            # of n_hidden_layers noisy layers.
             assert (
-                n_noisy_layers <= n_hidden_layers + 1
-            ), "n_noisy_layers must be <= n_hidden_layers + the output layer."
+                n_noisy_layers <= n_hidden_layers
+            ), "n_noisy_layers must be <= n_hidden_layers."
             assert hidden_dim is not None, "hidden_dim must be provided"
             assert (
                 activation_fn in ACTIVATION_FNS
@@ -108,9 +113,12 @@ class MLP(nn.Module):
                     activation(),
                 ]
 
-            # Add the hidden layers. Put all noisy layers near the output.
+            # Add hidden-to-hidden layers. The input projection above counts as
+            # the first hidden layer, so we add (n_hidden_layers - 1) more.
+            # Put all noisy layers near the output.
+            n_extra_hidden = max(0, n_hidden_layers - 1)
             n_noisy_hidden_layers = max(0, n_noisy_layers - 1)
-            n_noiseless_hidden_layers = n_hidden_layers - n_noisy_hidden_layers
+            n_noiseless_hidden_layers = n_extra_hidden - n_noisy_hidden_layers
             hidden_layer_types = [nn.Linear] * n_noiseless_hidden_layers + [
                 NoisyLinear
             ] * n_noisy_hidden_layers
@@ -207,38 +215,78 @@ class Tabular(nn.Module):
         return outputs
 
 
-class DiscreteUniform(nn.Module):
-    """Implements a uniform distribution over discrete actions.
+class UniformModule(nn.Module):
+    """Constant-output module for non-learned (uniform/fixed) policies.
 
-    It uses a zero function approximator (a function that always outputs 0) to be used as
-    logits by a DiscretePBEstimator.
+    Outputs a constant tensor for all inputs.  Plug into any ``Estimator`` as the
+    ``module`` argument to get a non-learned policy.
+
+    Typical fill values:
+
+    * ``0.0`` — equal logits → uniform categorical (discrete environments).
+    * ``1.0`` — fixed params for sigmoid-based continuous estimators.
 
     Attributes:
-        output_dim: The size of the output space.
+        output_dim: Output dimension matching the estimator's expected_output_dim.
+        fill_value: Constant value to fill the output tensor.
+        skip_normalization: If True, signals to estimators that outputs should be
+            used directly without normalization transforms (e.g. sigmoid scaling
+            of concentration parameters).
     """
 
-    def __init__(self, output_dim: int) -> None:
-        """Initializes a new DiscreteUniform module.
+    def __init__(
+        self,
+        output_dim: int,
+        input_dim: int | None = None,
+        fill_value: float = 0.0,
+        skip_normalization: bool = False,
+    ) -> None:
+        """Initialize a UniformModule.
 
         Args:
             output_dim: The dimension of the output.
+            input_dim: Input dimension. Set this when no external preprocessor is
+                provided so that ``Estimator`` can create a default
+                ``IdentityPreprocessor``.  May be omitted when a preprocessor is
+                always supplied.
+            fill_value: Constant value for every output element.
+            skip_normalization: If True, downstream estimators should skip
+                normalization of the module output (e.g. don't apply sigmoid
+                scaling to concentration parameters).
         """
         super().__init__()
+        if input_dim is not None:
+            self.input_dim = input_dim
         self.output_dim = output_dim
+        self.fill_value = fill_value
+        self.skip_normalization = skip_normalization
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
-        """Forward method for the uniform distribution.
+        """Return a constant tensor of shape ``(*batch_shape, output_dim)``.
 
         Args:
-            preprocessed_states: a batch of states appropriately preprocessed for
-                ingestion by the uniform distribution. The shape of the tensor should be (*batch_shape, input_dim).
+            preprocessed_states: Tensor of shape ``(*batch_shape, input_dim)``.
 
-        Returns: a tensor of shape (*batch_shape, output_dim).
+        Returns:
+            Tensor of shape ``(*batch_shape, output_dim)`` filled with
+            ``fill_value``.
         """
-        out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
-            preprocessed_states.device
+        return torch.full(
+            (*preprocessed_states.shape[:-1], self.output_dim),
+            self.fill_value,
+            device=preprocessed_states.device,
         )
-        return out
+
+
+class DiscreteUniform(UniformModule):
+    """Uniform distribution over discrete actions.
+
+    Backward-compatible alias for ``UniformModule(output_dim, fill_value=0.0)``.
+    Prefer ``UniformModule`` for new code.
+    """
+
+    def __init__(self, output_dim: int) -> None:
+        super().__init__(output_dim=output_dim, fill_value=0.0)
 
 
 class LinearTransformer(nn.Module):
@@ -782,7 +830,7 @@ class GraphScalarMLP(nn.Module):
         super().__init__()
         assert n_nodes > 0, "n_nodes must be positive"
         assert embedding_dim > 0, "embedding_dim must be positive"
-        assert n_hidden_layers >= 0, "n_hidden_layers must be non-negative"
+        assert n_hidden_layers >= 1, "n_hidden_layers must be >= 1"
         self.n_nodes = n_nodes
         self.is_directed = directed
         self.input_dim = n_nodes**2
@@ -1744,7 +1792,7 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
         out = self.joint_model(s_emb, t_emb)
 
         # TODO: learn variance, lp, clipping, ...
-        if torch.isnan(out).any():
+        if getattr(self, "debug", False) and torch.isnan(out).any():
             logger.warning("out has %d nans", torch.isnan(out).sum())
             out = torch.nan_to_num(out)
 

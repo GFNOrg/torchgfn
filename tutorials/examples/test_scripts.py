@@ -209,6 +209,7 @@ class BoxArgs(CommonArgs):
     n_components_s0: int = 4
     n_components: int = 2
     scheduler_milestone: int = 2500
+    temperature_start: float = 2.0
     use_local_search: bool = False
 
 
@@ -219,8 +220,8 @@ class BitSequenceArgs(CommonArgs):
     seq_size: int = 4
     n_modes: int = 2
     temperature: float = 1.0
-    lr: 1e-4
-    lr_Z: 1e-2
+    lr: float = 1e-4
+    lr_Z: float = 1e-2
     seed: int = 0
     batch_size: int = 32
 
@@ -479,34 +480,20 @@ def test_box(delta: float, loss: str):
     final_jsd = train_box_main(namespace_args)
 
     if loss == "TB" and delta == 0.1:
-        # TODO: This value seems to be machine dependent. Either that or is is
-        #       an issue with no seeding properly. Need to investigate.
-        tgt1 = 0.1
-        tgt2 = 0.285
-        tgt3 = 3.81e-2
-        tgt4 = 5.67e-2
-        test_1 = np.isclose(final_jsd, tgt1, atol=1e-2)
-        test_2 = np.isclose(final_jsd, tgt2, atol=1e-2)
-        test_3 = np.isclose(final_jsd, tgt3, atol=1e-2)
-        test_4 = np.isclose(final_jsd, tgt4, atol=1e-2)
-        assert (
-            test_1 or test_2 or test_3 or test_4
-        ), f"final_jsd: {final_jsd} not close to [{tgt1}, {tgt2}, {tgt3}, {tgt4}]"
-
+        tgt = 0.10
+        atol = 0.02
+        assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
     elif loss == "DB" and delta == 0.1:
-        tgt1 = 0.2757
-        tgt2 = 0.2878
-        atol = 1e-2
-        test_1 = np.isclose(final_jsd, tgt1, atol=atol)
-        test_2 = np.isclose(final_jsd, tgt2, atol=atol)
-        assert test_1 or test_2, f"final_jsd: {final_jsd} not close to [{tgt1}, {tgt2}]"
-    if loss == "TB" and delta == 0.25:
-        tgt = 0.1492
-        atol = 1e-2
+        tgt = 0.10
+        atol = 0.02
+        assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
+    elif loss == "TB" and delta == 0.25:
+        tgt = 0.09
+        atol = 0.02
         assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
     elif loss == "DB" and delta == 0.25:
-        tgt = 0.1427
-        atol = 1e-2
+        tgt = 0.09
+        atol = 0.02
         assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
 
 

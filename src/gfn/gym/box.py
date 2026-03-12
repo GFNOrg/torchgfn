@@ -8,8 +8,19 @@ from gfn.env import Env
 from gfn.states import States
 
 
-class Box(Env):
-    """Box environment, corresponding to the one in Section 4.1 of https://arxiv.org/abs/2301.12594
+class BoxPolar(Env):
+    """Box environment with polar (norm-based) action validation.
+
+    Corresponds to the environment in Section 4.1 of
+    https://arxiv.org/abs/2301.12594
+
+    Actions are 2D vectors whose L2 norm must equal delta (for non-s0 forward
+    steps) or be at most delta (for the initial s0 step). Use with the polar
+    estimators/distributions in ``box_polar_utils.py``.
+
+    See Also:
+        :class:`~gfn.gym.box_cartesian.BoxCartesian` for a simpler
+        per-dimension Cartesian variant.
 
     Attributes:
         delta: The step size.
@@ -127,7 +138,13 @@ class Box(Env):
     def is_action_valid(
         self, states: States, actions: Actions, backward: bool = False
     ) -> bool:
-        """Checks if the actions are valid.
+        """Checks if the actions are valid (polar norm-based semantics).
+
+        For polar actions:
+        - Forward from s0: norm(action) <= delta
+        - Forward from non-s0: norm(action) == delta (within tolerance)
+        - Backward: state - action >= 0 component-wise
+        - Backward to s0: if norm(state) < delta, action must equal state
 
         Args:
             states: The current states.
@@ -187,7 +204,8 @@ class Box(Env):
         ax = abs(final_states.tensor - 0.5)
         reward = R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
 
-        assert reward.shape == final_states.batch_shape
+        if self.debug:
+            assert reward.shape == final_states.batch_shape
         return reward
 
     def log_partition(self, condition=None) -> float:  # condition is ignored

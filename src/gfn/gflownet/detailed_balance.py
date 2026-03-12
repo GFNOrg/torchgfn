@@ -73,6 +73,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         forward_looking: bool = False,
         constant_pb: bool = False,
         log_reward_clip_min: float = -float("inf"),
+        debug: bool = False,
     ) -> None:
         """Initializes a DBGFlowNet instance.
 
@@ -88,10 +89,15 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
             log_reward_clip_min: If finite, clips log rewards to this value.
+            debug: If True, enables expensive validation checks.
 
         """
         super().__init__(
-            pf, pb, constant_pb=constant_pb, log_reward_clip_min=log_reward_clip_min
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
         )
 
         # Disallow recurrent PF for transition-based DB
@@ -109,6 +115,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         self.logF = logF
         self.forward_looking = forward_looking
+
+        if debug and hasattr(logF, "debug"):
+            logF.debug = True
 
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
         """Returns a dictionary of named parameters containing 'logF' in their name.
@@ -259,7 +268,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         preds = log_pf + log_F_s
         targets = log_pb + log_F_s_next
         scores = preds - targets
-        assert scores.shape == (transitions.n_transitions,)
+        if self.debug:
+            assert scores.shape == (transitions.n_transitions,)
         return scores
 
     def loss(
@@ -289,7 +299,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         scores = scores**2
         loss = loss_reduce(scores, reduction)
 
-        if torch.isnan(loss).any():
+        if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is nan")
 
         return loss
@@ -327,6 +337,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         pf: Estimator,
         pb: Estimator | None,
         constant_pb: bool = False,
+        debug: bool = False,
     ) -> None:
         """Initializes a ModifiedDBGFlowNet instance.
 
@@ -334,9 +345,10 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             pf: Forward policy estimator.
             pb: Backward policy estimator or None.
             constant_pb: See base class.
+            debug: If True, enables expensive validation checks.
 
         """
-        super().__init__(pf, pb, constant_pb=constant_pb)
+        super().__init__(pf, pb, constant_pb=constant_pb, debug=debug)
 
     def get_scores(
         self, transitions: Transitions, recalculate_all_logprobs: bool = True
@@ -437,7 +449,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         targets = all_log_rewards[:, 1] + valid_log_pb_actions + valid_log_pf_s_exit
 
         scores = preds - targets
-        if torch.any(torch.isinf(scores)):
+        if self.debug and torch.any(torch.isinf(scores)):
             raise ValueError("scores contains inf")
 
         return scores

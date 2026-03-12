@@ -18,9 +18,14 @@ from gfn.estimators import (
     DiscretePolicyEstimator,
     Estimator,
 )
-from gfn.gym import Box, ConditionalHyperGrid, DiscreteEBM, HyperGrid
+from gfn.gym import BoxPolar, ConditionalHyperGrid, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
-from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
+from gfn.gym.helpers.box_polar_utils import (
+    BoxPBEstimator,
+    BoxPBMLP,
+    BoxPFEstimator,
+    BoxPFMLP,
+)
 from gfn.preprocessors import (
     EnumPreprocessor,
     IdentityPreprocessor,
@@ -103,16 +108,16 @@ def get_env_and_estimators(
         )
 
     elif env_name == "Box":
-        env = Box(delta=delta)
+        env = BoxPolar(delta=delta)
         pf_module = BoxPFMLP(
             hidden_dim=32,
-            n_hidden_layers=2,
+            n_hidden_layers=3,
             n_components=n_components,
             n_components_s0=n_components_s0,
         )
         pb_module = BoxPBMLP(
             hidden_dim=32,
-            n_hidden_layers=2,
+            n_hidden_layers=3,
             n_components=n_components,
             trunk=pf_module.trunk,
         )
@@ -541,7 +546,7 @@ def test_replay_buffer(
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=8)
     elif env_name == "Box":
-        env = Box(delta=0.1)
+        env = BoxPolar(delta=0.1)
     elif env_name == "GraphBuildingOnEdges":
         env = GraphBuildingOnEdges(
             n_nodes=10,

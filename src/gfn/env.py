@@ -386,9 +386,10 @@ class Env(ABC):
         not_done_actions = actions[new_valid_states_idx]
 
         not_done_states = self.step(not_done_states, not_done_actions)
-        assert isinstance(
-            not_done_states, States
-        ), f"The step function must return a States instance, but got {type(not_done_states)} instead."
+        if self.debug:
+            assert isinstance(
+                not_done_states, States
+            ), f"The step function must return a States instance, but got {type(not_done_states)} instead."
 
         # Create a batch of sink states with the same batch shape as the input states.
         # For the indices where the new states are not sink states (i.e., where the
@@ -398,8 +399,10 @@ class Env(ABC):
             states.batch_shape, device=states.device
         )
         new_states[new_valid_states_idx] = not_done_states
-        if states.conditions is not None:
-            new_states.conditions = states.conditions
+        # Bypass conditions setter: avoids redundant shape/dtype/device
+        # validation since conditions are unchanged from the source states.
+        if states._conditions is not None:
+            new_states._conditions = states._conditions
         return new_states
 
     def _backward_step(self, states: States, actions: Actions) -> States:
@@ -442,8 +445,10 @@ class Env(ABC):
 
         # Calculate the backward step, and update only the states which are not Done.
         new_states[valid_states_idx] = self.backward_step(valid_states, valid_actions)
-        if states.conditions is not None:
-            new_states.conditions = states.conditions
+        # Bypass conditions setter: avoids redundant shape/dtype/device
+        # validation since conditions are unchanged from the source states.
+        if states._conditions is not None:
+            new_states._conditions = states._conditions
         return new_states
 
     def reward(self, states: States) -> torch.Tensor:

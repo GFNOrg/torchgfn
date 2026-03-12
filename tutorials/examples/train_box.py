@@ -1,15 +1,20 @@
 r"""
-The goal of this script is to reproduce some of the published results on the Box
-environment. Run one of the following commands to reproduce some of the results in
+The goal of this script is to train a GFlowNet on the Box environment using
+Cartesian per-dimension increments.
+
+Example usage:
+    python train_box.py --delta 0.25 --tied --loss TB
+    python train_box.py --delta 0.1 --loss DB --n_components 5
+
+Based on results from:
 [A theory of continuous generative flow networks](https://arxiv.org/abs/2301.12594)
-
-
-python train_box.py --delta {0.1, 0.25} --tied {--uniform_pb} --loss {TB, DB}
 """
 
 from argparse import ArgumentParser, Namespace
+from pathlib import Path
 from typing import Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import wandb
@@ -27,11 +32,10 @@ from gfn.gflownet import (
 )
 from gfn.gym import Box
 from gfn.gym.helpers.box_utils import (
-    BoxPBEstimator,
-    BoxPBMLP,
-    BoxPBUniform,
-    BoxPFEstimator,
-    BoxPFMLP,
+    BoxCartesianPBEstimator,
+    BoxCartesianPBMLP,
+    BoxCartesianPFEstimator,
+    BoxCartesianPFMLP,
     BoxStateFlowModule,
 )
 from gfn.preprocessors import IdentityPreprocessor
@@ -89,6 +93,104 @@ def estimate_jsd(kde1: KernelDensity, kde2: KernelDensity) -> float:
     return jsd / 2.0
 
 
+def plot_trajectories(
+    env: Box,
+    sampler: Sampler,
+    n_trajectories: int = 100,
+    output_path: Optional[str] = None,
+    alpha: float = 0.1,
+) -> None:
+    """Plot sampled trajectories on the Box environment.
+
+    Each trajectory is plotted as a line from s0 to the terminal state,
+    with transparency to visualize overlapping paths.
+
+    Args:
+        env: The Box environment.
+        sampler: The sampler to use for generating trajectories.
+        n_trajectories: Number of trajectories to sample and plot.
+        output_path: Path to save the output plot. If None, defaults to
+            'output/train_box_trajectories.png' relative to this script.
+        alpha: Transparency for each trajectory line.
+    """
+    # Default output path relative to script location
+    if output_path is None:
+        script_dir = Path(__file__).parent
+        output_path = str(script_dir / "output" / "train_box_trajectories.png")
+
+    # Sample trajectories
+    trajectories = sampler.sample_trajectories(env, n=n_trajectories)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    # Get all states: shape is (max_length+1, n_trajectories, state_dim)
+    all_states = trajectories.states.tensor.cpu().numpy()
+    terminating_idx = trajectories.terminating_idx.cpu().numpy()
+
+    # Plot reward contours (corners at (0,0), (0,1), (1,0), (1,1))
+    # Create a grid for the reward landscape
+    x = np.linspace(0, 1, 100)
+    y = np.linspace(0, 1, 100)
+    X, Y = np.meshgrid(x, y)
+    grid_states = torch.tensor(
+        np.stack([X.flatten(), Y.flatten()], axis=1), dtype=torch.float32
+    )
+    rewards = env.reward(env.States(grid_states.to(env.device)))
+    Z = rewards.cpu().numpy().reshape(X.shape)
+
+    # Plot reward contours
+    contour = ax.contourf(X, Y, Z, levels=20, alpha=0.3, cmap="Blues")
+    plt.colorbar(contour, ax=ax, label="Reward")
+
+    # Plot each trajectory
+    for i in range(n_trajectories):
+        # Get the states for this trajectory up to its terminating index
+        term_idx = terminating_idx[i]
+        traj_states = all_states[: term_idx + 1, i, :]  # (length, state_dim)
+
+        # Plot the trajectory path (black lines, low alpha)
+        ax.plot(
+            traj_states[:, 0],
+            traj_states[:, 1],
+            "k-",
+            alpha=alpha,
+            linewidth=0.5,
+        )
+
+        # Mark the terminal state (red dots, full alpha, larger than lines)
+        ax.scatter(
+            traj_states[-2, 0],
+            traj_states[-2, 1],
+            c="red",
+            s=2,
+            alpha=0.2,
+            zorder=5,
+            marker="D",
+            edgecolors="darkred",
+            linewidths=1,
+        )
+
+    # Mark the source state
+    ax.scatter([0], [0], c="green", s=100, marker="*", zorder=10, label="s0")
+
+    ax.set_xlim(-0.05, 1.05)
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_xlabel("Dimension 1")
+    ax.set_ylabel("Dimension 2")
+    ax.set_title(f"Sampled Trajectories (n={n_trajectories})")
+    ax.set_aspect("equal")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Ensure output directory exists
+    output_dir = Path(output_path).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Trajectory plot saved to: {output_path}")
+
+
 def main(args: Namespace) -> float:  # noqa: C901
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
     set_seed(seed)
@@ -111,41 +213,37 @@ def main(args: Namespace) -> float:  # noqa: C901
     # 2. Create the gflownet.
     #    For this we need modules and estimators.
     #    Depending on the loss, we may need several estimators:
-    pf_module = BoxPFMLP(
+    #    Using Cartesian estimators (per-dimension increments, simpler and faster)
+    pf_module = BoxCartesianPFMLP(
         hidden_dim=args.hidden_dim,
         n_hidden_layers=args.n_hidden,
         n_components=args.n_components,
-        n_components_s0=args.n_components_s0,
     )
-    if args.uniform_pb:
-        pb_module = BoxPBUniform()
-    else:
-        pb_module = BoxPBMLP(
-            hidden_dim=args.hidden_dim,
-            n_hidden_layers=args.n_hidden,
-            n_components=args.n_components,
-            trunk=pf_module.trunk if args.tied else None,
-        )
+    pb_module = BoxCartesianPBMLP(
+        hidden_dim=args.hidden_dim,
+        n_hidden_layers=args.n_hidden,
+        n_components=args.n_components,
+        trunk=pf_module.trunk if args.tied else None,
+    )
 
-    pf_estimator = BoxPFEstimator(
+    pf_estimator = BoxCartesianPFEstimator(
         env,
         pf_module,
-        n_components_s0=args.n_components_s0,
         n_components=args.n_components,
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
-    pb_estimator = BoxPBEstimator(
+    pb_estimator = BoxCartesianPBEstimator(
         env,
         pb_module,
-        n_components=args.n_components if not args.uniform_pb else 1,
+        n_components=args.n_components,
         min_concentration=args.min_concentration,
         max_concentration=args.max_concentration,
     )
     module: Optional[BoxStateFlowModule] = None
     logZ: Optional[torch.Tensor] = None
 
-    assert args.loss in ("DB", "SubTB", "TB", "ZVar"), f"Invalid loss: {args.loss}"
+    assert args.loss in ("DB", "SubTB", "TB", "VarGrad"), f"Invalid loss: {args.loss}"
     assert args.subTB_weighting in (
         "geometric_within",
         "geometric_between",
@@ -185,7 +283,7 @@ def main(args: Namespace) -> float:  # noqa: C901
             pf=pf_estimator,
             pb=pb_estimator,
         )
-    elif args.loss == "ZVar":
+    elif args.loss == "VarGrad":
         gflownet = LogPartitionVarianceGFlowNet(
             pf=pf_estimator,
             pb=pb_estimator,
@@ -209,18 +307,17 @@ def main(args: Namespace) -> float:  # noqa: C901
     # 3. Create the optimizer and scheduler
 
     optimizer = torch.optim.Adam(pf_module.parameters(), lr=args.lr)
-    if not args.uniform_pb:
-        assert isinstance(pb_module.last_layer, torch.nn.Module)
-        optimizer.add_param_group(
-            {
-                "params": (
-                    pb_module.last_layer.parameters()
-                    if args.tied
-                    else pb_module.parameters()
-                ),
-                "lr": args.lr,
-            }
-        )
+    assert isinstance(pb_module.last_layer, torch.nn.Module)
+    optimizer.add_param_group(
+        {
+            "params": (
+                pb_module.last_layer.parameters()
+                if args.tied
+                else pb_module.parameters()
+            ),
+            "lr": args.lr,
+        }
+    )
     if args.loss in ("DB", "SubTB"):
         assert module is not None
         optimizer.add_param_group(
@@ -231,16 +328,22 @@ def main(args: Namespace) -> float:  # noqa: C901
         )
     if "logZ" in dict(gflownet.named_parameters()):
         logZ = dict(gflownet.named_parameters())["logZ"]
-    if args.loss != "ZVar":
+    if args.loss != "VarGrad":
         assert logZ is not None
         optimizer.add_param_group({"params": [logZ], "lr": args.lr_Z})
 
+    # Compute milestone dynamically if not set explicitly.
+    # Default: fire 3 times evenly spaced over the run (at 33%, 67%, 100%).
+    # This avoids the original hardcoded 2500 which fires ~9 times for a 3M run,
+    # decimating the LR before 10% of training is done.
+    milestone = (
+        args.scheduler_milestone
+        if args.scheduler_milestone > 0
+        else max(1, n_iterations // 3)
+    )
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        milestones=[
-            i * args.scheduler_milestone
-            for i in range(1, 1 + int(n_iterations / args.scheduler_milestone))
-        ],
+        milestones=[i * milestone for i in range(1, 1 + int(n_iterations / milestone))],
         gamma=args.gamma_scheduler,
     )
 
@@ -257,6 +360,17 @@ def main(args: Namespace) -> float:  # noqa: C901
         if iteration % 1000 == 0:
             print(f"current optimizer LR: {optimizer.param_groups[0]['lr']}")
 
+        # Temperature annealing: linearly decay from temperature_start to 1.0
+        # over the first half of training, then hold at 1.0.
+        # T > 1 makes discrete choices (exit, BTS, mixture weights) more uniform,
+        # providing exploration early on (similar to random_action_prob in gflownet).
+        anneal_fraction = min(1.0, 2.0 * iteration / max(1, n_iterations))
+        temperature = args.temperature_start + anneal_fraction * (
+            1.0 - args.temperature_start
+        )
+        pf_estimator.temperature = temperature
+        pb_estimator.temperature = temperature
+
         # Sampling on-policy, so we save logprobs for faster computation.
         trajectories = sampler.sample_trajectories(
             env, save_logprobs=True, n=args.batch_size, **local_search_params
@@ -268,7 +382,7 @@ def main(args: Namespace) -> float:  # noqa: C901
         )
         loss.backward()
         for p in gflownet.parameters():
-            if p.ndim > 0 and p.grad is not None:  # We do not clip logZ grad.
+            if p.grad is not None:
                 p.grad.data.clamp_(-10, 10).nan_to_num_(0.0)
         optimizer.step()
         scheduler.step()
@@ -277,7 +391,7 @@ def main(args: Namespace) -> float:  # noqa: C901
 
         to_log = {"loss": loss.item(), "states_visited": states_visited}
         tqdm_info = f"States: {states_visited}, Loss: {loss.item():.3f}"
-        if args.loss != "ZVar":
+        if args.loss != "VarGrad":
             assert logZ is not None
             true_logZ = env.log_partition()
             assert true_logZ is not None
@@ -304,6 +418,14 @@ def main(args: Namespace) -> float:  # noqa: C901
         if iteration % (args.validation_interval // 5) == 0:
             tqdm.write(tqdm_info)
 
+    # Plot trajectories at the end of training
+    print("\nGenerating trajectory visualization...")
+    plot_trajectories(
+        env=env,
+        sampler=sampler,
+        n_trajectories=1000,
+    )
+
     return jsd
 
 
@@ -315,8 +437,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--delta",
         type=float,
-        default=0.25,
-        help="maximum distance between two successive states",
+        default=0.1,
+        help="maximum distance between two successive states (min_incr in gflownet)",
     )
 
     parser.add_argument(
@@ -335,7 +457,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--loss",
         type=str,
-        choices=["TB", "DB", "SubTB", "ZVar"],
+        choices=["TB", "DB", "SubTB", "VarGrad"],
         default="TB",
         help="Loss function to use",
     )
@@ -359,7 +481,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max_concentration",
         type=float,
-        default=5.1,
+        default=100.0,
         help="maximal value for the Beta concentration parameters",
     )
 
@@ -367,16 +489,8 @@ if __name__ == "__main__":
         "--n_components",
         type=int,
         default=2,
-        help="Number of Beta distributions for P_F(s'|s)",
+        help="Number of mixture components for Beta distributions",
     )
-    parser.add_argument(
-        "--n_components_s0",
-        type=int,
-        default=4,
-        help="Number of Beta distributions for P_F(s'|s_0)",
-    )
-
-    parser.add_argument("--uniform_pb", action="store_true", help="Use a uniform PB")
     parser.add_argument(
         "--tied",
         action="store_true",
@@ -391,22 +505,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_hidden",
         type=int,
-        default=4,
-        help="Number of hidden layers (of size `hidden_dim`) in the estimators'"
-        + " neural network modules",
+        default=3,
+        help="Number of hidden layers incl. input projection (of size `hidden_dim`)"
+        + " in the estimators' neural network modules",
     )
 
     parser.add_argument(
         "--lr",
         type=float,
-        default=1e-3,
+        default=1e-4,
         help="Learning rate for the estimators' modules",
     )
     parser.add_argument(
         "--lr_Z",
         type=float,
-        default=1e-3,
-        help="Specific learning rate for logZ",
+        default=1e-2,
+        help="Specific learning rate for logZ (should be higher than base lr)",
     )
     parser.add_argument(
         "--lr_F",
@@ -423,8 +537,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--scheduler_milestone",
         type=int,
-        default=2500,
-        help="Every scheduler_milestone steps, multiply the learning rate by gamma_scheduler",
+        default=0,
+        help="Steps between LR halvings. 0 (default) = n_iterations//3 (3 halvings total).",
+    )
+
+    parser.add_argument(
+        "--temperature_start",
+        type=float,
+        default=2.0,
+        help="Initial temperature for discrete logit annealing (>1 = more exploration). "
+        "Linearly annealed to 1.0 over the first half of training.",
     )
 
     parser.add_argument(

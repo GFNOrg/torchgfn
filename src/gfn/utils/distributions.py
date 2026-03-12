@@ -14,6 +14,10 @@ class UnsqueezedCategorical(Categorical):
     the samples will have a shape of (batch_size, 1) instead of (batch_size,).
     """
 
+    def __init__(self, probs=None, logits=None, validate_args=None, debug=False):
+        super().__init__(probs=probs, logits=logits, validate_args=validate_args)
+        self.debug = debug
+
     def sample(self, sample_shape=torch.Size()) -> torch.Tensor:
         """Sample actions with an unsqueezed final dimension.
 
@@ -23,7 +27,8 @@ class UnsqueezedCategorical(Categorical):
         Returns the sampled actions as a tensor of shape (*sample_shape, *batch_shape, 1).
         """
         out = super().sample(sample_shape).unsqueeze(-1)
-        assert out.shape == sample_shape + self._batch_shape + (1,)
+        if self.debug:
+            assert out.shape == sample_shape + self._batch_shape + (1,)
         return out
 
     def log_prob(self, sample: torch.Tensor) -> torch.Tensor:
@@ -34,7 +39,8 @@ class UnsqueezedCategorical(Categorical):
 
         Returns the log probabilities of the sample as a tensor of shape (*sample_shape, *batch_shape).
         """
-        assert sample.shape[-1] == 1
+        if self.debug:
+            assert sample.shape[-1] == 1
         return super().log_prob(sample.squeeze(-1))
 
 
@@ -58,6 +64,7 @@ class GraphActionDistribution(Distribution):
         logits: TensorDict | None = None,
         probs: TensorDict | None = None,
         is_backward: bool = False,
+        debug: bool = False,
     ):
         """Initializes the mixture distribution.
 
@@ -65,9 +72,11 @@ class GraphActionDistribution(Distribution):
             logits: A TensorDict of logits (preferred).
             probs: A TensorDict of probs.
             is_backward: A boolean indicating whether the distribution is for backward policy.
+            debug: If True, enables expensive validation checks.
         """
         super().__init__()
         self.is_backward = is_backward
+        self.debug = debug
         assert (probs is None) ^ (logits is None), "Pass exactly one of logits or probs."
 
         # In practice, we never sample from the undefined distributions. However, if we
@@ -180,11 +189,10 @@ class GraphActionDistribution(Distribution):
                 ].log_prob(
                     sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_INDEX_KEY]]
                 )
-                assert torch.isfinite(
-                    log_prob_node_index_all[add_node_idx]
-                ).all(), (
-                    "add_node_idx is indexing masked values in log_prob_node_index_all"
-                )
+                if self.debug:
+                    assert torch.isfinite(
+                        log_prob_node_index_all[add_node_idx]
+                    ).all(), "add_node_idx is indexing masked values in log_prob_node_index_all"
                 log_prob[add_node_idx] += log_prob_node_index_all[add_node_idx]
 
             # In forwards mode, ignore node_index contribution; only node_class matters.
@@ -194,11 +202,10 @@ class GraphActionDistribution(Distribution):
                 ].log_prob(
                     sample[..., GraphActions.ACTION_INDICES[GraphActions.NODE_CLASS_KEY]]
                 )
-                assert torch.isfinite(
-                    log_prob_node_class_all[add_node_idx]
-                ).all(), (
-                    "add_node_idx is indexing masked values in log_prob_node_class_all"
-                )
+                if self.debug:
+                    assert torch.isfinite(
+                        log_prob_node_class_all[add_node_idx]
+                    ).all(), "add_node_idx is indexing masked values in log_prob_node_class_all"
                 log_prob[add_node_idx] += log_prob_node_class_all[add_node_idx]
 
         # If action_type is ADD_EDGE, add log_prob for EDGE_CLASS_KEY and EDGE_INDEX_KEY
