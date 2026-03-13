@@ -959,7 +959,7 @@ def main(args) -> dict:  # noqa: C901
 
     if args.distributed:
         if args.use_selective_averaging:
-            if args.spawn_backend == "dist":
+            if args.dist_lib == "torch":
                 averaging_policy_torch = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
                     model_builder=_model_builder,
                     average_every=args.average_every,
@@ -969,7 +969,7 @@ def main(args) -> dict:  # noqa: C901
                     threshold=args.performance_tracker_threshold,
                     cooldown=args.performance_tracker_cooldown,
                 )
-            elif args.spawn_backend == "mpi4py":
+            elif args.dist_lib == "mpi":
                 mpi4py_train_group = (
                     distributed_context.dc_mpi4py.train_global_group
                     if distributed_context.dc_mpi4py is not None
@@ -1004,11 +1004,11 @@ def main(args) -> dict:  # noqa: C901
                 else:
                     raise ValueError(f"Invalid MPI SA mode: {args.mpi_sa_mode}")
         else:
-            if args.spawn_backend == "dist":
+            if args.dist_lib == "torch":
                 averaging_policy_torch = AverageAllPolicy(
                     average_every=args.average_every
                 )
-            elif args.spawn_backend == "mpi4py":
+            elif args.dist_lib == "mpi":
                 averaging_policy_mpi4py = AverageAllPolicympi4py(
                     average_every=args.average_every
                 )
@@ -1139,7 +1139,7 @@ def main(args) -> dict:  # noqa: C901
                     group=distributed_context.train_global_group,
                 )
             elif averaging_policy_mpi4py is not None:
-                assert args.spawn_backend == "mpi4py"
+                assert args.dist_lib == "mpi"
                 assert distributed_context.dc_mpi4py is not None
                 gflownet, optimizer, averaging_info = averaging_policy_mpi4py(
                     iteration=iteration,
@@ -1275,10 +1275,10 @@ def main(args) -> dict:  # noqa: C901
         assert averaging_policy_torch is not None
         assert averaging_policy_mpi4py is not None
         try:
-            if args.spawn_backend == "dist":
+            if args.dist_lib == "torch":
                 assert averaging_policy_torch is not None
                 averaging_policy_torch.shutdown()
-            elif args.spawn_backend == "mpi4py":
+            elif args.dist_lib == "mpi":
                 assert averaging_policy_mpi4py is not None
                 averaging_policy_mpi4py.shutdown()
         except Exception:
