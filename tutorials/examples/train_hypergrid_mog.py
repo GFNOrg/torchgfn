@@ -640,7 +640,9 @@ def main(args) -> dict:  # noqa: C901
                 if distributed_context.my_rank == 0:
                     if distributed_context.assigned_buffer is not None:
                         manager_rank = distributed_context.assigned_buffer
-                        metadata = ReplayBufferManager.get_metadata(manager_rank)
+                        metadata = ReplayBufferManager.get_metadata(
+                            manager_rank, backend="torch"
+                        )
                         to_log.update(metadata)
                     else:
                         to_log["n_modes_found"] = to_log["n_modes_found_local"]
@@ -697,7 +699,9 @@ def main(args) -> dict:  # noqa: C901
     if distributed_context.is_training_rank() and (
         distributed_context.assigned_buffer is not None
     ):
-        ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
+        ReplayBufferManager.send_termination_signal(
+            distributed_context.assigned_buffer, backend="torch"
+        )
 
     # DDP cleanup (barrier on training group only; buffer ranks already exited).
     if dist.is_initialized() and distributed_context.train_global_group is not None:
