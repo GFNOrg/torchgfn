@@ -11,6 +11,8 @@ from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
+from gfn.utils.common import Timer
+from gfn.utils.distributed import recv, send
 
 
 @runtime_checkable
@@ -54,6 +56,8 @@ class ReplayBuffer:
         prioritized_sampling: bool = False,
         remote_manager_rank: int | None = None,
         remote_buffer_freq: int = 1,
+        communication_backend: str = "mpi",
+        timing: bool = False,
     ):
         """Initializes a ReplayBuffer instance.
 
@@ -75,6 +79,9 @@ class ReplayBuffer:
         self.prioritized_capacity = prioritized_capacity
         self.prioritized_sampling = prioritized_sampling
         self.pending_container: ContainerUnion | None = None
+        self.communication_backend = communication_backend
+        self.timing = timing
+        self.timing_data = {}
 
         # Remote buffer fields
         self.remote_manager_rank = remote_manager_rank
@@ -108,7 +115,9 @@ class ReplayBuffer:
             training_container: The Trajectories, Transitions, or StatesContainer
                 object to add.
         """
-        assert isinstance(training_container, ContainerUnion), "Must be a container type"
+        assert isinstance(
+            training_container, ContainerUnion
+        ), "Must be a container type " + str(type(training_container))
         self._add_objs(training_container)
 
         # Handle remote buffer communication.
@@ -127,31 +136,31 @@ class ReplayBuffer:
             if isinstance(self.pending_container, Trajectories):
                 self.pending_container.estimator_outputs = None
             if self._add_counter % self.remote_buffer_freq == 0:
-                score = self._send_objs(self.pending_container)
+                with Timer(self.timing_data, "send_objs", enabled=self.timing):
+                    score = self._send_objs(self.pending_container)
                 self.pending_container = None
                 return score
 
     def _send_objs(self, training_container: ContainerUnion) -> dict[str, float]:
         """Sends a training container to the remote manager."""
         msg = Message(MessageType.DATA, training_container)
-        msg_tensor = msg.serialize()
+        with Timer(self.timing_data, "serialize_objs", enabled=self.timing):
+            msg_tensor = msg.serialize()
 
-        # First send the length so the receiver knows how many bytes
-        length_tensor = torch.IntTensor([len(msg_tensor)])
-        dist.send(length_tensor, dst=self.remote_manager_rank)
+        with Timer(self.timing_data, "send_objs", enabled=self.timing):
+            send(
+                msg_tensor,
+                dst_rank=self.remote_manager_rank,
+                backend=self.communication_backend,
+            )
 
-        # Now send the actual content
-        dist.send(msg_tensor, dst=self.remote_manager_rank)
+        with Timer(self.timing_data, "recv_objs", enabled=self.timing):
+            _src_rank, score_tensor = recv(
+                src_rank=self.remote_manager_rank, backend=self.communication_backend
+            )
 
-        # Receive the length of the score dictionary
-        length_tensor = torch.zeros(1, dtype=torch.int32)
-        dist.recv(length_tensor, src=self.remote_manager_rank)
-        length = length_tensor.item()
-
-        # Receive the actual score dictionary
-        score_tensor = torch.ByteTensor(length)
-        dist.recv(score_tensor, src=self.remote_manager_rank)
-        score_dict = Message.deserialize(score_tensor).message_data
+        with Timer(self.timing_data, "deserialize_objs", enabled=self.timing):
+            score_dict = Message.deserialize(score_tensor).message_data
 
         return score_dict
 
@@ -284,6 +293,13 @@ class ReplayBuffer:
         if self.training_container is not None:
             self.training_container.load(os.path.join(directory, "training_container"))
 
+    def timing_log(self) -> str:
+        """Returns a formatted string of the timing information for the replay buffer."""
+        log_str = "Replay Buffer Timing Information:\n"
+        for key, times in self.timing_data.items():
+            log_str += f"{key}: {sum(times):.4f} s\n"
+        return log_str
+
 
 class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
     """A replay buffer with diversity-based prioritization.
@@ -311,6 +327,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         p_norm_distance: float = 1.0,
         remote_manager_rank: int | None = None,
         remote_buffer_freq: int = 1,
+        communication_backend: str = "mpi",
+        timing: bool = False,
     ):
         """Initializes a NormBasedDiversePrioritizedReplayBuffer instance.
 
@@ -331,6 +349,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             prioritized_capacity=True,
             remote_manager_rank=remote_manager_rank,
             remote_buffer_freq=remote_buffer_freq,
+            communication_backend=communication_backend,
+            timing=timing,
         )
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
@@ -358,7 +378,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
                 to add.
         """
         if not isinstance(training_container, ContainerUnion):
-            raise TypeError("Must be a container type")
+            raise TypeError("Must be a container type ", type(training_container))
 
         to_add = len(training_container)
         self._is_full |= len(self) + to_add >= self.capacity
@@ -445,7 +465,7 @@ class TerminatingStateBuffer(ReplayBuffer):
         training_container: The buffer contents (StatesContainer).
     """
 
-    def __init__(self, env: Env, capacity: int = 1000, **kwargs):
+    def __init__(self, env: Env, capacity: int = 1000, timing: bool = False, **kwargs):
         super().__init__(env, capacity, **kwargs)
         self.training_container = StatesContainer(env)
 

@@ -1,7 +1,6 @@
 import math
 from typing import Callable, Optional
 
-import torch
 import torch.distributed as dist
 
 from gfn.containers.message import Message, MessageType
@@ -11,6 +10,7 @@ from gfn.containers.replay_buffer import (
     ReplayBuffer,
 )
 from gfn.env import Env
+from gfn.utils.distributed import recv, send
 
 
 class ReplayBufferManager:
@@ -24,12 +24,14 @@ class ReplayBufferManager:
         diverse_replay_buffer: bool = False,
         capacity: int = 10000,
         remote_manager_rank: int | None = None,
+        communication_backend: str = "mpi",
     ):
         self.rank = rank
         self.is_running = True
         self.exit_counter = 0
         self.num_training_ranks = num_training_ranks
         self.scoring_function = scoring_function or self.default_scoring_function
+        self.communication_backend = communication_backend
         backend = dist.get_backend()
         if backend != "gloo":
             raise RuntimeError(
@@ -51,6 +53,7 @@ class ReplayBufferManager:
                 prioritized_capacity=True,  # Always prioritize high reward items.
                 remote_manager_rank=self.remote_manager_rank,
                 remote_buffer_freq=1,
+                communication_backend=self.communication_backend,
             )
 
     def default_scoring_function(self, obj) -> dict[str, float]:
@@ -75,17 +78,21 @@ class ReplayBufferManager:
                 score_dict = self.scoring_function(msg.message_data)
                 message = Message(message_type=MessageType.DATA, message_data=score_dict)
                 message_tensor = message.serialize()
-                length_message_tensor = torch.IntTensor([len(message_tensor)])
-                dist.send(length_message_tensor, dst=sender_rank)
-                dist.send(message_tensor, dst=sender_rank)
+                send(
+                    message_tensor,
+                    dst_rank=sender_rank,
+                    backend=self.communication_backend,
+                )
 
             elif msg.message_type == MessageType.GET_METADATA:
                 metadata = self._compute_metadata()
                 msg = Message(message_type=MessageType.DATA, message_data=metadata)
                 metadata_tensor = msg.serialize()
-                length_metadata_tensor = torch.IntTensor([len(metadata_tensor)])
-                dist.send(length_metadata_tensor, dst=sender_rank)
-                dist.send(metadata_tensor, dst=sender_rank)
+                send(
+                    metadata_tensor,
+                    dst_rank=sender_rank,
+                    backend=self.communication_backend,
+                )
 
             elif msg.message_type == MessageType.EXIT:
                 self.exit_counter = self.exit_counter + 1
@@ -100,46 +107,26 @@ class ReplayBufferManager:
                 )
 
     def _recv_object(self):
-        # Receive the length.
-        length_tensor = torch.IntTensor([0])
-        sender_rank = dist.recv(length_tensor)
-        length = length_tensor.item()
+        sender_rank, byte_tensor = recv(backend=self.communication_backend)
 
-        # Receive the actual serialized data.
-        byte_tensor = torch.ByteTensor(length)
-        dist.recv(byte_tensor, src=sender_rank)
-
+        # Deserialize back into object.
         msg = Message.deserialize(byte_tensor)
-        return sender_rank, msg, length
+        return sender_rank, msg, len(byte_tensor)
 
     @staticmethod
-    def send_termination_signal(manager_rank: int):
+    def send_termination_signal(manager_rank: int, backend):
         """Sends a termination signal to the replay buffer manager."""
-        rank = dist.get_rank()
         msg = Message(message_type=MessageType.EXIT, message_data=None)
         msg_bytes = msg.serialize()
-        length_tensor = torch.IntTensor([len(msg_bytes)])
-        dist.send(length_tensor, dst=manager_rank)
-        dist.send(msg_bytes, dst=manager_rank)
-        print(
-            f"Rank {rank} sent termination signal to replay buffer manager {manager_rank}."
-        )
+        send(msg_bytes, dst_rank=manager_rank, backend=backend)
 
     @staticmethod
-    def get_metadata(manager_rank: int) -> dict:
+    def get_metadata(manager_rank: int, backend) -> dict:
         """Sends a get metadata signal to the replay buffer manager."""
         msg = Message(message_type=MessageType.GET_METADATA, message_data=None)
         msg_bytes = msg.serialize()
 
-        length_tensor = torch.IntTensor([len(msg_bytes)])
-        dist.send(length_tensor, dst=manager_rank)
-
-        dist.send(msg_bytes, dst=manager_rank)
-        length_metadata_tensor = torch.IntTensor([0])
-
-        dist.recv(length_metadata_tensor, src=manager_rank)
-        metadata_tensor = torch.ByteTensor(length_metadata_tensor.item())
-
-        dist.recv(metadata_tensor, src=manager_rank)
+        send(msg_bytes, dst_rank=manager_rank, backend=backend)
+        src_rank, metadata_tensor = recv(manager_rank, backend=backend)
         metadata = Message.deserialize(metadata_tensor)
         return metadata.message_data
