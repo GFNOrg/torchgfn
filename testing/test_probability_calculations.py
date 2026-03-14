@@ -123,7 +123,6 @@ def test_get_trajectory_pfs_matches_legacy_with_default_adapter(
     modern = get_trajectory_pfs(
         pf_estimator,
         trajectories,
-        fill_value=0.0,
         recalculate_all_logprobs=not use_cached_outputs,
     )
 
@@ -237,7 +236,6 @@ def test_get_trajectory_pbs_matches_legacy_with_default_adapter():
     modern = get_trajectory_pbs(
         pb_estimator,
         trajectories,
-        fill_value=0.0,
     )
 
     torch.testing.assert_close(modern, legacy)

@@ -320,7 +320,6 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
-        fill_value: float = 0.0,
         recalculate_all_logprobs: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""Evaluates forward and backward logprobs for each trajectory in the batch.
@@ -340,8 +339,6 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
 
         Args:
             trajectories: The Trajectories object to evaluate.
-            fill_value: Value to use for invalid states (e.g., $s_f$ added to shorter
-                trajectories).
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
@@ -352,7 +349,6 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
             self.pf,
             self.pb,
             trajectories,
-            fill_value,
             recalculate_all_logprobs,
         )
 
